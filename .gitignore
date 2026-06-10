@@ -4,3 +4,4 @@
 __pycache__/
 *.pyc
 .python-version
+uv.lock
