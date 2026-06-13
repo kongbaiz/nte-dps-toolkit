@@ -4,7 +4,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::net::Ipv4Addr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{
     Arc, Mutex,
@@ -26,8 +26,10 @@ use serde::Deserialize;
 
 use crate::model::{AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, PacketDebug};
 use crate::parser::{
-    declared_character_ids_from_evidence, find_declared_character_evidence, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload,
+    GameplayEffectSkill, ParsedGameplayEffect, classify_attack_type,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    load_gameplay_effect_mapping, load_gameplay_effect_skills, parse_boss_hp_updates,
+    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, qte_reaction_type,
 };
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 
@@ -771,13 +773,21 @@ fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
 }
 
 const INFERRED_FOLLOW_UP_CHAR_ID: u32 = u32::MAX;
+const NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX: u32 = 241;
+const MAX_DISPLAY_DAMAGE_CORRECTION_RATIO: f64 = 0.03;
+
+#[derive(Clone)]
+struct PendingHit {
+    hit: Hit,
+    gameplay_effect_index: Option<u32>,
+}
 
 #[derive(Default)]
 struct FollowUpDamageTracker {
     last_server_hp: Option<f64>,
     last_hit_timestamp: Option<f64>,
     target_max_hp: Option<f64>,
-    pending_hits: VecDeque<Hit>,
+    pending_hits: VecDeque<PendingHit>,
     team_attributes: HashSet<String>,
     character_attributes: HashMap<u32, String>,
 }
@@ -807,7 +817,12 @@ impl FollowUpDamageTracker {
         }
     }
 
-    fn observe_hit(&mut self, hit: &Hit, characters: &HashMap<u32, CharacterInfo>) {
+    fn observe_hit(
+        &mut self,
+        hit: &Hit,
+        gameplay_effect_index: Option<u32>,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) {
         if hit.direction == "incoming"
             || hit.char_id == 0
             || hit.target_max_hp <= 500_000.0
@@ -831,19 +846,24 @@ impl FollowUpDamageTracker {
         if self
             .pending_hits
             .back()
-            .is_some_and(|previous| hit.timestamp - previous.timestamp > 1.0)
+            .is_some_and(|previous| hit.timestamp - previous.hit.timestamp > 1.0)
         {
             self.pending_hits.clear();
         }
-        self.pending_hits.push_back(hit.clone());
+        self.pending_hits.push_back(PendingHit {
+            hit: hit.clone(),
+            gameplay_effect_index,
+        });
     }
 
     fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<Hit> {
         self.pending_hits
-            .retain(|hit| timestamp - hit.timestamp <= 1.0);
-        let previous_hp = self
-            .last_server_hp
-            .or_else(|| self.pending_hits.front().map(|hit| hit.target_hp_before));
+            .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
+        let previous_hp = self.last_server_hp.or_else(|| {
+            self.pending_hits
+                .front()
+                .map(|pending| pending.hit.target_hp_before)
+        });
         self.last_server_hp = Some(current_hp);
         let previous_hp = previous_hp?;
         if current_hp >= previous_hp || self.pending_hits.is_empty() {
@@ -859,14 +879,19 @@ impl FollowUpDamageTracker {
         }
 
         let actual_damage = previous_hp - current_hp;
-        let source = self.pending_hits.pop_front()?;
-        let inferred_damage = actual_damage - source.damage;
+        let pending = self.pending_hits.pop_front()?;
+        let source = pending.hit;
+        let residual_damage = actual_damage - source.damage;
+        let inferred_damage =
+            corrected_follow_up_damage(actual_damage, source.damage, pending.gameplay_effect_index)
+                .unwrap_or(residual_damage);
         let inferred_ratio = if source.damage > 0.0 {
-            inferred_damage / source.damage
+            residual_damage / source.damage
         } else {
             0.0
         };
-        if inferred_damage < 1.0 || !(0.18..=0.26).contains(&inferred_ratio) {
+        let corrected = (inferred_damage - residual_damage).abs() > 0.5;
+        if inferred_damage < 1.0 || (!corrected && !(0.18..=0.26).contains(&inferred_ratio)) {
             return None;
         }
         let has_required_team_attributes =
@@ -878,7 +903,7 @@ impl FollowUpDamageTracker {
         Some(Hit {
             timestamp,
             char_id: INFERRED_FOLLOW_UP_CHAR_ID,
-            char_name: "覆纹伤害（推算）".to_owned(),
+            char_name: "覆纹伤害".to_owned(),
             char_known: false,
             damage: inferred_damage,
             byte_offset: 0,
@@ -897,25 +922,146 @@ impl FollowUpDamageTracker {
             target_name: source.target_name,
             target_context: vec![
                 format!(
-                    "服务器实际掉血 {:.0} - 已解析伤害 {:.0}（残差 {:.1}%）",
+                    "服务器实际掉血 {:.0} - 封包伤害 {:.0}（残差 {:.1}%）",
                     actual_damage,
                     source.damage,
                     inferred_ratio * 100.0
                 ),
+                if corrected {
+                    format!(
+                        "GameplayEffect {}：按显示伤害的 20% 反解覆纹 {:.0}",
+                        pending.gameplay_effect_index.unwrap_or_default(),
+                        inferred_damage
+                    )
+                } else {
+                    "覆纹取服务器 HP 残差".to_owned()
+                },
                 format!(
                     "触发角色 {}（{}，{}属性）",
                     source.char_name, source.char_id, source_attribute
                 ),
             ],
+            gameplay_effect_index: None,
+            gameplay_effect_name: None,
+            ability_name: None,
+            attack_type: Some("覆纹".to_owned()),
         })
     }
 }
 
-#[derive(Default)]
+fn corrected_follow_up_damage(
+    actual_damage: f64,
+    packet_damage: f64,
+    gameplay_effect_index: Option<u32>,
+) -> Option<f64> {
+    if gameplay_effect_index != Some(NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX) {
+        return None;
+    }
+    let total = actual_damage.round();
+    if (actual_damage - total).abs() > 0.01 || total < 1.0 {
+        return None;
+    }
+    let total = total as u64;
+    let minimum_base = total.saturating_mul(5) / 6;
+    for displayed_base in minimum_base.saturating_sub(2)..=minimum_base.saturating_add(3) {
+        let follow_up = displayed_base / 5;
+        if displayed_base + follow_up != total {
+            continue;
+        }
+        let correction_ratio =
+            (displayed_base as f64 - packet_damage).abs() / displayed_base as f64;
+        if correction_ratio <= MAX_DISPLAY_DAMAGE_CORRECTION_RATIO {
+            return Some(follow_up as f64);
+        }
+    }
+    None
+}
+
 struct PacketDecoder {
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
     follow_up_damage: FollowUpDamageTracker,
+    gameplay_effect_names: HashMap<u32, String>,
+    gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
+    resource_warnings: Vec<String>,
+    character_declarations: HashMap<u32, f64>,
+}
+
+impl Default for PacketDecoder {
+    fn default() -> Self {
+        let mapping_relative =
+            Path::new("NTE_Assets/DataTable/Skill/DT_GameplayEffectMappingData.json");
+        let skills_relative = Path::new("NTE_Assets/DataTable/Skill/DT_SkillDamageData.json");
+        let mut resource_warnings = Vec::new();
+        let gameplay_effect_names = find_data_file(mapping_relative)
+            .ok_or_else(|| format!("找不到 {}", mapping_relative.display()))
+            .and_then(|path| load_gameplay_effect_mapping(&path).map_err(|error| error.to_string()))
+            .unwrap_or_else(|error| {
+                resource_warnings.push(format!("GameplayEffect 名称表加载失败：{error}"));
+                HashMap::new()
+            });
+        let gameplay_effect_skills = find_data_file(skills_relative)
+            .ok_or_else(|| format!("找不到 {}", skills_relative.display()))
+            .and_then(|path| load_gameplay_effect_skills(&path).map_err(|error| error.to_string()))
+            .unwrap_or_else(|error| {
+                resource_warnings.push(format!("技能分类表加载失败：{error}"));
+                HashMap::new()
+            });
+        Self {
+            session_characters: HashMap::new(),
+            client_endpoints: HashSet::new(),
+            follow_up_damage: FollowUpDamageTracker::default(),
+            gameplay_effect_names,
+            gameplay_effect_skills,
+            resource_warnings,
+            character_declarations: HashMap::new(),
+        }
+    }
+}
+
+impl PacketDecoder {
+    fn resource_warning(&self) -> Option<String> {
+        (!self.resource_warnings.is_empty()).then(|| self.resource_warnings.join("；"))
+    }
+}
+
+fn matching_gameplay_effect<'a>(
+    hit: &Hit,
+    effects: &'a [ParsedGameplayEffect],
+) -> Option<&'a ParsedGameplayEffect> {
+    let mut aligned = effects
+        .iter()
+        .filter(|effect| effect.bit_shift == hit.bit_shift);
+    let first = aligned.next();
+    if first.is_some() && aligned.next().is_none() {
+        first
+    } else if effects.len() == 1 {
+        effects.first()
+    } else {
+        None
+    }
+}
+
+fn enrich_hit_with_gameplay_effect(
+    hit: &mut Hit,
+    effects: &[ParsedGameplayEffect],
+    names: &HashMap<u32, String>,
+    skills: &HashMap<String, GameplayEffectSkill>,
+) {
+    let Some(effect) = matching_gameplay_effect(hit, effects) else {
+        return;
+    };
+    hit.gameplay_effect_index = Some(effect.unique_index);
+    let Some(effect_name) = names.get(&effect.unique_index) else {
+        return;
+    };
+    hit.gameplay_effect_name = Some(effect_name.clone());
+    if let Some(skill) = skills.get(effect_name) {
+        hit.ability_name = skill.ability_name.clone();
+        hit.attack_type = Some(skill.attack_type.clone());
+    } else {
+        hit.attack_type = Some(classify_attack_type(None, effect_name, None));
+    }
 }
 
 impl PacketDecoder {
@@ -944,7 +1090,8 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
-        let hits = if outgoing {
+        let gameplay_effects = parse_gameplay_effects(payload);
+        let mut hits = if outgoing {
             let packet_char_id = if ids.len() == 1 {
                 ids.first().copied()
             } else {
@@ -966,6 +1113,61 @@ impl PacketDecoder {
         } else {
             Vec::new()
         };
+        for hit in &mut hits {
+            enrich_hit_with_gameplay_effect(
+                hit,
+                &gameplay_effects,
+                &self.gameplay_effect_names,
+                &self.gameplay_effect_skills,
+            );
+            if hit
+                .attack_type
+                .as_deref()
+                .is_some_and(|attack_type| attack_type.starts_with("QTE"))
+            {
+                let previous_declared_character = self
+                    .character_declarations
+                    .iter()
+                    .filter(|(character_id, declared_at)| {
+                        **character_id != hit.char_id && timestamp - **declared_at <= 3.0
+                    })
+                    .max_by(|left, right| left.1.total_cmp(right.1))
+                    .map(|(character_id, _)| *character_id);
+                let previous_attribute = previous_declared_character
+                    .and_then(|character_id| characters.get(&character_id))
+                    .and_then(|character| character.attribute.as_deref());
+                let entering_attribute = characters
+                    .get(&hit.char_id)
+                    .and_then(|character| character.attribute.as_deref());
+                if let (Some(previous_attribute), Some(entering_attribute)) =
+                    (previous_attribute, entering_attribute)
+                    && let Some(reaction_type) = qte_reaction_type(
+                        previous_attribute,
+                        entering_attribute,
+                        &self.follow_up_damage.team_attributes,
+                    )
+                {
+                    hit.attack_type = Some(format!("QTE·{reaction_type}"));
+                    hit.target_context.push(format!(
+                        "异能环合：{}({}) + {}({}) = {}",
+                        previous_declared_character
+                            .and_then(|character_id| characters.get(&character_id))
+                            .map(|character| character.name_zh.as_str())
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or("前台角色"),
+                        previous_attribute,
+                        hit.char_name,
+                        entering_attribute,
+                        reaction_type
+                    ));
+                }
+            }
+        }
+        for character_id in &ids {
+            self.character_declarations.insert(*character_id, timestamp);
+        }
+        self.character_declarations
+            .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
         let accepted = hits
             .iter()
             .filter(|hit| include_incoming || hit.direction != "incoming")
@@ -998,6 +1200,27 @@ impl PacketDecoder {
             &mut note,
             binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
         );
+        if !gameplay_effects.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "GameplayEffect：{}",
+                    gameplay_effects
+                        .iter()
+                        .map(|effect| {
+                            let location = format!("@{}:{}", effect.byte_offset, effect.bit_shift);
+                            self.gameplay_effect_names
+                                .get(&effect.unique_index)
+                                .map_or_else(
+                                    || format!("{}{}", effect.unique_index, location),
+                                    |name| format!("{} {}{}", effect.unique_index, name, location),
+                                )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
         if !current_hp_updates.is_empty() {
             append_packet_note(
                 &mut note,
@@ -1077,7 +1300,8 @@ impl PacketDecoder {
         );
         for hit in hits {
             if include_incoming || hit.direction != "incoming" {
-                self.follow_up_damage.observe_hit(&hit, characters);
+                self.follow_up_damage
+                    .observe_hit(&hit, hit.gameplay_effect_index, characters);
                 let _ = sender.send(EngineEvent::Hit(hit));
             }
         }
@@ -1199,6 +1423,9 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         )));
 
         let mut decoder = PacketDecoder::default();
+        if let Some(warning) = decoder.resource_warning() {
+            let _ = sender.send(EngineEvent::Error(warning));
+        }
         while !stop.load(Ordering::Relaxed) {
             let mut header = ptr::null();
             let mut packet_data = ptr::null();
@@ -1252,6 +1479,9 @@ pub fn import_pcapng(
             let file = File::open(&path).map_err(|error| error.to_string())?;
             let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
             let mut decoder = PacketDecoder::default();
+            if let Some(warning) = decoder.resource_warning() {
+                let _ = sender.send(EngineEvent::Error(warning));
+            }
             let mut packet_count = 0;
             let mut supported_count = 0;
 
@@ -1336,6 +1566,14 @@ struct ExportHit {
     target_name: Option<String>,
     #[serde(default)]
     target_context: Vec<String>,
+    #[serde(default)]
+    gameplay_effect_index: Option<u32>,
+    #[serde(default)]
+    gameplay_effect_name: Option<String>,
+    #[serde(default)]
+    ability_name: Option<String>,
+    #[serde(default)]
+    attack_type: Option<String>,
 }
 
 fn default_outgoing_direction() -> String {
@@ -1446,6 +1684,10 @@ pub fn import_capture_json(
                         target_id: hit.target_id,
                         target_name: hit.target_name,
                         target_context: hit.target_context,
+                        gameplay_effect_index: hit.gameplay_effect_index,
+                        gameplay_effect_name: hit.gameplay_effect_name,
+                        ability_name: hit.ability_name,
+                        attack_type: hit.attack_type,
                     }),
                 ));
             }
@@ -1541,6 +1783,44 @@ mod tests {
     }
 
     #[test]
+    fn corrects_nanally_melee1_follow_up_from_server_total() {
+        assert_eq!(
+            corrected_follow_up_damage(3_850.0, 3_177.0, Some(241)),
+            Some(641.0)
+        );
+        assert_eq!(
+            corrected_follow_up_damage(3_417.0, 2_898.0, Some(241)),
+            Some(569.0)
+        );
+        assert_eq!(
+            corrected_follow_up_damage(2_115.0, 1_714.0, Some(145)),
+            None
+        );
+    }
+
+    #[test]
+    fn packet_decoder_loads_attack_resources_outside_project_cwd() {
+        let decoder = PacketDecoder::default();
+
+        assert!(
+            decoder.resource_warnings.is_empty(),
+            "{}",
+            decoder.resource_warnings.join("; ")
+        );
+        assert_eq!(
+            decoder.gameplay_effect_names.get(&241).map(String::as_str),
+            Some("GE_Player_Nanally_Melee1_Damage")
+        );
+        assert_eq!(
+            decoder
+                .gameplay_effect_skills
+                .get("GE_Player_Nanally_Melee1_Damage")
+                .map(|skill| skill.attack_type.as_str()),
+            Some("普攻")
+        );
+    }
+
+    #[test]
     fn actual_capture_contains_udp_traffic() {
         let path = actual_capture_path();
         let file = File::open(&path).expect("无法打开真实抓包文件");
@@ -1629,6 +1909,139 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "manual real-capture attack type analysis"]
+    fn diagnose_actual_capture_attack_types() {
+        let path = actual_capture_path();
+        let characters = Arc::new(
+            crate::parser::load_characters(Path::new("characters.json"))
+                .expect("无法加载实际 characters.json"),
+        );
+        let (sender, receiver) = unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        import_pcapng(path.clone(), characters, true, sender, stop)
+            .join()
+            .expect("真实抓包导入线程异常退出");
+
+        let mut counts = HashMap::<String, usize>::new();
+        let mut effects = HashMap::<String, (usize, Vec<u64>)>::new();
+        let mut unknown_hits = Vec::new();
+        let mut other_hits = Vec::new();
+        let mut recent_hits = VecDeque::<Hit>::new();
+        let mut recent_packets = VecDeque::<(f64, Vec<u32>)>::new();
+        let mut last_declared_at = HashMap::<u32, f64>::new();
+        let mut total_hits = 0_usize;
+        let mut classified_hits = 0_usize;
+        for event in receiver.try_iter() {
+            let hit = match event {
+                EngineEvent::Packet(packet) => {
+                    if !packet.declared_ids.is_empty() {
+                        for character_id in &packet.declared_ids {
+                            last_declared_at.insert(*character_id, packet.timestamp);
+                        }
+                        recent_packets.push_back((packet.timestamp, packet.declared_ids));
+                        while recent_packets.len() > 32 {
+                            recent_packets.pop_front();
+                        }
+                    }
+                    continue;
+                }
+                EngineEvent::Hit(hit) => hit,
+                _ => continue,
+            };
+            if hit.attack_type.as_deref() == Some("QTE") {
+                println!(
+                    "qte_timeline t={:.6} char={}({}) damage={:.0} effect={} recent={:?}",
+                    hit.timestamp,
+                    hit.char_name,
+                    hit.char_id,
+                    hit.damage,
+                    hit.gameplay_effect_name.as_deref().unwrap_or("<unknown>"),
+                    recent_hits
+                        .iter()
+                        .filter(|recent| hit.timestamp - recent.timestamp <= 3.0)
+                        .map(|recent| (
+                            hit.timestamp - recent.timestamp,
+                            recent.char_id,
+                            recent.char_name.as_str(),
+                            recent.attack_type.as_deref(),
+                            recent.gameplay_effect_name.as_deref(),
+                        ))
+                        .collect::<Vec<_>>()
+                );
+                println!(
+                    "qte_packet_history={:?}",
+                    recent_packets
+                        .iter()
+                        .filter(|(timestamp, _)| hit.timestamp - timestamp <= 1.0)
+                        .map(|(timestamp, ids)| (hit.timestamp - timestamp, ids))
+                        .collect::<Vec<_>>()
+                );
+                let mut other_declarations = last_declared_at
+                    .iter()
+                    .filter(|(character_id, _)| **character_id != hit.char_id)
+                    .map(|(character_id, timestamp)| (hit.timestamp - timestamp, *character_id))
+                    .collect::<Vec<_>>();
+                other_declarations.sort_by(|left, right| left.0.total_cmp(&right.0));
+                println!("qte_other_declarations={other_declarations:?}");
+            }
+            total_hits += 1;
+            let attack_type = hit.attack_type.as_deref().unwrap_or("未知").to_owned();
+            if hit.attack_type.is_some() {
+                classified_hits += 1;
+            } else if unknown_hits.len() < 12 {
+                unknown_hits.push((
+                    hit.char_name.clone(),
+                    hit.damage.round() as u64,
+                    hit.bit_shift,
+                    hit.gameplay_effect_index,
+                ));
+            }
+            if hit.attack_type.as_deref() == Some("其他") && other_hits.len() < 12 {
+                other_hits.push((
+                    hit.char_name.clone(),
+                    hit.damage.round() as u64,
+                    hit.gameplay_effect_name.clone(),
+                    hit.ability_name.clone(),
+                ));
+            }
+            *counts.entry(attack_type).or_default() += 1;
+            if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
+                let row = effects.entry(effect_name.to_owned()).or_default();
+                row.0 += 1;
+                let damage = hit.damage.round() as u64;
+                if row.1.len() < 8 && !row.1.contains(&damage) {
+                    row.1.push(damage);
+                }
+            }
+            recent_hits.push_back(hit);
+            while recent_hits.len() > 24 {
+                recent_hits.pop_front();
+            }
+        }
+
+        let mut count_rows: Vec<_> = counts.into_iter().collect();
+        count_rows.sort_by(|left, right| right.1.cmp(&left.1));
+        let mut effect_rows: Vec<_> = effects.into_iter().collect();
+        effect_rows.sort_by(|left, right| right.1.0.cmp(&left.1.0));
+        println!(
+            "attack_type_summary capture={} hits={} classified={} types={:?}",
+            path.display(),
+            total_hits,
+            classified_hits,
+            count_rows
+        );
+        println!("unknown_hits={unknown_hits:?}");
+        println!("other_hits={other_hits:?}");
+        for (effect_name, (count, damages)) in effect_rows {
+            println!("effect={effect_name} hits={count} damage={damages:?}");
+        }
+
+        assert!(total_hits > 0, "抓包没有解析出伤害记录");
+        assert!(classified_hits > 0, "抓包没有关联出任何攻击类型");
+    }
+
+    #[test]
     fn actual_capture_contains_server_boss_hp_updates() {
         let path = actual_capture_path();
         let file = File::open(&path).expect("无法打开真实抓包文件");
@@ -1668,6 +2081,138 @@ mod tests {
             "真实抓包中的 Boss HP 更新没有形成掉血序列: {}",
             path.display()
         );
+    }
+
+    #[test]
+    #[ignore = "manual real-capture GameplayEffect analysis"]
+    fn diagnose_actual_capture_gameplay_effects() {
+        #[derive(Default)]
+        struct EffectStats {
+            count: usize,
+            packet_count: usize,
+            damage_values: Vec<u64>,
+            declared_ids: HashSet<u32>,
+            bit_shifts: HashSet<u8>,
+        }
+
+        let path = actual_capture_path();
+        let names = load_gameplay_effect_mapping(Path::new(
+            "NTE_Assets/DataTable/Skill/DT_GameplayEffectMappingData.json",
+        ))
+        .expect("无法加载 GameplayEffect 映射");
+        let file = File::open(&path).expect("无法打开真实抓包文件");
+        let mut reader = PcapNgReader::new(file).expect("真实抓包不是有效的 PCAPNG");
+        let mut stats = HashMap::<u32, EffectStats>::new();
+        let mut udp_packets = 0_usize;
+        let mut effect_packets = 0_usize;
+
+        while let Some(block) = reader.next_block() {
+            let block = block.expect("真实抓包包含损坏的数据块");
+            let (interface_id, timestamp, data) = match block {
+                Block::EnhancedPacket(packet) => (
+                    packet.interface_id as usize,
+                    packet.timestamp.as_secs_f64(),
+                    packet.data.into_owned(),
+                ),
+                Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                _ => continue,
+            };
+            let Some(interface) = reader.interfaces().get(interface_id) else {
+                continue;
+            };
+            if interface.linktype != DataLink::ETHERNET {
+                continue;
+            }
+            let Some((src, _, dst, _, payload)) = parse_udp_ipv4(&data) else {
+                continue;
+            };
+            udp_packets += 1;
+            let effects = parse_gameplay_effects(payload);
+            if effects.is_empty() {
+                continue;
+            }
+            effect_packets += 1;
+            let damage_records = crate::parser::parse_damage_records(payload);
+            let damage_values: Vec<_> = damage_records
+                .iter()
+                .map(|record| record.damage.round() as u64)
+                .collect();
+            let character_evidence = find_declared_character_evidence(payload);
+            let declared_ids = declared_character_ids_from_evidence(&character_evidence);
+            let mut packet_indexes = HashSet::new();
+            if effects
+                .iter()
+                .any(|effect| matches!(effect.unique_index, 52 | 559 | 561))
+            {
+                println!(
+                    "reaction_event t={timestamp:.6} direction={} effects={:?} evidence={:?} damage={:?}",
+                    if src.is_private() && !dst.is_private() {
+                        "C2S"
+                    } else {
+                        "S2C"
+                    },
+                    effects
+                        .iter()
+                        .map(|effect| (effect.unique_index, effect.bit_shift, effect.byte_offset))
+                        .collect::<Vec<_>>(),
+                    character_evidence,
+                    damage_records
+                        .iter()
+                        .map(|record| (
+                            record.damage.round() as u64,
+                            record.bit_shift,
+                            record.byte_offset
+                        ))
+                        .collect::<Vec<_>>()
+                );
+            }
+            for effect in effects {
+                let row = stats.entry(effect.unique_index).or_default();
+                row.count += 1;
+                row.bit_shifts.insert(effect.bit_shift);
+                row.declared_ids.extend(declared_ids.iter().copied());
+                for damage in &damage_values {
+                    if !row.damage_values.contains(damage) && row.damage_values.len() < 12 {
+                        row.damage_values.push(*damage);
+                    }
+                }
+                if packet_indexes.insert(effect.unique_index) {
+                    row.packet_count += 1;
+                }
+            }
+        }
+
+        let mut rows: Vec<_> = stats.into_iter().collect();
+        rows.sort_by(|(left_index, left), (right_index, right)| {
+            right
+                .count
+                .cmp(&left.count)
+                .then_with(|| left_index.cmp(right_index))
+        });
+        println!(
+            "effect_summary capture={} udp_packets={} effect_packets={} effect_events={} distinct={}",
+            path.display(),
+            udp_packets,
+            effect_packets,
+            rows.iter().map(|(_, row)| row.count).sum::<usize>(),
+            rows.len()
+        );
+        for (index, mut row) in rows {
+            let mut declared_ids: Vec<_> = row.declared_ids.drain().collect();
+            declared_ids.sort_unstable();
+            let mut bit_shifts: Vec<_> = row.bit_shifts.drain().collect();
+            bit_shifts.sort_unstable();
+            println!(
+                "effect index={} count={} packets={} name={} declared={:?} damage={:?} shifts={:?}",
+                index,
+                row.count,
+                row.packet_count,
+                names.get(&index).map(String::as_str).unwrap_or("<unknown>"),
+                declared_ids,
+                row.damage_values,
+                bit_shifts
+            );
+        }
     }
 
     #[test]
@@ -1868,16 +2413,22 @@ mod tests {
             });
         }
 
-        let trigger_time = hits
+        let Some(trigger_time) = hits
             .iter()
             .find(|hit| (hit.damage - 8_772.0).abs() < 0.5)
-            .unwrap()
-            .timestamp;
-        let follow_up_time = hits
+            .map(|hit| hit.timestamp)
+        else {
+            println!("specific trigger damage 8772 is absent; skipping legacy packet window");
+            return;
+        };
+        let Some(follow_up_time) = hits
             .iter()
             .find(|hit| (hit.damage - 3_177.0).abs() < 0.5)
-            .unwrap()
-            .timestamp;
+            .map(|hit| hit.timestamp)
+        else {
+            println!("specific follow-up damage 3177 is absent; skipping legacy packet window");
+            return;
+        };
         for (label, center) in [("trigger", trigger_time), ("follow_up", follow_up_time)] {
             println!("window {label} center={center:.6}");
             for packet in packets.iter().filter(|packet| {

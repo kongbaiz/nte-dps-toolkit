@@ -39,6 +39,14 @@ pub struct Hit {
     pub target_name: Option<String>,
     #[serde(default)]
     pub target_context: Vec<String>,
+    #[serde(default)]
+    pub gameplay_effect_index: Option<u32>,
+    #[serde(default)]
+    pub gameplay_effect_name: Option<String>,
+    #[serde(default)]
+    pub ability_name: Option<String>,
+    #[serde(default)]
+    pub attack_type: Option<String>,
 }
 
 #[derive(Clone, Debug)]

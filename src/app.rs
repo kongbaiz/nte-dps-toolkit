@@ -1031,6 +1031,40 @@ impl DpsApp {
             writeln!(&mut out, "      \"damage\": {},", json_f64(hit.damage)).ok();
             writeln!(
                 &mut out,
+                "      \"attack_type\": {},",
+                hit.attack_type
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"gameplay_effect_index\": {},",
+                hit.gameplay_effect_index
+                    .map_or_else(|| "null".to_owned(), |value| value.to_string())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"gameplay_effect_name\": {},",
+                hit.gameplay_effect_name
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"ability_name\": {},",
+                hit.ability_name
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
                 "      \"direction\": {},",
                 json_string(&hit.direction)
             )
@@ -3176,7 +3210,11 @@ fn draw_character_hit_row(
     };
     let mono = egui::FontId::monospace(12.0);
     draw_hit_column_separators(&painter, rect, layout);
-    let hit_type = if incoming { "受击" } else { "输出" };
+    let hit_type = if incoming {
+        "受击"
+    } else {
+        hit.attack_type.as_deref().unwrap_or("未知")
+    };
     let time = format_short_time(hit.timestamp);
     let damage = format_number(hit.damage);
     let target_hp = format!(
@@ -3195,14 +3233,14 @@ fn draw_character_hit_row(
     );
     painter.rect_filled(
         egui::Rect::from_center_size(
-            egui::pos2(x + layout.type_x + 26.0, y),
-            egui::vec2(48.0, 20.0),
+            egui::pos2(x + layout.type_x + 36.0, y),
+            egui::vec2(68.0, 20.0),
         ),
         10.0,
         type_color,
     );
     painter.text(
-        egui::pos2(x + layout.type_x + 26.0, y),
+        egui::pos2(x + layout.type_x + 36.0, y),
         egui::Align2::CENTER_CENTER,
         hit_type,
         egui::FontId::proportional(11.0),
@@ -3254,11 +3292,18 @@ fn draw_character_hit_row(
         );
     }
     if response.hovered() {
-        response.on_hover_text(if incoming {
-            "角色受到的伤害"
+        let mut details = if incoming {
+            "角色受到的伤害".to_owned()
         } else {
-            "角色造成的伤害"
-        });
+            format!("攻击类型：{hit_type}")
+        };
+        if let Some(ability_name) = hit.ability_name.as_deref() {
+            details.push_str(&format!("\n技能：{ability_name}"));
+        }
+        if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
+            details.push_str(&format!("\nGameplayEffect：{effect_name}"));
+        }
+        response.on_hover_text(details);
     }
 }
 
@@ -3381,16 +3426,20 @@ fn draw_team_hit_row(
     );
     painter.rect_filled(
         egui::Rect::from_center_size(
-            egui::pos2(x + layout.type_x + 26.0, y),
-            egui::vec2(48.0, 20.0),
+            egui::pos2(x + layout.type_x + 36.0, y),
+            egui::vec2(68.0, 20.0),
         ),
         10.0,
         type_color,
     );
     painter.text(
-        egui::pos2(x + layout.type_x + 26.0, y),
+        egui::pos2(x + layout.type_x + 36.0, y),
         egui::Align2::CENTER_CENTER,
-        if incoming { "受击" } else { "输出" },
+        if incoming {
+            "受击"
+        } else {
+            hit.attack_type.as_deref().unwrap_or("未知")
+        },
         egui::FontId::proportional(11.0),
         contrast_text(type_color),
     );
@@ -3441,16 +3490,23 @@ fn draw_team_hit_row(
         text_color,
     );
     if response.hovered() {
-        response.on_hover_text(format!(
+        let mut details = format!(
             "{} · 角色 ID {} · {}",
             hit.char_name,
             hit.char_id,
             if incoming {
                 "角色受到的伤害"
             } else {
-                "角色造成的伤害"
+                hit.attack_type.as_deref().unwrap_or("攻击类型未知")
             }
-        ));
+        );
+        if let Some(ability_name) = hit.ability_name.as_deref() {
+            details.push_str(&format!("\n技能：{ability_name}"));
+        }
+        if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
+            details.push_str(&format!("\nGameplayEffect：{effect_name}"));
+        }
+        response.on_hover_text(details);
     }
 }
 

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -16,6 +16,9 @@ const MAX_PLAUSIBLE_CHARACTER_HP: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
 const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
+const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
+const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
+const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
 
 #[derive(Deserialize)]
 struct CharacterDocument {
@@ -56,6 +59,45 @@ pub struct ParsedBossHpUpdate {
     pub bit_shift: u8,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedGameplayEffect {
+    pub unique_index: u32,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameplayEffectSkill {
+    pub damage_source_category: Option<String>,
+    pub ability_name: Option<String>,
+    pub attack_type: String,
+}
+
+pub fn find_data_file(relative_path: &Path) -> Option<PathBuf> {
+    if relative_path.is_file() {
+        return Some(relative_path.to_path_buf());
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        let candidate = current_dir.join(relative_path);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    if let Ok(executable) = std::env::current_exe() {
+        for ancestor in executable.ancestors().skip(1) {
+            let candidate = ancestor.join(relative_path);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    let manifest_candidate = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
+    manifest_candidate.is_file().then_some(manifest_candidate)
+}
+
 pub fn load_characters(path: &Path) -> Result<HashMap<u32, CharacterInfo>> {
     let text =
         fs::read_to_string(path).with_context(|| format!("无法读取角色表 {}", path.display()))?;
@@ -65,6 +107,164 @@ pub fn load_characters(path: &Path) -> Result<HashMap<u32, CharacterInfo>> {
         .into_iter()
         .filter_map(|(key, value)| key.parse::<u32>().ok().map(|id| (id, value)))
         .collect())
+}
+
+pub fn load_gameplay_effect_mapping(path: &Path) -> Result<HashMap<u32, String>> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("无法读取 GameplayEffect 映射表 {}", path.display()))?;
+    let document: serde_json::Value =
+        serde_json::from_str(&text).context("GameplayEffect 映射表 JSON 无效")?;
+    let rows = document
+        .as_array()
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry.get("Rows"))
+        .and_then(serde_json::Value::as_object)
+        .context("GameplayEffect 映射表缺少 Rows")?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|(name, row)| {
+            row.get("UniqueIndex")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|index| u32::try_from(index).ok())
+                .filter(|index| *index != 0)
+                .map(|index| (index, name.clone()))
+        })
+        .collect())
+}
+
+pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, GameplayEffectSkill>> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("无法读取技能伤害表 {}", path.display()))?;
+    let document: serde_json::Value =
+        serde_json::from_str(&text).context("技能伤害表 JSON 无效")?;
+    let rows = document
+        .as_array()
+        .and_then(|entries| entries.first())
+        .and_then(|entry| entry.get("Rows"))
+        .and_then(serde_json::Value::as_object)
+        .context("技能伤害表缺少 Rows")?;
+
+    Ok(rows
+        .iter()
+        .map(|(effect_name, row)| {
+            let category = row
+                .get("DamageSourceCategory")
+                .and_then(serde_json::Value::as_str)
+                .and_then(damage_source_category_code)
+                .map(str::to_owned);
+            let ability_name = row
+                .get("GAName")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty() && *value != "None")
+                .map(str::to_owned);
+            let attack_type =
+                classify_attack_type(category.as_deref(), effect_name, ability_name.as_deref());
+            (
+                effect_name.clone(),
+                GameplayEffectSkill {
+                    damage_source_category: category,
+                    ability_name,
+                    attack_type,
+                },
+            )
+        })
+        .collect())
+}
+
+fn damage_source_category_code(value: &str) -> Option<&str> {
+    value
+        .strip_prefix("EExecutionDamageSourceCategory::DAMAGE_SOURCE_CATEGORY_")
+        .or_else(|| value.rsplit('_').next())
+        .filter(|value| !value.is_empty() && *value != "NULL")
+}
+
+pub fn classify_attack_type(
+    category: Option<&str>,
+    effect_name: &str,
+    ability_name: Option<&str>,
+) -> String {
+    if effect_name.contains("Reaction_1") || effect_name.contains("Reaction1_") {
+        return "创生".to_owned();
+    }
+    if effect_name.contains("Reaction_2") || effect_name.contains("Reaction2_") {
+        return "覆纹".to_owned();
+    }
+    if effect_name.contains("Reaction_3") || effect_name.contains("Reaction3_") {
+        return "延滞".to_owned();
+    }
+    if effect_name.contains("Reaction_4") || effect_name.contains("Reaction4_") {
+        return "黯星".to_owned();
+    }
+    if effect_name.contains("Reaction_5") || effect_name.contains("Reaction5_") {
+        return "浊燃".to_owned();
+    }
+
+    let category_type = match category {
+        Some("A") => Some("普攻"),
+        Some("E") => Some("E技能"),
+        Some("Q") => Some("Q技能"),
+        Some("H") => Some("QTE"),
+        Some("R") => Some("反应伤害"),
+        Some("Z") => Some("闪避反击"),
+        _ => None,
+    };
+    if let Some(attack_type) = category_type {
+        return attack_type.to_owned();
+    }
+
+    let searchable = format!("{} {}", effect_name, ability_name.unwrap_or_default());
+    if searchable.contains("UltraSkill") {
+        "Q技能".to_owned()
+    } else if searchable.contains("QTE") || searchable.contains("EntryAttack") {
+        "QTE".to_owned()
+    } else if searchable.contains("Melee") || searchable.contains("NormalAttack") {
+        "普攻".to_owned()
+    } else if searchable.contains("Skill") {
+        "E技能".to_owned()
+    } else {
+        "其他".to_owned()
+    }
+}
+
+pub fn qte_reaction_type(
+    previous_attribute: &str,
+    entering_attribute: &str,
+    team_attributes: &HashSet<String>,
+) -> Option<&'static str> {
+    let has_pair = |left: &str, right: &str| {
+        (previous_attribute == left && entering_attribute == right)
+            || (previous_attribute == right && entering_attribute == left)
+    };
+
+    if team_attributes.contains("光")
+        && team_attributes.contains("灵")
+        && team_attributes.contains("相")
+        && (has_pair("光", "灵") || has_pair("光", "相"))
+    {
+        return Some("盈蓄");
+    }
+    if team_attributes.contains("暗")
+        && team_attributes.contains("魂")
+        && team_attributes.contains("咒")
+        && (has_pair("暗", "魂") || has_pair("咒", "暗"))
+    {
+        return Some("失谐");
+    }
+
+    if has_pair("光", "灵") {
+        Some("创生")
+    } else if has_pair("灵", "咒") {
+        Some("覆纹")
+    } else if has_pair("咒", "暗") {
+        Some("浊燃")
+    } else if has_pair("暗", "魂") {
+        Some("黯星")
+    } else if has_pair("光", "相") {
+        Some("延滞")
+    } else {
+        None
+    }
 }
 
 fn decode_shifted_into(
@@ -289,6 +489,55 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
     updates
 }
 
+pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
+    let mut effects = Vec::new();
+    let mut seen = HashSet::new();
+    for bit_shift in 0..8_u8 {
+        let shifted = if bit_shift == 0 {
+            data.to_vec()
+        } else {
+            match decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1)) {
+                Some(value) => value,
+                None => continue,
+            }
+        };
+        for (anchor_offset, window) in shifted
+            .windows(ACTIVE_GAMEPLAY_EFFECT_ANCHOR.len())
+            .enumerate()
+        {
+            if window != ACTIVE_GAMEPLAY_EFFECT_ANCHOR {
+                continue;
+            }
+            let marker_offset = anchor_offset
+                + ACTIVE_GAMEPLAY_EFFECT_ANCHOR.len()
+                + ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET;
+            let Some(marker_bytes) = shifted.get(marker_offset..marker_offset + 4) else {
+                continue;
+            };
+            let marker = u32::from_le_bytes(marker_bytes.try_into().unwrap());
+            if marker != ACTIVE_GAMEPLAY_EFFECT_MARKER {
+                continue;
+            }
+            let index_offset = marker_offset + 4;
+            let Some(index_bytes) = shifted.get(index_offset..index_offset + 4) else {
+                continue;
+            };
+            let unique_index = u32::from_le_bytes(index_bytes.try_into().unwrap());
+            if matches!(unique_index, 0 | u32::MAX)
+                || !seen.insert((unique_index, bit_shift, index_offset))
+            {
+                continue;
+            }
+            effects.push(ParsedGameplayEffect {
+                unique_index,
+                byte_offset: index_offset,
+                bit_shift,
+            });
+        }
+    }
+    effects
+}
+
 pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {
     let mut found = Vec::new();
     for bit_shift in 0..8 {
@@ -332,6 +581,20 @@ pub fn declared_character_ids_from_evidence(evidence: &[(u32, u8, usize)]) -> Ve
     ids
 }
 
+fn declared_character_for_shift(evidence: &[(u32, u8, usize)], bit_shift: u8) -> Option<u32> {
+    let mut matched = None;
+    for (id, shift, _) in evidence {
+        if *shift != bit_shift {
+            continue;
+        }
+        if matched.is_some_and(|current| current != *id) {
+            return None;
+        }
+        matched = Some(*id);
+    }
+    matched
+}
+
 pub fn parse_damage_payload(
     data: &[u8],
     timestamp: f64,
@@ -345,7 +608,9 @@ pub fn parse_damage_payload(
         let damage = record.damage;
         let byte_offset = record.byte_offset;
         let bit_shift = record.bit_shift;
-        let char_id = packet_char_id.or(fallback_char_id).unwrap_or(0);
+        let aligned_char_id = declared_character_for_shift(evidence, bit_shift);
+        let resolved_packet_char_id = packet_char_id.or(aligned_char_id);
+        let char_id = resolved_packet_char_id.or(fallback_char_id).unwrap_or(0);
         let target_hp_before = record.target_hp_before;
         let target_max_hp = record.target_max_hp;
         let character = characters.get(&char_id);
@@ -368,13 +633,13 @@ pub fn parse_damage_payload(
         let (target_id, target_name, target_context) =
             extract_target_metadata(data, byte_offset, bit_shift);
         let direction = if target_max_hp <= MAX_PLAUSIBLE_CHARACTER_HP
-            && packet_char_id.is_some()
+            && resolved_packet_char_id.is_some()
             && evidence
                 .iter()
-                .any(|(id, shift, _)| Some(*id) == packet_char_id && *shift == bit_shift)
+                .any(|(id, shift, _)| Some(*id) == resolved_packet_char_id && *shift == bit_shift)
         {
             "incoming"
-        } else if packet_char_id.is_some() {
+        } else if resolved_packet_char_id.is_some() {
             "outgoing"
         } else {
             "unknown"
@@ -388,7 +653,7 @@ pub fn parse_damage_payload(
             damage: damage as f64,
             byte_offset,
             bit_shift,
-            char_source: if packet_char_id.is_some() {
+            char_source: if resolved_packet_char_id.is_some() {
                 "packet"
             } else if fallback_char_id.is_some() {
                 "session"
@@ -408,6 +673,10 @@ pub fn parse_damage_payload(
             target_id,
             target_name,
             target_context,
+            gameplay_effect_index: None,
+            gameplay_effect_name: None,
+            ability_name: None,
+            attack_type: None,
         });
     }
     hits
@@ -523,5 +792,108 @@ mod character_tests {
             document.characters["1010"].attribute.as_deref(),
             Some("curse")
         );
+    }
+
+    #[test]
+    fn parses_gameplay_effect_unique_index_after_active_ge_anchor() {
+        let mut payload = vec![0xaa, 0xbb];
+        payload.extend_from_slice(ACTIVE_GAMEPLAY_EFFECT_ANCHOR);
+        payload.extend_from_slice(&[0; ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET]);
+        payload.extend_from_slice(&ACTIVE_GAMEPLAY_EFFECT_MARKER.to_le_bytes());
+        payload.extend_from_slice(&1012_u32.to_le_bytes());
+        payload.extend_from_slice(&[5, 0, 0, 0]);
+
+        assert_eq!(
+            parse_gameplay_effects(&payload),
+            vec![ParsedGameplayEffect {
+                unique_index: 1012,
+                byte_offset: 2
+                    + ACTIVE_GAMEPLAY_EFFECT_ANCHOR.len()
+                    + ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET
+                    + 4,
+                bit_shift: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn loads_gameplay_effect_names_from_assets() {
+        let mapping = load_gameplay_effect_mapping(Path::new(
+            "NTE_Assets/DataTable/Skill/DT_GameplayEffectMappingData.json",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            mapping.get(&1012).map(String::as_str),
+            Some("GE_Player_Sagiri_QTE1_Damage")
+        );
+    }
+
+    #[test]
+    fn loads_attack_types_from_skill_damage_assets() {
+        let skills = load_gameplay_effect_skills(Path::new(
+            "NTE_Assets/DataTable/Skill/DT_SkillDamageData.json",
+        ))
+        .unwrap();
+
+        for (effect, expected_type, expected_ability) in [
+            (
+                "GE_Player_Nanally_Melee1_Damage",
+                "普攻",
+                "GA_Nanally_Melee",
+            ),
+            (
+                "GE_Player_Nanally_Skill1_Damage",
+                "E技能",
+                "GA_Nanally_Skill",
+            ),
+            (
+                "GE_Player_Nanally_UltraSkill1_Damage",
+                "Q技能",
+                "GA_Nanally_UltraSkill",
+            ),
+            ("GE_Player_Sagiri_QTE1_Damage", "QTE", "GA_Sagiri_QTE"),
+            (
+                "GE_Player_Nanally_PerfectEvadeAttack_Damage",
+                "闪避反击",
+                "GA_Nanally_ExtremEvadeAtk",
+            ),
+        ] {
+            let skill = skills.get(effect).unwrap();
+            assert_eq!(skill.attack_type, expected_type);
+            assert_eq!(skill.ability_name.as_deref(), Some(expected_ability));
+        }
+    }
+
+    #[test]
+    fn classifies_qte_reaction_from_participant_and_team_attributes() {
+        let attributes = ["灵", "咒", "暗"].into_iter().map(str::to_owned).collect();
+        assert_eq!(qte_reaction_type("暗", "咒", &attributes), Some("浊燃"));
+        assert_eq!(qte_reaction_type("灵", "咒", &attributes), Some("覆纹"));
+
+        let accumulation = ["光", "灵", "相"].into_iter().map(str::to_owned).collect();
+        assert_eq!(qte_reaction_type("光", "灵", &accumulation), Some("盈蓄"));
+
+        let discord = ["暗", "魂", "咒"].into_iter().map(str::to_owned).collect();
+        assert_eq!(qte_reaction_type("暗", "咒", &discord), Some("失谐"));
+    }
+
+    #[test]
+    fn ignores_invalid_gameplay_effect_sentinel() {
+        let mut payload = ACTIVE_GAMEPLAY_EFFECT_ANCHOR.to_vec();
+        payload.extend_from_slice(&[0; ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET]);
+        payload.extend_from_slice(&ACTIVE_GAMEPLAY_EFFECT_MARKER.to_le_bytes());
+        payload.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        assert!(parse_gameplay_effects(&payload).is_empty());
+    }
+
+    #[test]
+    fn resolves_character_from_matching_bit_alignment() {
+        let evidence = [(1003, 2, 241), (1004, 3, 50), (1003, 0, 606)];
+
+        assert_eq!(declared_character_for_shift(&evidence, 3), Some(1004));
+        assert_eq!(declared_character_for_shift(&evidence, 2), Some(1003));
+        assert_eq!(declared_character_for_shift(&evidence, 5), None);
     }
 }

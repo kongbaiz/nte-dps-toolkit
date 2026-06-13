@@ -1,13 +1,5 @@
 {
   "characters": {
-    "1002": {
-      "avatar": "Character_edgar.png",
-      "codename": "Edgar",
-      "color": "#84a8d0",
-      "name_en": "Edgar",
-      "name_zh": "埃德嘉",
-      "verified": false
-    },
     "1003": {
       "attribute": "咒",
       "avatar": "res/player_003_256.png",
@@ -26,32 +18,14 @@
       "name_zh": "安魂曲",
       "verified": true
     },
-    "1005": {
-      "attribute": "暗",
-      "avatar": "res/player_005_256.png",
-      "codename": "Daffodill",
-      "color": "#346295",
-      "name_en": "Daffodill",
-      "name_zh": "达芙蒂尔",
-      "verified": false
-    },
     "1008": {
       "attribute": "相",
-      "avatar": "Character_skia.png",
+      "avatar": "res/player_008_256.png",
       "codename": "Skia",
       "color": "#893e4e",
       "name_en": "Skia",
       "name_zh": "翳",
       "verified": true
-    },
-    "1009": {
-      "attribute": "光",
-      "avatar": "Character_player_F.png",
-      "codename": "Female",
-      "color": "#ffffff",
-      "name_en": "Zero F",
-      "name_zh": "零(女)",
-      "verified": false
     },
     "1010": {
       "attribute": "灵",
@@ -61,15 +35,6 @@
       "name_en": "Nanally",
       "name_zh": "娜娜莉",
       "verified": true
-    },
-    "1013": {
-      "attribute": "光",
-      "avatar": "res/player_052_256.png",
-      "codename": "Jin",
-      "color": "#950742",
-      "name_en": "Hotori",
-      "name_zh": "浔",
-      "verified": false
     },
     "1015": {
       "attribute": "咒",
@@ -82,7 +47,7 @@
     },
     "1019": {
       "attribute": "灵",
-      "avatar": "Character_Mint.png",
+      "avatar": "res/player_019_256.png",
       "codename": "Mint",
       "color": "#2aacba",
       "name_en": "Mint",
@@ -95,11 +60,12 @@
       "codename": "Haniel",
       "color": "#a83c78",
       "name_en": "Haniel",
-      "name_zh": "哈尼亚",
-      "verified": false
+      "name_zh": "哈尼娅",
+      "verified": true
     },
     "1021": {
-      "avatar": "Character_edgar.png",
+      "attribute": "光",
+      "avatar": "res/player_021_256.png",
       "codename": "Edgar",
       "color": "#84a8d0",
       "name_en": "Edgar",
@@ -107,34 +73,35 @@
       "verified": true
     },
     "1022": {
-      "avatar": "Character_fadia.png",
+      "attribute": "魂",
+      "avatar": "res/player_027_256.png",
       "codename": "Fadia",
       "color": "#8903c6",
       "name_en": "Fadia",
-      "name_zh": "法帝婭",
+      "name_zh": "法帝娅",
       "verified": false
     },
     "1023": {
       "attribute": "咒",
-      "avatar": "Character_cang.png",
+      "avatar": "res/player_028_256.png",
       "codename": "Cang",
       "color": "#95a2b0",
       "name_en": "Baicang",
       "name_zh": "白藏",
-      "verified": false
+      "verified": true
     },
     "1025": {
       "attribute": "相",
-      "avatar": "Character_Hathor.png",
+      "avatar": "res/player_012_256.png",
       "codename": "Hathor",
       "color": "#737374",
       "name_en": "Hathor",
       "name_zh": "哈索尔",
-      "verified": false
+      "verified": true
     },
     "1033": {
       "attribute": "咒",
-      "avatar": "Character_Adler.png",
+      "avatar": "res/player_015_256.png",
       "codename": "Adler",
       "color": "#870803",
       "name_en": "Adler",
@@ -142,11 +109,12 @@
       "verified": true
     },
     "1039": {
-      "avatar": "Character_fadia.png",
+      "attribute": "魂",
+      "avatar": "res/player_027_256.png",
       "codename": "Fadia",
       "color": "#8903c6",
       "name_en": "Fadia",
-      "name_zh": "法帝婭",
+      "name_zh": "法帝娅",
       "verified": false
     },
     "1046": {
@@ -160,7 +128,7 @@
     },
     "1051": {
       "attribute": "光",
-      "avatar": "Character_player_F.png",
+      "avatar": "res/player_009_256.png",
       "codename": "Female",
       "color": "#ffffff",
       "name_en": "Zero F",
@@ -174,7 +142,7 @@
       "color": "#950742",
       "name_en": "Hotori",
       "name_zh": "浔",
-      "verified": false
+      "verified": true
     },
     "1054": {
       "attribute": "暗",
@@ -196,21 +164,21 @@
     },
     "1070": {
       "attribute": "魂",
-      "avatar": "Character_misuki.png",
+      "avatar": "res/player_haiyue_256.png",
       "codename": "mitsuki",
       "color": "#7ea1c8",
       "name_en": "Mitsuki",
       "name_zh": "海月",
-      "verified": false
+      "verified": true
     },
     "1073": {
       "attribute": "光",
-      "avatar": "Character_chiichan.png",
+      "avatar": "res/player_073_256.png",
       "codename": "chiichan",
       "color": "#f9b5b5",
       "name_en": "Chiz",
       "name_zh": "小吱",
-      "verified": false
+      "verified": true
     }
   },
   "description": "NTE char_id → character name mapping. verified=訓練模式手動驗證, unverified=1000+ID推測(未驗證)",
