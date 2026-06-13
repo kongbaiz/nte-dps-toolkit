@@ -22,11 +22,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::capture::{
-    CaptureDevice, CaptureHandle, import_capture_json, import_pcapng, list_devices, start_capture,
+    CaptureDevice, CaptureHandle, RawCaptureBuffer, import_capture_json, import_pcapng,
+    list_devices, start_capture,
 };
 use crate::hotkey::{HotkeyEvent, HotkeyHandle};
 use crate::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, CombatState, EngineEvent, PartyCombatState,
+    AbyssEvent, AbyssHalf, CharacterInfo, CharacterStats, CombatState, EngineEvent,
+    PartyCombatState,
 };
 use crate::network::{GameNetwork, detect_game_device};
 use crate::parser::load_characters;
@@ -248,6 +250,8 @@ pub struct DpsApp {
     abyss_compact_mode: bool,
     hit_detail_char_id: Option<u32>,
     hit_detail_filter: HitDetailFilter,
+    team_hit_detail_open: bool,
+    team_hit_detail_filter: HitDetailFilter,
     devices: Vec<CaptureDevice>,
     selected_device: usize,
     local_ip: String,
@@ -255,7 +259,7 @@ pub struct DpsApp {
     filter: String,
     include_incoming: bool,
     capture: Option<CaptureHandle>,
-    raw_capture_path: Option<PathBuf>,
+    raw_capture: Option<RawCaptureBuffer>,
     replay_stop: Option<Arc<AtomicBool>>,
     replay_thread: Option<thread::JoinHandle<()>>,
     sender: Sender<EngineEvent>,
@@ -275,6 +279,8 @@ pub struct DpsApp {
     opacity: f32,
     applied_opacity: Option<f32>,
     opacity_reapply_frames: u8,
+    theme_transition_from: Option<Color32>,
+    theme_transition_started_at: Option<f64>,
     pending_debug_import: Option<(DebugImportKind, u8)>,
     hotkey_receiver: Receiver<HotkeyEvent>,
     _hotkey: HotkeyHandle,
@@ -326,6 +332,8 @@ impl DpsApp {
             abyss_compact_mode: false,
             hit_detail_char_id: None,
             hit_detail_filter: HitDetailFilter::All,
+            team_hit_detail_open: false,
+            team_hit_detail_filter: HitDetailFilter::All,
             devices,
             selected_device,
             local_ip,
@@ -333,7 +341,7 @@ impl DpsApp {
             filter: "udp".to_owned(),
             include_incoming: true,
             capture: None,
-            raw_capture_path: None,
+            raw_capture: None,
             replay_stop: None,
             replay_thread: None,
             sender,
@@ -353,6 +361,8 @@ impl DpsApp {
             opacity: 0.92,
             applied_opacity: None,
             opacity_reapply_frames: 0,
+            theme_transition_from: None,
+            theme_transition_started_at: None,
             pending_debug_import: None,
             hotkey_receiver,
             _hotkey: hotkey,
@@ -361,7 +371,6 @@ impl DpsApp {
 
     fn stop_engine(&mut self) {
         if let Some(mut capture) = self.capture.take() {
-            self.raw_capture_path = Some(capture.raw_capture_path().to_path_buf());
             capture.stop();
         }
         if let Some(stop) = self.replay_stop.take() {
@@ -486,6 +495,8 @@ impl DpsApp {
                         })
                         .clicked()
                     {
+                        self.theme_transition_from = Some(shadcn_background(self.dark_mode));
+                        self.theme_transition_started_at = Some(ui.input(|input| input.time));
                         self.dark_mode = !self.dark_mode;
                         ui.close();
                     }
@@ -533,17 +544,16 @@ impl DpsApp {
             return;
         };
         let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
-        let raw_capture_path = default_raw_capture_path();
-        self.raw_capture_path = Some(raw_capture_path.clone());
-        self.capture = Some(start_capture(
+        let capture = start_capture(
             device,
             local_ip,
             self.filter.clone(),
             self.include_incoming,
             self.characters.clone(),
             self.sender.clone(),
-            raw_capture_path,
-        ));
+        );
+        self.raw_capture = Some(capture.raw_capture());
+        self.capture = Some(capture);
         self.status = "正在启动实时抓包...".to_owned();
     }
 
@@ -564,10 +574,12 @@ impl DpsApp {
 
     fn start_pcapng_import(&mut self, path: PathBuf) {
         self.stop_engine();
+        self.raw_capture = None;
         self.state.clear();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
         self.hit_detail_char_id = None;
+        self.team_hit_detail_open = false;
         let stop = Arc::new(AtomicBool::new(false));
         self.replay_thread = Some(import_pcapng(
             path,
@@ -582,10 +594,12 @@ impl DpsApp {
 
     fn start_capture_json_import(&mut self, path: PathBuf) {
         self.stop_engine();
+        self.raw_capture = None;
         self.state.clear();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
         self.hit_detail_char_id = None;
+        self.team_hit_detail_open = false;
         let stop = Arc::new(AtomicBool::new(false));
         self.replay_thread = Some(import_capture_json(path, self.sender.clone(), stop.clone()));
         self.replay_stop = Some(stop);
@@ -669,25 +683,12 @@ impl DpsApp {
                     self.last_error = Some(error);
                 }
                 EngineEvent::CaptureStopped => {
-                    let stopped_live_capture = if let Some(capture) = self.capture.take() {
-                        self.raw_capture_path = Some(capture.raw_capture_path().to_path_buf());
-                        true
-                    } else {
-                        false
-                    };
+                    self.capture.take();
                     self.replay_stop = None;
                     if let Some(thread) = self.replay_thread.take() {
                         let _ = thread.join();
                     }
-                    self.status = if stopped_live_capture {
-                        self.raw_capture_path
-                            .as_ref()
-                            .filter(|path| path.is_file())
-                            .map(|path| format!("已停止，完整抓包已保存至 {}", path.display()))
-                            .unwrap_or_else(|| "已停止".to_owned())
-                    } else {
-                        "已停止".to_owned()
-                    };
+                    self.status = "已停止".to_owned();
                 }
             }
         }
@@ -728,34 +729,28 @@ impl DpsApp {
             self.last_error = Some("请先停止抓包，再另存完整 PCAPNG".to_owned());
             return;
         }
-        let Some(source) = self
-            .raw_capture_path
-            .as_ref()
-            .filter(|path| path.is_file())
-            .cloned()
-        else {
+        let Some(raw_capture) = self.raw_capture.as_ref() else {
             self.last_error = Some("当前没有可另存的完整 PCAPNG".to_owned());
             return;
         };
-        let file_name = source
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("nte_raw_capture.pcapng");
         let Some(destination) = rfd::FileDialog::new()
             .add_filter("完整原始抓包", &["pcapng"])
-            .set_file_name(file_name)
+            .set_file_name(format!(
+                "nte_raw_{}.pcapng",
+                Local::now().format("%Y%m%d_%H%M%S")
+            ))
             .save_file()
         else {
             return;
         };
-        if destination == source {
-            self.status = format!("完整抓包位于 {}", source.display());
-            self.last_error = None;
-            return;
-        }
-        match std::fs::copy(&source, &destination) {
-            Ok(_) => {
-                self.status = format!("已另存完整抓包至 {}", destination.display());
+        match raw_capture.save(&destination) {
+            Ok((packet_count, captured_bytes)) => {
+                self.status = format!(
+                    "已另存完整抓包至 {}（{} 包，{} 字节）",
+                    destination.display(),
+                    packet_count,
+                    captured_bytes
+                );
                 self.last_error = None;
             }
             Err(error) => {
@@ -1129,7 +1124,12 @@ impl DpsApp {
                 .abyss
                 .floor
                 .map_or_else(|| "深渊".to_owned(), |floor| format!("深渊 {floor} 层"));
-            ui.label(RichText::new(floor).strong());
+            ui.label(
+                RichText::new(floor)
+                    .size(13.0)
+                    .strong()
+                    .color(shadcn_foreground(self.dark_mode)),
+            );
             ui.separator();
             ui.selectable_value(
                 &mut self.selected_abyss_half,
@@ -1173,10 +1173,11 @@ impl DpsApp {
                     self.state.total_damage_taken,
                 )
             };
+        ui.spacing_mut().item_spacing.x = 6.0;
         ui.columns(4, |columns| {
             compact_metric(
                 &mut columns[0],
-                "DPS",
+                "队伍 DPS",
                 format_number(dps),
                 theme_accent(self.dark_mode),
                 true,
@@ -1221,24 +1222,15 @@ impl DpsApp {
                     self.start_live();
                 }
             } else if ui.button("停止").clicked() {
-                let was_live_capture = self.capture.is_some();
                 self.stop_engine();
                 self.drain_pending_events();
-                self.status = if was_live_capture {
-                    self.raw_capture_path
-                        .as_ref()
-                        .filter(|path| path.is_file())
-                        .map(|path| format!("已停止，完整抓包已保存至 {}", path.display()))
-                        .unwrap_or_else(|| "已停止".to_owned())
-                } else {
-                    "已停止".to_owned()
-                };
             }
             if ui.button("重置").clicked() {
                 self.state.clear();
                 self.selected_abyss_half = AbyssHalf::First;
                 self.abyss_compact_mode = false;
                 self.hit_detail_char_id = None;
+                self.team_hit_detail_open = false;
             }
             if ui
                 .button(if self.paused { "继续" } else { "暂停" })
@@ -1249,27 +1241,116 @@ impl DpsApp {
             if self.state.abyss.is_active() && ui.button("折叠").clicked() {
                 self.abyss_compact_mode = true;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let status_color = if self.capture.is_some() {
-                    Color32::from_rgb(76, 185, 128)
-                } else {
-                    ui.visuals().weak_text_color()
-                };
-                let short_status = if self.capture.is_some() {
-                    "记录中"
-                } else if self.status.contains("Debug") {
-                    "未就绪"
-                } else {
-                    self.status.as_str()
-                };
-                ui.small(RichText::new(short_status).color(status_color))
-                    .on_hover_text(&self.status);
-            });
         });
     }
 
+    fn animated_controls(&mut self, ui: &mut egui::Ui) {
+        let expanded = !self.abyss_compact_mode || !self.state.abyss.is_active();
+        let progress = ui.ctx().animate_bool_with_time(
+            egui::Id::new("main_controls_expanded"),
+            expanded,
+            0.22,
+        );
+        if progress <= 0.001 {
+            return;
+        }
+
+        let full_height = 35.0;
+        let visible_height = full_height * ease_out_cubic(progress);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), visible_height),
+            egui::Sense::hover(),
+        );
+        let full_rect = egui::Rect::from_min_size(
+            rect.min + egui::vec2(2.0, 1.0),
+            egui::vec2((rect.width() - 4.0).max(0.0), full_height - 2.0),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("animated_controls")
+                .max_rect(full_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        child.set_clip_rect(rect);
+        child.set_opacity(progress);
+        self.controls(&mut child);
+        child.separator();
+    }
+
+    fn animated_party_content(&mut self, ui: &mut egui::Ui) {
+        let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
+        let phase = ui.ctx().animate_value_with_time(
+            egui::Id::new("abyss_half_transition"),
+            if second_half { 1.0 } else { 0.0 },
+            0.22,
+        );
+        let visibility = if second_half { phase } else { 1.0 - phase };
+        let direction = if second_half { 1.0 } else { -1.0 };
+        let offset_x = direction * (1.0 - visibility) * 14.0;
+        let available = ui.available_rect_before_wrap();
+        let content_rect = available.translate(egui::vec2(offset_x, 0.0));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("animated_party_content")
+                .max_rect(content_rect)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        child.set_clip_rect(available);
+        child.set_opacity(0.25 + visibility * 0.75);
+
+        self.summary_bar(&mut child);
+        child.add_space(2.0);
+        child.horizontal(|ui| {
+            ui.label(
+                RichText::new("队伍")
+                    .size(12.0)
+                    .strong()
+                    .color(shadcn_foreground(self.dark_mode)),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        !self
+                            .selected_party_state()
+                            .map_or(self.state.hits.is_empty(), |party| party.hits.is_empty()),
+                        egui::Button::new("队伍战斗明细"),
+                    )
+                    .clicked()
+                {
+                    self.team_hit_detail_open = true;
+                    self.team_hit_detail_filter = HitDetailFilter::All;
+                }
+            });
+        });
+        self.party_panel(&mut child);
+        ui.allocate_rect(available, egui::Sense::hover());
+    }
+
+    fn paint_theme_transition(&mut self, ctx: &egui::Context) {
+        let (Some(color), Some(started_at)) =
+            (self.theme_transition_from, self.theme_transition_started_at)
+        else {
+            return;
+        };
+        let elapsed = (ctx.input(|input| input.time) - started_at).max(0.0) as f32;
+        let progress = (elapsed / 0.24).clamp(0.0, 1.0);
+        if progress >= 1.0 {
+            self.theme_transition_from = None;
+            self.theme_transition_started_at = None;
+            return;
+        }
+
+        let alpha = ((1.0 - ease_out_cubic(progress)) * 96.0).round() as u8;
+        let overlay = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
+        ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("theme_transition_overlay"),
+        ))
+        .rect_filled(ctx.screen_rect(), 0.0, overlay);
+        ctx.request_repaint();
+    }
+
     fn party_panel(&mut self, ui: &mut egui::Ui) {
-        let compact = self.abyss_compact_mode && self.state.abyss.is_active();
         let (mut rows, total_damage): (Vec<_>, f64) =
             if let Some(party) = self.selected_party_state() {
                 (party.stats.values().cloned().collect(), party.total_damage)
@@ -1280,145 +1361,203 @@ impl DpsApp {
                 )
             };
         rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
-        let max_damage = rows.first().map_or(1.0, |row| row.damage.max(1.0));
-        egui::ScrollArea::vertical()
-            .id_salt("party_scroll")
-            .max_height(ui.available_height())
-            .show(ui, |ui| {
-                for (index, row) in rows.iter().enumerate() {
-                    let color = character_color(row.char_id, &self.characters, index);
-                    let avatar_texture = self
-                        .characters
-                        .get(&row.char_id)
-                        .and_then(|character| character.avatar.as_deref())
-                        .and_then(|avatar| self.avatar_textures.get(avatar));
-                    let fraction = (row.damage / max_damage) as f32;
-                    let share = if total_damage > 0.0 {
-                        row.damage / total_damage * 100.0
-                    } else {
-                        0.0
-                    };
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), if compact { 40.0 } else { 44.0 }),
-                        egui::Sense::click(),
-                    );
-                    ui.painter().rect_filled(
-                        rect,
-                        6.0,
-                        if self.dark_mode {
-                            Color32::from_rgb(35, 38, 44)
-                        } else {
-                            Color32::from_rgb(244, 245, 247)
-                        },
-                    );
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_size(
-                            rect.min,
-                            egui::vec2(rect.width() * fraction, rect.height()),
-                        ),
-                        6.0,
-                        color.gamma_multiply(if self.dark_mode { 0.38 } else { 0.18 }),
-                    );
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_max(
-                            rect.left_top(),
-                            egui::pos2(rect.left() + 4.0, rect.bottom()),
-                        ),
-                        6.0,
-                        color,
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.left() + 10.0, rect.center().y),
-                        egui::Align2::CENTER_CENTER,
-                        "↗",
-                        egui::FontId::proportional(13.0),
-                        ui.visuals().weak_text_color(),
-                    );
-                    let avatar_size = if compact { 32.0 } else { 36.0 };
-                    let avatar_rect = pixel_aligned_rect(
-                        egui::pos2(rect.left() + 20.0, rect.center().y - avatar_size * 0.5),
-                        avatar_size,
-                        ui.ctx().pixels_per_point(),
-                    );
-                    let avatar_border = if self.dark_mode {
-                        Color32::from_rgb(78, 82, 92)
-                    } else {
-                        Color32::from_rgb(210, 213, 220)
-                    };
-                    ui.painter().rect_filled(avatar_rect, 7.0, avatar_border);
-                    if let Some(texture) = avatar_texture {
-                        ui.put(
-                            avatar_rect,
-                            egui::Image::new((texture.id(), avatar_rect.size())).corner_radius(7),
-                        );
-                        ui.painter().rect_stroke(
-                            avatar_rect,
-                            7.0,
-                            Stroke::new(1.0, avatar_border),
-                            egui::StrokeKind::Inside,
-                        );
-                    } else {
-                        ui.painter()
-                            .rect_filled(avatar_rect, 7.0, color.gamma_multiply(0.82));
-                        ui.painter().text(
-                            avatar_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            row.name.chars().next().unwrap_or('?').to_string(),
-                            egui::FontId::proportional(14.0),
-                            Color32::WHITE,
-                        );
-                    }
-                    let text_left = avatar_rect.right() + 8.0;
-                    ui.painter().text(
-                        egui::pos2(text_left, rect.center().y - 8.0),
-                        egui::Align2::LEFT_CENTER,
-                        &row.name,
-                        egui::FontId::proportional(14.0),
-                        ui.visuals().text_color(),
-                    );
-                    ui.painter().text(
-                        egui::pos2(text_left, rect.center().y + 9.0),
-                        egui::Align2::LEFT_CENTER,
-                        format!("{}次 · {:.1}s", row.hits, row.duration()),
-                        egui::FontId::monospace(10.5),
-                        ui.visuals().weak_text_color(),
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.right() - 10.0, rect.center().y - 8.0),
-                        egui::Align2::RIGHT_CENTER,
-                        format!("{} DPS", format_number(row.dps())),
-                        egui::FontId::monospace(12.0),
-                        theme_accent(self.dark_mode),
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.right() - 10.0, rect.center().y + 9.0),
-                        egui::Align2::RIGHT_CENTER,
-                        format!(
-                            "{} · {share:.1}% · 受击 {}",
-                            format_number(row.damage),
-                            format_number(row.damage_taken)
-                        ),
-                        egui::FontId::monospace(10.5),
-                        ui.visuals().weak_text_color(),
-                    );
-                    if response.on_hover_text("在独立窗口查看完整命中").clicked() {
-                        self.hit_detail_char_id = Some(row.char_id);
-                        self.hit_detail_filter = HitDetailFilter::All;
-                    }
-                    ui.add_space(3.0);
-                }
-                if rows.is_empty() {
-                    ui.allocate_ui_with_layout(
-                        egui::vec2(ui.available_width(), 40.0),
-                        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                        |ui| {
-                            ui.label(
-                                RichText::new("等待伤害数据").color(ui.visuals().weak_text_color()),
-                            );
-                        },
-                    );
-                }
-            });
+        let row_height = party_row_height(ui.available_height(), rows.len());
+        if rows.is_empty() {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 40.0),
+                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                |ui| {
+                    ui.label(RichText::new("等待伤害数据").color(ui.visuals().weak_text_color()));
+                },
+            );
+            return;
+        }
+
+        let row_spacing = 5.0;
+        let total_height =
+            row_height * rows.len() as f32 + row_spacing * rows.len().saturating_sub(1) as f32;
+        let (container, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), total_height),
+            egui::Sense::hover(),
+        );
+        let stride = row_height + row_spacing;
+        for (index, row) in rows.iter().enumerate().rev() {
+            let target_y = index as f32 * stride;
+            let animated_y = ui.ctx().animate_value_with_time(
+                egui::Id::new(("party_rank_y", row.char_id)),
+                target_y,
+                0.24,
+            );
+            let row_rect = egui::Rect::from_min_size(
+                egui::pos2(container.left(), container.top() + animated_y),
+                egui::vec2(container.width(), row_height),
+            );
+            let mut row_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(("party_row", row.char_id))
+                    .max_rect(row_rect)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            self.draw_party_row(&mut row_ui, row, index, total_damage, row_height);
+        }
+    }
+
+    fn draw_party_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        row: &CharacterStats,
+        index: usize,
+        total_damage: f64,
+        row_height: f32,
+    ) {
+        let color = readable_accent(
+            character_color(row.char_id, &self.characters, index),
+            self.dark_mode,
+        );
+        let avatar_texture = self
+            .characters
+            .get(&row.char_id)
+            .and_then(|character| character.avatar.as_deref())
+            .and_then(|avatar| self.avatar_textures.get(avatar));
+        let share = if total_damage > 0.0 {
+            row.damage / total_damage * 100.0
+        } else {
+            0.0
+        };
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), row_height),
+            egui::Sense::click(),
+        );
+        let hover =
+            ui.ctx()
+                .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+        let card_fill = mix_color(
+            shadcn_card(self.dark_mode),
+            shadcn_card_hover(self.dark_mode),
+            hover,
+        );
+        ui.painter().rect_filled(rect, 6.0, card_fill);
+        ui.painter().rect_stroke(
+            rect,
+            6.0,
+            Stroke::new(
+                1.0,
+                mix_color(
+                    shadcn_border(self.dark_mode),
+                    color.gamma_multiply(0.72),
+                    hover,
+                ),
+            ),
+            egui::StrokeKind::Inside,
+        );
+        let contribution_track = egui::Rect::from_min_max(
+            egui::pos2(rect.left() + 7.0, rect.bottom() - 4.0),
+            egui::pos2(rect.right() - 7.0, rect.bottom() - 2.0),
+        );
+        let animated_share = ui.ctx().animate_value_with_time(
+            response.id.with("share"),
+            (share as f32 / 100.0).clamp(0.0, 1.0),
+            0.25,
+        );
+        ui.painter()
+            .rect_filled(contribution_track, 1.0, shadcn_muted(self.dark_mode));
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(
+                contribution_track.min,
+                egui::vec2(
+                    contribution_track.width() * animated_share,
+                    contribution_track.height(),
+                ),
+            ),
+            1.0,
+            color,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                rect.left_top(),
+                egui::pos2(rect.left() + 3.0 + hover, rect.bottom()),
+            ),
+            6.0,
+            color,
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + 10.0, rect.center().y),
+            egui::Align2::CENTER_CENTER,
+            format!("#{}", index + 1),
+            egui::FontId::monospace(9.5),
+            color,
+        );
+        let avatar_size = (row_height - 8.0).clamp(28.0, 32.0);
+        let avatar_rect = pixel_aligned_rect(
+            egui::pos2(rect.left() + 24.0, rect.center().y - avatar_size * 0.5),
+            avatar_size,
+            ui.ctx().pixels_per_point(),
+        );
+        let avatar_border = if self.dark_mode {
+            Color32::from_rgb(78, 82, 92)
+        } else {
+            Color32::from_rgb(210, 213, 220)
+        };
+        ui.painter().rect_filled(avatar_rect, 7.0, avatar_border);
+        if let Some(texture) = avatar_texture {
+            ui.put(
+                avatar_rect,
+                egui::Image::new((texture.id(), avatar_rect.size())).corner_radius(7),
+            );
+            ui.painter().rect_stroke(
+                avatar_rect,
+                7.0,
+                Stroke::new(1.0, avatar_border),
+                egui::StrokeKind::Inside,
+            );
+        } else {
+            ui.painter()
+                .rect_filled(avatar_rect, 7.0, color.gamma_multiply(0.82));
+            ui.painter().text(
+                avatar_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                row.name.chars().next().unwrap_or('?').to_string(),
+                egui::FontId::proportional(14.0),
+                contrast_text(color),
+            );
+        }
+        let text_left = avatar_rect.right() + 8.0;
+        ui.painter().text(
+            egui::pos2(text_left, rect.center().y - 8.0),
+            egui::Align2::LEFT_CENTER,
+            &row.name,
+            egui::FontId::proportional(14.0),
+            ui.visuals().text_color(),
+        );
+        ui.painter().text(
+            egui::pos2(text_left, rect.center().y + 9.0),
+            egui::Align2::LEFT_CENTER,
+            format!("{}次 · {:.1}s", row.hits, row.duration()),
+            egui::FontId::monospace(10.5),
+            ui.visuals().weak_text_color(),
+        );
+        ui.painter().text(
+            egui::pos2(rect.right() - 10.0, rect.center().y - 8.0),
+            egui::Align2::RIGHT_CENTER,
+            format!("{} DPS", format_number(row.dps())),
+            egui::FontId::monospace(12.0),
+            theme_accent(self.dark_mode),
+        );
+        ui.painter().text(
+            egui::pos2(rect.right() - 10.0, rect.center().y + 9.0),
+            egui::Align2::RIGHT_CENTER,
+            format!(
+                "伤害 {} · 占比 {share:.1}% · 受击 {}",
+                format_number(row.damage),
+                format_number(row.damage_taken)
+            ),
+            egui::FontId::monospace(10.5),
+            ui.visuals().weak_text_color(),
+        );
+        if response.on_hover_text("在独立窗口查看战斗明细").clicked() {
+            self.hit_detail_char_id = Some(row.char_id);
+            self.hit_detail_filter = HitDetailFilter::All;
+        }
     }
 
     fn character_hits(&self, ui: &mut egui::Ui, char_id: u32, filter: HitDetailFilter) {
@@ -1466,6 +1605,205 @@ impl DpsApp {
             });
     }
 
+    fn team_hits(&self, ui: &mut egui::Ui, filter: HitDetailFilter) {
+        let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
+        let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
+        let layout = TeamHitLayout::new(content_width);
+        draw_team_hit_header(ui, layout);
+        let hits = if let Some(party) = self.selected_party_state() {
+            &party.hits
+        } else {
+            &self.state.hits
+        };
+        let mut team_hits = hits
+            .iter()
+            .filter(|hit| filter.matches(hit))
+            .collect::<Vec<_>>();
+        team_hits.sort_by(|left, right| compare_team_hit_chronological(left, right));
+        if team_hits.is_empty() {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 72.0),
+                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                |ui| {
+                    ui.label(
+                        RichText::new("当前筛选条件下暂无命中记录")
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                },
+            );
+            return;
+        }
+        let hit_count = team_hits.len();
+        let max_damage = team_hits
+            .iter()
+            .map(|hit| hit.damage)
+            .fold(1.0_f64, f64::max);
+        egui::ScrollArea::vertical()
+            .id_salt((
+                "team_hits",
+                matches!(self.selected_abyss_half, AbyssHalf::Second),
+            ))
+            .max_height(ui.available_height())
+            .stick_to_bottom(true)
+            .show_rows(ui, 30.0, hit_count, |ui, visible_rows| {
+                let visible_count = visible_rows.end.saturating_sub(visible_rows.start);
+                for hit in team_hits[visible_rows].iter().take(visible_count) {
+                    let color = readable_accent(
+                        character_color(hit.char_id, &self.characters, 0),
+                        self.dark_mode,
+                    );
+                    let avatar_texture = self
+                        .characters
+                        .get(&hit.char_id)
+                        .and_then(|character| character.avatar.as_deref())
+                        .and_then(|avatar| self.avatar_textures.get(avatar));
+                    draw_team_hit_row(ui, layout, hit, max_damage, color, avatar_texture);
+                }
+            });
+    }
+
+    fn team_hit_detail_panel(&mut self, ctx: &egui::Context) {
+        let (total_damage, total_damage_taken, duration, dps, outgoing_count, incoming_count) =
+            if let Some(party) = self.selected_party_state() {
+                (
+                    party.total_damage,
+                    party.total_damage_taken,
+                    party.duration(),
+                    party.dps(),
+                    party
+                        .hits
+                        .iter()
+                        .filter(|hit| hit.direction != "incoming")
+                        .count(),
+                    party
+                        .hits
+                        .iter()
+                        .filter(|hit| hit.direction == "incoming")
+                        .count(),
+                )
+            } else {
+                (
+                    self.state.total_damage,
+                    self.state.total_damage_taken,
+                    self.state.duration(),
+                    self.state.dps(),
+                    self.state
+                        .hits
+                        .iter()
+                        .filter(|hit| hit.direction != "incoming")
+                        .count(),
+                    self.state
+                        .hits
+                        .iter()
+                        .filter(|hit| hit.direction == "incoming")
+                        .count(),
+                )
+            };
+        let title = if self.state.abyss.is_active() {
+            format!("队伍战斗明细 - {}", self.selected_abyss_half.label())
+        } else {
+            "队伍战斗明细".to_owned()
+        };
+        let close_requested = ctx.show_viewport_immediate(
+            team_hit_detail_viewport_id(),
+            egui::ViewportBuilder::default()
+                .with_title(&title)
+                .with_inner_size([980.0, 660.0])
+                .with_min_inner_size([760.0, 460.0])
+                .with_window_level(egui::WindowLevel::AlwaysOnTop)
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(true),
+            |ctx, _class| {
+                configure_style(ctx, self.dark_mode);
+                let mut close_clicked = false;
+                egui::TopBottomPanel::top("team_hit_detail_title_bar")
+                    .exact_height(34.0)
+                    .frame(
+                        egui::Frame::new()
+                            .fill(ctx.style().visuals.panel_fill)
+                            .inner_margin(egui::Margin::symmetric(10, 3)),
+                    )
+                    .show(ctx, |ui| {
+                        close_clicked = secondary_title_bar(ui, &title);
+                    });
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    egui::Frame::new()
+                        .fill(shadcn_card(self.dark_mode))
+                        .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
+                        .corner_radius(10)
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.columns(5, |columns| {
+                                hit_metric_card(
+                                    &mut columns[0],
+                                    "总输出",
+                                    format_number(total_damage),
+                                    theme_accent(self.dark_mode),
+                                );
+                                hit_metric_card(
+                                    &mut columns[1],
+                                    "DPS",
+                                    format_number(dps),
+                                    theme_accent(self.dark_mode),
+                                );
+                                let count_color = columns[2].visuals().text_color();
+                                hit_metric_card(
+                                    &mut columns[2],
+                                    "输出次数",
+                                    outgoing_count.to_string(),
+                                    count_color,
+                                );
+                                hit_metric_card(
+                                    &mut columns[3],
+                                    "总受击",
+                                    format_number(total_damage_taken),
+                                    Color32::from_rgb(211, 79, 79),
+                                );
+                                let duration_color = columns[4].visuals().text_color();
+                                hit_metric_card(
+                                    &mut columns[4],
+                                    "战斗时间",
+                                    format!("{duration:.1}s"),
+                                    duration_color,
+                                );
+                            });
+                        });
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new("命中类型")
+                                .strong()
+                                .color(ui.visuals().weak_text_color()),
+                        );
+                        ui.selectable_value(
+                            &mut self.team_hit_detail_filter,
+                            HitDetailFilter::All,
+                            format!("全部 {}", outgoing_count + incoming_count),
+                        );
+                        ui.selectable_value(
+                            &mut self.team_hit_detail_filter,
+                            HitDetailFilter::Outgoing,
+                            format!("输出 {outgoing_count}"),
+                        );
+                        ui.selectable_value(
+                            &mut self.team_hit_detail_filter,
+                            HitDetailFilter::Incoming,
+                            format!("受击 {incoming_count}"),
+                        );
+                    });
+                    ui.add_space(4.0);
+                    ui.separator();
+                    self.team_hits(ui, self.team_hit_detail_filter);
+                });
+                close_clicked || ctx.input(|input| input.viewport().close_requested())
+            },
+        );
+        if close_requested {
+            self.team_hit_detail_open = false;
+        }
+    }
+
     fn hit_detail_panel(&mut self, ctx: &egui::Context, char_id: u32) {
         let stats = if let Some(party) = self.selected_party_state() {
             party.stats.get(&char_id).cloned()
@@ -1495,8 +1833,11 @@ impl DpsApp {
             .and_then(|character| character.avatar.as_deref())
             .and_then(|avatar| self.avatar_textures.get(avatar))
             .cloned();
-        let character_color = character_color(char_id, &self.characters, 0);
-        let title = format!("{} - 命中详情", stats.name);
+        let character_color = readable_accent(
+            character_color(char_id, &self.characters, 0),
+            self.dark_mode,
+        );
+        let title = format!("{} - 战斗明细", stats.name);
         let close_requested = ctx.show_viewport_immediate(
             hit_detail_viewport_id(),
             egui::ViewportBuilder::default()
@@ -1522,81 +1863,101 @@ impl DpsApp {
                     });
                 egui::CentralPanel::default().show(ctx, |ui| {
                     egui::Frame::new()
-                        .fill(if self.dark_mode {
-                            Color32::from_rgb(35, 38, 44)
-                        } else {
-                            Color32::from_rgb(246, 247, 249)
-                        })
+                        .fill(shadcn_card(self.dark_mode))
+                        .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
                         .corner_radius(10)
                         .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                let avatar_rect = pixel_aligned_rect(
-                                    ui.cursor().min,
-                                    62.0,
-                                    ui.ctx().pixels_per_point(),
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(160.0, 62.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        let avatar_rect = pixel_aligned_rect(
+                                            ui.cursor().min,
+                                            62.0,
+                                            ui.ctx().pixels_per_point(),
+                                        );
+                                        ui.allocate_rect(avatar_rect, egui::Sense::hover());
+                                        ui.painter().rect_filled(
+                                            avatar_rect,
+                                            10.0,
+                                            character_color.gamma_multiply(0.8),
+                                        );
+                                        if let Some(texture) = &avatar_texture {
+                                            ui.put(
+                                                avatar_rect,
+                                                egui::Image::new((
+                                                    texture.id(),
+                                                    avatar_rect.size(),
+                                                ))
+                                                .corner_radius(10),
+                                            );
+                                        } else {
+                                            ui.painter().text(
+                                                avatar_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                stats
+                                                    .name
+                                                    .chars()
+                                                    .next()
+                                                    .unwrap_or('?')
+                                                    .to_string(),
+                                                egui::FontId::proportional(25.0),
+                                                contrast_text(character_color),
+                                            );
+                                        }
+                                        ui.add_space(4.0);
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                RichText::new(&stats.name)
+                                                    .size(20.0)
+                                                    .strong()
+                                                    .color(shadcn_foreground(self.dark_mode)),
+                                            );
+                                            ui.label(
+                                                RichText::new(format!("角色 ID {char_id}"))
+                                                    .size(11.0)
+                                                    .color(ui.visuals().weak_text_color()),
+                                            );
+                                        });
+                                    },
                                 );
-                                ui.allocate_rect(avatar_rect, egui::Sense::hover());
-                                ui.painter().rect_filled(
-                                    avatar_rect,
-                                    10.0,
-                                    character_color.gamma_multiply(0.8),
-                                );
-                                if let Some(texture) = &avatar_texture {
-                                    ui.put(
-                                        avatar_rect,
-                                        egui::Image::new((texture.id(), avatar_rect.size()))
-                                            .corner_radius(10),
+                                ui.add_space(12.0);
+                                ui.columns(5, |columns| {
+                                    hit_metric_card(
+                                        &mut columns[0],
+                                        "总输出",
+                                        format_number(stats.damage),
+                                        theme_accent(self.dark_mode),
                                     );
-                                } else {
-                                    ui.painter().text(
-                                        avatar_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        stats.name.chars().next().unwrap_or('?').to_string(),
-                                        egui::FontId::proportional(25.0),
-                                        Color32::WHITE,
+                                    hit_metric_card(
+                                        &mut columns[1],
+                                        "DPS",
+                                        format_number(stats.dps()),
+                                        theme_accent(self.dark_mode),
                                     );
-                                }
-                                ui.add_space(4.0);
-                                ui.vertical(|ui| {
-                                    ui.label(RichText::new(&stats.name).size(20.0).strong());
-                                    ui.label(
-                                        RichText::new(format!("角色 ID {char_id}"))
-                                            .size(11.0)
-                                            .color(ui.visuals().weak_text_color()),
+                                    let output_count_color = columns[2].visuals().text_color();
+                                    hit_metric_card(
+                                        &mut columns[2],
+                                        "输出次数",
+                                        outgoing_count.to_string(),
+                                        output_count_color,
+                                    );
+                                    hit_metric_card(
+                                        &mut columns[3],
+                                        "总受击",
+                                        format_number(stats.damage_taken),
+                                        Color32::from_rgb(211, 79, 79),
+                                    );
+                                    let duration_color = columns[4].visuals().text_color();
+                                    hit_metric_card(
+                                        &mut columns[4],
+                                        "战斗时间",
+                                        format!("{:.1}s", stats.duration()),
+                                        duration_color,
                                     );
                                 });
-                                ui.add_space(12.0);
-                                hit_metric_card(
-                                    ui,
-                                    "总输出",
-                                    format_number(stats.damage),
-                                    theme_accent(self.dark_mode),
-                                );
-                                hit_metric_card(
-                                    ui,
-                                    "DPS",
-                                    format_number(stats.dps()),
-                                    theme_accent(self.dark_mode),
-                                );
-                                hit_metric_card(
-                                    ui,
-                                    "输出次数",
-                                    outgoing_count.to_string(),
-                                    ui.visuals().text_color(),
-                                );
-                                hit_metric_card(
-                                    ui,
-                                    "总受击",
-                                    format_number(stats.damage_taken),
-                                    Color32::from_rgb(211, 79, 79),
-                                );
-                                hit_metric_card(
-                                    ui,
-                                    "战斗时间",
-                                    format!("{:.1}s", stats.duration()),
-                                    ui.visuals().text_color(),
-                                );
                             });
                         });
                     ui.add_space(8.0);
@@ -1732,11 +2093,10 @@ impl DpsApp {
                         ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(220.0));
                         ui.end_row();
                         ui.label("原始抓包");
-                        let raw_capture_label = self
-                            .raw_capture_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| "开始实时抓包后自动生成".to_owned());
+                        let raw_capture_label = self.raw_capture.as_ref().map_or_else(
+                            || "无内存抓包".to_owned(),
+                            |capture| format!("内存缓存 {} 包", capture.packet_count()),
+                        );
                         ui.monospace(raw_capture_label);
                         ui.end_row();
                     });
@@ -1758,9 +2118,9 @@ impl DpsApp {
                     }
                     let can_export_raw = self.capture.is_none()
                         && self
-                            .raw_capture_path
+                            .raw_capture
                             .as_ref()
-                            .is_some_and(|path| path.is_file());
+                            .is_some_and(|capture| capture.packet_count() > 0);
                     if ui
                         .add_enabled(can_export_raw, egui::Button::new("另存完整 PCAPNG"))
                         .clicked()
@@ -2119,25 +2479,26 @@ impl eframe::App for DpsApp {
             .frame(
                 egui::Frame::new()
                     .fill(ctx.style().visuals.panel_fill)
+                    .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
                     .inner_margin(egui::Margin::symmetric(8, 2)),
             )
             .show(ctx, |ui| {
                 self.title_bar(ui);
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if !self.abyss_compact_mode || !self.state.abyss.is_active() {
-                self.controls(ui);
-                ui.separator();
-            }
-            if self.state.abyss.is_active() {
-                self.abyss_selector(ui);
-            }
-            self.summary_bar(ui);
-            ui.add_space(2.0);
-            ui.label(RichText::new("队伍").size(12.0).strong());
-            self.party_panel(ui);
-        });
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(shadcn_background(self.dark_mode))
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show(ctx, |ui| {
+                self.animated_controls(ui);
+                if self.state.abyss.is_active() {
+                    self.abyss_selector(ui);
+                }
+                self.animated_party_content(ui);
+            });
 
         #[cfg(not(feature = "no_debug"))]
         if self.debug_open {
@@ -2146,6 +2507,10 @@ impl eframe::App for DpsApp {
         if let Some(char_id) = self.hit_detail_char_id {
             self.hit_detail_panel(ctx, char_id);
         }
+        if self.team_hit_detail_open {
+            self.team_hit_detail_panel(ctx);
+        }
+        self.paint_theme_transition(ctx);
         apply_rounding_to_process_windows();
         if let Some(error) = self.last_error.clone() {
             egui::Window::new("错误")
@@ -2232,6 +2597,10 @@ fn hit_detail_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("nte_hit_detail_viewport")
 }
 
+fn team_hit_detail_viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("nte_team_hit_detail_viewport")
+}
+
 fn load_character_avatars(
     ctx: &egui::Context,
     root: &std::path::Path,
@@ -2285,26 +2654,87 @@ fn configure_style(ctx: &egui::Context, dark_mode: bool) {
         egui::Visuals::light()
     };
     if dark_mode {
-        visuals.panel_fill = Color32::from_rgb(23, 25, 30);
-        visuals.window_fill = Color32::from_rgb(28, 30, 36);
-        visuals.extreme_bg_color = Color32::from_rgb(18, 20, 24);
-        visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_gray(48));
+        visuals.panel_fill = Color32::from_rgb(9, 9, 11);
+        visuals.window_fill = Color32::from_rgb(9, 9, 11);
+        visuals.extreme_bg_color = Color32::from_rgb(9, 9, 11);
+        visuals.faint_bg_color = Color32::from_rgb(24, 24, 27);
+        visuals.code_bg_color = Color32::from_rgb(24, 24, 27);
     } else {
-        visuals.panel_fill = Color32::from_rgb(250, 250, 248);
-        visuals.window_fill = Color32::WHITE;
-        visuals.extreme_bg_color = Color32::from_rgb(238, 239, 241);
-        visuals.widgets.noninteractive.bg_stroke =
-            Stroke::new(1.0, Color32::from_rgb(210, 212, 216));
+        visuals.panel_fill = Color32::from_rgb(255, 255, 255);
+        visuals.window_fill = Color32::from_rgb(255, 255, 255);
+        visuals.extreme_bg_color = Color32::from_rgb(250, 250, 250);
+        visuals.faint_bg_color = Color32::from_rgb(244, 244, 245);
+        visuals.code_bg_color = Color32::from_rgb(244, 244, 245);
     }
-    visuals.selection.bg_fill = theme_accent(dark_mode).gamma_multiply(0.45);
+    let border = shadcn_border(dark_mode);
+    let card = shadcn_card(dark_mode);
+    let hover = shadcn_card_hover(dark_mode);
+    visuals.widgets.noninteractive.bg_fill = Color32::TRANSPARENT;
+    visuals.widgets.noninteractive.weak_bg_fill = Color32::TRANSPARENT;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(
+        1.0,
+        if dark_mode {
+            Color32::from_rgb(250, 250, 250)
+        } else {
+            Color32::from_rgb(9, 9, 11)
+        },
+    );
+    visuals.widgets.inactive.bg_fill = card;
+    visuals.widgets.inactive.weak_bg_fill = card;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+    visuals.widgets.inactive.fg_stroke = visuals.widgets.noninteractive.fg_stroke;
+    visuals.widgets.hovered.bg_fill = hover;
+    visuals.widgets.hovered.weak_bg_fill = hover;
+    visuals.widgets.hovered.fg_stroke = visuals.widgets.noninteractive.fg_stroke;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(
+        1.0,
+        if dark_mode {
+            Color32::from_rgb(63, 63, 70)
+        } else {
+            Color32::from_rgb(212, 212, 216)
+        },
+    );
+    visuals.widgets.active.bg_fill = if dark_mode {
+        Color32::from_rgb(250, 250, 250)
+    } else {
+        Color32::from_rgb(24, 24, 27)
+    };
+    visuals.widgets.active.weak_bg_fill = visuals.widgets.active.bg_fill;
+    visuals.widgets.active.fg_stroke = Stroke::new(
+        1.0,
+        if dark_mode {
+            Color32::from_rgb(24, 24, 27)
+        } else {
+            Color32::from_rgb(250, 250, 250)
+        },
+    );
+    visuals.window_stroke = Stroke::new(1.0, border);
+    visuals.selection.bg_fill = if dark_mode {
+        Color32::from_rgb(250, 250, 250)
+    } else {
+        Color32::from_rgb(24, 24, 27)
+    };
+    visuals.selection.stroke = Stroke::new(
+        1.0,
+        if dark_mode {
+            Color32::from_rgb(24, 24, 27)
+        } else {
+            Color32::from_rgb(250, 250, 250)
+        },
+    );
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    style.spacing.button_padding = egui::vec2(10.0, 4.0);
+    style.animation_time = 0.14;
+    style.spacing.item_spacing = egui::vec2(8.0, 5.0);
+    style.spacing.button_padding = egui::vec2(11.0, 4.0);
     style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
     style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.hovered.expansion = 0.0;
     style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+    style.visuals.widgets.active.expansion = 0.0;
+    style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
     ctx.set_style(style);
 }
 
@@ -2375,6 +2805,53 @@ struct CharacterHitLayout {
     separators: [f32; 3],
 }
 
+#[derive(Clone, Copy)]
+struct TeamHitLayout {
+    row_width: f32,
+    time_x: f32,
+    character_x: f32,
+    type_x: f32,
+    damage_x: f32,
+    hp_x: f32,
+    separators: [f32; 4],
+}
+
+impl TeamHitLayout {
+    fn new(available_width: f32) -> Self {
+        const LEFT_INSET: f32 = 4.0;
+        const TIME_WIDTH: f32 = 92.0;
+        const CHARACTER_WIDTH: f32 = 132.0;
+        const TYPE_WIDTH: f32 = 84.0;
+        const DAMAGE_WIDTH: f32 = 132.0;
+        const CELL_PADDING: f32 = 10.0;
+
+        let time_x = LEFT_INSET + CELL_PADDING;
+        let character_separator = LEFT_INSET + TIME_WIDTH;
+        let character_x = character_separator + CELL_PADDING;
+        let type_separator = character_separator + CHARACTER_WIDTH;
+        let type_x = type_separator + CELL_PADDING;
+        let damage_separator = type_separator + TYPE_WIDTH;
+        let damage_x = damage_separator + CELL_PADDING;
+        let hp_separator = damage_separator + DAMAGE_WIDTH;
+        let hp_x = hp_separator + CELL_PADDING;
+
+        Self {
+            row_width: available_width,
+            time_x,
+            character_x,
+            type_x,
+            damage_x,
+            hp_x,
+            separators: [
+                character_separator,
+                type_separator,
+                damage_separator,
+                hp_separator,
+            ],
+        }
+    }
+}
+
 impl CharacterHitLayout {
     fn new(available_width: f32) -> Self {
         const LEFT_INSET: f32 = 4.0;
@@ -2407,10 +2884,10 @@ fn draw_character_hit_header(ui: &mut egui::Ui, layout: CharacterHitLayout) {
         ui.allocate_exact_size(egui::vec2(layout.row_width, 20.0), egui::Sense::hover());
     let y = rect.center().y;
     let x = rect.left();
-    let painter = ui.painter();
+    let painter = ui.painter().clone();
     let font = egui::FontId::proportional(11.0);
     let color = ui.visuals().weak_text_color();
-    draw_hit_column_separators(painter, rect, layout);
+    draw_hit_column_separators(&painter, rect, layout);
 
     painter.text(
         egui::pos2(x + layout.time_x, y),
@@ -2454,7 +2931,7 @@ fn draw_character_hit_row(
     let type_color = if incoming {
         Color32::from_rgb(211, 79, 79)
     } else {
-        theme_accent(ui.visuals().dark_mode)
+        hit_output_color(ui.visuals().dark_mode)
     };
     ui.painter().rect_filled(
         rect,
@@ -2476,11 +2953,11 @@ fn draw_character_hit_row(
     );
     let y = rect.center().y;
     let x = rect.left();
-    let painter = ui.painter();
+    let painter = ui.painter().clone();
     let text_color = ui.visuals().text_color();
     let damage_color = type_color;
     let mono = egui::FontId::monospace(12.0);
-    draw_hit_column_separators(painter, rect, layout);
+    draw_hit_column_separators(&painter, rect, layout);
     let hit_type = if incoming { "受击" } else { "输出" };
     let time = format_short_time(hit.timestamp);
     let damage = format_number(hit.damage);
@@ -2511,7 +2988,7 @@ fn draw_character_hit_row(
         egui::Align2::CENTER_CENTER,
         hit_type,
         egui::FontId::proportional(11.0),
-        Color32::WHITE,
+        contrast_text(type_color),
     );
     painter.text(
         egui::pos2(x + layout.damage_x, y),
@@ -2567,17 +3044,201 @@ fn draw_character_hit_row(
     }
 }
 
-fn hit_metric_card(ui: &mut egui::Ui, label: &str, value: String, color: Color32) {
-    egui::Frame::new()
-        .fill(if ui.visuals().dark_mode {
+fn draw_team_hit_header(ui: &mut egui::Ui, layout: TeamHitLayout) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(layout.row_width, 20.0), egui::Sense::hover());
+    let y = rect.center().y;
+    let x = rect.left();
+    let painter = ui.painter();
+    let font = egui::FontId::proportional(11.0);
+    let color = ui.visuals().weak_text_color();
+    draw_team_hit_column_separators(painter, rect, layout);
+
+    for (offset, label) in [
+        (layout.time_x, "时间"),
+        (layout.character_x, "角色"),
+        (layout.type_x, "类型"),
+        (layout.damage_x, "伤害"),
+        (layout.hp_x, "角色/目标 HP"),
+    ] {
+        painter.text(
+            egui::pos2(x + offset, y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            font.clone(),
+            color,
+        );
+    }
+}
+
+fn draw_team_hit_row(
+    ui: &mut egui::Ui,
+    layout: TeamHitLayout,
+    hit: &crate::model::Hit,
+    max_damage: f64,
+    character_color: Color32,
+    avatar_texture: Option<&egui::TextureHandle>,
+) {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(layout.row_width, 30.0), egui::Sense::hover());
+    let incoming = hit.direction == "incoming";
+    let type_color = if incoming {
+        Color32::from_rgb(211, 79, 79)
+    } else {
+        hit_output_color(ui.visuals().dark_mode)
+    };
+    ui.painter().rect_filled(
+        rect,
+        5.0,
+        if ui.visuals().dark_mode {
             Color32::from_rgba_unmultiplied(255, 255, 255, 8)
         } else {
-            Color32::WHITE
-        })
+            Color32::from_rgba_unmultiplied(0, 0, 0, 5)
+        },
+    );
+    let damage_fraction = (hit.damage / max_damage).clamp(0.0, 1.0) as f32;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            rect.min,
+            egui::vec2(rect.width() * damage_fraction, rect.height()),
+        ),
+        5.0,
+        type_color.gamma_multiply(if ui.visuals().dark_mode { 0.12 } else { 0.08 }),
+    );
+    let y = rect.center().y;
+    let x = rect.left();
+    let painter = ui.painter().clone();
+    let text_color = ui.visuals().text_color();
+    let mono = egui::FontId::monospace(12.0);
+    draw_team_hit_column_separators(&painter, rect, layout);
+
+    painter.text(
+        egui::pos2(x + layout.time_x, y),
+        egui::Align2::LEFT_CENTER,
+        format_short_time(hit.timestamp),
+        mono.clone(),
+        text_color,
+    );
+    let avatar_rect = pixel_aligned_rect(
+        egui::pos2(x + layout.character_x, y - 12.0),
+        24.0,
+        ui.ctx().pixels_per_point(),
+    );
+    painter.rect_filled(
+        avatar_rect,
+        5.0,
+        if ui.visuals().dark_mode {
+            Color32::from_rgb(55, 58, 66)
+        } else {
+            Color32::from_rgb(225, 227, 232)
+        },
+    );
+    if let Some(texture) = avatar_texture {
+        ui.put(
+            avatar_rect,
+            egui::Image::new((texture.id(), avatar_rect.size())).corner_radius(5),
+        );
+    } else {
+        painter.rect_filled(avatar_rect, 5.0, character_color.gamma_multiply(0.82));
+        painter.text(
+            avatar_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            hit.char_name.chars().next().unwrap_or('?').to_string(),
+            egui::FontId::proportional(11.0),
+            Color32::WHITE,
+        );
+    }
+    painter.rect_stroke(
+        avatar_rect,
+        5.0,
+        Stroke::new(1.5, character_color),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        egui::pos2(avatar_rect.right() + 7.0, y),
+        egui::Align2::LEFT_CENTER,
+        &hit.char_name,
+        egui::FontId::proportional(12.0),
+        text_color,
+    );
+    painter.rect_filled(
+        egui::Rect::from_center_size(
+            egui::pos2(x + layout.type_x + 26.0, y),
+            egui::vec2(48.0, 20.0),
+        ),
+        10.0,
+        type_color,
+    );
+    painter.text(
+        egui::pos2(x + layout.type_x + 26.0, y),
+        egui::Align2::CENTER_CENTER,
+        if incoming { "受击" } else { "输出" },
+        egui::FontId::proportional(11.0),
+        contrast_text(type_color),
+    );
+    painter.text(
+        egui::pos2(x + layout.damage_x, y),
+        egui::Align2::LEFT_CENTER,
+        format_number(hit.damage),
+        egui::FontId::monospace(14.0),
+        type_color,
+    );
+
+    let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
+    let hp_bar_left = x + layout.hp_x;
+    let hp_bar_right = (rect.right() - 10.0).min(ui.clip_rect().right() - 10.0);
+    let hp_bar_rect = egui::Rect::from_min_max(
+        egui::pos2(hp_bar_left, rect.bottom() - 7.0),
+        egui::pos2(hp_bar_right.max(hp_bar_left), rect.bottom() - 4.0),
+    );
+    painter.rect_filled(hp_bar_rect, 1.5, ui.visuals().faint_bg_color);
+    painter.rect_filled(
+        egui::Rect::from_min_size(
+            hp_bar_rect.min,
+            egui::vec2(hp_bar_rect.width() * hp_fraction, hp_bar_rect.height()),
+        ),
+        1.5,
+        if hp_fraction > 0.5 {
+            Color32::from_rgb(75, 168, 105)
+        } else if hp_fraction > 0.2 {
+            Color32::from_rgb(218, 154, 55)
+        } else {
+            Color32::from_rgb(211, 79, 79)
+        },
+    );
+    painter.text(
+        egui::pos2(x + layout.hp_x, y - 3.0),
+        egui::Align2::LEFT_CENTER,
+        format!(
+            "{} / {}  {:.1}%",
+            format_number(hit.target_hp_after),
+            format_number(hit.target_max_hp),
+            hit.target_hp_percent
+        ),
+        mono,
+        text_color,
+    );
+    if response.hovered() {
+        response.on_hover_text(format!(
+            "{} · 角色 ID {} · {}",
+            hit.char_name,
+            hit.char_id,
+            if incoming {
+                "角色受到的伤害"
+            } else {
+                "角色造成的伤害"
+            }
+        ));
+    }
+}
+
+fn hit_metric_card(ui: &mut egui::Ui, label: &str, value: String, color: Color32) {
+    egui::Frame::new()
+        .fill(shadcn_card_hover(ui.visuals().dark_mode))
+        .stroke(Stroke::new(1.0, shadcn_border(ui.visuals().dark_mode)))
         .corner_radius(6)
         .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
-            ui.set_min_width(92.0);
             ui.vertical_centered(|ui| {
                 ui.label(
                     RichText::new(value)
@@ -2614,15 +3275,27 @@ fn draw_hit_column_separators(
     }
 }
 
-fn default_export_filename() -> String {
-    format!("nte_capture_{}.json", Local::now().format("%Y%m%d_%H%M%S"))
+fn draw_team_hit_column_separators(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    layout: TeamHitLayout,
+) {
+    let color = if painter.ctx().style().visuals.dark_mode {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 92)
+    } else {
+        Color32::from_rgba_unmultiplied(70, 74, 82, 88)
+    };
+    for separator in layout.separators {
+        let x = rect.left() + separator;
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            Stroke::new(1.0, color),
+        );
+    }
 }
 
-fn default_raw_capture_path() -> PathBuf {
-    data_root().join("logs").join(format!(
-        "nte_raw_{}.pcapng",
-        Local::now().format("%Y%m%d_%H%M%S_%3f")
-    ))
+fn default_export_filename() -> String {
+    format!("nte_capture_{}.json", Local::now().format("%Y%m%d_%H%M%S"))
 }
 
 fn json_option_time(value: Option<f64>) -> String {
@@ -2773,27 +3446,160 @@ fn write_abyss_half_json(
 }
 
 fn compact_metric(ui: &mut egui::Ui, label: &str, value: String, color: Color32, prominent: bool) {
-    ui.vertical_centered(|ui| {
-        ui.label(
-            RichText::new(value)
-                .size(if prominent { 18.0 } else { 15.0 })
-                .strong()
-                .color(color),
-        );
-        ui.label(
-            RichText::new(label)
-                .size(10.0)
-                .color(ui.visuals().weak_text_color()),
-        );
-    });
+    let id = ui.make_persistent_id(("compact_metric", label));
+    let hovered = ui
+        .ctx()
+        .pointer_hover_pos()
+        .is_some_and(|pointer| ui.max_rect().contains(pointer));
+    let hover = ui.ctx().animate_bool_with_time(id, hovered, 0.14);
+    let fill = mix_color(
+        shadcn_card(ui.visuals().dark_mode),
+        shadcn_card_hover(ui.visuals().dark_mode),
+        hover,
+    );
+    egui::Frame::new()
+        .fill(fill)
+        .corner_radius(6)
+        .stroke(Stroke::new(
+            1.0,
+            mix_color(
+                shadcn_border(ui.visuals().dark_mode),
+                theme_accent(ui.visuals().dark_mode).gamma_multiply(0.55),
+                hover,
+            ),
+        ))
+        .inner_margin(egui::Margin::symmetric(4, 4))
+        .show(ui, |ui| {
+            ui.set_min_height(38.0);
+            ui.vertical_centered(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.label(
+                    RichText::new(value)
+                        .size(if prominent { 17.0 } else { 15.0 })
+                        .strong()
+                        .color(color),
+                );
+                ui.label(
+                    RichText::new(label)
+                        .size(9.5)
+                        .color(ui.visuals().weak_text_color()),
+                );
+            });
+        });
+}
+
+fn party_row_height(available_height: f32, row_count: usize) -> f32 {
+    if row_count == 0 {
+        return 52.0;
+    }
+
+    let spacing = 5.0 * row_count.saturating_sub(1) as f32;
+    ((available_height - spacing - 2.0) / row_count as f32).clamp(38.0, 52.0)
 }
 
 fn theme_accent(dark_mode: bool) -> Color32 {
     if dark_mode {
-        Color32::from_rgb(235, 188, 95)
+        Color32::from_rgb(250, 250, 250)
     } else {
-        Color32::from_rgb(166, 105, 25)
+        Color32::from_rgb(24, 24, 27)
     }
+}
+
+fn hit_output_color(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(63, 63, 70)
+    } else {
+        Color32::from_rgb(24, 24, 27)
+    }
+}
+
+fn readable_accent(color: Color32, dark_mode: bool) -> Color32 {
+    let luminance = 0.2126 * f32::from(color.r())
+        + 0.7152 * f32::from(color.g())
+        + 0.0722 * f32::from(color.b());
+    if !dark_mode && luminance > 210.0 {
+        Color32::from_rgb(82, 82, 91)
+    } else if dark_mode && luminance < 52.0 {
+        Color32::from_rgb(161, 161, 170)
+    } else {
+        color
+    }
+}
+
+fn contrast_text(background: Color32) -> Color32 {
+    let luminance = 0.2126 * f32::from(background.r())
+        + 0.7152 * f32::from(background.g())
+        + 0.0722 * f32::from(background.b());
+    if luminance > 150.0 {
+        Color32::from_rgb(9, 9, 11)
+    } else {
+        Color32::from_rgb(250, 250, 250)
+    }
+}
+
+fn shadcn_background(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(9, 9, 11)
+    } else {
+        Color32::from_rgb(250, 250, 250)
+    }
+}
+
+fn shadcn_foreground(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(250, 250, 250)
+    } else {
+        Color32::from_rgb(9, 9, 11)
+    }
+}
+
+fn shadcn_card(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(24, 24, 27)
+    } else {
+        Color32::from_rgb(255, 255, 255)
+    }
+}
+
+fn shadcn_card_hover(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(31, 31, 35)
+    } else {
+        Color32::from_rgb(248, 248, 249)
+    }
+}
+
+fn shadcn_muted(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(39, 39, 42)
+    } else {
+        Color32::from_rgb(228, 228, 231)
+    }
+}
+
+fn shadcn_border(dark_mode: bool) -> Color32 {
+    if dark_mode {
+        Color32::from_rgb(39, 39, 42)
+    } else {
+        Color32::from_rgb(228, 228, 231)
+    }
+}
+
+fn mix_color(from: Color32, to: Color32, amount: f32) -> Color32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let mix = |from: u8, to: u8| {
+        (f32::from(from) + (f32::from(to) - f32::from(from)) * amount).round() as u8
+    };
+    Color32::from_rgba_unmultiplied(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+        mix(from.a(), to.a()),
+    )
+}
+
+fn ease_out_cubic(value: f32) -> f32 {
+    1.0 - (1.0 - value.clamp(0.0, 1.0)).powi(3)
 }
 
 fn format_number(value: f64) -> String {
@@ -2830,21 +3636,45 @@ fn compare_hit_display_order(
     right: &crate::model::Hit,
 ) -> std::cmp::Ordering {
     let second_order = (left.timestamp.floor() as i64).cmp(&(right.timestamp.floor() as i64));
-    let same_health_pool = left.direction == "outgoing"
-        && right.direction == "outgoing"
-        && left.target_max_hp > 0.0
-        && right.target_max_hp > 0.0
-        && (left.target_max_hp - right.target_max_hp).abs()
-            <= left.target_max_hp.max(right.target_max_hp) * 0.05;
     second_order
-        .then_with(|| {
-            if same_health_pool {
-                right.target_hp_after.total_cmp(&left.target_hp_after)
-            } else {
-                left.timestamp.total_cmp(&right.timestamp)
-            }
-        })
+        .then_with(|| hit_direction_order(left).cmp(&hit_direction_order(right)))
+        .then_with(|| hit_health_pool_key(left).cmp(&hit_health_pool_key(right)))
+        .then_with(|| right.target_hp_after.total_cmp(&left.target_hp_after))
+        .then_with(|| left.timestamp.total_cmp(&right.timestamp))
         .then_with(|| left.byte_offset.cmp(&right.byte_offset))
+        .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+        .then_with(|| left.damage.total_cmp(&right.damage))
+}
+
+fn compare_team_hit_chronological(
+    left: &crate::model::Hit,
+    right: &crate::model::Hit,
+) -> std::cmp::Ordering {
+    (left.timestamp.floor() as i64)
+        .cmp(&(right.timestamp.floor() as i64))
+        .then_with(|| hit_zero_hp_order(left).cmp(&hit_zero_hp_order(right)))
+        .then_with(|| left.timestamp.total_cmp(&right.timestamp))
+        .then_with(|| left.byte_offset.cmp(&right.byte_offset))
+        .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+        .then_with(|| left.char_id.cmp(&right.char_id))
+        .then_with(|| left.direction.cmp(&right.direction))
+        .then_with(|| left.damage.total_cmp(&right.damage))
+}
+
+fn hit_zero_hp_order(hit: &crate::model::Hit) -> u8 {
+    u8::from(hit.target_hp_after <= 0.0 || hit.target_hp_percent <= 0.0)
+}
+
+fn hit_direction_order(hit: &crate::model::Hit) -> u8 {
+    if hit.direction == "outgoing" { 0 } else { 1 }
+}
+
+fn hit_health_pool_key(hit: &crate::model::Hit) -> i64 {
+    if hit.target_max_hp.is_finite() && hit.target_max_hp > 0.0 {
+        hit.target_max_hp.round() as i64
+    } else {
+        i64::MIN
+    }
 }
 
 fn character_color(
@@ -3049,6 +3879,243 @@ mod avatar_tests {
         assert_eq!(rect.width() * 1.5, 60.0);
         assert_eq!((rect.left() * 1.5).fract(), 0.0);
         assert_eq!((rect.top() * 1.5).fract(), 0.0);
+    }
+
+    #[test]
+    fn fits_four_party_rows_into_available_height() {
+        let row_height = party_row_height(171.0, 4);
+
+        assert_eq!(row_height, 38.5);
+        assert_eq!(row_height * 4.0 + 15.0 + 2.0, 171.0);
+    }
+
+    #[test]
+    fn expands_four_party_rows_to_use_taller_window() {
+        let row_height = party_row_height(210.0, 4);
+
+        assert_eq!(row_height, 48.25);
+        assert_eq!(row_height * 4.0 + 15.0 + 2.0, 210.0);
+    }
+
+    #[test]
+    fn makes_white_character_accent_readable_on_light_theme() {
+        let color = readable_accent(Color32::WHITE, false);
+
+        assert_eq!(color, Color32::from_rgb(82, 82, 91));
+        assert_eq!(contrast_text(color), Color32::from_rgb(250, 250, 250));
+    }
+
+    #[test]
+    fn keeps_dark_hit_badge_text_contrasting() {
+        let badge = hit_output_color(true);
+
+        assert_eq!(contrast_text(badge), Color32::from_rgb(250, 250, 250));
+    }
+
+    #[test]
+    fn cubic_transition_preserves_animation_endpoints() {
+        assert_eq!(ease_out_cubic(0.0), 0.0);
+        assert_eq!(ease_out_cubic(1.0), 1.0);
+        assert!(ease_out_cubic(0.5) > 0.5);
+    }
+
+    #[test]
+    fn renders_hit_detail_metrics_inside_horizontal_layout() {
+        egui::__run_test_ui(|ui| {
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(160.0, 62.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label("Character");
+                    },
+                );
+                ui.add_space(12.0);
+                ui.columns(5, |columns| {
+                    for (index, column) in columns.iter_mut().enumerate() {
+                        hit_metric_card(column, "Metric", index.to_string(), Color32::WHITE);
+                    }
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn hit_display_order_is_transitive_across_nearby_health_pools() {
+        let hit = |max_hp: f64, hp_after: f64, timestamp: f64| crate::model::Hit {
+            timestamp,
+            char_id: 1,
+            char_name: "Test".to_owned(),
+            char_known: true,
+            damage: 1.0,
+            byte_offset: 0,
+            bit_shift: 0,
+            char_source: "packet".to_owned(),
+            direction: "outgoing".to_owned(),
+            target_hp_before: hp_after + 1.0,
+            target_hp_after: hp_after,
+            target_max_hp: max_hp,
+            target_hp_percent: hp_after / max_hp * 100.0,
+            target_id: None,
+            target_name: None,
+            target_context: Vec::new(),
+        };
+        let mut hits = vec![
+            hit(100.0, 90.0, 10.1),
+            hit(104.0, 80.0, 10.2),
+            hit(108.0, 70.0, 10.3),
+        ];
+
+        hits.sort_by(compare_hit_display_order);
+        for left in &hits {
+            for middle in &hits {
+                for right in &hits {
+                    let left_before_middle =
+                        compare_hit_display_order(left, middle) != std::cmp::Ordering::Greater;
+                    let middle_before_right =
+                        compare_hit_display_order(middle, right) != std::cmp::Ordering::Greater;
+                    if left_before_middle && middle_before_right {
+                        assert_ne!(
+                            compare_hit_display_order(left, right),
+                            std::cmp::Ordering::Greater
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sorts_team_hits_by_exact_timestamp_across_characters() {
+        let hit = |timestamp: f64, char_id: u32, direction: &str| crate::model::Hit {
+            timestamp,
+            char_id,
+            char_name: format!("Character {char_id}"),
+            char_known: true,
+            damage: 1.0,
+            byte_offset: 0,
+            bit_shift: 0,
+            char_source: "test".to_owned(),
+            direction: direction.to_owned(),
+            target_hp_before: 100.0,
+            target_hp_after: 99.0,
+            target_max_hp: 100.0,
+            target_hp_percent: 99.0,
+            target_id: None,
+            target_name: None,
+            target_context: Vec::new(),
+        };
+        let mut hits = [
+            hit(10.75, 1010, "outgoing"),
+            hit(10.25, 1004, "incoming"),
+            hit(10.50, 1010, "outgoing"),
+            hit(9.90, 1004, "outgoing"),
+        ];
+
+        hits.sort_by(compare_team_hit_chronological);
+
+        assert_eq!(
+            hits.map(|hit| (hit.timestamp, hit.char_id, hit.direction)),
+            [
+                (9.90, 1004, "outgoing".to_owned()),
+                (10.25, 1004, "incoming".to_owned()),
+                (10.50, 1010, "outgoing".to_owned()),
+                (10.75, 1010, "outgoing".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn sorts_zero_hp_last_within_team_hit_second() {
+        let hit = |timestamp: f64, hp_after: f64| crate::model::Hit {
+            timestamp,
+            char_id: 1004,
+            char_name: "Test".to_owned(),
+            char_known: true,
+            damage: 1.0,
+            byte_offset: 0,
+            bit_shift: 0,
+            char_source: "test".to_owned(),
+            direction: "outgoing".to_owned(),
+            target_hp_before: hp_after + 1.0,
+            target_hp_after: hp_after,
+            target_max_hp: 100.0,
+            target_hp_percent: hp_after,
+            target_id: None,
+            target_name: None,
+            target_context: Vec::new(),
+        };
+        let mut hits = [
+            hit(10.10, 0.0),
+            hit(10.30, 40.0),
+            hit(10.20, 60.0),
+            hit(11.05, 80.0),
+        ];
+
+        hits.sort_by(compare_team_hit_chronological);
+
+        assert_eq!(
+            hits.map(|hit| (hit.timestamp, hit.target_hp_after)),
+            [(10.20, 60.0), (10.30, 40.0), (10.10, 0.0), (11.05, 80.0)]
+        );
+    }
+
+    #[test]
+    fn renders_team_hit_columns() {
+        egui::__run_test_ui(|ui| {
+            let layout = TeamHitLayout::new(ui.available_width());
+            draw_team_hit_header(ui, layout);
+            let hit = crate::model::Hit {
+                timestamp: 10.0,
+                char_id: 1004,
+                char_name: "Test".to_owned(),
+                char_known: true,
+                damage: 100.0,
+                byte_offset: 0,
+                bit_shift: 0,
+                char_source: "test".to_owned(),
+                direction: "outgoing".to_owned(),
+                target_hp_before: 1_000.0,
+                target_hp_after: 900.0,
+                target_max_hp: 1_000.0,
+                target_hp_percent: 90.0,
+                target_id: None,
+                target_name: None,
+                target_context: Vec::new(),
+            };
+            draw_team_hit_row(ui, layout, &hit, hit.damage, Color32::WHITE, None);
+        });
+    }
+
+    #[test]
+    fn sorts_latest_capture_hit_details_without_panicking() {
+        let path = PathBuf::from("logs/nte_raw_20260613_010933_325.pcapng");
+        if !path.is_file() {
+            return;
+        }
+        let characters =
+            Arc::new(load_characters(std::path::Path::new("characters.json")).unwrap());
+        let (sender, receiver) = unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        import_pcapng(path, characters, true, sender, stop)
+            .join()
+            .unwrap();
+        let hits = receiver
+            .try_iter()
+            .filter_map(|event| match event {
+                EngineEvent::Hit(hit) => Some(hit),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for char_id in [1004, 1010] {
+            let mut character_hits = hits
+                .iter()
+                .filter(|hit| hit.char_id == char_id)
+                .collect::<Vec<_>>();
+            character_hits.sort_by(|left, right| compare_hit_display_order(left, right));
+            assert!(!character_hits.is_empty());
+        }
     }
 
     #[test]

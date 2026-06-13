@@ -7,13 +7,13 @@ use serde::Deserialize;
 
 use crate::model::{CharacterInfo, Hit};
 
-const FIELD_SEPARATORS: [u8; 9] = [12, 12, 13, 12, 12, 6, 6, 6, 12];
-const SCAN_START: usize = 200;
-const SCAN_END: usize = 700;
-const MAX_FIELD_LENGTH: usize = 64;
+const RECORD_FIELD_TYPES: [u8; 10] = [12, 12, 12, 13, 12, 12, 6, 6, 6, 12];
+const RECORD_FIELD_LENGTHS: [usize; 10] = [4, 4, 4, 8, 4, 4, 4, 4, 4, 4];
+const MAX_RECORD_FIELD_LENGTH: usize = 8;
 const MIN_DAMAGE: f32 = 2.0;
 const MAX_DAMAGE: f32 = 1_000_000_000.0;
 const MAX_PLAUSIBLE_CHARACTER_HP: f32 = 500_000.0;
+const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 
 #[derive(Deserialize)]
 struct CharacterDocument {
@@ -22,8 +22,28 @@ struct CharacterDocument {
 
 #[derive(Clone, Debug)]
 struct Field {
-    separator: u8,
     raw: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedDamageRecord {
+    pub damage: f32,
+    pub target_hp_before: f32,
+    pub target_max_hp: f32,
+    pub damage_time: f64,
+    pub world_time: f32,
+    pub repeated_damage: f32,
+    pub state_flags: [i32; 3],
+    pub trailing_value: f32,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedCurrentHpUpdate {
+    pub current_hp: f32,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
 }
 
 pub fn load_characters(path: &Path) -> Result<HashMap<u32, CharacterInfo>> {
@@ -64,29 +84,146 @@ fn read_field(
     byte_offset: usize,
     bit_shift: u8,
     bit_offset: usize,
-) -> Option<(Field, usize)> {
+) -> Option<(u8, Field, usize)> {
     let header = decode_shifted_bytes(data, byte_offset, bit_shift, bit_offset, 5)?;
     let field_length = u32::from_le_bytes(header[1..5].try_into().ok()?) as usize;
     let consumed_bits = 40 + field_length * 8;
     let remaining_bits = data.len().saturating_sub(byte_offset) * 8;
     if field_length == 0
-        || field_length > MAX_FIELD_LENGTH
+        || field_length > MAX_RECORD_FIELD_LENGTH
         || bit_offset + consumed_bits > remaining_bits
     {
         return None;
     }
     let raw = decode_shifted_bytes(data, byte_offset, bit_shift, bit_offset + 40, field_length)?;
-    Some((
-        Field {
-            separator: header[0],
-            raw,
-        },
-        consumed_bits,
-    ))
+    Some((header[0], Field { raw }, consumed_bits))
 }
 
 fn f32_field(field: &Field) -> Option<f32> {
-    Some(f32::from_le_bytes(field.raw.get(..4)?.try_into().ok()?))
+    Some(f32::from_le_bytes(field.raw.as_slice().try_into().ok()?))
+}
+
+fn f64_field(field: &Field) -> Option<f64> {
+    Some(f64::from_le_bytes(field.raw.as_slice().try_into().ok()?))
+}
+
+fn i32_field(field: &Field) -> Option<i32> {
+    Some(i32::from_le_bytes(field.raw.as_slice().try_into().ok()?))
+}
+
+fn parse_damage_record_at(
+    data: &[u8],
+    byte_offset: usize,
+    bit_shift: u8,
+) -> Option<ParsedDamageRecord> {
+    let mut fields = Vec::with_capacity(RECORD_FIELD_TYPES.len());
+    let mut bit_cursor = 0;
+    for (expected_type, expected_length) in RECORD_FIELD_TYPES.into_iter().zip(RECORD_FIELD_LENGTHS)
+    {
+        let (field_type, field, consumed) = read_field(data, byte_offset, bit_shift, bit_cursor)?;
+        if field_type != expected_type || field.raw.len() != expected_length {
+            return None;
+        }
+        bit_cursor += consumed;
+        fields.push(field);
+    }
+
+    let damage = f32_field(&fields[0])?;
+    let target_hp_before = f32_field(&fields[1])?;
+    let target_max_hp = f32_field(&fields[2])?;
+    let damage_time = f64_field(&fields[3])?;
+    let world_time = f32_field(&fields[4])?;
+    let repeated_damage = f32_field(&fields[5])?;
+    let state_flags = [
+        i32_field(&fields[6])?,
+        i32_field(&fields[7])?,
+        i32_field(&fields[8])?,
+    ];
+    let trailing_value = f32_field(&fields[9])?;
+
+    if !damage.is_finite()
+        || !(MIN_DAMAGE..=MAX_DAMAGE).contains(&damage)
+        || !target_hp_before.is_finite()
+        || target_hp_before < 0.0
+        || !target_max_hp.is_finite()
+        || target_max_hp <= 0.0
+        || !damage_time.is_finite()
+        || damage_time < 0.0
+        || !world_time.is_finite()
+        || world_time < 0.0
+        || !trailing_value.is_finite()
+    {
+        return None;
+    }
+
+    let tolerance = 0.01_f32.max(damage.abs() * 1e-6);
+    if (damage - repeated_damage).abs() > tolerance {
+        return None;
+    }
+
+    Some(ParsedDamageRecord {
+        damage,
+        target_hp_before,
+        target_max_hp,
+        damage_time,
+        world_time,
+        repeated_damage,
+        state_flags,
+        trailing_value,
+        byte_offset: byte_offset + 5,
+        bit_shift,
+    })
+}
+
+pub fn parse_damage_records(data: &[u8]) -> Vec<ParsedDamageRecord> {
+    let mut records = Vec::new();
+    let mut seen = HashSet::new();
+    for byte_offset in 0..data.len() {
+        for bit_shift in 0..8_u8 {
+            let Some(record) = parse_damage_record_at(data, byte_offset, bit_shift) else {
+                continue;
+            };
+            if seen.insert((byte_offset, bit_shift)) {
+                records.push(record);
+            }
+        }
+    }
+    records
+}
+
+pub fn parse_current_hp_updates(data: &[u8]) -> Vec<ParsedCurrentHpUpdate> {
+    let mut updates = Vec::new();
+    for byte_offset in 0..data.len() {
+        for bit_shift in 0..8_u8 {
+            let Some(decoded) = decode_shifted_bytes(
+                data,
+                byte_offset,
+                bit_shift,
+                0,
+                CURRENT_HP_PREFIX_LENGTH + 4,
+            ) else {
+                continue;
+            };
+            let prefix = &decoded[..CURRENT_HP_PREFIX_LENGTH];
+            if prefix[1..7] != [0, 0, 0xe0, 0x4f, 0x33, 0x33]
+                || prefix[8] != 0x0f
+                || prefix[11..16] != [0, 0, 0, 0, 0x24]
+            {
+                continue;
+            }
+            let current_hp = f32::from_le_bytes(decoded[16..20].try_into().unwrap());
+            if !current_hp.is_finite() || !(0.0..=MAX_PLAUSIBLE_CHARACTER_HP).contains(&current_hp)
+            {
+                continue;
+            }
+            updates.push(ParsedCurrentHpUpdate {
+                current_hp,
+                byte_offset: byte_offset + CURRENT_HP_PREFIX_LENGTH,
+                bit_shift,
+            });
+        }
+    }
+    updates
 }
 
 pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {
@@ -141,114 +278,74 @@ pub fn parse_damage_payload(
     evidence: &[(u32, u8, usize)],
 ) -> Vec<Hit> {
     let mut hits = Vec::new();
-    let mut seen = HashSet::new();
-    for byte_offset in SCAN_START..data.len().min(SCAN_END) {
-        for bit_shift in 0..8_u8 {
-            let Some(raw_damage) = decode_shifted_bytes(data, byte_offset, bit_shift, 0, 4) else {
-                continue;
-            };
-            let damage = f32::from_le_bytes(raw_damage.try_into().unwrap());
-            if !damage.is_finite() || !(MIN_DAMAGE..=MAX_DAMAGE).contains(&damage) {
-                continue;
-            }
-
-            let mut fields = Vec::with_capacity(9);
-            let mut bit_cursor = 32;
-            for expected_separator in FIELD_SEPARATORS {
-                let Some((field, consumed)) = read_field(data, byte_offset, bit_shift, bit_cursor)
-                else {
-                    break;
-                };
-                if field.separator != expected_separator {
-                    break;
+    for record in parse_damage_records(data) {
+        let damage = record.damage;
+        let byte_offset = record.byte_offset;
+        let bit_shift = record.bit_shift;
+        let char_id = packet_char_id.or(fallback_char_id).unwrap_or(0);
+        let target_hp_before = record.target_hp_before;
+        let target_max_hp = record.target_max_hp;
+        let character = characters.get(&char_id);
+        let name = character
+            .map(|row| {
+                if row.name_zh.is_empty() {
+                    row.name_en.clone()
+                } else {
+                    row.name_zh.clone()
                 }
-                bit_cursor += consumed;
-                fields.push(field);
-            }
-            if fields.len() != 9 {
-                continue;
-            }
-            let Some(repeated_damage) = f32_field(&fields[4]) else {
-                continue;
-            };
-            let tolerance = 0.01_f32.max(damage.abs() * 1e-6);
-            if (damage - repeated_damage).abs() > tolerance {
-                continue;
-            }
+            })
+            .unwrap_or_else(|| {
+                if char_id == 0 {
+                    "未知角色".to_owned()
+                } else {
+                    format!("未知角色({char_id})")
+                }
+            });
+        let target_hp_after = (target_hp_before - damage).max(0.0);
+        let (target_id, target_name, target_context) =
+            extract_target_metadata(data, byte_offset, bit_shift);
+        let direction = if target_max_hp <= MAX_PLAUSIBLE_CHARACTER_HP
+            && packet_char_id.is_some()
+            && evidence
+                .iter()
+                .any(|(id, shift, _)| Some(*id) == packet_char_id && *shift == bit_shift)
+        {
+            "incoming"
+        } else if packet_char_id.is_some() {
+            "outgoing"
+        } else {
+            "unknown"
+        };
 
-            let char_id = packet_char_id.or(fallback_char_id).unwrap_or(0);
-            let Some(target_hp_before) = f32_field(&fields[0]) else {
-                continue;
-            };
-            let Some(target_max_hp) = f32_field(&fields[1]) else {
-                continue;
-            };
-            let key = (char_id, damage.round() as i64, byte_offset, bit_shift);
-            if !seen.insert(key) {
-                continue;
-            }
-            let character = characters.get(&char_id);
-            let name = character
-                .map(|row| {
-                    if row.name_zh.is_empty() {
-                        row.name_en.clone()
-                    } else {
-                        row.name_zh.clone()
-                    }
-                })
-                .unwrap_or_else(|| {
-                    if char_id == 0 {
-                        "未知角色".to_owned()
-                    } else {
-                        format!("未知角色({char_id})")
-                    }
-                });
-            let target_hp_after = (target_hp_before - damage).max(0.0);
-            let (target_id, target_name, target_context) =
-                extract_target_metadata(data, byte_offset, bit_shift);
-            let direction = if target_max_hp <= MAX_PLAUSIBLE_CHARACTER_HP
-                && packet_char_id.is_some()
-                && evidence
-                    .iter()
-                    .any(|(id, shift, _)| Some(*id) == packet_char_id && *shift == bit_shift)
-            {
-                "incoming"
-            } else if packet_char_id.is_some() {
-                "outgoing"
+        hits.push(Hit {
+            timestamp,
+            char_id,
+            char_name: name,
+            char_known: character.is_some(),
+            damage: damage as f64,
+            byte_offset,
+            bit_shift,
+            char_source: if packet_char_id.is_some() {
+                "packet"
+            } else if fallback_char_id.is_some() {
+                "session"
             } else {
                 "unknown"
-            };
-
-            hits.push(Hit {
-                timestamp,
-                char_id,
-                char_name: name,
-                char_known: character.is_some(),
-                damage: damage as f64,
-                byte_offset,
-                bit_shift,
-                char_source: if packet_char_id.is_some() {
-                    "packet"
-                } else if fallback_char_id.is_some() {
-                    "session"
-                } else {
-                    "unknown"
-                }
-                .to_owned(),
-                direction: direction.to_owned(),
-                target_hp_before: target_hp_before as f64,
-                target_hp_after: target_hp_after as f64,
-                target_max_hp: target_max_hp as f64,
-                target_hp_percent: if target_max_hp > 0.0 {
-                    target_hp_after as f64 / target_max_hp as f64 * 100.0
-                } else {
-                    0.0
-                },
-                target_id,
-                target_name,
-                target_context,
-            });
-        }
+            }
+            .to_owned(),
+            direction: direction.to_owned(),
+            target_hp_before: target_hp_before as f64,
+            target_hp_after: target_hp_after as f64,
+            target_max_hp: target_max_hp as f64,
+            target_hp_percent: if target_max_hp > 0.0 {
+                target_hp_after as f64 / target_max_hp as f64 * 100.0
+            } else {
+                0.0
+            },
+            target_id,
+            target_name,
+            target_context,
+        });
     }
     hits
 }
@@ -347,21 +444,29 @@ mod tests {
     use super::*;
 
     fn synthetic_payload(char_id: u32, damage: f32) -> Vec<u8> {
-        let mut data = vec![0_u8; 512];
+        let mut data = vec![0_u8; 900];
         let declaration = format!("\x05\0\0\0{char_id:04}\0");
         data[10..19].copy_from_slice(declaration.as_bytes());
-        let mut cursor = SCAN_START;
-        data[cursor..cursor + 4].copy_from_slice(&damage.to_le_bytes());
-        cursor += 4;
-        for (index, separator) in FIELD_SEPARATORS.iter().enumerate() {
-            let raw = if index == 2 {
-                12345_f64.to_le_bytes().to_vec()
-            } else if index == 4 {
-                damage.to_le_bytes().to_vec()
-            } else {
-                ((index + 1) as f32).to_le_bytes().to_vec()
-            };
-            data[cursor] = *separator;
+        let mut cursor = 760;
+        let values = [
+            damage.to_le_bytes().to_vec(),
+            50_000_f32.to_le_bytes().to_vec(),
+            80_000_f32.to_le_bytes().to_vec(),
+            16_783_723.442_390_9_f64.to_le_bytes().to_vec(),
+            5_372.153_f32.to_le_bytes().to_vec(),
+            damage.to_le_bytes().to_vec(),
+            0_i32.to_le_bytes().to_vec(),
+            1_i32.to_le_bytes().to_vec(),
+            1_i32.to_le_bytes().to_vec(),
+            0_f32.to_le_bytes().to_vec(),
+        ];
+        for ((field_type, expected_length), raw) in RECORD_FIELD_TYPES
+            .iter()
+            .zip(RECORD_FIELD_LENGTHS)
+            .zip(values)
+        {
+            assert_eq!(raw.len(), expected_length);
+            data[cursor] = *field_type;
             data[cursor + 1..cursor + 5].copy_from_slice(&(raw.len() as u32).to_le_bytes());
             data[cursor + 5..cursor + 5 + raw.len()].copy_from_slice(&raw);
             cursor += 5 + raw.len();
@@ -377,13 +482,16 @@ mod tests {
         assert_eq!(declared_character_ids(&data), vec![1033]);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].damage, 12345.5);
+        assert_eq!(hits[0].byte_offset, 765);
+        assert_eq!(hits[0].target_hp_before, 50_000.0);
+        assert_eq!(hits[0].target_max_hp, 80_000.0);
     }
 
     #[test]
     fn does_not_classify_enemy_health_as_incoming_damage() {
         let mut data = synthetic_payload(1004, 3480.0);
         let max_hp = 1_528_385_f32.to_le_bytes();
-        let max_hp_field_offset = SCAN_START + 4 + 5 + 4 + 5;
+        let max_hp_field_offset = 760 + 9 + 9 + 5;
         data[max_hp_field_offset..max_hp_field_offset + 4].copy_from_slice(&max_hp);
         let evidence = find_declared_character_evidence(&data);
         let hits = parse_damage_payload(&data, 1.0, Some(1004), None, &HashMap::new(), &evidence);
@@ -393,16 +501,112 @@ mod tests {
     }
 
     #[test]
+    fn classifies_player_health_record_as_incoming_damage() {
+        let mut data = synthetic_payload(1010, 3101.0);
+        let hp_field_offset = 760 + 9 + 5;
+        let max_hp_field_offset = 760 + 9 + 9 + 5;
+        data[hp_field_offset..hp_field_offset + 4].copy_from_slice(&22_397.898_f32.to_le_bytes());
+        data[max_hp_field_offset..max_hp_field_offset + 4]
+            .copy_from_slice(&22_397.898_f32.to_le_bytes());
+        let evidence = find_declared_character_evidence(&data);
+        let hits = parse_damage_payload(&data, 1.0, Some(1010), None, &HashMap::new(), &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "incoming");
+    }
+
+    #[test]
+    fn does_not_treat_state_flag_zero_as_incoming_damage() {
+        let mut data = synthetic_payload(1010, 12_743.0);
+        let hp_field_offset = 760 + 9 + 5;
+        let max_hp_field_offset = 760 + 9 + 9 + 5;
+        let direction_flag_payload_offset = 760 + 9 + 9 + 9 + 13 + 9 + 9 + 9 + 9 + 5;
+        data[hp_field_offset..hp_field_offset + 4].copy_from_slice(&1_052_122_f32.to_le_bytes());
+        data[max_hp_field_offset..max_hp_field_offset + 4]
+            .copy_from_slice(&1_940_137_f32.to_le_bytes());
+        data[direction_flag_payload_offset..direction_flag_payload_offset + 4]
+            .copy_from_slice(&0_i32.to_le_bytes());
+        let evidence = find_declared_character_evidence(&data);
+        let hits = parse_damage_payload(&data, 1.0, Some(1010), None, &HashMap::new(), &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "outgoing");
+    }
+
+    #[test]
     fn extracts_explicit_target_metadata_when_present() {
         let mut data = synthetic_payload(1033, 12345.5);
         let metadata = b"TargetId=enemy-42 TargetName=TrainingDummy";
-        data[320..320 + metadata.len()].copy_from_slice(metadata);
+        data[600..600 + metadata.len()].copy_from_slice(metadata);
         let evidence = find_declared_character_evidence(&data);
         let hits = parse_damage_payload(&data, 1.0, Some(1033), None, &HashMap::new(), &evidence);
 
         assert_eq!(hits[0].target_id.as_deref(), Some("enemy-42"));
         assert_eq!(hits[0].target_name.as_deref(), Some("TrainingDummy"));
         assert!(!hits[0].target_context.is_empty());
+    }
+
+    #[test]
+    fn parses_complete_record_from_real_capture_layout() {
+        let record = hex::decode(concat!(
+            "0c0400000000201c45",
+            "0c04000000a8a4eb49",
+            "0c04000000a8a4eb49",
+            "0d08000000c958cd6e21027041",
+            "0c04000000b2d6b944",
+            "0c0400000000201c45",
+            "060400000000000000",
+            "060400000001000000",
+            "060400000001000000",
+            "0c0400000000000000"
+        ))
+        .unwrap();
+        let records = parse_damage_records(&record);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].damage, 2498.0);
+        assert_eq!(records[0].target_hp_before, 1_930_389.0);
+        assert_eq!(records[0].target_max_hp, 1_930_389.0);
+        assert!((records[0].damage_time - 16_785_942.925_134).abs() < 0.000_001);
+        assert!((records[0].world_time - 1_486.709_2).abs() < 0.001);
+        assert_eq!(records[0].state_flags, [0, 1, 1]);
+        assert_eq!(records[0].trailing_value, 0.0);
+        assert_eq!(records[0].byte_offset, 5);
+    }
+
+    #[test]
+    fn parses_bit_aligned_current_hp_replication() {
+        fn shift_bytes(data: &[u8], shift: u8) -> Vec<u8> {
+            let mut shifted = vec![0_u8; data.len() + 1];
+            for (index, value) in data.iter().copied().enumerate() {
+                shifted[index] |= value << shift;
+                if shift != 0 {
+                    shifted[index + 1] |= value >> (8 - shift);
+                }
+            }
+            shifted
+        }
+
+        let mut decoded = hex::decode("020000e04f3333730f80030000000024").expect("valid prefix");
+        decoded.extend_from_slice(&21_198_f32.to_le_bytes());
+        let payload = shift_bytes(&decoded, 3);
+        let updates = parse_current_hp_updates(&payload);
+
+        assert_eq!(
+            updates,
+            vec![ParsedCurrentHpUpdate {
+                current_hp: 21_198.0,
+                byte_offset: 16,
+                bit_shift: 3,
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_legacy_candidate_without_f0_field_header() {
+        let mut data = synthetic_payload(1033, 12345.5);
+        data.drain(760..765);
+        assert!(parse_damage_records(&data).is_empty());
     }
 
     #[test]

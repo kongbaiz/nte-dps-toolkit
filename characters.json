@@ -25,11 +25,11 @@
       "verified": true
     },
     "1005": {
-      "avatar": "Character_daffodill.png",
+      "avatar": "res/player_005_256.png",
       "codename": "Daffodill",
       "color": "#346295",
       "name_en": "Daffodill",
-      "name_zh": "達芙蒂爾",
+      "name_zh": "达芙蒂尔",
       "verified": false
     },
     "1008": {
@@ -65,7 +65,7 @@
       "verified": false
     },
     "1014": {
-      "avatar": "Character_Kuhara.png",
+      "avatar": "res/player_104_256.png",
       "codename": "Kuhara",
       "color": "#6d5590",
       "name_en": "Jiuyuan",
@@ -237,12 +237,12 @@
       "verified": false
     },
     "1046": {
-      "avatar": "Character_player_M.png",
+      "avatar": "res/player_046_256.png",
       "codename": "Male",
       "color": "#ffffff",
       "name_en": "Zero M",
       "name_zh": "零(男)",
-      "verified": false
+      "verified": true
     },
     "1051": {
       "avatar": "Character_player_F.png",
@@ -261,15 +261,15 @@
       "verified": false
     },
     "1054": {
-      "avatar": "Character_daffodill.png",
+      "avatar": "res/player_005_256.png",
       "codename": "Daffodill",
       "color": "#346295",
       "name_en": "Daffodill",
-      "name_zh": "達芙蒂爾",
-      "verified": false
+      "name_zh": "达芙蒂尔",
+      "verified": true
     },
     "1055": {
-      "avatar": "Character_Kuhara.png",
+      "avatar": "res/player_104_256.png",
       "codename": "Kuhara",
       "color": "#6d5590",
       "name_en": "Jiuyuan",

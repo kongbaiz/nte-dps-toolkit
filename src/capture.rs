@@ -7,7 +7,7 @@ use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
@@ -25,8 +25,10 @@ use serde::Deserialize;
 
 use crate::model::{AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, PacketDebug};
 use crate::parser::{
-    declared_character_ids, find_declared_character_evidence, parse_damage_payload,
+    declared_character_ids, find_declared_character_evidence, parse_current_hp_updates,
+    parse_damage_payload,
 };
+use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 
 const PCAP_ERRBUF_SIZE: usize = 256;
 const MIN_READABLE_TEXT_LEN: usize = 4;
@@ -101,12 +103,12 @@ pub struct CaptureDevice {
 pub struct CaptureHandle {
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
-    raw_capture_path: PathBuf,
+    raw_capture: RawCaptureBuffer,
 }
 
 impl CaptureHandle {
-    pub fn raw_capture_path(&self) -> &std::path::Path {
-        &self.raw_capture_path
+    pub fn raw_capture(&self) -> RawCaptureBuffer {
+        self.raw_capture.clone()
     }
 
     pub fn stop(&mut self) {
@@ -120,6 +122,59 @@ impl CaptureHandle {
 impl Drop for CaptureHandle {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[derive(Clone)]
+pub struct RawCaptureBuffer {
+    inner: Arc<Mutex<RawCaptureData>>,
+}
+
+struct RawCaptureData {
+    device: CaptureDevice,
+    packets: Vec<RawCapturedPacket>,
+}
+
+struct RawCapturedPacket {
+    timestamp: Duration,
+    original_len: u32,
+    data: Vec<u8>,
+}
+
+impl RawCaptureBuffer {
+    fn new(device: CaptureDevice) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(RawCaptureData {
+                device,
+                packets: Vec::new(),
+            })),
+        }
+    }
+
+    fn push(&self, timestamp: Duration, original_len: u32, packet: &[u8]) {
+        if let Ok(mut capture) = self.inner.lock() {
+            capture.packets.push(RawCapturedPacket {
+                timestamp,
+                original_len,
+                data: packet.to_vec(),
+            });
+        }
+    }
+
+    pub fn packet_count(&self) -> usize {
+        self.inner.lock().map_or(0, |capture| capture.packets.len())
+    }
+
+    pub fn save(&self, path: &std::path::Path) -> Result<(u64, u64), String> {
+        let capture = self
+            .inner
+            .lock()
+            .map_err(|_| "原始抓包内存缓存不可用".to_owned())?;
+        let mut writer = RawCaptureWriter::create(path, &capture.device)?;
+        for packet in &capture.packets {
+            writer.write_packet(packet.timestamp, packet.original_len, &packet.data)?;
+        }
+        writer.finish()
     }
 }
 
@@ -716,7 +771,14 @@ impl PacketDecoder {
         let preview_len = payload.len().min(96);
         let payload_hex = hex::encode(payload);
         let decoded_text = decode_payload_text(payload);
-        if !should_keep_debug_packet(payload, &ids, accepted, &decoded_text) {
+        let current_hp_updates = if outgoing {
+            Vec::new()
+        } else {
+            parse_current_hp_updates(payload)
+        };
+        if current_hp_updates.is_empty()
+            && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
+        {
             return;
         }
         let mut note = if hits.len() != accepted {
@@ -728,6 +790,44 @@ impl PacketDecoder {
             &mut note,
             binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
         );
+        if !current_hp_updates.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "CurrentHP 更新候选：{}",
+                    current_hp_updates
+                        .iter()
+                        .map(|update| format!(
+                            "{:.0}@{}:{}",
+                            update.current_hp, update.byte_offset, update.bit_shift
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
+        if let Some(TransportPacket::Sequenced(packet)) = parse_transport_packet(payload) {
+            if packet.mode != 0 {
+                append_packet_note(
+                    &mut note,
+                    Some(format!(
+                        "传输模式 {}，PacketId {}，Ack {}，应用载荷 {} bit",
+                        packet.mode,
+                        packet.packet_id,
+                        packet.acknowledged_packet_id,
+                        packet.payload_bit_len
+                    )),
+                );
+            } else if let Some(bunch) = parse_single_bunch(&packet) {
+                append_packet_note(
+                    &mut note,
+                    Some(format!(
+                        "SingleBunch seq {}，descriptor 0x{:02x}，数据 {} bit",
+                        bunch.sequence, bunch.descriptor, bunch.data_bit_len
+                    )),
+                );
+            }
+        }
         send_packet_events(
             sender,
             PacketDebug {
@@ -759,11 +859,11 @@ pub fn start_capture(
     include_incoming: bool,
     characters: Arc<HashMap<u32, CharacterInfo>>,
     sender: Sender<EngineEvent>,
-    raw_capture_path: PathBuf,
 ) -> CaptureHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
-    let thread_raw_capture_path = raw_capture_path.clone();
+    let raw_capture = RawCaptureBuffer::new(device.clone());
+    let thread_raw_capture = raw_capture.clone();
     let thread = thread::spawn(move || {
         if let Err(error) = run_capture(CaptureRunConfig {
             device: &device,
@@ -773,7 +873,7 @@ pub fn start_capture(
             characters: &characters,
             sender: &sender,
             stop: &thread_stop,
-            raw_capture_path: &thread_raw_capture_path,
+            raw_capture: &thread_raw_capture,
         }) {
             let _ = sender.send(EngineEvent::Error(error));
         }
@@ -782,7 +882,7 @@ pub fn start_capture(
     CaptureHandle {
         stop,
         thread: Some(thread),
-        raw_capture_path,
+        raw_capture,
     }
 }
 
@@ -794,7 +894,7 @@ struct CaptureRunConfig<'a> {
     characters: &'a HashMap<u32, CharacterInfo>,
     sender: &'a Sender<EngineEvent>,
     stop: &'a AtomicBool,
-    raw_capture_path: &'a std::path::Path,
+    raw_capture: &'a RawCaptureBuffer,
 }
 
 fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
@@ -806,7 +906,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         characters,
         sender,
         stop,
-        raw_capture_path,
+        raw_capture,
     } = config;
     // SAFETY: Function pointers are loaded from Npcap and used per the libpcap API.
     unsafe {
@@ -848,33 +948,12 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             return Err(format!("抓包过滤器无效: {error}"));
         }
         free_code(&mut program);
-        let mut raw_capture = match RawCaptureWriter::create(raw_capture_path, device) {
-            Ok(writer) => {
-                let _ = sender.send(EngineEvent::Status(format!(
-                    "正在抓包，完整原始帧同步保存至 {}",
-                    raw_capture_path.display()
-                )));
-                Some(writer)
-            }
-            Err(error) => {
-                let _ = sender.send(EngineEvent::Status(format!(
-                    "原始抓包保存不可用，实时解析继续：{error}"
-                )));
-                None
-            }
-        };
-        let raw_capture_status = if raw_capture.is_some() {
-            raw_capture_path.display().to_string()
-        } else {
-            "不可用（实时解析继续）".to_owned()
-        };
         let _ = sender.send(EngineEvent::Status(format!(
-            "正在抓包: {} ({})；原始文件: {}",
+            "正在抓包: {} ({})；原始帧保存在内存中",
             device.description,
             local_ip
                 .map(|ip| ip.to_string())
-                .unwrap_or_else(|| "不过滤本机 IP".to_owned()),
-            raw_capture_status
+                .unwrap_or_else(|| "不过滤本机 IP".to_owned())
         )));
 
         let mut decoder = PacketDecoder::default();
@@ -900,18 +979,11 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             let packet = std::slice::from_raw_parts(packet_data, header_ref.caplen as usize);
             let timestamp =
                 header_ref.ts.tv_sec as f64 + header_ref.ts.tv_usec as f64 / 1_000_000.0;
-            if let Some(writer) = raw_capture.as_mut() {
-                let raw_timestamp = Duration::new(
-                    header_ref.ts.tv_sec.max(0) as u64,
-                    header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
-                );
-                if let Err(error) = writer.write_packet(raw_timestamp, header_ref.len, packet) {
-                    let _ = sender.send(EngineEvent::Status(format!(
-                        "原始抓包写入失败，实时解析继续：{error}"
-                    )));
-                    raw_capture = None;
-                }
-            }
+            let raw_timestamp = Duration::new(
+                header_ref.ts.tv_sec.max(0) as u64,
+                header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
+            );
+            raw_capture.push(raw_timestamp, header_ref.len, packet);
             decoder.process_ethernet_frame(
                 packet,
                 timestamp,
@@ -920,23 +992,6 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
                 characters,
                 sender,
             );
-        }
-        if let Some(writer) = raw_capture {
-            match writer.finish() {
-                Ok((packet_count, captured_bytes)) => {
-                    let _ = sender.send(EngineEvent::Status(format!(
-                        "完整抓包已保存：{}，{} 包，{} 字节",
-                        raw_capture_path.display(),
-                        packet_count,
-                        captured_bytes
-                    )));
-                }
-                Err(error) => {
-                    let _ = sender.send(EngineEvent::Status(format!(
-                        "原始抓包刷新失败，实时解析结果不受影响：{error}"
-                    )));
-                }
-            }
         }
         close(handle);
     }
@@ -1290,6 +1345,32 @@ mod tests {
     }
 
     #[test]
+    fn saves_memory_capture_only_when_requested() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nte-memory-capture-{}-{unique}.pcapng",
+            std::process::id()
+        ));
+        let device = CaptureDevice {
+            name: "memory-device".to_owned(),
+            description: "memory adapter".to_owned(),
+            ipv4: vec![Ipv4Addr::LOCALHOST],
+        };
+        let packet: Vec<u8> = (0..64).collect();
+        let capture = RawCaptureBuffer::new(device);
+        capture.push(Duration::new(10, 250_000_000), 96, &packet);
+
+        assert!(!path.exists());
+        assert_eq!(capture.save(&path).unwrap(), (1, packet.len() as u64));
+        assert!(path.is_file());
+
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn rejects_empty_and_truncated_packets() {
         assert!(parse_udp_ipv4(&[]).is_none());
         assert!(parse_udp_ipv4(&[0_u8; 13]).is_none());
@@ -1321,6 +1402,174 @@ mod tests {
             events
                 .iter()
                 .any(|event| matches!(event, EngineEvent::Hit(_)))
+        );
+    }
+
+    #[test]
+    fn validates_latest_full_session_capture() {
+        let path = PathBuf::from("logs/nte_raw_20260612_234722_410.pcapng");
+        if !path.is_file() {
+            return;
+        }
+
+        let file = File::open(path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut handshakes = 0;
+        let mut modes = [0_usize; 4];
+        let mut damage_records = 0;
+        let mut single_bunches = 0;
+        while let Some(block) = reader.next_block() {
+            let Block::EnhancedPacket(packet) = block.unwrap() else {
+                continue;
+            };
+            let Some((_, source_port, _, destination_port, payload)) =
+                parse_udp_ipv4(packet.data.as_ref())
+            else {
+                continue;
+            };
+            if !matches!(
+                (source_port, destination_port),
+                (55550, 30224) | (30224, 55550)
+            ) {
+                continue;
+            }
+
+            match parse_transport_packet(payload).unwrap() {
+                TransportPacket::StatelessHandshake { .. } => handshakes += 1,
+                TransportPacket::Sequenced(packet) => {
+                    modes[packet.mode as usize] += 1;
+                    single_bunches += usize::from(parse_single_bunch(&packet).is_some());
+                }
+            }
+            for _record in crate::parser::parse_damage_records(payload) {
+                damage_records += 1;
+            }
+        }
+
+        assert_eq!(handshakes, 4);
+        assert_eq!(modes, [20_690, 126, 11, 1]);
+        assert_eq!(single_bunches, 474);
+        assert_eq!(damage_records, 837);
+    }
+
+    #[test]
+    fn classifies_latest_abyss_capture_damage_direction() {
+        let path = PathBuf::from("logs/nte_raw_20260613_005021_039.pcapng");
+        if !path.is_file() {
+            return;
+        }
+        let characters = Arc::new(
+            crate::parser::load_characters(std::path::Path::new("characters.json")).unwrap(),
+        );
+        let (sender, receiver) = unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        import_pcapng(path, characters, true, sender, stop)
+            .join()
+            .unwrap();
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        let hits = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::Hit(hit) => Some(hit.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let incoming = hits
+            .iter()
+            .filter(|hit| hit.direction == "incoming")
+            .collect::<Vec<_>>();
+
+        assert_eq!(hits.len(), 461);
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.direction == "outgoing")
+                .count(),
+            460
+        );
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(incoming[0].damage, 3_101.0);
+        assert!((incoming[0].target_max_hp - 22_397.898_437_5).abs() < 0.001);
+
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    EngineEvent::Abyss(AbyssEvent::RestartDetected { .. })
+                ))
+                .count(),
+            2
+        );
+        let mut state = crate::model::CombatState::default();
+        for event in events {
+            match event {
+                EngineEvent::Abyss(event) => state.apply_abyss_event(event),
+                EngineEvent::Hit(hit) => state.push_hit(hit),
+                _ => {}
+            }
+        }
+        assert_eq!(state.abyss.floor, Some(11));
+        assert_eq!(state.abyss.first_half.hits.len(), 254);
+        assert_eq!(state.abyss.first_half.total_damage, 1_471_024.0);
+        assert_eq!(state.abyss.second_half.hits.len(), 207);
+        assert_eq!(state.abyss.second_half.total_damage, 1_959_151.0);
+        assert_eq!(state.abyss.second_half.total_damage_taken, 3_101.0);
+    }
+
+    #[test]
+    fn identifies_latest_capture_health_recovery_updates() {
+        let path = PathBuf::from("logs/nte_raw_20260613_012652_290.pcapng");
+        if !path.is_file() {
+            return;
+        }
+        let file = File::open(path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut updates = Vec::new();
+        while let Some(block) = reader.next_block() {
+            let Block::EnhancedPacket(packet) = block.unwrap() else {
+                continue;
+            };
+            let timestamp = packet.timestamp.as_secs_f64();
+            let Some((src, src_port, dst, dst_port, payload)) =
+                parse_udp_ipv4(packet.data.as_ref())
+            else {
+                continue;
+            };
+            for update in parse_current_hp_updates(payload) {
+                if (19_000.0..=22_000.0).contains(&update.current_hp) {
+                    let packet_id = match parse_transport_packet(payload) {
+                        Some(TransportPacket::Sequenced(packet)) => Some(packet.packet_id),
+                        _ => None,
+                    };
+                    updates.push((
+                        timestamp,
+                        update.current_hp,
+                        payload.len(),
+                        packet_id,
+                        update.byte_offset,
+                        update.bit_shift,
+                        format!("{src}:{src_port}->{dst}:{dst_port}"),
+                    ));
+                }
+            }
+        }
+
+        let values = updates.iter().map(|update| update.1).collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                21_198.0, 21_460.0, 21_998.0, 19_172.0, 19_427.0, 19_637.0, 20_029.0, 20_513.0,
+                20_946.0,
+            ]
+        );
+        assert_eq!(
+            (updates[1].2, updates[1].3, updates[1].4, updates[1].5),
+            (351, Some(5896), 53, 5)
+        );
+        assert_eq!(
+            (updates[2].2, updates[2].3, updates[2].4, updates[2].5),
+            (117, Some(6016), 63, 4)
         );
     }
 
