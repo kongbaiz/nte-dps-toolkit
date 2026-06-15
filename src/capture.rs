@@ -1121,6 +1121,12 @@ impl PacketDecoder {
             .filter(|target| timestamp >= target.observed_at && timestamp <= target.expires_at)
     }
 
+    fn invalidate_monster_if_ambiguous(&mut self, packet_has_multiple_targets: bool) {
+        if packet_has_multiple_targets {
+            self.current_monster = None;
+        }
+    }
+
     fn apply_inferred_monster(
         &self,
         hits: &mut [Hit],
@@ -1258,6 +1264,7 @@ impl PacketDecoder {
         packet_target_ids.sort_unstable();
         packet_target_ids.dedup();
         let packet_has_multiple_targets = packet_target_ids.len() > 1;
+        self.invalidate_monster_if_ambiguous(packet_has_multiple_targets);
         if !packet_has_multiple_targets {
             if effect_monsters.len() == 1 {
                 let (id, name) = effect_monsters.remove(0);
@@ -2114,6 +2121,24 @@ mod tests {
         let mut later_hits = [targetless_hit()];
         decoder.apply_inferred_monster(&mut later_hits, 20.3, false);
         assert!(later_hits[0].target_name.is_none());
+    }
+
+    #[test]
+    fn ambiguous_targets_invalidate_current_monster_for_later_hits() {
+        let mut decoder = PacketDecoder::default();
+        decoder.current_monster = Some(inferred_target(
+            MonsterTargetSource::GameplayEffect,
+            30.0,
+            33.0,
+        ));
+
+        decoder.invalidate_monster_if_ambiguous(true);
+        assert!(decoder.current_monster.is_none());
+
+        let mut later_hits = [targetless_hit()];
+        decoder.apply_inferred_monster(&mut later_hits, 31.0, false);
+        assert!(later_hits[0].target_name.is_none());
+        assert!(later_hits[0].target_context.is_empty());
     }
 
     #[test]
