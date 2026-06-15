@@ -81,6 +81,7 @@ pub struct ParsedCurrentHpUpdate {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsedBossHpUpdate {
+    pub target_handle: [u8; 16],
     pub current_hp: f32,
     pub byte_offset: usize,
     pub bit_shift: u8,
@@ -562,6 +563,9 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
                 continue;
             }
             updates.push(ParsedBossHpUpdate {
+                target_handle: decoded[8..24]
+                    .try_into()
+                    .expect("Boss target handle has a fixed 16-byte length"),
                 current_hp,
                 byte_offset: byte_offset + BOSS_HP_PREFIX_LENGTH,
                 bit_shift,
@@ -569,6 +573,33 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
         }
     }
     updates
+}
+
+pub fn parse_object_handles(data: &[u8]) -> Vec<[u8; 16]> {
+    let mut handles = Vec::new();
+    let mut seen = HashSet::new();
+    for bit_shift in 0..8_u8 {
+        let shifted = if bit_shift == 0 {
+            data.to_vec()
+        } else {
+            match decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1)) {
+                Some(value) => value,
+                None => continue,
+            }
+        };
+        for window in shifted.windows(28) {
+            let handle: [u8; 16] = window[..16]
+                .try_into()
+                .expect("Object handle window has a fixed 16-byte length");
+            if handle.iter().all(|byte| *byte != 0)
+                && window[16..].iter().all(|byte| *byte == 0)
+                && seen.insert(handle)
+            {
+                handles.push(handle);
+            }
+        }
+    }
+    handles
 }
 
 pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
@@ -876,10 +907,13 @@ pub fn detect_monster_targets(data: &[u8]) -> Vec<(String, String)> {
         for token in
             text.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
         {
-            let Some(monster) = monster_entry(token) else {
+            let Some((id, display_name)) = monster_entry(token)
+                .map(|monster| (monster.id, monster.display_name))
+                .or_else(|| monster_target_from_identifier(token))
+            else {
                 continue;
             };
-            let entry = (monster.id, monster.display_name);
+            let entry = (id, display_name);
             if !monsters.contains(&entry) {
                 monsters.push(entry);
             }
@@ -897,17 +931,23 @@ pub fn monster_target_from_identifier(value: &str) -> Option<(String, String)> {
         let Some(start) = lower.find(marker) else {
             continue;
         };
-        let digits = lower[start + marker.len()..]
-            .trim_start_matches('0')
+        let raw_digits = lower[start + marker.len()..]
             .chars()
             .take_while(char::is_ascii_digit)
             .collect::<String>();
-        if digits.is_empty() {
+        if raw_digits.is_empty() {
             continue;
         }
-        let family = format!("{}{}", marker, digits);
-        if let Some(monster) = monster_index().get(&family) {
-            return Some((monster.id.clone(), monster.display_name.clone()));
+        let normalized_digits = raw_digits.trim_start_matches('0');
+        for family in [
+            format!("{marker}{raw_digits}"),
+            format!("{marker}{raw_digits}_bp"),
+            format!("{marker}{normalized_digits}"),
+            format!("{marker}{normalized_digits}_bp"),
+        ] {
+            if let Some(monster) = monster_index().get(&family) {
+                return Some((monster.id.clone(), monster.display_name.clone()));
+            }
         }
     }
     None
@@ -1091,6 +1131,25 @@ mod character_tests {
     }
 
     #[test]
+    fn parses_target_handle_from_boss_hp_update() {
+        let handle = [
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ];
+        let mut payload = [0_u8; BOSS_HP_PREFIX_LENGTH + 4];
+        payload[..8].copy_from_slice(&BOSS_HP_PREFIX_HEAD);
+        payload[8..24].copy_from_slice(&handle);
+        payload[BOSS_HP_PREFIX_LENGTH..].copy_from_slice(&1_927_891_f32.to_le_bytes());
+
+        let updates = parse_boss_hp_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target_handle, handle);
+        assert_eq!(updates[0].current_hp, 1_927_891.0);
+        assert!(parse_object_handles(&payload).contains(&handle));
+    }
+
+    #[test]
     fn resolves_character_from_matching_bit_alignment() {
         let evidence = [(1003, 2, 241), (1004, 3, 50), (1003, 0, 606)];
 
@@ -1113,6 +1172,10 @@ mod character_tests {
         assert_eq!(
             monster_target_from_identifier("GE_Boss_017_act01_Dmg_05a_Steal_BP"),
             Some(("Boss_017_BP_Abyss".to_owned(), "玛门".to_owned()))
+        );
+        assert_eq!(
+            monster_target_from_identifier("boss_07"),
+            Some(("Boss_07_BP".to_owned(), "塞润尼缇".to_owned()))
         );
     }
 }

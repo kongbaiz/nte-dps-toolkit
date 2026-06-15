@@ -32,7 +32,8 @@ use crate::parser::{
     detect_monster_targets, find_data_file, find_declared_character_evidence,
     load_gameplay_effect_mapping, load_gameplay_effect_skills, load_wooden_damage_names,
     monster_target_from_identifier, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, qte_reaction_type,
+    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, parse_object_handles,
+    qte_reaction_type,
 };
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 
@@ -992,6 +993,132 @@ fn corrected_follow_up_damage(
     None
 }
 
+#[derive(Clone, Debug)]
+struct TargetHandleInfo {
+    handle: [u8; 16],
+    target_id: String,
+    target_name: Option<String>,
+    monster_id: Option<String>,
+    monster_name: Option<String>,
+    max_hp: Option<f64>,
+    last_hp: Option<f64>,
+    last_seen_at: f64,
+}
+
+#[derive(Default)]
+struct TargetHandleTracker {
+    targets: HashMap<[u8; 16], TargetHandleInfo>,
+}
+
+impl TargetHandleTracker {
+    fn observe_monster(
+        &mut self,
+        handles: &[[u8; 16]],
+        monsters: &[(String, String)],
+        timestamp: f64,
+    ) {
+        if handles.len() != 1 || monsters.len() != 1 {
+            return;
+        }
+        let handle = handles[0];
+        let (monster_id, monster_name) = &monsters[0];
+        let target = self
+            .targets
+            .entry(handle)
+            .or_insert_with(|| target_handle_info(handle, timestamp));
+        target.target_name = Some(monster_name.clone());
+        target.monster_id = Some(monster_id.clone());
+        target.monster_name = Some(monster_name.clone());
+        target.last_seen_at = timestamp;
+    }
+
+    fn observe_boss_hp(&mut self, handle: [u8; 16], current_hp: f64, timestamp: f64) {
+        let target = self
+            .targets
+            .entry(handle)
+            .or_insert_with(|| target_handle_info(handle, timestamp));
+        target.last_hp = Some(current_hp);
+        target.max_hp = Some(
+            target
+                .max_hp
+                .map_or(current_hp, |maximum| maximum.max(current_hp)),
+        );
+        target.last_seen_at = timestamp;
+    }
+
+    fn apply_to_hits(
+        &mut self,
+        packet_handles: &[[u8; 16]],
+        hits: &mut [Hit],
+        timestamp: f64,
+    ) -> bool {
+        let mut matched_handles = packet_handles
+            .iter()
+            .copied()
+            .filter(|handle| self.targets.contains_key(handle))
+            .collect::<Vec<_>>();
+        matched_handles.sort_unstable();
+        matched_handles.dedup();
+        let [handle] = matched_handles.as_slice() else {
+            return false;
+        };
+        let Some(target) = self.targets.get_mut(handle) else {
+            return false;
+        };
+        debug_assert_eq!(target.target_id, hex::encode(target.handle));
+        target.last_seen_at = timestamp;
+        for hit in hits {
+            hit.target_id = Some(target.target_id.clone());
+            hit.target_name = target
+                .target_name
+                .clone()
+                .or_else(|| target.monster_name.clone());
+            target.max_hp = Some(
+                target
+                    .max_hp
+                    .map_or(hit.target_max_hp, |maximum| maximum.max(hit.target_max_hp)),
+            );
+            target.last_hp = Some(hit.target_hp_after);
+            hit.target_context.push(format!(
+                "协议对象句柄：{}（hit 与目标状态包直接关联）",
+                target.target_id
+            ));
+            if let (Some(monster_id), Some(monster_name)) =
+                (&target.monster_id, &target.monster_name)
+            {
+                hit.target_context
+                    .push(format!("对象句柄关联怪物：{monster_name}（{monster_id}）"));
+            }
+        }
+        true
+    }
+
+    fn target_for_handles(&self, handles: &[[u8; 16]]) -> Option<&TargetHandleInfo> {
+        let mut targets = handles.iter().filter_map(|handle| self.targets.get(handle));
+        let first = targets.next()?;
+        targets
+            .all(|target| target.handle == first.handle)
+            .then_some(first)
+    }
+
+    fn clear(&mut self) {
+        self.targets.clear();
+    }
+}
+
+fn target_handle_info(handle: [u8; 16], timestamp: f64) -> TargetHandleInfo {
+    TargetHandleInfo {
+        handle,
+        target_id: hex::encode(handle),
+        target_name: None,
+        monster_id: None,
+        monster_name: None,
+        max_hp: None,
+        last_hp: None,
+        last_seen_at: timestamp,
+    }
+}
+
 struct PacketDecoder {
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
@@ -1002,6 +1129,7 @@ struct PacketDecoder {
     resource_warnings: Vec<String>,
     character_declarations: HashMap<u32, f64>,
     current_monster: Option<InferredMonsterTarget>,
+    target_handles: TargetHandleTracker,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1079,6 +1207,7 @@ impl Default for PacketDecoder {
             resource_warnings,
             character_declarations: HashMap::new(),
             current_monster: None,
+            target_handles: TargetHandleTracker::default(),
         }
     }
 }
@@ -1256,6 +1385,16 @@ impl PacketDecoder {
             .collect::<Vec<_>>();
         effect_monsters.sort();
         effect_monsters.dedup();
+        let mut packet_monsters = detected_monsters
+            .iter()
+            .chain(effect_monsters.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        packet_monsters.sort();
+        packet_monsters.dedup();
+        let packet_handles = parse_object_handles(payload);
+        self.target_handles
+            .observe_monster(&packet_handles, &packet_monsters, timestamp);
         let mut packet_target_ids = detected_monsters
             .iter()
             .chain(effect_monsters.iter())
@@ -1314,8 +1453,14 @@ impl PacketDecoder {
             .any(|scene| scene.category == "transition");
         if scene_transition {
             self.current_monster = None;
+            self.target_handles.clear();
         } else if outgoing {
-            self.apply_inferred_monster(&mut hits, timestamp, packet_has_multiple_targets);
+            let applied_handle_target =
+                self.target_handles
+                    .apply_to_hits(&packet_handles, &mut hits, timestamp);
+            if !applied_handle_target {
+                self.apply_inferred_monster(&mut hits, timestamp, packet_has_multiple_targets);
+            }
         }
         for hit in &mut hits {
             enrich_hit_with_gameplay_effect(
@@ -1389,6 +1534,13 @@ impl PacketDecoder {
         } else {
             parse_boss_hp_updates(payload)
         };
+        for update in &boss_hp_updates {
+            self.target_handles.observe_boss_hp(
+                update.target_handle,
+                update.current_hp as f64,
+                timestamp,
+            );
+        }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
             && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
@@ -1449,8 +1601,11 @@ impl PacketDecoder {
                     boss_hp_updates
                         .iter()
                         .map(|update| format!(
-                            "{:.0}@{}:{}",
-                            update.current_hp, update.byte_offset, update.bit_shift
+                            "{}={:.0}@{}:{}",
+                            hex::encode(update.target_handle),
+                            update.current_hp,
+                            update.byte_offset,
+                            update.bit_shift
                         ))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -1829,6 +1984,8 @@ pub fn import_capture_json(
                 .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
             let mut packets = document.packets.into_iter().peekable();
             let mut hits = document.hits.into_iter().peekable();
+            let mut target_handles = TargetHandleTracker::default();
+            let mut packet_hit_targets = HashMap::<u64, TargetHandleInfo>::new();
 
             while packets.peek().is_some() || hits.peek().is_some() {
                 if stop.load(Ordering::Relaxed) {
@@ -1841,17 +1998,42 @@ pub fn import_capture_json(
                     (None, None) => break,
                 };
                 if take_packet {
-                    if send_export_packet(
-                        packets.next().expect("peeked packet must exist"),
-                        &sender,
-                    )? {
+                    let packet = packets.next().expect("peeked packet must exist");
+                    let payload = hex::decode(&packet.payload_hex).unwrap_or_default();
+                    if !payload.is_empty() {
+                        let packet_handles = parse_object_handles(&payload);
+                        let packet_monsters = detect_monster_targets(&payload);
+                        target_handles.observe_monster(
+                            &packet_handles,
+                            &packet_monsters,
+                            packet.timestamp_unix,
+                        );
+                        for update in parse_boss_hp_updates(&payload) {
+                            target_handles.observe_boss_hp(
+                                update.target_handle,
+                                update.current_hp as f64,
+                                packet.timestamp_unix,
+                            );
+                        }
+                        if packet.parsed_hits > 0
+                            && let Some(target) = target_handles.target_for_handles(&packet_handles)
+                        {
+                            packet_hit_targets
+                                .insert(packet.timestamp_unix.to_bits(), target.clone());
+                        }
+                    }
+                    if send_export_packet(packet, &sender)? {
                         packet_count += 1;
                     }
                 } else {
+                    let mut hit = hits.next().expect("peeked hit must exist");
+                    if hit.target_id.is_none()
+                        && let Some(target) = packet_hit_targets.get(&hit.timestamp_unix.to_bits())
+                    {
+                        apply_export_target(&mut hit, target);
+                    }
                     sender
-                        .send(export_hit_event(
-                            hits.next().expect("peeked hit must exist"),
-                        ))
+                        .send(export_hit_event(hit))
                         .map_err(|error| error.to_string())?;
                 }
             }
@@ -1916,6 +2098,22 @@ fn send_export_packet(packet: ExportPacket, sender: &Sender<EngineEvent>) -> Res
         .send(EngineEvent::Packet(packet))
         .map_err(|error| error.to_string())?;
     Ok(true)
+}
+
+fn apply_export_target(hit: &mut ExportHit, target: &TargetHandleInfo) {
+    hit.target_id = Some(target.target_id.clone());
+    hit.target_name = target
+        .target_name
+        .clone()
+        .or_else(|| target.monster_name.clone());
+    hit.target_context.push(format!(
+        "协议对象句柄：{}（从导出封包重新关联）",
+        target.target_id
+    ));
+    if let (Some(monster_id), Some(monster_name)) = (&target.monster_id, &target.monster_name) {
+        hit.target_context
+            .push(format!("对象句柄关联怪物：{monster_name}（{monster_id}）"));
+    }
 }
 
 fn export_hit_event(hit: ExportHit) -> EngineEvent {
@@ -2042,6 +2240,37 @@ mod tests {
             [1001, 1002]
         );
         assert!(parse_export_ids(&serde_json::json!([4294967296_u64])).is_empty());
+    }
+
+    #[test]
+    fn target_handle_tracker_links_monster_hp_and_hit() {
+        let handle = [
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ];
+        let mut tracker = TargetHandleTracker::default();
+        tracker.observe_monster(
+            &[handle],
+            &[("boss_07".to_owned(), "Boss 07".to_owned())],
+            1.0,
+        );
+        tracker.observe_boss_hp(handle, 1_930_389.0, 1.1);
+        let mut hits = [targetless_hit()];
+        hits[0].target_max_hp = 1_930_389.0;
+        hits[0].target_hp_after = 1_927_891.0;
+
+        assert!(tracker.apply_to_hits(&[handle], &mut hits, 1.2));
+        assert_eq!(
+            hits[0].target_id.as_deref(),
+            Some("21f04e928995334f8c0bbcaa0ee16fe7")
+        );
+        assert_eq!(hits[0].target_name.as_deref(), Some("Boss 07"));
+        assert!(
+            hits[0]
+                .target_context
+                .iter()
+                .any(|context| context.contains("协议对象句柄"))
+        );
     }
 
     fn inferred_target(
