@@ -356,7 +356,6 @@ pub struct DpsApp {
     local_ip: String,
     game_network: Option<GameNetwork>,
     filter: String,
-    filter_customized: bool,
     active_capture_filter: Option<String>,
     include_incoming: bool,
     capture: Option<CaptureHandle>,
@@ -487,7 +486,6 @@ impl DpsApp {
             local_ip,
             game_network,
             filter: "udp".to_owned(),
-            filter_customized: false,
             active_capture_filter: None,
             include_incoming: true,
             capture: None,
@@ -772,11 +770,7 @@ impl DpsApp {
             return;
         };
         let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
-        let capture_filter = build_capture_filter(
-            &self.filter,
-            self.filter_customized,
-            self.game_network.as_ref(),
-        );
+        let capture_filter = self.filter.clone();
         self.reset_combat_session();
         let capture = start_capture(
             device,
@@ -1001,7 +995,10 @@ impl DpsApp {
                     EngineEvent::Packet(_) => {
                         self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
                     }
-                    EngineEvent::Hit(_) | EngineEvent::Abyss(_) | EngineEvent::Scene(_) => {
+                    EngineEvent::Hit(_)
+                    | EngineEvent::TargetTrackResolved { .. }
+                    | EngineEvent::Abyss(_)
+                    | EngineEvent::Scene(_) => {
                         if self.paused_events.len() == MAX_PAUSED_EVENTS {
                             self.paused_events.pop_front();
                         }
@@ -1059,6 +1056,13 @@ impl DpsApp {
     fn apply_engine_event(&mut self, event: EngineEvent) {
         match event {
             EngineEvent::Hit(hit) => self.state.push_hit(hit),
+            EngineEvent::TargetTrackResolved {
+                track_key,
+                target_id,
+                target_name,
+            } => self
+                .state
+                .apply_target_track_resolution(&track_key, &target_id, &target_name),
             EngineEvent::Packet(packet) => self.state.push_packet(packet),
             EngineEvent::Abyss(event) => {
                 self.character_hit_cache = HitDetailCache::default();
@@ -2894,12 +2898,7 @@ impl DpsApp {
                         ui.monospace(self.diagnostic.as_deref().unwrap_or("正常"));
                         ui.end_row();
                         ui.label("BPF");
-                        if ui
-                            .add(egui::TextEdit::singleline(&mut self.filter).desired_width(220.0))
-                            .changed()
-                        {
-                            self.filter_customized = true;
-                        }
+                        ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(220.0));
                         ui.end_row();
                         ui.label("实际 BPF");
                         ui.monospace(self.active_capture_filter.as_deref().unwrap_or_else(|| {
@@ -4641,7 +4640,7 @@ fn truncate_text_to_width(
     let mut low = 0;
     let mut high = chars.len();
     while low < high {
-        let middle = (low + high + 1) / 2;
+        let middle = (low + high).div_ceil(2);
         let mut candidate = chars[..middle].iter().collect::<String>();
         candidate.push('…');
         if text_width(&candidate) <= max_width {
@@ -5217,26 +5216,22 @@ fn parse_hex_color(value: &str) -> Option<Color32> {
     ))
 }
 
-fn build_capture_filter(
-    configured_filter: &str,
-    customized: bool,
-    game_network: Option<&GameNetwork>,
-) -> String {
-    if !customized
-        && configured_filter.trim().eq_ignore_ascii_case("udp")
-        && let Some(network) = game_network
-    {
-        return format!("udp and host {}", network.remote_ip);
+fn data_root() -> PathBuf {
+    if PathBuf::from(CHARACTER_DATA_PATH).is_file() {
+        return PathBuf::from(".");
     }
-    configured_filter.to_owned()
+    std::env::current_exe()
+        .ok()
+        .into_iter()
+        .flat_map(|path| path.ancestors().map(PathBuf::from).collect::<Vec<_>>())
+        .find(|path| path.join(CHARACTER_DATA_PATH).is_file())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{adjusted_cached_index, build_capture_filter, hit_type_label};
+    use super::{adjusted_cached_index, hit_type_label};
     use crate::model::Hit;
-    use crate::network::GameNetwork;
-    use std::net::Ipv4Addr;
 
     fn hit_with_direction(direction: &str) -> Hit {
         Hit {
@@ -5283,36 +5278,4 @@ mod tests {
         assert_eq!(hit_type_label(&hit_with_direction("incoming")), "受击");
         assert_eq!(hit_type_label(&hit_with_direction("unknown")), "候选输出");
     }
-
-    #[test]
-    fn default_capture_filter_is_narrowed_without_overriding_custom_filter() {
-        let network = GameNetwork {
-            pid: 1,
-            local_ip: Ipv4Addr::new(192, 168, 1, 2),
-            remote_ip: Ipv4Addr::new(203, 0, 113, 8),
-            remote_port: 30031,
-        };
-        assert_eq!(
-            build_capture_filter("udp", false, Some(&network)),
-            "udp and host 203.0.113.8"
-        );
-        assert_eq!(build_capture_filter("udp", false, None), "udp");
-        assert_eq!(build_capture_filter("udp", true, Some(&network)), "udp");
-        assert_eq!(
-            build_capture_filter("udp and port 7777", true, Some(&network)),
-            "udp and port 7777"
-        );
-    }
-}
-
-fn data_root() -> PathBuf {
-    if PathBuf::from(CHARACTER_DATA_PATH).is_file() {
-        return PathBuf::from(".");
-    }
-    std::env::current_exe()
-        .ok()
-        .into_iter()
-        .flat_map(|path| path.ancestors().map(PathBuf::from).collect::<Vec<_>>())
-        .find(|path| path.join(CHARACTER_DATA_PATH).is_file())
-        .unwrap_or_else(|| PathBuf::from("."))
 }

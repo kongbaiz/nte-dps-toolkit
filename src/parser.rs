@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -457,6 +457,21 @@ fn decode_shifted_bytes(
     let mut output = vec![0; count];
     decode_shifted_into(data, byte_offset, bit_shift, start_bit_offset, &mut output)?;
     Some(output)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ParsedMonsterInstance {
+    pub instance_id: String,
+    pub monster_id: String,
+    pub monster_name: String,
+    pub object_name: String,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
+}
+
+#[cfg(test)]
+pub(crate) fn aligned_bytes_for_test(data: &[u8], bit_shift: u8) -> Option<Vec<u8>> {
+    decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
 }
 
 fn read_field(
@@ -1003,6 +1018,54 @@ pub fn detect_monster_targets(data: &[u8]) -> Vec<(String, String)> {
     monsters
 }
 
+pub fn detect_monster_instances(data: &[u8]) -> Vec<ParsedMonsterInstance> {
+    let mut instances = BTreeSet::new();
+    for bit_shift in 0..8_u8 {
+        let shifted = if bit_shift == 0 {
+            data.to_vec()
+        } else {
+            match decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1)) {
+                Some(value) => value,
+                None => continue,
+            }
+        };
+        let mut cursor = 0;
+        while cursor < shifted.len() {
+            if !(shifted[cursor].is_ascii_alphanumeric() || shifted[cursor] == b'_') {
+                cursor += 1;
+                continue;
+            }
+            let start = cursor;
+            while cursor < shifted.len()
+                && (shifted[cursor].is_ascii_alphanumeric() || shifted[cursor] == b'_')
+            {
+                cursor += 1;
+            }
+            let Ok(token) = std::str::from_utf8(&shifted[start..cursor]) else {
+                continue;
+            };
+            let Some((base, instance_id)) = token.rsplit_once("_C_") else {
+                continue;
+            };
+            if instance_id.is_empty() || !instance_id.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            let Some(monster) = monster_entry(base) else {
+                continue;
+            };
+            instances.insert(ParsedMonsterInstance {
+                instance_id: instance_id.to_owned(),
+                monster_id: monster.id,
+                monster_name: monster.display_name,
+                object_name: token.to_owned(),
+                byte_offset: start,
+                bit_shift,
+            });
+        }
+    }
+    instances.into_iter().collect()
+}
+
 pub fn monster_target_from_identifier(value: &str) -> Option<(String, String)> {
     if let Some(monster) = monster_entry(value) {
         return Some((monster.id, monster.display_name));
@@ -1331,5 +1394,15 @@ mod character_tests {
             monster_icon_path(Some("mon_35_BP_Red_Abyss"), None),
             Some("res/images/monsters/mon_35_red.png")
         );
+    }
+
+    #[test]
+    fn parses_unique_monster_instance_names() {
+        let instances = detect_monster_instances(b"mon_24_BP_Abyss_C_2147349936\0");
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].instance_id, "2147349936");
+        assert_eq!(instances[0].monster_id, "mon_24_BP_Abyss");
+        assert_eq!(instances[0].monster_name, "诡面风筝");
+        assert_eq!(instances[0].object_name, "mon_24_BP_Abyss_C_2147349936");
     }
 }

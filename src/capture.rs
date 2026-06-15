@@ -1,5 +1,7 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(test)]
+use std::collections::BTreeMap;
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint};
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -29,12 +31,14 @@ use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
     classify_attack_type_from_description, declared_character_ids_from_evidence,
-    detect_monster_targets, find_data_file, find_declared_character_evidence,
-    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_wooden_damage_names,
-    monster_target_from_identifier, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, parse_object_handles,
-    qte_reaction_type,
+    detect_monster_instances, detect_monster_targets, find_data_file,
+    find_declared_character_evidence, load_gameplay_effect_mapping, load_gameplay_effect_skills,
+    load_wooden_damage_names, monster_target_from_identifier, normalize_damage_name,
+    parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects,
+    parse_object_handles, qte_reaction_type,
 };
+
+include!(concat!(env!("OUT_DIR"), "/abyss_stage_index.rs"));
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 
 const PCAP_ERRBUF_SIZE: usize = 256;
@@ -713,18 +717,19 @@ fn append_packet_note(note: &mut String, diagnostic: Option<String>) {
     note.push_str(&diagnostic);
 }
 
-fn parse_abyss_stage_id(value: &str) -> Option<(u32, AbyssHalf)> {
+fn parse_abyss_stage_id(value: &str) -> Option<(u32, u32, AbyssHalf)> {
     let parts: Vec<_> = value.split('_').collect();
     if parts.len() < 4 || parts.first().copied() != Some("Abyss") {
         return None;
     }
+    let cycle = parts.get(parts.len() - 3)?.parse().ok()?;
     let floor = parts.get(parts.len() - 2)?.parse().ok()?;
     let half = match *parts.last()? {
         "0" => AbyssHalf::First,
         "1" => AbyssHalf::Second,
         _ => return None,
     };
-    Some((floor, half))
+    Some((cycle, floor, half))
 }
 
 fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent> {
@@ -743,9 +748,10 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
             }
         }
     }
-    if let Some((floor, half)) = explicit_stage {
+    if let Some((cycle, floor, half)) = explicit_stage {
         events.push(AbyssEvent::Stage {
             timestamp,
+            cycle: Some(cycle),
             floor: Some(floor),
             half,
         });
@@ -759,6 +765,7 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
         if first ^ second {
             events.push(AbyssEvent::Stage {
                 timestamp,
+                cycle: None,
                 floor: None,
                 half: if first {
                     AbyssHalf::First
@@ -775,6 +782,50 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
         events.push(AbyssEvent::Exit { timestamp });
     }
     events
+}
+
+#[derive(Clone, Debug)]
+struct AbyssStageTarget {
+    id: String,
+    name: String,
+    max_hp: Option<u64>,
+}
+
+fn abyss_stage_target(identifier: &str, max_hp: Option<u64>) -> Option<AbyssStageTarget> {
+    let abyss_identifier = (!identifier.ends_with("_Abyss")).then(|| format!("{identifier}_Abyss"));
+    let (id, name) = abyss_identifier
+        .as_deref()
+        .and_then(monster_target_from_identifier)
+        .or_else(|| monster_target_from_identifier(identifier))?;
+    Some(AbyssStageTarget { id, name, max_hp })
+}
+
+fn abyss_stage_targets(cycle: u32, floor: u32, half: AbyssHalf) -> Vec<AbyssStageTarget> {
+    let half_index = match half {
+        AbyssHalf::First => 0,
+        AbyssHalf::Second => 1,
+    };
+    let rows = ABYSS_STAGE_ROWS
+        .iter()
+        .filter(|&&(row_cycle, row_floor, row_half, _, _, _)| {
+            row_cycle == cycle && row_floor == floor && row_half == half_index
+        })
+        .filter_map(|&(_, _, _, _, identifier, max_hp)| {
+            abyss_stage_target(identifier, Some(max_hp))
+        })
+        .collect::<Vec<_>>();
+
+    let names = rows
+        .iter()
+        .map(|target| target.name.as_str())
+        .collect::<BTreeSet<_>>();
+    if names.len() == 1 {
+        let mut target = rows.into_iter().next().expect("one target name exists");
+        target.max_hp = None;
+        return vec![target];
+    }
+
+    rows
 }
 
 fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
@@ -1007,11 +1058,13 @@ struct TargetHandleInfo {
     max_hp: Option<f64>,
     last_hp: Option<f64>,
     last_seen_at: f64,
+    ambiguous: bool,
 }
 
 #[derive(Default)]
 struct TargetHandleTracker {
     targets: HashMap<[u8; 16], TargetHandleInfo>,
+    scope: u64,
 }
 
 impl TargetHandleTracker {
@@ -1021,15 +1074,67 @@ impl TargetHandleTracker {
         monsters: &[(String, String)],
         timestamp: f64,
     ) {
-        if handles.len() != 1 || monsters.len() != 1 {
+        let [(monster_id, _)] = monsters else {
             return;
-        }
-        let handle = handles[0];
+        };
+        let noisy_generic = matches!(
+            monster_id.to_ascii_lowercase().as_str(),
+            "mon_01_bp" | "mon_04_bp" | "mon_015_bp" | "mon_18_bp"
+        );
+        let handle = if let [handle] = handles {
+            *handle
+        } else {
+            let mut candidates = if handles.is_empty() {
+                self.targets
+                    .values()
+                    .filter(|target| {
+                        target.monster_name.is_none()
+                            && target.max_hp.is_some()
+                            && timestamp - target.last_seen_at <= 2.0
+                    })
+                    .map(|target| target.handle)
+                    .collect::<Vec<_>>()
+            } else {
+                handles
+                    .iter()
+                    .copied()
+                    .filter(|handle| {
+                        self.targets.get(handle).is_some_and(|target| {
+                            target.max_hp.is_some() && timestamp - target.last_seen_at <= 2.0
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            candidates.sort_unstable();
+            candidates.dedup();
+            let [handle] = candidates.as_slice() else {
+                return;
+            };
+            if noisy_generic {
+                return;
+            }
+            *handle
+        };
         let (monster_id, monster_name) = &monsters[0];
         let target = self
             .targets
             .entry(handle)
-            .or_insert_with(|| target_handle_info(handle, timestamp));
+            .or_insert_with(|| target_handle_info(handle, timestamp, self.scope));
+        if target
+            .monster_name
+            .as_deref()
+            .is_some_and(|known| known != monster_name)
+        {
+            target.target_name = None;
+            target.monster_id = None;
+            target.monster_name = None;
+            target.ambiguous = true;
+            target.last_seen_at = timestamp;
+            return;
+        }
+        if target.ambiguous {
+            return;
+        }
         target.target_name = Some(monster_name.clone());
         target.monster_id = Some(monster_id.clone());
         target.monster_name = Some(monster_name.clone());
@@ -1040,7 +1145,7 @@ impl TargetHandleTracker {
         let target = self
             .targets
             .entry(handle)
-            .or_insert_with(|| target_handle_info(handle, timestamp));
+            .or_insert_with(|| target_handle_info(handle, timestamp, self.scope));
         target.last_hp = Some(current_hp);
         target.max_hp = Some(
             target
@@ -1069,17 +1174,27 @@ impl TargetHandleTracker {
         let Some(target) = self.targets.get_mut(handle) else {
             return false;
         };
-        debug_assert_eq!(target.target_id, hex::encode(target.handle));
+        if target.ambiguous {
+            return false;
+        }
+        debug_assert!(target.target_id.starts_with(&hex::encode(target.handle)));
         target.last_seen_at = timestamp;
         for hit in hits {
             if hit.direction == "incoming" {
                 continue;
             }
-            hit.target_id = Some(target.target_id.clone());
-            hit.target_name = target
-                .target_name
-                .clone()
-                .or_else(|| target.monster_name.clone());
+            if let (Some(hit_name), Some(handle_name)) =
+                (hit.target_name.as_deref(), target.monster_name.as_deref())
+                && hit_name != handle_name
+            {
+                continue;
+            }
+            if hit.target_name.is_none() {
+                hit.target_name = target
+                    .target_name
+                    .clone()
+                    .or_else(|| target.monster_name.clone());
+            }
             target.max_hp = Some(
                 target
                     .max_hp
@@ -1087,7 +1202,7 @@ impl TargetHandleTracker {
             );
             target.last_hp = Some(hit.target_hp_after);
             hit.target_context.push(format!(
-                "协议对象句柄：{}（hit 与目标状态包直接关联）",
+                "协议相关 16 字节值：{}（仅用于名称线索，不作为实体唯一 ID）",
                 target.target_id
             ));
             if let (Some(monster_id), Some(monster_name)) =
@@ -1100,30 +1215,217 @@ impl TargetHandleTracker {
         true
     }
 
-    fn target_for_handles(&self, handles: &[[u8; 16]]) -> Option<&TargetHandleInfo> {
-        let mut targets = handles.iter().filter_map(|handle| self.targets.get(handle));
-        let first = targets.next()?;
-        targets
-            .all(|target| target.handle == first.handle)
-            .then_some(first)
-    }
-
     fn clear(&mut self) {
         self.targets.clear();
     }
+
+    fn begin_scope(&mut self) {
+        self.scope = self.scope.wrapping_add(1);
+        self.clear();
+    }
 }
 
-fn target_handle_info(handle: [u8; 16], timestamp: f64) -> TargetHandleInfo {
+fn target_handle_info(handle: [u8; 16], timestamp: f64, scope: u64) -> TargetHandleInfo {
+    let handle_id = hex::encode(handle);
     TargetHandleInfo {
         handle,
-        target_id: hex::encode(handle),
+        target_id: if scope == 0 {
+            handle_id
+        } else {
+            format!("{handle_id}#{scope}")
+        },
         target_name: None,
         monster_id: None,
         monster_name: None,
         max_hp: None,
         last_hp: None,
         last_seen_at: timestamp,
+        ambiguous: false,
     }
+}
+
+#[derive(Clone, Debug)]
+struct ObservedTargetTrack {
+    serial: u64,
+    max_hp: f64,
+    current_hp: f64,
+    last_seen_at: f64,
+    instance_id: Option<String>,
+    instance_name: Option<String>,
+}
+
+#[derive(Default)]
+struct TargetTrackResolver {
+    scope: u64,
+    next_serial: u64,
+    tracks: Vec<ObservedTargetTrack>,
+}
+
+#[derive(Clone, Debug)]
+struct TargetTrackResolution {
+    track_key: String,
+    target_id: String,
+    target_name: String,
+}
+
+impl TargetTrackResolver {
+    fn begin_scope(&mut self) {
+        self.scope = self.scope.wrapping_add(1);
+        self.next_serial = 0;
+        self.tracks.clear();
+    }
+
+    fn resolve_hits(
+        &mut self,
+        hits: &mut [Hit],
+        instances: &[crate::parser::ParsedMonsterInstance],
+        timestamp: f64,
+    ) -> Vec<TargetTrackResolution> {
+        let mut resolutions = Vec::new();
+        self.tracks
+            .retain(|track| timestamp - track.last_seen_at <= 30.0);
+
+        for hit in hits.iter_mut().filter(|hit| hit.direction != "incoming") {
+            let direct_instance = closest_instance_for_hit(hit, instances);
+            let track_index = direct_instance
+                .and_then(|instance| {
+                    self.tracks.iter().position(|track| {
+                        track.instance_id.as_deref() == Some(instance.object_name.as_str())
+                    })
+                })
+                .or_else(|| {
+                    self.unique_continuous_track(
+                        hit,
+                        direct_instance.map(|instance| instance.object_name.as_str()),
+                    )
+                });
+
+            let track_index = track_index.unwrap_or_else(|| {
+                let serial = self.next_serial;
+                self.next_serial = self.next_serial.wrapping_add(1);
+                self.tracks.push(ObservedTargetTrack {
+                    serial,
+                    max_hp: hit.target_max_hp,
+                    current_hp: hit.target_hp_before,
+                    last_seen_at: timestamp,
+                    instance_id: None,
+                    instance_name: None,
+                });
+                self.tracks.len() - 1
+            });
+
+            let track = &mut self.tracks[track_index];
+            track.max_hp = track.max_hp.max(hit.target_max_hp);
+            track.current_hp = hit.target_hp_after;
+            track.last_seen_at = timestamp;
+            let track_key = format!("hp:{}:{}", self.scope, track.serial);
+            hit.target_context.push(format!("目标轨迹键：{track_key}"));
+
+            if let Some(instance) = direct_instance {
+                let newly_bound = track.instance_id.is_none();
+                track.instance_id = Some(instance.object_name.clone());
+                track.instance_name = Some(instance.monster_name.clone());
+                hit.target_id = Some(instance.object_name.clone());
+                hit.target_name = Some(instance.monster_name.clone());
+                hit.target_context.push(format!(
+                    "同包唯一/最近对象实例：{}（伤害 shift={}，实例 shift={}，距离 {} bit）",
+                    instance.object_name,
+                    hit.bit_shift,
+                    instance.bit_shift,
+                    (hit.byte_offset * 8 + hit.bit_shift as usize)
+                        .abs_diff(instance.byte_offset * 8 + instance.bit_shift as usize)
+                ));
+                if newly_bound {
+                    resolutions.push(TargetTrackResolution {
+                        track_key,
+                        target_id: instance.object_name.clone(),
+                        target_name: instance.monster_name.clone(),
+                    });
+                }
+            } else if let Some(instance_id) = &track.instance_id {
+                hit.target_id = Some(instance_id.clone());
+                hit.target_name.clone_from(&track.instance_name);
+                hit.target_context.push(format!(
+                    "HP 连续轨迹：scope={} track={}，继承已确认对象实例",
+                    self.scope, track.serial
+                ));
+            } else {
+                hit.target_context.push(format!(
+                    "HP 连续轨迹：scope={} track={}（未绑定协议实例）",
+                    self.scope, track.serial
+                ));
+            }
+        }
+        resolutions
+    }
+
+    fn unique_continuous_track(
+        &self,
+        hit: &Hit,
+        direct_instance_id: Option<&str>,
+    ) -> Option<usize> {
+        let tolerance = 0.5_f64.max(hit.target_max_hp.abs() * 1e-6);
+        let reset_threshold = hit.target_max_hp * 0.05;
+        let mut candidates = self
+            .tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, track)| {
+                if (track.max_hp - hit.target_max_hp).abs() > tolerance {
+                    return None;
+                }
+                if let (Some(expected), Some(actual)) =
+                    (direct_instance_id, track.instance_id.as_deref())
+                    && expected != actual
+                {
+                    return None;
+                }
+                let hp_increase = hit.target_hp_before - track.current_hp;
+                let looks_like_fresh_spawn = hp_increase > reset_threshold
+                    && hit.target_hp_before >= hit.target_max_hp * 0.9;
+                (!looks_like_fresh_spawn)
+                    .then_some(((track.current_hp - hit.target_hp_before).abs(), index))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let (best_gap, best_index) = *candidates.first()?;
+        if candidates
+            .get(1)
+            .is_some_and(|(gap, _)| (*gap - best_gap).abs() <= tolerance)
+        {
+            return None;
+        }
+        Some(best_index)
+    }
+}
+
+fn closest_instance_for_hit<'a>(
+    hit: &Hit,
+    instances: &'a [crate::parser::ParsedMonsterInstance],
+) -> Option<&'a crate::parser::ParsedMonsterInstance> {
+    if let [instance] = instances {
+        return Some(instance);
+    }
+
+    const MAX_INSTANCE_DISTANCE_BITS: usize = 16_384;
+    let hit_bit_offset = hit.byte_offset * 8 + hit.bit_shift as usize;
+    let mut candidates = instances
+        .iter()
+        .map(|instance| {
+            let instance_bit_offset = instance.byte_offset * 8 + instance.bit_shift as usize;
+            (hit_bit_offset.abs_diff(instance_bit_offset), instance)
+        })
+        .filter(|(distance, _)| *distance <= MAX_INSTANCE_DISTANCE_BITS)
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(distance, _)| *distance);
+    let (best_distance, best) = candidates.first().copied()?;
+    if candidates
+        .get(1)
+        .is_some_and(|(distance, _)| *distance == best_distance)
+    {
+        return None;
+    }
+    Some(best)
 }
 
 struct PacketDecoder {
@@ -1137,6 +1439,10 @@ struct PacketDecoder {
     character_declarations: HashMap<u32, f64>,
     current_monster: Option<InferredMonsterTarget>,
     target_handles: TargetHandleTracker,
+    target_tracks: TargetTrackResolver,
+    active_abyss_stage: Option<(u32, u32, AbyssHalf)>,
+    abyss_stage_targets: Vec<AbyssStageTarget>,
+    scene_transition_active: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1215,6 +1521,10 @@ impl Default for PacketDecoder {
             character_declarations: HashMap::new(),
             current_monster: None,
             target_handles: TargetHandleTracker::default(),
+            target_tracks: TargetTrackResolver::default(),
+            active_abyss_stage: None,
+            abyss_stage_targets: Vec::new(),
+            scene_transition_active: false,
         }
     }
 }
@@ -1274,13 +1584,33 @@ impl PacketDecoder {
         };
         for hit in hits {
             if hit.direction != "incoming" && hit.target_name.is_none() {
-                hit.target_id = Some(target.id.clone());
                 hit.target_name = Some(target.name.clone());
                 hit.target_context.push(format!(
                     "推断目标（非协议直接命中）：来源 {}，置信度{}",
                     target.source.label(),
                     target.source.confidence_label()
                 ));
+            }
+        }
+    }
+
+    fn apply_abyss_stage_target(&self, hits: &mut [Hit]) {
+        for hit in hits {
+            if hit.direction == "incoming" || hit.target_name.is_some() {
+                continue;
+            }
+            let max_hp = hit.target_max_hp.round() as u64;
+            let mut candidates = self
+                .abyss_stage_targets
+                .iter()
+                .filter(|target| target.max_hp.is_none_or(|value| value == max_hp));
+            let Some(target) = candidates.next() else {
+                continue;
+            };
+            if candidates.next().is_none() {
+                hit.target_name = Some(target.name.clone());
+                hit.target_context
+                    .push("深渊数据表/MaxHP：仅补目标名称，不作为实体唯一 ID".to_owned());
             }
         }
     }
@@ -1374,6 +1704,41 @@ impl PacketDecoder {
             return;
         }
 
+        let decoded_text = decode_payload_text(payload);
+        for event in abyss_events_from_text(timestamp, &decoded_text) {
+            match event {
+                AbyssEvent::RestartDetected { .. } => {
+                    self.target_handles.begin_scope();
+                    self.target_tracks.begin_scope();
+                    self.current_monster = None;
+                }
+                AbyssEvent::Stage {
+                    cycle, floor, half, ..
+                } => {
+                    if let (Some(cycle), Some(floor)) = (cycle, floor) {
+                        let stage = (cycle, floor, half);
+                        if self
+                            .active_abyss_stage
+                            .is_some_and(|active| active != stage)
+                        {
+                            self.target_handles.begin_scope();
+                            self.target_tracks.begin_scope();
+                            self.current_monster = None;
+                        }
+                        self.active_abyss_stage = Some(stage);
+                        self.abyss_stage_targets = abyss_stage_targets(cycle, floor, half);
+                    }
+                }
+                AbyssEvent::Exit { .. } => {
+                    self.target_handles.begin_scope();
+                    self.target_tracks.begin_scope();
+                    self.current_monster = None;
+                    self.active_abyss_stage = None;
+                    self.abyss_stage_targets.clear();
+                }
+                AbyssEvent::Success { .. } => {}
+            }
+        }
         let evidence = find_declared_character_evidence(payload);
         let ids = declared_character_ids_from_evidence(&evidence);
         self.follow_up_damage
@@ -1385,6 +1750,7 @@ impl PacketDecoder {
         let direction = if outgoing { "C2S" } else { "S2C" };
         let gameplay_effects = parse_gameplay_effects(payload);
         let detected_monsters = detect_monster_targets(payload);
+        let monster_instances = detect_monster_instances(payload);
         let mut effect_monsters = gameplay_effects
             .iter()
             .filter_map(|effect| self.gameplay_effect_names.get(&effect.unique_index))
@@ -1392,16 +1758,33 @@ impl PacketDecoder {
             .collect::<Vec<_>>();
         effect_monsters.sort();
         effect_monsters.dedup();
-        let mut packet_monsters = detected_monsters
-            .iter()
-            .chain(effect_monsters.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        packet_monsters.sort();
-        packet_monsters.dedup();
         let packet_handles = parse_object_handles(payload);
+        let bindable_monsters = |monsters: &[(String, String)]| {
+            if monster_instances.is_empty() {
+                return monsters.to_vec();
+            }
+            monsters
+                .iter()
+                .filter(|(monster_id, _)| {
+                    monster_instances
+                        .iter()
+                        .any(|instance| instance.monster_id.eq_ignore_ascii_case(monster_id))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let bindable_detected_monsters = bindable_monsters(&detected_monsters);
+        let bindable_effect_monsters = bindable_monsters(&effect_monsters);
+        // Entity strings can describe preloaded enemies, summons, or unrelated actors. The
+        // tracker accepts them only when the packet contains exactly one monster and one object
+        // value; later hits must repeat that same value before the name is applied.
+        self.target_handles.observe_monster(
+            &packet_handles,
+            &bindable_detected_monsters,
+            timestamp,
+        );
         self.target_handles
-            .observe_monster(&packet_handles, &packet_monsters, timestamp);
+            .observe_monster(&packet_handles, &bindable_effect_monsters, timestamp);
         let mut packet_target_ids = detected_monsters
             .iter()
             .chain(effect_monsters.iter())
@@ -1454,18 +1837,32 @@ impl PacketDecoder {
         } else {
             Vec::new()
         };
-        let decoded_text = decode_payload_text(payload);
         let scene_transition = crate::scene::detect_scenes(timestamp, &decoded_text)
             .iter()
             .any(|scene| scene.category == "transition");
         if scene_transition {
-            self.current_monster = None;
-            self.target_handles.clear();
-        } else if outgoing {
-            let applied_handle_target =
+            if !self.scene_transition_active {
+                self.current_monster = None;
+                self.target_handles.begin_scope();
+                self.target_tracks.begin_scope();
+                self.scene_transition_active = true;
+            }
+        } else {
+            self.scene_transition_active = false;
+            if outgoing {
+                for resolution in
+                    self.target_tracks
+                        .resolve_hits(&mut hits, &monster_instances, timestamp)
+                {
+                    let _ = sender.send(EngineEvent::TargetTrackResolved {
+                        track_key: resolution.track_key,
+                        target_id: resolution.target_id,
+                        target_name: resolution.target_name,
+                    });
+                }
                 self.target_handles
                     .apply_to_hits(&packet_handles, &mut hits, timestamp);
-            if !applied_handle_target {
+                self.apply_abyss_stage_target(&mut hits);
                 self.apply_inferred_monster(&mut hits, timestamp, packet_has_multiple_targets);
             }
         }
@@ -1547,6 +1944,15 @@ impl PacketDecoder {
                 update.current_hp as f64,
                 timestamp,
             );
+            if self.abyss_stage_targets.len() == 1
+                && let Some(monster) = self.abyss_stage_targets.first()
+            {
+                self.target_handles.observe_monster(
+                    &[update.target_handle],
+                    &[(monster.id.clone(), monster.name.clone())],
+                    timestamp,
+                );
+            }
         }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
@@ -1999,8 +2405,6 @@ pub fn import_capture_json(
                 .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
             let mut packets = document.packets.into_iter().peekable();
             let mut hits = document.hits.into_iter().peekable();
-            let mut target_handles = TargetHandleTracker::default();
-            let mut packet_hit_targets = HashMap::<u64, TargetHandleInfo>::new();
 
             while packets.peek().is_some() || hits.peek().is_some() {
                 if stop.load(Ordering::Relaxed) {
@@ -2014,39 +2418,11 @@ pub fn import_capture_json(
                 };
                 if take_packet {
                     let packet = packets.next().expect("peeked packet must exist");
-                    let payload = hex::decode(&packet.payload_hex).unwrap_or_default();
-                    if !payload.is_empty() {
-                        let packet_handles = parse_object_handles(&payload);
-                        let packet_monsters = detect_monster_targets(&payload);
-                        target_handles.observe_monster(
-                            &packet_handles,
-                            &packet_monsters,
-                            packet.timestamp_unix,
-                        );
-                        for update in parse_boss_hp_updates(&payload) {
-                            target_handles.observe_boss_hp(
-                                update.target_handle,
-                                update.current_hp as f64,
-                                packet.timestamp_unix,
-                            );
-                        }
-                        if packet.parsed_hits > 0
-                            && let Some(target) = target_handles.target_for_handles(&packet_handles)
-                        {
-                            packet_hit_targets
-                                .insert(packet.timestamp_unix.to_bits(), target.clone());
-                        }
-                    }
                     if send_export_packet(packet, &sender)? {
                         packet_count += 1;
                     }
                 } else {
-                    let mut hit = hits.next().expect("peeked hit must exist");
-                    if hit.target_id.is_none()
-                        && let Some(target) = packet_hit_targets.get(&hit.timestamp_unix.to_bits())
-                    {
-                        apply_export_target(&mut hit, target);
-                    }
+                    let hit = hits.next().expect("peeked hit must exist");
                     sender
                         .send(export_hit_event(hit))
                         .map_err(|error| error.to_string())?;
@@ -2113,25 +2489,6 @@ fn send_export_packet(packet: ExportPacket, sender: &Sender<EngineEvent>) -> Res
         .send(EngineEvent::Packet(packet))
         .map_err(|error| error.to_string())?;
     Ok(true)
-}
-
-fn apply_export_target(hit: &mut ExportHit, target: &TargetHandleInfo) {
-    if hit.direction == "incoming" {
-        return;
-    }
-    hit.target_id = Some(target.target_id.clone());
-    hit.target_name = target
-        .target_name
-        .clone()
-        .or_else(|| target.monster_name.clone());
-    hit.target_context.push(format!(
-        "协议对象句柄：{}（从导出封包重新关联）",
-        target.target_id
-    ));
-    if let (Some(monster_id), Some(monster_name)) = (&target.monster_id, &target.monster_name) {
-        hit.target_context
-            .push(format!("对象句柄关联怪物：{monster_name}（{monster_id}）"));
-    }
 }
 
 fn export_hit_event(hit: ExportHit) -> EngineEvent {
@@ -2365,16 +2722,13 @@ mod tests {
         hits[0].target_hp_after = 1_927_891.0;
 
         assert!(tracker.apply_to_hits(&[handle], &mut hits, 1.2));
-        assert_eq!(
-            hits[0].target_id.as_deref(),
-            Some("21f04e928995334f8c0bbcaa0ee16fe7")
-        );
+        assert_eq!(hits[0].target_id, None);
         assert_eq!(hits[0].target_name.as_deref(), Some("Boss 07"));
         assert!(
             hits[0]
                 .target_context
                 .iter()
-                .any(|context| context.contains("协议对象句柄"))
+                .any(|context| context.contains("协议相关 16 字节值"))
         );
 
         let mut incoming = targetless_hit();
@@ -2386,6 +2740,191 @@ mod tests {
         assert!(tracker.apply_to_hits(&[handle], &mut incoming_hits, 1.3));
         assert_eq!(incoming_hits[0].target_id.as_deref(), Some("1001"));
         assert_eq!(incoming_hits[0].target_name.as_deref(), Some("测试角色"));
+    }
+
+    #[test]
+    fn target_handle_scope_separates_reused_handles_between_abyss_halves() {
+        let handle = [0x5a; 16];
+        let mut tracker = TargetHandleTracker::default();
+        tracker.observe_boss_hp(handle, 100.0, 1.0);
+        tracker.observe_monster(
+            &[handle],
+            &[("boss_first".to_owned(), "上半 Boss".to_owned())],
+            1.1,
+        );
+        let mut first_hits = [targetless_hit()];
+        assert!(tracker.apply_to_hits(&[handle], &mut first_hits, 1.2));
+
+        tracker.begin_scope();
+        tracker.observe_boss_hp(handle, 200.0, 2.0);
+        tracker.observe_monster(
+            &[handle],
+            &[("boss_second".to_owned(), "下半 Boss".to_owned())],
+            2.1,
+        );
+        let mut second_hits = [targetless_hit()];
+        assert!(tracker.apply_to_hits(&[handle], &mut second_hits, 2.2));
+
+        assert_eq!(first_hits[0].target_id, None);
+        assert_eq!(second_hits[0].target_id, None);
+        assert_eq!(first_hits[0].target_name.as_deref(), Some("上半 Boss"));
+        assert_eq!(second_hits[0].target_name.as_deref(), Some("下半 Boss"));
+    }
+
+    #[test]
+    fn abyss_group_stage_leaves_same_hp_variants_unresolved() {
+        let decoder = PacketDecoder {
+            abyss_stage_targets: abyss_stage_targets(3, 10, AbyssHalf::Second),
+            ..Default::default()
+        };
+
+        let mut bear = targetless_hit();
+        bear.target_id = Some("shared-handle".to_owned());
+        bear.target_max_hp = 1_983_356.0;
+        let mut soldiers = targetless_hit();
+        soldiers.target_id = Some("shared-handle".to_owned());
+        soldiers.target_max_hp = 495_839.0;
+        let mut hits = [bear, soldiers];
+
+        decoder.apply_abyss_stage_target(&mut hits);
+
+        assert_eq!(hits[0].target_name.as_deref(), Some("伤心英熊"));
+        assert_eq!(hits[1].target_name, None);
+        assert_eq!(hits[0].target_id.as_deref(), Some("shared-handle"));
+        assert_eq!(hits[1].target_id.as_deref(), Some("shared-handle"));
+    }
+
+    #[test]
+    fn abyss_stage_rosters_are_generated_from_all_table_rows() {
+        assert_eq!(ABYSS_STAGE_ROWS.len(), 151);
+
+        let stages = ABYSS_STAGE_ROWS
+            .iter()
+            .map(|&(cycle, floor, half, _, _, _)| (cycle, floor, half))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(stages.len(), 72);
+        for (cycle, floor, half) in stages {
+            let half = if half == 0 {
+                AbyssHalf::First
+            } else {
+                AbyssHalf::Second
+            };
+            assert!(
+                !abyss_stage_targets(cycle, floor, half).is_empty(),
+                "missing generated roster for Abyss_{cycle}_{floor}_{half:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn aligned_packet_instance_binds_hp_track_and_following_hits() {
+        let mut resolver = TargetTrackResolver::default();
+        let instance = crate::parser::ParsedMonsterInstance {
+            instance_id: "2147349936".to_owned(),
+            monster_id: "mon_24_BP_Abyss".to_owned(),
+            monster_name: "诡面风筝".to_owned(),
+            object_name: "mon_24_BP_Abyss_C_2147349936".to_owned(),
+            byte_offset: 64,
+            bit_shift: 0,
+        };
+        let mut first = targetless_hit();
+        first.byte_offset = 96;
+        first.target_hp_before = 1_000.0;
+        first.target_hp_after = 900.0;
+        first.target_max_hp = 1_000.0;
+        let mut hits = [first];
+
+        let _ = resolver.resolve_hits(&mut hits, std::slice::from_ref(&instance), 1.0);
+
+        assert_eq!(
+            hits[0].target_id.as_deref(),
+            Some("mon_24_BP_Abyss_C_2147349936")
+        );
+        assert_eq!(hits[0].target_name.as_deref(), Some("诡面风筝"));
+
+        let mut next = targetless_hit();
+        next.byte_offset = 120;
+        next.target_hp_before = 900.0;
+        next.target_hp_after = 800.0;
+        next.target_max_hp = 1_000.0;
+        let _ = resolver.resolve_hits(std::slice::from_mut(&mut next), &[], 1.1);
+
+        assert_eq!(
+            next.target_id.as_deref(),
+            Some("mon_24_BP_Abyss_C_2147349936")
+        );
+        assert_eq!(next.target_name.as_deref(), Some("诡面风筝"));
+    }
+
+    #[test]
+    fn hp_track_does_not_merge_discontinuous_same_hp_targets() {
+        let mut resolver = TargetTrackResolver::default();
+        let mut first = targetless_hit();
+        first.target_hp_before = 1_000.0;
+        first.target_hp_after = 900.0;
+        first.target_max_hp = 1_000.0;
+        let _ = resolver.resolve_hits(std::slice::from_mut(&mut first), &[], 1.0);
+
+        let mut second = targetless_hit();
+        second.target_hp_before = 1_000.0;
+        second.target_hp_after = 850.0;
+        second.target_max_hp = 1_000.0;
+        let _ = resolver.resolve_hits(std::slice::from_mut(&mut second), &[], 1.1);
+
+        assert!(
+            first
+                .target_context
+                .iter()
+                .any(|context| context.contains("track=0"))
+        );
+        assert!(
+            second
+                .target_context
+                .iter()
+                .any(|context| context.contains("track=1"))
+        );
+        assert!(first.target_id.is_none());
+        assert!(second.target_id.is_none());
+    }
+
+    #[test]
+    fn target_handle_does_not_append_conflicting_monster_evidence() {
+        let mut tracker = TargetHandleTracker::default();
+        let handle = [7; 16];
+        tracker.observe_boss_hp(handle, 500.0, 1.0);
+        tracker.observe_monster(
+            &[handle],
+            &[("mon_blue".to_owned(), "blue monster".to_owned())],
+            1.1,
+        );
+        let mut hit = targetless_hit();
+        hit.target_name = Some("red monster".to_owned());
+
+        assert!(tracker.apply_to_hits(&[handle], std::slice::from_mut(&mut hit), 1.2));
+        assert_eq!(hit.target_name.as_deref(), Some("red monster"));
+        assert!(hit.target_context.is_empty());
+    }
+
+    #[test]
+    fn target_handle_conflict_disables_future_name_assignment() {
+        let mut tracker = TargetHandleTracker::default();
+        let handle = [9; 16];
+        tracker.observe_boss_hp(handle, 500.0, 1.0);
+        tracker.observe_monster(
+            &[handle],
+            &[("monster-a".to_owned(), "怪物 A".to_owned())],
+            1.1,
+        );
+        tracker.observe_monster(
+            &[handle],
+            &[("monster-b".to_owned(), "怪物 B".to_owned())],
+            1.2,
+        );
+        let mut hit = targetless_hit();
+
+        assert!(!tracker.apply_to_hits(&[handle], std::slice::from_mut(&mut hit), 1.3));
+        assert!(hit.target_name.is_none());
+        assert!(hit.target_context.is_empty());
     }
 
     fn inferred_target(
@@ -2430,12 +2969,14 @@ mod tests {
 
     #[test]
     fn applies_only_current_unambiguous_inferred_monster() {
-        let mut decoder = PacketDecoder::default();
-        decoder.current_monster = Some(inferred_target(
-            MonsterTargetSource::GameplayEffect,
-            10.0,
-            13.0,
-        ));
+        let decoder = PacketDecoder {
+            current_monster: Some(inferred_target(
+                MonsterTargetSource::GameplayEffect,
+                10.0,
+                13.0,
+            )),
+            ..Default::default()
+        };
 
         let mut hits = [targetless_hit()];
         decoder.apply_inferred_monster(&mut hits, 12.0, false);
@@ -2463,8 +3004,10 @@ mod tests {
 
     #[test]
     fn low_confidence_entity_target_has_short_lifetime() {
-        let mut decoder = PacketDecoder::default();
-        decoder.current_monster = Some(inferred_target(MonsterTargetSource::Entity, 20.0, 20.25));
+        let decoder = PacketDecoder {
+            current_monster: Some(inferred_target(MonsterTargetSource::Entity, 20.0, 20.25)),
+            ..Default::default()
+        };
 
         let mut near_hits = [targetless_hit()];
         decoder.apply_inferred_monster(&mut near_hits, 20.2, false);
@@ -2478,12 +3021,14 @@ mod tests {
 
     #[test]
     fn ambiguous_targets_invalidate_current_monster_for_later_hits() {
-        let mut decoder = PacketDecoder::default();
-        decoder.current_monster = Some(inferred_target(
-            MonsterTargetSource::GameplayEffect,
-            30.0,
-            33.0,
-        ));
+        let mut decoder = PacketDecoder {
+            current_monster: Some(inferred_target(
+                MonsterTargetSource::GameplayEffect,
+                30.0,
+                33.0,
+            )),
+            ..Default::default()
+        };
 
         decoder.invalidate_monster_if_ambiguous(true);
         assert!(decoder.current_monster.is_none());
@@ -2769,19 +3314,16 @@ mod tests {
             .join()
             .expect("capture import thread failed");
 
-        let mut targets = HashMap::<(String, String, String), usize>::new();
         let mut observed_targets = Vec::new();
-        let mut unresolved = 0;
+        let mut state = crate::model::CombatState::default();
         for event in receiver.try_iter() {
             match event {
-                EngineEvent::Hit(hit) => match (hit.target_id, hit.target_name) {
-                    (Some(id), Some(name)) => {
-                        *targets
-                            .entry((id, name, hit.target_context.join("|")))
-                            .or_default() += 1
-                    }
-                    _ => unresolved += 1,
-                },
+                EngineEvent::Hit(hit) => state.push_hit(hit),
+                EngineEvent::TargetTrackResolved {
+                    track_key,
+                    target_id,
+                    target_name,
+                } => state.apply_target_track_resolution(&track_key, &target_id, &target_name),
                 EngineEvent::Packet(packet) => {
                     if let Ok(payload) = hex::decode(&packet.payload_hex) {
                         for (id, name) in detect_monster_targets(&payload) {
@@ -2792,13 +3334,733 @@ mod tests {
                 _ => {}
             }
         }
+        let mut targets = HashMap::<(String, String, String), usize>::new();
+        let mut unresolved = 0;
+        let mut missing_target_ids = 0;
+        let mut name_only = HashMap::<(String, String), usize>::new();
+        for hit in state.hits {
+            if hit.direction != "incoming" && hit.target_id.is_none() {
+                missing_target_ids += 1;
+            }
+            match (hit.target_id, hit.target_name) {
+                (Some(id), Some(name)) => {
+                    *targets
+                        .entry((id, name, hit.target_context.join("|")))
+                        .or_default() += 1
+                }
+                (None, Some(name)) => {
+                    *name_only
+                        .entry((name, hit.target_context.join("|")))
+                        .or_default() += 1
+                }
+                _ => unresolved += 1,
+            }
+        }
         observed_targets.dedup();
         println!("observed_targets={observed_targets:?}");
         println!(
-            "target_summary capture={} targets={targets:?} unresolved={unresolved}",
+            "target_summary capture={} targets={targets:?} name_only={name_only:?} unresolved={unresolved} missing_target_ids={missing_target_ids}",
             path.display()
         );
-        assert!(!targets.is_empty(), "no monster targets resolved");
+        assert!(
+            !targets.is_empty() || !name_only.is_empty(),
+            "no monster targets resolved"
+        );
+    }
+
+    #[test]
+    #[ignore = "manual real-capture target quality summary"]
+    fn diagnose_actual_capture_target_quality() {
+        let path = actual_capture_path();
+        let characters = Arc::new(
+            crate::parser::load_characters(Path::new(crate::parser::CHARACTER_DATA_PATH))
+                .expect("failed to load characters.json"),
+        );
+        let (sender, receiver) = unbounded();
+        import_pcapng(
+            path.clone(),
+            characters,
+            None,
+            true,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .join()
+        .expect("capture import thread failed");
+
+        let mut state = crate::model::CombatState::default();
+        for event in receiver.try_iter() {
+            match event {
+                EngineEvent::Hit(hit) => state.push_hit(hit),
+                EngineEvent::TargetTrackResolved {
+                    track_key,
+                    target_id,
+                    target_name,
+                } => state.apply_target_track_resolution(&track_key, &target_id, &target_name),
+                _ => {}
+            }
+        }
+
+        let mut outgoing = 0;
+        let mut exact_instance = 0;
+        let mut inherited_instance = 0;
+        let mut name_only = 0;
+        let mut unresolved = 0;
+        let mut contradictory_handle_names = 0;
+        for hit in state
+            .hits
+            .into_iter()
+            .filter(|hit| hit.direction != "incoming")
+        {
+            outgoing += 1;
+            match (&hit.target_id, &hit.target_name) {
+                (Some(id), Some(_)) if id.contains("_C_") => {
+                    exact_instance += 1;
+                    if hit.target_context.iter().any(|context| {
+                        context.contains("继承已确认对象实例")
+                            || context.contains("后续同轨迹对象实例确认")
+                    }) {
+                        inherited_instance += 1;
+                    }
+                }
+                (None, Some(_)) => name_only += 1,
+                _ => unresolved += 1,
+            }
+            if let Some(name) = &hit.target_name {
+                for context in &hit.target_context {
+                    if let Some((_, association)) = context.split_once("对象句柄关联怪物：")
+                        && !association.starts_with(name)
+                    {
+                        contradictory_handle_names += 1;
+                    }
+                }
+            }
+        }
+        println!(
+            "TARGET_QUALITY capture={} outgoing={outgoing} exact_instance={exact_instance} inherited_instance={inherited_instance} name_only={name_only} unresolved={unresolved} contradictory_handle_names={contradictory_handle_names}",
+            path.display()
+        );
+    }
+
+    #[test]
+    #[ignore = "manual multi-floor abyss target analysis"]
+    fn diagnose_actual_capture_abyss_floors() {
+        #[derive(Default)]
+        struct FloorStats {
+            hits: usize,
+            exact: usize,
+            name_only: usize,
+            unresolved: usize,
+            names: BTreeMap<String, usize>,
+        }
+
+        let path = actual_capture_path();
+        let characters = Arc::new(
+            crate::parser::load_characters(Path::new(crate::parser::CHARACTER_DATA_PATH))
+                .expect("failed to load characters.json"),
+        );
+        let (sender, receiver) = unbounded();
+        import_pcapng(
+            path.clone(),
+            characters,
+            None,
+            true,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .join()
+        .expect("capture import thread failed");
+
+        let mut active_stage = None;
+        let mut stages = BTreeMap::<(u32, u32, u8), FloorStats>::new();
+        for event in receiver.try_iter() {
+            match event {
+                EngineEvent::Abyss(AbyssEvent::Stage {
+                    timestamp,
+                    cycle: Some(cycle),
+                    floor: Some(floor),
+                    half,
+                }) => {
+                    let half_index = u8::from(half == AbyssHalf::Second);
+                    active_stage = Some((cycle, floor, half_index));
+                    println!(
+                        "STAGE t={timestamp:.3} cycle={cycle} floor={floor} half={half_index}"
+                    );
+                }
+                EngineEvent::Abyss(AbyssEvent::RestartDetected { timestamp }) => {
+                    println!("RESTART t={timestamp:.3} stage={active_stage:?}");
+                }
+                EngineEvent::Abyss(AbyssEvent::Success { timestamp }) => {
+                    println!("SUCCESS t={timestamp:.3} stage={active_stage:?}");
+                }
+                EngineEvent::Abyss(AbyssEvent::Exit { timestamp }) => {
+                    println!("EXIT t={timestamp:.3} stage={active_stage:?}");
+                    active_stage = None;
+                }
+                EngineEvent::Hit(hit) if hit.direction != "incoming" && active_stage.is_some() => {
+                    let stats = stages.entry(active_stage.unwrap()).or_default();
+                    stats.hits += 1;
+                    match (&hit.target_id, &hit.target_name) {
+                        (Some(_), Some(name)) => {
+                            stats.exact += 1;
+                            *stats.names.entry(name.clone()).or_default() += 1;
+                        }
+                        (None, Some(name)) => {
+                            stats.name_only += 1;
+                            *stats.names.entry(name.clone()).or_default() += 1;
+                        }
+                        _ => stats.unresolved += 1,
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        println!("capture={}", path.display());
+        for ((cycle, floor, half), stats) in stages {
+            println!(
+                "FLOOR cycle={cycle} floor={floor} half={half} hits={} exact={} name_only={} unresolved={} names={:?}",
+                stats.hits, stats.exact, stats.name_only, stats.unresolved, stats.names
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual real-capture target timeline analysis"]
+    fn diagnose_actual_capture_target_timeline() {
+        let path = actual_capture_path();
+        let characters = Arc::new(
+            crate::parser::load_characters(Path::new(crate::parser::CHARACTER_DATA_PATH))
+                .expect("failed to load characters.json"),
+        );
+        let (sender, receiver) = unbounded();
+        import_pcapng(
+            path.clone(),
+            characters,
+            None,
+            true,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .join()
+        .expect("capture import thread failed");
+
+        println!("capture={}", path.display());
+        for event in receiver.try_iter() {
+            match event {
+                EngineEvent::Hit(hit) if hit.direction != "incoming" => println!(
+                    "HIT t={:.6} damage={:.0} hp={:.0}/{:.0} id={:?} name={:?} context={}",
+                    hit.timestamp,
+                    hit.damage,
+                    hit.target_hp_before,
+                    hit.target_max_hp,
+                    hit.target_id,
+                    hit.target_name,
+                    hit.target_context.join("|")
+                ),
+                EngineEvent::Packet(packet) => {
+                    let Ok(payload) = hex::decode(&packet.payload_hex) else {
+                        continue;
+                    };
+                    let monsters = detect_monster_targets(&payload);
+                    let instances = detect_monster_instances(&payload);
+                    if !monsters.is_empty() || !instances.is_empty() {
+                        let handles = parse_object_handles(&payload)
+                            .into_iter()
+                            .map(hex::encode)
+                            .collect::<Vec<_>>();
+                        println!(
+                            "OBS t={:.6} dir={} hits={} monsters={:?} instances={:?} handles={handles:?}",
+                            packet.timestamp,
+                            packet.direction,
+                            packet.parsed_hits,
+                            monsters,
+                            instances
+                                .iter()
+                                .map(|instance| instance.object_name.as_str())
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual UDP flow analysis"]
+    fn diagnose_actual_capture_udp_flows() {
+        #[derive(Default)]
+        struct FlowStats {
+            packets: usize,
+            bytes: usize,
+            first: f64,
+            last: f64,
+            monster_packets: Vec<(f64, Vec<(String, String)>)>,
+        }
+
+        let path = actual_capture_path();
+        let file = File::open(&path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut flows = BTreeMap::<(Ipv4Addr, u16, Ipv4Addr, u16), FlowStats>::new();
+        let mut capture_first = f64::INFINITY;
+        let mut capture_last = 0.0_f64;
+
+        while let Some(block) = reader.next_block() {
+            let block = block.unwrap();
+            let (interface_id, timestamp, data) = match block {
+                Block::EnhancedPacket(packet) => (
+                    packet.interface_id as usize,
+                    packet.timestamp.as_secs_f64(),
+                    packet.data.into_owned(),
+                ),
+                Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                _ => continue,
+            };
+            let Some(interface) = reader.interfaces().get(interface_id) else {
+                continue;
+            };
+            if interface.linktype != DataLink::ETHERNET {
+                continue;
+            }
+            let Some((src, src_port, dst, dst_port, payload)) = parse_udp_ipv4(&data) else {
+                continue;
+            };
+            capture_first = capture_first.min(timestamp);
+            capture_last = capture_last.max(timestamp);
+            let stats = flows.entry((src, src_port, dst, dst_port)).or_default();
+            stats.packets += 1;
+            stats.bytes += payload.len();
+            if stats.first == 0.0 {
+                stats.first = timestamp;
+            }
+            stats.last = timestamp;
+            let monsters = detect_monster_targets(payload);
+            if !monsters.is_empty() {
+                stats.monster_packets.push((timestamp, monsters));
+            }
+        }
+
+        println!(
+            "capture={} first={capture_first:.6} last={capture_last:.6} duration={:.3}s flows={}",
+            path.display(),
+            capture_last - capture_first,
+            flows.len()
+        );
+        for ((src, src_port, dst, dst_port), stats) in flows {
+            println!(
+                "FLOW {src}:{src_port} -> {dst}:{dst_port} packets={} bytes={} first={:.6} last={:.6} monsters={:?}",
+                stats.packets, stats.bytes, stats.first, stats.last, stats.monster_packets
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual damage target reference analysis"]
+    fn diagnose_damage_target_references() {
+        let path = actual_capture_path();
+        let file = File::open(&path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut samples = BTreeMap::<u64, Vec<String>>::new();
+        let mut prefixes = BTreeMap::<u64, Vec<Vec<u8>>>::new();
+        let mut reference_candidates = BTreeMap::<u64, HashMap<[u8; 8], usize>>::new();
+
+        while let Some(block) = reader.next_block() {
+            let block = block.unwrap();
+            let (interface_id, timestamp, data) = match block {
+                Block::EnhancedPacket(packet) => (
+                    packet.interface_id as usize,
+                    packet.timestamp.as_secs_f64(),
+                    packet.data.into_owned(),
+                ),
+                Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                _ => continue,
+            };
+            let Some(interface) = reader.interfaces().get(interface_id) else {
+                continue;
+            };
+            if interface.linktype != DataLink::ETHERNET {
+                continue;
+            }
+            let Some((src, _, dst, _, payload)) = parse_udp_ipv4(&data) else {
+                continue;
+            };
+            if !src.is_private() || dst.is_private() {
+                continue;
+            }
+            for record in crate::parser::parse_damage_records(payload) {
+                let max_hp = record.target_max_hp.round() as u64;
+                let rows = samples.entry(max_hp).or_default();
+                if rows.len() >= 8 {
+                    continue;
+                }
+                let Some(aligned) =
+                    crate::parser::aligned_bytes_for_test(payload, record.bit_shift)
+                else {
+                    continue;
+                };
+                let record_start = record.byte_offset.saturating_sub(5);
+                if record_start >= 227 {
+                    let candidate: [u8; 8] = aligned[record_start - 227..record_start - 219]
+                        .try_into()
+                        .unwrap();
+                    *reference_candidates
+                        .entry(max_hp)
+                        .or_default()
+                        .entry(candidate)
+                        .or_default() += 1;
+                }
+                if record_start >= 75 {
+                    let prefix_start = record_start.saturating_sub(256);
+                    prefixes
+                        .entry(max_hp)
+                        .or_default()
+                        .push(aligned[prefix_start..record_start - 75].to_vec());
+                }
+                let start = record_start.saturating_sub(256);
+                let end = aligned.len().min(record_start + 160);
+                let transport = parse_transport_packet(payload)
+                    .and_then(|packet| match packet {
+                        TransportPacket::Sequenced(packet) => Some(packet),
+                        TransportPacket::StatelessHandshake { .. } => None,
+                    })
+                    .map(|packet| {
+                        let bunch = parse_single_bunch(&packet)
+                            .map(|bunch| {
+                                format!(
+                                    " bunch={}/{:02x}/{}",
+                                    bunch.sequence, bunch.descriptor, bunch.data_bit_len
+                                )
+                            })
+                            .unwrap_or_default();
+                        format!(" packet={}/mode={}{}", packet.packet_id, packet.mode, bunch)
+                    })
+                    .unwrap_or_default();
+                rows.push(format!(
+                    "t={timestamp:.6} damage={:.0} hp={:.0}/{max_hp} shift={} offset={}{} bytes[{}..{}]={}",
+                    record.damage,
+                    record.target_hp_before,
+                    record.bit_shift,
+                    record_start,
+                    transport,
+                    start,
+                    end,
+                    hex::encode(&aligned[start..end])
+                ));
+            }
+        }
+
+        println!("capture={}", path.display());
+        for (max_hp, rows) in samples {
+            println!("MAX_HP={max_hp} samples={}", rows.len());
+            for row in rows {
+                println!("{row}");
+            }
+        }
+        println!("STABLE PREFIX RUNS");
+        for (max_hp, rows) in prefixes {
+            if rows.len() < 3 {
+                continue;
+            }
+            let width = rows.iter().map(Vec::len).min().unwrap_or(0);
+            let aligned_rows = rows
+                .iter()
+                .map(|row| &row[row.len() - width..])
+                .collect::<Vec<_>>();
+            let mut index = 0;
+            let mut runs = Vec::new();
+            while index < width {
+                if aligned_rows
+                    .iter()
+                    .skip(1)
+                    .all(|row| row[index] == aligned_rows[0][index])
+                {
+                    let start = index;
+                    index += 1;
+                    while index < width
+                        && aligned_rows
+                            .iter()
+                            .skip(1)
+                            .all(|row| row[index] == aligned_rows[0][index])
+                    {
+                        index += 1;
+                    }
+                    if index - start >= 2 {
+                        runs.push(format!(
+                            "{}..{}:{}",
+                            start as isize - width as isize - 75,
+                            index as isize - width as isize - 75,
+                            hex::encode(&aligned_rows[0][start..index])
+                        ));
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            println!("MAX_HP={max_hp} count={} {}", rows.len(), runs.join(" "));
+        }
+        println!("REFERENCE CANDIDATES");
+        for (max_hp, candidates) in reference_candidates {
+            let mut candidates = candidates.into_iter().collect::<Vec<_>>();
+            candidates.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+            println!(
+                "MAX_HP={max_hp} candidates={:?}",
+                candidates
+                    .into_iter()
+                    .take(8)
+                    .map(|(value, count)| (hex::encode(value), count))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual monster NetGUID export analysis"]
+    fn diagnose_monster_export_references() {
+        const MONSTERS: &[&str] = &[
+            "mon_17_BP_Abyss",
+            "mon_14_BP_Abyss",
+            "mon_24_BP_Abyss",
+            "mon_023_BP_Abyss",
+            "mon_33_BP_Abyss",
+        ];
+        let path = actual_capture_path();
+        let file = File::open(&path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut seen = HashSet::new();
+
+        while let Some(block) = reader.next_block() {
+            let block = block.unwrap();
+            let (interface_id, timestamp, data) = match block {
+                Block::EnhancedPacket(packet) => (
+                    packet.interface_id as usize,
+                    packet.timestamp.as_secs_f64(),
+                    packet.data.into_owned(),
+                ),
+                Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                _ => continue,
+            };
+            let Some(interface) = reader.interfaces().get(interface_id) else {
+                continue;
+            };
+            if interface.linktype != DataLink::ETHERNET {
+                continue;
+            }
+            let Some((src, src_port, dst, dst_port, payload)) = parse_udp_ipv4(&data) else {
+                continue;
+            };
+            for bit_shift in 0..8 {
+                let Some(aligned) = crate::parser::aligned_bytes_for_test(payload, bit_shift)
+                else {
+                    continue;
+                };
+                for monster in MONSTERS {
+                    for (offset, _) in aligned
+                        .windows(monster.len())
+                        .enumerate()
+                        .filter(|(_, window)| *window == monster.as_bytes())
+                    {
+                        let key = (monster, bit_shift, offset, timestamp.to_bits());
+                        if !seen.insert(key) {
+                            continue;
+                        }
+                        let start = offset.saturating_sub(96);
+                        let end = aligned.len().min(offset + monster.len() + 48);
+                        println!(
+                            "t={timestamp:.6} flow={src}:{src_port}->{dst}:{dst_port} dir={} monster={monster} shift={bit_shift} offset={offset} raw={} transport={:?} records={:?} handles={:?} bytes[{}..{}]={}",
+                            if src.is_private() && !dst.is_private() {
+                                "C2S"
+                            } else {
+                                "S2C"
+                            },
+                            hex::encode(&payload[..payload.len().min(24)]),
+                            parse_transport_packet(payload).and_then(|packet| match packet {
+                                TransportPacket::Sequenced(packet) => {
+                                    let prefix = packet.payload.get(..2).map(|bytes| {
+                                        u16::from_le_bytes([bytes[0], bytes[1]]) & 0x1fff
+                                    });
+                                    Some((
+                                        packet.mode,
+                                        packet.packet_id,
+                                        packet.payload_bit_len,
+                                        prefix,
+                                    ))
+                                }
+                                TransportPacket::StatelessHandshake { .. } => None,
+                            }),
+                            crate::parser::parse_damage_records(payload)
+                                .iter()
+                                .map(|record| {
+                                    let candidate = crate::parser::aligned_bytes_for_test(
+                                        payload,
+                                        record.bit_shift,
+                                    )
+                                    .and_then(|aligned| {
+                                        let start = record.byte_offset.checked_sub(232)?;
+                                        aligned.get(start..start + 16).map(hex::encode)
+                                    });
+                                    (
+                                        record.damage.round() as u64,
+                                        record.target_hp_before.round() as u64,
+                                        record.target_max_hp.round() as u64,
+                                        record.bit_shift,
+                                        record.byte_offset,
+                                        candidate,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                            parse_object_handles(payload)
+                                .into_iter()
+                                .map(hex::encode)
+                                .collect::<Vec<_>>(),
+                            start,
+                            end,
+                            hex::encode(&aligned[start..end])
+                        );
+                    }
+                }
+            }
+        }
+        println!("capture={} exports={}", path.display(), seen.len());
+    }
+
+    #[test]
+    #[ignore = "manual monster instance reference search"]
+    fn diagnose_monster_instance_ids_in_damage_packets() {
+        const INSTANCE_IDS: &[u32] = &[
+            2_147_354_380,
+            2_147_353_337,
+            2_147_349_936,
+            2_147_349_963,
+            2_147_349_209,
+            2_147_347_859,
+        ];
+        let path = actual_capture_path();
+        let file = File::open(&path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut damage_packets = 0;
+        let mut matches = 0;
+
+        while let Some(block) = reader.next_block() {
+            let block = block.unwrap();
+            let (interface_id, timestamp, data) = match block {
+                Block::EnhancedPacket(packet) => (
+                    packet.interface_id as usize,
+                    packet.timestamp.as_secs_f64(),
+                    packet.data.into_owned(),
+                ),
+                Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                _ => continue,
+            };
+            let Some(interface) = reader.interfaces().get(interface_id) else {
+                continue;
+            };
+            if interface.linktype != DataLink::ETHERNET {
+                continue;
+            }
+            let Some((src, _, dst, _, payload)) = parse_udp_ipv4(&data) else {
+                continue;
+            };
+            if !src.is_private() || dst.is_private() {
+                continue;
+            }
+            let records = crate::parser::parse_damage_records(payload);
+            if records.is_empty() {
+                continue;
+            }
+            damage_packets += 1;
+            for bit_shift in 0..8 {
+                let Some(aligned) = crate::parser::aligned_bytes_for_test(payload, bit_shift)
+                else {
+                    continue;
+                };
+                for instance_id in INSTANCE_IDS {
+                    for bytes in [instance_id.to_le_bytes(), instance_id.to_be_bytes()] {
+                        if let Some(offset) = aligned
+                            .windows(bytes.len())
+                            .position(|window| window == bytes)
+                        {
+                            matches += 1;
+                            println!(
+                                "t={timestamp:.6} id={instance_id} shift={bit_shift} offset={offset} records={:?}",
+                                records
+                                    .iter()
+                                    .map(|record| (
+                                        record.target_max_hp.round() as u64,
+                                        record.bit_shift,
+                                        record.byte_offset
+                                    ))
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "capture={} damage_packets={damage_packets} exact_instance_matches={matches}",
+            path.display()
+        );
+    }
+
+    #[test]
+    #[ignore = "manual monster instance and damage alignment analysis"]
+    fn diagnose_monster_instance_damage_alignment() {
+        let path = actual_capture_path();
+        let file = File::open(&path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        let mut matches = 0;
+
+        while let Some(block) = reader.next_block() {
+            let block = block.unwrap();
+            let (interface_id, timestamp, data) = match block {
+                Block::EnhancedPacket(packet) => (
+                    packet.interface_id as usize,
+                    packet.timestamp.as_secs_f64(),
+                    packet.data.into_owned(),
+                ),
+                Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                _ => continue,
+            };
+            let Some(interface) = reader.interfaces().get(interface_id) else {
+                continue;
+            };
+            if interface.linktype != DataLink::ETHERNET {
+                continue;
+            }
+            let Some((src, _, dst, _, payload)) = parse_udp_ipv4(&data) else {
+                continue;
+            };
+            if !src.is_private() || dst.is_private() {
+                continue;
+            }
+            let records = crate::parser::parse_damage_records(payload);
+            let instances = detect_monster_instances(payload);
+            if records.is_empty() || instances.is_empty() {
+                continue;
+            }
+            matches += 1;
+            println!(
+                "ALIGN t={timestamp:.6} records={:?} instances={:?}",
+                records
+                    .iter()
+                    .map(|record| (
+                        record.target_max_hp.round() as u64,
+                        record.byte_offset,
+                        record.bit_shift
+                    ))
+                    .collect::<Vec<_>>(),
+                instances
+                    .iter()
+                    .map(|instance| (
+                        instance.object_name.as_str(),
+                        instance.byte_offset,
+                        instance.bit_shift
+                    ))
+                    .collect::<Vec<_>>()
+            );
+        }
+        println!("capture={} packets_with_both={matches}", path.display());
     }
 
     #[test]

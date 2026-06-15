@@ -283,6 +283,35 @@ fn rebuild_target_names(hits: &VecDeque<Hit>, target_names: &mut HashMap<String,
     }
 }
 
+fn hit_has_target_track(hit: &Hit, track_key: &str) -> bool {
+    let marker = format!("目标轨迹键：{track_key}");
+    hit.target_context.iter().any(|context| context == &marker)
+}
+
+fn apply_target_track_resolution_to_hits(
+    hits: &mut VecDeque<Hit>,
+    track_key: &str,
+    target_id: &str,
+    target_name: &str,
+) -> bool {
+    let mut changed = false;
+    for hit in hits.iter_mut().filter(|hit| {
+        hit.direction != "incoming"
+            && hit.target_id.is_none()
+            && hit_has_target_track(hit, track_key)
+    }) {
+        hit.target_id = Some(target_id.to_owned());
+        hit.target_name = Some(target_name.to_owned());
+        hit.target_context.retain(|context| {
+            !context.contains("协议相关 16 字节值") && !context.contains("对象句柄关联怪物：")
+        });
+        hit.target_context
+            .push("HP 轨迹由后续同轨迹对象实例确认".to_owned());
+        changed = true;
+    }
+    changed
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum AbyssHalf {
     #[default]
@@ -306,6 +335,7 @@ pub enum AbyssEvent {
     },
     Stage {
         timestamp: f64,
+        cycle: Option<u32>,
         floor: Option<u32>,
         half: AbyssHalf,
     },
@@ -369,6 +399,18 @@ impl PartyCombatState {
 
     pub fn dps(&self) -> f64 {
         self.total_damage / self.duration().max(1.0)
+    }
+
+    fn apply_target_track_resolution(
+        &mut self,
+        track_key: &str,
+        target_id: &str,
+        target_name: &str,
+    ) {
+        if apply_target_track_resolution_to_hits(&mut self.hits, track_key, target_id, target_name)
+        {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+        }
     }
 }
 
@@ -445,6 +487,7 @@ impl AbyssRunState {
             }
             AbyssEvent::Stage {
                 timestamp,
+                cycle: _,
                 floor,
                 half,
             } => {
@@ -563,6 +606,24 @@ impl CombatState {
         }
     }
 
+    pub fn apply_target_track_resolution(
+        &mut self,
+        track_key: &str,
+        target_id: &str,
+        target_name: &str,
+    ) {
+        if apply_target_track_resolution_to_hits(&mut self.hits, track_key, target_id, target_name)
+        {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+        }
+        self.abyss
+            .first_half
+            .apply_target_track_resolution(track_key, target_id, target_name);
+        self.abyss
+            .second_half
+            .apply_target_track_resolution(track_key, target_id, target_name);
+    }
+
     pub fn dps(&self) -> f64 {
         self.total_damage / self.duration().max(1.0)
     }
@@ -583,6 +644,11 @@ impl CombatState {
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Hit),
+    TargetTrackResolved {
+        track_key: String,
+        target_id: String,
+        target_name: String,
+    },
     Packet(PacketDebug),
     Abyss(AbyssEvent),
     Scene(SceneObservation),
@@ -716,6 +782,7 @@ mod tests {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 0.0,
+            cycle: None,
             floor: Some(1),
             half: AbyssHalf::First,
         });
@@ -762,6 +829,30 @@ mod tests {
         assert_eq!(summary.incoming_damage, 25.0);
         assert_eq!(summary.incoming_hits, 1);
         assert!((summary.unknown_share() - 28.571_428_571).abs() < 1e-6);
+    }
+
+    #[test]
+    fn target_track_resolution_backfills_only_matching_unknown_hits() {
+        let mut state = CombatState::default();
+        let mut matching = test_hit(1.0, 1001, "outgoing", 100.0);
+        matching
+            .target_context
+            .push("目标轨迹键：hp:4:7".to_owned());
+        state.push_hit(matching);
+        let mut unrelated = test_hit(2.0, 1001, "outgoing", 100.0);
+        unrelated
+            .target_context
+            .push("目标轨迹键：hp:4:8".to_owned());
+        state.push_hit(unrelated);
+
+        state.apply_target_track_resolution("hp:4:7", "mon_24_BP_Abyss_C_2147349936", "诡面风筝");
+
+        assert_eq!(
+            state.hits[0].target_id.as_deref(),
+            Some("mon_24_BP_Abyss_C_2147349936")
+        );
+        assert_eq!(state.hits[0].target_name.as_deref(), Some("诡面风筝"));
+        assert!(state.hits[1].target_id.is_none());
     }
 
     #[test]

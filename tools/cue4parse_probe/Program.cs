@@ -15,6 +15,7 @@ Usage:
   Cue4ParseProbe --paks <directory> [--output <directory>]
                  [--usmap <file>] [--aes-key-file <file>]
                  [--target <package suffix>]... [--all-datatables]
+                 [--mapping-filter <text>]...
 
 The AES key file must contain one authorized 32-byte hexadecimal key.
 The key is never written to logs or reports.
@@ -54,6 +55,46 @@ var report = new JObject
     ["game"] = EGame.GAME_NevernessToEverness.ToString(),
     ["usmap"] = options.UsmapPath is null ? null : Path.GetFullPath(options.UsmapPath)
 };
+
+if (options.MappingFilters.Count > 0)
+{
+    if (options.UsmapPath is null)
+    {
+        Console.Error.WriteLine("--mapping-filter requires --usmap");
+        return 2;
+    }
+    var mappingsProvider = new FileUsmapTypeMappingsProvider(
+        Path.GetFullPath(options.UsmapPath),
+        StringComparer.OrdinalIgnoreCase);
+    var mappings = mappingsProvider.MappingsForGame!;
+    report["mapping_types"] = new JArray(
+        mappings.Types
+            .Where(pair => options.MappingFilters.Any(filter =>
+                pair.Key.Contains(filter, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(pair => pair.Key)
+            .Select(pair => new JObject
+            {
+                ["name"] = pair.Key,
+                ["super"] = pair.Value.SuperType,
+                ["property_count"] = pair.Value.PropertyCount,
+                ["properties"] = new JArray(pair.Value.Properties
+                    .OrderBy(property => property.Key)
+                    .Select(property => new JObject
+                    {
+                        ["slot"] = property.Key,
+                        ["index"] = property.Value.Index,
+                        ["name"] = property.Value.Name,
+                        ["type"] = property.Value.MappingType.Type,
+                        ["struct_type"] = property.Value.MappingType.StructType,
+                        ["enum_name"] = property.Value.MappingType.EnumName
+                    }))
+            }));
+    var mappingReportPath = Path.Combine(outputDirectory, "usmap_mappings.json");
+    File.WriteAllText(mappingReportPath, report.ToString(Formatting.Indented));
+    Console.WriteLine($"Report: {mappingReportPath}");
+    Console.WriteLine(report.ToString(Formatting.Indented));
+    return 0;
+}
 
 try
 {
@@ -276,6 +317,7 @@ static Options? ParseArguments(string[] arguments)
     string? aesKeyFile = null;
     var allDataTables = false;
     var targets = new List<string>();
+    var mappingFilters = new List<string>();
 
     for (var index = 0; index < arguments.Length; index++)
     {
@@ -311,6 +353,9 @@ static Options? ParseArguments(string[] arguments)
                 case "--all-datatables":
                     allDataTables = true;
                     break;
+                case "--mapping-filter":
+                    mappingFilters.Add(NextValue());
+                    break;
                 default:
                     return null;
             }
@@ -323,7 +368,7 @@ static Options? ParseArguments(string[] arguments)
 
     return paks is null
         ? null
-        : new Options(paks, output, usmap, aesKeyFile, targets, allDataTables);
+        : new Options(paks, output, usmap, aesKeyFile, targets, allDataTables, mappingFilters);
 }
 
 internal sealed record Options(
@@ -332,4 +377,5 @@ internal sealed record Options(
     string? UsmapPath,
     string? AesKeyFile,
     List<string> Targets,
-    bool AllDataTables);
+    bool AllDataTables,
+    List<string> MappingFilters);
