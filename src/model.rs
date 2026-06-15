@@ -238,6 +238,7 @@ pub enum AbyssEvent {
 #[derive(Clone, Debug, Default)]
 pub struct PartyCombatState {
     pub hits: VecDeque<Hit>,
+    pub hits_generation: u64,
     pub stats: HashMap<u32, CharacterStats>,
     pub started_at: Option<f64>,
     pub ended_at: Option<f64>,
@@ -256,6 +257,7 @@ impl PartyCombatState {
             &hit,
         );
         self.hits.push_back(hit);
+        self.hits_generation = self.hits_generation.wrapping_add(1);
         let mut trimmed = false;
         while self.hits.len() > MAX_COMBAT_HITS {
             self.hits.pop_front();
@@ -418,6 +420,7 @@ impl AbyssRunState {
 #[derive(Default)]
 pub struct CombatState {
     pub hits: VecDeque<Hit>,
+    pub hits_generation: u64,
     pub packets: VecDeque<PacketDebug>,
     pub stats: HashMap<u32, CharacterStats>,
     pub started_at: Option<f64>,
@@ -440,6 +443,7 @@ impl CombatState {
             &hit,
         );
         self.hits.push_back(hit);
+        self.hits_generation = self.hits_generation.wrapping_add(1);
         let mut trimmed = false;
         while self.hits.len() > MAX_COMBAT_HITS {
             self.hits.pop_front();
@@ -622,10 +626,13 @@ mod tests {
     #[test]
     fn party_combat_totals_follow_trimmed_hits() {
         let mut state = PartyCombatState::default();
-        for hit in overflowing_hits() {
+        let hits = overflowing_hits();
+        let expected_generation = hits.len() as u64;
+        for hit in hits {
             state.push_hit(hit);
         }
 
+        assert_eq!(state.hits_generation, expected_generation);
         assert_totals_match_hits(
             &state.hits,
             &state.stats,
@@ -639,10 +646,13 @@ mod tests {
     #[test]
     fn combat_totals_follow_trimmed_hits() {
         let mut state = CombatState::default();
-        for hit in overflowing_hits() {
+        let hits = overflowing_hits();
+        let expected_generation = hits.len() as u64;
+        for hit in hits {
             state.push_hit(hit);
         }
 
+        assert_eq!(state.hits_generation, expected_generation);
         assert_totals_match_hits(
             &state.hits,
             &state.stats,

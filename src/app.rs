@@ -56,7 +56,7 @@ enum DebugTab {
     Environment,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum HitDetailFilter {
     #[default]
     All,
@@ -72,6 +72,71 @@ impl HitDetailFilter {
             Self::Incoming => hit.direction == "incoming",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HitDetailSource {
+    Global,
+    AbyssFirst,
+    AbyssSecond,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct HitDetailCacheKey {
+    source: HitDetailSource,
+    generation: u64,
+    char_id: Option<u32>,
+    filter: HitDetailFilter,
+    skill_filter: String,
+    limit: usize,
+}
+
+#[derive(Clone)]
+struct CachedHitRow {
+    time_text: String,
+    damage_text: String,
+    hp_text: String,
+    type_text: String,
+    target_text: Option<String>,
+    hover_text: String,
+    is_incoming: bool,
+    damage: f64,
+    char_id: u32,
+    char_name: String,
+    avatar_initial: String,
+    hp_fraction: f32,
+    timestamp: f64,
+    byte_offset: usize,
+    bit_shift: u8,
+    target_hp_after: f64,
+    target_max_hp: f64,
+}
+
+#[derive(Default)]
+struct HitDetailCache {
+    key: Option<HitDetailCacheKey>,
+    rows: Arc<Vec<CachedHitRow>>,
+    filtered_count: usize,
+    max_damage: f64,
+    #[cfg(debug_assertions)]
+    filter_collect_duration: Duration,
+    #[cfg(debug_assertions)]
+    sort_duration: Duration,
+    #[cfg(debug_assertions)]
+    max_damage_duration: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillSummaryCacheKey {
+    source: HitDetailSource,
+    generation: u64,
+    char_id: u32,
+}
+
+#[derive(Default)]
+struct SkillSummaryCache {
+    key: Option<SkillSummaryCacheKey>,
+    rows: Vec<SkillDamageSummary>,
 }
 
 #[derive(Clone, Default)]
@@ -283,6 +348,9 @@ pub struct DpsApp {
     hit_detail_skill_filter: String,
     team_hit_detail_open: bool,
     team_hit_detail_filter: HitDetailFilter,
+    character_hit_cache: HitDetailCache,
+    team_hit_cache: HitDetailCache,
+    skill_summary_cache: SkillSummaryCache,
     devices: Vec<CaptureDevice>,
     selected_device: usize,
     local_ip: String,
@@ -402,6 +470,9 @@ impl DpsApp {
             hit_detail_skill_filter: String::new(),
             team_hit_detail_open: false,
             team_hit_detail_filter: HitDetailFilter::All,
+            character_hit_cache: HitDetailCache::default(),
+            team_hit_cache: HitDetailCache::default(),
+            skill_summary_cache: SkillSummaryCache::default(),
             devices,
             selected_device,
             local_ip,
@@ -469,6 +540,9 @@ impl DpsApp {
         self.hit_detail_skill_filter.clear();
         self.team_hit_detail_open = false;
         self.team_hit_detail_filter = HitDetailFilter::All;
+        self.character_hit_cache = HitDetailCache::default();
+        self.team_hit_cache = HitDetailCache::default();
+        self.skill_summary_cache = SkillSummaryCache::default();
         self.paused = false;
         self.paused_events.clear();
         self.dropped_debug_packets = 0;
@@ -1426,6 +1500,40 @@ impl DpsApp {
             .then(|| self.state.abyss.half(self.selected_abyss_half))
     }
 
+    fn detail_hits(&self) -> (HitDetailSource, u64, &VecDeque<crate::model::Hit>) {
+        if self.state.abyss.is_active() {
+            let party = self.state.abyss.half(self.selected_abyss_half);
+            let source = match self.selected_abyss_half {
+                AbyssHalf::First => HitDetailSource::AbyssFirst,
+                AbyssHalf::Second => HitDetailSource::AbyssSecond,
+            };
+            (source, party.hits_generation, &party.hits)
+        } else {
+            (
+                HitDetailSource::Global,
+                self.state.hits_generation,
+                &self.state.hits,
+            )
+        }
+    }
+
+    fn cached_skill_summaries(&mut self, char_id: u32) -> Vec<SkillDamageSummary> {
+        let (source, generation, hits) = self.detail_hits();
+        let key = SkillSummaryCacheKey {
+            source,
+            generation,
+            char_id,
+        };
+        if self.skill_summary_cache.key.as_ref() != Some(&key) {
+            let rows = aggregate_character_skill_damage(hits, char_id);
+            self.skill_summary_cache = SkillSummaryCache {
+                key: Some(key),
+                rows,
+            };
+        }
+        self.skill_summary_cache.rows.clone()
+    }
+
     fn abyss_selector(&mut self, ui: &mut egui::Ui) {
         if !self.state.abyss.is_active() {
             return;
@@ -1989,36 +2097,46 @@ impl DpsApp {
     }
 
     fn character_hits(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         char_id: u32,
         filter: HitDetailFilter,
         skill_filter: &str,
     ) {
+        #[cfg(debug_assertions)]
+        let frame_started = Instant::now();
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
         let layout = CharacterHitLayout::new(content_width);
-        let hits = if let Some(party) = self.selected_party_state() {
-            &party.hits
-        } else {
-            &self.state.hits
+        let (source, generation, hits) = self.detail_hits();
+        let key = HitDetailCacheKey {
+            source,
+            generation,
+            char_id: Some(char_id),
+            filter,
+            skill_filter: skill_filter.to_owned(),
+            limit: MAX_DETAIL_HITS,
         };
-        let mut filtered_count = 0;
-        let mut character_hits = Vec::with_capacity(MAX_DETAIL_HITS.min(hits.len()));
-        for hit in hits.iter().rev().filter(|hit| {
-            hit.char_id == char_id
-                && filter.matches(hit)
-                && (skill_filter.is_empty() || hit_specific_type(hit) == skill_filter)
-        }) {
-            filtered_count += 1;
-            if character_hits.len() < MAX_DETAIL_HITS {
-                character_hits.push(hit);
-            }
+        let rebuilt = self.character_hit_cache.key.as_ref() != Some(&key);
+        if rebuilt {
+            self.character_hit_cache = build_hit_detail_cache(hits, key);
         }
+        let rows = self.character_hit_cache.rows.clone();
+        let filtered_count = self.character_hit_cache.filtered_count;
+        let max_damage = self.character_hit_cache.max_damage;
+        #[cfg(debug_assertions)]
+        let (filter_duration, sort_duration, max_duration) = if rebuilt {
+            (
+                self.character_hit_cache.filter_collect_duration,
+                self.character_hit_cache.sort_duration,
+                self.character_hit_cache.max_damage_duration,
+            )
+        } else {
+            (Duration::ZERO, Duration::ZERO, Duration::ZERO)
+        };
         show_detail_limit_notice(ui, filtered_count);
         draw_character_hit_header(ui, layout);
-        character_hits.sort_by(|left, right| compare_hit_display_order(left, right));
-        let hit_count = character_hits.len();
+        let hit_count = rows.len();
         if hit_count == 0 {
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), 72.0),
@@ -2032,43 +2150,64 @@ impl DpsApp {
             );
             return;
         }
-        let max_damage = character_hits
-            .iter()
-            .map(|hit| hit.damage)
-            .fold(1.0_f64, f64::max);
+        #[cfg(debug_assertions)]
+        let draw_started = Instant::now();
         egui::ScrollArea::vertical()
             .id_salt(("character_hits", char_id))
             .max_height(ui.available_height())
-            .stick_to_bottom(true)
             .show_rows(ui, 30.0, hit_count, |ui, visible_rows| {
                 let visible_count = visible_rows.end.saturating_sub(visible_rows.start);
-                for hit in character_hits[visible_rows].iter().take(visible_count) {
-                    draw_character_hit_row(ui, layout, hit, max_damage);
+                for row in rows[visible_rows].iter().take(visible_count) {
+                    draw_character_hit_row(ui, layout, row, max_damage);
                 }
             });
+        #[cfg(debug_assertions)]
+        log_slow_detail_frame(
+            "character",
+            frame_started.elapsed(),
+            rebuilt,
+            filter_duration,
+            sort_duration,
+            max_duration,
+            draw_started.elapsed(),
+        );
     }
 
-    fn team_hits(&self, ui: &mut egui::Ui, filter: HitDetailFilter) {
+    fn team_hits(&mut self, ui: &mut egui::Ui, filter: HitDetailFilter) {
+        #[cfg(debug_assertions)]
+        let frame_started = Instant::now();
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
         let layout = TeamHitLayout::new(content_width);
-        let hits = if let Some(party) = self.selected_party_state() {
-            &party.hits
-        } else {
-            &self.state.hits
+        let (source, generation, hits) = self.detail_hits();
+        let key = HitDetailCacheKey {
+            source,
+            generation,
+            char_id: None,
+            filter,
+            skill_filter: String::new(),
+            limit: MAX_DETAIL_HITS,
         };
-        let mut filtered_count = 0;
-        let mut team_hits = Vec::with_capacity(MAX_DETAIL_HITS.min(hits.len()));
-        for hit in hits.iter().rev().filter(|hit| filter.matches(hit)) {
-            filtered_count += 1;
-            if team_hits.len() < MAX_DETAIL_HITS {
-                team_hits.push(hit);
-            }
+        let rebuilt = self.team_hit_cache.key.as_ref() != Some(&key);
+        if rebuilt {
+            self.team_hit_cache = build_hit_detail_cache(hits, key);
         }
+        let rows = self.team_hit_cache.rows.clone();
+        let filtered_count = self.team_hit_cache.filtered_count;
+        let max_damage = self.team_hit_cache.max_damage;
+        #[cfg(debug_assertions)]
+        let (filter_duration, sort_duration, max_duration) = if rebuilt {
+            (
+                self.team_hit_cache.filter_collect_duration,
+                self.team_hit_cache.sort_duration,
+                self.team_hit_cache.max_damage_duration,
+            )
+        } else {
+            (Duration::ZERO, Duration::ZERO, Duration::ZERO)
+        };
         show_detail_limit_notice(ui, filtered_count);
         draw_team_hit_header(ui, layout);
-        team_hits.sort_by(|left, right| compare_team_hit_chronological(left, right));
-        if team_hits.is_empty() {
+        if rows.is_empty() {
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), 72.0),
                 egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
@@ -2081,33 +2220,40 @@ impl DpsApp {
             );
             return;
         }
-        let hit_count = team_hits.len();
-        let max_damage = team_hits
-            .iter()
-            .map(|hit| hit.damage)
-            .fold(1.0_f64, f64::max);
+        let hit_count = rows.len();
+        #[cfg(debug_assertions)]
+        let draw_started = Instant::now();
         egui::ScrollArea::vertical()
             .id_salt((
                 "team_hits",
                 matches!(self.selected_abyss_half, AbyssHalf::Second),
             ))
             .max_height(ui.available_height())
-            .stick_to_bottom(true)
             .show_rows(ui, 30.0, hit_count, |ui, visible_rows| {
                 let visible_count = visible_rows.end.saturating_sub(visible_rows.start);
-                for hit in team_hits[visible_rows].iter().take(visible_count) {
+                for row in rows[visible_rows].iter().take(visible_count) {
                     let color = readable_accent(
-                        character_color(hit.char_id, &self.characters, 0),
+                        character_color(row.char_id, &self.characters, 0),
                         self.dark_mode,
                     );
                     let avatar_texture = self
                         .characters
-                        .get(&hit.char_id)
+                        .get(&row.char_id)
                         .and_then(|character| character.avatar.as_deref())
                         .and_then(|avatar| self.avatar_textures.get(avatar));
-                    draw_team_hit_row(ui, layout, hit, max_damage, color, avatar_texture);
+                    draw_team_hit_row(ui, layout, row, max_damage, color, avatar_texture);
                 }
             });
+        #[cfg(debug_assertions)]
+        log_slow_detail_frame(
+            "team",
+            frame_started.elapsed(),
+            rebuilt,
+            filter_duration,
+            sort_duration,
+            max_duration,
+            draw_started.elapsed(),
+        );
     }
 
     fn team_hit_detail_panel(&mut self, ctx: &egui::Context) {
@@ -2119,15 +2265,15 @@ impl DpsApp {
                     party.duration(),
                     party.dps(),
                     party
-                        .hits
-                        .iter()
-                        .filter(|hit| hit.direction != "incoming")
-                        .count(),
+                        .stats
+                        .values()
+                        .map(|row| row.hits as usize)
+                        .sum::<usize>(),
                     party
-                        .hits
-                        .iter()
-                        .filter(|hit| hit.direction == "incoming")
-                        .count(),
+                        .stats
+                        .values()
+                        .map(|row| row.hits_taken as usize)
+                        .sum::<usize>(),
                 )
             } else {
                 (
@@ -2136,15 +2282,15 @@ impl DpsApp {
                     self.state.duration(),
                     self.state.dps(),
                     self.state
-                        .hits
-                        .iter()
-                        .filter(|hit| hit.direction != "incoming")
-                        .count(),
+                        .stats
+                        .values()
+                        .map(|row| row.hits as usize)
+                        .sum::<usize>(),
                     self.state
-                        .hits
-                        .iter()
-                        .filter(|hit| hit.direction == "incoming")
-                        .count(),
+                        .stats
+                        .values()
+                        .map(|row| row.hits_taken as usize)
+                        .sum::<usize>(),
                 )
             };
         let title = if self.state.abyss.is_active() {
@@ -2269,20 +2415,9 @@ impl DpsApp {
             self.hit_detail_char_id = None;
             return;
         };
-        let hits = if let Some(party) = self.selected_party_state() {
-            &party.hits
-        } else {
-            &self.state.hits
-        };
-        let outgoing_count = hits
-            .iter()
-            .filter(|hit| hit.char_id == char_id && hit.direction != "incoming")
-            .count();
-        let incoming_count = hits
-            .iter()
-            .filter(|hit| hit.char_id == char_id && hit.direction == "incoming")
-            .count();
-        let skill_summaries = aggregate_character_skill_damage(hits, char_id);
+        let outgoing_count = stats.hits as usize;
+        let incoming_count = stats.hits_taken as usize;
+        let skill_summaries = self.cached_skill_summaries(char_id);
         if !self.hit_detail_skill_filter.is_empty()
             && !skill_summaries
                 .iter()
@@ -2498,12 +2633,8 @@ impl DpsApp {
                         );
                         ui.add_space(4.0);
                         ui.separator();
-                        self.character_hits(
-                            ui,
-                            char_id,
-                            self.hit_detail_filter,
-                            &self.hit_detail_skill_filter,
-                        );
+                        let skill_filter = self.hit_detail_skill_filter.clone();
+                        self.character_hits(ui, char_id, self.hit_detail_filter, &skill_filter);
                     });
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
@@ -3476,6 +3607,170 @@ fn aggregate_character_skill_damage(
     rows
 }
 
+fn build_hit_detail_cache(
+    hits: &VecDeque<crate::model::Hit>,
+    key: HitDetailCacheKey,
+) -> HitDetailCache {
+    #[cfg(debug_assertions)]
+    let filter_started = Instant::now();
+    let mut filtered_count = 0;
+    let mut rows = Vec::with_capacity(key.limit.min(hits.len()));
+    for hit in hits.iter().rev().filter(|hit| {
+        key.char_id.is_none_or(|char_id| hit.char_id == char_id)
+            && key.filter.matches(hit)
+            && (key.skill_filter.is_empty() || hit_specific_type(hit) == key.skill_filter.as_str())
+    }) {
+        filtered_count += 1;
+        if rows.len() < key.limit {
+            rows.push(cached_hit_row(hit));
+        }
+    }
+    #[cfg(debug_assertions)]
+    let filter_collect_duration = filter_started.elapsed();
+
+    #[cfg(debug_assertions)]
+    let sort_started = Instant::now();
+    if key.char_id.is_some() {
+        rows.sort_by(compare_cached_character_hits);
+    } else {
+        rows.sort_by(compare_cached_team_hits);
+    }
+    #[cfg(debug_assertions)]
+    let sort_duration = sort_started.elapsed();
+
+    #[cfg(debug_assertions)]
+    let max_damage_started = Instant::now();
+    let max_damage = rows.iter().map(|row| row.damage).fold(1.0_f64, f64::max);
+    #[cfg(debug_assertions)]
+    let max_damage_duration = max_damage_started.elapsed();
+
+    HitDetailCache {
+        key: Some(key),
+        rows: Arc::new(rows),
+        filtered_count,
+        max_damage,
+        #[cfg(debug_assertions)]
+        filter_collect_duration,
+        #[cfg(debug_assertions)]
+        sort_duration,
+        #[cfg(debug_assertions)]
+        max_damage_duration,
+    }
+}
+
+fn cached_hit_row(hit: &crate::model::Hit) -> CachedHitRow {
+    let is_incoming = hit.direction == "incoming";
+    let type_text = if is_incoming {
+        "受击".to_owned()
+    } else {
+        hit_specific_type(hit).to_owned()
+    };
+    let mut hover_text = format!(
+        "{} · 角色 ID {} · {}",
+        hit.char_name,
+        hit.char_id,
+        if is_incoming {
+            "角色受到的伤害".to_owned()
+        } else {
+            format!(
+                "攻击类型：{}",
+                hit.attack_type.as_deref().unwrap_or("攻击类型未知")
+            )
+        }
+    );
+    if let Some(ability_name) = hit.ability_name.as_deref() {
+        hover_text.push_str(&format!("\nGA：{ability_name}"));
+    }
+    if let Some(damage_name) = hit.damage_name.as_deref() {
+        hover_text.push_str(&format!("\n招式：{damage_name}"));
+    }
+    if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
+        hover_text.push_str(&format!("\nGameplayEffect：{effect_name}"));
+    }
+    CachedHitRow {
+        time_text: format_short_time(hit.timestamp),
+        damage_text: format_number(hit.damage),
+        hp_text: format!(
+            "{} / {}  {:.1}%",
+            format_number(hit.target_hp_after),
+            format_number(hit.target_max_hp),
+            hit.target_hp_percent
+        ),
+        type_text,
+        target_text: hit.target_name.clone(),
+        hover_text,
+        is_incoming,
+        damage: hit.damage,
+        char_id: hit.char_id,
+        char_name: hit.char_name.clone(),
+        avatar_initial: hit.char_name.chars().next().unwrap_or('?').to_string(),
+        hp_fraction: (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32,
+        timestamp: hit.timestamp,
+        byte_offset: hit.byte_offset,
+        bit_shift: hit.bit_shift,
+        target_hp_after: hit.target_hp_after,
+        target_max_hp: hit.target_max_hp,
+    }
+}
+
+fn compare_cached_character_hits(left: &CachedHitRow, right: &CachedHitRow) -> std::cmp::Ordering {
+    (left.timestamp.floor() as i64)
+        .cmp(&(right.timestamp.floor() as i64))
+        .then_with(|| u8::from(left.is_incoming).cmp(&u8::from(right.is_incoming)))
+        .then_with(|| cached_health_pool_key(left).cmp(&cached_health_pool_key(right)))
+        .then_with(|| right.target_hp_after.total_cmp(&left.target_hp_after))
+        .then_with(|| left.timestamp.total_cmp(&right.timestamp))
+        .then_with(|| left.byte_offset.cmp(&right.byte_offset))
+        .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+        .then_with(|| left.damage.total_cmp(&right.damage))
+}
+
+fn compare_cached_team_hits(left: &CachedHitRow, right: &CachedHitRow) -> std::cmp::Ordering {
+    (left.timestamp.floor() as i64)
+        .cmp(&(right.timestamp.floor() as i64))
+        .then_with(|| {
+            u8::from(left.target_hp_after <= 0.0 || left.hp_fraction <= 0.0).cmp(&u8::from(
+                right.target_hp_after <= 0.0 || right.hp_fraction <= 0.0,
+            ))
+        })
+        .then_with(|| left.timestamp.total_cmp(&right.timestamp))
+        .then_with(|| left.byte_offset.cmp(&right.byte_offset))
+        .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+        .then_with(|| left.char_id.cmp(&right.char_id))
+        .then_with(|| right.is_incoming.cmp(&left.is_incoming))
+        .then_with(|| left.damage.total_cmp(&right.damage))
+}
+
+fn cached_health_pool_key(row: &CachedHitRow) -> i64 {
+    if row.target_max_hp.is_finite() && row.target_max_hp > 0.0 {
+        row.target_max_hp.round() as i64
+    } else {
+        i64::MIN
+    }
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_detail_frame(
+    kind: &str,
+    total: Duration,
+    rebuilt: bool,
+    filter_collect: Duration,
+    sort: Duration,
+    max_damage: Duration,
+    draw: Duration,
+) {
+    if total >= Duration::from_millis(12) {
+        eprintln!(
+            "[detail-ui:{kind}] total={:.2}ms rebuilt={rebuilt} filter={:.2}ms sort={:.2}ms max={:.2}ms draw={:.2}ms",
+            total.as_secs_f64() * 1_000.0,
+            filter_collect.as_secs_f64() * 1_000.0,
+            sort.as_secs_f64() * 1_000.0,
+            max_damage.as_secs_f64() * 1_000.0,
+            draw.as_secs_f64() * 1_000.0,
+        );
+    }
+}
+
 fn draw_skill_damage_summary(
     ui: &mut egui::Ui,
     summaries: &[SkillDamageSummary],
@@ -3726,12 +4021,12 @@ fn draw_character_hit_header(ui: &mut egui::Ui, layout: CharacterHitLayout) {
 fn draw_character_hit_row(
     ui: &mut egui::Ui,
     layout: CharacterHitLayout,
-    hit: &crate::model::Hit,
+    hit: &CachedHitRow,
     max_damage: f64,
 ) {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(layout.row_width, 30.0), egui::Sense::hover());
-    let incoming = hit.direction == "incoming";
+    let incoming = hit.is_incoming;
     let type_color = if incoming {
         semantic_danger(ui.visuals().dark_mode)
     } else {
@@ -3766,24 +4061,10 @@ fn draw_character_hit_row(
     };
     let mono = egui::FontId::monospace(12.0);
     draw_hit_column_separators(&painter, rect, layout);
-    let hit_type = if incoming {
-        "受击"
-    } else {
-        hit_specific_type(hit)
-    };
-    let time = format_short_time(hit.timestamp);
-    let damage = format_number(hit.damage);
-    let target_hp = format!(
-        "{} / {}  {:.1}%",
-        format_number(hit.target_hp_after),
-        format_number(hit.target_max_hp),
-        hit.target_hp_percent
-    );
-
     painter.text(
         egui::pos2(x + layout.time_x, y),
         egui::Align2::LEFT_CENTER,
-        &time,
+        &hit.time_text,
         mono.clone(),
         text_color,
     );
@@ -3798,18 +4079,18 @@ fn draw_character_hit_row(
     painter.text(
         egui::pos2(x + layout.type_x + (layout.type_width - 20.0) * 0.5, y),
         egui::Align2::CENTER_CENTER,
-        hit_type,
+        &hit.type_text,
         egui::FontId::proportional(10.5),
         contrast_text(type_color),
     );
     painter.text(
         egui::pos2(x + layout.damage_x, y),
         egui::Align2::LEFT_CENTER,
-        &damage,
+        &hit.damage_text,
         egui::FontId::monospace(14.0),
         damage_color,
     );
-    let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
+    let hp_fraction = hit.hp_fraction;
     let hp_bar_left = x + layout.hp_x;
     let hp_bar_right = (rect.right() - 10.0).min(ui.clip_rect().right() - 10.0);
     let hp_bar_rect = egui::Rect::from_min_max(
@@ -3834,11 +4115,11 @@ fn draw_character_hit_row(
     painter.text(
         egui::pos2(x + layout.hp_x, y - 3.0),
         egui::Align2::LEFT_CENTER,
-        &target_hp,
+        &hit.hp_text,
         mono.clone(),
         text_color,
     );
-    if let Some(target_name) = hit.target_name.as_deref() {
+    if let Some(target_name) = hit.target_text.as_deref() {
         painter.text(
             egui::pos2(rect.right() - 10.0, y - 3.0),
             egui::Align2::RIGHT_CENTER,
@@ -3848,21 +4129,7 @@ fn draw_character_hit_row(
         );
     }
     if response.hovered() {
-        let mut details = if incoming {
-            "角色受到的伤害".to_owned()
-        } else {
-            format!("攻击类型：{hit_type}")
-        };
-        if let Some(ability_name) = hit.ability_name.as_deref() {
-            details.push_str(&format!("\nGA：{ability_name}"));
-        }
-        if let Some(damage_name) = hit.damage_name.as_deref() {
-            details.push_str(&format!("\n招式：{damage_name}"));
-        }
-        if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
-            details.push_str(&format!("\nGameplayEffect：{effect_name}"));
-        }
-        response.on_hover_text(details);
+        response.on_hover_text(&hit.hover_text);
     }
 }
 
@@ -3896,14 +4163,14 @@ fn draw_team_hit_header(ui: &mut egui::Ui, layout: TeamHitLayout) {
 fn draw_team_hit_row(
     ui: &mut egui::Ui,
     layout: TeamHitLayout,
-    hit: &crate::model::Hit,
+    hit: &CachedHitRow,
     max_damage: f64,
     character_color: Color32,
     avatar_texture: Option<&egui::TextureHandle>,
 ) {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(layout.row_width, 30.0), egui::Sense::hover());
-    let incoming = hit.direction == "incoming";
+    let incoming = hit.is_incoming;
     let type_color = if incoming {
         semantic_danger(ui.visuals().dark_mode)
     } else {
@@ -3937,7 +4204,7 @@ fn draw_team_hit_row(
     painter.text(
         egui::pos2(x + layout.time_x, y),
         egui::Align2::LEFT_CENTER,
-        format_short_time(hit.timestamp),
+        &hit.time_text,
         mono.clone(),
         text_color,
     );
@@ -3965,7 +4232,7 @@ fn draw_team_hit_row(
         painter.text(
             avatar_rect.center(),
             egui::Align2::CENTER_CENTER,
-            hit.char_name.chars().next().unwrap_or('?').to_string(),
+            &hit.avatar_initial,
             egui::FontId::proportional(11.0),
             Color32::WHITE,
         );
@@ -3994,18 +4261,14 @@ fn draw_team_hit_row(
     painter.text(
         egui::pos2(x + layout.type_x + (layout.type_width - 20.0) * 0.5, y),
         egui::Align2::CENTER_CENTER,
-        if incoming {
-            "受击"
-        } else {
-            hit_specific_type(hit)
-        },
+        &hit.type_text,
         egui::FontId::proportional(10.5),
         contrast_text(type_color),
     );
     painter.text(
         egui::pos2(x + layout.damage_x, y),
         egui::Align2::LEFT_CENTER,
-        format_number(hit.damage),
+        &hit.damage_text,
         egui::FontId::monospace(14.0),
         if incoming {
             semantic_danger(ui.visuals().dark_mode)
@@ -4014,7 +4277,7 @@ fn draw_team_hit_row(
         },
     );
 
-    let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
+    let hp_fraction = hit.hp_fraction;
     let hp_bar_left = x + layout.hp_x;
     let hp_bar_right = (rect.right() - 10.0).min(ui.clip_rect().right() - 10.0);
     let hp_bar_rect = egui::Rect::from_min_max(
@@ -4039,36 +4302,12 @@ fn draw_team_hit_row(
     painter.text(
         egui::pos2(x + layout.hp_x, y - 3.0),
         egui::Align2::LEFT_CENTER,
-        format!(
-            "{} / {}  {:.1}%",
-            format_number(hit.target_hp_after),
-            format_number(hit.target_max_hp),
-            hit.target_hp_percent
-        ),
+        &hit.hp_text,
         mono,
         text_color,
     );
     if response.hovered() {
-        let mut details = format!(
-            "{} · 角色 ID {} · {}",
-            hit.char_name,
-            hit.char_id,
-            if incoming {
-                "角色受到的伤害"
-            } else {
-                hit.attack_type.as_deref().unwrap_or("攻击类型未知")
-            }
-        );
-        if let Some(ability_name) = hit.ability_name.as_deref() {
-            details.push_str(&format!("\nGA：{ability_name}"));
-        }
-        if let Some(damage_name) = hit.damage_name.as_deref() {
-            details.push_str(&format!("\n招式：{damage_name}"));
-        }
-        if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
-            details.push_str(&format!("\nGameplayEffect：{effect_name}"));
-        }
-        response.on_hover_text(details);
+        response.on_hover_text(&hit.hover_text);
     }
 }
 
@@ -4527,40 +4766,6 @@ fn format_short_time(timestamp: f64) -> String {
         .to_string()
 }
 
-fn compare_hit_display_order(
-    left: &crate::model::Hit,
-    right: &crate::model::Hit,
-) -> std::cmp::Ordering {
-    let second_order = (left.timestamp.floor() as i64).cmp(&(right.timestamp.floor() as i64));
-    second_order
-        .then_with(|| hit_direction_order(left).cmp(&hit_direction_order(right)))
-        .then_with(|| hit_health_pool_key(left).cmp(&hit_health_pool_key(right)))
-        .then_with(|| right.target_hp_after.total_cmp(&left.target_hp_after))
-        .then_with(|| left.timestamp.total_cmp(&right.timestamp))
-        .then_with(|| left.byte_offset.cmp(&right.byte_offset))
-        .then_with(|| left.bit_shift.cmp(&right.bit_shift))
-        .then_with(|| left.damage.total_cmp(&right.damage))
-}
-
-fn compare_team_hit_chronological(
-    left: &crate::model::Hit,
-    right: &crate::model::Hit,
-) -> std::cmp::Ordering {
-    (left.timestamp.floor() as i64)
-        .cmp(&(right.timestamp.floor() as i64))
-        .then_with(|| hit_zero_hp_order(left).cmp(&hit_zero_hp_order(right)))
-        .then_with(|| left.timestamp.total_cmp(&right.timestamp))
-        .then_with(|| left.byte_offset.cmp(&right.byte_offset))
-        .then_with(|| left.bit_shift.cmp(&right.bit_shift))
-        .then_with(|| left.char_id.cmp(&right.char_id))
-        .then_with(|| left.direction.cmp(&right.direction))
-        .then_with(|| left.damage.total_cmp(&right.damage))
-}
-
-fn hit_zero_hp_order(hit: &crate::model::Hit) -> u8 {
-    u8::from(hit.target_hp_after <= 0.0 || hit.target_hp_percent <= 0.0)
-}
-
 fn show_detail_limit_notice(ui: &mut egui::Ui, filtered_count: usize) {
     if filtered_count > MAX_DETAIL_HITS {
         ui.label(
@@ -4573,18 +4778,6 @@ fn show_detail_limit_notice(ui: &mut egui::Ui, filtered_count: usize) {
             .color(ui.visuals().weak_text_color()),
         );
         ui.add_space(4.0);
-    }
-}
-
-fn hit_direction_order(hit: &crate::model::Hit) -> u8 {
-    if hit.direction == "outgoing" { 0 } else { 1 }
-}
-
-fn hit_health_pool_key(hit: &crate::model::Hit) -> i64 {
-    if hit.target_max_hp.is_finite() && hit.target_max_hp > 0.0 {
-        hit.target_max_hp.round() as i64
-    } else {
-        i64::MIN
     }
 }
 
