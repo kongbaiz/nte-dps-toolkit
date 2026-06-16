@@ -2032,7 +2032,7 @@ mod tests {
             note: String::new(),
             payload_preview: String::new(),
             payload_hex: String::new(),
-            decoded_text: "娴嬭瘯瑙ｇ爜".to_owned(),
+            decoded_text: "测试解码".to_owned(),
         };
         assert!(send_export_packet(packet, &sender).is_ok());
         match receiver.try_recv().expect("packet event should be emitted") {
