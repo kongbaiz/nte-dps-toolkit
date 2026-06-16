@@ -1793,7 +1793,7 @@ fn send_export_packet(packet: ExportPacket, sender: &Sender<EngineEvent>) -> Res
     let payload = if packet.payload_hex.trim().is_empty() {
         Vec::new()
     } else {
-        hex::decode(&packet.payload_hex).map_err(|error| format!("payload_hex 鏃犳晥: {error}"))?
+        hex::decode(&packet.payload_hex).map_err(|error| format!("payload_hex 无效: {error}"))?
     };
     let decoded_text = if payload.is_empty() {
         packet.decoded_text
@@ -1858,10 +1858,7 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         attack_type: hit.attack_type.map(|attack_type| {
             if attack_type == "QTE" {
                 "环合".to_owned()
-            } else if let Some(reaction_type) = attack_type
-                .strip_prefix("QTE·")
-                .or_else(|| attack_type.strip_prefix("QTE路"))
-            {
+            } else if let Some(reaction_type) = attack_type.strip_prefix("QTE·") {
                 format!("环合·{reaction_type}")
             } else {
                 attack_type
@@ -2016,7 +2013,7 @@ mod tests {
         assert!(
             send_export_packet(packet, &sender)
                 .unwrap_err()
-                .contains("payload_hex 鏃犳晥")
+                .contains("payload_hex 无效")
         );
         assert!(receiver.try_recv().is_err());
     }
