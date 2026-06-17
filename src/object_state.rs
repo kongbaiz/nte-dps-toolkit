@@ -252,9 +252,10 @@ impl ObjectStateStore {
         if attribute_keys.len() != 1 {
             return;
         }
-        let display_name = resources.display_name_for_path(path);
+        let linked_path = strong_paths[0].clone();
+        let display_name = resources.display_name_for_path(&linked_path);
         if let Some(attribute) = self.objects.get_mut(&attribute_keys[0]) {
-            apply_path_link(attribute, path, display_name);
+            apply_path_link(attribute, &linked_path, display_name);
         }
     }
 
@@ -484,5 +485,33 @@ mod tests {
         );
         assert!(store.objects.get(&first).unwrap().object_path.is_none());
         assert!(store.objects.get(&second).unwrap().object_path.is_none());
+    }
+
+    #[test]
+    fn weak_targetish_path_does_not_replace_unique_strong_path_link() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        let strong_path = "/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C";
+        let weak_path = "HTCharacterEnemy";
+
+        store.observe_path_candidate(1.0, &path(strong_path), &resources);
+        let key = store.observe_hp_guid_update(1.1, [6_u8; 16], 900.0, None, "hp=900".to_owned());
+        store.observe_path_candidate(1.2, &path(weak_path), &resources);
+
+        let object = store.objects.get(&key).unwrap();
+        assert_eq!(object.object_path.as_deref(), Some(strong_path));
+        assert_eq!(object.display_name.as_deref(), Some("BP_Boss_07"));
+        assert!(
+            object
+                .evidence
+                .iter()
+                .any(|evidence| evidence == &format!("linked_path:{strong_path}"))
+        );
+        assert!(
+            !object
+                .evidence
+                .iter()
+                .any(|evidence| evidence == &format!("linked_path:{weak_path}"))
+        );
     }
 }
