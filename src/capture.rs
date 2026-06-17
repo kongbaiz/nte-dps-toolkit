@@ -27,7 +27,8 @@ use serde::Deserialize;
 use crate::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitTargetUpdate, PacketDebug,
 };
-use crate::object_state::ObjectStateStore;
+use crate::net_identity::{NetIdentityCandidateKind, extract_net_identity_candidates};
+use crate::object_state::{ObjectHandleKind, ObjectStateStore};
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
@@ -553,6 +554,12 @@ fn protocol_text_score(value: &str) -> usize {
         "BackEvade",
         "Boss",
         "CharacterForNet",
+        "ClientRepExtraDamageInfo",
+        "ClientRepFightData",
+        "ClientServerAbilityActorSetCurrentHP",
+        "ClientShowPlayerDamageInfo",
+        "ClientShowWoodenInfo",
+        "ClientUpdateTargetExtraDamageInfos",
         "CityEvent",
         "CityLive",
         "CoolDown.",
@@ -581,6 +588,7 @@ fn protocol_text_score(value: &str) -> usize {
         "Phase",
         "Wave",
         "MaxHP",
+        "NetMulticast_OnSendHandleDamageInfos",
     ];
     if protocol_markers.iter().any(|marker| value.contains(marker)) {
         return 100 + length.min(100);
@@ -788,6 +796,21 @@ fn append_packet_note(note: &mut String, diagnostic: Option<String>) {
     note.push_str(&diagnostic);
 }
 
+fn short_hex(bytes: &[u8]) -> String {
+    let hex = hex::encode(bytes);
+    if hex.len() <= 16 {
+        hex
+    } else {
+        format!("{}…{}", &hex[..12], &hex[hex.len() - 4..])
+    }
+}
+
+fn current_hp_target_token(prefix: &[u8; 16]) -> Option<[u8; 4]> {
+    let token = [prefix[0], prefix[7], prefix[9], prefix[10]];
+    let distinct = token.iter().copied().collect::<HashSet<_>>().len();
+    (token.iter().any(|byte| *byte != 0) && distinct >= 2).then_some(token)
+}
+
 fn parse_abyss_stage_id(value: &str) -> Option<(u32, u32, AbyssHalf)> {
     let parts: Vec<_> = value.split('_').collect();
     if parts.len() < 4 || parts.first().copied() != Some("Abyss") {
@@ -866,8 +889,8 @@ const INFERRED_FOLLOW_UP_CHAR_ID: u32 = u32::MAX;
 const NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX: u32 = 241;
 const MAX_DISPLAY_DAMAGE_CORRECTION_RATIO: f64 = 0.03;
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
-const MAX_RECENT_TARGET_HITS: usize = 256;
-const TARGET_BACKFILL_WINDOW_SECONDS: f64 = 1.25;
+const MAX_RECENT_TARGET_HITS: usize = 2048;
+const TARGET_BACKFILL_WINDOW_SECONDS: f64 = 90.0;
 
 #[derive(Clone)]
 struct PendingHit {
@@ -1196,6 +1219,19 @@ fn should_apply_target_update(
     old: &TargetResolutionSummary,
     new: &TargetResolutionSummary,
 ) -> bool {
+    if old.target_id == new.target_id
+        && new.target_id.is_some()
+        && old.target_name.is_none()
+        && new.target_name.is_some()
+    {
+        return true;
+    }
+    if old.target_name.is_none()
+        && new.target_name.is_some()
+        && new.confidence.rank() >= TargetConfidence::Probable.rank()
+    {
+        return true;
+    }
     if new.confidence.rank() < old.confidence.rank() {
         return false;
     }
@@ -1311,6 +1347,35 @@ impl PacketDecoder {
             self.object_state
                 .observe_path_candidate(timestamp, candidate, &self.resource_index);
         }
+        let net_identity_candidates = extract_net_identity_candidates(payload, &path_candidates);
+        for candidate in &net_identity_candidates {
+            let handle_kind = match candidate.kind {
+                NetIdentityCandidateKind::NetGuidPacked | NetIdentityCandidateKind::NetGuid32 => {
+                    ObjectHandleKind::NetGuidCandidate
+                }
+                NetIdentityCandidateKind::IrisNetRefHandle32 => {
+                    ObjectHandleKind::NetRefHandleCandidate
+                }
+            };
+            self.object_state.observe_path_handle_candidate(
+                timestamp,
+                handle_kind,
+                candidate.handle.clone(),
+                &candidate.path,
+                &self.resource_index,
+                format!(
+                    "net_identity:{}={} path_anchor:{}@{}:{} rel={} raw={}",
+                    candidate.kind.label(),
+                    candidate.handle,
+                    candidate.path,
+                    candidate.byte_offset,
+                    candidate.bit_shift,
+                    candidate.relative_offset,
+                    candidate.raw_hex
+                ),
+                candidate.score,
+            );
+        }
         let evidence = find_declared_character_evidence(payload);
         let ids = declared_character_ids_from_evidence(&evidence);
         self.follow_up_damage
@@ -1415,6 +1480,25 @@ impl PacketDecoder {
         } else {
             parse_boss_hp_updates(payload)
         };
+        for update in &current_hp_updates {
+            let Some(target_token) = current_hp_target_token(&update.target_hint) else {
+                continue;
+            };
+            self.object_state.observe_net_target_hp_update(
+                timestamp,
+                "currenthp",
+                &target_token,
+                update.current_hp as f64,
+                None,
+                format!(
+                    "current_hp:{}={:.0}@{}:{}",
+                    short_hex(&target_token),
+                    update.current_hp,
+                    update.byte_offset,
+                    update.bit_shift
+                ),
+            );
+        }
         for update in &boss_hp_updates {
             self.object_state.observe_hp_guid_update(
                 timestamp,
@@ -1430,13 +1514,16 @@ impl PacketDecoder {
                 ),
             );
         }
-        if !outgoing && (!boss_hp_updates.is_empty() || !path_candidates.is_empty()) {
-            self.backfill_recent_targets(timestamp, sender);
-        }
         let targetish_path_candidates = path_candidates
             .iter()
             .filter(|candidate| crate::object_state::is_targetish_path(&candidate.value))
             .collect::<Vec<_>>();
+        if !current_hp_updates.is_empty()
+            || !boss_hp_updates.is_empty()
+            || !targetish_path_candidates.is_empty()
+        {
+            self.backfill_recent_targets(timestamp, sender);
+        }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
             && targetish_path_candidates.is_empty()
@@ -1464,6 +1551,27 @@ impl PacketDecoder {
                         .map(|candidate| format!(
                             "{}@{}:{}",
                             candidate.value, candidate.byte_offset, candidate.bit_shift
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
+        if !net_identity_candidates.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "Net identity candidates: {}",
+                    net_identity_candidates
+                        .iter()
+                        .take(6)
+                        .map(|candidate| format!(
+                            "{}:{}->{}@{}:{}",
+                            candidate.kind.label(),
+                            candidate.handle,
+                            candidate.path,
+                            candidate.byte_offset,
+                            candidate.bit_shift
                         ))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -1522,8 +1630,12 @@ impl PacketDecoder {
                     current_hp_updates
                         .iter()
                         .map(|update| format!(
-                            "{:.0}@{}:{}",
-                            update.current_hp, update.byte_offset, update.bit_shift
+                            "{}={:.0}@{}:{}",
+                            current_hp_target_token(&update.target_hint)
+                                .map_or_else(|| "untracked".to_owned(), |token| short_hex(&token),),
+                            update.current_hp,
+                            update.byte_offset,
+                            update.bit_shift
                         ))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -2324,6 +2436,55 @@ mod tests {
     }
 
     #[test]
+    fn same_target_id_update_can_fill_missing_name() {
+        let old = TargetResolutionSummary {
+            target_id: Some("AttributeGuid:target".to_owned()),
+            target_name: None,
+            target_context: vec!["confidence=confirmed score=100".to_owned()],
+            score: 100,
+            confidence: TargetConfidence::Confirmed,
+            direct_hp_evidence: true,
+        };
+        let new = TargetResolutionSummary {
+            target_name: Some("流梦种".to_owned()),
+            target_context: vec![
+                "confidence=probable score=70".to_owned(),
+                "target_name=流梦种".to_owned(),
+            ],
+            score: 70,
+            confidence: TargetConfidence::Probable,
+            ..old.clone()
+        };
+
+        assert!(should_apply_target_update(&old, &new));
+    }
+
+    #[test]
+    fn named_probable_candidate_replaces_internal_id_without_name() {
+        let old = TargetResolutionSummary {
+            target_id: Some("AttributeGuid:internal".to_owned()),
+            target_name: None,
+            target_context: vec!["confidence=confirmed score=120".to_owned()],
+            score: 120,
+            confidence: TargetConfidence::Confirmed,
+            direct_hp_evidence: true,
+        };
+        let new = TargetResolutionSummary {
+            target_id: Some("PathOnly:Boss_016_BP_DiyBoss_C_2147307033".to_owned()),
+            target_name: Some("随心泥".to_owned()),
+            target_context: vec![
+                "confidence=probable score=60".to_owned(),
+                "target_name=随心泥".to_owned(),
+            ],
+            score: 60,
+            confidence: TargetConfidence::Probable,
+            direct_hp_evidence: false,
+        };
+
+        assert!(should_apply_target_update(&old, &new));
+    }
+
+    #[test]
     fn local_ip_hint_controls_import_direction_inference() {
         let local_ip = Ipv4Addr::new(10, 0, 0, 2);
         let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
@@ -2426,6 +2587,32 @@ mod tests {
         payload.extend_from_slice(&[0; 12]);
         payload.extend_from_slice(&hp.to_le_bytes());
         payload
+    }
+
+    fn current_hp_update(prefix: [u8; 16], hp: f32) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&prefix);
+        payload.extend_from_slice(&hp.to_le_bytes());
+        payload
+    }
+
+    #[test]
+    fn current_hp_token_uses_unfixed_prefix_bytes() {
+        let prefix = [
+            0x10, 0x00, 0x00, 0xe0, 0x4f, 0x33, 0x33, 0x44, 0x0f, 0x55, 0x66, 0x00, 0x00, 0x00,
+            0x00, 0x24,
+        ];
+
+        assert_eq!(
+            current_hp_target_token(&prefix),
+            Some([0x10, 0x44, 0x55, 0x66])
+        );
+
+        let uninformative = [
+            0x00, 0x00, 0x00, 0xe0, 0x4f, 0x33, 0x33, 0x00, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x24,
+        ];
+        assert_eq!(current_hp_target_token(&uninformative), None);
     }
 
     fn ethernet_udp_frame(
@@ -2567,12 +2754,131 @@ mod tests {
                 .as_deref()
                 .is_some_and(|id| id.contains("AttributeGuid"))
         );
-        assert_eq!(update.target_name.as_deref(), Some("BP_Boss_07"));
+        assert_eq!(update.target_name.as_deref(), Some("塞润尼缇"));
         assert!(
             update
                 .target_context
                 .iter()
                 .any(|entry| entry.contains("hp_guid_timeline_match"))
+        );
+    }
+
+    #[test]
+    fn packet_decoder_backfills_target_from_current_hp_token_timeline() {
+        let (sender, receiver) = unbounded();
+        let local = Ipv4Addr::new(10, 0, 0, 2);
+        let remote = Ipv4Addr::new(10, 0, 0, 3);
+        let characters = HashMap::from([(
+            1003,
+            CharacterInfo {
+                name_zh: "早雾".to_owned(),
+                name_en: "Sagiri".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: Some("咒".to_owned()),
+            },
+        )]);
+        let prefix = [
+            0x10, 0x00, 0x00, 0xe0, 0x4f, 0x33, 0x33, 0x44, 0x0f, 0x55, 0x66, 0x00, 0x00, 0x00,
+            0x00, 0x24,
+        ];
+        let s2c_before = ethernet_udp_frame(
+            remote,
+            30031,
+            local,
+            50000,
+            &current_hp_update(prefix, 1000.0),
+        );
+        let mut c2s_payload = encoded_damage_record(100.0, 1000.0, 1_000_000.0);
+        c2s_payload.extend_from_slice(&[5, 0, 0, 0, b'1', b'0', b'0', b'3', 0]);
+        let c2s = ethernet_udp_frame(local, 50000, remote, 30031, &c2s_payload);
+        let s2c_after = ethernet_udp_frame(
+            remote,
+            30031,
+            local,
+            50000,
+            &current_hp_update(prefix, 900.0),
+        );
+
+        let mut decoder = PacketDecoder::default();
+        decoder.process_ethernet_frame(&s2c_before, 9.8, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&c2s, 10.0, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&s2c_after, 10.1, Some(local), true, &characters, &sender);
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        let update = events
+            .iter()
+            .find_map(|event| match event {
+                EngineEvent::HitTargetUpdate(update) => Some(update),
+                _ => None,
+            })
+            .expect("late CurrentHP token evidence should backfill target");
+        assert!(
+            update
+                .target_id
+                .as_deref()
+                .is_some_and(|id| id.contains("NetRefHandleCandidate"))
+        );
+        assert!(update.target_context.iter().any(|entry| {
+            entry.contains("net_target_hp_delta_match")
+                || entry.contains("net_target_hp_timeline_match")
+        }));
+    }
+
+    #[test]
+    fn packet_decoder_backfills_old_hit_when_much_later_c2s_target_path_arrives() {
+        let (sender, receiver) = unbounded();
+        let local = Ipv4Addr::new(10, 0, 0, 2);
+        let remote = Ipv4Addr::new(10, 0, 0, 3);
+        let characters = HashMap::from([(
+            1003,
+            CharacterInfo {
+                name_zh: "早雾".to_owned(),
+                name_en: "Sagiri".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: Some("咒".to_owned()),
+            },
+        )]);
+        let handle = [0x33_u8; 16];
+        let s2c_before =
+            ethernet_udp_frame(remote, 30031, local, 50000, &boss_hp_update(handle, 1000.0));
+        let mut c2s_hit_payload = encoded_damage_record(100.0, 1000.0, 1_000_000.0);
+        c2s_hit_payload.extend_from_slice(&[5, 0, 0, 0, b'1', b'0', b'0', b'3', 0]);
+        let c2s_hit = ethernet_udp_frame(local, 50000, remote, 30031, &c2s_hit_payload);
+        let s2c_after =
+            ethernet_udp_frame(remote, 30031, local, 50000, &boss_hp_update(handle, 900.0));
+        let s2c_later =
+            ethernet_udp_frame(remote, 30031, local, 50000, &boss_hp_update(handle, 700.0));
+        let c2s_path = ethernet_udp_frame(
+            local,
+            50000,
+            remote,
+            30031,
+            b"mon_33_BP_World_Perform_C_2147325373\0",
+        );
+
+        let mut decoder = PacketDecoder::default();
+        decoder.process_ethernet_frame(&s2c_before, 10.0, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&c2s_hit, 10.1, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&s2c_after, 10.2, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&s2c_later, 19.1, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&c2s_path, 19.2, Some(local), true, &characters, &sender);
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        let update = events
+            .iter()
+            .filter_map(|event| match event {
+                EngineEvent::HitTargetUpdate(update) => Some(update),
+                _ => None,
+            })
+            .find(|update| update.target_name.as_deref() == Some("流梦种"))
+            .expect("late C2S target path should backfill the old hit name");
+        assert!(
+            update
+                .target_context
+                .iter()
+                .any(|entry| entry == "target_path=mon_33_BP_World_Perform_C_2147325373")
         );
     }
 

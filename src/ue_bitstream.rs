@@ -268,6 +268,7 @@ fn path_candidate_score(value: &str) -> u16 {
         "boss",
         "enemy",
         "npc",
+        "mon_",
         "htcharacter",
         "character",
     ]

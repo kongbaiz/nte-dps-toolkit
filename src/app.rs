@@ -4274,6 +4274,7 @@ fn draw_character_hit_row(
         if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
             details.push_str(&format!("\nGameplayEffect：{effect_name}"));
         }
+        append_hit_target_hover_details(&mut details, hit);
         response.on_hover_text(details);
     }
 }
@@ -4472,6 +4473,7 @@ fn draw_team_hit_row(
         if let Some(effect_name) = hit.gameplay_effect_name.as_deref() {
             details.push_str(&format!("\nGameplayEffect：{effect_name}"));
         }
+        append_hit_target_hover_details(&mut details, hit);
         response.on_hover_text(details);
     }
 }
@@ -4625,22 +4627,22 @@ fn draw_target_hp_text(
         egui::pos2(text_rect.left(), text_rect.center().y),
         text_rect.max,
     );
-    let target = "Target HP";
+    let target = hit_target_label(hit);
     let hp = format!(
         "{} / {}  {:.1}%",
         format_number(hit.target_hp_after),
         format_number(hit.target_max_hp),
         hit.target_hp_percent
     );
-    let hp_tooltip = format!("{target}\n{hp}");
+    let hp_tooltip = hit_target_tooltip(hit, &target, &hp);
     draw_clipped_label(
         ui,
         target_rect,
-        target,
+        &target,
         egui::FontId::proportional(12.0),
         target_color,
         egui::Align::Min,
-        Some(target),
+        Some(&hp_tooltip),
     );
     draw_clipped_label(
         ui,
@@ -4651,6 +4653,65 @@ fn draw_target_hp_text(
         egui::Align::Min,
         Some(&hp_tooltip),
     );
+}
+
+fn hit_target_label(hit: &crate::model::Hit) -> String {
+    if let Some(name) = clean_target_value(hit.target_name.as_deref()) {
+        return name.to_owned();
+    }
+    if let Some(name) = clean_target_value(hit_target_context_value(hit, "target_name")) {
+        return name.to_owned();
+    }
+    if hit.target_max_hp > 0.0 || hit.target_hp_after > 0.0 {
+        return "目标未识别".to_owned();
+    }
+    "无目标 HP".to_owned()
+}
+
+fn hit_target_tooltip(hit: &crate::model::Hit, target: &str, hp: &str) -> String {
+    let mut tooltip = format!("{target}\nHP：{hp}");
+    if !hit.target_context.is_empty() {
+        tooltip.push_str("\n\n目标解析证据：");
+        for value in hit.target_context.iter().take(8) {
+            tooltip.push_str("\n");
+            tooltip.push_str(value);
+        }
+    }
+    tooltip
+}
+
+fn append_hit_target_hover_details(details: &mut String, hit: &crate::model::Hit) {
+    let target = hit_target_label(hit);
+    details.push_str(&format!("\n目标：{target}"));
+    if hit.target_max_hp > 0.0 || hit.target_hp_after > 0.0 {
+        details.push_str(&format!(
+            "\n目标 HP：{} / {}  {:.1}%",
+            format_number(hit.target_hp_after),
+            format_number(hit.target_max_hp),
+            hit.target_hp_percent
+        ));
+    }
+    if !hit.target_context.is_empty() {
+        details.push_str("\n目标解析证据：");
+        for value in hit.target_context.iter().take(6) {
+            details.push_str("\n");
+            details.push_str(value);
+        }
+    }
+}
+
+fn clean_target_value(value: Option<&str>) -> Option<&str> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "None")
+}
+
+fn hit_target_context_value<'a>(hit: &'a crate::model::Hit, key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    hit.target_context
+        .iter()
+        .find_map(|value| value.strip_prefix(&prefix))
+        .and_then(|value| clean_target_value(Some(value)))
 }
 
 fn draw_direction_summary(ui: &mut egui::Ui, summary: HitDirectionSummary) {
@@ -5169,7 +5230,9 @@ fn data_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{DpsApp, UiConfigSavePlan, adjusted_cached_index, hit_type_label};
+    use super::{
+        DpsApp, UiConfigSavePlan, adjusted_cached_index, hit_target_label, hit_type_label,
+    };
     use crate::config::UiConfig;
     use crate::model::Hit;
     use std::time::{Duration, Instant};
@@ -5225,6 +5288,59 @@ mod tests {
         assert!(!incoming.is_empty());
         assert!(!unknown.is_empty());
         assert_ne!(unknown, incoming);
+    }
+
+    #[test]
+    fn target_label_prefers_resolved_target_name() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.target_name = Some("长明灯".to_owned());
+        hit.target_hp_after = 50_000.0;
+        hit.target_max_hp = 51_880.0;
+        hit.target_hp_percent = 96.4;
+
+        assert_eq!(hit_target_label(&hit), "长明灯");
+    }
+
+    #[test]
+    fn target_label_uses_candidate_name_from_context() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.target_hp_after = 50_000.0;
+        hit.target_max_hp = 51_880.0;
+        hit.target_context = vec![
+            "confidence=possible score=40".to_owned(),
+            "target_name=罐头锡兵".to_owned(),
+        ];
+
+        assert_eq!(hit_target_label(&hit), "罐头锡兵");
+    }
+
+    #[test]
+    fn target_label_does_not_show_internal_path_when_name_is_missing() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.target_hp_after = 50_000.0;
+        hit.target_max_hp = 51_880.0;
+        hit.target_context = vec!["target_path=Boss_07_BP_DiyBoss".to_owned()];
+
+        assert_eq!(hit_target_label(&hit), "目标未识别");
+    }
+
+    #[test]
+    fn target_label_does_not_show_target_id_when_name_is_missing() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.target_hp_after = 50_000.0;
+        hit.target_max_hp = 51_880.0;
+        hit.target_id = Some("NetRefHandleCandidate:currenthp:10445566".to_owned());
+
+        assert_eq!(hit_target_label(&hit), "目标未识别");
+    }
+
+    #[test]
+    fn target_label_marks_unknown_hp_target() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.target_hp_after = 50_000.0;
+        hit.target_max_hp = 51_880.0;
+
+        assert_eq!(hit_target_label(&hit), "目标未识别");
     }
 
     #[test]

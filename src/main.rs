@@ -7,6 +7,7 @@ mod config;
 mod file_drop;
 mod hotkey;
 mod model;
+mod net_identity;
 mod network;
 mod object_state;
 mod parser;

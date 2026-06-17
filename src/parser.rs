@@ -15,6 +15,8 @@ const MAX_PLAUSIBLE_CHARACTER_HP: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
 const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
+const SDK_NET_TARGET_SIZE: usize = 0x28;
+const SDK_TARGET_HP_WINDOW_LENGTH: usize = SDK_NET_TARGET_SIZE + 8;
 const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
@@ -51,6 +53,7 @@ pub struct ParsedDamageRecord {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsedCurrentHpUpdate {
+    pub target_hint: [u8; CURRENT_HP_PREFIX_LENGTH],
     pub current_hp: f32,
     pub byte_offset: usize,
     pub bit_shift: u8,
@@ -60,6 +63,22 @@ pub struct ParsedCurrentHpUpdate {
 pub struct ParsedBossHpUpdate {
     pub target_handle: [u8; 16],
     pub current_hp: f32,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ParsedSdkTargetHpKind {
+    ClientRepExtraDamageInfo,
+    ClientRepFightData,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedSdkTargetHpUpdate {
+    pub kind: ParsedSdkTargetHpKind,
+    pub target_token: [u8; SDK_NET_TARGET_SIZE],
+    pub current_hp: f32,
+    pub dead_state: i32,
     pub byte_offset: usize,
     pub bit_shift: u8,
 }
@@ -409,6 +428,30 @@ fn i32_field(field: &Field) -> Option<i32> {
     Some(i32::from_le_bytes(field.raw[..field.len].try_into().ok()?))
 }
 
+fn plausible_hp(value: f32, max_value: f32) -> bool {
+    value.is_finite() && (0.0..=max_value).contains(&value)
+}
+
+fn plausible_dead_state(value: i32) -> bool {
+    (0..=10).contains(&value)
+}
+
+fn plausible_net_target_token(token: &[u8]) -> bool {
+    let non_zero = token.iter().filter(|byte| **byte != 0).count();
+    if non_zero < 4 {
+        return false;
+    }
+    let distinct = token.iter().copied().collect::<HashSet<_>>().len();
+    if distinct < 3 {
+        return false;
+    }
+    !token.windows(24).any(|window| {
+        window
+            .first()
+            .is_some_and(|first| window.iter().all(|byte| byte == first))
+    })
+}
+
 fn parse_damage_record_at(
     data: &[u8],
     byte_offset: usize,
@@ -442,8 +485,8 @@ fn parse_damage_record_at(
     ];
     let trailing_value = f32_field(&fields[9])?;
 
-    if !damage.is_finite()
-        || !(MIN_DAMAGE..=MAX_DAMAGE).contains(&damage)
+    if !plausible_hp(damage, MAX_DAMAGE)
+        || damage < MIN_DAMAGE
         || !target_hp_before.is_finite()
         || target_hp_before < 0.0
         || !target_max_hp.is_finite()
@@ -509,11 +552,13 @@ pub fn parse_current_hp_updates(data: &[u8]) -> Vec<ParsedCurrentHpUpdate> {
             }
             let current_hp =
                 f32::from_le_bytes([decoded[16], decoded[17], decoded[18], decoded[19]]);
-            if !current_hp.is_finite() || !(0.0..=MAX_PLAUSIBLE_CHARACTER_HP).contains(&current_hp)
-            {
+            if !plausible_hp(current_hp, MAX_PLAUSIBLE_CHARACTER_HP) {
                 continue;
             }
             updates.push(ParsedCurrentHpUpdate {
+                target_hint: prefix
+                    .try_into()
+                    .expect("CurrentHP prefix has a fixed sixteen-byte length"),
                 current_hp,
                 byte_offset: byte_offset + CURRENT_HP_PREFIX_LENGTH,
                 bit_shift,
@@ -542,7 +587,7 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
                     .try_into()
                     .expect("Boss HP field has a fixed four-byte length"),
             );
-            if !current_hp.is_finite() || !(0.0..=MAX_DAMAGE).contains(&current_hp) {
+            if !plausible_hp(current_hp, MAX_DAMAGE) {
                 continue;
             }
             updates.push(ParsedBossHpUpdate {
@@ -553,6 +598,81 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
                 byte_offset: byte_offset + BOSS_HP_PREFIX_LENGTH,
                 bit_shift,
             });
+        }
+    }
+    updates
+}
+
+pub fn parse_sdk_target_hp_updates(data: &[u8]) -> Vec<ParsedSdkTargetHpUpdate> {
+    let mut updates = Vec::new();
+    let mut seen = HashSet::new();
+    for byte_offset in 0..data.len() {
+        for bit_shift in 0..8_u8 {
+            let mut decoded = [0; SDK_TARGET_HP_WINDOW_LENGTH];
+            if decode_shifted_into(data, byte_offset, bit_shift, 0, &mut decoded).is_none() {
+                continue;
+            }
+            let target_token: [u8; SDK_NET_TARGET_SIZE] = decoded[..SDK_NET_TARGET_SIZE]
+                .try_into()
+                .expect("SDK NetTarget token has a fixed forty-byte length");
+            if !plausible_net_target_token(&target_token) {
+                continue;
+            }
+
+            let first_value = i32::from_le_bytes(
+                decoded[SDK_NET_TARGET_SIZE..SDK_NET_TARGET_SIZE + 4]
+                    .try_into()
+                    .unwrap(),
+            );
+            let second_value = i32::from_le_bytes(
+                decoded[SDK_NET_TARGET_SIZE + 4..SDK_NET_TARGET_SIZE + 8]
+                    .try_into()
+                    .unwrap(),
+            );
+            let first_float = f32::from_bits(first_value as u32);
+            let second_float = f32::from_bits(second_value as u32);
+
+            if plausible_dead_state(first_value) && plausible_hp(second_float, MAX_DAMAGE) {
+                let key = (
+                    ParsedSdkTargetHpKind::ClientRepExtraDamageInfo,
+                    bit_shift,
+                    byte_offset,
+                    target_token,
+                    second_float.to_bits(),
+                    first_value,
+                );
+                if seen.insert(key) {
+                    updates.push(ParsedSdkTargetHpUpdate {
+                        kind: ParsedSdkTargetHpKind::ClientRepExtraDamageInfo,
+                        target_token,
+                        current_hp: second_float,
+                        dead_state: first_value,
+                        byte_offset: byte_offset + SDK_NET_TARGET_SIZE + 4,
+                        bit_shift,
+                    });
+                }
+            }
+
+            if plausible_hp(first_float, MAX_DAMAGE) && plausible_dead_state(second_value) {
+                let key = (
+                    ParsedSdkTargetHpKind::ClientRepFightData,
+                    bit_shift,
+                    byte_offset,
+                    target_token,
+                    first_float.to_bits(),
+                    second_value,
+                );
+                if seen.insert(key) {
+                    updates.push(ParsedSdkTargetHpUpdate {
+                        kind: ParsedSdkTargetHpKind::ClientRepFightData,
+                        target_token,
+                        current_hp: first_float,
+                        dead_state: second_value,
+                        byte_offset: byte_offset + SDK_NET_TARGET_SIZE,
+                        bit_shift,
+                    });
+                }
+            }
         }
     }
     updates
@@ -775,6 +895,16 @@ mod character_tests {
         encoded
     }
 
+    fn net_target_token() -> [u8; SDK_NET_TARGET_SIZE] {
+        let mut token = [0_u8; SDK_NET_TARGET_SIZE];
+        token[..16].copy_from_slice(&[
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ]);
+        token[24..28].copy_from_slice(&0x1234_5678_u32.to_le_bytes());
+        token
+    }
+
     #[test]
     fn character_attribute_is_optional_and_loaded_when_present() {
         let document: CharacterDocument = serde_json::from_str(
@@ -949,6 +1079,57 @@ mod character_tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].target_handle, handle);
         assert_eq!(updates[0].current_hp, 1_927_891.0);
+    }
+
+    #[test]
+    fn parses_current_hp_target_hint() {
+        let prefix = [
+            0x10, 0x00, 0x00, 0xe0, 0x4f, 0x33, 0x33, 0x44, 0x0f, 0x55, 0x66, 0x00, 0x00, 0x00,
+            0x00, 0x24,
+        ];
+        let mut payload = prefix.to_vec();
+        payload.extend_from_slice(&1234.0_f32.to_le_bytes());
+
+        let updates = parse_current_hp_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target_hint, prefix);
+        assert_eq!(updates[0].current_hp, 1234.0);
+    }
+
+    #[test]
+    fn parses_sdk_target_hp_update_shapes() {
+        let token = net_target_token();
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&token);
+        payload.extend_from_slice(&1_i32.to_le_bytes());
+        payload.extend_from_slice(&900.0_f32.to_le_bytes());
+        payload.extend_from_slice(&[0xaa, 0xbb]);
+        payload.extend_from_slice(&token);
+        payload.extend_from_slice(&800.0_f32.to_le_bytes());
+        payload.extend_from_slice(&2_i32.to_le_bytes());
+
+        let updates = parse_sdk_target_hp_updates(&payload);
+
+        assert!(updates.iter().any(|update| {
+            update.kind == ParsedSdkTargetHpKind::ClientRepExtraDamageInfo
+                && update.current_hp == 900.0
+                && update.dead_state == 1
+        }));
+        assert!(updates.iter().any(|update| {
+            update.kind == ParsedSdkTargetHpKind::ClientRepFightData
+                && update.current_hp == 800.0
+                && update.dead_state == 2
+        }));
+    }
+
+    #[test]
+    fn sdk_target_hp_scanner_ignores_zero_target_token() {
+        let mut payload = vec![0; SDK_NET_TARGET_SIZE];
+        payload.extend_from_slice(&1_i32.to_le_bytes());
+        payload.extend_from_slice(&900.0_f32.to_le_bytes());
+
+        assert!(parse_sdk_target_hp_updates(&payload).is_empty());
     }
 
     #[test]
