@@ -63,6 +63,8 @@ pub struct HitTargetUpdate {
     pub target_id: Option<String>,
     pub target_name: Option<String>,
     pub target_context: Vec<String>,
+    pub target_score: i32,
+    pub target_confidence: String,
 }
 
 #[derive(Clone, Debug)]
@@ -289,6 +291,8 @@ impl PartyCombatState {
     }
 
     fn apply_target_update(&mut self, update: &HitTargetUpdate) -> bool {
+        let _ = update.target_score;
+        let _ = update.target_confidence.as_str();
         if let Some(hit) = self
             .hits
             .iter_mut()
@@ -505,6 +509,8 @@ impl CombatState {
     }
 
     pub fn apply_target_update(&mut self, update: HitTargetUpdate) {
+        let _ = update.target_score;
+        let _ = update.target_confidence.as_str();
         let mut changed = self.abyss.apply_target_update(&update);
         if let Some(hit) = self
             .hits

@@ -45,14 +45,20 @@ struct TargetRow {
 }
 
 impl ResourceIndex {
+    #[allow(dead_code)]
     pub fn load_default() -> Self {
+        let mut warnings = Vec::new();
+        Self::load_default_with_warnings(&mut warnings)
+    }
+
+    pub fn load_default_with_warnings(warnings: &mut Vec<String>) -> Self {
         let mut index = Self::default();
         for file in TARGET_RESOURCE_FILES {
             let relative = Path::new(TARGET_RESOURCE_DIR).join(file);
             let Some(path) = find_data_file(&relative) else {
                 continue;
             };
-            index.load_file(&path);
+            index.load_file_with_warnings(&path, warnings);
         }
         index
     }
@@ -68,12 +74,26 @@ impl ResourceIndex {
             .or_else(|| fallback_name_from_path(path))
     }
 
-    fn load_file(&mut self, path: &Path) {
-        let Ok(text) = fs::read_to_string(path) else {
-            return;
+    pub(crate) fn load_file_with_warnings(&mut self, path: &Path, warnings: &mut Vec<String>) {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                warnings.push(format!(
+                    "target resource {} read failed: {error}",
+                    path.display()
+                ));
+                return;
+            }
         };
-        let Ok(document) = serde_json::from_str::<TargetDocument>(&text) else {
-            return;
+        let document = match serde_json::from_str::<TargetDocument>(&text) {
+            Ok(document) => document,
+            Err(error) => {
+                warnings.push(format!(
+                    "target resource {} has unsupported JSON structure: {error}",
+                    path.display()
+                ));
+                return;
+            }
         };
         match document {
             TargetDocument::Map(rows) | TargetDocument::Rows { rows } => {
@@ -137,6 +157,7 @@ pub fn fallback_name_from_path(path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn missing_targets_resource_table_is_ok() {
@@ -160,5 +181,80 @@ mod tests {
             .as_deref(),
             Some("BP_Boss_07")
         );
+    }
+
+    #[test]
+    fn invalid_existing_target_resource_reports_warning() {
+        let path = temp_resource_path("invalid-target-resource.json");
+        fs::write(&path, r#"{"rows":[{"path":1}]}"#).unwrap();
+        let mut warnings = Vec::new();
+        let mut index = ResourceIndex::default();
+        index.load_file_with_warnings(&path, &mut warnings);
+        fs::remove_file(&path).ok();
+
+        assert!(index.names_by_path.is_empty());
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("unsupported JSON structure"))
+        );
+    }
+
+    #[test]
+    fn valid_target_resource_loads_name() {
+        let map_path = temp_resource_path("valid-target-map.json");
+        let list_path = temp_resource_path("valid-target-list.json");
+        let rows_path = temp_resource_path("valid-target-rows.json");
+        fs::write(&map_path, r#"{"/Game/Monster/A.A_C":"Monster A"}"#).unwrap();
+        fs::write(
+            &list_path,
+            r#"[{"path":"/Game/Monster/B.B_C","display_name":"Monster B"}]"#,
+        )
+        .unwrap();
+        fs::write(
+            &rows_path,
+            r#"{"Rows":{"/Game/Monster/C.C_C":"Monster C"}}"#,
+        )
+        .unwrap();
+
+        let mut warnings = Vec::new();
+        let mut index = ResourceIndex::default();
+        index.load_file_with_warnings(&map_path, &mut warnings);
+        index.load_file_with_warnings(&list_path, &mut warnings);
+        index.load_file_with_warnings(&rows_path, &mut warnings);
+        fs::remove_file(&map_path).ok();
+        fs::remove_file(&list_path).ok();
+        fs::remove_file(&rows_path).ok();
+
+        assert!(warnings.is_empty(), "{}", warnings.join("; "));
+        assert_eq!(
+            index
+                .display_name_for_path("/Game/Monster/A.A_C")
+                .as_deref(),
+            Some("Monster A")
+        );
+        assert_eq!(
+            index
+                .display_name_for_path("/Game/Monster/B.B_C")
+                .as_deref(),
+            Some("Monster B")
+        );
+        assert_eq!(
+            index
+                .display_name_for_path("/Game/Monster/C.C_C")
+                .as_deref(),
+            Some("Monster C")
+        );
+    }
+
+    fn temp_resource_path(name: &str) -> std::path::PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "nte-dps-tool-{}-{suffix}-{name}",
+            std::process::id()
+        ))
     }
 }

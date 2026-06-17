@@ -8,21 +8,31 @@ use crate::ue_bitstream::PathCandidate;
 const HP_MATCH_TOLERANCE_ABSOLUTE: f64 = 2.0;
 const HP_MATCH_TOLERANCE_RATIO: f64 = 0.002;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TargetConfidence {
-    Confirmed,
-    Probable,
-    Possible,
+    #[default]
     Unknown,
+    Possible,
+    Probable,
+    Confirmed,
 }
 
 impl TargetConfidence {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Confirmed => "confirmed",
-            Self::Probable => "probable",
-            Self::Possible => "possible",
             Self::Unknown => "unknown",
+            Self::Possible => "possible",
+            Self::Probable => "probable",
+            Self::Confirmed => "confirmed",
+        }
+    }
+
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Unknown => 0,
+            Self::Possible => 1,
+            Self::Probable => 2,
+            Self::Confirmed => 3,
         }
     }
 }
@@ -36,6 +46,16 @@ pub struct TargetCandidate {
     pub score: i32,
     pub confidence: TargetConfidence,
     pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TargetResolutionSummary {
+    pub target_id: Option<String>,
+    pub target_name: Option<String>,
+    pub target_context: Vec<String>,
+    pub score: i32,
+    pub confidence: TargetConfidence,
+    pub direct_hp_evidence: bool,
 }
 
 #[derive(Default)]
@@ -100,6 +120,7 @@ impl TargetResolver {
         candidates
     }
 
+    #[allow(dead_code)]
     pub fn apply_to_hit(
         &self,
         hit: &mut Hit,
@@ -108,40 +129,79 @@ impl TargetResolver {
         resources: &ResourceIndex,
     ) -> Vec<TargetCandidate> {
         let candidates = self.resolve_for_hit(hit, store, packet_paths, resources);
-        let Some(top) = candidates.first() else {
-            hit.target_context
-                .push("confidence=unknown score=0 reason=no_target_candidate".to_owned());
-            return candidates;
-        };
-        hit.target_context.push(format!(
-            "confidence={} score={}",
-            top.confidence.as_str(),
-            top.score
-        ));
-        hit.target_context.extend(
-            top.reasons
-                .iter()
-                .take(6)
-                .map(|reason| format!("reason={reason}")),
-        );
-        if let Some(path) = &top.target_path {
-            hit.target_context.push(format!("target_path={path}"));
-        }
-        if top.confidence != TargetConfidence::Unknown {
-            hit.target_id = Some(format!("{}:{}", top.handle_kind.label(), top.handle));
-        }
-        if matches!(
-            top.confidence,
-            TargetConfidence::Confirmed | TargetConfidence::Probable
-        ) && top.handle_kind != ObjectHandleKind::PathOnly
-        {
-            hit.target_name = top.target_name.clone();
-        }
-        if candidates.len() > 1 {
-            hit.target_context
-                .push(format!("candidate_count={}", candidates.len()));
-        }
+        apply_candidates_to_hit(hit, &candidates);
         candidates
+    }
+
+    pub fn apply_to_hit_with_summary(
+        &self,
+        hit: &mut Hit,
+        store: &ObjectStateStore,
+        packet_paths: &[PathCandidate],
+        resources: &ResourceIndex,
+    ) -> TargetResolutionSummary {
+        let candidates = self.resolve_for_hit(hit, store, packet_paths, resources);
+        apply_candidates_to_hit(hit, &candidates);
+        TargetResolutionSummary::from_hit_and_candidates(hit, &candidates)
+    }
+}
+
+impl TargetResolutionSummary {
+    pub fn from_hit_and_candidates(hit: &Hit, candidates: &[TargetCandidate]) -> Self {
+        let Some(top) = candidates.first() else {
+            return Self {
+                target_id: hit.target_id.clone(),
+                target_name: hit.target_name.clone(),
+                target_context: hit.target_context.clone(),
+                score: 0,
+                confidence: TargetConfidence::Unknown,
+                direct_hp_evidence: false,
+            };
+        };
+        Self {
+            target_id: hit.target_id.clone(),
+            target_name: hit.target_name.clone(),
+            target_context: hit.target_context.clone(),
+            score: top.score,
+            confidence: top.confidence,
+            direct_hp_evidence: candidate_has_direct_hp_evidence(top),
+        }
+    }
+}
+
+fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
+    let Some(top) = candidates.first() else {
+        hit.target_context
+            .push("confidence=unknown score=0 reason=no_target_candidate".to_owned());
+        return;
+    };
+    hit.target_context.push(format!(
+        "confidence={} score={}",
+        top.confidence.as_str(),
+        top.score
+    ));
+    hit.target_context.extend(
+        top.reasons
+            .iter()
+            .take(6)
+            .map(|reason| format!("reason={reason}")),
+    );
+    if let Some(path) = &top.target_path {
+        hit.target_context.push(format!("target_path={path}"));
+    }
+    if top.confidence != TargetConfidence::Unknown {
+        hit.target_id = Some(format!("{}:{}", top.handle_kind.label(), top.handle));
+    }
+    if matches!(
+        top.confidence,
+        TargetConfidence::Confirmed | TargetConfidence::Probable
+    ) && top.handle_kind != ObjectHandleKind::PathOnly
+    {
+        hit.target_name = top.target_name.clone();
+    }
+    if candidates.len() > 1 {
+        hit.target_context
+            .push(format!("candidate_count={}", candidates.len()));
     }
 }
 
@@ -183,6 +243,7 @@ fn score_object(
         let time_delta = (current.timestamp - hit.timestamp).abs();
         if time_delta <= 1.0 && nearly_equal(delta, hit.damage, hit.damage) {
             score += 50;
+            direct_hp_match = true;
             reasons.push(format!("boss_hp_delta_match:{delta:.0}"));
             let time_bonus = ((1.0 - time_delta).max(0.0) * 20.0).round() as i32;
             if time_bonus > 0 {
@@ -251,11 +312,15 @@ fn score_object(
 }
 
 fn has_direct_hp_match(candidates: &[TargetCandidate]) -> bool {
-    candidates.iter().any(|candidate| {
-        candidate
-            .reasons
-            .iter()
-            .any(|reason| reason.starts_with("hp_guid_timeline_match"))
+    candidates.iter().any(candidate_has_direct_hp_evidence)
+}
+
+fn candidate_has_direct_hp_evidence(candidate: &TargetCandidate) -> bool {
+    candidate.reasons.iter().any(|reason| {
+        reason.starts_with("hp_guid_timeline_match")
+            || reason.starts_with("boss_hp_delta_match")
+            || (candidate.handle_kind == ObjectHandleKind::AttributeGuid
+                && reason == "last_hp_close_to_hit_after")
     })
 }
 
@@ -429,6 +494,117 @@ mod tests {
             hit.target_context
                 .iter()
                 .any(|item| item.contains("possible"))
+        );
+    }
+
+    #[test]
+    fn direct_hp_match_avoids_conflict_penalty() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        let guid = [10_u8; 16];
+        store.observe_hp_guid_update(9.8, guid, 1000.0, None, "hp=1000".to_owned());
+        store.observe_hp_guid_update(10.1, guid, 900.0, None, "hp=900".to_owned());
+        store.observe_path_candidate(
+            10.0,
+            &PathCandidate {
+                value: "/Game/Monster/OtherBoss".to_owned(),
+                byte_offset: 0,
+                bit_shift: 0,
+                score: 240,
+            },
+            &resources,
+        );
+
+        let candidates = TargetResolver.resolve_for_hit(&hit(), &store, &[], &resources);
+        let direct = candidates
+            .iter()
+            .find(|candidate| candidate.handle_kind == ObjectHandleKind::AttributeGuid)
+            .expect("attribute candidate should exist");
+        assert!(
+            direct
+                .reasons
+                .iter()
+                .any(|reason| reason.starts_with("hp_guid_timeline_match"))
+        );
+        assert!(
+            !direct
+                .reasons
+                .iter()
+                .any(|reason| reason == "conflict:multiple_candidates")
+        );
+    }
+
+    #[test]
+    fn boss_hp_delta_counts_as_direct_hp_evidence() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        let guid = [11_u8; 16];
+        store.observe_hp_guid_update(9.8, guid, 1000.0, None, "hp=1000".to_owned());
+        store.observe_hp_guid_update(10.1, guid, 900.0, None, "hp=900".to_owned());
+        let mut hit = hit();
+        hit.target_hp_before = 0.0;
+        hit.target_hp_after = 0.0;
+        store.observe_path_candidate(
+            10.0,
+            &PathCandidate {
+                value: "/Game/Monster/PathOnlyBoss".to_owned(),
+                byte_offset: 0,
+                bit_shift: 0,
+                score: 240,
+            },
+            &resources,
+        );
+
+        let candidates = TargetResolver.resolve_for_hit(&hit, &store, &[], &resources);
+        let direct = candidates
+            .iter()
+            .find(|candidate| candidate.handle_kind == ObjectHandleKind::AttributeGuid)
+            .expect("attribute candidate should exist");
+        assert!(
+            direct
+                .reasons
+                .iter()
+                .any(|reason| reason.starts_with("boss_hp_delta_match"))
+        );
+        assert!(
+            !direct
+                .reasons
+                .iter()
+                .any(|reason| reason == "conflict:multiple_candidates")
+        );
+    }
+
+    #[test]
+    fn multiple_path_only_candidates_remain_possible() {
+        let resources = ResourceIndex::default();
+        let paths = [
+            PathCandidate {
+                value: "/Game/Monster/BossAlpha".to_owned(),
+                byte_offset: 0,
+                bit_shift: 0,
+                score: 240,
+            },
+            PathCandidate {
+                value: "/Game/Monster/BossBeta".to_owned(),
+                byte_offset: 8,
+                bit_shift: 0,
+                score: 240,
+            },
+        ];
+        let candidates = TargetResolver.resolve_for_hit(
+            &hit(),
+            &ObjectStateStore::default(),
+            &paths,
+            &resources,
+        );
+        assert!(candidates.iter().all(|candidate| {
+            candidate.handle_kind == ObjectHandleKind::PathOnly
+                && candidate.confidence.rank() <= TargetConfidence::Possible.rank()
+        }));
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| candidate.target_name.is_some())
         );
     }
 }

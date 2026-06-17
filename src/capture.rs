@@ -39,7 +39,7 @@ use crate::parser::{
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 use crate::resource_index::ResourceIndex;
-use crate::target_resolver::TargetResolver;
+use crate::target_resolver::{TargetConfidence, TargetResolutionSummary, TargetResolver};
 use crate::ue_bitstream::extract_path_candidates;
 
 const PCAP_ERRBUF_SIZE: usize = 256;
@@ -1063,10 +1063,16 @@ struct PacketDecoder {
     object_state: ObjectStateStore,
     resource_index: ResourceIndex,
     target_resolver: TargetResolver,
-    recent_target_hits: VecDeque<Hit>,
+    recent_target_hits: VecDeque<RecentTargetHit>,
     follow_up_damage: FollowUpDamageTracker,
     character_declarations: HashMap<u32, f64>,
     resource_warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+struct RecentTargetHit {
+    hit: Hit,
+    summary: TargetResolutionSummary,
 }
 
 impl Default for PacketDecoder {
@@ -1095,7 +1101,7 @@ impl Default for PacketDecoder {
             gameplay_effect_skills,
             wooden_damage_names,
             object_state: ObjectStateStore::default(),
-            resource_index: ResourceIndex::load_default(),
+            resource_index: ResourceIndex::load_default_with_warnings(&mut resource_warnings),
             target_resolver: TargetResolver,
             recent_target_hits: VecDeque::new(),
             follow_up_damage: FollowUpDamageTracker::default(),
@@ -1105,7 +1111,7 @@ impl Default for PacketDecoder {
     }
 }
 
-fn target_update_from_hit(hit: &Hit) -> HitTargetUpdate {
+fn target_update_from_hit(hit: &Hit, summary: &TargetResolutionSummary) -> HitTargetUpdate {
     HitTargetUpdate {
         timestamp: hit.timestamp,
         char_id: hit.char_id,
@@ -1115,6 +1121,8 @@ fn target_update_from_hit(hit: &Hit) -> HitTargetUpdate {
         target_id: hit.target_id.clone(),
         target_name: hit.target_name.clone(),
         target_context: hit.target_context.clone(),
+        target_score: summary.score,
+        target_confidence: summary.confidence.as_str().to_owned(),
     }
 }
 
@@ -1145,11 +1153,14 @@ impl PacketDecoder {
         (!self.resource_warnings.is_empty()).then(|| self.resource_warnings.join("; "))
     }
 
-    fn remember_target_hit(&mut self, hit: &Hit) {
+    fn remember_target_hit(&mut self, hit: &Hit, summary: TargetResolutionSummary) {
         if hit.direction == "incoming" {
             return;
         }
-        self.recent_target_hits.push_back(hit.clone());
+        self.recent_target_hits.push_back(RecentTargetHit {
+            hit: hit.clone(),
+            summary,
+        });
         while self.recent_target_hits.len() > MAX_RECENT_TARGET_HITS {
             self.recent_target_hits.pop_front();
         }
@@ -1157,36 +1168,57 @@ impl PacketDecoder {
 
     fn backfill_recent_targets(&mut self, timestamp: f64, sender: &Sender<EngineEvent>) {
         self.recent_target_hits
-            .retain(|hit| timestamp - hit.timestamp <= TARGET_BACKFILL_WINDOW_SECONDS);
-        for hit in &mut self.recent_target_hits {
-            let before = (
-                hit.target_id.clone(),
-                hit.target_name.clone(),
-                hit.target_context.clone(),
-            );
-            let mut resolved = hit.clone();
+            .retain(|recent| timestamp - recent.hit.timestamp <= TARGET_BACKFILL_WINDOW_SECONDS);
+        for recent in &mut self.recent_target_hits {
+            let mut resolved = recent.hit.clone();
             resolved.target_id = None;
             resolved.target_name = None;
             resolved.target_context.clear();
-            self.target_resolver.apply_to_hit(
+            let resolved_summary = self.target_resolver.apply_to_hit_with_summary(
                 &mut resolved,
                 &self.object_state,
                 &[],
                 &self.resource_index,
             );
-            let after = (
-                resolved.target_id.clone(),
-                resolved.target_name.clone(),
-                resolved.target_context.clone(),
-            );
-            if after != before
-                && (resolved.target_id.is_some() || !resolved.target_context.is_empty())
-            {
-                *hit = resolved;
-                let _ = sender.send(EngineEvent::HitTargetUpdate(target_update_from_hit(hit)));
+            if should_apply_target_update(&recent.summary, &resolved_summary) {
+                recent.hit = resolved;
+                recent.summary = resolved_summary;
+                let _ = sender.send(EngineEvent::HitTargetUpdate(target_update_from_hit(
+                    &recent.hit,
+                    &recent.summary,
+                )));
             }
         }
     }
+}
+
+fn should_apply_target_update(
+    old: &TargetResolutionSummary,
+    new: &TargetResolutionSummary,
+) -> bool {
+    if new.confidence.rank() < old.confidence.rank() {
+        return false;
+    }
+    if old.target_id.is_some()
+        && new.target_id.is_some()
+        && old.target_id != new.target_id
+        && old.confidence.rank() >= TargetConfidence::Probable.rank()
+    {
+        return new.direct_hp_evidence && new.confidence.rank() >= old.confidence.rank();
+    }
+    if new.confidence.rank() > old.confidence.rank() {
+        return true;
+    }
+    if old.target_id.is_none() && new.target_id.is_some() {
+        return true;
+    }
+    if old.target_id == new.target_id && new.target_id.is_some() && new.score > old.score {
+        return true;
+    }
+    old.target_id != new.target_id
+        && new.target_id.is_some()
+        && new.direct_hp_evidence
+        && new.confidence.rank() >= old.confidence.rank()
 }
 
 fn matching_gameplay_effect<'a>(
@@ -1311,6 +1343,7 @@ impl PacketDecoder {
         } else {
             Vec::new()
         };
+        let mut hit_summaries = Vec::with_capacity(hits.len());
         for hit in &mut hits {
             enrich_hit_with_gameplay_effect(
                 hit,
@@ -1349,14 +1382,17 @@ impl PacketDecoder {
                     hit.attack_type = Some(format!("环合·{reaction_type}"));
                 }
             }
-            if hit.direction != "incoming" {
-                self.target_resolver.apply_to_hit(
+            let summary = if hit.direction != "incoming" {
+                self.target_resolver.apply_to_hit_with_summary(
                     hit,
                     &self.object_state,
                     &path_candidates,
                     &self.resource_index,
-                );
-            }
+                )
+            } else {
+                TargetResolutionSummary::from_hit_and_candidates(hit, &[])
+            };
+            hit_summaries.push(summary);
         }
         for character_id in &ids {
             self.character_declarations.insert(*character_id, timestamp);
@@ -1520,13 +1556,13 @@ impl PacketDecoder {
                     .observe_server_hp(timestamp, update.current_hp as f64)
             })
             .map(|mut hit| {
-                self.target_resolver.apply_to_hit(
+                let summary = self.target_resolver.apply_to_hit_with_summary(
                     &mut hit,
                     &self.object_state,
                     &[],
                     &self.resource_index,
                 );
-                hit
+                (hit, summary)
             })
             .collect::<Vec<_>>();
         if let Some(TransportPacket::Sequenced(packet)) = parse_transport_packet(payload) {
@@ -1567,16 +1603,16 @@ impl PacketDecoder {
                 decoded_text,
             },
         );
-        for hit in hits {
+        for (hit, summary) in hits.into_iter().zip(hit_summaries) {
             if include_incoming || hit.direction != "incoming" {
                 self.follow_up_damage
                     .observe_hit(&hit, hit.gameplay_effect_index, characters);
-                self.remember_target_hit(&hit);
+                self.remember_target_hit(&hit, summary);
                 let _ = sender.send(EngineEvent::Hit(hit));
             }
         }
-        for hit in inferred_follow_up_hits {
-            self.remember_target_hit(&hit);
+        for (hit, summary) in inferred_follow_up_hits {
+            self.remember_target_hit(&hit, summary);
             let _ = sender.send(EngineEvent::Hit(hit));
         }
     }
@@ -2205,6 +2241,89 @@ mod tests {
     }
 
     #[test]
+    fn backfills_unknown_hit_when_late_s2c_evidence_arrives() {
+        let old = target_summary(None, 0, TargetConfidence::Unknown, false);
+        let new = target_summary(
+            Some("AttributeGuid:late".to_owned()),
+            80,
+            TargetConfidence::Probable,
+            true,
+        );
+        assert!(should_apply_target_update(&old, &new));
+    }
+
+    #[test]
+    fn does_not_downgrade_probable_target_with_weaker_late_context() {
+        let old = target_summary(
+            Some("AttributeGuid:target".to_owned()),
+            70,
+            TargetConfidence::Probable,
+            true,
+        );
+        let new = target_summary(
+            Some("PathOnly:/Game/Monster/target".to_owned()),
+            40,
+            TargetConfidence::Possible,
+            false,
+        );
+        assert!(!should_apply_target_update(&old, &new));
+    }
+
+    #[test]
+    fn does_not_replace_confirmed_target_with_different_non_direct_candidate() {
+        let old = target_summary(
+            Some("AttributeGuid:target-a".to_owned()),
+            100,
+            TargetConfidence::Confirmed,
+            true,
+        );
+        let new = target_summary(
+            Some("PathOnly:/Game/Monster/target-b".to_owned()),
+            120,
+            TargetConfidence::Confirmed,
+            false,
+        );
+        assert!(!should_apply_target_update(&old, &new));
+    }
+
+    #[test]
+    fn applies_follow_up_hit_target_resolution() {
+        let old = target_summary(
+            Some("AttributeGuid:target".to_owned()),
+            70,
+            TargetConfidence::Probable,
+            true,
+        );
+        let new = target_summary(
+            Some("AttributeGuid:target".to_owned()),
+            95,
+            TargetConfidence::Probable,
+            true,
+        );
+        assert!(should_apply_target_update(&old, &new));
+    }
+
+    #[test]
+    fn context_only_target_update_is_ignored() {
+        let old = TargetResolutionSummary {
+            target_id: Some("AttributeGuid:target".to_owned()),
+            target_name: Some("Target".to_owned()),
+            target_context: vec!["confidence=probable score=70".to_owned()],
+            score: 70,
+            confidence: TargetConfidence::Probable,
+            direct_hp_evidence: true,
+        };
+        let new = TargetResolutionSummary {
+            target_context: vec![
+                "confidence=probable score=70".to_owned(),
+                "reason=reordered_context".to_owned(),
+            ],
+            ..old.clone()
+        };
+        assert!(!should_apply_target_update(&old, &new));
+    }
+
+    #[test]
     fn local_ip_hint_controls_import_direction_inference() {
         let local_ip = Ipv4Addr::new(10, 0, 0, 2);
         let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
@@ -2234,6 +2353,22 @@ mod tests {
             &[1001],
             &endpoints,
         ));
+    }
+
+    fn target_summary(
+        target_id: Option<String>,
+        score: i32,
+        confidence: TargetConfidence,
+        direct_hp_evidence: bool,
+    ) -> TargetResolutionSummary {
+        TargetResolutionSummary {
+            target_name: target_id.as_ref().map(|_| "Target".to_owned()),
+            target_context: vec![format!("confidence={} score={score}", confidence.as_str())],
+            target_id,
+            score,
+            confidence,
+            direct_hp_evidence,
+        }
     }
 
     fn targetless_hit() -> Hit {

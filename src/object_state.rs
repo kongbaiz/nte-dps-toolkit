@@ -223,6 +223,23 @@ impl ObjectStateStore {
         if !is_targetish_path(path) {
             return;
         }
+        let strong_paths = self.strong_targetish_paths_near(timestamp);
+        if strong_paths.is_empty() {
+            return;
+        }
+        if strong_paths.len() > 1 {
+            for attribute in self
+                .objects
+                .values_mut()
+                .filter(|object| object.handle_kind == ObjectHandleKind::AttributeGuid)
+                .filter(|object| {
+                    (timestamp - object.last_seen_at).abs() <= ATTRIBUTE_PATH_LINK_WINDOW_SECONDS
+                })
+            {
+                mark_ambiguous_path_link(attribute, strong_paths.len(), &strong_paths);
+            }
+            return;
+        }
         let attribute_keys = self
             .objects
             .iter()
@@ -242,7 +259,28 @@ impl ObjectStateStore {
     }
 
     fn link_attribute_to_best_path(&mut self, attribute_key: &str, timestamp: f64) {
-        let best_path = self
+        let strong_paths = self.strong_targetish_paths_near(timestamp);
+        if strong_paths.len() > 1 {
+            if let Some(attribute) = self.objects.get_mut(attribute_key) {
+                mark_ambiguous_path_link(attribute, strong_paths.len(), &strong_paths);
+            }
+            return;
+        }
+        let Some(path) = strong_paths.first() else {
+            return;
+        };
+        let display_name = self
+            .objects
+            .values()
+            .find(|object| object.object_path.as_deref() == Some(path.as_str()))
+            .and_then(|object| object.display_name.clone());
+        if let Some(attribute) = self.objects.get_mut(attribute_key) {
+            apply_path_link(attribute, path, display_name);
+        }
+    }
+
+    fn strong_targetish_paths_near(&self, timestamp: f64) -> Vec<String> {
+        let mut paths = self
             .objects
             .values()
             .filter(|object| object.handle_kind == ObjectHandleKind::PathOnly)
@@ -251,24 +289,12 @@ impl ObjectStateStore {
             })
             .filter_map(|object| {
                 let path = object.object_path.as_deref()?;
-                is_targetish_path(path).then_some((
-                    path.to_owned(),
-                    object.display_name.clone(),
-                    (timestamp - object.last_seen_at).abs(),
-                    object.confidence,
-                ))
+                strong_targetish_path(object, path).then(|| path.to_owned())
             })
-            .min_by(|left, right| {
-                left.2
-                    .total_cmp(&right.2)
-                    .then_with(|| right.3.total_cmp(&left.3))
-            });
-        let Some((path, display_name, _, _)) = best_path else {
-            return;
-        };
-        if let Some(attribute) = self.objects.get_mut(attribute_key) {
-            apply_path_link(attribute, &path, display_name);
-        }
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths.dedup();
+        paths
     }
 
     pub fn cleanup(&mut self, timestamp: f64) {
@@ -303,6 +329,23 @@ fn apply_path_link(attribute: &mut ObjectDescriptor, path: &str, display_name: O
     attribute.display_name = attribute.display_name.clone().or(display_name);
     attribute.confidence = attribute.confidence.max(0.80);
     push_unique_evidence(&mut attribute.evidence, format!("linked_path:{path}"));
+}
+
+fn mark_ambiguous_path_link(attribute: &mut ObjectDescriptor, count: usize, paths: &[String]) {
+    attribute.object_path = None;
+    attribute.class_path = None;
+    attribute.display_name = None;
+    push_unique_evidence(
+        &mut attribute.evidence,
+        format!("ambiguous_path_link:{count}"),
+    );
+    for path in paths.iter().take(3) {
+        push_unique_evidence(&mut attribute.evidence, format!("ambiguous_path:{path}"));
+    }
+}
+
+fn strong_targetish_path(object: &ObjectDescriptor, path: &str) -> bool {
+    is_targetish_path(path) && (path.starts_with("/Game/") || object.confidence >= 0.70)
 }
 
 fn object_key(kind: &ObjectHandleKind, handle: &str) -> String {
@@ -379,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn attribute_guid_links_nearby_target_path() {
+    fn attribute_guid_links_nearby_unique_target_path() {
         let mut store = ObjectStateStore::default();
         let resources = ResourceIndex::default();
         let candidate = path("/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C");
@@ -399,5 +442,47 @@ mod tests {
                 .iter()
                 .any(|evidence| evidence.starts_with("linked_path:"))
         );
+    }
+
+    #[test]
+    fn attribute_guid_does_not_link_ambiguous_target_paths() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        store.observe_path_candidate(
+            1.0,
+            &path("/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C"),
+            &resources,
+        );
+        store.observe_path_candidate(
+            1.05,
+            &path("/Game/Blueprints/Character/Monster/boss_08/BP_Boss_08.BP_Boss_08_C"),
+            &resources,
+        );
+        let key = store.observe_hp_guid_update(1.1, [3_u8; 16], 900.0, None, "hp=900".to_owned());
+        let object = store.objects.get(&key).unwrap();
+        assert!(object.object_path.is_none());
+        assert!(object.display_name.is_none());
+        assert!(
+            object
+                .evidence
+                .iter()
+                .any(|evidence| evidence == "ambiguous_path_link:2")
+        );
+    }
+
+    #[test]
+    fn path_does_not_link_when_multiple_attribute_guids_nearby() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        let first = store.observe_hp_guid_update(1.0, [4_u8; 16], 900.0, None, "hp=900".to_owned());
+        let second =
+            store.observe_hp_guid_update(1.05, [5_u8; 16], 800.0, None, "hp=800".to_owned());
+        store.observe_path_candidate(
+            1.1,
+            &path("/Game/Blueprints/Character/Monster/boss_09/BP_Boss_09.BP_Boss_09_C"),
+            &resources,
+        );
+        assert!(store.objects.get(&first).unwrap().object_path.is_none());
+        assert!(store.objects.get(&second).unwrap().object_path.is_none());
     }
 }
