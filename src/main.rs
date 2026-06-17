@@ -8,8 +8,12 @@ mod file_drop;
 mod hotkey;
 mod model;
 mod network;
+mod object_state;
 mod parser;
 mod protocol;
+mod resource_index;
+mod target_resolver;
+mod ue_bitstream;
 
 use anyhow::Result;
 use app::DpsApp;

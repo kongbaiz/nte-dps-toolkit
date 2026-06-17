@@ -25,6 +25,7 @@ use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
 use crate::model::{AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, PacketDebug};
+use crate::object_state::ObjectStateStore;
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
@@ -35,6 +36,9 @@ use crate::parser::{
 };
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
+use crate::resource_index::ResourceIndex;
+use crate::target_resolver::TargetResolver;
+use crate::ue_bitstream::extract_path_candidates;
 
 const PCAP_ERRBUF_SIZE: usize = 256;
 const MIN_READABLE_TEXT_LEN: usize = 4;
@@ -1052,6 +1056,9 @@ struct PacketDecoder {
     gameplay_effect_names: HashMap<u32, String>,
     gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
     wooden_damage_names: HashMap<String, String>,
+    object_state: ObjectStateStore,
+    resource_index: ResourceIndex,
+    target_resolver: TargetResolver,
     follow_up_damage: FollowUpDamageTracker,
     character_declarations: HashMap<u32, f64>,
     resource_warnings: Vec<String>,
@@ -1082,6 +1089,9 @@ impl Default for PacketDecoder {
             gameplay_effect_names,
             gameplay_effect_skills,
             wooden_damage_names,
+            object_state: ObjectStateStore::default(),
+            resource_index: ResourceIndex::load_default(),
+            target_resolver: TargetResolver,
             follow_up_damage: FollowUpDamageTracker::default(),
             character_declarations: HashMap::new(),
             resource_warnings,
@@ -1202,6 +1212,11 @@ impl PacketDecoder {
         }
 
         let decoded_text = decode_payload_text(payload);
+        let path_candidates = extract_path_candidates(payload);
+        for candidate in &path_candidates {
+            self.object_state
+                .observe_path_candidate(timestamp, candidate, &self.resource_index);
+        }
         let evidence = find_declared_character_evidence(payload);
         let ids = declared_character_ids_from_evidence(&evidence);
         self.follow_up_damage
@@ -1272,6 +1287,14 @@ impl PacketDecoder {
                     hit.attack_type = Some(format!("环合·{reaction_type}"));
                 }
             }
+            if hit.direction != "incoming" {
+                self.target_resolver.apply_to_hit(
+                    hit,
+                    &self.object_state,
+                    &path_candidates,
+                    &self.resource_index,
+                );
+            }
         }
         for character_id in &ids {
             self.character_declarations.insert(*character_id, timestamp);
@@ -1294,8 +1317,24 @@ impl PacketDecoder {
         } else {
             parse_boss_hp_updates(payload)
         };
+        for update in &boss_hp_updates {
+            self.object_state.observe_hp_guid_update(
+                timestamp,
+                update.target_handle,
+                update.current_hp as f64,
+                None,
+                format!(
+                    "boss_hp:{}={:.0}@{}:{}",
+                    hex::encode(update.target_handle),
+                    update.current_hp,
+                    update.byte_offset,
+                    update.bit_shift
+                ),
+            );
+        }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
+            && path_candidates.is_empty()
             && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
         {
             return;
@@ -1309,6 +1348,46 @@ impl PacketDecoder {
             &mut note,
             binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
         );
+        if !path_candidates.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "Object/path candidates: {}",
+                    path_candidates
+                        .iter()
+                        .take(5)
+                        .map(|candidate| format!(
+                            "{}@{}:{}",
+                            candidate.value, candidate.byte_offset, candidate.bit_shift
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
+        let target_notes = hits
+            .iter()
+            .filter(|hit| !hit.target_context.is_empty())
+            .take(3)
+            .map(|hit| {
+                format!(
+                    "target hit {:.0}: {}",
+                    hit.damage,
+                    hit.target_context
+                        .iter()
+                        .take(4)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                )
+            })
+            .collect::<Vec<_>>();
+        if !target_notes.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!("Target candidates: {}", target_notes.join("; "))),
+            );
+        }
         if !gameplay_effects.is_empty() {
             append_packet_note(
                 &mut note,
@@ -2101,6 +2180,124 @@ mod tests {
             damage_name: None,
             attack_type: None,
         }
+    }
+
+    fn encoded_damage_record(damage: f32, target_hp_before: f32, target_max_hp: f32) -> Vec<u8> {
+        let fields = [
+            (12, damage.to_le_bytes().to_vec()),
+            (12, target_hp_before.to_le_bytes().to_vec()),
+            (12, target_max_hp.to_le_bytes().to_vec()),
+            (13, 10.0_f64.to_le_bytes().to_vec()),
+            (12, 10.0_f32.to_le_bytes().to_vec()),
+            (12, damage.to_le_bytes().to_vec()),
+            (6, 0_i32.to_le_bytes().to_vec()),
+            (6, 0_i32.to_le_bytes().to_vec()),
+            (6, 0_i32.to_le_bytes().to_vec()),
+            (12, 0.0_f32.to_le_bytes().to_vec()),
+        ];
+        let mut encoded = Vec::new();
+        for (field_type, value) in fields {
+            encoded.push(field_type);
+            encoded.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            encoded.extend_from_slice(&value);
+        }
+        encoded
+    }
+
+    fn boss_hp_update(handle: [u8; 16], hp: f32) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&[0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00]);
+        payload.extend_from_slice(&handle);
+        payload.extend_from_slice(&[0; 12]);
+        payload.extend_from_slice(&hp.to_le_bytes());
+        payload
+    }
+
+    fn ethernet_udp_frame(
+        src: Ipv4Addr,
+        src_port: u16,
+        dst: Ipv4Addr,
+        dst_port: u16,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let udp_len = 8 + payload.len();
+        let ip_len = 20 + udp_len;
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&[0, 1, 2, 3, 4, 5]);
+        frame.extend_from_slice(&[6, 7, 8, 9, 10, 11]);
+        frame.extend_from_slice(&0x0800_u16.to_be_bytes());
+        frame.push(0x45);
+        frame.push(0);
+        frame.extend_from_slice(&(ip_len as u16).to_be_bytes());
+        frame.extend_from_slice(&[0, 0, 0, 0]);
+        frame.push(64);
+        frame.push(17);
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(&src.octets());
+        frame.extend_from_slice(&dst.octets());
+        frame.extend_from_slice(&src_port.to_be_bytes());
+        frame.extend_from_slice(&dst_port.to_be_bytes());
+        frame.extend_from_slice(&(udp_len as u16).to_be_bytes());
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn packet_decoder_attaches_target_context_from_hp_guid_and_path_evidence() {
+        let (sender, receiver) = unbounded();
+        let local = Ipv4Addr::new(10, 0, 0, 2);
+        let remote = Ipv4Addr::new(10, 0, 0, 3);
+        let characters = HashMap::from([(
+            1003,
+            CharacterInfo {
+                name_zh: "早雾".to_owned(),
+                name_en: "Sagiri".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: Some("咒".to_owned()),
+            },
+        )]);
+        let handle = [0x21_u8; 16];
+        let mut s2c_payload =
+            b"/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C\0".to_vec();
+        s2c_payload.extend_from_slice(&boss_hp_update(handle, 1000.0));
+        s2c_payload.extend_from_slice(&boss_hp_update(handle, 900.0));
+        let s2c = ethernet_udp_frame(remote, 30031, local, 50000, &s2c_payload);
+
+        let mut c2s_payload = encoded_damage_record(100.0, 1000.0, 1_000_000.0);
+        c2s_payload.extend_from_slice(&[5, 0, 0, 0, b'1', b'0', b'0', b'3', 0]);
+        let c2s = ethernet_udp_frame(local, 50000, remote, 30031, &c2s_payload);
+
+        let mut decoder = PacketDecoder::default();
+        decoder.process_ethernet_frame(&s2c, 10.0, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&c2s, 10.1, Some(local), true, &characters, &sender);
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        let hit = events
+            .iter()
+            .find_map(|event| match event {
+                EngineEvent::Hit(hit) => Some(hit),
+                _ => None,
+            })
+            .expect("synthetic damage hit should be emitted");
+        assert!(
+            hit.target_id
+                .as_deref()
+                .is_some_and(|id| id.contains("AttributeGuid"))
+        );
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|entry| entry.contains("hp_guid_timeline_match"))
+        );
+        assert!(
+            events.iter().any(|event| match event {
+                EngineEvent::Packet(packet) => packet.note.contains("Object/path candidates"),
+                _ => false,
+            }),
+            "debug packet should preserve path evidence"
+        );
     }
 
     #[test]

@@ -1,0 +1,310 @@
+use std::collections::{HashMap, VecDeque};
+
+use crate::resource_index::ResourceIndex;
+use crate::ue_bitstream::PathCandidate;
+
+const MAX_OBJECTS: usize = 512;
+const MAX_EVIDENCE_PER_OBJECT: usize = 8;
+const MAX_HP_HISTORY_PER_OBJECT: usize = 32;
+const OBJECT_TTL_SECONDS: f64 = 20.0;
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[allow(dead_code)]
+pub enum ObjectHandleKind {
+    NetGuidCandidate,
+    NetRefHandleCandidate,
+    AttributeGuid,
+    PathOnly,
+    Unknown,
+}
+
+impl ObjectHandleKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::NetGuidCandidate => "NetGuidCandidate",
+            Self::NetRefHandleCandidate => "NetRefHandleCandidate",
+            Self::AttributeGuid => "AttributeGuid",
+            Self::PathOnly => "PathOnly",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct HpObservation {
+    pub timestamp: f64,
+    pub current: f64,
+    pub max: Option<f64>,
+    pub evidence: String,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub struct ObjectDescriptor {
+    pub handle_kind: ObjectHandleKind,
+    pub handle: String,
+    pub class_path: Option<String>,
+    pub object_path: Option<String>,
+    pub display_name: Option<String>,
+    pub owner_handle: Option<String>,
+    pub actor_handle: Option<String>,
+    pub component_handle: Option<String>,
+    pub hp_current: Option<f64>,
+    pub hp_max: Option<f64>,
+    pub first_seen_at: f64,
+    pub last_seen_at: f64,
+    pub evidence: Vec<String>,
+    pub confidence: f32,
+    pub hp_history: VecDeque<HpObservation>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ObjectStateStore {
+    objects: HashMap<String, ObjectDescriptor>,
+}
+
+impl ObjectStateStore {
+    pub fn observe_path_candidate(
+        &mut self,
+        timestamp: f64,
+        candidate: &PathCandidate,
+        resources: &ResourceIndex,
+    ) -> String {
+        let key = object_key(&ObjectHandleKind::PathOnly, &candidate.value);
+        let descriptor = self.objects.entry(key.clone()).or_insert_with(|| {
+            let display_name = resources.display_name_for_path(&candidate.value);
+            ObjectDescriptor {
+                handle_kind: ObjectHandleKind::PathOnly,
+                handle: candidate.value.clone(),
+                class_path: Some(candidate.value.clone()).filter(|value| value.contains("/Game/")),
+                object_path: Some(candidate.value.clone()),
+                display_name,
+                owner_handle: None,
+                actor_handle: None,
+                component_handle: None,
+                hp_current: None,
+                hp_max: None,
+                first_seen_at: timestamp,
+                last_seen_at: timestamp,
+                evidence: Vec::new(),
+                confidence: (candidate.score as f32 / 255.0).clamp(0.1, 0.95),
+                hp_history: VecDeque::new(),
+            }
+        });
+        descriptor.last_seen_at = timestamp;
+        descriptor.confidence = descriptor
+            .confidence
+            .max((candidate.score as f32 / 255.0).clamp(0.1, 0.95));
+        push_unique_evidence(
+            &mut descriptor.evidence,
+            format!(
+                "path_candidate:{}@{}:{}",
+                candidate.value, candidate.byte_offset, candidate.bit_shift
+            ),
+        );
+        self.cleanup(timestamp);
+        key
+    }
+
+    pub fn observe_hp_guid_update(
+        &mut self,
+        timestamp: f64,
+        guid: [u8; 16],
+        current_hp: f64,
+        max_hp: Option<f64>,
+        evidence: String,
+    ) -> String {
+        let handle = hex::encode(guid);
+        let key = object_key(&ObjectHandleKind::AttributeGuid, &handle);
+        let descriptor = self
+            .objects
+            .entry(key.clone())
+            .or_insert_with(|| ObjectDescriptor {
+                handle_kind: ObjectHandleKind::AttributeGuid,
+                handle: handle.clone(),
+                class_path: None,
+                object_path: None,
+                display_name: None,
+                owner_handle: None,
+                actor_handle: None,
+                component_handle: None,
+                hp_current: None,
+                hp_max: max_hp,
+                first_seen_at: timestamp,
+                last_seen_at: timestamp,
+                evidence: Vec::new(),
+                confidence: 0.65,
+                hp_history: VecDeque::new(),
+            });
+        descriptor.last_seen_at = timestamp;
+        descriptor.hp_current = Some(current_hp);
+        descriptor.hp_max = descriptor.hp_max.or(max_hp);
+        descriptor.confidence = descriptor.confidence.max(0.70);
+        descriptor.hp_history.push_back(HpObservation {
+            timestamp,
+            current: current_hp,
+            max: max_hp,
+            evidence: evidence.clone(),
+        });
+        while descriptor.hp_history.len() > MAX_HP_HISTORY_PER_OBJECT {
+            descriptor.hp_history.pop_front();
+        }
+        push_unique_evidence(&mut descriptor.evidence, evidence);
+        self.cleanup(timestamp);
+        key
+    }
+
+    #[allow(dead_code)]
+    pub fn observe_possible_handle(
+        &mut self,
+        timestamp: f64,
+        handle_kind: ObjectHandleKind,
+        handle: String,
+        evidence: String,
+    ) -> String {
+        let key = object_key(&handle_kind, &handle);
+        let descriptor = self
+            .objects
+            .entry(key.clone())
+            .or_insert_with(|| ObjectDescriptor {
+                handle_kind,
+                handle,
+                class_path: None,
+                object_path: None,
+                display_name: None,
+                owner_handle: None,
+                actor_handle: None,
+                component_handle: None,
+                hp_current: None,
+                hp_max: None,
+                first_seen_at: timestamp,
+                last_seen_at: timestamp,
+                evidence: Vec::new(),
+                confidence: 0.25,
+                hp_history: VecDeque::new(),
+            });
+        descriptor.last_seen_at = timestamp;
+        push_unique_evidence(&mut descriptor.evidence, evidence);
+        self.cleanup(timestamp);
+        key
+    }
+
+    pub fn objects_near_time(&self, timestamp: f64, window_seconds: f64) -> Vec<&ObjectDescriptor> {
+        self.objects
+            .values()
+            .filter(|object| (timestamp - object.last_seen_at).abs() <= window_seconds)
+            .collect()
+    }
+
+    pub fn candidates_for_damage(&self, timestamp: f64) -> Vec<&ObjectDescriptor> {
+        self.objects_near_time(timestamp, 1.0)
+            .into_iter()
+            .filter(|object| {
+                object.hp_current.is_some()
+                    || object
+                        .object_path
+                        .as_deref()
+                        .or(object.class_path.as_deref())
+                        .is_some_and(is_targetish_path)
+            })
+            .collect()
+    }
+
+    pub fn cleanup(&mut self, timestamp: f64) {
+        self.objects
+            .retain(|_, object| timestamp - object.last_seen_at <= OBJECT_TTL_SECONDS);
+        if self.objects.len() <= MAX_OBJECTS {
+            return;
+        }
+        let mut keys = self
+            .objects
+            .iter()
+            .map(|(key, object)| (key.clone(), object.last_seen_at))
+            .collect::<Vec<_>>();
+        keys.sort_by(|left, right| left.1.total_cmp(&right.1));
+        let remove_count = self.objects.len() - MAX_OBJECTS;
+        for (key, _) in keys.into_iter().take(remove_count) {
+            self.objects.remove(&key);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+}
+
+fn object_key(kind: &ObjectHandleKind, handle: &str) -> String {
+    format!("{}:{handle}", kind.label())
+}
+
+fn push_unique_evidence(evidence: &mut Vec<String>, value: String) {
+    if evidence.iter().any(|item| item == &value) {
+        return;
+    }
+    evidence.push(value);
+    if evidence.len() > MAX_EVIDENCE_PER_OBJECT {
+        evidence.remove(0);
+    }
+}
+
+pub fn is_targetish_path(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    ["monster", "boss", "enemy", "npc", "htcharacter"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resource_index::ResourceIndex;
+
+    fn path(value: &str) -> PathCandidate {
+        PathCandidate {
+            value: value.to_owned(),
+            byte_offset: 1,
+            bit_shift: 0,
+            score: 240,
+        }
+    }
+
+    #[test]
+    fn hp_guid_update_maintains_timeline() {
+        let mut store = ObjectStateStore::default();
+        let guid = [1_u8; 16];
+        store.observe_hp_guid_update(1.0, guid, 900.0, None, "hp=900".to_owned());
+        let key = store.observe_hp_guid_update(1.5, guid, 800.0, None, "hp=800".to_owned());
+        let object = store.objects.get(&key).unwrap();
+        assert_eq!(object.hp_history.len(), 2);
+        assert_eq!(object.hp_current, Some(800.0));
+    }
+
+    #[test]
+    fn path_candidate_is_saved_and_deduped() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        let candidate = path("/Game/Blueprints/Character/Monster/boss_07/BP.BP_C");
+        store.observe_path_candidate(1.0, &candidate, &resources);
+        store.observe_path_candidate(1.1, &candidate, &resources);
+        assert_eq!(store.len(), 1);
+        let object = store.candidates_for_damage(1.1).pop().unwrap();
+        assert_eq!(object.evidence.len(), 1);
+    }
+
+    #[test]
+    fn cleanup_keeps_recent_objects() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        store.observe_path_candidate(1.0, &path("/Game/Monster/old"), &resources);
+        store.observe_path_candidate(25.0, &path("/Game/Monster/recent"), &resources);
+        assert_eq!(store.len(), 1);
+        assert!(
+            store
+                .objects
+                .values()
+                .any(|object| object.handle.contains("recent"))
+        );
+    }
+}
