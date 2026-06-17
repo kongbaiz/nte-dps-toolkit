@@ -64,10 +64,10 @@ impl TargetResolver {
             }) {
                 continue;
             }
-            let mut score = 30;
+            let mut score = 25;
             let mut reasons = vec![format!("path_candidate:{}", path.value)];
             if path.value.starts_with("/Game/") {
-                score += 40;
+                score += 15;
                 reasons.push("game_path_target_keyword".to_owned());
             }
             let confidence = confidence_for_score(score);
@@ -133,7 +133,8 @@ impl TargetResolver {
         if matches!(
             top.confidence,
             TargetConfidence::Confirmed | TargetConfidence::Probable
-        ) {
+        ) && top.handle_kind != ObjectHandleKind::PathOnly
+        {
             hit.target_name = top.target_name.clone();
         }
         if candidates.len() > 1 {
@@ -152,6 +153,7 @@ fn score_object(
 ) -> TargetCandidate {
     let mut score = 0;
     let mut reasons = Vec::new();
+    let path_only = object.handle_kind == ObjectHandleKind::PathOnly;
     let target_path = object
         .object_path
         .clone()
@@ -159,10 +161,10 @@ fn score_object(
     if let Some(path) = &target_path
         && is_targetish_path(path)
     {
-        score += 30;
+        score += if path_only { 25 } else { 30 };
         reasons.push(format!("near_object_path:{path}"));
         if path.starts_with("/Game/") {
-            score += 40;
+            score += if path_only { 15 } else { 40 };
             reasons.push("game_path_target_keyword".to_owned());
         }
     }
@@ -225,7 +227,8 @@ fn score_object(
                     .is_some_and(is_targetish_path)
         })
         .count();
-    if high_conf_targets == 1 && target_path.as_deref().is_some_and(is_targetish_path) {
+    if !path_only && high_conf_targets == 1 && target_path.as_deref().is_some_and(is_targetish_path)
+    {
         score += 25;
         reasons.push("single_high_confidence_target_window".to_owned());
     }
@@ -401,6 +404,31 @@ mod tests {
             hit.target_context
                 .iter()
                 .any(|item| item.contains("reason="))
+        );
+    }
+
+    #[test]
+    fn path_only_candidate_does_not_fill_target_name() {
+        let path = PathCandidate {
+            value: "/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C".to_owned(),
+            byte_offset: 1,
+            bit_shift: 0,
+            score: 240,
+        };
+        let mut hit = hit();
+        let candidates = TargetResolver.apply_to_hit(
+            &mut hit,
+            &ObjectStateStore::default(),
+            &[path],
+            &ResourceIndex::default(),
+        );
+        assert_eq!(candidates[0].handle_kind, ObjectHandleKind::PathOnly);
+        assert_eq!(candidates[0].confidence, TargetConfidence::Possible);
+        assert!(hit.target_name.is_none());
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|item| item.contains("possible"))
         );
     }
 }

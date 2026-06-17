@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::parser::find_data_file;
 
@@ -55,11 +55,6 @@ impl ResourceIndex {
             index.load_file(&path);
         }
         index
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.names_by_path.is_empty()
     }
 
     pub fn display_name_for_path(&self, path: &str) -> Option<String> {
@@ -139,11 +134,6 @@ pub fn fallback_name_from_path(path: &str) -> Option<String> {
     Some(without_class.to_owned())
 }
 
-#[allow(dead_code)]
-pub fn target_resource_dir() -> PathBuf {
-    PathBuf::from(TARGET_RESOURCE_DIR)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,8 +141,14 @@ mod tests {
     #[test]
     fn missing_targets_resource_table_is_ok() {
         let index = ResourceIndex::load_default();
-        assert!(index.is_empty() || !index.is_empty());
-        assert!(target_resource_dir().to_string_lossy().contains("targets"));
+        assert_eq!(
+            index
+                .display_name_for_path(
+                    "/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C"
+                )
+                .as_deref(),
+            Some("BP_Boss_07")
+        );
     }
 
     #[test]

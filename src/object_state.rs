@@ -7,6 +7,7 @@ const MAX_OBJECTS: usize = 512;
 const MAX_EVIDENCE_PER_OBJECT: usize = 8;
 const MAX_HP_HISTORY_PER_OBJECT: usize = 32;
 const OBJECT_TTL_SECONDS: f64 = 20.0;
+const ATTRIBUTE_PATH_LINK_WINDOW_SECONDS: f64 = 1.0;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[allow(dead_code)]
@@ -88,14 +89,14 @@ impl ObjectStateStore {
                 first_seen_at: timestamp,
                 last_seen_at: timestamp,
                 evidence: Vec::new(),
-                confidence: (candidate.score as f32 / 255.0).clamp(0.1, 0.95),
+                confidence: (candidate.score as f32 / 255.0).clamp(0.1, 0.45),
                 hp_history: VecDeque::new(),
             }
         });
         descriptor.last_seen_at = timestamp;
         descriptor.confidence = descriptor
             .confidence
-            .max((candidate.score as f32 / 255.0).clamp(0.1, 0.95));
+            .max((candidate.score as f32 / 255.0).clamp(0.1, 0.45));
         push_unique_evidence(
             &mut descriptor.evidence,
             format!(
@@ -103,6 +104,7 @@ impl ObjectStateStore {
                 candidate.value, candidate.byte_offset, candidate.bit_shift
             ),
         );
+        self.link_path_to_single_attribute(timestamp, &candidate.value, resources);
         self.cleanup(timestamp);
         key
     }
@@ -151,6 +153,7 @@ impl ObjectStateStore {
             descriptor.hp_history.pop_front();
         }
         push_unique_evidence(&mut descriptor.evidence, evidence);
+        self.link_attribute_to_best_path(&key, timestamp);
         self.cleanup(timestamp);
         key
     }
@@ -211,6 +214,63 @@ impl ObjectStateStore {
             .collect()
     }
 
+    fn link_path_to_single_attribute(
+        &mut self,
+        timestamp: f64,
+        path: &str,
+        resources: &ResourceIndex,
+    ) {
+        if !is_targetish_path(path) {
+            return;
+        }
+        let attribute_keys = self
+            .objects
+            .iter()
+            .filter(|(_, object)| object.handle_kind == ObjectHandleKind::AttributeGuid)
+            .filter(|(_, object)| {
+                (timestamp - object.last_seen_at).abs() <= ATTRIBUTE_PATH_LINK_WINDOW_SECONDS
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        if attribute_keys.len() != 1 {
+            return;
+        }
+        let display_name = resources.display_name_for_path(path);
+        if let Some(attribute) = self.objects.get_mut(&attribute_keys[0]) {
+            apply_path_link(attribute, path, display_name);
+        }
+    }
+
+    fn link_attribute_to_best_path(&mut self, attribute_key: &str, timestamp: f64) {
+        let best_path = self
+            .objects
+            .values()
+            .filter(|object| object.handle_kind == ObjectHandleKind::PathOnly)
+            .filter(|object| {
+                (timestamp - object.last_seen_at).abs() <= ATTRIBUTE_PATH_LINK_WINDOW_SECONDS
+            })
+            .filter_map(|object| {
+                let path = object.object_path.as_deref()?;
+                is_targetish_path(path).then_some((
+                    path.to_owned(),
+                    object.display_name.clone(),
+                    (timestamp - object.last_seen_at).abs(),
+                    object.confidence,
+                ))
+            })
+            .min_by(|left, right| {
+                left.2
+                    .total_cmp(&right.2)
+                    .then_with(|| right.3.total_cmp(&left.3))
+            });
+        let Some((path, display_name, _, _)) = best_path else {
+            return;
+        };
+        if let Some(attribute) = self.objects.get_mut(attribute_key) {
+            apply_path_link(attribute, &path, display_name);
+        }
+    }
+
     pub fn cleanup(&mut self, timestamp: f64) {
         self.objects
             .retain(|_, object| timestamp - object.last_seen_at <= OBJECT_TTL_SECONDS);
@@ -233,6 +293,16 @@ impl ObjectStateStore {
     pub fn len(&self) -> usize {
         self.objects.len()
     }
+}
+
+fn apply_path_link(attribute: &mut ObjectDescriptor, path: &str, display_name: Option<String>) {
+    attribute.object_path = Some(path.to_owned());
+    if path.contains("/Game/") {
+        attribute.class_path = Some(path.to_owned());
+    }
+    attribute.display_name = attribute.display_name.clone().or(display_name);
+    attribute.confidence = attribute.confidence.max(0.80);
+    push_unique_evidence(&mut attribute.evidence, format!("linked_path:{path}"));
 }
 
 fn object_key(kind: &ObjectHandleKind, handle: &str) -> String {
@@ -305,6 +375,29 @@ mod tests {
                 .objects
                 .values()
                 .any(|object| object.handle.contains("recent"))
+        );
+    }
+
+    #[test]
+    fn attribute_guid_links_nearby_target_path() {
+        let mut store = ObjectStateStore::default();
+        let resources = ResourceIndex::default();
+        let candidate = path("/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C");
+        store.observe_path_candidate(1.0, &candidate, &resources);
+        let key = store.observe_hp_guid_update(1.1, [2_u8; 16], 900.0, None, "hp=900".to_owned());
+        let object = store.objects.get(&key).unwrap();
+        assert!(
+            object
+                .object_path
+                .as_deref()
+                .is_some_and(|path| path.contains("boss_07"))
+        );
+        assert_eq!(object.display_name.as_deref(), Some("BP_Boss_07"));
+        assert!(
+            object
+                .evidence
+                .iter()
+                .any(|evidence| evidence.starts_with("linked_path:"))
         );
     }
 }

@@ -24,7 +24,9 @@ use pcap_file::pcapng::blocks::interface_description::{
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
-use crate::model::{AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, PacketDebug};
+use crate::model::{
+    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitTargetUpdate, PacketDebug,
+};
 use crate::object_state::ObjectStateStore;
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
@@ -864,6 +866,8 @@ const INFERRED_FOLLOW_UP_CHAR_ID: u32 = u32::MAX;
 const NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX: u32 = 241;
 const MAX_DISPLAY_DAMAGE_CORRECTION_RATIO: f64 = 0.03;
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
+const MAX_RECENT_TARGET_HITS: usize = 256;
+const TARGET_BACKFILL_WINDOW_SECONDS: f64 = 1.25;
 
 #[derive(Clone)]
 struct PendingHit {
@@ -1059,6 +1063,7 @@ struct PacketDecoder {
     object_state: ObjectStateStore,
     resource_index: ResourceIndex,
     target_resolver: TargetResolver,
+    recent_target_hits: VecDeque<Hit>,
     follow_up_damage: FollowUpDamageTracker,
     character_declarations: HashMap<u32, f64>,
     resource_warnings: Vec<String>,
@@ -1092,10 +1097,24 @@ impl Default for PacketDecoder {
             object_state: ObjectStateStore::default(),
             resource_index: ResourceIndex::load_default(),
             target_resolver: TargetResolver,
+            recent_target_hits: VecDeque::new(),
             follow_up_damage: FollowUpDamageTracker::default(),
             character_declarations: HashMap::new(),
             resource_warnings,
         }
+    }
+}
+
+fn target_update_from_hit(hit: &Hit) -> HitTargetUpdate {
+    HitTargetUpdate {
+        timestamp: hit.timestamp,
+        char_id: hit.char_id,
+        damage: hit.damage,
+        byte_offset: hit.byte_offset,
+        bit_shift: hit.bit_shift,
+        target_id: hit.target_id.clone(),
+        target_name: hit.target_name.clone(),
+        target_context: hit.target_context.clone(),
     }
 }
 
@@ -1124,6 +1143,49 @@ where
 impl PacketDecoder {
     fn resource_warning(&self) -> Option<String> {
         (!self.resource_warnings.is_empty()).then(|| self.resource_warnings.join("; "))
+    }
+
+    fn remember_target_hit(&mut self, hit: &Hit) {
+        if hit.direction == "incoming" {
+            return;
+        }
+        self.recent_target_hits.push_back(hit.clone());
+        while self.recent_target_hits.len() > MAX_RECENT_TARGET_HITS {
+            self.recent_target_hits.pop_front();
+        }
+    }
+
+    fn backfill_recent_targets(&mut self, timestamp: f64, sender: &Sender<EngineEvent>) {
+        self.recent_target_hits
+            .retain(|hit| timestamp - hit.timestamp <= TARGET_BACKFILL_WINDOW_SECONDS);
+        for hit in &mut self.recent_target_hits {
+            let before = (
+                hit.target_id.clone(),
+                hit.target_name.clone(),
+                hit.target_context.clone(),
+            );
+            let mut resolved = hit.clone();
+            resolved.target_id = None;
+            resolved.target_name = None;
+            resolved.target_context.clear();
+            self.target_resolver.apply_to_hit(
+                &mut resolved,
+                &self.object_state,
+                &[],
+                &self.resource_index,
+            );
+            let after = (
+                resolved.target_id.clone(),
+                resolved.target_name.clone(),
+                resolved.target_context.clone(),
+            );
+            if after != before
+                && (resolved.target_id.is_some() || !resolved.target_context.is_empty())
+            {
+                *hit = resolved;
+                let _ = sender.send(EngineEvent::HitTargetUpdate(target_update_from_hit(hit)));
+            }
+        }
     }
 }
 
@@ -1332,9 +1394,16 @@ impl PacketDecoder {
                 ),
             );
         }
+        if !outgoing && (!boss_hp_updates.is_empty() || !path_candidates.is_empty()) {
+            self.backfill_recent_targets(timestamp, sender);
+        }
+        let targetish_path_candidates = path_candidates
+            .iter()
+            .filter(|candidate| crate::object_state::is_targetish_path(&candidate.value))
+            .collect::<Vec<_>>();
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
-            && path_candidates.is_empty()
+            && targetish_path_candidates.is_empty()
             && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
         {
             return;
@@ -1348,12 +1417,12 @@ impl PacketDecoder {
             &mut note,
             binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
         );
-        if !path_candidates.is_empty() {
+        if !targetish_path_candidates.is_empty() {
             append_packet_note(
                 &mut note,
                 Some(format!(
                     "Object/path candidates: {}",
-                    path_candidates
+                    targetish_path_candidates
                         .iter()
                         .take(5)
                         .map(|candidate| format!(
@@ -1450,6 +1519,15 @@ impl PacketDecoder {
                 self.follow_up_damage
                     .observe_server_hp(timestamp, update.current_hp as f64)
             })
+            .map(|mut hit| {
+                self.target_resolver.apply_to_hit(
+                    &mut hit,
+                    &self.object_state,
+                    &[],
+                    &self.resource_index,
+                );
+                hit
+            })
             .collect::<Vec<_>>();
         if let Some(TransportPacket::Sequenced(packet)) = parse_transport_packet(payload) {
             if packet.mode != 0 {
@@ -1493,10 +1571,12 @@ impl PacketDecoder {
             if include_incoming || hit.direction != "incoming" {
                 self.follow_up_damage
                     .observe_hit(&hit, hit.gameplay_effect_index, characters);
+                self.remember_target_hit(&hit);
                 let _ = sender.send(EngineEvent::Hit(hit));
             }
         }
         for hit in inferred_follow_up_hits {
+            self.remember_target_hit(&hit);
             let _ = sender.send(EngineEvent::Hit(hit));
         }
     }
@@ -2297,6 +2377,67 @@ mod tests {
                 _ => false,
             }),
             "debug packet should preserve path evidence"
+        );
+    }
+
+    #[test]
+    fn packet_decoder_backfills_target_when_s2c_evidence_arrives_after_hit() {
+        let (sender, receiver) = unbounded();
+        let local = Ipv4Addr::new(10, 0, 0, 2);
+        let remote = Ipv4Addr::new(10, 0, 0, 3);
+        let characters = HashMap::from([(
+            1003,
+            CharacterInfo {
+                name_zh: "早雾".to_owned(),
+                name_en: "Sagiri".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: Some("咒".to_owned()),
+            },
+        )]);
+        let mut c2s_payload = encoded_damage_record(100.0, 1000.0, 1_000_000.0);
+        c2s_payload.extend_from_slice(&[5, 0, 0, 0, b'1', b'0', b'0', b'3', 0]);
+        let c2s = ethernet_udp_frame(local, 50000, remote, 30031, &c2s_payload);
+
+        let handle = [0x22_u8; 16];
+        let mut s2c_payload =
+            b"/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C\0".to_vec();
+        s2c_payload.extend_from_slice(&boss_hp_update(handle, 1000.0));
+        s2c_payload.extend_from_slice(&boss_hp_update(handle, 900.0));
+        let s2c = ethernet_udp_frame(remote, 30031, local, 50000, &s2c_payload);
+
+        let mut decoder = PacketDecoder::default();
+        decoder.process_ethernet_frame(&c2s, 10.0, Some(local), true, &characters, &sender);
+        decoder.process_ethernet_frame(&s2c, 10.2, Some(local), true, &characters, &sender);
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        let original_hit = events
+            .iter()
+            .find_map(|event| match event {
+                EngineEvent::Hit(hit) => Some(hit),
+                _ => None,
+            })
+            .expect("hit should be emitted immediately");
+        assert!(original_hit.target_name.is_none());
+        let update = events
+            .iter()
+            .find_map(|event| match event {
+                EngineEvent::HitTargetUpdate(update) => Some(update),
+                _ => None,
+            })
+            .expect("late S2C evidence should backfill target");
+        assert!(
+            update
+                .target_id
+                .as_deref()
+                .is_some_and(|id| id.contains("AttributeGuid"))
+        );
+        assert_eq!(update.target_name.as_deref(), Some("BP_Boss_07"));
+        assert!(
+            update
+                .target_context
+                .iter()
+                .any(|entry| entry.contains("hp_guid_timeline_match"))
         );
     }
 

@@ -1023,7 +1023,9 @@ impl DpsApp {
                     EngineEvent::Packet(_) => {
                         self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
                     }
-                    EngineEvent::Hit(_) | EngineEvent::Abyss(_) => {
+                    EngineEvent::Hit(_)
+                    | EngineEvent::HitTargetUpdate(_)
+                    | EngineEvent::Abyss(_) => {
                         if self.paused_events.len() == MAX_PAUSED_EVENTS {
                             self.paused_events.pop_front();
                         }
@@ -1081,6 +1083,12 @@ impl DpsApp {
     fn apply_engine_event(&mut self, event: EngineEvent) {
         match event {
             EngineEvent::Hit(hit) => self.state.push_hit(hit),
+            EngineEvent::HitTargetUpdate(update) => {
+                self.state.apply_target_update(update);
+                self.character_hit_cache = HitDetailCache::default();
+                self.team_hit_cache = HitDetailCache::default();
+                self.skill_summary_cache = SkillSummaryCache::default();
+            }
             EngineEvent::Packet(packet) => self.state.push_packet(packet),
             EngineEvent::Abyss(event) => {
                 self.character_hit_cache = HitDetailCache::default();

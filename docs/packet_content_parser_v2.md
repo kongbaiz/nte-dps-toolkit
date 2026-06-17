@@ -11,6 +11,9 @@
 - `resource_index`：预留 `res/data/targets/*.json` 目标资源索引；目录不存在时静默降级，并从路径 basename 生成 fallback name。
 - `target_resolver`：按可解释 reason 生成 `TargetCandidate`，并只在 probable/confirmed 时填充 `target_name`。
 - `PacketDecoder` 集成：S2C 观察 Boss HP、CurrentHP 和路径候选；C2S 观察伤害、角色声明、GameplayEffect 和路径候选；发送 `Hit` 前附加 `target_id`、`target_name`、`target_context`。
+- AttributeGuid 会在短时间窗口内链接唯一近邻目标路径，从而让 HP 属性实例获得 `object_path` / fallback name。
+- 原始 Hit 仍立即发送；后到的 S2C HP/path 证据会通过 `HitTargetUpdate` 回填最近 Hit 的 target 字段。
+- 覆纹推断 Hit 也会经过同一套 TargetResolver。
 
 ## 未实现内容
 
@@ -24,13 +27,14 @@
 
 - 当前对象路径、类路径和目标候选均为 heuristic/candidate。
 - Attribute GUID 目前只确认可作为 HP 属性实例候选，不等价于 Actor 或 Monster 实例。
-- 伤害 Hit 发送后不会回写未来才到达的 S2C HP 证据，因此目标识别仍偏保守。
+- HitTargetUpdate 只回填短时间窗口内的最近 Hit；跨长窗口或乱序严重的包仍可能无法更新。
 - 多目标、多 Boss、召唤物、分身场景仍可能只能输出 possible/unknown。
 
 ## 目标匹配评分规则
 
-- 同包或近邻出现 Monster/Boss/Enemy/Character/HTCharacter 等路径：`+30`。
-- 同包或近邻出现 `/Game/` 且包含 Monster/Boss/NPC/Enemy：额外 `+40`。
+- AttributeGuid 已链接近邻 Monster/Boss/Enemy/Character/HTCharacter 等路径：`+30`。
+- AttributeGuid 已链接 `/Game/` 且包含 Monster/Boss/NPC/Enemy 的路径：额外 `+40`。
+- 只有 PathOnly、没有 HP/handle 证据的路径候选：最高 possible，不填 `target_name`。
 - Boss HP update 的 HP delta 与伤害在 1 秒窗口内匹配：`+50`。
 - `target_hp_before`/`target_hp_after` 与同一 HP GUID 时间线匹配：`+50`。
 - 时间差越小额外加分，最高 `+20`。

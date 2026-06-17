@@ -54,6 +54,18 @@ pub struct Hit {
 }
 
 #[derive(Clone, Debug)]
+pub struct HitTargetUpdate {
+    pub timestamp: f64,
+    pub char_id: u32,
+    pub damage: f64,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
+    pub target_id: Option<String>,
+    pub target_name: Option<String>,
+    pub target_context: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct PacketDebug {
     pub timestamp: f64,
     pub source: String,
@@ -276,6 +288,23 @@ impl PartyCombatState {
         }
     }
 
+    fn apply_target_update(&mut self, update: &HitTargetUpdate) -> bool {
+        if let Some(hit) = self
+            .hits
+            .iter_mut()
+            .rev()
+            .find(|hit| hit_matches_update(hit, update))
+        {
+            hit.target_id = update.target_id.clone();
+            hit.target_name = update.target_name.clone();
+            hit.target_context = update.target_context.clone();
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn duration(&self) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => (end - start).max(0.001),
@@ -417,6 +446,12 @@ impl AbyssRunState {
             self.half_mut(half).push_hit(hit);
         }
     }
+
+    pub fn apply_target_update(&mut self, update: &HitTargetUpdate) -> bool {
+        let mut changed = self.first_half.apply_target_update(update);
+        changed |= self.second_half.apply_target_update(update);
+        changed
+    }
 }
 
 #[derive(Default)]
@@ -469,6 +504,24 @@ impl CombatState {
         }
     }
 
+    pub fn apply_target_update(&mut self, update: HitTargetUpdate) {
+        let mut changed = self.abyss.apply_target_update(&update);
+        if let Some(hit) = self
+            .hits
+            .iter_mut()
+            .rev()
+            .find(|hit| hit_matches_update(hit, &update))
+        {
+            hit.target_id = update.target_id;
+            hit.target_name = update.target_name;
+            hit.target_context = update.target_context;
+            changed = true;
+        }
+        if changed {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+        }
+    }
+
     pub fn duration(&self) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => (end - start).max(0.001),
@@ -492,12 +545,21 @@ impl CombatState {
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Hit),
+    HitTargetUpdate(HitTargetUpdate),
     Packet(PacketDebug),
     Abyss(AbyssEvent),
     Status(String),
     Warning(String),
     Error(String),
     CaptureStopped,
+}
+
+fn hit_matches_update(hit: &Hit, update: &HitTargetUpdate) -> bool {
+    hit.timestamp.to_bits() == update.timestamp.to_bits()
+        && hit.char_id == update.char_id
+        && hit.damage.to_bits() == update.damage.to_bits()
+        && hit.byte_offset == update.byte_offset
+        && hit.bit_shift == update.bit_shift
 }
 
 #[cfg(test)]
