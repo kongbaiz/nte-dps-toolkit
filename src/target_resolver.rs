@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use crate::model::Hit;
 use crate::object_state::{
-    ObjectDescriptor, ObjectHandleKind, ObjectStateStore, is_precise_target_path, is_targetish_path,
+    ObjectDescriptor, ObjectHandleKind, ObjectStateStore, is_ignored_non_target_path,
+    is_precise_target_path, is_targetish_path,
 };
 use crate::resource_index::ResourceIndex;
 use crate::target_instance::TargetInstanceStore;
@@ -100,8 +101,9 @@ impl TargetResolver {
             });
         }
         for path in packet_paths.iter().filter(|path| {
-            resources.resolved_name_for_path(&path.value).is_some()
-                || is_targetish_path(&path.value)
+            !is_ignored_non_target_path(&path.value)
+                && (resources.resolved_name_for_path(&path.value).is_some()
+                    || is_targetish_path(&path.value))
         }) {
             if candidates.iter().any(|candidate| {
                 candidate.target_path.as_deref() == Some(path.value.as_str())
@@ -224,8 +226,11 @@ fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
             .take(6)
             .map(|reason| format!("reason={reason}")),
     );
-    if let Some(path) = &top.target_path {
-        hit.target_context.push(format!("target_path={path}"));
+    if let Some(path) = &top.target_path
+        && is_ignored_non_target_path(path)
+    {
+        hit.target_context
+            .push(format!("ignored_non_target_path={path}"));
     }
     if top.confidence != TargetConfidence::Unknown {
         hit.target_id = Some(if top.handle_kind == ObjectHandleKind::RuntimeInstance {
@@ -235,6 +240,13 @@ fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
         });
     }
     if let Some(resolution) = resolved_display_name_from_candidates(candidates) {
+        if let Some(path) = &resolution.target_path {
+            hit.target_context.push(format!("target_path={path}"));
+        } else if let Some(path) = &top.target_path
+            && !is_ignored_non_target_path(path)
+        {
+            hit.target_context.push(format!("target_path={path}"));
+        }
         hit.target_context
             .push(format!("target_name={}", resolution.name));
         hit.target_context.push(format!(
@@ -252,6 +264,10 @@ fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
             ));
         }
         hit.target_name = Some(resolution.name);
+    } else if let Some(path) = &top.target_path
+        && !is_ignored_non_target_path(path)
+    {
+        hit.target_context.push(format!("target_path={path}"));
     }
     if candidates.len() > 1 {
         hit.target_context
@@ -262,6 +278,7 @@ fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
 #[derive(Clone, Debug)]
 struct DisplayNameResolution {
     name: String,
+    target_path: Option<String>,
     distinct_names: Vec<String>,
     ambiguous: bool,
 }
@@ -272,16 +289,30 @@ fn resolved_display_name_from_candidates(
     let mut named = candidates
         .iter()
         .filter(|candidate| candidate.target_name.is_some())
+        .filter(|candidate| {
+            !candidate
+                .target_path
+                .as_deref()
+                .is_some_and(is_ignored_non_target_path)
+        })
         .collect::<Vec<_>>();
     if named.is_empty() {
         return None;
     }
     named.sort_by(|left, right| compare_named_candidates(left, right));
 
-    let selected_name = candidates
+    let selected = candidates
         .first()
-        .and_then(|candidate| candidate.target_name.clone())
-        .or_else(|| named[0].target_name.clone())?;
+        .filter(|candidate| {
+            candidate.target_name.is_some()
+                && !candidate
+                    .target_path
+                    .as_deref()
+                    .is_some_and(is_ignored_non_target_path)
+        })
+        .unwrap_or(named[0]);
+    let selected_name = selected.target_name.clone()?;
+    let selected_target_path = selected.target_path.clone();
     let mut distinct_names = Vec::new();
     for candidate in named {
         let Some(name) = &candidate.target_name else {
@@ -293,6 +324,7 @@ fn resolved_display_name_from_candidates(
     }
     Some(DisplayNameResolution {
         name: selected_name,
+        target_path: selected_target_path,
         ambiguous: distinct_names.len() > 1,
         distinct_names,
     })
@@ -998,6 +1030,51 @@ mod tests {
         );
 
         assert!(hit.target_name.is_none());
+    }
+
+    #[test]
+    fn ignored_buff_top_candidate_does_not_write_target_path() {
+        let mut hit = hit();
+        let candidates = vec![
+            TargetCandidate {
+                handle: "buff".to_owned(),
+                handle_kind: ObjectHandleKind::PathOnly,
+                target_name: None,
+                target_path: Some("Default__Buff_Boss07_Night_Weaktime_C".to_owned()),
+                score: 100,
+                confidence: TargetConfidence::Confirmed,
+                reasons: vec!["near_object_path:Default__Buff_Boss07_Night_Weaktime_C".to_owned()],
+            },
+            TargetCandidate {
+                handle: "boss".to_owned(),
+                handle_kind: ObjectHandleKind::PathOnly,
+                target_name: Some("塞润尼缇".to_owned()),
+                target_path: Some("Boss_07_BP_WorldBoss".to_owned()),
+                score: 80,
+                confidence: TargetConfidence::Probable,
+                reasons: vec!["resolved_target_name_table".to_owned()],
+            },
+        ];
+
+        apply_candidates_to_hit(&mut hit, &candidates);
+
+        assert_eq!(hit.target_name.as_deref(), Some("塞润尼缇"));
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|entry| entry == "target_path=Boss_07_BP_WorldBoss")
+        );
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|entry| entry
+                    == "ignored_non_target_path=Default__Buff_Boss07_Night_Weaktime_C")
+        );
+        assert!(
+            !hit.target_context
+                .iter()
+                .any(|entry| entry == "target_path=Default__Buff_Boss07_Night_Weaktime_C")
+        );
     }
 
     #[test]

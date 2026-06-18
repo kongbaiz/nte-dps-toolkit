@@ -80,8 +80,10 @@ impl ObjectStateStore {
         let target_path = resources
             .canonical_target_path_for_path(&candidate.value)
             .unwrap_or_else(|| candidate.value.clone());
-        let has_resolved_name = resources.resolved_name_for_path(&target_path).is_some()
-            || resources.resolved_name_for_path(&candidate.value).is_some();
+        let has_resolved_name = !is_ignored_non_target_path(&target_path)
+            && !is_ignored_non_target_path(&candidate.value)
+            && (resources.resolved_name_for_path(&target_path).is_some()
+                || resources.resolved_name_for_path(&candidate.value).is_some());
         let display_name = resources
             .display_name_for_path(&target_path)
             .or_else(|| resources.display_name_for_path(&candidate.value));
@@ -353,12 +355,14 @@ impl ObjectStateStore {
             .filter(|object| object_is_near_damage(object, timestamp))
             .filter(|object| {
                 object.hp_current.is_some()
-                    || object.table_resolved_name
                     || object
                         .object_path
                         .as_deref()
                         .or(object.class_path.as_deref())
-                        .is_some_and(is_targetish_path)
+                        .is_some_and(|path| {
+                            (object.table_resolved_name && !is_ignored_non_target_path(path))
+                                || is_targetish_path(path)
+                        })
             })
             .collect()
     }
