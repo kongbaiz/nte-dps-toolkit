@@ -5,6 +5,7 @@ use crate::object_state::{
     ObjectDescriptor, ObjectHandleKind, ObjectStateStore, is_precise_target_path, is_targetish_path,
 };
 use crate::resource_index::ResourceIndex;
+use crate::target_instance::TargetInstanceStore;
 use crate::ue_bitstream::PathCandidate;
 
 const HP_MATCH_TOLERANCE_ABSOLUTE: f64 = 2.0;
@@ -71,15 +72,37 @@ impl TargetResolver {
         packet_paths: &[PathCandidate],
         resources: &ResourceIndex,
     ) -> Vec<TargetCandidate> {
+        self.resolve_for_hit_with_instances(hit, store, None, packet_paths, resources)
+    }
+
+    pub fn resolve_for_hit_with_instances(
+        &self,
+        hit: &Hit,
+        store: &ObjectStateStore,
+        instances: Option<&TargetInstanceStore>,
+        packet_paths: &[PathCandidate],
+        resources: &ResourceIndex,
+    ) -> Vec<TargetCandidate> {
         let mut candidates = store
             .candidates_for_damage(hit.timestamp)
             .into_iter()
             .map(|object| score_object(hit, object, store, resources))
             .collect::<Vec<_>>();
-        for path in packet_paths
-            .iter()
-            .filter(|path| is_targetish_path(&path.value))
-        {
+        if let Some(resolution) = instances.and_then(|instances| instances.resolve_hit(hit)) {
+            candidates.push(TargetCandidate {
+                handle: resolution.instance_id,
+                handle_kind: ObjectHandleKind::RuntimeInstance,
+                target_name: Some(resolution.target_name),
+                target_path: Some(resolution.canonical_path),
+                score: resolution.score,
+                confidence: resolution.confidence,
+                reasons: vec![resolution.reason],
+            });
+        }
+        for path in packet_paths.iter().filter(|path| {
+            resources.resolved_name_for_path(&path.value).is_some()
+                || is_targetish_path(&path.value)
+        }) {
             if candidates.iter().any(|candidate| {
                 candidate.target_path.as_deref() == Some(path.value.as_str())
                     || candidate.handle == path.value
@@ -88,21 +111,20 @@ impl TargetResolver {
             }
             let mut score = 25;
             let mut reasons = vec![format!("path_candidate:{}", path.value)];
+            let target_name = resources.resolved_name_for_path(&path.value);
             if path.value.starts_with("/Game/") {
                 score += 15;
                 reasons.push("game_path_target_keyword".to_owned());
             }
-            if is_precise_target_path(&path.value)
-                && resources.resolved_name_for_path(&path.value).is_some()
-            {
+            if target_name.is_some() {
                 score += 35;
-                reasons.push("resolved_precise_target_tag".to_owned());
+                reasons.push("resolved_target_name_table".to_owned());
             }
             let confidence = confidence_for_score(score);
             candidates.push(TargetCandidate {
                 handle: path.value.clone(),
                 handle_kind: ObjectHandleKind::PathOnly,
-                target_name: resources.resolved_name_for_path(&path.value),
+                target_name,
                 target_path: Some(path.value.clone()),
                 score,
                 confidence,
@@ -146,10 +168,17 @@ impl TargetResolver {
         &self,
         hit: &mut Hit,
         store: &ObjectStateStore,
+        instances: &TargetInstanceStore,
         packet_paths: &[PathCandidate],
         resources: &ResourceIndex,
     ) -> TargetResolutionSummary {
-        let candidates = self.resolve_for_hit(hit, store, packet_paths, resources);
+        let candidates = self.resolve_for_hit_with_instances(
+            hit,
+            store,
+            Some(instances),
+            packet_paths,
+            resources,
+        );
         apply_candidates_to_hit(hit, &candidates);
         TargetResolutionSummary::from_hit_and_candidates(hit, &candidates)
     }
@@ -198,26 +227,110 @@ fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
     if let Some(path) = &top.target_path {
         hit.target_context.push(format!("target_path={path}"));
     }
-    if let Some(name) = &top.target_name {
-        hit.target_context.push(format!("target_name={name}"));
-    }
     if top.confidence != TargetConfidence::Unknown {
-        hit.target_id = Some(format!("{}:{}", top.handle_kind.label(), top.handle));
+        hit.target_id = Some(if top.handle_kind == ObjectHandleKind::RuntimeInstance {
+            top.handle.clone()
+        } else {
+            format!("{}:{}", top.handle_kind.label(), top.handle)
+        });
     }
-    if top.target_name.is_some()
-        && top.confidence != TargetConfidence::Unknown
-        && (top.handle_kind != ObjectHandleKind::PathOnly
-            || top
-                .target_path
-                .as_deref()
-                .is_some_and(is_precise_target_path))
-    {
-        hit.target_name = top.target_name.clone();
+    if let Some(resolution) = resolved_display_name_from_candidates(candidates) {
+        hit.target_context
+            .push(format!("target_name={}", resolution.name));
+        hit.target_context.push(format!(
+            "target_name_resolution={}",
+            if resolution.ambiguous {
+                "table_resolved_ambiguous"
+            } else {
+                "table_resolved"
+            }
+        ));
+        if resolution.ambiguous {
+            hit.target_context.push(format!(
+                "target_name_candidates={}",
+                resolution.distinct_names.join(",")
+            ));
+        }
+        hit.target_name = Some(resolution.name);
     }
     if candidates.len() > 1 {
         hit.target_context
             .push(format!("candidate_count={}", candidates.len()));
     }
+}
+
+#[derive(Clone, Debug)]
+struct DisplayNameResolution {
+    name: String,
+    distinct_names: Vec<String>,
+    ambiguous: bool,
+}
+
+fn resolved_display_name_from_candidates(
+    candidates: &[TargetCandidate],
+) -> Option<DisplayNameResolution> {
+    let mut named = candidates
+        .iter()
+        .filter(|candidate| candidate.target_name.is_some())
+        .collect::<Vec<_>>();
+    if named.is_empty() {
+        return None;
+    }
+    named.sort_by(|left, right| compare_named_candidates(left, right));
+
+    let selected_name = candidates
+        .first()
+        .and_then(|candidate| candidate.target_name.clone())
+        .or_else(|| named[0].target_name.clone())?;
+    let mut distinct_names = Vec::new();
+    for candidate in named {
+        let Some(name) = &candidate.target_name else {
+            continue;
+        };
+        if !distinct_names.iter().any(|existing| existing == name) {
+            distinct_names.push(name.clone());
+        }
+    }
+    Some(DisplayNameResolution {
+        name: selected_name,
+        ambiguous: distinct_names.len() > 1,
+        distinct_names,
+    })
+}
+
+fn compare_named_candidates(left: &TargetCandidate, right: &TargetCandidate) -> std::cmp::Ordering {
+    right
+        .score
+        .cmp(&left.score)
+        .then_with(|| non_path_only_rank(right).cmp(&non_path_only_rank(left)))
+        .then_with(|| target_path_specificity(right).cmp(&target_path_specificity(left)))
+        .then_with(|| left.handle_kind.label().cmp(right.handle_kind.label()))
+        .then_with(|| candidate_stable_identity(left).cmp(candidate_stable_identity(right)))
+}
+
+fn non_path_only_rank(candidate: &TargetCandidate) -> u8 {
+    u8::from(candidate.handle_kind != ObjectHandleKind::PathOnly)
+}
+
+fn target_path_specificity(candidate: &TargetCandidate) -> usize {
+    let Some(path) = candidate.target_path.as_deref() else {
+        return 0;
+    };
+    let mut score = path.len();
+    if is_precise_target_path(path) {
+        score += 10_000;
+    }
+    if path.starts_with("/Game/") {
+        score += 1_000;
+    }
+    score
+}
+
+fn candidate_stable_identity(candidate: &TargetCandidate) -> &str {
+    candidate
+        .target_path
+        .as_deref()
+        .unwrap_or(candidate.handle.as_str())
 }
 
 fn score_object(
@@ -237,32 +350,30 @@ fn score_object(
         .object_path
         .clone()
         .or_else(|| object.class_path.clone());
-    if let Some(path) = &target_path
-        && is_targetish_path(path)
-    {
-        score += if path_only || identity_without_hp {
-            25
-        } else {
-            30
-        };
-        reasons.push(format!("near_object_path:{path}"));
-        if path.starts_with("/Game/") {
+    if let Some(path) = &target_path {
+        let resolved_name = resources.resolved_name_for_path(path);
+        if is_targetish_path(path) {
             score += if path_only || identity_without_hp {
-                15
+                25
             } else {
-                40
+                30
             };
-            reasons.push("game_path_target_keyword".to_owned());
+            reasons.push(format!("near_object_path:{path}"));
+            if path.starts_with("/Game/") {
+                score += if path_only || identity_without_hp {
+                    15
+                } else {
+                    40
+                };
+                reasons.push("game_path_target_keyword".to_owned());
+            }
+            if identity_without_hp {
+                reasons.push("net_identity_path_anchor_unconfirmed".to_owned());
+            }
         }
-        if identity_without_hp {
-            reasons.push("net_identity_path_anchor_unconfirmed".to_owned());
-        }
-        if path_only
-            && is_precise_target_path(path)
-            && resources.resolved_name_for_path(path).is_some()
-        {
+        if resolved_name.is_some() {
             score += 35;
-            reasons.push("resolved_precise_target_tag".to_owned());
+            reasons.push("resolved_target_name_table".to_owned());
         }
     }
 
@@ -621,27 +732,27 @@ mod tests {
     }
 
     #[test]
-    fn path_only_candidate_does_not_fill_target_name() {
+    fn path_only_resolved_name_fills_target_name_without_hp_evidence() {
         let path = PathCandidate {
-            value: "/Game/Blueprints/Character/Monster/boss_07/BP_Boss_07.BP_Boss_07_C".to_owned(),
+            value: "mon_04_BP".to_owned(),
             byte_offset: 1,
             bit_shift: 0,
             score: 240,
         };
+        let resources = ResourceIndex::load_default();
         let mut hit = hit();
         let candidates = TargetResolver.apply_to_hit(
             &mut hit,
             &ObjectStateStore::default(),
             &[path],
-            &ResourceIndex::default(),
+            &resources,
         );
         assert_eq!(candidates[0].handle_kind, ObjectHandleKind::PathOnly);
-        assert_eq!(candidates[0].confidence, TargetConfidence::Possible);
-        assert!(hit.target_name.is_none());
+        assert_eq!(hit.target_name.as_deref(), Some("迷失种"));
         assert!(
             hit.target_context
                 .iter()
-                .any(|item| item.contains("possible"))
+                .any(|item| item == "target_name_resolution=table_resolved")
         );
     }
 
@@ -813,37 +924,80 @@ mod tests {
     }
 
     #[test]
-    fn multiple_path_only_candidates_remain_possible() {
-        let resources = ResourceIndex::default();
+    fn multiple_path_only_candidates_do_not_hide_resolved_names() {
+        let resources = ResourceIndex::load_default();
         let paths = [
             PathCandidate {
-                value: "/Game/Monster/BossAlpha".to_owned(),
+                value: "mon_04_BP".to_owned(),
                 byte_offset: 0,
                 bit_shift: 0,
                 score: 240,
             },
             PathCandidate {
-                value: "/Game/Monster/BossBeta".to_owned(),
+                value: "Boss_07_BP_DiyBoss".to_owned(),
                 byte_offset: 8,
                 bit_shift: 0,
                 score: 240,
             },
         ];
-        let candidates = TargetResolver.resolve_for_hit(
-            &hit(),
-            &ObjectStateStore::default(),
-            &paths,
-            &resources,
-        );
+        let mut hit = hit();
+        let candidates =
+            TargetResolver.apply_to_hit(&mut hit, &ObjectStateStore::default(), &paths, &resources);
         assert!(candidates.iter().all(|candidate| {
             candidate.handle_kind == ObjectHandleKind::PathOnly
                 && candidate.confidence.rank() <= TargetConfidence::Possible.rank()
         }));
+        assert!(hit.target_name.is_some());
+        assert!(hit.target_context.iter().any(|entry| {
+            entry.starts_with("target_name_candidates=")
+                && entry.contains("迷失种")
+                && entry.contains("塞润尼缇")
+        }));
+    }
+
+    #[test]
+    fn unnamed_high_score_hp_candidate_does_not_mask_named_path_candidate() {
+        let mut store = ObjectStateStore::default();
+        let guid = [0x44_u8; 16];
+        store.observe_hp_guid_update(9.8, guid, 1000.0, None, "hp=1000".to_owned());
+        store.observe_hp_guid_update(10.1, guid, 900.0, None, "hp=900".to_owned());
+        let resources = ResourceIndex::load_default();
+        let path = PathCandidate {
+            value: "mon_04_BP".to_owned(),
+            byte_offset: 0,
+            bit_shift: 0,
+            score: 240,
+        };
+        let mut hit = hit();
+
+        TargetResolver.apply_to_hit(&mut hit, &store, &[path], &resources);
+
         assert!(
-            candidates
-                .iter()
-                .all(|candidate| candidate.target_name.is_some())
+            hit.target_id
+                .as_deref()
+                .is_some_and(|id| id.starts_with("AttributeGuid:"))
         );
+        assert_eq!(hit.target_name.as_deref(), Some("迷失种"));
+    }
+
+    #[test]
+    fn unresolved_path_candidate_does_not_fill_target_name() {
+        let path = PathCandidate {
+            value: "/Game/Monster/UnknownBoss".to_owned(),
+            byte_offset: 1,
+            bit_shift: 0,
+            score: 240,
+        };
+        let mut hit = hit();
+
+        TargetResolver.apply_to_hit(
+            &mut hit,
+            &ObjectStateStore::default(),
+            &[path],
+            &ResourceIndex::default(),
+        );
+
+        assert!(hit.target_name.is_none());
     }
 
     #[test]

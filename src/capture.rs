@@ -40,6 +40,7 @@ use crate::parser::{
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 use crate::resource_index::ResourceIndex;
+use crate::target_instance::TargetInstanceStore;
 use crate::target_resolver::{TargetConfidence, TargetResolutionSummary, TargetResolver};
 use crate::ue_bitstream::extract_path_candidates;
 
@@ -805,6 +806,24 @@ fn short_hex(bytes: &[u8]) -> String {
     }
 }
 
+fn attach_runtime_alias_context(
+    hit: &mut Hit,
+    net_identity_candidates: &[crate::net_identity::NetIdentityCandidate],
+) {
+    const HIT_ALIAS_WINDOW_BYTES: usize = 128;
+    for candidate in net_identity_candidates
+        .iter()
+        .filter(|candidate| candidate.bit_shift == hit.bit_shift)
+        .filter(|candidate| {
+            candidate.byte_offset.abs_diff(hit.byte_offset) <= HIT_ALIAS_WINDOW_BYTES
+        })
+        .take(4)
+    {
+        hit.target_context
+            .push(format!("{}={}", candidate.kind.label(), candidate.handle));
+    }
+}
+
 fn current_hp_target_token(prefix: &[u8; 16]) -> Option<[u8; 4]> {
     let token = [prefix[0], prefix[7], prefix[9], prefix[10]];
     let distinct = token.iter().copied().collect::<HashSet<_>>().len();
@@ -1084,6 +1103,7 @@ struct PacketDecoder {
     gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
     wooden_damage_names: HashMap<String, String>,
     object_state: ObjectStateStore,
+    target_instances: TargetInstanceStore,
     resource_index: ResourceIndex,
     target_resolver: TargetResolver,
     recent_target_hits: VecDeque<RecentTargetHit>,
@@ -1124,6 +1144,7 @@ impl Default for PacketDecoder {
             gameplay_effect_skills,
             wooden_damage_names,
             object_state: ObjectStateStore::default(),
+            target_instances: TargetInstanceStore::default(),
             resource_index: ResourceIndex::load_default_with_warnings(&mut resource_warnings),
             target_resolver: TargetResolver,
             recent_target_hits: VecDeque::new(),
@@ -1200,10 +1221,27 @@ impl PacketDecoder {
             let resolved_summary = self.target_resolver.apply_to_hit_with_summary(
                 &mut resolved,
                 &self.object_state,
+                &self.target_instances,
                 &[],
                 &self.resource_index,
             );
             if should_apply_target_update(&recent.summary, &resolved_summary) {
+                let mut resolved_summary = resolved_summary;
+                if should_preserve_existing_target_id_for_name_update(
+                    &recent.summary,
+                    &resolved_summary,
+                ) {
+                    resolved.target_id = recent.hit.target_id.clone();
+                    resolved.target_context.push(format!(
+                        "target_id_preserved={}",
+                        recent.hit.target_id.as_deref().unwrap_or_default()
+                    ));
+                    resolved_summary.target_id = recent.summary.target_id.clone();
+                    resolved_summary.score = recent.summary.score;
+                    resolved_summary.confidence = recent.summary.confidence;
+                    resolved_summary.direct_hp_evidence = recent.summary.direct_hp_evidence;
+                    resolved_summary.target_context = resolved.target_context.clone();
+                }
                 recent.hit = resolved;
                 recent.summary = resolved_summary;
                 let _ = sender.send(EngineEvent::HitTargetUpdate(target_update_from_hit(
@@ -1226,10 +1264,7 @@ fn should_apply_target_update(
     {
         return true;
     }
-    if old.target_name.is_none()
-        && new.target_name.is_some()
-        && new.confidence.rank() >= TargetConfidence::Probable.rank()
-    {
+    if old.target_name.is_none() && new.target_name.is_some() {
         return true;
     }
     if new.confidence.rank() < old.confidence.rank() {
@@ -1255,6 +1290,19 @@ fn should_apply_target_update(
         && new.target_id.is_some()
         && new.direct_hp_evidence
         && new.confidence.rank() >= old.confidence.rank()
+}
+
+fn should_preserve_existing_target_id_for_name_update(
+    old: &TargetResolutionSummary,
+    new: &TargetResolutionSummary,
+) -> bool {
+    old.target_name.is_none()
+        && new.target_name.is_some()
+        && old.target_id.is_some()
+        && new.target_id.is_some()
+        && old.target_id != new.target_id
+        && old.confidence.rank() >= TargetConfidence::Probable.rank()
+        && !(new.direct_hp_evidence && new.confidence.rank() >= old.confidence.rank())
 }
 
 fn matching_gameplay_effect<'a>(
@@ -1348,6 +1396,12 @@ impl PacketDecoder {
                 .observe_path_candidate(timestamp, candidate, &self.resource_index);
         }
         let net_identity_candidates = extract_net_identity_candidates(payload, &path_candidates);
+        let target_instance_notes = self.target_instances.observe_paths(
+            timestamp,
+            &path_candidates,
+            &net_identity_candidates,
+            &self.resource_index,
+        );
         for candidate in &net_identity_candidates {
             let handle_kind = match candidate.kind {
                 NetIdentityCandidateKind::NetGuidPacked | NetIdentityCandidateKind::NetGuid32 => {
@@ -1410,6 +1464,7 @@ impl PacketDecoder {
         };
         let mut hit_summaries = Vec::with_capacity(hits.len());
         for hit in &mut hits {
+            attach_runtime_alias_context(hit, &net_identity_candidates);
             enrich_hit_with_gameplay_effect(
                 hit,
                 &gameplay_effects,
@@ -1451,6 +1506,7 @@ impl PacketDecoder {
                 self.target_resolver.apply_to_hit_with_summary(
                     hit,
                     &self.object_state,
+                    &self.target_instances,
                     &path_candidates,
                     &self.resource_index,
                 )
@@ -1498,6 +1554,18 @@ impl PacketDecoder {
                     update.bit_shift
                 ),
             );
+            self.target_instances.observe_current_hp_token(
+                timestamp,
+                &target_token,
+                update.current_hp as f64,
+                format!(
+                    "current_hp:{}={:.0}@{}:{}",
+                    short_hex(&target_token),
+                    update.current_hp,
+                    update.byte_offset,
+                    update.bit_shift
+                ),
+            );
         }
         for update in &boss_hp_updates {
             self.object_state.observe_hp_guid_update(
@@ -1513,10 +1581,27 @@ impl PacketDecoder {
                     update.bit_shift
                 ),
             );
+            self.target_instances.observe_boss_hp_guid(
+                timestamp,
+                update.target_handle,
+                update.current_hp as f64,
+                format!(
+                    "boss_hp:{}={:.0}@{}:{}",
+                    hex::encode(update.target_handle),
+                    update.current_hp,
+                    update.byte_offset,
+                    update.bit_shift
+                ),
+            );
         }
         let targetish_path_candidates = path_candidates
             .iter()
-            .filter(|candidate| crate::object_state::is_targetish_path(&candidate.value))
+            .filter(|candidate| {
+                self.resource_index
+                    .resolved_name_for_path(&candidate.value)
+                    .is_some()
+                    || crate::object_state::is_targetish_path(&candidate.value)
+            })
             .collect::<Vec<_>>();
         if !current_hp_updates.is_empty()
             || !boss_hp_updates.is_empty()
@@ -1573,6 +1658,20 @@ impl PacketDecoder {
                             candidate.byte_offset,
                             candidate.bit_shift
                         ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            );
+        }
+        if !target_instance_notes.is_empty() {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "Runtime target instances: {}",
+                    target_instance_notes
+                        .iter()
+                        .take(8)
+                        .cloned()
                         .collect::<Vec<_>>()
                         .join(", ")
                 )),
@@ -1671,6 +1770,7 @@ impl PacketDecoder {
                 let summary = self.target_resolver.apply_to_hit_with_summary(
                     &mut hit,
                     &self.object_state,
+                    &self.target_instances,
                     &[],
                     &self.resource_index,
                 );
@@ -2212,6 +2312,7 @@ fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ue_bitstream::PathCandidate;
     use crossbeam_channel::unbounded;
 
     #[test]
@@ -2457,6 +2558,48 @@ mod tests {
         };
 
         assert!(should_apply_target_update(&old, &new));
+    }
+
+    #[test]
+    fn backfill_applies_table_resolved_name_below_probable_without_replacing_strong_id() {
+        let (sender, receiver) = unbounded();
+        let mut decoder = PacketDecoder::default();
+        let mut hit = targetless_hit();
+        hit.target_id = Some("AttributeGuid:strong".to_owned());
+        let old_summary = TargetResolutionSummary {
+            target_id: hit.target_id.clone(),
+            target_name: None,
+            target_context: vec!["confidence=confirmed score=100".to_owned()],
+            score: 100,
+            confidence: TargetConfidence::Confirmed,
+            direct_hp_evidence: true,
+        };
+        decoder.recent_target_hits.push_back(RecentTargetHit {
+            hit,
+            summary: old_summary,
+        });
+        decoder.object_state.observe_path_candidate(
+            0.2,
+            &PathCandidate {
+                value: "mon_04_BP".to_owned(),
+                byte_offset: 0,
+                bit_shift: 0,
+                score: 240,
+            },
+            &decoder.resource_index,
+        );
+
+        decoder.backfill_recent_targets(0.2, &sender);
+
+        let update = receiver
+            .try_iter()
+            .find_map(|event| match event {
+                EngineEvent::HitTargetUpdate(update) => Some(update),
+                _ => None,
+            })
+            .expect("table-resolved name should backfill even below probable");
+        assert_eq!(update.target_name.as_deref(), Some("迷失种"));
+        assert_eq!(update.target_id.as_deref(), Some("AttributeGuid:strong"));
     }
 
     #[test]

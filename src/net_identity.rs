@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::object_state::is_targetish_path;
+use crate::object_state::{is_ignored_non_target_path, is_targetish_path};
 use crate::ue_bitstream::{PathCandidate, decode_shifted_bytes};
 
 const ANCHOR_WINDOW_BEFORE: usize = 24;
@@ -47,7 +47,7 @@ pub fn extract_net_identity_candidates(
 
     for path in paths
         .iter()
-        .filter(|path| is_targetish_path(&path.value))
+        .filter(|path| !is_ignored_non_target_path(&path.value) && is_targetish_path(&path.value))
         .take(8)
     {
         let Some(shifted) = decode_shifted_bytes(
@@ -259,6 +259,7 @@ fn push_u32_candidate(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_candidate(
     path: &PathCandidate,
     candidates: &mut Vec<NetIdentityCandidate>,

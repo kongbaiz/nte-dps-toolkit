@@ -13,6 +13,7 @@ mod object_state;
 mod parser;
 mod protocol;
 mod resource_index;
+mod target_instance;
 mod target_resolver;
 mod ue_bitstream;
 

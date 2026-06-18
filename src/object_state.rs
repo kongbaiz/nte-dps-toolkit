@@ -13,6 +13,7 @@ const HP_HISTORY_DAMAGE_WINDOW_SECONDS: f64 = 1.0;
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[allow(dead_code)]
 pub enum ObjectHandleKind {
+    RuntimeInstance,
     NetGuidCandidate,
     NetRefHandleCandidate,
     AttributeGuid,
@@ -23,6 +24,7 @@ pub enum ObjectHandleKind {
 impl ObjectHandleKind {
     pub fn label(&self) -> &'static str {
         match self {
+            Self::RuntimeInstance => "RuntimeInstance",
             Self::NetGuidCandidate => "NetGuidCandidate",
             Self::NetRefHandleCandidate => "NetRefHandleCandidate",
             Self::AttributeGuid => "AttributeGuid",
@@ -49,6 +51,7 @@ pub struct ObjectDescriptor {
     pub class_path: Option<String>,
     pub object_path: Option<String>,
     pub display_name: Option<String>,
+    pub table_resolved_name: bool,
     pub owner_handle: Option<String>,
     pub actor_handle: Option<String>,
     pub component_handle: Option<String>,
@@ -93,6 +96,7 @@ impl ObjectStateStore {
                 class_path: Some(target_path.clone()).filter(|value| value.contains("/Game/")),
                 object_path: Some(target_path.clone()),
                 display_name: display_name.clone(),
+                table_resolved_name: has_resolved_name,
                 owner_handle: None,
                 actor_handle: None,
                 component_handle: None,
@@ -107,6 +111,7 @@ impl ObjectStateStore {
         descriptor.last_seen_at = timestamp;
         descriptor.confidence = descriptor.confidence.max(confidence);
         descriptor.object_path = Some(target_path.clone());
+        descriptor.table_resolved_name |= has_resolved_name;
         if target_path.contains("/Game/") {
             descriptor.class_path = Some(target_path.clone());
         }
@@ -166,6 +171,7 @@ impl ObjectStateStore {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn observe_hp_update(
         &mut self,
         timestamp: f64,
@@ -193,6 +199,7 @@ impl ObjectStateStore {
                 class_path: None,
                 object_path: None,
                 display_name: None,
+                table_resolved_name: false,
                 owner_handle: None,
                 actor_handle: None,
                 component_handle: None,
@@ -208,6 +215,7 @@ impl ObjectStateStore {
             descriptor.class_path = None;
             descriptor.object_path = None;
             descriptor.display_name = None;
+            descriptor.table_resolved_name = false;
             descriptor.hp_max = max_hp;
             descriptor.first_seen_at = timestamp;
             descriptor.confidence = initial_confidence;
@@ -257,6 +265,7 @@ impl ObjectStateStore {
                 class_path: None,
                 object_path: None,
                 display_name: None,
+                table_resolved_name: false,
                 owner_handle: None,
                 actor_handle: None,
                 component_handle: None,
@@ -274,6 +283,7 @@ impl ObjectStateStore {
         key
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn observe_path_handle_candidate(
         &mut self,
         timestamp: f64,
@@ -286,6 +296,7 @@ impl ObjectStateStore {
     ) -> String {
         let key = object_key(&handle_kind, &handle);
         let confidence = (score as f32 / 255.0).clamp(0.25, 0.55);
+        let has_resolved_name = resources.resolved_name_for_path(path).is_some();
         let display_name = resources.display_name_for_path(path);
         let descriptor = self
             .objects
@@ -296,6 +307,7 @@ impl ObjectStateStore {
                 class_path: None,
                 object_path: None,
                 display_name: None,
+                table_resolved_name: false,
                 owner_handle: None,
                 actor_handle: None,
                 component_handle: None,
@@ -320,6 +332,7 @@ impl ObjectStateStore {
                     descriptor.class_path = Some(path.to_owned());
                 }
                 descriptor.display_name = descriptor.display_name.clone().or(display_name);
+                descriptor.table_resolved_name |= has_resolved_name;
             }
         }
         push_unique_evidence(&mut descriptor.evidence, evidence);
@@ -340,6 +353,7 @@ impl ObjectStateStore {
             .filter(|object| object_is_near_damage(object, timestamp))
             .filter(|object| {
                 object.hp_current.is_some()
+                    || object.table_resolved_name
                     || object
                         .object_path
                         .as_deref()
@@ -390,8 +404,9 @@ impl ObjectStateStore {
         }
         let linked_path = strong_paths[0].clone();
         let display_name = resources.display_name_for_path(&linked_path);
+        let table_resolved_name = resources.resolved_name_for_path(&linked_path).is_some();
         if let Some(object) = self.objects.get_mut(&linkable_keys[0]) {
-            apply_path_link(object, &linked_path, display_name);
+            apply_path_link(object, &linked_path, display_name, table_resolved_name);
         }
     }
 
@@ -424,13 +439,14 @@ impl ObjectStateStore {
         if linkable_keys.len() != 1 || linkable_keys[0] != object_key {
             return;
         }
-        let display_name = self
+        let (display_name, table_resolved_name) = self
             .objects
             .values()
             .find(|object| object.object_path.as_deref() == Some(path.as_str()))
-            .and_then(|object| object.display_name.clone());
+            .map(|object| (object.display_name.clone(), object.table_resolved_name))
+            .unwrap_or((None, false));
         if let Some(object) = self.objects.get_mut(object_key) {
-            apply_path_link(object, path, display_name);
+            apply_path_link(object, path, display_name, table_resolved_name);
         }
     }
 
@@ -617,7 +633,12 @@ fn is_new_hp_encounter(object: &ObjectDescriptor, timestamp: f64, current_hp: f6
     current_hp - previous_hp > 500_000.0 && current_hp > previous_hp * 3.0
 }
 
-fn apply_path_link(attribute: &mut ObjectDescriptor, path: &str, display_name: Option<String>) {
+fn apply_path_link(
+    attribute: &mut ObjectDescriptor,
+    path: &str,
+    display_name: Option<String>,
+    table_resolved_name: bool,
+) {
     if let Some(existing_path) = attribute.object_path.as_deref()
         && existing_path != path
     {
@@ -628,6 +649,7 @@ fn apply_path_link(attribute: &mut ObjectDescriptor, path: &str, display_name: O
         return;
     }
     attribute.object_path = Some(path.to_owned());
+    attribute.table_resolved_name |= table_resolved_name;
     if path.contains("/Game/") {
         attribute.class_path = Some(path.to_owned());
     }
@@ -643,9 +665,9 @@ fn is_linkable_hp_handle_kind(handle_kind: &ObjectHandleKind) -> bool {
     )
 }
 
-fn path_candidate_confidence(score: u16, target_path: &str, has_display_name: bool) -> f32 {
+fn path_candidate_confidence(score: u16, target_path: &str, has_resolved_name: bool) -> f32 {
     let base = (score as f32 / 255.0).clamp(0.1, 0.45);
-    if has_display_name && is_targetish_path(target_path) {
+    if has_resolved_name || is_targetish_path(target_path) {
         base.max(0.75)
     } else {
         base
@@ -656,6 +678,7 @@ fn mark_ambiguous_path_link(attribute: &mut ObjectDescriptor, count: usize, path
     if attribute.object_path.is_none() {
         attribute.class_path = None;
         attribute.display_name = None;
+        attribute.table_resolved_name = false;
     }
     push_unique_evidence(
         &mut attribute.evidence,
@@ -693,7 +716,7 @@ fn damage_candidate_window(object: &ObjectDescriptor) -> f64 {
         .object_path
         .as_deref()
         .or(object.class_path.as_deref());
-    if target_path.is_some_and(is_precise_target_path) {
+    if object.table_resolved_name || target_path.is_some_and(is_precise_target_path) {
         ATTRIBUTE_PATH_LINK_WINDOW_SECONDS
     } else {
         1.0
@@ -718,15 +741,16 @@ fn object_is_near_damage(object: &ObjectDescriptor, timestamp: f64) -> bool {
 fn object_has_named_hp_target(object: &ObjectDescriptor) -> bool {
     object.hp_current.is_some()
         && object.display_name.is_some()
+        && object.table_resolved_name
         && object
             .object_path
             .as_deref()
             .or(object.class_path.as_deref())
-            .is_some_and(is_targetish_path)
+            .is_some_and(|path| object.table_resolved_name || is_targetish_path(path))
 }
 
 pub fn is_targetish_path(value: &str) -> bool {
-    if is_non_target_blueprint_path(value) {
+    if is_ignored_non_target_path(value) {
         return false;
     }
     if is_precise_target_path(value) || is_world_boss_path(value) {
@@ -739,13 +763,13 @@ pub fn is_targetish_path(value: &str) -> bool {
 }
 
 pub fn is_precise_target_path(value: &str) -> bool {
-    if is_non_target_blueprint_path(value) || is_world_boss_path(value) {
+    if is_ignored_non_target_path(value) || is_world_boss_path(value) {
         return false;
     }
     target_group_key(value).is_some()
 }
 
-fn is_non_target_blueprint_path(value: &str) -> bool {
+pub fn is_ignored_non_target_path(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     let basename = lower
         .rsplit('/')
@@ -754,15 +778,32 @@ fn is_non_target_blueprint_path(value: &str) -> bool {
         .rsplit('.')
         .next()
         .unwrap_or(&lower)
-        .trim_end_matches("_c");
+        .trim_end_matches("_c")
+        .strip_prefix("default__")
+        .unwrap_or_else(|| {
+            lower
+                .rsplit('/')
+                .next()
+                .unwrap_or(&lower)
+                .rsplit('.')
+                .next()
+                .unwrap_or(&lower)
+                .trim_end_matches("_c")
+        });
     basename.starts_with("buff_")
         || basename.starts_with("ge_")
         || basename.starts_with("ga_")
-        || basename.starts_with("drop_")
+        || basename.starts_with("drop")
+        || basename.starts_with("dropbox")
+        || lower.contains("drop_mon_")
+        || lower.contains("/drop/")
+        || lower.contains("/dropbox/")
         || basename.contains("lockhp")
         || lower.contains("/monsterbase/")
         || lower.contains("/abilities/")
+        || lower.contains("/ability/")
         || lower.contains("/buff/")
+        || lower.contains("/effect/")
         || lower.contains("/cooldown/")
         || lower.contains("/passiveeffect/")
 }

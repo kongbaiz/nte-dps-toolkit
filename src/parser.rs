@@ -15,11 +15,17 @@ const MAX_PLAUSIBLE_CHARACTER_HP: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
 const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
+#[allow(dead_code)]
 const SDK_NET_TARGET_SIZE: usize = 0x28;
+#[allow(dead_code)]
 const SDK_TARGET_HP_WINDOW_LENGTH: usize = SDK_NET_TARGET_SIZE + 8;
 const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
+const HIT_TARGET_TOKEN_SCAN_BEFORE: usize = 96;
+const HIT_TARGET_TOKEN_SCAN_AFTER: usize = 160;
+const HIT_TARGET_VECTOR_MARKER: [u8; 5] = [0x11, 0x18, 0x00, 0x00, 0x00];
+const HIT_TARGET_VECTOR_TOKEN_LEN: usize = 24;
 
 pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
@@ -49,6 +55,8 @@ pub struct ParsedDamageRecord {
     pub trailing_value: f32,
     pub byte_offset: usize,
     pub bit_shift: u8,
+    pub hit_target_vector_token: Option<String>,
+    pub hit_target_xyz: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,12 +76,14 @@ pub struct ParsedBossHpUpdate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum ParsedSdkTargetHpKind {
     ClientRepExtraDamageInfo,
     ClientRepFightData,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(dead_code)]
 pub struct ParsedSdkTargetHpUpdate {
     pub kind: ParsedSdkTargetHpKind,
     pub target_token: [u8; SDK_NET_TARGET_SIZE],
@@ -432,10 +442,12 @@ fn plausible_hp(value: f32, max_value: f32) -> bool {
     value.is_finite() && (0.0..=max_value).contains(&value)
 }
 
+#[allow(dead_code)]
 fn plausible_dead_state(value: i32) -> bool {
     (0..=10).contains(&value)
 }
 
+#[allow(dead_code)]
 fn plausible_net_target_token(token: &[u8]) -> bool {
     let non_zero = token.iter().filter(|byte| **byte != 0).count();
     if non_zero < 4 {
@@ -505,6 +517,9 @@ fn parse_damage_record_at(
         return None;
     }
 
+    let (hit_target_vector_token, hit_target_xyz) =
+        parse_hit_target_vector_token_near(data, byte_offset, bit_shift);
+
     Some(ParsedDamageRecord {
         damage,
         target_hp_before,
@@ -516,7 +531,62 @@ fn parse_damage_record_at(
         trailing_value,
         byte_offset: byte_offset + 5,
         bit_shift,
+        hit_target_vector_token,
+        hit_target_xyz,
     })
+}
+
+fn parse_hit_target_vector_token_near(
+    data: &[u8],
+    record_start: usize,
+    bit_shift: u8,
+) -> (Option<String>, Option<[f64; 3]>) {
+    let Some(shifted) = decode_shifted_bytes(
+        data,
+        0,
+        bit_shift,
+        0,
+        data.len().saturating_sub(usize::from(bit_shift != 0)),
+    ) else {
+        return (None, None);
+    };
+    let start = record_start.saturating_sub(HIT_TARGET_TOKEN_SCAN_BEFORE);
+    let end = record_start
+        .saturating_add(HIT_TARGET_TOKEN_SCAN_AFTER)
+        .min(shifted.len());
+    let Some(scan) = shifted.get(start..end) else {
+        return (None, None);
+    };
+    for (relative, window) in scan
+        .windows(HIT_TARGET_VECTOR_MARKER.len() + HIT_TARGET_VECTOR_TOKEN_LEN)
+        .enumerate()
+    {
+        if window[..HIT_TARGET_VECTOR_MARKER.len()] != HIT_TARGET_VECTOR_MARKER {
+            continue;
+        }
+        let token = &window[HIT_TARGET_VECTOR_MARKER.len()..];
+        if token.iter().filter(|byte| **byte != 0).count() < 6 {
+            continue;
+        }
+        let xyz = decode_xyz_token(token);
+        let token_hex = hex::encode(token);
+        let _absolute_offset = start + relative + HIT_TARGET_VECTOR_MARKER.len();
+        return (Some(token_hex), xyz);
+    }
+    (None, None)
+}
+
+fn decode_xyz_token(token: &[u8]) -> Option<[f64; 3]> {
+    if token.len() != HIT_TARGET_VECTOR_TOKEN_LEN {
+        return None;
+    }
+    let x = f64::from_le_bytes(token[0..8].try_into().unwrap());
+    let y = f64::from_le_bytes(token[8..16].try_into().unwrap());
+    let z = f64::from_le_bytes(token[16..24].try_into().unwrap());
+    let xyz = [x, y, z];
+    xyz.iter()
+        .all(|value| value.is_finite() && value.abs() <= 1_000_000.0)
+        .then_some(xyz)
 }
 
 pub fn parse_damage_records(data: &[u8]) -> Vec<ParsedDamageRecord> {
@@ -603,6 +673,7 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
     updates
 }
 
+#[allow(dead_code)]
 pub fn parse_sdk_target_hp_updates(data: &[u8]) -> Vec<ParsedSdkTargetHpUpdate> {
     let mut updates = Vec::new();
     let mut seen = HashSet::new();
@@ -831,6 +902,13 @@ pub fn parse_damage_payload(
         } else {
             "unknown"
         };
+        let mut target_context = Vec::new();
+        if let Some(token) = &record.hit_target_vector_token {
+            target_context.push(format!("hit_target_vector_token={token}"));
+        }
+        if let Some([x, y, z]) = record.hit_target_xyz {
+            target_context.push(format!("hit_target_xyz={x:.3},{y:.3},{z:.3}"));
+        }
         hits.push(Hit {
             timestamp,
             char_id,
@@ -858,7 +936,7 @@ pub fn parse_damage_payload(
             },
             target_id: None,
             target_name: None,
-            target_context: Vec::new(),
+            target_context,
             gameplay_effect_index: None,
             gameplay_effect_name: None,
             ability_name: None,
@@ -1121,6 +1199,28 @@ mod character_tests {
                 && update.current_hp == 800.0
                 && update.dead_state == 2
         }));
+    }
+
+    #[test]
+    fn damage_record_exports_nearby_hit_target_vector_token() {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&HIT_TARGET_VECTOR_MARKER);
+        payload.extend_from_slice(&12.5_f64.to_le_bytes());
+        payload.extend_from_slice(&(-34.0_f64).to_le_bytes());
+        payload.extend_from_slice(&56.25_f64.to_le_bytes());
+        payload.extend_from_slice(&encoded_damage_record(100.0, 1000.0, 5000.0));
+
+        let records = parse_damage_records(&payload);
+
+        let record = records
+            .iter()
+            .find(|record| record.damage == 100.0)
+            .expect("damage record should parse");
+        assert_eq!(
+            record.hit_target_vector_token.as_deref(),
+            Some("000000000000294000000000000041c00000000000204c40")
+        );
+        assert_eq!(record.hit_target_xyz, Some([12.5, -34.0, 56.25]));
     }
 
     #[test]

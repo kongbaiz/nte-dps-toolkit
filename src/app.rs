@@ -4673,7 +4673,7 @@ fn hit_target_tooltip(hit: &crate::model::Hit, target: &str, hp: &str) -> String
     if !hit.target_context.is_empty() {
         tooltip.push_str("\n\n目标解析证据：");
         for value in hit.target_context.iter().take(8) {
-            tooltip.push_str("\n");
+            tooltip.push('\n');
             tooltip.push_str(value);
         }
     }
@@ -4694,7 +4694,7 @@ fn append_hit_target_hover_details(details: &mut String, hit: &crate::model::Hit
     if !hit.target_context.is_empty() {
         details.push_str("\n目标解析证据：");
         for value in hit.target_context.iter().take(6) {
-            details.push_str("\n");
+            details.push('\n');
             details.push_str(value);
         }
     }
