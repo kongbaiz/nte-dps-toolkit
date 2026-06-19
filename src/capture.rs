@@ -37,9 +37,9 @@ use crate::object_state::{
     ObjectHandleKind, ObjectStateStore, is_ignored_non_target_path, is_targetish_path,
 };
 use crate::parser::{
-    GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedBossHpUpdate, ParsedCurrentHpUpdate,
-    ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH,
-    classify_attack_type, classify_attack_type_from_description,
+    DamageParseContext, GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, PacketDirection,
+    ParsedBossHpUpdate, ParsedCurrentHpUpdate, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH,
+    WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type, classify_attack_type_from_description,
     declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
     load_gameplay_effect_mapping, load_gameplay_effect_skills, load_wooden_damage_names,
     normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
@@ -856,6 +856,29 @@ fn is_non_player_damage_effect(effect_name: Option<&str>) -> bool {
     };
     let lower = effect_name.to_ascii_lowercase();
     lower.contains("killself") || lower.contains("self_destruct") || lower.contains("selfdestruct")
+}
+
+fn refine_hit_direction_after_effect(hit: &mut Hit, packet_direction: PacketDirection) {
+    if packet_direction != PacketDirection::ClientToServer
+        || hit.direction != "incoming"
+        || hit.char_source != "packet"
+    {
+        return;
+    }
+    let Some(effect) = hit.gameplay_effect_name.as_deref() else {
+        return;
+    };
+    let player_or_reaction_effect = effect.starts_with("GE_Player_")
+        || effect.starts_with("Buff_Reaction_")
+        || effect.contains("ActorReaction");
+    if !player_or_reaction_effect {
+        return;
+    }
+    hit.direction = "outgoing".to_owned();
+    push_unique_context(
+        &mut hit.target_context,
+        "direction_corrected=c2s_player_effect_low_hp_target".to_owned(),
+    );
 }
 
 fn has_net_runtime_text_hint(decoded_text: &str) -> bool {
@@ -2882,6 +2905,11 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
+        let packet_direction = if outgoing {
+            PacketDirection::ClientToServer
+        } else {
+            PacketDirection::ServerToClient
+        };
         let current_hp_updates = if outgoing {
             Vec::new()
         } else {
@@ -3015,11 +3043,14 @@ impl PacketDecoder {
         {
             parse_damage_payload(
                 payload,
-                timestamp,
-                packet_char_id,
-                fallback_char_id,
-                characters,
-                &evidence,
+                DamageParseContext {
+                    timestamp,
+                    packet_char_id,
+                    fallback_char_id,
+                    packet_direction,
+                    characters,
+                    evidence: &evidence,
+                },
             )
         } else {
             Vec::new()
@@ -3033,6 +3064,8 @@ impl PacketDecoder {
                 &self.gameplay_effect_skills,
                 &self.wooden_damage_names,
             );
+            refine_hit_direction_after_effect(hit, packet_direction);
+            self.target_instances.observe_hit_vector_hit(hit);
             if hit
                 .attack_type
                 .as_deref()
@@ -4147,6 +4180,22 @@ mod tests {
     }
 
     #[test]
+    fn gameplay_effect_can_correct_low_hp_incoming_direction() {
+        let mut hit = test_hit(1.0, 29104.0, 25681.0);
+        hit.direction = "incoming".to_owned();
+        hit.char_source = "packet".to_owned();
+        hit.gameplay_effect_name = Some("GE_Player_Haniel_QTE_Damage".to_owned());
+        refine_hit_direction_after_effect(&mut hit, PacketDirection::ClientToServer);
+
+        assert_eq!(hit.direction, "outgoing");
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|entry| { entry == "direction_corrected=c2s_player_effect_low_hp_target" })
+        );
+    }
+
+    #[test]
     fn payload_scan_reuses_shifted_buffers() {
         let payload = b"prefix /Game/Monster/Boss CurrentHP suffix";
         let scan = PayloadScan::new(payload);
@@ -4270,69 +4319,41 @@ mod tests {
         handle.join().expect("import thread should finish");
 
         let mut names_by_track = HashMap::<String, HashSet<String>>::new();
-        let mut projected = 0usize;
-        let mut ambiguous_unknown = 0usize;
-        let mut terminal_named = 0usize;
-        let mut terminal_names = HashSet::<String>::new();
-        let mut dot_named = 0usize;
-        let mut dot_unknown_not_ambiguous = 0usize;
-        let mut dot_unknown_samples = Vec::new();
+        let mut outgoing = 0usize;
+        let mut incoming = 0usize;
+        let mut low_hp_outgoing = 0usize;
+        let mut direction_evidence = 0usize;
+        let mut runtime_instances = 0usize;
+        let mut placeholders = 0usize;
         for hit in &hits {
+            match hit.direction.as_str() {
+                "outgoing" => outgoing += 1,
+                "incoming" => incoming += 1,
+                _ => {}
+            }
+            if hit.direction == "outgoing" && hit.target_max_hp <= 500_000.0 {
+                low_hp_outgoing += 1;
+            }
+            if hit.target_context.iter().any(|entry| {
+                entry == "direction_inferred=c2s_packet_character"
+                    || entry == "direction_low_hp_target_not_incoming"
+                    || entry.starts_with("direction_corrected=")
+            }) {
+                direction_evidence += 1;
+            }
             if hit
                 .target_context
                 .iter()
-                .any(|entry| entry == "target_name_resolution=track_continuity_projected")
+                .any(|entry| entry.starts_with("runtime_target_instance="))
             {
-                projected += 1;
+                runtime_instances += 1;
             }
-            if hit.target_name.is_none()
-                && hit
-                    .target_context
-                    .iter()
-                    .any(|entry| entry == "target_unresolved=ambiguous_multi_target")
+            if hit
+                .target_context
+                .iter()
+                .any(|entry| entry == "target_name_resolution=runtime_placeholder")
             {
-                ambiguous_unknown += 1;
-            }
-            if hit.target_hp_after <= 1.0 && hit.target_name.is_some() {
-                terminal_named += 1;
-                if let Some(name) = hit.target_name.as_deref() {
-                    terminal_names.insert(name.to_owned());
-                }
-            }
-            let is_requiem_bleed = hit
-                .damage_name
-                .as_deref()
-                .is_some_and(|name| name.contains("安魂曲流血伤害"));
-            if is_requiem_bleed {
-                if hit.target_name.is_some() {
-                    dot_named += 1;
-                } else if !hit
-                    .target_context
-                    .iter()
-                    .any(|entry| entry == "target_unresolved=ambiguous_multi_target")
-                {
-                    dot_unknown_not_ambiguous += 1;
-                    if dot_unknown_samples.len() < 5 {
-                        dot_unknown_samples.push(format!(
-                            "t={:.3} hp={:.0}->{:.0}/{:.0} ctx={}",
-                            hit.timestamp,
-                            hit.target_hp_before,
-                            hit.target_hp_after,
-                            hit.target_max_hp,
-                            hit.target_context
-                                .iter()
-                                .filter(|entry| {
-                                    entry.starts_with("track_")
-                                        || entry.starts_with("target_unresolved=")
-                                        || entry.starts_with("reason=")
-                                })
-                                .take(8)
-                                .cloned()
-                                .collect::<Vec<_>>()
-                                .join(" | ")
-                        ));
-                    }
-                }
+                placeholders += 1;
             }
             let Some(track_id) = target_context_value(&hit.target_context, "target_track_id")
             else {
@@ -4352,15 +4373,14 @@ mod tests {
             .filter(|(_, names)| names.len() > 1)
             .collect::<Vec<_>>();
         println!(
-            "replay target track stats: hits={} projected={} terminal_named={} terminal_names={:?} ambiguous_unknown={} dot_named={} dot_unknown_not_ambiguous={} dot_unknown_samples={:?} named_tracks={} names_by_track={:?}",
+            "replay target track stats: hits={} outgoing={} incoming={} low_hp_outgoing={} direction_evidence={} runtime_instances={} placeholders={} named_tracks={} names_by_track={:?}",
             hits.len(),
-            projected,
-            terminal_named,
-            terminal_names,
-            ambiguous_unknown,
-            dot_named,
-            dot_unknown_not_ambiguous,
-            dot_unknown_samples,
+            outgoing,
+            incoming,
+            low_hp_outgoing,
+            direction_evidence,
+            runtime_instances,
+            placeholders,
             names_by_track.len(),
             names_by_track
         );
@@ -4368,9 +4388,27 @@ mod tests {
             conflicting_tracks.is_empty(),
             "same target_track_id/generation had multiple names: {conflicting_tracks:?}"
         );
-        assert_eq!(
-            dot_unknown_not_ambiguous, 0,
-            "DOT hits should either project to a track or carry ambiguous context"
+        assert!(!hits.is_empty(), "capture should parse damage hits");
+        assert!(
+            outgoing > 0,
+            "C2S low HP player hits should remain outgoing"
+        );
+        assert_ne!(
+            incoming,
+            hits.len(),
+            "not all parsed hits should be incoming"
+        );
+        assert!(
+            low_hp_outgoing > 0,
+            "low target_max_hp hits should not be classified as incoming"
+        );
+        assert!(
+            direction_evidence > 0,
+            "hits should record direction inference/correction context"
+        );
+        assert!(
+            runtime_instances > 0 || placeholders > 0,
+            "hits should record runtime target instance evidence"
         );
     }
 

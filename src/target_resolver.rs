@@ -246,14 +246,8 @@ fn apply_candidates_to_hit(hit: &mut Hit, candidates: &[TargetCandidate]) {
         }
         hit.target_context
             .push(format!("target_name={}", resolution.name));
-        hit.target_context.push(format!(
-            "target_name_resolution={}",
-            if resolution.ambiguous {
-                "table_resolved_ambiguous"
-            } else {
-                "table_resolved"
-            }
-        ));
+        hit.target_context
+            .push(format!("target_name_resolution={}", resolution.resolution));
         if resolution.ambiguous {
             hit.target_context.push(format!(
                 "target_name_candidates={}",
@@ -346,6 +340,7 @@ struct DisplayNameResolution {
     target_path: Option<String>,
     distinct_names: Vec<String>,
     ambiguous: bool,
+    resolution: &'static str,
 }
 
 fn resolved_display_name_from_candidates(
@@ -381,11 +376,23 @@ fn resolved_display_name_from_candidates(
             distinct_names.push(name.clone());
         }
     }
+    let resolution = if selected
+        .reasons
+        .iter()
+        .any(|reason| reason == "runtime_placeholder_hit_vector")
+    {
+        "runtime_placeholder"
+    } else if distinct_names.len() > 1 {
+        "table_resolved_ambiguous"
+    } else {
+        "table_resolved"
+    };
     Some(DisplayNameResolution {
         name: selected_name,
         target_path: selected_target_path,
         ambiguous: distinct_names.len() > 1,
         distinct_names,
+        resolution,
     })
 }
 
@@ -419,6 +426,13 @@ fn candidate_can_display_target_name(
         return false;
     }
     if candidate.handle_kind == ObjectHandleKind::RuntimeInstance {
+        if candidate
+            .reasons
+            .iter()
+            .any(|reason| reason == "runtime_placeholder_hit_vector")
+        {
+            return candidates.len() == 1 || !has_named_direct_hp_conflict(candidate, candidates);
+        }
         return candidate
             .reasons
             .iter()

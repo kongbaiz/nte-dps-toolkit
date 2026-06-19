@@ -13,6 +13,9 @@ const INSTANCE_ACTIVE_TTL_SECONDS: f64 = 90.0;
 const INSTANCE_DEAD_HP_THRESHOLD: f64 = 1.0;
 const HP_MATCH_TOLERANCE_ABSOLUTE: f64 = 2.0;
 const HP_MATCH_TOLERANCE_RATIO: f64 = 0.002;
+const HIT_VECTOR_INSTANCE_WINDOW_SECONDS: f64 = 20.0;
+const HIT_VECTOR_INSTANCE_DISTANCE: f64 = 300.0;
+const UNKNOWN_RUNTIME_TARGET_PATH: &str = "runtime://unknown_target";
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TargetAliasKind {
@@ -102,6 +105,9 @@ pub struct RuntimeTargetInstance {
     pub last_seen_at: f64,
     pub aliases: BTreeSet<TargetAlias>,
     pub hp_current: Option<f64>,
+    pub hit_xyz: Option<[f64; 3]>,
+    pub observed_max_hp: Option<f64>,
+    pub placeholder: bool,
     pub hp_history: VecDeque<RuntimeTargetHpObservation>,
     pub state: RuntimeTargetState,
 }
@@ -244,6 +250,14 @@ impl TargetInstanceStore {
     pub fn resolve_hit(&self, hit: &Hit) -> Option<TargetInstanceResolution> {
         for alias in aliases_from_hit_context(hit) {
             if let Some(instance) = self.instance_for_alias(&alias) {
+                if instance.placeholder {
+                    return Some(instance_resolution(
+                        instance,
+                        TargetConfidence::Probable,
+                        70,
+                        "runtime_placeholder_hit_vector".to_owned(),
+                    ));
+                }
                 return Some(instance_resolution(
                     instance,
                     TargetConfidence::Confirmed,
@@ -261,6 +275,65 @@ impl TargetInstanceStore {
             ));
         }
         None
+    }
+
+    pub fn observe_hit_vector_hit(&mut self, hit: &mut Hit) -> Option<String> {
+        if hit.direction == "incoming" || hit.target_name.is_some() {
+            return None;
+        }
+        let token = target_context_value(&hit.target_context, "hit_target_vector_token")?;
+        let xyz =
+            target_context_value(&hit.target_context, "hit_target_xyz").and_then(parse_xyz)?;
+        let alias = TargetAlias::new(TargetAliasKind::HitVectorToken, token);
+        let instance_id = self
+            .alias_index
+            .get(&alias.key())
+            .cloned()
+            .or_else(|| self.unique_hit_vector_match(hit, xyz))
+            .unwrap_or_else(|| {
+                self.create_placeholder_instance(hit.timestamp, xyz, hit.target_max_hp)
+            });
+        let current_id = self.add_alias_and_maybe_rename(&instance_id, alias);
+        let instance = self.instances.get_mut(&current_id)?;
+        instance.last_seen_at = hit.timestamp;
+        instance.hit_xyz = Some(xyz);
+        instance.observed_max_hp = Some(hit.target_max_hp);
+        instance.hp_current = Some(hit.target_hp_after);
+        instance.state = if hit.target_hp_after <= INSTANCE_DEAD_HP_THRESHOLD {
+            RuntimeTargetState::Dead
+        } else {
+            RuntimeTargetState::Active
+        };
+        instance.hp_history.push_back(RuntimeTargetHpObservation {
+            timestamp: hit.timestamp,
+            current: hit.target_hp_after,
+            evidence: "hit_vector_hp_timeline".to_owned(),
+        });
+        while instance.hp_history.len() > MAX_HP_HISTORY_PER_INSTANCE {
+            instance.hp_history.pop_front();
+        }
+        let confidence = if instance.hp_history.len() >= 2 {
+            "probable"
+        } else {
+            "possible"
+        };
+        push_unique_context(
+            &mut hit.target_context,
+            format!("runtime_target_instance={}", instance.instance_id),
+        );
+        push_unique_context(
+            &mut hit.target_context,
+            format!("target_instance_confidence={confidence}"),
+        );
+        push_unique_context(
+            &mut hit.target_context,
+            "target_instance_reason=hit_vector_hp_timeline".to_owned(),
+        );
+        push_unique_context(
+            &mut hit.target_context,
+            format!("target_max_hp_observation={:.0}", hit.target_max_hp),
+        );
+        Some(instance.instance_id.clone())
     }
 
     pub fn active_named_instance_count(&self, timestamp: f64) -> usize {
@@ -350,6 +423,42 @@ impl TargetInstanceStore {
                 last_seen_at: timestamp,
                 aliases: BTreeSet::new(),
                 hp_current: None,
+                hit_xyz: None,
+                observed_max_hp: None,
+                placeholder: false,
+                hp_history: VecDeque::new(),
+                state: RuntimeTargetState::Active,
+            },
+        );
+        instance_id
+    }
+
+    fn create_placeholder_instance(
+        &mut self,
+        timestamp: f64,
+        xyz: [f64; 3],
+        observed_max_hp: f64,
+    ) -> String {
+        let spawn_seq = self
+            .spawn_seq_by_path
+            .entry(UNKNOWN_RUNTIME_TARGET_PATH.to_owned())
+            .and_modify(|value| *value += 1)
+            .or_insert(1);
+        let instance_id = format!("runtime_unknown_target#{}", *spawn_seq);
+        self.instances.insert(
+            instance_id.clone(),
+            RuntimeTargetInstance {
+                instance_id: instance_id.clone(),
+                canonical_path: UNKNOWN_RUNTIME_TARGET_PATH.to_owned(),
+                target_name: format!("未知目标#{}", *spawn_seq),
+                spawn_seq: *spawn_seq,
+                first_seen_at: timestamp,
+                last_seen_at: timestamp,
+                aliases: BTreeSet::new(),
+                hp_current: None,
+                hit_xyz: Some(xyz),
+                observed_max_hp: Some(observed_max_hp),
+                placeholder: true,
                 hp_history: VecDeque::new(),
                 state: RuntimeTargetState::Active,
             },
@@ -411,6 +520,9 @@ impl TargetInstanceStore {
         };
         instance.aliases.insert(alias.clone());
         self.alias_index.insert(alias.key(), current_id.clone());
+        if instance.placeholder && alias.kind == TargetAliasKind::HitVectorToken {
+            return current_id;
+        }
         let best_id = preferred_instance_id(
             &instance.canonical_path,
             instance.spawn_seq,
@@ -528,6 +640,28 @@ impl TargetInstanceStore {
             }
         }
     }
+
+    fn unique_hit_vector_match(&self, hit: &Hit, xyz: [f64; 3]) -> Option<String> {
+        let mut candidates = self
+            .instances
+            .values()
+            .filter(|instance| instance.placeholder)
+            .filter(|instance| instance.state == RuntimeTargetState::Active)
+            .filter(|instance| {
+                let age = hit.timestamp - instance.last_seen_at;
+                (0.0..=HIT_VECTOR_INSTANCE_WINDOW_SECONDS).contains(&age)
+            })
+            .filter(|instance| {
+                instance
+                    .hit_xyz
+                    .is_some_and(|existing| distance(existing, xyz) <= HIT_VECTOR_INSTANCE_DISTANCE)
+            })
+            .filter(|instance| placeholder_hp_matches(instance, hit))
+            .map(|instance| (instance.instance_id.clone(), instance.last_seen_at))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| right.1.total_cmp(&left.1));
+        (candidates.len() == 1).then(|| candidates.remove(0).0)
+    }
 }
 
 fn resolved_target_path_name(resources: &ResourceIndex, path: &str) -> Option<(String, String)> {
@@ -607,6 +741,50 @@ fn normalize_alias_value(value: String) -> String {
     value.trim().to_ascii_lowercase()
 }
 
+fn target_context_value<'a>(context: &'a [String], key: &str) -> Option<&'a str> {
+    let prefix = format!("{key}=");
+    context
+        .iter()
+        .find_map(|value| value.strip_prefix(&prefix))
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "None")
+}
+
+fn parse_xyz(value: &str) -> Option<[f64; 3]> {
+    let mut parts = value.split(',');
+    let x = parts.next()?.trim().parse().ok()?;
+    let y = parts.next()?.trim().parse().ok()?;
+    let z = parts.next()?.trim().parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some([x, y, z])
+}
+
+fn distance(left: [f64; 3], right: [f64; 3]) -> f64 {
+    ((left[0] - right[0]).powi(2) + (left[1] - right[1]).powi(2) + (left[2] - right[2]).powi(2))
+        .sqrt()
+}
+
+fn placeholder_hp_matches(instance: &RuntimeTargetInstance, hit: &Hit) -> bool {
+    if let Some(current) = instance.hp_current
+        && nearly_equal(
+            current,
+            hit.target_hp_before,
+            hit.target_hp_before.max(current),
+        )
+    {
+        return true;
+    }
+    instance.hp_history.is_empty()
+}
+
+fn push_unique_context(context: &mut Vec<String>, value: String) {
+    if !context.iter().any(|entry| entry == &value) {
+        context.push(value);
+    }
+}
+
 fn aliases_from_hit_context(hit: &Hit) -> Vec<TargetAlias> {
     hit.target_context
         .iter()
@@ -666,6 +844,39 @@ fn nearly_equal(left: f64, right: f64, scale: f64) -> bool {
 mod tests {
     use super::*;
 
+    fn vector_hit(timestamp: f64, before: f64, after: f64, max_hp: f64, xyz: [f64; 3]) -> Hit {
+        Hit {
+            timestamp,
+            char_id: 1,
+            char_name: "tester".to_owned(),
+            char_known: true,
+            damage: (before - after).abs().max(1.0),
+            byte_offset: timestamp as usize,
+            bit_shift: 0,
+            char_source: "packet".to_owned(),
+            direction: "outgoing".to_owned(),
+            target_hp_before: before,
+            target_hp_after: after,
+            target_max_hp: max_hp,
+            target_hp_percent: if max_hp > 0.0 {
+                after / max_hp * 100.0
+            } else {
+                0.0
+            },
+            target_id: None,
+            target_name: None,
+            target_context: vec![
+                format!("hit_target_vector_token=token-{timestamp:.3}"),
+                format!("hit_target_xyz={:.3},{:.3},{:.3}", xyz[0], xyz[1], xyz[2]),
+            ],
+            gameplay_effect_index: None,
+            gameplay_effect_name: None,
+            ability_name: None,
+            damage_name: None,
+            attack_type: None,
+        }
+    }
+
     #[test]
     fn active_alias_lock_does_not_rename_to_different_path() {
         let mut store = TargetInstanceStore::default();
@@ -711,5 +922,48 @@ mod tests {
         assert_ne!(first_id, second_id);
         assert_eq!(store.instance(&first_id).expect("first").spawn_seq, 1);
         assert_eq!(store.instance(&second_id).expect("second").spawn_seq, 2);
+    }
+
+    #[test]
+    fn hit_vector_runtime_instances_do_not_merge_different_small_targets() {
+        let mut store = TargetInstanceStore::default();
+        let mut a1 = vector_hit(1.0, 29104.0, 25681.0, 29104.0, [0.0, 0.0, 0.0]);
+        let a_id = store
+            .observe_hit_vector_hit(&mut a1)
+            .expect("first target instance");
+        let mut a2 = vector_hit(2.0, 25681.0, 12712.0, 29104.0, [120.0, 20.0, 0.0]);
+        let a2_id = store
+            .observe_hit_vector_hit(&mut a2)
+            .expect("same target instance");
+        let mut b = vector_hit(2.5, 168096.0, 167637.0, 168096.0, [2000.0, 0.0, 0.0]);
+        let b_id = store
+            .observe_hit_vector_hit(&mut b)
+            .expect("second target instance");
+
+        assert_eq!(a_id, a2_id);
+        assert_ne!(a_id, b_id);
+        assert!(
+            a2.target_context
+                .iter()
+                .any(|entry| entry == "target_instance_reason=hit_vector_hp_timeline")
+        );
+    }
+
+    #[test]
+    fn hit_vector_placeholder_does_not_override_existing_boss_target() {
+        let mut store = TargetInstanceStore::default();
+        let mut hit = vector_hit(1.0, 1_000_000.0, 900_000.0, 1_000_000.0, [0.0, 0.0, 0.0]);
+        hit.target_id = Some("monster:boss_13#1".to_owned());
+        hit.target_name = Some("斑蝶".to_owned());
+        let result = store.observe_hit_vector_hit(&mut hit);
+
+        assert_eq!(result, None);
+        assert_eq!(hit.target_id.as_deref(), Some("monster:boss_13#1"));
+        assert_eq!(hit.target_name.as_deref(), Some("斑蝶"));
+        assert!(
+            !hit.target_context
+                .iter()
+                .any(|entry| entry.starts_with("runtime_target_instance="))
+        );
     }
 }

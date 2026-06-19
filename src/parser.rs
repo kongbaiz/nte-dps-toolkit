@@ -100,6 +100,23 @@ pub struct ParsedGameplayEffect {
     pub bit_shift: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PacketDirection {
+    ClientToServer,
+    ServerToClient,
+    #[allow(dead_code)]
+    Unknown,
+}
+
+pub struct DamageParseContext<'a> {
+    pub timestamp: f64,
+    pub packet_char_id: Option<u32>,
+    pub fallback_char_id: Option<u32>,
+    pub packet_direction: PacketDirection,
+    pub characters: &'a HashMap<u32, CharacterInfo>,
+    pub evidence: &'a [(u32, u8, usize)],
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameplayEffectSkill {
     pub damage_source_category: Option<String>,
@@ -865,25 +882,20 @@ fn declared_character_for_shift(evidence: &[(u32, u8, usize)], bit_shift: u8) ->
     matched
 }
 
-pub fn parse_damage_payload(
-    data: &[u8],
-    timestamp: f64,
-    packet_char_id: Option<u32>,
-    fallback_char_id: Option<u32>,
-    characters: &HashMap<u32, CharacterInfo>,
-    evidence: &[(u32, u8, usize)],
-) -> Vec<Hit> {
+pub fn parse_damage_payload(data: &[u8], context: DamageParseContext<'_>) -> Vec<Hit> {
     let mut hits = Vec::new();
     for record in parse_damage_records(data) {
         let damage = record.damage;
         let byte_offset = record.byte_offset;
         let bit_shift = record.bit_shift;
-        let aligned_char_id = declared_character_for_shift(evidence, bit_shift);
-        let resolved_packet_char_id = packet_char_id.or(aligned_char_id);
-        let char_id = resolved_packet_char_id.or(fallback_char_id).unwrap_or(0);
+        let aligned_char_id = declared_character_for_shift(context.evidence, bit_shift);
+        let resolved_packet_char_id = context.packet_char_id.or(aligned_char_id);
+        let char_id = resolved_packet_char_id
+            .or(context.fallback_char_id)
+            .unwrap_or(0);
         let target_hp_before = record.target_hp_before;
         let target_max_hp = record.target_max_hp;
-        let character = characters.get(&char_id);
+        let character = context.characters.get(&char_id);
         let name = character
             .map(|row| {
                 if row.name_zh.is_empty() {
@@ -900,19 +912,19 @@ pub fn parse_damage_payload(
                 }
             });
         let target_hp_after = (target_hp_before - damage).max(0.0);
-        let direction = if target_max_hp <= MAX_PLAUSIBLE_CHARACTER_HP
-            && resolved_packet_char_id.is_some()
-            && evidence
-                .iter()
-                .any(|(id, shift, _)| Some(*id) == resolved_packet_char_id && *shift == bit_shift)
-        {
-            "incoming"
-        } else if resolved_packet_char_id.is_some() {
-            "outgoing"
-        } else {
-            "unknown"
-        };
         let mut target_context = Vec::new();
+        let direction = infer_damage_direction(
+            context.packet_direction,
+            resolved_packet_char_id,
+            context.fallback_char_id,
+            &mut target_context,
+        );
+        if target_max_hp <= 500_000.0
+            && direction == "outgoing"
+            && context.packet_direction == PacketDirection::ClientToServer
+        {
+            target_context.push("direction_low_hp_target_not_incoming".to_owned());
+        }
         if let Some(token) = &record.hit_target_vector_token {
             target_context.push(format!("hit_target_vector_token={token}"));
         }
@@ -920,7 +932,7 @@ pub fn parse_damage_payload(
             target_context.push(format!("hit_target_xyz={x:.3},{y:.3},{z:.3}"));
         }
         hits.push(Hit {
-            timestamp,
+            timestamp: context.timestamp,
             char_id,
             char_name: name,
             char_known: character.is_some(),
@@ -929,7 +941,7 @@ pub fn parse_damage_payload(
             bit_shift,
             char_source: if resolved_packet_char_id.is_some() {
                 "packet"
-            } else if fallback_char_id.is_some() {
+            } else if context.fallback_char_id.is_some() {
                 "session"
             } else {
                 "unknown"
@@ -955,4 +967,123 @@ pub fn parse_damage_payload(
         });
     }
     hits
+}
+
+fn infer_damage_direction(
+    packet_direction: PacketDirection,
+    resolved_packet_char_id: Option<u32>,
+    fallback_char_id: Option<u32>,
+    target_context: &mut Vec<String>,
+) -> &'static str {
+    match packet_direction {
+        PacketDirection::ClientToServer => {
+            if resolved_packet_char_id.is_some() {
+                target_context.push("direction_inferred=c2s_packet_character".to_owned());
+                "outgoing"
+            } else if fallback_char_id.is_some() {
+                target_context.push("direction_inferred=c2s_session_character".to_owned());
+                "outgoing"
+            } else {
+                target_context.push("direction_unresolved=c2s_no_character".to_owned());
+                "unknown"
+            }
+        }
+        PacketDirection::ServerToClient => {
+            target_context.push("direction_unresolved=s2c_no_monster_attack_evidence".to_owned());
+            "unknown"
+        }
+        PacketDirection::Unknown => {
+            target_context.push("direction_unresolved=unknown_packet_direction".to_owned());
+            "unknown"
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_characters() -> HashMap<u32, CharacterInfo> {
+        HashMap::from([(
+            1020,
+            CharacterInfo {
+                name_zh: "测试角色".to_owned(),
+                name_en: "Tester".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )])
+    }
+
+    fn push_field(payload: &mut Vec<u8>, field_type: u8, value: &[u8]) {
+        payload.push(field_type);
+        payload.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        payload.extend_from_slice(value);
+    }
+
+    fn damage_payload(damage: f32, hp_before: f32, max_hp: f32) -> Vec<u8> {
+        let mut payload = Vec::new();
+        push_field(&mut payload, 12, &damage.to_le_bytes());
+        push_field(&mut payload, 12, &hp_before.to_le_bytes());
+        push_field(&mut payload, 12, &max_hp.to_le_bytes());
+        push_field(&mut payload, 13, &1.0_f64.to_le_bytes());
+        push_field(&mut payload, 12, &1.0_f32.to_le_bytes());
+        push_field(&mut payload, 12, &damage.to_le_bytes());
+        push_field(&mut payload, 6, &0_i32.to_le_bytes());
+        push_field(&mut payload, 6, &0_i32.to_le_bytes());
+        push_field(&mut payload, 6, &0_i32.to_le_bytes());
+        push_field(&mut payload, 12, &0.0_f32.to_le_bytes());
+        payload.extend_from_slice(&HIT_TARGET_VECTOR_MARKER);
+        payload.extend_from_slice(&(-46161.772_f64).to_le_bytes());
+        payload.extend_from_slice(&(118050.467_f64).to_le_bytes());
+        payload.extend_from_slice(&(-14010.483_f64).to_le_bytes());
+        payload
+    }
+
+    #[test]
+    fn low_hp_c2s_player_damage_is_outgoing() {
+        let characters = test_characters();
+        let evidence = vec![(1020, 0, 0)];
+        let hits = parse_damage_payload(
+            &damage_payload(3423.0, 29104.0, 29104.0),
+            DamageParseContext {
+                timestamp: 1.0,
+                packet_char_id: Some(1020),
+                fallback_char_id: None,
+                packet_direction: PacketDirection::ClientToServer,
+                characters: &characters,
+                evidence: &evidence,
+            },
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "outgoing");
+        assert!(
+            hits[0]
+                .target_context
+                .iter()
+                .any(|entry| entry == "direction_low_hp_target_not_incoming")
+        );
+    }
+
+    #[test]
+    fn low_hp_unknown_or_s2c_does_not_force_outgoing_or_incoming() {
+        let characters = test_characters();
+        let evidence = Vec::new();
+        for packet_direction in [PacketDirection::ServerToClient, PacketDirection::Unknown] {
+            let hits = parse_damage_payload(
+                &damage_payload(3423.0, 29104.0, 29104.0),
+                DamageParseContext {
+                    timestamp: 1.0,
+                    packet_char_id: None,
+                    fallback_char_id: None,
+                    packet_direction,
+                    characters: &characters,
+                    evidence: &evidence,
+                },
+            );
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].direction, "unknown");
+        }
+    }
 }

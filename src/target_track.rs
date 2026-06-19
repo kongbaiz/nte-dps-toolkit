@@ -843,6 +843,7 @@ fn can_learn_named_hit(hit: &Hit, summary: &TargetResolutionSummary) -> bool {
             entry.starts_with("target_conflict=")
                 || entry == "reason=recent_death_suppressed_stale_target"
                 || entry == "target_suppressed=ambiguous_multi_target"
+                || entry == "target_name_resolution=runtime_placeholder"
         })
         && identity_source_from_hit(hit, summary).is_some()
 }
