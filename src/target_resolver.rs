@@ -519,6 +519,8 @@ fn candidate_sort_score(candidate: &TargetCandidate) -> i32 {
     let mut score = candidate.score;
     if candidate_has_direct_hp_evidence(candidate) {
         score += 60;
+    } else if candidate_has_weak_hp_proximity(candidate) {
+        score += 5;
     }
     score += match candidate.handle_kind {
         ObjectHandleKind::RuntimeInstance => 50,
@@ -763,11 +765,14 @@ fn candidate_has_direct_hp_evidence(candidate: &TargetCandidate) -> bool {
             || reason.starts_with("boss_hp_delta_match")
             || reason.starts_with("net_target_hp_delta_match")
             || reason.starts_with("hp_delta_match")
-            || (candidate.handle_kind == ObjectHandleKind::AttributeGuid
-                && reason == "last_hp_close_to_hit_after")
-            || (candidate.handle_kind == ObjectHandleKind::NetRefHandleCandidate
-                && reason == "last_hp_close_to_hit_after")
     })
+}
+
+fn candidate_has_weak_hp_proximity(candidate: &TargetCandidate) -> bool {
+    candidate
+        .reasons
+        .iter()
+        .any(|reason| reason == "last_hp_close_to_hit_after")
 }
 
 fn suppress_stale_target_after_recent_death(
@@ -1029,6 +1034,40 @@ mod tests {
             hit.target_context
                 .iter()
                 .any(|entry| { entry == "target_unresolved=hp_evidence_without_table_name" })
+        );
+    }
+
+    #[test]
+    fn weak_last_hp_close_does_not_display_target_name() {
+        let resources = resources_with_targets();
+        let mut store = ObjectStateStore::default();
+        let guid = [4; 16];
+        let handle = hex::encode(guid);
+        store.observe_path_handle_candidate(
+            1.0,
+            ObjectHandleKind::AttributeGuid,
+            handle,
+            "/Game/Monster/Boss_001_BP.Boss_001_BP_C",
+            &resources,
+            "test_path_anchor".to_owned(),
+            255,
+        );
+        store.observe_hp_guid_update(1.0, guid, 900.0, Some(1000.0), "current".to_owned());
+        let mut hit = test_hit(1.0, 1000.0, 900.0, 100.0);
+
+        TargetResolver.apply_to_hit_with_summary(
+            &mut hit,
+            &store,
+            &TargetInstanceStore::default(),
+            &[],
+            &resources,
+        );
+
+        assert_eq!(hit.target_name, None);
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|entry| entry == "reason=last_hp_close_to_hit_after")
         );
     }
 }

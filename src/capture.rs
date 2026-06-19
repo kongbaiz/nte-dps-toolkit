@@ -33,7 +33,9 @@ use crate::net_event::{
     extract_net_runtime_events,
 };
 use crate::net_identity::{NetIdentityCandidateKind, extract_net_identity_candidates};
-use crate::object_state::{ObjectHandleKind, ObjectStateStore, is_ignored_non_target_path};
+use crate::object_state::{
+    ObjectHandleKind, ObjectStateStore, is_ignored_non_target_path, is_targetish_path,
+};
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedBossHpUpdate, ParsedCurrentHpUpdate,
     ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH,
@@ -51,6 +53,7 @@ use crate::runtime_mapping::{
     find_companion_runtime_mapping_sidecar, load_runtime_mapping_sidecar,
 };
 use crate::target_instance::{TargetAlias, TargetAliasKind, TargetInstanceStore};
+use crate::target_lock::{TargetHpStreamLockStore, TargetLockContext};
 use crate::target_resolver::{TargetConfidence, TargetResolutionSummary, TargetResolver};
 use crate::ue_bitstream::{PathCandidate, extract_path_candidates};
 
@@ -1251,6 +1254,7 @@ struct PacketDecoder {
     wooden_damage_names: HashMap<String, String>,
     object_state: ObjectStateStore,
     target_instances: TargetInstanceStore,
+    target_locks: TargetHpStreamLockStore,
     resource_index: ResourceIndex,
     target_resolver: TargetResolver,
     recent_target_hits: VecDeque<RecentTargetHit>,
@@ -1303,6 +1307,7 @@ impl Default for PacketDecoder {
             wooden_damage_names,
             object_state: ObjectStateStore::default(),
             target_instances: TargetInstanceStore::default(),
+            target_locks: TargetHpStreamLockStore::default(),
             resource_index: ResourceIndex::load_default_with_warnings(&mut resource_warnings),
             target_resolver: TargetResolver,
             recent_target_hits: VecDeque::new(),
@@ -1337,6 +1342,32 @@ fn target_update_from_hit(hit: &Hit, summary: &TargetResolutionSummary) -> HitTa
             .as_deref()
             .and_then(|target_id| target_id.rsplit_once('#').map(|(_, generation)| generation))
             .map(str::to_owned),
+    }
+}
+
+fn target_lock_context_for_packet(
+    path_candidates: &[PathCandidate],
+    current_hp_updates: &[ParsedCurrentHpUpdate],
+    boss_hp_updates: &[ParsedBossHpUpdate],
+) -> TargetLockContext {
+    let targetish_path_count = path_candidates
+        .iter()
+        .filter(|candidate| is_targetish_path(&candidate.value))
+        .map(|candidate| candidate.value.to_ascii_lowercase())
+        .collect::<HashSet<_>>()
+        .len();
+    let mut hp_handles = HashSet::new();
+    for update in boss_hp_updates {
+        hp_handles.insert(format!("boss:{}", hex::encode(update.target_handle)));
+    }
+    for update in current_hp_updates {
+        if let Some(token) = current_hp_target_token(&update.target_hint) {
+            hp_handles.insert(format!("current:{}", hex::encode(token)));
+        }
+    }
+    TargetLockContext {
+        targetish_path_count,
+        active_hp_handle_count: hp_handles.len(),
     }
 }
 
@@ -1511,6 +1542,24 @@ impl PacketDecoder {
     ) {
         if can_register_target_handle_alias_from_hit(hit) {
             self.register_target_handle_alias(summary, hit.timestamp);
+        }
+    }
+
+    fn apply_scoped_target_lock(
+        &mut self,
+        hit: &mut Hit,
+        summary: &mut TargetResolutionSummary,
+        context: TargetLockContext,
+    ) {
+        if hit.direction == "incoming" {
+            return;
+        }
+        if hit.target_name.is_none() {
+            self.target_locks
+                .try_apply_to_unnamed_hit(hit, summary, context);
+        }
+        if hit.target_name.is_some() {
+            self.target_locks.learn_from_named_hit(hit, summary);
         }
     }
 
@@ -2966,6 +3015,8 @@ impl PacketDecoder {
         }
         hits.retain(|hit| !is_non_player_damage_effect(hit.gameplay_effect_name.as_deref()));
 
+        let target_lock_context =
+            target_lock_context_for_packet(&path_candidates, &current_hp_updates, &boss_hp_updates);
         let mut hit_summaries = Vec::with_capacity(hits.len());
         for hit in &mut hits {
             let mut summary = if hit.direction != "incoming" {
@@ -3001,7 +3052,7 @@ impl PacketDecoder {
                 .then_with(|| hits[*left].bit_shift.cmp(&hits[*right].bit_shift))
         });
         let mut packet_dead_hits: Vec<Hit> = Vec::new();
-        for index in packet_hit_order {
+        for &index in &packet_hit_order {
             let hit = &mut hits[index];
             let summary = &mut hit_summaries[index];
             if hit.direction != "incoming"
@@ -3020,6 +3071,11 @@ impl PacketDecoder {
                 summary.target_context = hit.target_context.clone();
                 packet_dead_hits.push(hit.clone());
             }
+        }
+        for index in packet_hit_order {
+            let hit = &mut hits[index];
+            let summary = &mut hit_summaries[index];
+            self.apply_scoped_target_lock(hit, summary, target_lock_context);
         }
         let monster_gameplay_effect_links = hits
             .iter()
@@ -3244,6 +3300,9 @@ impl PacketDecoder {
         }
         for (hit, _) in &mut inferred_follow_up_hits {
             self.clear_dead_target_handles_from_hit(hit);
+        }
+        for (hit, summary) in &mut inferred_follow_up_hits {
+            self.apply_scoped_target_lock(hit, summary, target_lock_context);
         }
         if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
             if packet.mode != 0 {
