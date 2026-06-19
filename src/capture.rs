@@ -53,8 +53,8 @@ use crate::runtime_mapping::{
     find_companion_runtime_mapping_sidecar, load_runtime_mapping_sidecar,
 };
 use crate::target_instance::{TargetAlias, TargetAliasKind, TargetInstanceStore};
-use crate::target_lock::{TargetHpStreamLockStore, TargetLockContext};
 use crate::target_resolver::{TargetConfidence, TargetResolutionSummary, TargetResolver};
+use crate::target_track::{TargetTrackStore, TrackPacketContext};
 use crate::ue_bitstream::{PathCandidate, extract_path_candidates};
 
 const PCAP_ERRBUF_SIZE: usize = 256;
@@ -1254,7 +1254,7 @@ struct PacketDecoder {
     wooden_damage_names: HashMap<String, String>,
     object_state: ObjectStateStore,
     target_instances: TargetInstanceStore,
-    target_locks: TargetHpStreamLockStore,
+    target_tracks: TargetTrackStore,
     resource_index: ResourceIndex,
     target_resolver: TargetResolver,
     recent_target_hits: VecDeque<RecentTargetHit>,
@@ -1307,7 +1307,7 @@ impl Default for PacketDecoder {
             wooden_damage_names,
             object_state: ObjectStateStore::default(),
             target_instances: TargetInstanceStore::default(),
-            target_locks: TargetHpStreamLockStore::default(),
+            target_tracks: TargetTrackStore::default(),
             resource_index: ResourceIndex::load_default_with_warnings(&mut resource_warnings),
             target_resolver: TargetResolver,
             recent_target_hits: VecDeque::new(),
@@ -1349,7 +1349,7 @@ fn target_lock_context_for_packet(
     path_candidates: &[PathCandidate],
     current_hp_updates: &[ParsedCurrentHpUpdate],
     boss_hp_updates: &[ParsedBossHpUpdate],
-) -> TargetLockContext {
+) -> TrackPacketContext {
     let targetish_path_count = path_candidates
         .iter()
         .filter(|candidate| is_targetish_path(&candidate.value))
@@ -1365,7 +1365,7 @@ fn target_lock_context_for_packet(
             hp_handles.insert(format!("current:{}", hex::encode(token)));
         }
     }
-    TargetLockContext {
+    TrackPacketContext {
         targetish_path_count,
         active_hp_handle_count: hp_handles.len(),
     }
@@ -1545,22 +1545,17 @@ impl PacketDecoder {
         }
     }
 
-    fn apply_scoped_target_lock(
+    fn apply_target_track_attribution(
         &mut self,
         hit: &mut Hit,
         summary: &mut TargetResolutionSummary,
-        context: TargetLockContext,
+        context: TrackPacketContext,
     ) {
         if hit.direction == "incoming" {
             return;
         }
-        if hit.target_name.is_none() {
-            self.target_locks
-                .try_apply_to_unnamed_hit(hit, summary, context);
-        }
-        if hit.target_name.is_some() {
-            self.target_locks.learn_from_named_hit(hit, summary);
-        }
+        self.target_tracks
+            .attribute_damage_hit(hit, summary, context);
     }
 
     fn register_target_instance_alias_keys(
@@ -3067,15 +3062,21 @@ impl PacketDecoder {
                 suppress_hit_target_as_recent_death(hit, summary);
             }
             if hit.direction != "incoming" && hit.target_hp_after <= 1.0 {
-                self.clear_dead_target_handles_from_hit(hit);
-                summary.target_context = hit.target_context.clone();
                 packet_dead_hits.push(hit.clone());
             }
+        }
+        for &index in &packet_hit_order {
+            let hit = &mut hits[index];
+            let summary = &mut hit_summaries[index];
+            self.apply_target_track_attribution(hit, summary, target_lock_context);
         }
         for index in packet_hit_order {
             let hit = &mut hits[index];
             let summary = &mut hit_summaries[index];
-            self.apply_scoped_target_lock(hit, summary, target_lock_context);
+            if hit.direction != "incoming" && hit.target_hp_after <= 1.0 {
+                self.clear_dead_target_handles_from_hit(hit);
+                summary.target_context = hit.target_context.clone();
+            }
         }
         let monster_gameplay_effect_links = hits
             .iter()
@@ -3298,11 +3299,12 @@ impl PacketDecoder {
             apply_handle_alias_to_hit_summary(hit, summary, &self.target_handle_aliases);
             self.register_target_handle_alias_for_hit(hit, summary);
         }
-        for (hit, _) in &mut inferred_follow_up_hits {
-            self.clear_dead_target_handles_from_hit(hit);
+        for (hit, summary) in &mut inferred_follow_up_hits {
+            self.apply_target_track_attribution(hit, summary, target_lock_context);
         }
         for (hit, summary) in &mut inferred_follow_up_hits {
-            self.apply_scoped_target_lock(hit, summary, target_lock_context);
+            self.clear_dead_target_handles_from_hit(hit);
+            summary.target_context = hit.target_context.clone();
         }
         if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
             if packet.mode != 0 {
@@ -3863,5 +3865,164 @@ fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
             .filter_map(|part| part.trim().parse().ok())
             .collect(),
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_hit(timestamp: f64, before: f64, after: f64) -> Hit {
+        Hit {
+            timestamp,
+            char_id: 1,
+            char_name: "tester".to_owned(),
+            char_known: true,
+            damage: (before - after).abs().max(1.0),
+            byte_offset: timestamp as usize,
+            bit_shift: 0,
+            char_source: "test".to_owned(),
+            direction: "outgoing".to_owned(),
+            target_hp_before: before,
+            target_hp_after: after,
+            target_max_hp: before.max(1.0),
+            target_hp_percent: after / before.max(1.0) * 100.0,
+            target_id: None,
+            target_name: None,
+            target_context: Vec::new(),
+            gameplay_effect_index: None,
+            gameplay_effect_name: None,
+            ability_name: None,
+            damage_name: None,
+            attack_type: None,
+        }
+    }
+
+    fn named_summary(hit: &Hit) -> TargetResolutionSummary {
+        TargetResolutionSummary {
+            target_id: hit.target_id.clone(),
+            target_name: hit.target_name.clone(),
+            target_context: hit.target_context.clone(),
+            score: 120,
+            confidence: TargetConfidence::Confirmed,
+            direct_hp_evidence: true,
+        }
+    }
+
+    #[test]
+    fn packet_decoder_tracks_terminal_hit_before_death_cleanup() {
+        let mut decoder = PacketDecoder::default();
+        let mut first = test_hit(1.0, 1000.0, 100.0);
+        first.target_name = Some("斑蝶".to_owned());
+        first.target_context = vec![
+            "target_path=/Game/Monster/Boss_Butterfly.Boss_Butterfly_C".to_owned(),
+            "target_name=斑蝶".to_owned(),
+            "target_name_resolution=table_resolved".to_owned(),
+            "reason=hp_guid_timeline_match:test".to_owned(),
+            "boss_hp_guid=abc".to_owned(),
+        ];
+        let mut first_summary = named_summary(&first);
+        decoder.apply_target_track_attribution(
+            &mut first,
+            &mut first_summary,
+            TrackPacketContext::default(),
+        );
+
+        let mut death = test_hit(1.5, 100.0, 0.0);
+        let mut death_summary = TargetResolutionSummary::default();
+        decoder.apply_target_track_attribution(
+            &mut death,
+            &mut death_summary,
+            TrackPacketContext::default(),
+        );
+        decoder.clear_dead_target_handles_from_hit(&mut death);
+
+        assert_eq!(death.target_name.as_deref(), Some("斑蝶"));
+        assert!(
+            death
+                .target_context
+                .iter()
+                .any(|entry| entry.starts_with("target_track_id="))
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn replay_capture_target_track_invariants() {
+        let path = std::env::var("NTE_TEST_CAPTURE")
+            .map(PathBuf::from)
+            .expect("set NTE_TEST_CAPTURE to a pcapng path");
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = import_pcapng(path, Arc::new(HashMap::new()), None, false, sender, stop);
+        let mut hits = Vec::new();
+        while let Ok(event) = receiver.recv_timeout(Duration::from_secs(30)) {
+            match event {
+                EngineEvent::Hit(hit) => hits.push(hit),
+                EngineEvent::CaptureStopped => break,
+                EngineEvent::Error(error) => panic!("{error}"),
+                _ => {}
+            }
+        }
+        handle.join().expect("import thread should finish");
+
+        let mut names_by_track = HashMap::<String, HashSet<String>>::new();
+        let mut projected = 0usize;
+        let mut ambiguous_unknown = 0usize;
+        let mut terminal_named = 0usize;
+        let mut terminal_names = HashSet::<String>::new();
+        for hit in &hits {
+            if hit
+                .target_context
+                .iter()
+                .any(|entry| entry == "target_name_resolution=track_continuity_projected")
+            {
+                projected += 1;
+            }
+            if hit.target_name.is_none()
+                && hit
+                    .target_context
+                    .iter()
+                    .any(|entry| entry == "target_unresolved=ambiguous_multi_target")
+            {
+                ambiguous_unknown += 1;
+            }
+            if hit.target_hp_after <= 1.0 && hit.target_name.is_some() {
+                terminal_named += 1;
+                if let Some(name) = hit.target_name.as_deref() {
+                    terminal_names.insert(name.to_owned());
+                }
+            }
+            let Some(track_id) = target_context_value(&hit.target_context, "target_track_id")
+            else {
+                continue;
+            };
+            let generation =
+                target_context_value(&hit.target_context, "target_generation").unwrap_or("unknown");
+            if let Some(name) = hit.target_name.as_deref() {
+                names_by_track
+                    .entry(format!("{track_id}#{generation}"))
+                    .or_default()
+                    .insert(name.to_owned());
+            }
+        }
+        let conflicting_tracks = names_by_track
+            .iter()
+            .filter(|(_, names)| names.len() > 1)
+            .collect::<Vec<_>>();
+        println!(
+            "replay target track stats: hits={} projected={} terminal_named={} terminal_names={:?} ambiguous_unknown={} named_tracks={} names_by_track={:?}",
+            hits.len(),
+            projected,
+            terminal_named,
+            terminal_names,
+            ambiguous_unknown,
+            names_by_track.len(),
+            names_by_track
+        );
+        assert!(
+            conflicting_tracks.is_empty(),
+            "same target_track_id/generation had multiple names: {conflicting_tracks:?}"
+        );
     }
 }
