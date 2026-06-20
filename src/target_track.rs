@@ -182,7 +182,7 @@ impl TargetTrackStore {
         let canonical_key = canonical_target_key_from_name_and_path(&name, &path)
             .unwrap_or_else(|| fallback_canonical_key(&path));
         let non_hp_aliases = non_hp_alias_keys(hit.target_id.as_ref(), &hit.target_context);
-        let hp_handles = hp_handle_keys(hit.target_id.as_ref(), &hit.target_context);
+        let hp_handles = effective_hp_handle_keys(hit);
 
         if self.alias_conflict(hit, &non_hp_aliases, &canonical_key, &name, false)
             || self.alias_conflict(hit, &hp_handles, &canonical_key, &name, true)
@@ -303,7 +303,7 @@ impl TargetTrackStore {
             );
         }
 
-        let hp_handles = hp_handle_keys(hit.target_id.as_ref(), &hit.target_context);
+        let hp_handles = effective_hp_handle_keys(hit);
         if let Some(track_key) =
             self.unique_active_track_for_aliases(&hp_handles, fact.timestamp, true)
         {
@@ -836,25 +836,33 @@ impl TargetTrackStore {
 }
 
 fn can_learn_named_hit(hit: &Hit, summary: &TargetResolutionSummary) -> bool {
+    let stale_death_context = hit
+        .target_context
+        .iter()
+        .any(|entry| entry == "reason=recent_death_suppressed_stale_target");
+    let has_fresh_non_hp_identity = has_non_hp_alias(hit);
     hit.target_name
         .as_deref()
         .is_some_and(|name| !name.trim().is_empty())
         && !hit.target_context.iter().any(|entry| {
             entry.starts_with("target_conflict=")
-                || entry == "reason=recent_death_suppressed_stale_target"
                 || entry == "target_suppressed=ambiguous_multi_target"
                 || entry == "target_name_resolution=runtime_placeholder"
         })
+        && (!stale_death_context || has_fresh_non_hp_identity)
         && identity_source_from_hit(hit, summary).is_some()
 }
 
 fn can_attribute_unknown(hit: &Hit) -> bool {
+    let stale_death_context = hit
+        .target_context
+        .iter()
+        .any(|entry| entry == "reason=recent_death_suppressed_stale_target");
     hit.target_name.is_none()
         && !hit.target_context.iter().any(|entry| {
-            entry.starts_with("target_conflict=")
-                || entry == "reason=recent_death_suppressed_stale_target"
-                || entry == "target_lifecycle=dead_or_expired"
+            entry.starts_with("target_conflict=") || entry == "target_lifecycle=dead_or_expired"
         })
+        && (!stale_death_context || has_non_hp_alias(hit))
 }
 
 fn identity_source_from_hit(
@@ -1114,6 +1122,17 @@ fn unique_context_target(
 
 fn has_non_hp_alias(hit: &Hit) -> bool {
     !non_hp_alias_keys(hit.target_id.as_ref(), &hit.target_context).is_empty()
+}
+
+fn effective_hp_handle_keys(hit: &Hit) -> HashSet<String> {
+    if hit
+        .target_context
+        .iter()
+        .any(|entry| entry == "reason=recent_death_suppressed_stale_target")
+    {
+        return HashSet::new();
+    }
+    hp_handle_keys(hit.target_id.as_ref(), &hit.target_context)
 }
 
 fn hit_has_target_vector_token(hit: &Hit) -> bool {
@@ -1679,6 +1698,60 @@ mod tests {
             late.target_context
                 .iter()
                 .any(|entry| entry == "track_reject_reason=hp_stream_mismatch")
+        );
+    }
+
+    #[test]
+    fn sdk_target_raw_token_reuses_named_stream_base_suffix_track() {
+        let mut store = TargetTrackStore::default();
+        let token =
+            "a20000002006068606000000002000005b41c437d248b54e8959424b7501eae40200000000000000";
+        let mut named = hit(1.0, 51_084.0, 44_000.0, 51_084.0);
+        named.target_id =
+            Some("target_stream:5b41c437d248b54e8959424b7501eae4:slot:2:gen:1".to_owned());
+        named.target_name = Some("低语种".to_owned());
+        named.target_context = vec![
+            "target_path=/Game/Blueprints/Character/Monster/mon_01/mon_01_BP.mon_01_BP_C"
+                .to_owned(),
+            "target_name=低语种".to_owned(),
+            "target_name_resolution=class_hint_stream_order".to_owned(),
+            "target_id_resolution=sdk_target_stream".to_owned(),
+            "target_stream=target_stream:5b41c437d248b54e8959424b7501eae4:slot:2:gen:1".to_owned(),
+            "base_handle=5b41c437d248b54e8959424b7501eae4".to_owned(),
+            "sdk_target_slot=2".to_owned(),
+            "sdk_target_suffix=02000000".to_owned(),
+            "hp_timeline_match=sdk_target_after_match".to_owned(),
+        ];
+        let mut named_summary = TargetResolutionSummary {
+            target_id: named.target_id.clone(),
+            target_name: named.target_name.clone(),
+            target_context: named.target_context.clone(),
+            score: 120,
+            confidence: TargetConfidence::Confirmed,
+            direct_hp_evidence: true,
+        };
+        store.attribute_damage_hit(
+            &mut named,
+            &mut named_summary,
+            TrackPacketContext::default(),
+        );
+
+        let mut unnamed = hit(1.4, 44_000.0, 40_000.0, 51_084.0);
+        unnamed.target_context.push(format!(
+            "target_handle_candidate=NetRefHandleCandidate:sdk_target:{token}"
+        ));
+        let mut summary = TargetResolutionSummary::default();
+        let result =
+            store.attribute_damage_hit(&mut unnamed, &mut summary, TrackPacketContext::default());
+
+        assert_eq!(result.target_name.as_deref(), Some("低语种"));
+        assert_eq!(unnamed.target_name.as_deref(), Some("低语种"));
+        assert_eq!(
+            unnamed
+                .target_context
+                .iter()
+                .find_map(|entry| entry.strip_prefix("track_reason=")),
+            Some("unique_non_hp_alias")
         );
     }
 

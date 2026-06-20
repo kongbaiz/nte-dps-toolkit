@@ -658,7 +658,10 @@ fn apply_target_update_to_hits(hits: &mut VecDeque<Hit>, update: &HitTargetUpdat
 }
 
 fn apply_exact_target_update(hit: &mut Hit, update: &HitTargetUpdate) -> bool {
-    if has_recent_death_suppressed_target(&hit.target_context) && update.target_name.is_some() {
+    if has_recent_death_suppressed_target(&hit.target_context)
+        && update.target_name.is_some()
+        && !update_has_non_hp_exact_alias_backfill(update)
+    {
         return false;
     }
     if let (Some(old_name), Some(new_name)) =
@@ -689,6 +692,13 @@ fn apply_exact_target_update(hit: &mut Hit, update: &HitTargetUpdate) -> bool {
         hit.target_context = update.target_context.clone();
     }
     changed
+}
+
+fn update_has_non_hp_exact_alias_backfill(update: &HitTargetUpdate) -> bool {
+    update
+        .target_context
+        .iter()
+        .any(|entry| entry == "target_alias_backfill=non_hp_exact")
 }
 
 fn update_has_authoritative_lifecycle_reset(update: &HitTargetUpdate) -> bool {
@@ -844,5 +854,47 @@ mod tests {
                 .iter()
                 .any(|entry| { entry == "target_conflict=locked_name_mismatch" })
         );
+    }
+
+    #[test]
+    fn recent_death_hit_accepts_non_hp_exact_alias_update_only() {
+        let mut stale = hit_with_target(None, None);
+        stale
+            .target_context
+            .push("reason=recent_death_suppressed_stale_target".to_owned());
+        let uid = stable_hit_uid(&stale);
+
+        let mut blocked_hits = VecDeque::from([stale.clone()]);
+        let blocked = HitTargetUpdate {
+            hit_uid: uid.clone(),
+            timestamp: stale.timestamp,
+            char_id: stale.char_id,
+            damage: stale.damage,
+            byte_offset: stale.byte_offset,
+            bit_shift: stale.bit_shift,
+            target_id: None,
+            target_name: Some("低语种".to_owned()),
+            target_context: vec![
+                "reason=recent_death_suppressed_stale_target".to_owned(),
+                "target_name=低语种".to_owned(),
+                "target_name_resolution=handle_alias_applied".to_owned(),
+            ],
+            target_score: 80,
+            target_confidence: "probable".to_owned(),
+            old_target_id: None,
+            update_reason: Some("handle_alias_applied".to_owned()),
+            update_strength: Some("probable".to_owned()),
+            target_generation: None,
+        };
+        assert!(!apply_target_update_to_hits(&mut blocked_hits, &blocked));
+        assert_eq!(blocked_hits[0].target_name, None);
+
+        let mut allowed_hits = VecDeque::from([stale]);
+        let mut allowed = blocked;
+        allowed
+            .target_context
+            .push("target_alias_backfill=non_hp_exact".to_owned());
+        assert!(apply_target_update_to_hits(&mut allowed_hits, &allowed));
+        assert_eq!(allowed_hits[0].target_name.as_deref(), Some("低语种"));
     }
 }

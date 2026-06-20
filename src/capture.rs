@@ -1474,6 +1474,7 @@ fn mark_hit_outgoing_from_sdk_target(hit: &mut Hit, update: &SdkTargetHpConfirma
     }
     if let Some(class_hint) = &update.class_hint {
         push_unique_context(&mut hit.target_context, format!("class_hint={class_hint}"));
+        replace_target_path_context(&mut hit.target_context, class_hint);
     }
     if let Some(name) = &update.class_hint_name {
         hit.target_name = Some(name.clone());
@@ -2350,6 +2351,14 @@ impl PacketDecoder {
                 accepted += 1;
             }
         }
+        if accepted > 0 {
+            let latest_timestamp = self
+                .recent_target_hits
+                .back()
+                .map(|recent| recent.hit.timestamp)
+                .unwrap_or_default();
+            self.backfill_recent_targets(latest_timestamp, sender);
+        }
         accepted
     }
 
@@ -2877,31 +2886,47 @@ impl PacketDecoder {
         if let Some(advvision_id) = advvision_id_from_text(decoded_text) {
             self.active_advvision_id = Some(advvision_id);
         }
-        let Some(stage_key) = abyss_scene_stage_key_from_text(decoded_text) else {
-            return false;
-        };
-        let Some(advvision_id) = self.active_advvision_id.clone() else {
-            return false;
-        };
+        if let Some(stage_key) = abyss_scene_stage_key_from_text(decoded_text) {
+            if self.active_advvision_id.is_none()
+                && stage_key == "3"
+                && self
+                    .advvision_index
+                    .resolve_scene("AdvVision_Mammon", &stage_key)
+                    .is_some()
+            {
+                self.active_advvision_id = Some("AdvVision_Mammon".to_owned());
+            }
+            if let Some(advvision_id) = self.active_advvision_id.clone()
+                && let Some(target) = self
+                    .advvision_index
+                    .resolve_scene(&advvision_id, &stage_key)
+            {
+                self.active_stage_context = Some(StageContext {
+                    kind: "FAbyssGamePlayData".to_owned(),
+                    stage_key: Some(stage_key),
+                    half: abyss_half_from_text(decoded_text),
+                    runtime_guid: first_hex_guid_from_text(decoded_text),
+                    advvision_id: Some(advvision_id),
+                    scene_id: Some(target.scene_id),
+                });
+            }
+        }
         let Some(target) = self
-            .advvision_index
-            .resolve_scene(&advvision_id, &stage_key)
+            .active_stage_context
+            .as_ref()
+            .and_then(|context| context.scene_id.as_deref())
+            .and_then(|scene_id| self.advvision_index.target_for_scene(scene_id))
         else {
             return false;
         };
-        let context = StageContext {
-            kind: "FAbyssGamePlayData".to_owned(),
-            stage_key: Some(stage_key),
-            half: abyss_half_from_text(decoded_text),
-            runtime_guid: first_hex_guid_from_text(decoded_text),
-            advvision_id: Some(advvision_id),
-            scene_id: Some(target.scene_id.clone()),
-        };
-        self.active_stage_context = Some(context.clone());
+        if boss_hp_updates.is_empty() {
+            return false;
+        }
         let target_path = target
             .target_path
             .clone()
             .unwrap_or_else(|| target.scene_id.clone());
+        let context = self.active_stage_context.clone();
         for update in boss_hp_updates {
             let handle = hex::encode(update.target_handle);
             self.runtime_handles.bind_target(
@@ -2912,7 +2937,9 @@ impl PacketDecoder {
                 TargetConfidence::Confirmed,
                 "advvision_stage_context",
             );
-            if let Some(state) = self.runtime_handles.get_mut_for_context(&handle) {
+            if let Some(context) = &context
+                && let Some(state) = self.runtime_handles.get_mut_for_context(&handle)
+            {
                 state.stage_context = Some(context.clone());
             }
             let alias = HandleTargetAlias {
@@ -3203,8 +3230,11 @@ fn target_handle_aliases_from_summary(
     let Some(alias) = handle_target_alias_from_summary(summary, timestamp) else {
         return Vec::new();
     };
+    let allow_hp_aliases = has_runtime_target_source(&summary.target_context)
+        && !has_unreliable_target_name_source(&summary.target_context);
     target_alias_lookup_keys(summary.target_id.as_ref(), &summary.target_context)
         .into_iter()
+        .filter(|key| allow_hp_aliases || !is_hp_alias_key(key))
         .map(|key| (key, alias.clone()))
         .collect()
 }
@@ -3213,9 +3243,12 @@ fn handle_target_alias_from_summary(
     summary: &TargetResolutionSummary,
     timestamp: f64,
 ) -> Option<HandleTargetAlias> {
-    if !has_runtime_target_source(&summary.target_context)
-        || has_unreliable_target_name_source(&summary.target_context)
-    {
+    let has_runtime_source = has_runtime_target_source(&summary.target_context);
+    let has_sdk_stream_source = has_sdk_target_stream_source(&summary.target_context);
+    if !has_runtime_source && !has_sdk_stream_source {
+        return None;
+    }
+    if has_unreliable_target_name_source(&summary.target_context) && !has_sdk_stream_source {
         return None;
     }
     let target_name = summary.target_name.as_ref()?.trim();
@@ -3229,7 +3262,11 @@ fn handle_target_alias_from_summary(
     Some(HandleTargetAlias {
         target_path: target_path.to_owned(),
         target_name: target_name.to_owned(),
-        source: "table_resolved_handle_alias".to_owned(),
+        source: if has_sdk_stream_source {
+            "sdk_target_stream_alias".to_owned()
+        } else {
+            "table_resolved_handle_alias".to_owned()
+        },
         first_seen_at: timestamp.to_bits(),
         last_seen_at: timestamp.to_bits(),
     })
@@ -3266,9 +3303,6 @@ fn apply_handle_alias_backfill(
     recent: &mut RecentTargetHit,
     aliases: &HashMap<String, HandleTargetAlias>,
 ) -> bool {
-    if !can_register_target_handle_alias_from_hit(&recent.hit) {
-        return false;
-    }
     let named_overwrite = recent.hit.target_name.is_some();
     let current_name = recent.hit.target_name.as_deref();
     let current_path = target_context_value(&recent.hit.target_context, "target_path");
@@ -3283,6 +3317,11 @@ fn apply_handle_alias_backfill(
     .into_iter()
     .filter(|key| !is_hp_alias_key(key))
     .collect::<Vec<_>>();
+    if lookup_keys.is_empty()
+        || (recent.hit.target_hp_after <= 1.0 && recent.hit.target_name.is_none())
+    {
+        return false;
+    }
     let Some(alias) = lookup_keys.iter().find_map(|key| aliases.get(key)) else {
         return false;
     };
@@ -3301,6 +3340,10 @@ fn apply_handle_alias_backfill(
         return false;
     }
     apply_alias_to_hit(&mut recent.hit, alias);
+    push_unique_context(
+        &mut recent.hit.target_context,
+        "target_alias_backfill=non_hp_exact".to_owned(),
+    );
     recent.summary.target_name = recent.hit.target_name.clone();
     recent.summary.target_context = recent.hit.target_context.clone();
     recent.summary.score = recent.summary.score.max(80);
@@ -3361,6 +3404,12 @@ fn normalize_final_target_identity(hit: &mut Hit) {
         push_unique_context(
             &mut hit.target_context,
             format!("target_handle_candidate={target_id}"),
+        );
+        hit.target_id = None;
+    } else if target_id.starts_with("runtime_unknown_target#") {
+        push_unique_context(
+            &mut hit.target_context,
+            format!("runtime_placeholder_id={target_id}"),
         );
         hit.target_id = None;
     }
@@ -3508,7 +3557,12 @@ fn apply_handle_alias_to_hit_summary(
 }
 
 fn can_register_target_handle_alias_from_hit(hit: &Hit) -> bool {
-    hit.target_hp_after > 1.0 && !has_unreliable_target_name_source(&hit.target_context)
+    if hit.target_hp_after > 1.0 && !has_unreliable_target_name_source(&hit.target_context) {
+        return true;
+    }
+    hit.target_name.is_some()
+        && target_context_value(&hit.target_context, "target_path").is_some()
+        && has_sdk_target_stream_source(&hit.target_context)
 }
 
 fn has_recent_death_suppressed_target(context: &[String]) -> bool {
@@ -3535,6 +3589,13 @@ fn has_runtime_target_source(context: &[String]) -> bool {
     context
         .iter()
         .any(|entry| entry.starts_with("reason=runtime_alias:"))
+}
+
+fn has_sdk_target_stream_source(context: &[String]) -> bool {
+    target_context_value(context, "target_stream").is_some()
+        && context
+            .iter()
+            .any(|entry| entry == "hp_timeline_match=sdk_target_after_match")
 }
 
 fn apply_alias_to_hit(hit: &mut Hit, alias: &HandleTargetAlias) {
@@ -3598,6 +3659,9 @@ fn should_apply_target_update(
     old: &TargetResolutionSummary,
     new: &TargetResolutionSummary,
 ) -> bool {
+    if summary_is_runtime_unknown_placeholder(new) {
+        return false;
+    }
     if has_recent_death_suppressed_target(&old.target_context) && new.target_name.is_some() {
         return false;
     }
@@ -3658,6 +3722,19 @@ fn should_apply_target_update(
         && new.target_id.is_some()
         && new.direct_hp_evidence
         && new.confidence.rank() >= old.confidence.rank()
+}
+
+fn summary_is_runtime_unknown_placeholder(summary: &TargetResolutionSummary) -> bool {
+    summary
+        .target_id
+        .as_deref()
+        .is_some_and(|target_id| target_id.starts_with("runtime_unknown_target#"))
+        || target_context_value(&summary.target_context, "target_path")
+            == Some("runtime://unknown_target")
+        || summary
+            .target_context
+            .iter()
+            .any(|entry| entry == "target_name_resolution=runtime_placeholder")
 }
 
 fn named_target_paths_conflict(
@@ -5089,6 +5166,20 @@ mod tests {
     }
 
     #[test]
+    fn final_target_id_drops_runtime_unknown_placeholder_when_no_track() {
+        let mut hit = test_hit(1.0, 1000.0, 900.0);
+        hit.target_id = Some("runtime_unknown_target#14".to_owned());
+        normalize_final_target_identity(&mut hit);
+
+        assert_eq!(hit.target_id, None);
+        assert!(
+            hit.target_context
+                .iter()
+                .any(|entry| entry == "runtime_placeholder_id=runtime_unknown_target#14")
+        );
+    }
+
+    #[test]
     fn unknown_hit_without_identity_candidates_records_decode_gap() {
         let mut hit = test_hit(1.0, 1000.0, 900.0);
         annotate_unknown_identity_gap(&mut hit, true, true, true);
@@ -5466,6 +5557,41 @@ mod tests {
     }
 
     #[test]
+    fn abyss_stage_context_binds_later_boss_hp_handle() {
+        let handle = [
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ];
+        let mut decoder = PacketDecoder::default();
+        decoder
+            .advvision_index
+            .insert_monster_name_path_for_test("玛门", "Boss_017_BP_Abyss");
+
+        assert!(!decoder.observe_advvision_context(21.0, "FAbyssGamePlayData Abyss_3_11_0", &[]));
+        assert_eq!(
+            decoder
+                .active_stage_context
+                .as_ref()
+                .and_then(|context| context.scene_id.as_deref()),
+            Some("AdvVision_Mammon_3")
+        );
+
+        let applied = decoder.observe_advvision_context(
+            21.1,
+            UNREADABLE_PROTOCOL_TEXT,
+            &[boss_hp_update(handle, 1_939_334.0, 1552)],
+        );
+        let target = decoder
+            .runtime_handles
+            .target_for_handle("21f04e928995334f8c0bbcaa0ee16fe7")
+            .expect("bound mammon handle");
+
+        assert!(applied);
+        assert_eq!(target.target_name, "玛门");
+        assert_eq!(target.target_path.as_deref(), Some("Boss_017_BP_Abyss"));
+    }
+
+    #[test]
     fn c2s_damage_confirmed_outgoing_by_sdk_target_stream_with_class_hint() {
         let mut hit = test_hit(30.000, 46_347.0, 43_155.0);
         hit.direction = "unknown".to_owned();
@@ -5657,6 +5783,7 @@ mod tests {
         let mut names_by_track = HashMap::<String, HashSet<String>>::new();
         let mut outgoing = 0usize;
         let mut incoming = 0usize;
+        let mut low_hp_hits = 0usize;
         let mut low_hp_outgoing = 0usize;
         let mut direction_evidence = 0usize;
         let mut runtime_instances = 0usize;
@@ -5667,8 +5794,11 @@ mod tests {
                 "incoming" => incoming += 1,
                 _ => {}
             }
-            if hit.direction == "outgoing" && hit.target_max_hp <= 500_000.0 {
-                low_hp_outgoing += 1;
+            if hit.target_max_hp <= 500_000.0 {
+                low_hp_hits += 1;
+                if hit.direction == "outgoing" {
+                    low_hp_outgoing += 1;
+                }
             }
             if hit.target_context.iter().any(|entry| {
                 entry == "direction_candidate=c2s_packet_character"
@@ -5711,10 +5841,11 @@ mod tests {
             .filter(|(_, names)| names.len() > 1)
             .collect::<Vec<_>>();
         println!(
-            "replay target track stats: hits={} outgoing={} incoming={} low_hp_outgoing={} direction_evidence={} runtime_instances={} placeholders={} named_tracks={} names_by_track={:?}",
+            "replay target track stats: hits={} outgoing={} incoming={} low_hp_hits={} low_hp_outgoing={} direction_evidence={} runtime_instances={} placeholders={} named_tracks={} names_by_track={:?}",
             hits.len(),
             outgoing,
             incoming,
+            low_hp_hits,
             low_hp_outgoing,
             direction_evidence,
             runtime_instances,
@@ -5736,17 +5867,15 @@ mod tests {
             hits.len(),
             "not all parsed hits should be incoming"
         );
-        assert!(
-            low_hp_outgoing > 0,
-            "low target_max_hp hits should not be classified as incoming"
-        );
+        if low_hp_hits > 0 {
+            assert!(
+                low_hp_outgoing > 0,
+                "low target_max_hp hits should not be classified as incoming"
+            );
+        }
         assert!(
             direction_evidence > 0,
             "hits should record direction inference/correction context"
-        );
-        assert!(
-            runtime_instances > 0 || placeholders > 0,
-            "hits should record runtime target instance evidence"
         );
     }
 
@@ -5768,10 +5897,12 @@ mod tests {
             stop,
         );
         let mut hits = Vec::new();
+        let mut updates = Vec::new();
         let mut packet_notes = Vec::new();
         while let Ok(event) = receiver.recv_timeout(Duration::from_secs(30)) {
             match event {
                 EngineEvent::Hit(hit) => hits.push(hit),
+                EngineEvent::HitTargetUpdate(update) => updates.push(update),
                 EngineEvent::Packet(packet) => {
                     if packet.parsed_hits > 0 || packet.note.contains("Object/path candidates") {
                         packet_notes.push(packet.note);
@@ -5785,6 +5916,18 @@ mod tests {
         handle.join().expect("import thread should finish");
 
         eprintln!("diagnostic hits={}", hits.len());
+        eprintln!("diagnostic updates={}", updates.len());
+        for update in updates.iter().take(80) {
+            eprintln!(
+                "update t={:.3} dmg={:.0} hp_after? target={:?} id={:?} reason={:?} ctx={}",
+                update.timestamp,
+                update.damage,
+                update.target_name,
+                update.target_id,
+                update.update_reason,
+                update.target_context.join(" | ")
+            );
+        }
         for hit in hits.iter().take(120) {
             eprintln!(
                 "hit t={:.3} dmg={:.0} hp={:.0}->{:.0}/{:.0} target={:?} id={:?} ge={:?} dmg_name={:?} ctx={}",

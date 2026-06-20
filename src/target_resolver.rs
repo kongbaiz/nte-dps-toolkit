@@ -431,12 +431,7 @@ fn candidate_can_display_target_name(
             .iter()
             .any(|reason| reason == "runtime_placeholder_hit_vector")
         {
-            return !candidates.iter().any(|other| {
-                other.handle_kind != ObjectHandleKind::RuntimeInstance
-                    && (candidate_has_direct_hp_evidence(other)
-                        || other.target_name.is_some()
-                        || other.confidence == TargetConfidence::Confirmed)
-            });
+            return false;
         }
         return candidate
             .reasons
@@ -1066,7 +1061,7 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_candidate_can_display_when_no_strong_candidate_exists() {
+    fn placeholder_candidate_never_displays_as_target_name() {
         let resources = resources_with_targets();
         let store = ObjectStateStore::default();
         let mut instances = TargetInstanceStore::default();
@@ -1090,9 +1085,9 @@ mod tests {
             .push("hit_target_xyz=0.000,0.000,0.000".to_owned());
         TargetResolver.apply_to_hit_with_summary(&mut hit, &store, &instances, &[], &resources);
 
-        assert_eq!(hit.target_name.as_deref(), Some("未知目标#1"));
+        assert_eq!(hit.target_name, None);
         assert!(
-            hit.target_context
+            !hit.target_context
                 .iter()
                 .any(|entry| { entry == "target_name_resolution=runtime_placeholder" })
         );
