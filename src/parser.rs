@@ -232,7 +232,7 @@ pub fn classify_attack_type(
         return "格挡反击".to_owned();
     }
     if effect_name.contains("Reaction_1") || effect_name.contains("Reaction1_") {
-        return "创生".to_owned();
+        return "创生花".to_owned();
     }
     if effect_name.contains("Reaction_2") || effect_name.contains("Reaction2_") {
         return "覆纹".to_owned();
@@ -241,7 +241,7 @@ pub fn classify_attack_type(
         return "延滞".to_owned();
     }
     if effect_name.contains("Reaction_4") || effect_name.contains("Reaction4_") {
-        return "默星".to_owned();
+        return "黯星".to_owned();
     }
     if effect_name.contains("Reaction_5") || effect_name.contains("Reaction5_") {
         return "浊燃".to_owned();
@@ -252,7 +252,7 @@ pub fn classify_attack_type(
         Some("E") => Some("E技能"),
         Some("Q") => Some("Q技能"),
         Some("H") => Some("环合"),
-        Some("R") => Some("反应伤害"),
+        Some("R") => Some("环合伤害"),
         Some("Z") => Some("闪避反击"),
         _ => None,
     };
@@ -319,7 +319,7 @@ pub fn qte_reaction_type(
     } else if has_pair("光", "相") {
         Some("延滞")
     } else if has_pair("暗", "魂") {
-        Some("默星")
+        Some("黯星")
     } else if has_pair("暗", "咒") {
         Some("浊燃")
     } else {
@@ -605,6 +605,21 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
         }
     }
     effects
+}
+
+pub fn matches_shifted_bytes_at(
+    data: &[u8],
+    bit_shift: u8,
+    byte_offset: usize,
+    expected: &[u8],
+) -> bool {
+    let Some(decoded) = decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
+    else {
+        return false;
+    };
+    decoded
+        .get(byte_offset..byte_offset + expected.len())
+        .is_some_and(|bytes| bytes == expected)
 }
 
 pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {

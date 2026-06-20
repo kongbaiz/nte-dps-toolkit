@@ -7,3 +7,12 @@
 /tools/cue4parse_probe/obj/
 *.usmap
 .env
+/tools/.venv/
+/tools/.python-version
+/tools/README.md
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+/tools/uv.lock

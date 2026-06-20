@@ -12,6 +12,9 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use aes::Aes256;
+use aes::cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
@@ -60,6 +63,7 @@ const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
 enum DebugImportKind {
     Pcapng,
     CaptureJson,
+    EncryptedIni,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -67,25 +71,37 @@ enum DebugTab {
     #[default]
     Packets,
     Characters,
+    EncryptedIni,
     Environment,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 enum HitDetailFilter {
     #[default]
     All,
     Outgoing,
     Incoming,
+    QteType(String),
 }
 
 impl HitDetailFilter {
-    fn matches(self, hit: &crate::model::Hit) -> bool {
+    fn matches(&self, hit: &crate::model::Hit) -> bool {
         match self {
             Self::All => true,
             Self::Outgoing => hit.direction != "incoming",
             Self::Incoming => hit.direction == "incoming",
+            Self::QteType(attack_type) => {
+                hit.direction != "incoming" && hit.attack_type.as_deref() == Some(attack_type)
+            }
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct QteTypeFilterSummary {
+    attack_type: String,
+    hits: usize,
+    damage: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -341,6 +357,133 @@ impl CharacterEditorState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
+enum EncryptedIniKey {
+    #[default]
+    Global,
+    China,
+}
+
+impl EncryptedIniKey {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::China => "china",
+        }
+    }
+
+    fn key(self) -> &'static [u8; 32] {
+        match self {
+            Self::Global => b"UVbP6pjjw5KZhvddie3tfhg1pVkkveY8",
+            Self::China => b"1zh6IOlIohrR88UNPjiLisrkWACUQYuz",
+        }
+    }
+
+    fn all() -> [Self; 2] {
+        [Self::Global, Self::China]
+    }
+}
+
+#[derive(Default)]
+struct EncryptedIniRecord {
+    encrypted_line: String,
+    payload_parts: Vec<String>,
+    visible_parts: Vec<String>,
+}
+
+#[derive(Default)]
+struct EncryptedIniLayoutCache {
+    key: Option<EncryptedIniLayoutCacheKey>,
+    galley: Option<Arc<egui::Galley>>,
+}
+
+impl EncryptedIniLayoutCache {
+    fn clear(&mut self) {
+        self.key = None;
+        self.galley = None;
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct EncryptedIniLayoutCacheKey {
+    text_len: usize,
+    text_hash: u64,
+    query: String,
+    current_match_byte: Option<usize>,
+    dark_mode: bool,
+    text_color: Color32,
+}
+
+#[derive(Default)]
+struct EncryptedIniEditorState {
+    path: Option<PathBuf>,
+    key: EncryptedIniKey,
+    plaintext: String,
+    search: String,
+    search_match: Option<usize>,
+    search_matches: Vec<usize>,
+    search_cache_query: String,
+    search_matches_dirty: bool,
+    original_key: EncryptedIniKey,
+    original_plaintext: String,
+    records: Vec<EncryptedIniRecord>,
+    line_ending: String,
+    final_newline: bool,
+    dirty: bool,
+    message: String,
+    layout_cache: EncryptedIniLayoutCache,
+}
+
+impl EncryptedIniEditorState {
+    fn load(path: PathBuf) -> Result<Self, String> {
+        let encrypted = std::fs::read_to_string(&path)
+            .map_err(|error| format!("无法读取 {}: {error}", path.display()))?;
+        let (key, plaintext, records, line_ending, final_newline) =
+            parse_encrypted_ini_text(&encrypted)?;
+        let encrypted_lines = records.len();
+        Ok(Self {
+            path: Some(path),
+            key,
+            original_key: key,
+            original_plaintext: plaintext.clone(),
+            records,
+            line_ending,
+            final_newline,
+            plaintext,
+            search: String::new(),
+            search_match: None,
+            search_matches: Vec::new(),
+            search_cache_query: String::new(),
+            search_matches_dirty: false,
+            dirty: false,
+            message: format!("已解析 {encrypted_lines} 行密文，使用 {} key", key.label()),
+            layout_cache: EncryptedIniLayoutCache::default(),
+        })
+    }
+
+    fn display_path(&self) -> String {
+        self.path.as_ref().map_or_else(
+            || "未打开文件".to_owned(),
+            |path| path.display().to_string(),
+        )
+    }
+
+    fn refresh_search_matches(&mut self) {
+        if !self.search_matches_dirty && self.search_cache_query == self.search {
+            return;
+        }
+        self.search_matches = encrypted_ini_search_matches(&self.plaintext, &self.search);
+        self.search_cache_query = self.search.clone();
+        self.search_matches_dirty = false;
+        if self
+            .search_match
+            .is_some_and(|index| index >= self.search_matches.len())
+        {
+            self.search_match = None;
+        }
+    }
+}
+
 pub struct DpsApp {
     characters: Arc<HashMap<u32, CharacterInfo>>,
     avatar_textures: HashMap<String, egui::TextureHandle>,
@@ -383,6 +526,7 @@ pub struct DpsApp {
     debug_only_hits: bool,
     debug_search: String,
     character_editor: CharacterEditorState,
+    encrypted_ini_editor: EncryptedIniEditorState,
     paused: bool,
     dark_mode: bool,
     always_on_top: bool,
@@ -511,6 +655,7 @@ impl DpsApp {
             debug_only_hits: false,
             debug_search: String::new(),
             character_editor,
+            encrypted_ini_editor: EncryptedIniEditorState::default(),
             paused: false,
             dark_mode: ui_config.dark_mode,
             always_on_top: ui_config.always_on_top,
@@ -988,6 +1133,10 @@ impl DpsApp {
             DebugImportKind::CaptureJson => rfd::FileDialog::new()
                 .add_filter("NTE 导出抓包", &["json"])
                 .pick_file(),
+            DebugImportKind::EncryptedIni => rfd::FileDialog::new()
+                .add_filter("NTE 加密 INI", &["ini"])
+                .add_filter("所有文件", &["*"])
+                .pick_file(),
         };
         ctx.send_viewport_cmd_to(
             debug_viewport_id(),
@@ -1006,6 +1155,7 @@ impl DpsApp {
             match kind {
                 DebugImportKind::Pcapng => self.start_pcapng_import(path),
                 DebugImportKind::CaptureJson => self.start_capture_json_import(path),
+                DebugImportKind::EncryptedIni => self.load_encrypted_ini(path),
             }
         }
     }
@@ -1977,15 +2127,21 @@ impl DpsApp {
     }
 
     fn party_panel(&mut self, ui: &mut egui::Ui) {
-        let (mut rows, total_damage): (Vec<_>, f64) =
+        let (mut rows, total_damage, hits): (Vec<_>, f64, &VecDeque<crate::model::Hit>) =
             if let Some(party) = self.selected_party_state() {
-                (party.stats.values().cloned().collect(), party.total_damage)
+                (
+                    party.stats.values().cloned().collect(),
+                    party.total_damage,
+                    &party.hits,
+                )
             } else {
                 (
                     self.state.stats.values().cloned().collect(),
                     self.state.total_damage,
+                    &self.state.hits,
                 )
             };
+        rows.retain(|row| is_party_member_row(row, hits));
         rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
         let row_height = party_row_height(ui.available_height(), rows.len());
         if rows.is_empty() {
@@ -2386,6 +2542,11 @@ impl DpsApp {
         let (detail_source, _) = self.detail_source();
         let direction_summary =
             summarize_hit_directions(detail_hits_for_source(&self.state, detail_source));
+        let qte_summaries =
+            summarize_qte_type_filters(detail_hits_for_source(&self.state, detail_source), None);
+        if !hit_detail_filter_available(&self.team_hit_detail_filter, &qte_summaries) {
+            self.team_hit_detail_filter = HitDetailFilter::All;
+        }
         let (total_damage, total_damage_taken, duration, dps, outgoing_count, incoming_count) =
             if let Some(party) = self.selected_party_state() {
                 (
@@ -2489,11 +2650,16 @@ impl DpsApp {
                                 draw_direction_summary(ui, direction_summary);
                             });
                         ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new("命中类型")
-                                    .strong()
-                                    .color(ui.visuals().weak_text_color()),
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().interact_size.y = 28.0;
+                            ui.spacing_mut().button_padding.y = 4.0;
+                            ui.add_sized(
+                                egui::vec2(92.0, 28.0),
+                                egui::Label::new(
+                                    RichText::new("命中类型")
+                                        .strong()
+                                        .color(ui.visuals().weak_text_color()),
+                                ),
                             );
                             ui.selectable_value(
                                 &mut self.team_hit_detail_filter,
@@ -2512,8 +2678,15 @@ impl DpsApp {
                             );
                         });
                         ui.add_space(4.0);
+                        draw_qte_damage_summary(
+                            ui,
+                            &qte_summaries,
+                            total_damage,
+                            &mut self.team_hit_detail_filter,
+                        );
+                        ui.add_space(4.0);
                         ui.separator();
-                        self.team_hits(ui, self.team_hit_detail_filter);
+                        self.team_hits(ui, self.team_hit_detail_filter.clone());
                     });
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
@@ -2543,6 +2716,13 @@ impl DpsApp {
                 .iter()
                 .filter(|hit| hit.char_id == char_id),
         );
+        let qte_summaries = summarize_qte_type_filters(
+            detail_hits_for_source(&self.state, detail_source),
+            Some(char_id),
+        );
+        if !hit_detail_filter_available(&self.hit_detail_filter, &qte_summaries) {
+            self.hit_detail_filter = HitDetailFilter::All;
+        }
         let skill_summaries = self.cached_skill_summaries(char_id);
         if !self.hit_detail_skill_filter.is_empty()
             && !skill_summaries
@@ -2706,62 +2886,73 @@ impl DpsApp {
                                 });
                             });
                         ui.add_space(8.0);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), 32.0),
-                            egui::Layout::left_to_right(egui::Align::Center),
-                            |ui| {
-                                ui.label(
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().interact_size.y = 28.0;
+                            ui.spacing_mut().button_padding.y = 4.0;
+                            ui.add_sized(
+                                egui::vec2(92.0, 28.0),
+                                egui::Label::new(
                                     RichText::new("伤害类型")
                                         .strong()
                                         .color(ui.visuals().weak_text_color()),
-                                );
-                                ui.selectable_value(
-                                    &mut self.hit_detail_filter,
-                                    HitDetailFilter::All,
-                                    format!("全部 {}", outgoing_count + incoming_count),
-                                );
-                                ui.selectable_value(
-                                    &mut self.hit_detail_filter,
-                                    HitDetailFilter::Outgoing,
-                                    format!("输出 {outgoing_count}"),
-                                );
-                                ui.selectable_value(
-                                    &mut self.hit_detail_filter,
-                                    HitDetailFilter::Incoming,
-                                    format!("受击 {incoming_count}"),
-                                );
-                                ui.separator();
-                                ui.label(
+                                ),
+                            );
+                            ui.selectable_value(
+                                &mut self.hit_detail_filter,
+                                HitDetailFilter::All,
+                                format!("全部 {}", outgoing_count + incoming_count),
+                            );
+                            ui.selectable_value(
+                                &mut self.hit_detail_filter,
+                                HitDetailFilter::Outgoing,
+                                format!("输出 {outgoing_count}"),
+                            );
+                            ui.selectable_value(
+                                &mut self.hit_detail_filter,
+                                HitDetailFilter::Incoming,
+                                format!("受击 {incoming_count}"),
+                            );
+                            ui.separator();
+                            ui.add_sized(
+                                egui::vec2(92.0, 28.0),
+                                egui::Label::new(
                                     RichText::new("具体招式")
                                         .strong()
                                         .color(ui.visuals().weak_text_color()),
-                                );
-                                ui.scope(|ui| {
-                                    ui.spacing_mut().interact_size.y = 27.0;
-                                    ui.spacing_mut().button_padding.y = 2.0;
-                                    egui::ComboBox::from_id_salt(("hit_skill_filter", char_id))
-                                        .width(240.0)
-                                        .selected_text(if self.hit_detail_skill_filter.is_empty() {
-                                            "全部招式".to_owned()
-                                        } else {
-                                            self.hit_detail_skill_filter.clone()
-                                        })
-                                        .show_ui(ui, |ui| {
+                                ),
+                            );
+                            ui.scope(|ui| {
+                                ui.spacing_mut().interact_size.y = 27.0;
+                                ui.spacing_mut().button_padding.y = 2.0;
+                                egui::ComboBox::from_id_salt(("hit_skill_filter", char_id))
+                                    .width(240.0)
+                                    .selected_text(if self.hit_detail_skill_filter.is_empty() {
+                                        "全部招式".to_owned()
+                                    } else {
+                                        self.hit_detail_skill_filter.clone()
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut self.hit_detail_skill_filter,
+                                            String::new(),
+                                            "全部招式",
+                                        );
+                                        for summary in &skill_summaries {
                                             ui.selectable_value(
                                                 &mut self.hit_detail_skill_filter,
-                                                String::new(),
-                                                "全部招式",
+                                                summary.name.clone(),
+                                                format!("{}  {}次", summary.name, summary.hits),
                                             );
-                                            for summary in &skill_summaries {
-                                                ui.selectable_value(
-                                                    &mut self.hit_detail_skill_filter,
-                                                    summary.name.clone(),
-                                                    format!("{}  {}次", summary.name, summary.hits),
-                                                );
-                                            }
-                                        });
-                                });
-                            },
+                                        }
+                                    });
+                            });
+                        });
+                        ui.add_space(4.0);
+                        draw_qte_damage_summary(
+                            ui,
+                            &qte_summaries,
+                            stats.damage,
+                            &mut self.hit_detail_filter,
                         );
                         ui.add_space(4.0);
                         draw_skill_damage_summary(
@@ -2774,7 +2965,12 @@ impl DpsApp {
                         ui.add_space(4.0);
                         ui.separator();
                         let skill_filter = self.hit_detail_skill_filter.clone();
-                        self.character_hits(ui, char_id, self.hit_detail_filter, &skill_filter);
+                        self.character_hits(
+                            ui,
+                            char_id,
+                            self.hit_detail_filter.clone(),
+                            &skill_filter,
+                        );
                     });
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
@@ -2835,14 +3031,242 @@ impl DpsApp {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.debug_tab, DebugTab::Packets, "封包");
             ui.selectable_value(&mut self.debug_tab, DebugTab::Characters, "角色数据");
+            ui.selectable_value(&mut self.debug_tab, DebugTab::EncryptedIni, "加密 INI");
             ui.selectable_value(&mut self.debug_tab, DebugTab::Environment, "环境");
         });
         ui.separator();
         match self.debug_tab {
             DebugTab::Packets => self.debug_packets_contents(ui),
             DebugTab::Characters => self.debug_characters_contents(ui),
+            DebugTab::EncryptedIni => self.debug_encrypted_ini_contents(ui),
             DebugTab::Environment => self.debug_environment_contents(ui),
         }
+    }
+
+    fn debug_encrypted_ini_contents(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("打开 INI").clicked() {
+                self.request_debug_import(ui.ctx(), DebugImportKind::EncryptedIni);
+            }
+            let can_save = self.encrypted_ini_editor.path.is_some();
+            if ui
+                .add_enabled(can_save, egui::Button::new("保存为加密 INI"))
+                .clicked()
+            {
+                self.save_encrypted_ini();
+            }
+            if ui
+                .add_enabled(can_save, egui::Button::new("重新载入"))
+                .clicked()
+                && let Some(path) = self.encrypted_ini_editor.path.clone()
+            {
+                self.load_encrypted_ini(path);
+            }
+            if ui.button("清空").clicked() {
+                self.encrypted_ini_editor = EncryptedIniEditorState::default();
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_sized([92.0, 28.0], egui::Label::new("文件"));
+            ui.monospace(self.encrypted_ini_editor.display_path());
+        });
+        ui.horizontal(|ui| {
+            ui.add_sized([92.0, 28.0], egui::Label::new("保存 key"));
+            egui::ComboBox::from_id_salt("encrypted_ini_key")
+                .width(200.0)
+                .selected_text(self.encrypted_ini_editor.key.label())
+                .show_ui(ui, |ui| {
+                    for key in EncryptedIniKey::all() {
+                        ui.selectable_value(&mut self.encrypted_ini_editor.key, key, key.label());
+                    }
+                });
+        });
+        let editor_id = ui.make_persistent_id("encrypted_ini_plaintext_editor");
+        let mut jump_to_match = false;
+        ui.horizontal(|ui| {
+            ui.add_sized([92.0, 28.0], egui::Label::new("搜索"));
+            let search_changed = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.encrypted_ini_editor.search)
+                        .desired_width(360.0)
+                        .vertical_align(egui::Align::Center)
+                        .hint_text("输入配置名或值"),
+                )
+                .changed();
+            if search_changed {
+                self.encrypted_ini_editor.search_match = None;
+                self.encrypted_ini_editor.search_matches_dirty = true;
+            }
+            self.encrypted_ini_editor.refresh_search_matches();
+            let matches = &self.encrypted_ini_editor.search_matches;
+            let can_search = !matches.is_empty();
+            if ui
+                .add_enabled(can_search, egui::Button::new("上一个"))
+                .clicked()
+            {
+                self.encrypted_ini_editor.search_match =
+                    previous_search_match(self.encrypted_ini_editor.search_match, matches.len());
+                jump_to_match = true;
+            }
+            if ui
+                .add_enabled(can_search, egui::Button::new("下一个"))
+                .clicked()
+            {
+                self.encrypted_ini_editor.search_match =
+                    next_search_match(self.encrypted_ini_editor.search_match, matches.len());
+                jump_to_match = true;
+            }
+            if self.encrypted_ini_editor.search.is_empty() {
+                ui.label("未搜索");
+            } else if let Some(current) = self.encrypted_ini_editor.search_match {
+                if let Some(&byte_index) = matches.get(current) {
+                    let (line, column) =
+                        line_column_for_byte(&self.encrypted_ini_editor.plaintext, byte_index);
+                    ui.monospace(format!(
+                        "{}/{}  行 {} 列 {}",
+                        current + 1,
+                        matches.len(),
+                        line,
+                        column
+                    ));
+                }
+            } else {
+                ui.monospace(format!("{} 处匹配", matches.len()));
+            }
+        });
+        if !self.encrypted_ini_editor.message.is_empty() {
+            ui.label(
+                RichText::new(&self.encrypted_ini_editor.message)
+                    .color(semantic_warning(self.dark_mode)),
+            );
+        }
+        ui.separator();
+        let editor_height = (ui.available_height() - 28.0).max(180.0);
+        let editor_width = ui.available_width();
+        let editor = &mut self.encrypted_ini_editor;
+        let matches = &editor.search_matches;
+        let current_match_byte = editor
+            .search_match
+            .and_then(|index| matches.get(index).copied());
+        let current_cursor_range = current_match_byte.and_then(|byte_index| {
+            encrypted_ini_match_cursor_range(&editor.plaintext, &editor.search, byte_index)
+        });
+        let dark_mode = self.dark_mode;
+        let search = &editor.search;
+        let layout_cache = &mut editor.layout_cache;
+        let plaintext = &mut editor.plaintext;
+        let mut editor_changed = false;
+        let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap_width: f32| {
+            encrypted_ini_layout_galley(
+                ui,
+                buffer.as_str(),
+                search,
+                matches,
+                current_match_byte,
+                wrap_width,
+                dark_mode,
+                layout_cache,
+            )
+        };
+        egui::ScrollArea::both()
+            .id_salt("encrypted_ini_editor_scroll")
+            .auto_shrink([false, false])
+            .max_height(editor_height)
+            .show(ui, |ui| {
+                let mut editor_output = egui::TextEdit::multiline(plaintext)
+                    .id(editor_id)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(editor_width)
+                    .lock_focus(true)
+                    .layouter(&mut layouter)
+                    .hint_text("打开加密 INI 后，这里会显示解密后的明文。")
+                    .show(ui);
+                if editor_output.response.changed() {
+                    editor_changed = true;
+                }
+                if jump_to_match && let Some(cursor_range) = current_cursor_range {
+                    editor_output
+                        .state
+                        .cursor
+                        .set_char_range(Some(cursor_range));
+                    editor_output
+                        .state
+                        .store(ui.ctx(), editor_output.response.id);
+                    editor_output.response.request_focus();
+                    let cursor_rect = editor_output
+                        .galley
+                        .pos_from_cursor(cursor_range.primary)
+                        .translate(editor_output.galley_pos.to_vec2());
+                    ui.scroll_to_rect(
+                        cursor_rect.expand2(egui::vec2(80.0, 32.0)),
+                        Some(egui::Align::Center),
+                    );
+                    ui.ctx().request_repaint();
+                }
+            });
+        if editor_changed {
+            editor.dirty = true;
+            editor.search_matches_dirty = true;
+            editor.layout_cache.clear();
+        }
+        ui.horizontal(|ui| {
+            if self.encrypted_ini_editor.dirty {
+                ui.label("有未保存修改");
+            } else if self.encrypted_ini_editor.path.is_some() {
+                ui.label("当前内容已保存或未修改");
+            }
+        });
+    }
+
+    fn load_encrypted_ini(&mut self, path: PathBuf) {
+        match EncryptedIniEditorState::load(path) {
+            Ok(editor) => {
+                self.encrypted_ini_editor = editor;
+                self.last_error = None;
+            }
+            Err(error) => {
+                self.encrypted_ini_editor.message = error.clone();
+                self.last_error = Some(error);
+            }
+        }
+    }
+
+    fn save_encrypted_ini(&mut self) {
+        let Some(path) = self.encrypted_ini_editor.path.clone() else {
+            self.encrypted_ini_editor.message = "请先打开一个 INI 文件".to_owned();
+            return;
+        };
+        if self.encrypted_ini_editor.plaintext == self.encrypted_ini_editor.original_plaintext
+            && self.encrypted_ini_editor.key == self.encrypted_ini_editor.original_key
+        {
+            self.encrypted_ini_editor.dirty = false;
+            self.encrypted_ini_editor.message = "内容未修改，已保留原始密文文件".to_owned();
+            return;
+        }
+        let encrypted = encrypt_encrypted_ini_records(
+            &self.encrypted_ini_editor.plaintext,
+            self.encrypted_ini_editor.key,
+            self.encrypted_ini_editor.original_key,
+            &self.encrypted_ini_editor.records,
+            &self.encrypted_ini_editor.line_ending,
+            self.encrypted_ini_editor.final_newline,
+        );
+        if let Err(error) = atomic_write_text(&path, &encrypted) {
+            self.encrypted_ini_editor.message = format!("保存 {} 失败: {error}", path.display());
+            self.last_error = Some(self.encrypted_ini_editor.message.clone());
+            return;
+        }
+        self.encrypted_ini_editor.original_key = self.encrypted_ini_editor.key;
+        self.encrypted_ini_editor.original_plaintext = self.encrypted_ini_editor.plaintext.clone();
+        self.encrypted_ini_editor.dirty = false;
+        self.encrypted_ini_editor.message = format!(
+            "已使用 {} key 保存到 {}",
+            self.encrypted_ini_editor.key.label(),
+            path.display()
+        );
+        self.status = "加密 INI 已保存".to_owned();
+        self.last_error = None;
     }
 
     fn debug_environment_contents(&mut self, ui: &mut egui::Ui) {
@@ -3626,19 +4050,9 @@ fn configure_style(ctx: &egui::Context, dark_mode: bool) {
         },
     );
     visuals.window_stroke = Stroke::new(1.0, border);
-    visuals.selection.bg_fill = if dark_mode {
-        Color32::from_rgb(250, 250, 250)
-    } else {
-        Color32::from_rgb(24, 24, 27)
-    };
-    visuals.selection.stroke = Stroke::new(
-        1.0,
-        if dark_mode {
-            Color32::from_rgb(24, 24, 27)
-        } else {
-            Color32::from_rgb(250, 250, 250)
-        },
-    );
+    let accent = theme_accent(dark_mode);
+    visuals.selection.bg_fill = accent;
+    visuals.selection.stroke = Stroke::new(1.0, contrast_text(accent));
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();
@@ -3734,6 +4148,24 @@ struct SkillDamageSummary {
     damage: f64,
 }
 
+fn is_qte_follow_up_damage_type(attack_type: &str) -> bool {
+    matches!(
+        attack_type,
+        "创生花" | "覆纹" | "延滞" | "黯星" | "浊燃" | "盈蓄" | "失谐"
+    )
+}
+
+fn is_qte_follow_up_damage_hit(hit: &crate::model::Hit) -> bool {
+    hit.attack_type
+        .as_deref()
+        .is_some_and(is_qte_follow_up_damage_type)
+}
+
+fn is_party_member_row(row: &CharacterStats, hits: &VecDeque<crate::model::Hit>) -> bool {
+    hits.iter()
+        .any(|hit| hit.char_id == row.char_id && !is_qte_follow_up_damage_hit(hit))
+}
+
 fn hit_specific_type(hit: &crate::model::Hit) -> &str {
     hit.damage_name
         .as_deref()
@@ -3802,6 +4234,185 @@ fn aggregate_character_skill_damage(
             .then_with(|| left.name.cmp(&right.name))
     });
     rows
+}
+
+fn summarize_qte_type_filters(
+    hits: &VecDeque<crate::model::Hit>,
+    char_id: Option<u32>,
+) -> Vec<QteTypeFilterSummary> {
+    let mut summaries = HashMap::<String, QteTypeFilterSummary>::new();
+    for hit in hits.iter().filter(|hit| {
+        hit.direction != "incoming" && char_id.is_none_or(|char_id| hit.char_id == char_id)
+    }) {
+        let Some(attack_type) = hit.attack_type.as_deref() else {
+            continue;
+        };
+        if is_qte_follow_up_damage_type(attack_type) {
+            let row =
+                summaries
+                    .entry(attack_type.to_owned())
+                    .or_insert_with(|| QteTypeFilterSummary {
+                        attack_type: attack_type.to_owned(),
+                        hits: 0,
+                        damage: 0.0,
+                    });
+            row.hits += 1;
+            row.damage += hit.damage;
+        }
+    }
+    let mut rows = summaries.into_values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .damage
+            .total_cmp(&left.damage)
+            .then_with(|| left.attack_type.cmp(&right.attack_type))
+    });
+    rows
+}
+
+fn hit_detail_filter_available(
+    filter: &HitDetailFilter,
+    qte_summaries: &[QteTypeFilterSummary],
+) -> bool {
+    match filter {
+        HitDetailFilter::QteType(attack_type) => qte_summaries
+            .iter()
+            .any(|summary| summary.attack_type == *attack_type),
+        _ => true,
+    }
+}
+
+fn qte_type_filter_label(summary: &QteTypeFilterSummary, total_damage: f64) -> String {
+    let share = if total_damage > 0.0 {
+        summary.damage / total_damage * 100.0
+    } else {
+        0.0
+    };
+    format!(
+        "{} {} · {share:.1}%",
+        summary.attack_type,
+        format_number(summary.damage)
+    )
+}
+
+fn draw_qte_damage_summary(
+    ui: &mut egui::Ui,
+    qte_summaries: &[QteTypeFilterSummary],
+    total_damage: f64,
+    selected: &mut HitDetailFilter,
+) {
+    if qte_summaries.is_empty() {
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.add_sized(
+            egui::vec2(92.0, 36.0),
+            egui::Label::new(
+                RichText::new("环合伤害")
+                    .strong()
+                    .color(ui.visuals().weak_text_color()),
+            ),
+        );
+        for summary in qte_summaries {
+            qte_damage_summary_chip(ui, summary, total_damage, selected);
+        }
+    });
+}
+
+fn qte_damage_summary_chip(
+    ui: &mut egui::Ui,
+    summary: &QteTypeFilterSummary,
+    total_damage: f64,
+    selected: &mut HitDetailFilter,
+) {
+    let target_filter = HitDetailFilter::QteType(summary.attack_type.clone());
+    let is_selected = selected == &target_filter;
+    let share = if total_damage > 0.0 {
+        summary.damage / total_damage * 100.0
+    } else {
+        0.0
+    };
+    let width = 156.0_f32.max(96.0 + summary.attack_type.chars().count() as f32 * 12.0);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 42.0), egui::Sense::click());
+    let dark_mode = ui.visuals().dark_mode;
+    let accent = theme_accent(dark_mode);
+    let bg = if is_selected {
+        accent
+    } else if response.hovered() {
+        shadcn_card_hover(dark_mode)
+    } else {
+        shadcn_card(dark_mode)
+    };
+    let text_color = if is_selected {
+        contrast_text(accent)
+    } else {
+        shadcn_foreground(dark_mode)
+    };
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(6),
+        bg,
+        Stroke::new(
+            1.0,
+            if is_selected {
+                accent
+            } else {
+                shadcn_border(dark_mode)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let progress_rect = egui::Rect::from_min_max(
+        rect.left_bottom() - egui::vec2(0.0, 3.0),
+        egui::pos2(
+            rect.left() + rect.width() * (share as f32 / 100.0).clamp(0.0, 1.0),
+            rect.bottom(),
+        ),
+    );
+    ui.painter().rect_filled(
+        progress_rect,
+        1.0,
+        if is_selected {
+            contrast_text(accent).gamma_multiply(0.45)
+        } else {
+            accent.gamma_multiply(0.55)
+        },
+    );
+    let text_rect = rect.shrink2(egui::vec2(10.0, 5.0));
+    ui.painter().text(
+        egui::pos2(text_rect.left(), text_rect.top() + 9.0),
+        egui::Align2::LEFT_CENTER,
+        &summary.attack_type,
+        egui::FontId::proportional(12.5),
+        text_color,
+    );
+    ui.painter().text(
+        egui::pos2(text_rect.left(), text_rect.top() + 27.0),
+        egui::Align2::LEFT_CENTER,
+        format!("{} · {share:.1}%", format_number(summary.damage)),
+        egui::FontId::monospace(11.0),
+        if is_selected {
+            contrast_text(accent).gamma_multiply(0.82)
+        } else {
+            ui.visuals().weak_text_color()
+        },
+    );
+    if response
+        .on_hover_text(format!(
+            "{} 次 · 总伤害 {} · 占总伤害 {share:.1}%",
+            summary.hits,
+            format_number(summary.damage)
+        ))
+        .clicked()
+    {
+        *selected = if is_selected {
+            HitDetailFilter::All
+        } else {
+            target_filter
+        };
+    }
 }
 
 fn detail_hits_for_source(
@@ -4877,6 +5488,444 @@ fn character_text_field(ui: &mut egui::Ui, label: &str, value: &mut String, dirt
     ui.end_row();
 }
 
+fn encrypted_ini_search_matches(text: &str, query: &str) -> Vec<usize> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    if query.is_ascii() {
+        let query = query.as_bytes();
+        let text_bytes = text.as_bytes();
+        if query.len() > text_bytes.len() {
+            return Vec::new();
+        }
+        return text_bytes
+            .windows(query.len())
+            .enumerate()
+            .filter_map(|(index, window)| {
+                (text.is_char_boundary(index) && window.eq_ignore_ascii_case(query))
+                    .then_some(index)
+            })
+            .collect();
+    }
+
+    let lower_text = text.to_lowercase();
+    let lower_query = query.to_lowercase();
+    lower_text
+        .match_indices(&lower_query)
+        .filter_map(|(index, _)| text.is_char_boundary(index).then_some(index))
+        .collect()
+}
+
+fn next_search_match(current: Option<usize>, len: usize) -> Option<usize> {
+    if len == 0 {
+        None
+    } else {
+        Some(current.map_or(0, |index| (index + 1) % len))
+    }
+}
+
+fn previous_search_match(current: Option<usize>, len: usize) -> Option<usize> {
+    if len == 0 {
+        None
+    } else {
+        Some(current.map_or(
+            len - 1,
+            |index| {
+                if index == 0 { len - 1 } else { index - 1 }
+            },
+        ))
+    }
+}
+
+fn encrypted_ini_match_cursor_range(
+    text: &str,
+    query: &str,
+    match_index: usize,
+) -> Option<egui::text::CCursorRange> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let start = byte_to_char_index(text, match_index);
+    let end = byte_to_char_index(
+        text,
+        byte_index_after_chars(text, match_index, query.chars().count())
+            .unwrap_or(match_index + query.len()),
+    );
+    Some(egui::text::CCursorRange::two(
+        egui::text::CCursor::new(start),
+        egui::text::CCursor::new(end),
+    ))
+}
+
+fn encrypted_ini_match_byte_range(
+    text: &str,
+    query: &str,
+    match_index: usize,
+) -> Option<std::ops::Range<usize>> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let end = byte_index_after_chars(text, match_index, query.chars().count())
+        .unwrap_or(match_index + query.len())
+        .min(text.len());
+    (match_index < end && text.is_char_boundary(match_index) && text.is_char_boundary(end))
+        .then_some(match_index..end)
+}
+
+fn encrypted_ini_layout_galley(
+    ui: &egui::Ui,
+    text: &str,
+    query: &str,
+    matches: &[usize],
+    current_match_byte: Option<usize>,
+    wrap_width: f32,
+    dark_mode: bool,
+    cache: &mut EncryptedIniLayoutCache,
+) -> Arc<egui::Galley> {
+    let text_color = ui.visuals().widgets.inactive.text_color();
+    let query = query.trim();
+    let highlight_query = if query.is_empty() || matches.is_empty() {
+        ""
+    } else {
+        query
+    };
+    let current_match_byte = current_match_byte.filter(|_| !highlight_query.is_empty());
+    let key = EncryptedIniLayoutCacheKey {
+        text_len: text.len(),
+        text_hash: encrypted_ini_text_fingerprint(text),
+        query: highlight_query.to_owned(),
+        current_match_byte,
+        dark_mode,
+        text_color,
+    };
+    if cache.key.as_ref() == Some(&key)
+        && let Some(galley) = &cache.galley
+    {
+        return Arc::clone(galley);
+    }
+
+    let layout_job = encrypted_ini_layout_job(
+        ui,
+        text,
+        highlight_query,
+        matches,
+        current_match_byte,
+        wrap_width,
+        dark_mode,
+    );
+    let galley = ui.fonts(|fonts| fonts.layout_job(layout_job));
+    cache.key = Some(key);
+    cache.galley = Some(Arc::clone(&galley));
+    galley
+}
+
+fn encrypted_ini_text_fingerprint(text: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn encrypted_ini_layout_job(
+    ui: &egui::Ui,
+    text: &str,
+    query: &str,
+    matches: &[usize],
+    current_match_byte: Option<usize>,
+    _wrap_width: f32,
+    dark_mode: bool,
+) -> egui::text::LayoutJob {
+    let text_color = ui.visuals().widgets.inactive.text_color();
+    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+    let base_format = egui::text::TextFormat {
+        font_id,
+        color: text_color,
+        ..Default::default()
+    };
+    let mut match_format = base_format.clone();
+    match_format.background = if dark_mode {
+        Color32::from_rgb(82, 62, 12)
+    } else {
+        Color32::from_rgb(254, 240, 138)
+    };
+    match_format.color = if dark_mode {
+        Color32::from_rgb(254, 249, 195)
+    } else {
+        Color32::from_rgb(63, 63, 70)
+    };
+    let mut current_format = match_format.clone();
+    current_format.background = Color32::from_rgb(37, 99, 235);
+    current_format.color = Color32::WHITE;
+
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = f32::INFINITY;
+    let mut cursor = 0;
+    for &start in matches {
+        let Some(range) = encrypted_ini_match_byte_range(text, query, start) else {
+            continue;
+        };
+        if range.start < cursor {
+            continue;
+        }
+        if cursor < range.start {
+            job.append(&text[cursor..range.start], 0.0, base_format.clone());
+        }
+        let format = if Some(range.start) == current_match_byte {
+            current_format.clone()
+        } else {
+            match_format.clone()
+        };
+        job.append(&text[range.clone()], 0.0, format);
+        cursor = range.end;
+    }
+    if cursor < text.len() {
+        job.append(&text[cursor..], 0.0, base_format);
+    } else if text.is_empty() {
+        job.append("", 0.0, base_format);
+    }
+    job
+}
+
+fn byte_to_char_index(text: &str, byte_index: usize) -> usize {
+    text[..byte_index.min(text.len())].chars().count()
+}
+
+fn byte_index_after_chars(text: &str, byte_index: usize, char_count: usize) -> Option<usize> {
+    let mut remaining = char_count;
+    for (offset, ch) in text.get(byte_index..)?.char_indices() {
+        if remaining == 0 {
+            return Some(byte_index + offset);
+        }
+        remaining -= 1;
+        if remaining == 0 {
+            return Some(byte_index + offset + ch.len_utf8());
+        }
+    }
+    (remaining == 0).then_some(text.len())
+}
+
+fn line_column_for_byte(text: &str, byte_index: usize) -> (usize, usize) {
+    let prefix = &text[..byte_index.min(text.len())];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit_once('\n')
+        .map_or(prefix, |(_, tail)| tail)
+        .chars()
+        .count()
+        + 1;
+    (line, column)
+}
+
+fn parse_encrypted_ini_text(
+    text: &str,
+) -> Result<
+    (
+        EncryptedIniKey,
+        String,
+        Vec<EncryptedIniRecord>,
+        String,
+        bool,
+    ),
+    String,
+> {
+    let mut active_key = EncryptedIniKey::Global;
+    let mut output = Vec::new();
+    let mut records = Vec::new();
+    let line_ending = if text.contains("\r\n") {
+        "\r\n".to_owned()
+    } else {
+        "\n".to_owned()
+    };
+    let final_newline = text.ends_with('\n') || text.ends_with('\r');
+    for original in text.trim_start_matches('\u{feff}').lines() {
+        let line = original.trim();
+        if line.is_empty() {
+            records.push(EncryptedIniRecord {
+                encrypted_line: original.to_owned(),
+                payload_parts: Vec::new(),
+                visible_parts: Vec::new(),
+            });
+            continue;
+        }
+        if let Some((key, decrypted)) = decrypt_encrypted_ini_line(line)? {
+            active_key = key;
+            let payload_parts = decrypted
+                .split("|SPLIT|")
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let visible_parts = payload_parts
+                .iter()
+                .filter(|part| !part.is_empty())
+                .cloned()
+                .collect::<Vec<_>>();
+            output.extend(visible_parts.iter().cloned());
+            records.push(EncryptedIniRecord {
+                encrypted_line: original.to_owned(),
+                payload_parts,
+                visible_parts,
+            });
+        } else {
+            output.push(original.to_owned());
+            records.push(EncryptedIniRecord {
+                encrypted_line: original.to_owned(),
+                payload_parts: vec![original.to_owned()],
+                visible_parts: vec![original.to_owned()],
+            });
+        }
+    }
+    Ok((
+        active_key,
+        output.join("\n"),
+        records,
+        line_ending,
+        final_newline,
+    ))
+}
+
+#[cfg(test)]
+fn decrypt_encrypted_ini_text(text: &str) -> Result<(EncryptedIniKey, String, usize), String> {
+    let (key, plaintext, records, _, _) = parse_encrypted_ini_text(text)?;
+    Ok((key, plaintext, records.len()))
+}
+
+fn decrypt_encrypted_ini_line(line: &str) -> Result<Option<(EncryptedIniKey, String)>, String> {
+    let Ok(encrypted) = BASE64.decode(line) else {
+        return Ok(None);
+    };
+    if encrypted.is_empty() || encrypted.len() % 16 != 0 {
+        return Ok(None);
+    }
+    for key in EncryptedIniKey::all() {
+        let decrypted = decrypt_aes256_ecb(&encrypted, key.key())?;
+        let Ok(unpadded) = pkcs7_unpad(&decrypted) else {
+            continue;
+        };
+        let Ok(text) = String::from_utf8(unpadded.to_vec()) else {
+            continue;
+        };
+        return Ok(Some((key, text)));
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+fn encrypt_encrypted_ini_text(text: &str, key: EncryptedIniKey) -> String {
+    let mut output = String::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let encrypted = encrypt_aes256_ecb(&pkcs7_pad(line.as_bytes()), key.key());
+        output.push_str(&BASE64.encode(encrypted));
+        output.push('\n');
+    }
+    output
+}
+
+fn encrypt_encrypted_ini_records(
+    text: &str,
+    key: EncryptedIniKey,
+    original_key: EncryptedIniKey,
+    records: &[EncryptedIniRecord],
+    line_ending: &str,
+    final_newline: bool,
+) -> String {
+    let mut output_lines = Vec::new();
+    let lines = text.lines().map(str::to_owned).collect::<Vec<_>>();
+    let mut line_index = 0;
+    for record in records {
+        let visible_count = record.visible_parts.len();
+        if visible_count == 0 {
+            output_lines.push(record.encrypted_line.clone());
+            continue;
+        }
+        if line_index + visible_count > lines.len() {
+            break;
+        }
+        let current_parts = &lines[line_index..line_index + visible_count];
+        if key == original_key && current_parts == record.visible_parts.as_slice() {
+            output_lines.push(record.encrypted_line.clone());
+        } else {
+            let mut payload_parts = record.payload_parts.clone();
+            let mut current_index = 0;
+            for part in &mut payload_parts {
+                if !part.is_empty() {
+                    *part = current_parts[current_index].clone();
+                    current_index += 1;
+                }
+            }
+            let payload = payload_parts.join("|SPLIT|");
+            let encrypted = encrypt_aes256_ecb(&pkcs7_pad(payload.as_bytes()), key.key());
+            let encrypted_line = BASE64.encode(encrypted);
+            output_lines.push(encrypted_line);
+        }
+        line_index += visible_count;
+    }
+    for line in lines
+        .iter()
+        .skip(line_index)
+        .filter(|line| !line.trim().is_empty())
+    {
+        let encrypted = encrypt_aes256_ecb(&pkcs7_pad(line.as_bytes()), key.key());
+        let encrypted_line = BASE64.encode(encrypted);
+        output_lines.push(encrypted_line);
+    }
+    let mut output = output_lines.join(line_ending);
+    if final_newline {
+        output.push_str(line_ending);
+    }
+    output
+}
+
+fn decrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
+    if data.len() % 16 != 0 {
+        return Err("AES 密文长度不是 16 字节块的整数倍".to_owned());
+    }
+    let cipher = Aes256::new_from_slice(key).map_err(|error| error.to_string())?;
+    let mut output = data.to_vec();
+    for block in output.chunks_exact_mut(16) {
+        cipher.decrypt_block(block.into());
+    }
+    Ok(output)
+}
+
+fn encrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
+    debug_assert_eq!(data.len() % 16, 0);
+    let cipher = Aes256::new_from_slice(key).expect("static AES-256 key must be valid");
+    let mut output = data.to_vec();
+    for block in output.chunks_exact_mut(16) {
+        cipher.encrypt_block(block.into());
+    }
+    output
+}
+
+fn pkcs7_pad(data: &[u8]) -> Vec<u8> {
+    let padding = 16 - data.len() % 16;
+    let mut output = Vec::with_capacity(data.len() + padding);
+    output.extend_from_slice(data);
+    output.extend(std::iter::repeat_n(padding as u8, padding));
+    output
+}
+
+fn pkcs7_unpad(data: &[u8]) -> Result<&[u8], String> {
+    let Some(&padding) = data.last() else {
+        return Err("空数据无法移除 PKCS#7 padding".to_owned());
+    };
+    let padding = usize::from(padding);
+    if padding == 0 || padding > 16 || padding > data.len() {
+        return Err("PKCS#7 padding 无效".to_owned());
+    }
+    if !data[data.len() - padding..]
+        .iter()
+        .all(|byte| usize::from(*byte) == padding)
+    {
+        return Err("PKCS#7 padding 不一致".to_owned());
+    }
+    Ok(&data[..data.len() - padding])
+}
+
 fn write_abyss_half_json<W: std::fmt::Write + ?Sized>(
     out: &mut W,
     key: &str,
@@ -5256,9 +6305,18 @@ fn data_root() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{DpsApp, UiConfigSavePlan, adjusted_cached_index, hit_type_label};
+    use super::{
+        BASE64, DpsApp, EncryptedIniKey, HitDetailFilter, QteTypeFilterSummary, UiConfigSavePlan,
+        adjusted_cached_index, decrypt_encrypted_ini_text, encrypt_aes256_ecb,
+        encrypt_encrypted_ini_records, encrypt_encrypted_ini_text, encrypted_ini_search_matches,
+        encrypted_ini_text_fingerprint, hit_detail_filter_available, hit_type_label,
+        is_party_member_row, parse_encrypted_ini_text, pkcs7_pad, qte_type_filter_label,
+        summarize_qte_type_filters,
+    };
     use crate::config::UiConfig;
-    use crate::model::Hit;
+    use crate::model::{CharacterStats, Hit};
+    use base64::Engine as _;
+    use std::collections::VecDeque;
     use std::time::{Duration, Instant};
 
     fn hit_with_direction(direction: &str) -> Hit {
@@ -5312,6 +6370,237 @@ mod tests {
         assert!(!incoming.is_empty());
         assert!(!unknown.is_empty());
         assert_ne!(unknown, incoming);
+    }
+
+    #[test]
+    fn qte_type_filters_include_only_present_outgoing_qte_types() {
+        let mut qte_a = hit_with_direction("outgoing");
+        qte_a.attack_type = Some("覆纹".to_owned());
+        qte_a.damage = 10.0;
+        let mut qte_b = hit_with_direction("unknown");
+        qte_b.attack_type = Some("创生花".to_owned());
+        qte_b.damage = 20.0;
+        let mut incoming_qte = hit_with_direction("incoming");
+        incoming_qte.attack_type = Some("覆纹".to_owned());
+        let mut entry_qte = hit_with_direction("outgoing");
+        entry_qte.attack_type = Some("环合·覆纹".to_owned());
+        let mut non_qte = hit_with_direction("outgoing");
+        non_qte.attack_type = Some("普攻".to_owned());
+
+        let hits = VecDeque::from([qte_a, qte_b, incoming_qte, entry_qte, non_qte]);
+        let summaries = summarize_qte_type_filters(&hits, None);
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].attack_type, "创生花");
+        assert_eq!(summaries[0].hits, 1);
+        assert_eq!(summaries[0].damage, 20.0);
+        assert_eq!(summaries[1].attack_type, "覆纹");
+        assert_eq!(summaries[1].hits, 1);
+        assert_eq!(summaries[1].damage, 10.0);
+        assert!(hit_detail_filter_available(
+            &HitDetailFilter::QteType("覆纹".to_owned()),
+            &summaries
+        ));
+        assert!(!hit_detail_filter_available(
+            &HitDetailFilter::QteType("黯星".to_owned()),
+            &summaries
+        ));
+    }
+
+    #[test]
+    fn qte_type_filter_matches_only_that_attack_type() {
+        let filter = HitDetailFilter::QteType("覆纹".to_owned());
+        let mut matching = hit_with_direction("outgoing");
+        matching.attack_type = Some("覆纹".to_owned());
+        let mut different_qte = hit_with_direction("outgoing");
+        different_qte.attack_type = Some("创生花".to_owned());
+        let mut incoming = hit_with_direction("incoming");
+        incoming.attack_type = Some("覆纹".to_owned());
+
+        assert!(filter.matches(&matching));
+        assert!(!filter.matches(&different_qte));
+        assert!(!filter.matches(&incoming));
+    }
+
+    #[test]
+    fn qte_type_filter_label_shows_damage_and_share() {
+        let summary = QteTypeFilterSummary {
+            attack_type: "覆纹".to_owned(),
+            hits: 42,
+            damage: 77_136.0,
+        };
+
+        assert_eq!(
+            qte_type_filter_label(&summary, 1_928_356.0),
+            "覆纹 77,136 · 4.0%"
+        );
+    }
+
+    #[test]
+    fn party_member_rows_hide_qte_follow_up_pseudo_characters() {
+        let mut real_hit = hit_with_direction("outgoing");
+        real_hit.char_id = 1;
+        real_hit.attack_type = Some("普攻".to_owned());
+        let mut follow_up = hit_with_direction("outgoing");
+        follow_up.char_id = 999_999;
+        follow_up.char_known = false;
+        follow_up.attack_type = Some("覆纹".to_owned());
+
+        let hits = VecDeque::from([real_hit, follow_up]);
+
+        assert!(is_party_member_row(
+            &CharacterStats {
+                char_id: 1,
+                ..Default::default()
+            },
+            &hits
+        ));
+        assert!(!is_party_member_row(
+            &CharacterStats {
+                char_id: 999_999,
+                ..Default::default()
+            },
+            &hits
+        ));
+    }
+
+    #[test]
+    fn encrypted_ini_round_trips_with_china_key() {
+        let plaintext = "[Core.System]\nGameName=NTE\nEndpoint=https://example.invalid";
+        let encrypted = encrypt_encrypted_ini_text(plaintext, EncryptedIniKey::China);
+        assert!(encrypted.lines().all(|line| BASE64.decode(line).is_ok()));
+
+        let (key, decrypted, encrypted_lines) =
+            decrypt_encrypted_ini_text(&encrypted).expect("encrypted INI should decrypt");
+        assert_eq!(key, EncryptedIniKey::China);
+        assert_eq!(decrypted, plaintext);
+        assert_eq!(encrypted_lines, 3);
+    }
+
+    #[test]
+    fn encrypted_ini_save_preserves_unchanged_records() {
+        let first = BASE64.encode(encrypt_aes256_ecb(
+            &pkcs7_pad(b"[Setting]|SPLIT||SPLIT|Sound_MainVolumn=70|SPLIT|"),
+            EncryptedIniKey::China.key(),
+        ));
+        let second = BASE64.encode(encrypt_aes256_ecb(
+            &pkcs7_pad(b"FightDefaultArmLengthScale=0"),
+            EncryptedIniKey::China.key(),
+        ));
+        let encrypted = format!("{first}\n{second}\n");
+        let (key, plaintext, records, line_ending, final_newline) =
+            parse_encrypted_ini_text(&encrypted).expect("fixture should decrypt");
+        assert_eq!(
+            plaintext,
+            "[Setting]\nSound_MainVolumn=70\nFightDefaultArmLengthScale=0"
+        );
+
+        let modified = plaintext.replace(
+            "FightDefaultArmLengthScale=0",
+            "FightDefaultArmLengthScale=1",
+        );
+        let saved = encrypt_encrypted_ini_records(
+            &modified,
+            key,
+            key,
+            &records,
+            &line_ending,
+            final_newline,
+        );
+        let saved_lines = saved.lines().collect::<Vec<_>>();
+        assert_eq!(saved_lines[0], first);
+        assert_ne!(saved_lines[1], second);
+
+        let restored = encrypt_encrypted_ini_records(
+            &plaintext,
+            key,
+            key,
+            &records,
+            &line_ending,
+            final_newline,
+        );
+        assert_eq!(restored, encrypted);
+    }
+
+    #[test]
+    fn encrypted_ini_reencrypts_same_payload_to_same_ciphertext_after_reload() {
+        let original_payload = "|SPLIT|FightDefaultArmLengthScale=0|SPLIT|";
+        let changed_line = "FightDefaultArmLengthScale=1";
+        let original = format!(
+            "{}\n",
+            BASE64.encode(encrypt_aes256_ecb(
+                &pkcs7_pad(original_payload.as_bytes()),
+                EncryptedIniKey::China.key(),
+            ))
+        );
+        let (key, _, records, line_ending, final_newline) =
+            parse_encrypted_ini_text(&original).expect("fixture should decrypt");
+
+        let changed = encrypt_encrypted_ini_records(
+            changed_line,
+            key,
+            key,
+            &records,
+            &line_ending,
+            final_newline,
+        );
+        assert_ne!(changed, original);
+        let (reloaded_key, _, reloaded_records, reloaded_line_ending, reloaded_final_newline) =
+            parse_encrypted_ini_text(&changed).expect("changed fixture should decrypt");
+        let restored = encrypt_encrypted_ini_records(
+            "FightDefaultArmLengthScale=0",
+            reloaded_key,
+            reloaded_key,
+            &reloaded_records,
+            &reloaded_line_ending,
+            reloaded_final_newline,
+        );
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn encrypted_ini_save_preserves_crlf_and_missing_final_newline() {
+        let first = BASE64.encode(encrypt_aes256_ecb(
+            &pkcs7_pad(b"[Setting]|SPLIT|Sound_MainVolumn=70"),
+            EncryptedIniKey::China.key(),
+        ));
+        let second = BASE64.encode(encrypt_aes256_ecb(
+            &pkcs7_pad(b"FightDefaultArmLengthScale=0"),
+            EncryptedIniKey::China.key(),
+        ));
+        let encrypted = format!("{first}\r\n{second}");
+        let (key, plaintext, records, line_ending, final_newline) =
+            parse_encrypted_ini_text(&encrypted).expect("fixture should decrypt");
+        assert_eq!(line_ending, "\r\n");
+        assert!(!final_newline);
+
+        let saved = encrypt_encrypted_ini_records(
+            &plaintext,
+            key,
+            key,
+            &records,
+            &line_ending,
+            final_newline,
+        );
+        assert_eq!(saved, encrypted);
+        assert!(!saved.ends_with('\n'));
+        assert!(saved.contains("\r\n"));
+    }
+
+    #[test]
+    fn encrypted_ini_search_is_case_insensitive() {
+        let text = "bUseHDR=True\nHDRDisplay=1\nOther=0";
+        let matches = encrypted_ini_search_matches(text, "hdr");
+        assert_eq!(matches.len(), 2);
+        assert_eq!(&text[matches[0]..matches[0] + 3], "HDR");
+    }
+
+    #[test]
+    fn encrypted_ini_text_fingerprint_tracks_same_length_edits() {
+        assert_ne!(
+            encrypted_ini_text_fingerprint("Alpha=1\nBeta=2"),
+            encrypted_ini_text_fingerprint("Alpha=1\nBeta=3")
+        );
     }
 
     #[test]

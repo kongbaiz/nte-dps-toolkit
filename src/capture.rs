@@ -30,8 +30,9 @@ use crate::parser::{
     SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
     classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
     find_declared_character_evidence, load_gameplay_effect_mapping, load_gameplay_effect_skills,
-    load_wooden_damage_names, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, qte_reaction_type,
+    load_wooden_damage_names, matches_shifted_bytes_at, normalize_damage_name,
+    parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects,
+    qte_reaction_type,
 };
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
@@ -857,14 +858,21 @@ fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
 }
 
 const INFERRED_FOLLOW_UP_CHAR_ID: u32 = u32::MAX;
-const NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX: u32 = 241;
-const MAX_DISPLAY_DAMAGE_CORRECTION_RATIO: f64 = 0.03;
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
+const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
+const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
+const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
+const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
+const FUWEN_ENTERING_ID_SHIFT: u8 = 0;
+const FUWEN_ENTERING_ID_OFFSET: usize = 53;
+const FUWEN_PREVIOUS_ID_SHIFT: u8 = 2;
+const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
+const FUWEN_DURATION_SECONDS: f64 = 12.0;
+const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
 
 #[derive(Clone)]
 struct PendingHit {
     hit: Hit,
-    gameplay_effect_index: Option<u32>,
 }
 
 #[derive(Default)]
@@ -875,6 +883,11 @@ struct FollowUpDamageTracker {
     pending_hits: VecDeque<PendingHit>,
     team_attributes: HashSet<String>,
     character_attributes: HashMap<u32, String>,
+    fuwen_active: bool,
+    fuwen_opening_character_id: Option<u32>,
+    fuwen_opening_pending: bool,
+    fuwen_effect_started_at: Option<f64>,
+    fuwen_recorded_damage: bool,
 }
 
 impl FollowUpDamageTracker {
@@ -882,6 +895,11 @@ impl FollowUpDamageTracker {
         self.pending_hits.clear();
         self.team_attributes.clear();
         self.character_attributes.clear();
+        self.fuwen_active = false;
+        self.fuwen_opening_character_id = None;
+        self.fuwen_opening_pending = false;
+        self.fuwen_effect_started_at = None;
+        self.fuwen_recorded_damage = false;
     }
 
     fn observe_characters(
@@ -905,7 +923,7 @@ impl FollowUpDamageTracker {
     fn observe_hit(
         &mut self,
         hit: &Hit,
-        gameplay_effect_index: Option<u32>,
+        _gameplay_effect_index: Option<u32>,
         characters: &HashMap<u32, CharacterInfo>,
     ) {
         if hit.direction == "incoming"
@@ -935,13 +953,25 @@ impl FollowUpDamageTracker {
         {
             self.pending_hits.clear();
         }
-        self.pending_hits.push_back(PendingHit {
-            hit: hit.clone(),
-            gameplay_effect_index,
-        });
+        self.pending_hits.push_back(PendingHit { hit: hit.clone() });
         while self.pending_hits.len() > MAX_PENDING_FOLLOW_UP_HITS {
             self.pending_hits.pop_front();
         }
+    }
+
+    fn observe_fuwen_start(
+        &mut self,
+        _timestamp: f64,
+        entering_character_id: u32,
+        previous_character_id: u32,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) {
+        self.observe_characters([entering_character_id, previous_character_id], characters);
+        self.fuwen_active = true;
+        self.fuwen_opening_character_id = Some(entering_character_id);
+        self.fuwen_opening_pending = true;
+        self.fuwen_effect_started_at = None;
+        self.fuwen_recorded_damage = false;
     }
 
     fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<Hit> {
@@ -967,38 +997,46 @@ impl FollowUpDamageTracker {
         }
 
         let actual_damage = previous_hp - current_hp;
-        let pending = self.pending_hits.pop_front()?;
-        let source = pending.hit;
+        let source = self.pending_hits.pop_front()?.hit;
         let residual_damage = actual_damage - source.damage;
-        let inferred_damage =
-            corrected_follow_up_damage(actual_damage, source.damage, pending.gameplay_effect_index)
-                .unwrap_or(residual_damage);
-        let inferred_ratio = if source.damage > 0.0 {
-            residual_damage / source.damage
-        } else {
-            0.0
-        };
-        let corrected = (inferred_damage - residual_damage).abs() > 0.5;
-        if inferred_damage < 1.0 || (!corrected && !(0.18..=0.26).contains(&inferred_ratio)) {
-            return None;
-        }
         let has_required_team_attributes =
             self.team_attributes.contains("灵") && self.team_attributes.contains("咒");
         let source_attribute = self.character_attributes.get(&source.char_id)?;
         if !has_required_team_attributes || !matches!(source_attribute.as_str(), "灵" | "咒") {
             return None;
         }
+        if !self.fuwen_active {
+            return None;
+        }
+        if self.fuwen_opening_pending {
+            if self.fuwen_opening_character_id == Some(source.char_id) {
+                self.fuwen_opening_pending = false;
+                self.fuwen_effect_started_at = Some(source.timestamp);
+            }
+            return None;
+        }
+        if self
+            .fuwen_effect_started_at
+            .is_some_and(|started_at| source.timestamp - started_at > FUWEN_DURATION_SECONDS)
+        {
+            self.clear_fuwen_state();
+            return None;
+        }
+        if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+            return None;
+        }
+        self.fuwen_recorded_damage = true;
         Some(Hit {
             timestamp,
             char_id: INFERRED_FOLLOW_UP_CHAR_ID,
             char_name: "覆纹伤害".to_owned(),
             char_known: false,
-            damage: inferred_damage,
+            damage: residual_damage,
             byte_offset: 0,
             bit_shift: 0,
             char_source: "boss_hp_residual".to_owned(),
             direction: "outgoing".to_owned(),
-            target_hp_before: current_hp + inferred_damage,
+            target_hp_before: current_hp + residual_damage,
             target_hp_after: current_hp,
             target_max_hp: source.target_max_hp,
             target_hp_percent: if source.target_max_hp > 0.0 {
@@ -1016,34 +1054,14 @@ impl FollowUpDamageTracker {
             attack_type: Some("覆纹".to_owned()),
         })
     }
-}
 
-fn corrected_follow_up_damage(
-    actual_damage: f64,
-    packet_damage: f64,
-    gameplay_effect_index: Option<u32>,
-) -> Option<f64> {
-    if gameplay_effect_index != Some(NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX) {
-        return None;
+    fn clear_fuwen_state(&mut self) {
+        self.fuwen_active = false;
+        self.fuwen_opening_character_id = None;
+        self.fuwen_opening_pending = false;
+        self.fuwen_effect_started_at = None;
+        self.fuwen_recorded_damage = false;
     }
-    let total = actual_damage.round();
-    if (actual_damage - total).abs() > 0.01 || total < 1.0 {
-        return None;
-    }
-    let total = total as u64;
-    let minimum_base = total.saturating_mul(5) / 6;
-    for displayed_base in minimum_base.saturating_sub(2)..=minimum_base.saturating_add(3) {
-        let follow_up = displayed_base / 5;
-        if displayed_base + follow_up != total {
-            continue;
-        }
-        let correction_ratio =
-            (displayed_base as f64 - packet_damage).abs() / displayed_base as f64;
-        if correction_ratio <= MAX_DISPLAY_DAMAGE_CORRECTION_RATIO {
-            return Some(follow_up as f64);
-        }
-    }
-    None
 }
 
 struct PacketDecoder {
@@ -1054,7 +1072,16 @@ struct PacketDecoder {
     wooden_damage_names: HashMap<String, String>,
     follow_up_damage: FollowUpDamageTracker,
     character_declarations: HashMap<u32, f64>,
+    pending_ambiguous_hits: Vec<Hit>,
     resource_warnings: Vec<String>,
+}
+
+#[derive(Default)]
+struct PreparedHits {
+    emit: Vec<Hit>,
+    filtered_incoming: usize,
+    deferred_ambiguous: usize,
+    suppressed_ambiguous: usize,
 }
 
 impl Default for PacketDecoder {
@@ -1084,6 +1111,7 @@ impl Default for PacketDecoder {
             wooden_damage_names,
             follow_up_damage: FollowUpDamageTracker::default(),
             character_declarations: HashMap::new(),
+            pending_ambiguous_hits: Vec::new(),
             resource_warnings,
         }
     }
@@ -1115,6 +1143,164 @@ impl PacketDecoder {
     fn resource_warning(&self) -> Option<String> {
         (!self.resource_warnings.is_empty()).then(|| self.resource_warnings.join("; "))
     }
+
+    fn take_expired_ambiguous_hits(&mut self, timestamp: f64) -> Vec<Hit> {
+        let mut expired = Vec::new();
+        let mut pending = Vec::with_capacity(self.pending_ambiguous_hits.len());
+        for hit in self.pending_ambiguous_hits.drain(..) {
+            if timestamp - hit.timestamp > AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS {
+                expired.push(hit);
+            } else {
+                pending.push(hit);
+            }
+        }
+        self.pending_ambiguous_hits = pending;
+        expired
+    }
+
+    fn take_all_ambiguous_hits(&mut self) -> Vec<Hit> {
+        self.pending_ambiguous_hits.drain(..).collect()
+    }
+
+    fn emit_hits(
+        &mut self,
+        hits: impl IntoIterator<Item = Hit>,
+        characters: &HashMap<u32, CharacterInfo>,
+        sender: &Sender<EngineEvent>,
+    ) {
+        for hit in hits {
+            self.follow_up_damage
+                .observe_hit(&hit, hit.gameplay_effect_index, characters);
+            let _ = sender.send(EngineEvent::Hit(hit));
+        }
+    }
+
+    fn prepare_hits_for_emission(
+        &mut self,
+        hits: Vec<Hit>,
+        declared_ids: &[u32],
+        include_incoming: bool,
+    ) -> PreparedHits {
+        let mut prepared = PreparedHits::default();
+        for hit in hits {
+            if !include_incoming && hit.direction == "incoming" {
+                prepared.filtered_incoming += 1;
+                continue;
+            }
+            if is_ambiguous_session_hit(&hit, declared_ids) {
+                self.pending_ambiguous_hits.push(hit);
+                prepared.deferred_ambiguous += 1;
+                continue;
+            }
+            prepared.suppressed_ambiguous += self.suppress_matching_ambiguous_hits(&hit);
+            prepared.emit.push(hit);
+        }
+        prepared
+    }
+
+    fn suppress_matching_ambiguous_hits(&mut self, confirmed_hit: &Hit) -> usize {
+        if !is_confirmed_packet_hit(confirmed_hit) {
+            return 0;
+        }
+        let before = self.pending_ambiguous_hits.len();
+        self.pending_ambiguous_hits
+            .retain(|pending| !same_damage_event(pending, confirmed_hit));
+        before - self.pending_ambiguous_hits.len()
+    }
+}
+
+fn is_ambiguous_session_hit(hit: &Hit, declared_ids: &[u32]) -> bool {
+    declared_ids.len() > 1
+        && hit.char_source == "session"
+        && hit.direction == "unknown"
+        && hit.gameplay_effect_index.is_some()
+}
+
+fn is_confirmed_packet_hit(hit: &Hit) -> bool {
+    hit.char_source == "packet" && hit.direction == "outgoing"
+}
+
+fn same_damage_event(left: &Hit, right: &Hit) -> bool {
+    (left.timestamp - right.timestamp).abs() <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
+        && left.gameplay_effect_index.is_some()
+        && left.gameplay_effect_index == right.gameplay_effect_index
+        && nearly_same(left.damage, right.damage)
+        && nearly_same(left.target_hp_before, right.target_hp_before)
+        && nearly_same(left.target_hp_after, right.target_hp_after)
+        && nearly_same(left.target_max_hp, right.target_max_hp)
+}
+
+fn nearly_same(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 0.5
+}
+
+fn fuwen_start_pair(
+    payload: &[u8],
+    evidence: &[(u32, u8, usize)],
+    characters: &HashMap<u32, CharacterInfo>,
+) -> Option<(u32, u32)> {
+    if !matches_shifted_bytes_at(
+        payload,
+        FUWEN_START_SIGNATURE_SHIFT,
+        FUWEN_START_SIGNATURE_OFFSET,
+        FUWEN_START_SIGNATURE,
+    ) {
+        return None;
+    }
+    let entering_character_id = character_id_at_evidence_location(
+        evidence,
+        FUWEN_ENTERING_ID_SHIFT,
+        FUWEN_ENTERING_ID_OFFSET,
+    )?;
+    let previous_character_id = character_id_at_evidence_location(
+        evidence,
+        FUWEN_PREVIOUS_ID_SHIFT,
+        FUWEN_PREVIOUS_ID_OFFSET,
+    )?;
+    if entering_character_id == previous_character_id {
+        return None;
+    }
+    let entering_attribute = characters
+        .get(&entering_character_id)
+        .and_then(|character| character.attribute.as_deref())?;
+    let previous_attribute = characters
+        .get(&previous_character_id)
+        .and_then(|character| character.attribute.as_deref())?;
+    let has_fuwen_pair = (entering_attribute == "灵" && previous_attribute == "咒")
+        || (entering_attribute == "咒" && previous_attribute == "灵");
+    has_fuwen_pair.then_some((entering_character_id, previous_character_id))
+}
+
+fn character_id_at_evidence_location(
+    evidence: &[(u32, u8, usize)],
+    bit_shift: u8,
+    byte_offset: usize,
+) -> Option<u32> {
+    evidence
+        .iter()
+        .find(|(_, shift, offset)| *shift == bit_shift && *offset == byte_offset)
+        .map(|(character_id, _, _)| *character_id)
+}
+
+fn character_debug_label(character_id: u32, characters: &HashMap<u32, CharacterInfo>) -> String {
+    characters.get(&character_id).map_or_else(
+        || character_id.to_string(),
+        |character| {
+            let name = if character.name_zh.is_empty() {
+                character.name_en.as_str()
+            } else {
+                character.name_zh.as_str()
+            };
+            match character.attribute.as_deref() {
+                Some(attribute) if !name.is_empty() => {
+                    format!("{name}({character_id}/{attribute})")
+                }
+                Some(attribute) => format!("{character_id}/{attribute}"),
+                None if !name.is_empty() => format!("{name}({character_id})"),
+                None => character_id.to_string(),
+            }
+        },
+    )
 }
 
 fn matching_gameplay_effect<'a>(
@@ -1207,6 +1393,8 @@ impl PacketDecoder {
         if local_ip.is_some_and(|ip| src != ip && dst != ip) {
             return;
         }
+        let expired_hits = self.take_expired_ambiguous_hits(timestamp);
+        self.emit_hits(expired_hits, characters, sender);
 
         let decoded_text = decode_payload_text(payload);
         let evidence = find_declared_character_evidence(payload);
@@ -1280,15 +1468,13 @@ impl PacketDecoder {
                 }
             }
         }
+        let prepared_hits = self.prepare_hits_for_emission(hits, &ids, include_incoming);
         for character_id in &ids {
             self.character_declarations.insert(*character_id, timestamp);
         }
         self.character_declarations
             .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
-        let accepted = hits
-            .iter()
-            .filter(|hit| include_incoming || hit.direction != "incoming")
-            .count();
+        let accepted = prepared_hits.emit.len();
         let preview_len = payload.len().min(96);
         let payload_hex = hex::encode(payload);
         let current_hp_updates = if outgoing {
@@ -1301,17 +1487,69 @@ impl PacketDecoder {
         } else {
             parse_boss_hp_updates(payload)
         };
+        let fuwen_start = if !outgoing
+            && gameplay_effects.is_empty()
+            && current_hp_updates.is_empty()
+            && boss_hp_updates.is_empty()
+        {
+            fuwen_start_pair(payload, &evidence, characters)
+        } else {
+            None
+        };
+        if let Some((entering_character_id, previous_character_id)) = fuwen_start {
+            self.follow_up_damage.observe_fuwen_start(
+                timestamp,
+                entering_character_id,
+                previous_character_id,
+                characters,
+            );
+        }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
+            && prepared_hits.deferred_ambiguous == 0
+            && fuwen_start.is_none()
             && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
         {
             return;
         }
-        let mut note = if hits.len() != accepted {
-            format!("过滤 {} 条 incoming 记录", hits.len() - accepted)
-        } else {
-            String::new()
-        };
+        let mut note = String::new();
+        if prepared_hits.filtered_incoming > 0 {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "过滤 {} 条 incoming 记录",
+                    prepared_hits.filtered_incoming
+                )),
+            );
+        }
+        if prepared_hits.deferred_ambiguous > 0 {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "暂存 {} 条多角色候选伤害等待确认",
+                    prepared_hits.deferred_ambiguous
+                )),
+            );
+        }
+        if prepared_hits.suppressed_ambiguous > 0 {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "丢弃 {} 条已确认重复候选伤害",
+                    prepared_hits.suppressed_ambiguous
+                )),
+            );
+        }
+        if let Some((entering_character_id, previous_character_id)) = fuwen_start {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "覆纹启动：{} + {}",
+                    character_debug_label(entering_character_id, characters),
+                    character_debug_label(previous_character_id, characters)
+                )),
+            );
+        }
         append_packet_note(
             &mut note,
             binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
@@ -1417,13 +1655,7 @@ impl PacketDecoder {
                 decoded_text,
             },
         );
-        for hit in hits {
-            if include_incoming || hit.direction != "incoming" {
-                self.follow_up_damage
-                    .observe_hit(&hit, hit.gameplay_effect_index, characters);
-                let _ = sender.send(EngineEvent::Hit(hit));
-            }
-        }
+        self.emit_hits(prepared_hits.emit, characters, sender);
         for hit in inferred_follow_up_hits {
             let _ = sender.send(EngineEvent::Hit(hit));
         }
@@ -1585,6 +1817,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
                 sender,
             );
         }
+        let pending_hits = decoder.take_all_ambiguous_hits();
+        decoder.emit_hits(pending_hits, characters, sender);
     }
     Ok(())
 }
@@ -1646,6 +1880,8 @@ pub fn import_pcapng(
                     &sender,
                 );
             }
+            let pending_hits = decoder.take_all_ambiguous_hits();
+            decoder.emit_hits(pending_hits, &characters, &sender);
             if packet_count > 0 && supported_count == 0 {
                 return Err("pcapng contains no supported Ethernet packets".to_owned());
             }
@@ -1915,22 +2151,6 @@ mod tests {
     use crossbeam_channel::unbounded;
 
     #[test]
-    fn corrects_nanally_melee1_follow_up_from_server_total() {
-        assert_eq!(
-            corrected_follow_up_damage(3_850.0, 3_177.0, Some(241)),
-            Some(641.0)
-        );
-        assert_eq!(
-            corrected_follow_up_damage(3_417.0, 2_898.0, Some(241)),
-            Some(569.0)
-        );
-        assert_eq!(
-            corrected_follow_up_damage(2_115.0, 1_714.0, Some(145)),
-            None
-        );
-    }
-
-    #[test]
     fn follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve() {
         let characters = HashMap::from([
             (
@@ -1956,6 +2176,8 @@ mod tests {
         ]);
         let mut tracker = FollowUpDamageTracker::default();
         tracker.observe_characters([1, 2], &characters);
+        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        activate_fuwen_after_opening(&mut tracker, 0.0);
         let mut hit = targetless_hit();
         hit.char_id = 1;
         hit.char_name = "character1".to_owned();
@@ -1964,28 +2186,205 @@ mod tests {
         hit.damage = 3_177.0;
         for index in 0..MAX_PENDING_FOLLOW_UP_HITS + 20 {
             hit.timestamp = index as f64 / 1_000.0;
-            tracker.observe_hit(
-                &hit,
-                Some(NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX),
-                &characters,
-            );
+            tracker.observe_hit(&hit, Some(241), &characters);
         }
         assert_eq!(tracker.pending_hits.len(), MAX_PENDING_FOLLOW_UP_HITS);
 
         hit.timestamp = 2.0;
-        tracker.observe_hit(
-            &hit,
-            Some(NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX),
-            &characters,
-        );
+        tracker.observe_hit(&hit, Some(241), &characters);
         assert_eq!(tracker.pending_hits.len(), 1);
         let follow_up = tracker
             .observe_server_hp(2.1, 996_150.0)
             .expect("recent pending hit should still resolve follow-up damage");
-        assert_eq!(follow_up.damage, 641.0);
+        assert_eq!(follow_up.damage, 673.0);
         assert_eq!(follow_up.char_name, "覆纹伤害");
         assert_eq!(follow_up.damage_name.as_deref(), Some("覆纹追加攻击"));
         assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
+    }
+
+    #[test]
+    fn follow_up_requires_fuwen_start_packet() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(0.1, 998_750.0).is_none());
+    }
+
+    #[test]
+    fn non_ling_zhou_hit_does_not_end_active_fuwen() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        activate_fuwen_after_opening(&mut tracker, 0.0);
+        let mut hit = targetless_hit();
+        hit.target_max_hp = 1_000_000.0;
+
+        hit.char_id = 3;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 500.0;
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.1, 999_500.0).is_none());
+        assert!(tracker.fuwen_active);
+
+        hit.char_id = 1;
+        hit.timestamp = 0.2;
+        hit.target_hp_before = 999_500.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.3, 998_250.0)
+            .expect("ling/zhou residual should still be recorded after other-attribute hit");
+        assert_eq!(follow_up.damage, 250.0);
+    }
+
+    #[test]
+    fn zero_residual_does_not_end_active_fuwen_after_recorded_residual() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(0.1, 999_000.0).is_none());
+        assert!(tracker.fuwen_active);
+        assert!(!tracker.fuwen_opening_pending);
+
+        hit.timestamp = 0.2;
+        hit.target_hp_before = 999_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("普攻".to_owned());
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.3, 997_750.0)
+            .expect("first residual after fuwen start should be recorded");
+        assert_eq!(follow_up.damage, 250.0);
+        assert!(tracker.fuwen_active);
+
+        hit.timestamp = 0.4;
+        hit.target_hp_before = 997_750.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.5, 996_750.0).is_none());
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
+    fn fuwen_expires_after_duration() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.1, 999_000.0).is_none());
+        assert!(tracker.fuwen_active);
+        assert!(!tracker.fuwen_opening_pending);
+
+        hit.timestamp = FUWEN_DURATION_SECONDS + 0.2;
+        hit.target_hp_before = 999_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(
+            tracker
+                .observe_server_hp(FUWEN_DURATION_SECONDS + 0.3, 997_750.0)
+                .is_none()
+        );
+        assert!(!tracker.fuwen_active);
+    }
+
+    #[test]
+    fn pre_opening_zero_residual_does_not_end_fuwen_after_pause() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        let mut hit = targetless_hit();
+        hit.timestamp = 5.0;
+        hit.char_id = 2;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("普攻".to_owned());
+
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(5.1, 999_000.0).is_none());
+        assert!(tracker.fuwen_active);
+        assert!(tracker.fuwen_opening_pending);
+
+        hit.char_id = 1;
+        hit.timestamp = 5.2;
+        hit.target_hp_before = 999_000.0;
+        hit.attack_type = Some("Q技能".to_owned());
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(5.3, 998_000.0).is_none());
+        assert!(tracker.fuwen_active);
+        assert!(!tracker.fuwen_opening_pending);
+    }
+
+    #[test]
+    fn fuwen_start_pair_uses_shifted_signature_and_fixed_role_positions() {
+        let mut payload = vec![0_u8; 90];
+        write_shifted_bytes(
+            &mut payload,
+            FUWEN_START_SIGNATURE_SHIFT,
+            FUWEN_START_SIGNATURE_OFFSET,
+            FUWEN_START_SIGNATURE,
+        );
+        write_shifted_bytes(
+            &mut payload,
+            FUWEN_ENTERING_ID_SHIFT,
+            FUWEN_ENTERING_ID_OFFSET,
+            &character_evidence_row(1001),
+        );
+        write_shifted_bytes(
+            &mut payload,
+            FUWEN_PREVIOUS_ID_SHIFT,
+            FUWEN_PREVIOUS_ID_OFFSET,
+            &character_evidence_row(1002),
+        );
+        let evidence = find_declared_character_evidence(&payload);
+        let characters = HashMap::from([
+            (
+                1001,
+                CharacterInfo {
+                    name_zh: "entering".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                1002,
+                CharacterInfo {
+                    name_zh: "previous".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            fuwen_start_pair(&payload, &evidence, &characters),
+            Some((1001, 1002))
+        );
     }
 
     #[test]
@@ -2138,6 +2537,91 @@ mod tests {
         }
     }
 
+    fn follow_up_test_characters() -> HashMap<u32, CharacterInfo> {
+        HashMap::from([
+            (
+                1,
+                CharacterInfo {
+                    name_zh: "ling".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                2,
+                CharacterInfo {
+                    name_zh: "zhou".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+            (
+                3,
+                CharacterInfo {
+                    name_zh: "other".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("光".to_owned()),
+                },
+            ),
+        ])
+    }
+
+    fn activate_fuwen_after_opening(tracker: &mut FollowUpDamageTracker, timestamp: f64) {
+        tracker.fuwen_opening_pending = false;
+        tracker.fuwen_effect_started_at = Some(timestamp);
+    }
+
+    fn character_evidence_row(character_id: u32) -> [u8; 9] {
+        let digits = format!("{character_id:04}");
+        let mut row = [0_u8; 9];
+        row[..4].copy_from_slice(&[5, 0, 0, 0]);
+        row[4..8].copy_from_slice(digits.as_bytes());
+        row
+    }
+
+    fn write_shifted_bytes(payload: &mut [u8], bit_shift: u8, byte_offset: usize, bytes: &[u8]) {
+        for (index, byte) in bytes.iter().enumerate() {
+            for bit in 0..8 {
+                let bit_value = (byte >> bit) & 1;
+                let target_bit = bit_shift as usize + (byte_offset + index) * 8 + bit;
+                let target_byte = target_bit / 8;
+                let target_bit_offset = target_bit % 8;
+                if bit_value == 1 {
+                    payload[target_byte] |= 1 << target_bit_offset;
+                } else {
+                    payload[target_byte] &= !(1 << target_bit_offset);
+                }
+            }
+        }
+    }
+
+    fn duplicate_test_hit(timestamp: f64, char_source: &str, direction: &str) -> Hit {
+        let mut hit = targetless_hit();
+        hit.timestamp = timestamp;
+        hit.char_id = if char_source == "packet" { 1051 } else { 1010 };
+        hit.char_name = if char_source == "packet" {
+            "零(女)".to_owned()
+        } else {
+            "娜娜莉".to_owned()
+        };
+        hit.damage = 5_829.0;
+        hit.char_source = char_source.to_owned();
+        hit.direction = direction.to_owned();
+        hit.target_hp_before = 1_389_577.0;
+        hit.target_hp_after = 1_383_748.0;
+        hit.target_max_hp = 1_930_389.0;
+        hit.gameplay_effect_index = Some(52);
+        hit.gameplay_effect_name = Some("GE_ActorReaction_1_Damage".to_owned());
+        hit.attack_type = Some("创生花".to_owned());
+        hit
+    }
+
     #[test]
     fn packet_decoder_loads_attack_resources_outside_project_cwd() {
         let decoder = PacketDecoder::default();
@@ -2165,6 +2649,41 @@ mod tests {
                 .map(String::as_str),
             Some("娜娜莉普攻")
         );
+    }
+
+    #[test]
+    fn confirmed_packet_hit_suppresses_ambiguous_session_candidate() {
+        let mut decoder = PacketDecoder::default();
+        let candidate = duplicate_test_hit(10.0, "session", "unknown");
+
+        let prepared = decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false);
+
+        assert!(prepared.emit.is_empty());
+        assert_eq!(prepared.deferred_ambiguous, 1);
+        assert_eq!(decoder.pending_ambiguous_hits.len(), 1);
+
+        let confirmed = duplicate_test_hit(10.1, "packet", "outgoing");
+        let prepared = decoder.prepare_hits_for_emission(vec![confirmed], &[1051], false);
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 1);
+        assert_eq!(prepared.emit[0].char_id, 1051);
+        assert!(decoder.pending_ambiguous_hits.is_empty());
+    }
+
+    #[test]
+    fn ambiguous_session_candidate_expires_when_unconfirmed() {
+        let mut decoder = PacketDecoder::default();
+        let candidate = duplicate_test_hit(10.0, "session", "unknown");
+
+        decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false);
+
+        assert!(decoder.take_expired_ambiguous_hits(10.25).is_empty());
+        let expired = decoder.take_expired_ambiguous_hits(10.75);
+
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].char_source, "session");
+        assert!(decoder.pending_ambiguous_hits.is_empty());
     }
 
     #[test]
