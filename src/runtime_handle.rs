@@ -59,6 +59,13 @@ pub struct RuntimeHandleStore {
     handles: HashMap<String, RuntimeHandleState>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeHandleTarget {
+    pub target_name: String,
+    pub target_path: Option<String>,
+    pub confidence: TargetConfidence,
+}
+
 impl RuntimeHandleStore {
     pub fn observe(
         &mut self,
@@ -144,6 +151,19 @@ impl RuntimeHandleStore {
         state.confidence = max_confidence(state.confidence, confidence);
     }
 
+    pub fn target_for_handle(&self, handle: &str) -> Option<RuntimeHandleTarget> {
+        let state = self.handles.get(&normalize_handle(handle.to_owned()))?;
+        Some(RuntimeHandleTarget {
+            target_name: state.target_name.clone()?,
+            target_path: state.target_path.clone(),
+            confidence: state.confidence,
+        })
+    }
+
+    pub(crate) fn get_mut_for_context(&mut self, handle: &str) -> Option<&mut RuntimeHandleState> {
+        self.handles.get_mut(&normalize_handle(handle.to_owned()))
+    }
+
     #[cfg(test)]
     pub fn get(&self, handle: &str) -> Option<&RuntimeHandleState> {
         self.handles.get(&normalize_handle(handle.to_owned()))
@@ -176,5 +196,23 @@ mod tests {
         assert_eq!(state.target_name, None);
         assert_eq!(state.hp_timeline.len(), 1);
         assert_eq!(state.confidence, TargetConfidence::Probable);
+    }
+
+    #[test]
+    fn target_for_handle_returns_bound_target_identity() {
+        let mut store = RuntimeHandleStore::default();
+        store.bind_target(
+            1.0,
+            "ABCDEF",
+            "Boss_017_BP_Abyss",
+            "玛门",
+            TargetConfidence::Confirmed,
+            "advvision_stage_context",
+        );
+        let target = store.target_for_handle("abcdef").expect("bound target");
+
+        assert_eq!(target.target_name, "玛门");
+        assert_eq!(target.target_path.as_deref(), Some("Boss_017_BP_Abyss"));
+        assert_eq!(target.confidence, TargetConfidence::Confirmed);
     }
 }

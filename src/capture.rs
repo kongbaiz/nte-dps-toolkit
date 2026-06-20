@@ -24,6 +24,7 @@ use pcap_file::pcapng::blocks::interface_description::{
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
+use crate::advvision_index::AdvVisionIndex;
 use crate::class_hint::ClassHintStore;
 use crate::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitTargetUpdate, PacketDebug,
@@ -49,7 +50,7 @@ use crate::parser::{
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 use crate::resource_index::ResourceIndex;
-use crate::runtime_handle::RuntimeHandleStore;
+use crate::runtime_handle::{RuntimeHandleStore, StageContext};
 use crate::runtime_mapping::{
     RuntimeMappingAction, RuntimeMappingEvent, RuntimeMappingTimeline,
     find_companion_runtime_mapping_sidecar, load_runtime_mapping_sidecar,
@@ -1045,6 +1046,61 @@ fn parse_abyss_stage_id(value: &str) -> Option<(u32, u32, AbyssHalf)> {
     Some((cycle, floor, half))
 }
 
+fn advvision_id_from_text(decoded_text: &str) -> Option<String> {
+    if decoded_text.contains("AdvVision_Mammon")
+        || decoded_text.contains("Vision_Mammon")
+        || decoded_text.contains("Mammon")
+    {
+        return Some("AdvVision_Mammon".to_owned());
+    }
+    None
+}
+
+fn abyss_scene_stage_key_from_text(decoded_text: &str) -> Option<String> {
+    for (offset, _) in decoded_text.match_indices("Abyss_") {
+        let tail = &decoded_text[offset + "Abyss_".len()..];
+        let digits = tail
+            .chars()
+            .take_while(|character| character.is_ascii_digit())
+            .collect::<String>();
+        if !digits.is_empty() {
+            return Some(digits);
+        }
+    }
+    None
+}
+
+fn abyss_half_from_text(decoded_text: &str) -> Option<String> {
+    if decoded_text.contains("EAbyssFightStage::FirstHalf") {
+        Some("FirstHalf".to_owned())
+    } else if decoded_text.contains("EAbyssFightStage::SecondHalf") {
+        Some("SecondHalf".to_owned())
+    } else {
+        None
+    }
+}
+
+fn first_hex_guid_from_text(decoded_text: &str) -> Option<String> {
+    let mut run = String::new();
+    for character in decoded_text.chars() {
+        if character.is_ascii_hexdigit() {
+            run.push(character.to_ascii_lowercase());
+            if run.len() == 32
+                && run.as_bytes().iter().any(|byte| *byte != b'0')
+                && run.as_bytes().iter().collect::<HashSet<_>>().len() > 1
+            {
+                return Some(run);
+            }
+            if run.len() > 32 {
+                run.remove(0);
+            }
+        } else {
+            run.clear();
+        }
+    }
+    None
+}
+
 fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent> {
     let mut events = Vec::new();
     let is_restart = decoded_text.contains("Abyss_Battle_Born");
@@ -1289,6 +1345,7 @@ fn apply_hp_confirmation_to_hit(
     current_hp_updates: &[ParsedCurrentHpUpdate],
     boss_hp_updates: &[ParsedBossHpUpdate],
     sdk_hp_updates: &[SdkTargetHpConfirmation],
+    runtime_handles: &RuntimeHandleStore,
 ) -> Option<HpConfirmationKind> {
     if !should_wait_for_hp_reconciliation(hit) {
         return None;
@@ -1305,6 +1362,12 @@ fn apply_hp_confirmation_to_hit(
         .find(|update| hp_value_matches(hit.target_hp_after, update.current_hp as f64))
     {
         mark_hit_outgoing_from_boss_hp(hit, update);
+        apply_runtime_handle_target_to_hit(
+            hit,
+            runtime_handles,
+            &hex::encode(update.target_handle),
+            "runtime_handle_bound",
+        );
         return Some(HpConfirmationKind::BossHp);
     }
     if let Some(update) = sdk_hp_updates
@@ -1378,6 +1441,12 @@ fn mark_hit_outgoing_from_boss_hp(hit: &mut Hit, update: &ParsedBossHpUpdate) {
 
 fn mark_hit_outgoing_from_sdk_target(hit: &mut Hit, update: &SdkTargetHpConfirmation) {
     hit.direction = "outgoing".to_owned();
+    hit.target_id = Some(update.stream.stream_id.clone());
+    replace_target_context_value(
+        &mut hit.target_context,
+        "target_id_resolution",
+        "sdk_target_stream",
+    );
     push_unique_context(
         &mut hit.target_context,
         "direction_confirmed=target_hp_after_match".to_owned(),
@@ -1415,6 +1484,11 @@ fn mark_hit_outgoing_from_sdk_target(hit: &mut Hit, update: &SdkTargetHpConfirma
             "class_hint_stream_order",
         );
         push_unique_context(&mut hit.target_context, format!("class_hint_name={name}"));
+    } else {
+        push_unique_context(
+            &mut hit.target_context,
+            "target_unresolved=class_hint_missing".to_owned(),
+        );
     }
     if let Some(confidence) = update.class_hint_confidence {
         push_unique_context(
@@ -1422,6 +1496,30 @@ fn mark_hit_outgoing_from_sdk_target(hit: &mut Hit, update: &SdkTargetHpConfirma
             format!("class_hint_confidence={}", confidence.as_str()),
         );
     }
+}
+
+fn apply_runtime_handle_target_to_hit(
+    hit: &mut Hit,
+    runtime_handles: &RuntimeHandleStore,
+    handle: &str,
+    resolution: &str,
+) -> bool {
+    let Some(target) = runtime_handles.target_for_handle(handle) else {
+        return false;
+    };
+    hit.target_id = Some(format!("boss_hp_guid:{handle}"));
+    hit.target_name = Some(target.target_name.clone());
+    replace_target_context_value(&mut hit.target_context, "target_name", &target.target_name);
+    replace_target_context_value(
+        &mut hit.target_context,
+        "target_name_resolution",
+        resolution,
+    );
+    replace_target_context_value(&mut hit.target_context, "target_id_resolution", resolution);
+    if let Some(path) = target.target_path {
+        replace_target_path_context(&mut hit.target_context, &path);
+    }
+    true
 }
 
 fn finalize_unconfirmed_hp_direction(hit: &mut Hit) {
@@ -1650,6 +1748,9 @@ struct PacketDecoder {
     class_hints: ClassHintStore,
     target_tracks: TargetTrackStore,
     resource_index: ResourceIndex,
+    advvision_index: AdvVisionIndex,
+    active_advvision_id: Option<String>,
+    active_stage_context: Option<StageContext>,
     target_resolver: TargetResolver,
     recent_target_hits: VecDeque<RecentTargetHit>,
     target_handle_aliases: HashMap<String, HandleTargetAlias>,
@@ -1679,6 +1780,14 @@ struct HandleTargetAlias {
     last_seen_at: u64,
 }
 
+#[derive(Clone, Debug)]
+struct TargetStreamResolutionSnapshot {
+    stream_id: String,
+    target_name: Option<String>,
+    target_name_resolution: Option<String>,
+    had_class_hint_missing: bool,
+}
+
 impl Default for PacketDecoder {
     fn default() -> Self {
         let mut resource_warnings = Vec::new();
@@ -1698,6 +1807,9 @@ impl Default for PacketDecoder {
             load_wooden_damage_names,
         );
 
+        let resource_index = ResourceIndex::load_default_with_warnings(&mut resource_warnings);
+        let advvision_index = AdvVisionIndex::load_default(&resource_index);
+
         Self {
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
@@ -1710,7 +1822,10 @@ impl Default for PacketDecoder {
             target_streams: TargetStreamStore::default(),
             class_hints: ClassHintStore::default(),
             target_tracks: TargetTrackStore::default(),
-            resource_index: ResourceIndex::load_default_with_warnings(&mut resource_warnings),
+            resource_index,
+            advvision_index,
+            active_advvision_id: None,
+            active_stage_context: None,
             target_resolver: TargetResolver,
             recent_target_hits: VecDeque::new(),
             target_handle_aliases: HashMap::new(),
@@ -1885,6 +2000,7 @@ impl PacketDecoder {
                 current_hp_updates,
                 boss_hp_updates,
                 sdk_hp_updates,
+                &self.runtime_handles,
             ) {
                 if kind == HpConfirmationKind::CurrentHp {
                     consumed_current_hp_after.push(pending.hit.target_hp_after);
@@ -1912,6 +2028,7 @@ impl PacketDecoder {
                 current_hp_updates,
                 boss_hp_updates,
                 sdk_hp_updates,
+                &self.runtime_handles,
             )
             .is_some()
             {
@@ -2132,14 +2249,17 @@ impl PacketDecoder {
     ) -> usize {
         let mut hit_summaries = Vec::with_capacity(hits.len());
         for hit in &mut hits {
+            let stream_snapshot = target_stream_resolution_snapshot(hit);
             let mut summary = if hit.direction == "outgoing" {
-                self.target_resolver.apply_to_hit_with_summary(
+                let mut summary = self.target_resolver.apply_to_hit_with_summary(
                     hit,
                     &self.object_state,
                     &self.target_instances,
                     path_candidates,
                     &self.resource_index,
-                )
+                );
+                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
+                summary
             } else {
                 TargetResolutionSummary::from_hit_and_candidates(hit, &[])
             };
@@ -2155,17 +2275,21 @@ impl PacketDecoder {
                         path_candidates,
                         &self.resource_index,
                     );
+                    preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
                 }
                 self.suppress_recently_dead_target_on_hit(hit, &mut summary);
                 self.register_target_handle_alias_for_hit(hit, &summary);
                 apply_handle_alias_to_hit_summary(hit, &mut summary, &self.target_handle_aliases);
+                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
                 self.register_target_handle_alias_for_hit(hit, &summary);
             }
             hit_summaries.push(summary);
         }
         for (hit, summary) in hits.iter_mut().zip(&mut hit_summaries) {
             if hit.direction == "outgoing" {
+                let stream_snapshot = target_stream_resolution_snapshot(hit);
                 apply_handle_alias_to_hit_summary(hit, summary, &self.target_handle_aliases);
+                preserve_target_stream_resolution(hit, summary, &stream_snapshot);
             }
         }
         let mut hit_order = (0..hits.len()).collect::<Vec<_>>();
@@ -2744,6 +2868,74 @@ impl PacketDecoder {
             .collect()
     }
 
+    fn observe_advvision_context(
+        &mut self,
+        timestamp: f64,
+        decoded_text: &str,
+        boss_hp_updates: &[ParsedBossHpUpdate],
+    ) -> bool {
+        if let Some(advvision_id) = advvision_id_from_text(decoded_text) {
+            self.active_advvision_id = Some(advvision_id);
+        }
+        let Some(stage_key) = abyss_scene_stage_key_from_text(decoded_text) else {
+            return false;
+        };
+        let Some(advvision_id) = self.active_advvision_id.clone() else {
+            return false;
+        };
+        let Some(target) = self
+            .advvision_index
+            .resolve_scene(&advvision_id, &stage_key)
+        else {
+            return false;
+        };
+        let context = StageContext {
+            kind: "FAbyssGamePlayData".to_owned(),
+            stage_key: Some(stage_key),
+            half: abyss_half_from_text(decoded_text),
+            runtime_guid: first_hex_guid_from_text(decoded_text),
+            advvision_id: Some(advvision_id),
+            scene_id: Some(target.scene_id.clone()),
+        };
+        self.active_stage_context = Some(context.clone());
+        let target_path = target
+            .target_path
+            .clone()
+            .unwrap_or_else(|| target.scene_id.clone());
+        for update in boss_hp_updates {
+            let handle = hex::encode(update.target_handle);
+            self.runtime_handles.bind_target(
+                timestamp,
+                handle.clone(),
+                target_path.clone(),
+                target.target_name.clone(),
+                TargetConfidence::Confirmed,
+                "advvision_stage_context",
+            );
+            if let Some(state) = self.runtime_handles.get_mut_for_context(&handle) {
+                state.stage_context = Some(context.clone());
+            }
+            let alias = HandleTargetAlias {
+                target_path: target_path.clone(),
+                target_name: target.target_name.clone(),
+                source: "advvision_stage_context".to_owned(),
+                first_seen_at: timestamp.to_bits(),
+                last_seen_at: timestamp.to_bits(),
+            };
+            merge_target_handle_alias(
+                &mut self.target_handle_aliases,
+                format!("boss_hp_guid:{handle}"),
+                alias.clone(),
+            );
+            merge_target_handle_alias(
+                &mut self.target_handle_aliases,
+                format!("AttributeGuid:{handle}"),
+                alias,
+            );
+        }
+        !boss_hp_updates.is_empty()
+    }
+
     fn apply_monster_gameplay_effect_links(
         &mut self,
         timestamp: f64,
@@ -3171,6 +3363,86 @@ fn normalize_final_target_identity(hit: &mut Hit) {
             format!("target_handle_candidate={target_id}"),
         );
         hit.target_id = None;
+    }
+}
+
+fn target_stream_resolution_snapshot(hit: &Hit) -> Option<TargetStreamResolutionSnapshot> {
+    let stream_id = hit
+        .target_id
+        .as_deref()
+        .filter(|target_id| target_id.starts_with("target_stream:"))
+        .map(str::to_owned)
+        .or_else(|| {
+            target_context_value(&hit.target_context, "target_stream").map(str::to_owned)
+        })?;
+    Some(TargetStreamResolutionSnapshot {
+        stream_id,
+        target_name: hit.target_name.clone(),
+        target_name_resolution: target_context_value(&hit.target_context, "target_name_resolution")
+            .map(str::to_owned),
+        had_class_hint_missing: hit
+            .target_context
+            .iter()
+            .any(|entry| entry == "target_unresolved=class_hint_missing"),
+    })
+}
+
+fn preserve_target_stream_resolution(
+    hit: &mut Hit,
+    summary: &mut TargetResolutionSummary,
+    snapshot: &Option<TargetStreamResolutionSnapshot>,
+) -> bool {
+    let Some(snapshot) = snapshot else {
+        return false;
+    };
+    hit.target_id = Some(snapshot.stream_id.clone());
+    replace_target_context_value(
+        &mut hit.target_context,
+        "target_id_resolution",
+        "sdk_target_stream",
+    );
+    replace_target_context_value(
+        &mut hit.target_context,
+        "target_stream",
+        &snapshot.stream_id,
+    );
+    if let Some(name) = &snapshot.target_name {
+        hit.target_name = Some(name.clone());
+        replace_target_context_value(&mut hit.target_context, "target_name", name);
+        replace_target_context_value(
+            &mut hit.target_context,
+            "target_name_resolution",
+            snapshot
+                .target_name_resolution
+                .as_deref()
+                .unwrap_or("class_hint_stream_order"),
+        );
+        summary.confidence = max_target_confidence(summary.confidence, TargetConfidence::Probable);
+    } else if snapshot.had_class_hint_missing {
+        hit.target_name = None;
+        hit.target_context.retain(|entry| {
+            !entry.starts_with("target_name=")
+                && !entry.starts_with("target_path=")
+                && !entry.starts_with("target_name_resolution=")
+                && !entry.starts_with("reason=runtime_unknown_target")
+                && *entry != "reason=runtime_placeholder"
+        });
+        push_unique_context(
+            &mut hit.target_context,
+            "target_unresolved=class_hint_missing".to_owned(),
+        );
+    }
+    summary.target_id = hit.target_id.clone();
+    summary.target_name = hit.target_name.clone();
+    summary.target_context = hit.target_context.clone();
+    true
+}
+
+fn max_target_confidence(left: TargetConfidence, right: TargetConfidence) -> TargetConfidence {
+    if left.rank() >= right.rank() {
+        left
+    } else {
+        right
     }
 }
 
@@ -3624,6 +3896,8 @@ impl PacketDecoder {
                     || crate::object_state::is_targetish_path(&candidate.value)
             })
             .collect::<Vec<_>>();
+        let packet_advvision_applied =
+            self.observe_advvision_context(timestamp, &decoded_text, &boss_hp_updates);
         let packet_target_path_link_applied =
             self.apply_packet_target_path_links(timestamp, &targetish_path_candidates);
         let transport_packet = parse_transport_packet(payload);
@@ -3631,9 +3905,13 @@ impl PacketDecoder {
             Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
             _ => None,
         };
+        let has_pending_hp_reconciliation = !self.pending_hp_reconciliation.is_empty();
+        let has_nearby_class_hints = !self.class_hints.hints_near(timestamp, 3.0, 0.5).is_empty();
         let sdk_target_scan_enabled = !outgoing
             && (!current_hp_updates.is_empty()
                 || !boss_hp_updates.is_empty()
+                || has_pending_hp_reconciliation
+                || has_nearby_class_hints
                 || !targetish_path_candidates.is_empty()
                 || !gameplay_effects.is_empty()
                 || has_net_runtime_text_hint(&decoded_text));
@@ -3758,14 +4036,17 @@ impl PacketDecoder {
         );
         let mut hit_summaries = Vec::with_capacity(hits.len());
         for hit in &mut hits {
+            let stream_snapshot = target_stream_resolution_snapshot(hit);
             let mut summary = if hit.direction == "outgoing" {
-                self.target_resolver.apply_to_hit_with_summary(
+                let mut summary = self.target_resolver.apply_to_hit_with_summary(
                     hit,
                     &self.object_state,
                     &self.target_instances,
                     &path_candidates,
                     &self.resource_index,
-                )
+                );
+                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
+                summary
             } else {
                 TargetResolutionSummary::from_hit_and_candidates(hit, &[])
             };
@@ -3781,17 +4062,21 @@ impl PacketDecoder {
                         &path_candidates,
                         &self.resource_index,
                     );
+                    preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
                 }
                 self.suppress_recently_dead_target_on_hit(hit, &mut summary);
                 self.register_target_handle_alias_for_hit(hit, &summary);
                 apply_handle_alias_to_hit_summary(hit, &mut summary, &self.target_handle_aliases);
+                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
                 self.register_target_handle_alias_for_hit(hit, &summary);
             }
             hit_summaries.push(summary);
         }
         for (hit, summary) in hits.iter_mut().zip(&mut hit_summaries) {
             if hit.direction == "outgoing" {
+                let stream_snapshot = target_stream_resolution_snapshot(hit);
                 apply_handle_alias_to_hit_summary(hit, summary, &self.target_handle_aliases);
+                preserve_target_stream_resolution(hit, summary, &stream_snapshot);
             }
         }
         let mut packet_hit_order = (0..hits.len()).collect::<Vec<_>>();
@@ -3864,6 +4149,7 @@ impl PacketDecoder {
             || !boss_hp_updates.is_empty()
             || !targetish_path_candidates.is_empty()
             || packet_target_path_link_applied
+            || packet_advvision_applied
             || net_runtime_applied
             || monster_gameplay_effect_applied
         {
@@ -3874,6 +4160,7 @@ impl PacketDecoder {
             || !net_identity_candidates.is_empty()
             || !net_runtime_events.is_empty()
             || packet_target_path_link_applied
+            || packet_advvision_applied
             || net_runtime_applied
             || monster_gameplay_effect_applied;
         let should_emit_packet_debug = self.packet_debug_mode != PacketDebugMode::Off
@@ -3888,6 +4175,7 @@ impl PacketDecoder {
             && boss_hp_updates.is_empty()
             && targetish_path_candidates.is_empty()
             && net_runtime_notes.is_empty()
+            && !packet_advvision_applied
             && accepted == 0
             && abyss_events.is_empty()
             && !should_emit_packet_debug
@@ -5097,6 +5385,87 @@ mod tests {
     }
 
     #[test]
+    fn boss_hp_confirmation_projects_runtime_handle_bound_target() {
+        let handle = [
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ];
+        let handle_hex = "21f04e928995334f8c0bbcaa0ee16fe7";
+        let mut decoder = PacketDecoder::default();
+        decoder.runtime_handles.bind_target(
+            20.010,
+            handle_hex,
+            "Boss_017_BP_Abyss",
+            "玛门",
+            TargetConfidence::Confirmed,
+            "advvision_stage_context",
+        );
+        let mut hit = test_hit(20.000, 1_940_137.0, 1_939_334.0);
+        hit.direction = "unknown".to_owned();
+        hit.target_context = vec!["direction_pending=c2s_hp_reconciliation".to_owned()];
+        assert!(
+            decoder
+                .reconcile_hp_confirmations(20.000, vec![hit], &[], &[], &[])
+                .is_empty()
+        );
+
+        let ready = decoder.reconcile_hp_confirmations(
+            20.080,
+            Vec::new(),
+            &[],
+            &[boss_hp_update(handle, 1_939_334.0, 1552)],
+            &[],
+        );
+
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].target_name.as_deref(), Some("玛门"));
+        assert!(
+            ready[0]
+                .target_context
+                .iter()
+                .any(|entry| entry == "target_name_resolution=runtime_handle_bound")
+        );
+        assert!(
+            ready[0]
+                .target_context
+                .iter()
+                .any(|entry| entry == "target_path=Boss_017_BP_Abyss")
+        );
+    }
+
+    #[test]
+    fn advvision_mammon_stage_context_binds_boss_hp_handle() {
+        let handle = [
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ];
+        let mut decoder = PacketDecoder::default();
+        decoder
+            .advvision_index
+            .insert_monster_name_path_for_test("玛门", "Boss_017_BP_Abyss");
+        let applied = decoder.observe_advvision_context(
+            21.0,
+            "AdvVision_Mammon FAbyssGamePlayData Abyss_3 EAbyssFightStage::FirstHalf 21f04e928995334f8c0bbcaa0ee16fe7",
+            &[boss_hp_update(handle, 1_939_334.0, 1552)],
+        );
+        let target = decoder
+            .runtime_handles
+            .target_for_handle("21f04e928995334f8c0bbcaa0ee16fe7")
+            .expect("bound mammon handle");
+
+        assert!(applied);
+        assert_eq!(target.target_name, "玛门");
+        assert_eq!(target.target_path.as_deref(), Some("Boss_017_BP_Abyss"));
+        assert_eq!(
+            decoder
+                .active_stage_context
+                .as_ref()
+                .and_then(|context| context.stage_key.as_deref()),
+            Some("3")
+        );
+    }
+
+    #[test]
     fn c2s_damage_confirmed_outgoing_by_sdk_target_stream_with_class_hint() {
         let mut hit = test_hit(30.000, 46_347.0, 43_155.0);
         hit.direction = "unknown".to_owned();
@@ -5115,8 +5484,21 @@ mod tests {
             class_hint_confidence: Some(TargetConfidence::Probable),
         };
 
-        assert!(apply_hp_confirmation_to_hit(&mut hit, &[], &[], &[sdk]).is_some());
+        assert!(
+            apply_hp_confirmation_to_hit(
+                &mut hit,
+                &[],
+                &[],
+                &[sdk],
+                &RuntimeHandleStore::default()
+            )
+            .is_some()
+        );
         assert_eq!(hit.direction, "outgoing");
+        assert_eq!(
+            hit.target_id.as_deref(),
+            Some("target_stream:5b41c437d248b54e8959424b7501eae4:slot:1:gen:1")
+        );
         assert_eq!(hit.target_name.as_deref(), Some("低语种"));
         assert!(
             hit.target_context

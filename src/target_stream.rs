@@ -148,14 +148,14 @@ struct TargetStreamDescriptor {
 
 impl TargetStreamDescriptor {
     fn from_token(token: &[u8]) -> Option<Self> {
-        if token.len() < 28 {
+        if token.len() < 36 {
             return None;
         }
-        let base_handle = hex::encode(&token[8..24]);
+        let base_handle = hex::encode(&token[16..32]);
         if base_handle.chars().all(|character| character == '0') {
             return None;
         }
-        let suffix = &token[24..28];
+        let suffix = &token[32..36];
         let slot = u32::from_le_bytes(suffix.try_into().ok()?);
         let plausible_slot = (slot <= 4096).then_some(slot);
         Some(Self {
@@ -231,8 +231,8 @@ mod tests {
     fn token(base: [u8; 16], slot: u32, prefix: u8) -> [u8; 40] {
         let mut token = [0_u8; 40];
         token[0] = prefix;
-        token[8..24].copy_from_slice(&base);
-        token[24..28].copy_from_slice(&slot.to_le_bytes());
+        token[16..32].copy_from_slice(&base);
+        token[32..36].copy_from_slice(&slot.to_le_bytes());
         token
     }
 
@@ -266,6 +266,19 @@ mod tests {
         assert_eq!(first.stream_id, second.stream_id);
         assert_eq!(second.stream_id, third.stream_id);
         assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn sdk_target_token_0x28_layout_uses_base_at_16_and_suffix_at_32() {
+        let bytes = hex::decode(
+            "a20000002006068606000000002000005b41c437d248b54e8959424b7501eae40200000000000000",
+        )
+        .expect("token hex");
+        let descriptor = TargetStreamDescriptor::from_token(&bytes).expect("descriptor");
+
+        assert_eq!(descriptor.base_handle, "5b41c437d248b54e8959424b7501eae4");
+        assert_eq!(descriptor.slot, Some(2));
+        assert_eq!(descriptor.suffix_hex.as_deref(), Some("02000000"));
     }
 
     #[test]
