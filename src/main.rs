@@ -1,31 +1,15 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![cfg_attr(feature = "no_debug", allow(dead_code))]
 
-mod advvision_index;
 mod app;
 mod capture;
-mod class_hint;
 mod config;
 mod file_drop;
 mod hotkey;
 mod model;
-mod net_event;
-mod net_identity;
 mod network;
-mod object_state;
 mod parser;
 mod protocol;
-mod resource_index;
-mod runtime_handle;
-mod runtime_mapping;
-mod target_alias;
-mod target_fact;
-mod target_identity;
-mod target_instance;
-mod target_resolver;
-mod target_stream;
-mod target_track;
-mod ue_bitstream;
 
 use anyhow::Result;
 use app::DpsApp;

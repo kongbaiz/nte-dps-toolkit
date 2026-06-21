@@ -24,74 +24,28 @@ use pcap_file::pcapng::blocks::interface_description::{
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
-use crate::advvision_index::AdvVisionIndex;
-use crate::class_hint::ClassHintStore;
 use crate::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitTargetUpdate, PacketDebug,
-    PacketDebugMode, stable_hit_uid,
-};
-use crate::net_event::{
-    NetRuntimeAction, NetRuntimeEvent, NetRuntimeEventKind, NetRuntimeScanOptions,
-    extract_net_runtime_events,
-};
-use crate::net_identity::{NetIdentityCandidateKind, extract_net_identity_candidates};
-use crate::object_state::{
-    ObjectHandleKind, ObjectStateStore, is_ignored_non_target_path, is_targetish_path,
+    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitDamageCorrection, HitFollowUp,
+    PacketDebug,
 };
 use crate::parser::{
-    DamageParseContext, GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, PacketDirection,
-    ParsedBossHpUpdate, ParsedCurrentHpUpdate, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH,
-    WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type, classify_attack_type_from_description,
-    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_wooden_damage_names,
-    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
-    parse_gameplay_effects, qte_reaction_type,
+    GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
+    SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
+    classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
+    find_declared_character_evidence, load_gameplay_effect_mapping, load_gameplay_effect_skills,
+    load_wooden_damage_names, matches_shifted_bytes_at, normalize_damage_name,
+    parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects,
+    qte_reaction_type,
 };
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
-use crate::resource_index::ResourceIndex;
-use crate::runtime_handle::{RuntimeHandleStore, StageContext};
-use crate::runtime_mapping::{
-    RuntimeMappingAction, RuntimeMappingEvent, RuntimeMappingTimeline,
-    find_companion_runtime_mapping_sidecar, load_runtime_mapping_sidecar,
-};
-use crate::target_alias::{
-    equivalent_target_alias_keys, is_hp_alias_key, is_legacy_handle_candidate_id,
-    target_alias_lookup_keys, target_context_value, target_context_values,
-};
-use crate::target_instance::{TargetAlias, TargetAliasKind, TargetInstanceStore};
-use crate::target_resolver::{TargetConfidence, TargetResolutionSummary, TargetResolver};
-use crate::target_stream::{TargetStreamObservation, TargetStreamStore};
-use crate::target_track::{TargetTrackStore, TrackPacketContext};
-use crate::ue_bitstream::{PathCandidate, extract_path_candidates};
 
 const PCAP_ERRBUF_SIZE: usize = 256;
 const MIN_READABLE_TEXT_LEN: usize = 4;
 const MAX_IGNORABLE_BINARY_PACKET_LEN: usize = 96;
-const MIN_POSSIBLE_DAMAGE_PACKET_LEN: usize = 88;
-const DAMAGE_RECORD_MIN_LEN: usize = 94;
-const DAMAGE_FIELD_F32_PREFIX: [u8; 5] = [12, 4, 0, 0, 0];
-const DAMAGE_FIELD_F64_PREFIX: [u8; 5] = [13, 8, 0, 0, 0];
-const FAST_SKIP_TEXT_HINTS: &[&[u8]] = &[
-    b"/Game/",
-    b"mon_",
-    b"_BP",
-    b"Boss",
-    b"Gameplay",
-    b"Ability",
-    b"FHTClient",
-    b"ClientRep",
-    b"CurrentHP",
-    b"Damage",
-    b"ActorChannel",
-    b"PackageMap",
-    b"NetGUID",
-    b"Iris",
-];
 const UNREADABLE_PROTOCOL_TEXT: &str = "未解析到可读协议文本";
 const CAPTURE_SNAPLEN: u32 = 65_535;
 const RAW_CAPTURE_FLUSH_INTERVAL: u64 = 256;
-const DEAD_TARGET_HANDLE_REUSE_WINDOW_SECONDS: f64 = 8.0;
 
 #[repr(C)]
 struct PcapIf {
@@ -223,11 +177,11 @@ pub struct CaptureDevice {
 pub struct CaptureHandle {
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
-    raw_capture: Option<RawCaptureBuffer>,
+    raw_capture: RawCaptureBuffer,
 }
 
 impl CaptureHandle {
-    pub fn raw_capture(&self) -> Option<RawCaptureBuffer> {
+    pub fn raw_capture(&self) -> RawCaptureBuffer {
         self.raw_capture.clone()
     }
 
@@ -251,7 +205,7 @@ pub struct RawCaptureBuffer {
 }
 
 struct RawCaptureData {
-    path: Option<PathBuf>,
+    path: PathBuf,
     writer: Option<RawCaptureWriter>,
     packet_count: u64,
     captured_bytes: u64,
@@ -259,18 +213,6 @@ struct RawCaptureData {
 }
 
 impl RawCaptureBuffer {
-    fn disabled() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(RawCaptureData {
-                path: None,
-                writer: None,
-                packet_count: 0,
-                captured_bytes: 0,
-                write_error: None,
-            })),
-        }
-    }
-
     fn new(device: CaptureDevice) -> Self {
         let timestamp = Local::now().format("%Y%m%d_%H%M%S_%3f");
         let path = PathBuf::from(format!("logs/nte_raw_{timestamp}.pcapng"));
@@ -281,7 +223,7 @@ impl RawCaptureBuffer {
         };
         Self {
             inner: Arc::new(Mutex::new(RawCaptureData {
-                path: Some(path),
+                path,
                 writer,
                 packet_count: 0,
                 captured_bytes: 0,
@@ -321,7 +263,7 @@ impl RawCaptureBuffer {
             .lock()
             .ok()
             .filter(|capture| capture.write_error.is_none())
-            .and_then(|capture| capture.path.clone())
+            .map(|capture| capture.path.clone())
     }
 
     fn finish(&self) {
@@ -346,14 +288,11 @@ impl RawCaptureBuffer {
         if let Some(error) = &capture.write_error {
             return Err(format!("raw capture write failed: {error}"));
         }
-        let Some(source_path) = capture.path.as_ref() else {
-            return Err("raw capture was not enabled for this session".to_owned());
-        };
-        if path != source_path {
-            std::fs::copy(source_path, path).map_err(|error| {
+        if path != capture.path {
+            std::fs::copy(&capture.path, path).map_err(|error| {
                 format!(
                     "failed to copy raw capture {} to {}: {error}",
-                    source_path.display(),
+                    capture.path.display(),
                     path.display()
                 )
             })?;
@@ -595,80 +534,6 @@ fn decode_shifted_payload(data: &[u8], bit_shift: u8) -> Vec<u8> {
         .collect()
 }
 
-struct PayloadScan {
-    shifted: [Vec<u8>; 8],
-}
-
-impl PayloadScan {
-    fn new(payload: &[u8]) -> Self {
-        Self {
-            shifted: std::array::from_fn(|bit_shift| {
-                decode_shifted_payload(payload, bit_shift as u8)
-            }),
-        }
-    }
-
-    fn contains_any_fast_hint(&self) -> bool {
-        self.shifted.iter().any(|shifted| {
-            FAST_SKIP_TEXT_HINTS.iter().any(|hint| {
-                hint.len() <= shifted.len()
-                    && shifted
-                        .windows(hint.len())
-                        .any(|window| window.eq_ignore_ascii_case(hint))
-            })
-        })
-    }
-
-    fn decode_text(&self) -> String {
-        let mut found = Vec::<(usize, String)>::new();
-        for shifted in &self.shifted {
-            for (score, value) in extract_length_prefixed_identifiers(shifted) {
-                if !found.iter().any(|(_, item)| item == &value) {
-                    found.push((score, value));
-                }
-            }
-            for bytes in shifted.split(|byte| !(0x20..=0x7e).contains(byte)) {
-                if bytes.len() < MIN_READABLE_TEXT_LEN {
-                    continue;
-                }
-                let Ok(value) = std::str::from_utf8(bytes) else {
-                    continue;
-                };
-                let value = value.trim();
-                let score = protocol_text_score(value);
-                if score == 0 || found.iter().any(|(_, item)| item == value) {
-                    continue;
-                }
-                found.push((score, value.to_owned()));
-            }
-        }
-        if found.is_empty() {
-            UNREADABLE_PROTOCOL_TEXT.to_owned()
-        } else {
-            found.sort_by_key(|item| std::cmp::Reverse(item.0));
-            found
-                .into_iter()
-                .map(|(_, value)| value)
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
-    }
-
-    fn may_contain_damage_record(&self) -> bool {
-        self.shifted.iter().any(|shifted| {
-            if shifted.len() < 32 {
-                return false;
-            }
-            (0..=shifted.len() - 32).any(|offset| {
-                shifted[offset..offset + 5] == DAMAGE_FIELD_F32_PREFIX
-                    && shifted[offset + 9..offset + 14] == DAMAGE_FIELD_F32_PREFIX
-                    && shifted[offset + 18..offset + 23] == DAMAGE_FIELD_F32_PREFIX
-                    && shifted[offset + 27..offset + 32] == DAMAGE_FIELD_F64_PREFIX
-            })
-        })
-    }
-}
-
 fn protocol_text_score(value: &str) -> usize {
     let length = value.len();
     if length < MIN_READABLE_TEXT_LEN {
@@ -686,12 +551,6 @@ fn protocol_text_score(value: &str) -> usize {
         "BackEvade",
         "Boss",
         "CharacterForNet",
-        "ClientRepExtraDamageInfo",
-        "ClientRepFightData",
-        "ClientServerAbilityActorSetCurrentHP",
-        "ClientShowPlayerDamageInfo",
-        "ClientShowWoodenInfo",
-        "ClientUpdateTargetExtraDamageInfos",
         "CityEvent",
         "CityLive",
         "CoolDown.",
@@ -720,7 +579,6 @@ fn protocol_text_score(value: &str) -> usize {
         "Phase",
         "Wave",
         "MaxHP",
-        "NetMulticast_OnSendHandleDamageInfos",
     ];
     if protocol_markers.iter().any(|marker| value.contains(marker)) {
         return 100 + length.min(100);
@@ -798,7 +656,39 @@ fn extract_length_prefixed_identifiers(data: &[u8]) -> Vec<(usize, String)> {
 }
 
 fn decode_payload_text(data: &[u8]) -> String {
-    PayloadScan::new(data).decode_text()
+    let mut found = Vec::<(usize, String)>::new();
+    for bit_shift in 0..8 {
+        let shifted = decode_shifted_payload(data, bit_shift);
+        for (score, value) in extract_length_prefixed_identifiers(&shifted) {
+            if !found.iter().any(|(_, item)| item == &value) {
+                found.push((score, value));
+            }
+        }
+        for bytes in shifted.split(|byte| !(0x20..=0x7e).contains(byte)) {
+            if bytes.len() < MIN_READABLE_TEXT_LEN {
+                continue;
+            }
+            let Ok(value) = std::str::from_utf8(bytes) else {
+                continue;
+            };
+            let value = value.trim();
+            let score = protocol_text_score(value);
+            if score == 0 || found.iter().any(|(_, item)| item == value) {
+                continue;
+            }
+            found.push((score, value.to_owned()));
+        }
+    }
+    if found.is_empty() {
+        UNREADABLE_PROTOCOL_TEXT.to_owned()
+    } else {
+        found.sort_by_key(|item| std::cmp::Reverse(item.0));
+        found
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 fn is_padding_payload(data: &[u8]) -> bool {
@@ -809,104 +699,15 @@ fn is_padding_payload(data: &[u8]) -> bool {
 }
 
 fn should_keep_debug_packet(
-    parsed_hits: usize,
-    has_hp_updates: bool,
-    has_targetish_or_runtime: bool,
-    has_abyss_event: bool,
-    packet_debug_mode: PacketDebugMode,
-) -> bool {
-    if matches!(packet_debug_mode, PacketDebugMode::FullPayload) {
-        return true;
-    }
-    parsed_hits > 0 || has_hp_updates || has_targetish_or_runtime || has_abyss_event
-}
-
-fn should_fast_skip_payload(
     payload: &[u8],
     declared_ids: &[u32],
-    has_hp_updates: bool,
-    has_text_hint: bool,
+    parsed_hits: usize,
+    decoded_text: &str,
 ) -> bool {
-    if payload.len() > MAX_IGNORABLE_BINARY_PACKET_LEN {
-        return false;
+    if parsed_hits > 0 || !declared_ids.is_empty() || decoded_text != UNREADABLE_PROTOCOL_TEXT {
+        return true;
     }
-    if payload.len() >= MIN_POSSIBLE_DAMAGE_PACKET_LEN {
-        return false;
-    }
-    if has_hp_updates || !declared_ids.is_empty() {
-        return false;
-    }
-    !has_text_hint
-}
-
-fn packet_target_path_rank(path: &str) -> usize {
-    let lower = path.to_ascii_lowercase();
-    let mut rank = path.len();
-    if lower.starts_with("/game/") {
-        rank += 10_000;
-    }
-    if lower.contains("/monster/") {
-        rank += 2_000;
-    }
-    if lower.contains("_bp") {
-        rank += 1_000;
-    }
-    rank
-}
-
-fn is_non_player_damage_effect(effect_name: Option<&str>) -> bool {
-    let Some(effect_name) = effect_name else {
-        return false;
-    };
-    let lower = effect_name.to_ascii_lowercase();
-    lower.contains("killself") || lower.contains("self_destruct") || lower.contains("selfdestruct")
-}
-
-fn refine_hit_direction_after_effect(hit: &mut Hit, packet_direction: PacketDirection) {
-    if packet_direction != PacketDirection::ClientToServer
-        || hit.direction != "unknown"
-        || hit.char_source != "packet"
-    {
-        return;
-    }
-    let Some(effect) = hit.gameplay_effect_name.as_deref() else {
-        return;
-    };
-    let player_or_reaction_effect = effect.starts_with("GE_Player_")
-        || effect.starts_with("Buff_Reaction_")
-        || effect.contains("ActorReaction");
-    if !player_or_reaction_effect {
-        return;
-    }
-    push_unique_context(
-        &mut hit.target_context,
-        "direction_candidate=c2s_player_or_reaction_effect".to_owned(),
-    );
-}
-
-fn has_net_runtime_text_hint(decoded_text: &str) -> bool {
-    if decoded_text == UNREADABLE_PROTOCOL_TEXT {
-        return false;
-    }
-    let lower = decoded_text.to_ascii_lowercase();
-    [
-        "actorchannel",
-        "packagemap",
-        "netguid",
-        "netrefhandle",
-        "iris",
-        "clientsetreplicatedtargetdata",
-        "clientupdatetargetextradamageinfos",
-        "clientserverabilityactorsetcurrenthp",
-        "fclientrepfightdata",
-        "fclientrepextradamageinfo",
-        "gameplayeffect",
-        "gameplaycue",
-        "serverreceivegameplayeventtoactor",
-        "netmulticast_onsendhandledamageinfos",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+    !is_padding_payload(payload) && payload.len() > MAX_IGNORABLE_BINARY_PACKET_LEN
 }
 
 fn shannon_entropy(data: &[u8]) -> f64 {
@@ -985,52 +786,6 @@ fn append_packet_note(note: &mut String, diagnostic: Option<String>) {
     note.push_str(&diagnostic);
 }
 
-fn short_hex(bytes: &[u8]) -> String {
-    let hex = hex::encode(bytes);
-    if hex.len() <= 16 {
-        hex
-    } else {
-        format!("{}…{}", &hex[..12], &hex[hex.len() - 4..])
-    }
-}
-
-fn attach_runtime_alias_context(
-    hit: &mut Hit,
-    net_identity_candidates: &[crate::net_identity::NetIdentityCandidate],
-    net_runtime_events: &[NetRuntimeEvent],
-) {
-    const HIT_ALIAS_WINDOW_BYTES: usize = 128;
-    for candidate in net_identity_candidates
-        .iter()
-        .filter(|candidate| candidate.bit_shift == hit.bit_shift)
-        .filter(|candidate| {
-            candidate.byte_offset.abs_diff(hit.byte_offset) <= HIT_ALIAS_WINDOW_BYTES
-        })
-        .take(4)
-    {
-        hit.target_context
-            .push(format!("{}={}", candidate.kind.label(), candidate.handle));
-    }
-    for event in net_runtime_events
-        .iter()
-        .filter(|event| event.bit_shift == hit.bit_shift)
-        .filter(|event| event.byte_offset.abs_diff(hit.byte_offset) <= HIT_ALIAS_WINDOW_BYTES)
-        .flat_map(|event| event.aliases.iter())
-        .take(4)
-    {
-        push_unique_context(
-            &mut hit.target_context,
-            format!("{}={}", event.kind.label(), event.value),
-        );
-    }
-}
-
-fn current_hp_target_token(prefix: &[u8; 16]) -> Option<[u8; 4]> {
-    let token = [prefix[0], prefix[7], prefix[9], prefix[10]];
-    let distinct = token.iter().copied().collect::<HashSet<_>>().len();
-    (token.iter().any(|byte| *byte != 0) && distinct >= 2).then_some(token)
-}
-
 fn parse_abyss_stage_id(value: &str) -> Option<(u32, u32, AbyssHalf)> {
     let parts: Vec<_> = value.split('_').collect();
     if parts.len() < 4 || parts.first().copied() != Some("Abyss") {
@@ -1044,61 +799,6 @@ fn parse_abyss_stage_id(value: &str) -> Option<(u32, u32, AbyssHalf)> {
         _ => return None,
     };
     Some((cycle, floor, half))
-}
-
-fn advvision_id_from_text(decoded_text: &str) -> Option<String> {
-    if decoded_text.contains("AdvVision_Mammon")
-        || decoded_text.contains("Vision_Mammon")
-        || decoded_text.contains("Mammon")
-    {
-        return Some("AdvVision_Mammon".to_owned());
-    }
-    None
-}
-
-fn abyss_scene_stage_key_from_text(decoded_text: &str) -> Option<String> {
-    for (offset, _) in decoded_text.match_indices("Abyss_") {
-        let tail = &decoded_text[offset + "Abyss_".len()..];
-        let digits = tail
-            .chars()
-            .take_while(|character| character.is_ascii_digit())
-            .collect::<String>();
-        if !digits.is_empty() {
-            return Some(digits);
-        }
-    }
-    None
-}
-
-fn abyss_half_from_text(decoded_text: &str) -> Option<String> {
-    if decoded_text.contains("EAbyssFightStage::FirstHalf") {
-        Some("FirstHalf".to_owned())
-    } else if decoded_text.contains("EAbyssFightStage::SecondHalf") {
-        Some("SecondHalf".to_owned())
-    } else {
-        None
-    }
-}
-
-fn first_hex_guid_from_text(decoded_text: &str) -> Option<String> {
-    let mut run = String::new();
-    for character in decoded_text.chars() {
-        if character.is_ascii_hexdigit() {
-            run.push(character.to_ascii_lowercase());
-            if run.len() == 32
-                && run.as_bytes().iter().any(|byte| *byte != b'0')
-                && run.as_bytes().iter().collect::<HashSet<_>>().len() > 1
-            {
-                return Some(run);
-            }
-            if run.len() > 32 {
-                run.remove(0);
-            }
-        } else {
-            run.clear();
-        }
-    }
-    None
 }
 
 fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent> {
@@ -1160,401 +860,33 @@ fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
     let _ = sender.send(EngineEvent::Packet(packet));
 }
 
-const INFERRED_FOLLOW_UP_CHAR_ID: u32 = u32::MAX;
-const NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX: u32 = 241;
-const MAX_DISPLAY_DAMAGE_CORRECTION_RATIO: f64 = 0.03;
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
-const MAX_RECENT_TARGET_HITS: usize = 2048;
-const TARGET_BACKFILL_WINDOW_SECONDS: f64 = 90.0;
-const PLAYER_HP_STREAM_FALLBACK_WINDOW_SECONDS: f64 = 8.0;
-const HP_RECONCILIATION_WINDOW_SECONDS: f64 = 0.300;
-const HP_RECONCILIATION_ABSOLUTE_TOLERANCE: f64 = 2.0;
-const HP_RECONCILIATION_RELATIVE_TOLERANCE: f64 = 0.002;
+const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
+const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
+const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
+const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
+const FUWEN_ENTERING_ID_SHIFT: u8 = 0;
+const FUWEN_ENTERING_ID_OFFSET: usize = 53;
+const FUWEN_PREVIOUS_ID_SHIFT: u8 = 2;
+const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
+const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
+const RECENT_CONFIRMED_HIT_WINDOW_SECONDS: f64 = 0.75;
+const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
+const BOSS_HP_SYNC_WINDOW_SECONDS: f64 = 1.0;
+const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
+
+fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
+    match hit.attack_type.as_deref() {
+        Some("创生") | Some("创生花") | Some("覆纹") | Some("延滞") | Some("黯星")
+        | Some("浊燃") | Some("浸染") | Some("盈蓄") | Some("失谐") => false,
+        Some(attack_type) if attack_type.starts_with("环合·") => attack_type == "环合·覆纹",
+        _ => true,
+    }
+}
 
 #[derive(Clone)]
 struct PendingHit {
     hit: Hit,
-    gameplay_effect_index: Option<u32>,
-}
-
-#[derive(Clone, Debug)]
-struct PendingHpReconciliationHit {
-    hit: Hit,
-}
-
-#[derive(Clone, Debug)]
-struct SdkTargetHpConfirmation {
-    current_hp: f64,
-    stream: TargetStreamObservation,
-    class_hint: Option<String>,
-    class_hint_name: Option<String>,
-    class_hint_confidence: Option<TargetConfidence>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HpConfirmationKind {
-    CurrentHp,
-    BossHp,
-    SdkTarget,
-}
-
-#[derive(Clone, Debug)]
-struct PlayerHpObservation {
-    timestamp: f64,
-    hp: f64,
-    char_id: Option<u32>,
-    hint: String,
-}
-
-#[derive(Default)]
-struct PlayerHpTracker {
-    by_hint: HashMap<String, PlayerHpObservation>,
-    active_stream: Option<PlayerHpObservation>,
-}
-
-impl PlayerHpTracker {
-    fn observe_updates(
-        &mut self,
-        timestamp: f64,
-        updates: &[ParsedCurrentHpUpdate],
-        active_char_id: Option<u32>,
-        fallback_char_id: Option<u32>,
-        characters: &HashMap<u32, CharacterInfo>,
-    ) -> Vec<Hit> {
-        let mut hits = Vec::new();
-        for update in updates {
-            let hp = update.current_hp as f64;
-            let hint = current_hp_observation_hint(update);
-            let exact_previous = self.by_hint.get(&hint).cloned();
-            let fallback_previous = exact_previous.is_none().then(|| {
-                self.active_stream
-                    .as_ref()
-                    .filter(|previous| {
-                        previous.hint != hint
-                            && timestamp - previous.timestamp
-                                <= PLAYER_HP_STREAM_FALLBACK_WINDOW_SECONDS
-                            && previous.hp > hp
-                    })
-                    .cloned()
-            });
-            let (previous, stream_context) = match (exact_previous, fallback_previous.flatten()) {
-                (Some(previous), _) if previous.hp > hp => (Some(previous), hint.clone()),
-                (None, Some(previous)) => (Some(previous), "active_player_fallback".to_owned()),
-                _ => (None, hint.clone()),
-            };
-            if let Some(previous) = previous {
-                let damage = previous.hp - hp;
-                if damage >= 1.0 {
-                    let char_id = active_char_id
-                        .or(fallback_char_id)
-                        .or(previous.char_id)
-                        .unwrap_or(0);
-                    let (char_name, char_known) = characters.get(&char_id).map_or_else(
-                        || {
-                            if char_id == 0 {
-                                ("未知角色".to_owned(), false)
-                            } else {
-                                (format!("角色 {char_id}"), false)
-                            }
-                        },
-                        |character| (character.name_zh.clone(), true),
-                    );
-                    let char_resolution = if active_char_id.is_some() {
-                        "active_player"
-                    } else if fallback_char_id.is_some() || previous.char_id.is_some() {
-                        "fallback"
-                    } else {
-                        "unknown"
-                    };
-                    let max_hp = previous.hp.max(hp).max(1.0);
-                    let mut target_context = vec![
-                        "incoming_source=current_hp_delta".to_owned(),
-                        format!("current_hp_token={hint}"),
-                        format!("current_hp_before={:.0}", previous.hp),
-                        format!("current_hp_after={:.0}", hp),
-                        format!("char_resolution={char_resolution}"),
-                    ];
-                    if stream_context == "active_player_fallback" {
-                        target_context.push("current_hp_stream=active_player_fallback".to_owned());
-                    } else {
-                        target_context.push(format!("current_hp_stream={stream_context}"));
-                    }
-                    hits.push(Hit {
-                        timestamp,
-                        char_id,
-                        char_name,
-                        char_known,
-                        damage,
-                        byte_offset: update.byte_offset,
-                        bit_shift: update.bit_shift,
-                        char_source: "current_hp_delta".to_owned(),
-                        direction: "incoming".to_owned(),
-                        target_hp_before: previous.hp,
-                        target_hp_after: hp,
-                        target_max_hp: max_hp,
-                        target_hp_percent: hp / max_hp * 100.0,
-                        target_id: None,
-                        target_name: None,
-                        target_context,
-                        gameplay_effect_index: None,
-                        gameplay_effect_name: None,
-                        ability_name: None,
-                        damage_name: Some("受击".to_owned()),
-                        attack_type: Some("受击".to_owned()),
-                    });
-                }
-            }
-            let observation = PlayerHpObservation {
-                timestamp,
-                hp,
-                char_id: active_char_id.or(fallback_char_id),
-                hint: hint.clone(),
-            };
-            self.by_hint.insert(hint, observation.clone());
-            self.active_stream = Some(observation);
-        }
-        self.by_hint.retain(|_, observation| {
-            timestamp - observation.timestamp <= PLAYER_HP_STREAM_FALLBACK_WINDOW_SECONDS * 2.0
-        });
-        if self.active_stream.as_ref().is_some_and(|observation| {
-            timestamp - observation.timestamp > PLAYER_HP_STREAM_FALLBACK_WINDOW_SECONDS * 2.0
-        }) {
-            self.active_stream = None;
-        }
-        hits
-    }
-}
-
-fn current_hp_observation_hint(update: &ParsedCurrentHpUpdate) -> String {
-    current_hp_target_token(&update.target_hint).map_or_else(
-        || format!("hint:{}", hex::encode(update.target_hint)),
-        |token| format!("token:{}", short_hex(&token)),
-    )
-}
-
-fn should_wait_for_hp_reconciliation(hit: &Hit) -> bool {
-    hit.direction == "unknown"
-        && hit
-            .target_context
-            .iter()
-            .any(|entry| entry == "direction_pending=c2s_hp_reconciliation")
-}
-
-fn apply_hp_confirmation_to_hit(
-    hit: &mut Hit,
-    current_hp_updates: &[ParsedCurrentHpUpdate],
-    boss_hp_updates: &[ParsedBossHpUpdate],
-    sdk_hp_updates: &[SdkTargetHpConfirmation],
-    runtime_handles: &RuntimeHandleStore,
-) -> Option<HpConfirmationKind> {
-    if !should_wait_for_hp_reconciliation(hit) {
-        return None;
-    }
-    if let Some(update) = current_hp_updates
-        .iter()
-        .find(|update| hp_value_matches(hit.target_hp_after, update.current_hp as f64))
-    {
-        mark_hit_incoming_from_current_hp(hit, update);
-        return Some(HpConfirmationKind::CurrentHp);
-    }
-    if let Some(update) = boss_hp_updates
-        .iter()
-        .find(|update| hp_value_matches(hit.target_hp_after, update.current_hp as f64))
-    {
-        mark_hit_outgoing_from_boss_hp(hit, update);
-        apply_runtime_handle_target_to_hit(
-            hit,
-            runtime_handles,
-            &hex::encode(update.target_handle),
-            "runtime_handle_bound",
-        );
-        return Some(HpConfirmationKind::BossHp);
-    }
-    if let Some(update) = sdk_hp_updates
-        .iter()
-        .find(|update| hp_value_matches(hit.target_hp_after, update.current_hp))
-    {
-        mark_hit_outgoing_from_sdk_target(hit, update);
-        return Some(HpConfirmationKind::SdkTarget);
-    }
-    None
-}
-
-fn is_current_hp_delta_hit(hit: &Hit) -> bool {
-    hit.direction == "incoming"
-        && hit
-            .target_context
-            .iter()
-            .any(|entry| entry == "incoming_source=current_hp_delta")
-}
-
-fn hp_value_matches(left: f64, right: f64) -> bool {
-    let delta = (left - right).abs();
-    delta <= HP_RECONCILIATION_ABSOLUTE_TOLERANCE
-        || delta <= left.abs().max(right.abs()).max(1.0) * HP_RECONCILIATION_RELATIVE_TOLERANCE
-}
-
-fn mark_hit_incoming_from_current_hp(hit: &mut Hit, update: &ParsedCurrentHpUpdate) {
-    hit.direction = "incoming".to_owned();
-    hit.target_id = None;
-    hit.target_name = None;
-    hit.target_context.retain(|entry| {
-        !entry.starts_with("target_")
-            && !entry.starts_with("reason=runtime_")
-            && !entry.starts_with("runtime_target_instance=")
-            && !entry.starts_with("boss_hp_guid=")
-    });
-    push_unique_context(
-        &mut hit.target_context,
-        "direction_confirmed=current_hp_after_match".to_owned(),
-    );
-    push_unique_context(
-        &mut hit.target_context,
-        format!("current_hp_after={:.0}", update.current_hp),
-    );
-    if let Some(token) = current_hp_target_token(&update.target_hint) {
-        push_unique_context(
-            &mut hit.target_context,
-            format!("current_hp_token={}", short_hex(&token)),
-        );
-    }
-}
-
-fn mark_hit_outgoing_from_boss_hp(hit: &mut Hit, update: &ParsedBossHpUpdate) {
-    hit.direction = "outgoing".to_owned();
-    let handle = hex::encode(update.target_handle);
-    push_unique_context(
-        &mut hit.target_context,
-        "direction_confirmed=boss_hp_after_match".to_owned(),
-    );
-    push_unique_context(&mut hit.target_context, format!("boss_hp_guid={handle}"));
-    push_unique_context(
-        &mut hit.target_context,
-        format!("target_handle_candidate=AttributeGuid:{handle}"),
-    );
-    push_unique_context(&mut hit.target_context, format!("base_handle={handle}"));
-    push_unique_context(
-        &mut hit.target_context,
-        "hp_timeline_match=boss_hp_after_match".to_owned(),
-    );
-}
-
-fn mark_hit_outgoing_from_sdk_target(hit: &mut Hit, update: &SdkTargetHpConfirmation) {
-    hit.direction = "outgoing".to_owned();
-    hit.target_id = Some(update.stream.stream_id.clone());
-    replace_target_context_value(
-        &mut hit.target_context,
-        "target_id_resolution",
-        "sdk_target_stream",
-    );
-    push_unique_context(
-        &mut hit.target_context,
-        "direction_confirmed=target_hp_after_match".to_owned(),
-    );
-    push_unique_context(
-        &mut hit.target_context,
-        "hp_timeline_match=sdk_target_after_match".to_owned(),
-    );
-    push_unique_context(
-        &mut hit.target_context,
-        format!("base_handle={}", update.stream.base_handle),
-    );
-    push_unique_context(
-        &mut hit.target_context,
-        format!("target_stream={}", update.stream.stream_id),
-    );
-    if let Some(slot) = update.stream.slot {
-        push_unique_context(&mut hit.target_context, format!("sdk_target_slot={slot}"));
-    }
-    if let Some(suffix) = &update.stream.suffix_hex {
-        push_unique_context(
-            &mut hit.target_context,
-            format!("sdk_target_suffix={suffix}"),
-        );
-    }
-    if let Some(class_hint) = &update.class_hint {
-        push_unique_context(&mut hit.target_context, format!("class_hint={class_hint}"));
-        replace_target_path_context(&mut hit.target_context, class_hint);
-    }
-    if let Some(name) = &update.class_hint_name {
-        hit.target_name = Some(name.clone());
-        replace_target_context_value(&mut hit.target_context, "target_name", name);
-        replace_target_context_value(
-            &mut hit.target_context,
-            "target_name_resolution",
-            "class_hint_stream_order",
-        );
-        push_unique_context(&mut hit.target_context, format!("class_hint_name={name}"));
-    } else {
-        push_unique_context(
-            &mut hit.target_context,
-            "target_unresolved=class_hint_missing".to_owned(),
-        );
-    }
-    if let Some(confidence) = update.class_hint_confidence {
-        push_unique_context(
-            &mut hit.target_context,
-            format!("class_hint_confidence={}", confidence.as_str()),
-        );
-    }
-}
-
-fn apply_runtime_handle_target_to_hit(
-    hit: &mut Hit,
-    runtime_handles: &RuntimeHandleStore,
-    handle: &str,
-    resolution: &str,
-) -> bool {
-    let Some(target) = runtime_handles.target_for_handle(handle) else {
-        return false;
-    };
-    hit.target_id = Some(format!("boss_hp_guid:{handle}"));
-    hit.target_name = Some(target.target_name.clone());
-    replace_target_context_value(&mut hit.target_context, "target_name", &target.target_name);
-    replace_target_context_value(
-        &mut hit.target_context,
-        "target_name_resolution",
-        resolution,
-    );
-    replace_target_context_value(&mut hit.target_context, "target_id_resolution", resolution);
-    if let Some(path) = target.target_path {
-        replace_target_path_context(&mut hit.target_context, &path);
-    }
-    true
-}
-
-fn finalize_unconfirmed_hp_direction(hit: &mut Hit) {
-    if hit.direction != "unknown" {
-        return;
-    }
-    if hit
-        .target_context
-        .iter()
-        .any(|entry| entry == "direction_confirmed=current_hp_after_match")
-    {
-        hit.direction = "incoming".to_owned();
-    } else if hit.target_max_hp > 500_000.0 {
-        hit.direction = "outgoing".to_owned();
-        push_unique_context(
-            &mut hit.target_context,
-            "direction_confirmed=high_target_hp_candidate".to_owned(),
-        );
-    } else if hit
-        .target_context
-        .iter()
-        .any(|entry| entry == "direction_candidate=c2s_player_or_reaction_effect")
-    {
-        hit.direction = "outgoing".to_owned();
-        push_unique_context(
-            &mut hit.target_context,
-            "direction_confirmed=c2s_player_effect_no_current_hp_match".to_owned(),
-        );
-    } else {
-        push_unique_context(
-            &mut hit.target_context,
-            "direction_unresolved=hp_reconciliation_timeout".to_owned(),
-        );
-    }
 }
 
 #[derive(Default)]
@@ -1565,6 +897,9 @@ struct FollowUpDamageTracker {
     pending_hits: VecDeque<PendingHit>,
     team_attributes: HashSet<String>,
     character_attributes: HashMap<u32, String>,
+    fuwen_active: bool,
+    fuwen_start_pending: bool,
+    fuwen_recorded_damage: bool,
 }
 
 impl FollowUpDamageTracker {
@@ -1572,6 +907,7 @@ impl FollowUpDamageTracker {
         self.pending_hits.clear();
         self.team_attributes.clear();
         self.character_attributes.clear();
+        self.clear_fuwen_state();
     }
 
     fn observe_characters(
@@ -1595,10 +931,10 @@ impl FollowUpDamageTracker {
     fn observe_hit(
         &mut self,
         hit: &Hit,
-        gameplay_effect_index: Option<u32>,
+        _gameplay_effect_index: Option<u32>,
         characters: &HashMap<u32, CharacterInfo>,
     ) {
-        if hit.direction != "outgoing"
+        if hit.direction == "incoming"
             || hit.char_id == 0
             || hit.target_max_hp <= 500_000.0
             || hit.target_hp_before <= 0.0
@@ -1625,16 +961,35 @@ impl FollowUpDamageTracker {
         {
             self.pending_hits.clear();
         }
-        self.pending_hits.push_back(PendingHit {
-            hit: hit.clone(),
-            gameplay_effect_index,
-        });
+        self.pending_hits.push_back(PendingHit { hit: hit.clone() });
         while self.pending_hits.len() > MAX_PENDING_FOLLOW_UP_HITS {
             self.pending_hits.pop_front();
         }
     }
 
-    fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<Hit> {
+    fn observe_fuwen_start_candidate(
+        &mut self,
+        _timestamp: f64,
+        entering_character_id: u32,
+        previous_character_id: u32,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) {
+        self.observe_characters([entering_character_id, previous_character_id], characters);
+        self.fuwen_start_pending = true;
+    }
+
+    fn observe_fuwen_trigger_hit(&mut self, hit: &Hit) {
+        if hit.direction == "incoming" || hit.attack_type.as_deref() != Some("环合·覆纹") {
+            return;
+        }
+        self.fuwen_active = true;
+        self.fuwen_start_pending = false;
+        self.fuwen_recorded_damage = false;
+        self.pending_hits.clear();
+        self.last_server_hp = None;
+    }
+
+    fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<HitFollowUp> {
         self.pending_hits
             .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
         let previous_hp = self.last_server_hp.or_else(|| {
@@ -1657,83 +1012,159 @@ impl FollowUpDamageTracker {
         }
 
         let actual_damage = previous_hp - current_hp;
-        let pending = self.pending_hits.pop_front()?;
-        let source = pending.hit;
-        let residual_damage = actual_damage - source.damage;
-        let inferred_damage =
-            corrected_follow_up_damage(actual_damage, source.damage, pending.gameplay_effect_index)
-                .unwrap_or(residual_damage);
-        let inferred_ratio = if source.damage > 0.0 {
-            residual_damage / source.damage
-        } else {
-            0.0
-        };
-        let corrected = (inferred_damage - residual_damage).abs() > 0.5;
-        if inferred_damage < 1.0 || (!corrected && !(0.18..=0.26).contains(&inferred_ratio)) {
+        let source = self.pending_hits.pop_front()?.hit;
+        if !hit_can_trigger_fuwen_follow_up(&source) {
             return None;
         }
+        let residual_damage = actual_damage - source.damage;
         let has_required_team_attributes =
             self.team_attributes.contains("灵") && self.team_attributes.contains("咒");
         let source_attribute = self.character_attributes.get(&source.char_id)?;
         if !has_required_team_attributes || !matches!(source_attribute.as_str(), "灵" | "咒") {
             return None;
         }
-        Some(Hit {
+        if !self.fuwen_active {
+            return None;
+        }
+        if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+            return None;
+        }
+        self.fuwen_recorded_damage = true;
+        Some(HitFollowUp {
+            source_timestamp: source.timestamp,
+            source_char_id: source.char_id,
+            source_damage: source.damage,
+            source_target_hp_before: source.target_hp_before,
+            source_target_hp_after: source.target_hp_after,
+            source_target_max_hp: source.target_max_hp,
+            source_gameplay_effect_index: source.gameplay_effect_index,
             timestamp,
-            char_id: INFERRED_FOLLOW_UP_CHAR_ID,
-            char_name: "覆纹伤害".to_owned(),
-            char_known: false,
-            damage: inferred_damage,
-            byte_offset: 0,
-            bit_shift: 0,
-            char_source: "boss_hp_residual".to_owned(),
-            direction: "outgoing".to_owned(),
-            target_hp_before: current_hp + inferred_damage,
+            damage: residual_damage,
             target_hp_after: current_hp,
-            target_max_hp: source.target_max_hp,
             target_hp_percent: if source.target_max_hp > 0.0 {
                 current_hp / source.target_max_hp * 100.0
             } else {
                 0.0
             },
-            target_id: None,
-            target_name: None,
-            target_context: Vec::new(),
-            gameplay_effect_index: None,
-            gameplay_effect_name: None,
-            ability_name: None,
             damage_name: Some("覆纹追加攻击".to_owned()),
             attack_type: Some("覆纹".to_owned()),
+            damage_attribute: Some(source_attribute.clone()),
         })
+    }
+
+    fn clear_fuwen_state(&mut self) {
+        self.fuwen_active = false;
+        self.fuwen_start_pending = false;
+        self.fuwen_recorded_damage = false;
     }
 }
 
-fn corrected_follow_up_damage(
-    actual_damage: f64,
-    packet_damage: f64,
-    gameplay_effect_index: Option<u32>,
-) -> Option<f64> {
-    if gameplay_effect_index != Some(NANALLY_MELEE1_GAMEPLAY_EFFECT_INDEX) {
-        return None;
-    }
-    let total = actual_damage.round();
-    if (actual_damage - total).abs() > 0.01 || total < 1.0 {
-        return None;
-    }
-    let total = total as u64;
-    let minimum_base = total.saturating_mul(5) / 6;
-    for displayed_base in minimum_base.saturating_sub(2)..=minimum_base.saturating_add(3) {
-        let follow_up = displayed_base / 5;
-        if displayed_base + follow_up != total {
-            continue;
+#[derive(Clone)]
+struct ServerDamagePendingHit {
+    hit: Hit,
+}
+
+#[derive(Clone, Copy)]
+struct ServerHpSnapshot {
+    timestamp: f64,
+    hp: f64,
+}
+
+#[derive(Default)]
+struct ServerDamageCalibrationTracker {
+    hp_by_handle: HashMap<[u8; 16], ServerHpSnapshot>,
+    pending_hits: VecDeque<ServerDamagePendingHit>,
+}
+
+impl ServerDamageCalibrationTracker {
+    fn observe_hit(&mut self, hit: &Hit) {
+        if hit.direction == "incoming"
+            || hit.char_id == 0
+            || hit.target_max_hp <= 0.0
+            || hit.target_hp_before <= 0.0
+        {
+            return;
         }
-        let correction_ratio =
-            (displayed_base as f64 - packet_damage).abs() / displayed_base as f64;
-        if correction_ratio <= MAX_DISPLAY_DAMAGE_CORRECTION_RATIO {
-            return Some(follow_up as f64);
+        if self
+            .pending_hits
+            .back()
+            .is_some_and(|pending| hit.timestamp - pending.hit.timestamp > 2.0)
+        {
+            self.pending_hits.clear();
+        }
+        self.pending_hits
+            .push_back(ServerDamagePendingHit { hit: hit.clone() });
+        while self.pending_hits.len() > MAX_PENDING_FOLLOW_UP_HITS {
+            self.pending_hits.pop_front();
         }
     }
-    None
+
+    fn observe_boss_hp(
+        &mut self,
+        timestamp: f64,
+        update: &crate::parser::ParsedBossHpUpdate,
+    ) -> Option<HitDamageCorrection> {
+        let current_hp = if update.current_hp <= 1.0 {
+            0.0
+        } else {
+            update.current_hp as f64
+        };
+        let previous = self.hp_by_handle.insert(
+            update.target_handle,
+            ServerHpSnapshot {
+                timestamp,
+                hp: current_hp,
+            },
+        );
+        self.pending_hits.retain(|pending| {
+            timestamp - pending.hit.timestamp <= SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS
+        });
+        let previous = previous?;
+        if current_hp >= previous.hp {
+            self.pending_hits
+                .retain(|pending| pending.hit.timestamp > timestamp);
+            return None;
+        }
+        let candidates = self
+            .pending_hits
+            .iter()
+            .enumerate()
+            .filter(|(_, pending)| {
+                pending.hit.timestamp > previous.timestamp
+                    && pending.hit.timestamp <= timestamp
+                    && pending.hit.target_max_hp > 0.0
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return None;
+        }
+        let source_index = candidates[0];
+        let source = self.pending_hits[source_index].hit.clone();
+        self.pending_hits
+            .retain(|pending| pending.hit.timestamp > source.timestamp);
+        let damage = previous.hp - current_hp;
+        if damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+            return None;
+        }
+        Some(HitDamageCorrection {
+            source_timestamp: source.timestamp,
+            source_char_id: source.char_id,
+            source_damage: source.damage,
+            source_target_hp_before: source.target_hp_before,
+            source_target_hp_after: source.target_hp_after,
+            source_target_max_hp: source.target_max_hp,
+            source_gameplay_effect_index: source.gameplay_effect_index,
+            damage,
+            target_hp_before: previous.hp,
+            target_hp_after: current_hp,
+            target_hp_percent: if source.target_max_hp > 0.0 {
+                current_hp / source.target_max_hp * 100.0
+            } else {
+                0.0
+            },
+        })
+    }
 }
 
 struct PacketDecoder {
@@ -1742,51 +1173,21 @@ struct PacketDecoder {
     gameplay_effect_names: HashMap<u32, String>,
     gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
     wooden_damage_names: HashMap<String, String>,
-    object_state: ObjectStateStore,
-    target_instances: TargetInstanceStore,
-    runtime_handles: RuntimeHandleStore,
-    target_streams: TargetStreamStore,
-    class_hints: ClassHintStore,
-    target_tracks: TargetTrackStore,
-    resource_index: ResourceIndex,
-    advvision_index: AdvVisionIndex,
-    active_advvision_id: Option<String>,
-    active_stage_context: Option<StageContext>,
-    target_resolver: TargetResolver,
-    recent_target_hits: VecDeque<RecentTargetHit>,
-    target_handle_aliases: HashMap<String, HandleTargetAlias>,
-    recent_dead_target_handles: HashMap<String, f64>,
     follow_up_damage: FollowUpDamageTracker,
-    player_hp: PlayerHpTracker,
-    pending_hp_reconciliation: VecDeque<PendingHpReconciliationHit>,
-    active_player_char_id: Option<u32>,
+    server_damage_calibration: ServerDamageCalibrationTracker,
+    use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
+    pending_ambiguous_hits: Vec<Hit>,
+    recent_confirmed_hits: Vec<Hit>,
     resource_warnings: Vec<String>,
-    packet_debug_mode: PacketDebugMode,
-    packet_index: usize,
 }
 
-#[derive(Clone, Debug)]
-struct RecentTargetHit {
-    hit: Hit,
-    summary: TargetResolutionSummary,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct HandleTargetAlias {
-    target_path: String,
-    target_name: String,
-    source: String,
-    first_seen_at: u64,
-    last_seen_at: u64,
-}
-
-#[derive(Clone, Debug)]
-struct TargetStreamResolutionSnapshot {
-    stream_id: String,
-    target_name: Option<String>,
-    target_name_resolution: Option<String>,
-    had_class_hint_missing: bool,
+#[derive(Default)]
+struct PreparedHits {
+    emit: Vec<Hit>,
+    filtered_incoming: usize,
+    deferred_ambiguous: usize,
+    suppressed_ambiguous: usize,
 }
 
 impl Default for PacketDecoder {
@@ -1808,153 +1209,30 @@ impl Default for PacketDecoder {
             load_wooden_damage_names,
         );
 
-        let resource_index = ResourceIndex::load_default_with_warnings(&mut resource_warnings);
-        let advvision_index = AdvVisionIndex::load_default(&resource_index);
-
         Self {
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
             gameplay_effect_names,
             gameplay_effect_skills,
             wooden_damage_names,
-            object_state: ObjectStateStore::default(),
-            target_instances: TargetInstanceStore::default(),
-            runtime_handles: RuntimeHandleStore::default(),
-            target_streams: TargetStreamStore::default(),
-            class_hints: ClassHintStore::default(),
-            target_tracks: TargetTrackStore::default(),
-            resource_index,
-            advvision_index,
-            active_advvision_id: None,
-            active_stage_context: None,
-            target_resolver: TargetResolver,
-            recent_target_hits: VecDeque::new(),
-            target_handle_aliases: HashMap::new(),
-            recent_dead_target_handles: HashMap::new(),
             follow_up_damage: FollowUpDamageTracker::default(),
-            player_hp: PlayerHpTracker::default(),
-            pending_hp_reconciliation: VecDeque::new(),
-            active_player_char_id: None,
+            server_damage_calibration: ServerDamageCalibrationTracker::default(),
+            use_server_damage_calibration: false,
             character_declarations: HashMap::new(),
+            pending_ambiguous_hits: Vec::new(),
+            recent_confirmed_hits: Vec::new(),
             resource_warnings,
-            packet_debug_mode: PacketDebugMode::Off,
-            packet_index: 0,
         }
     }
 }
 
 impl PacketDecoder {
-    fn with_packet_debug_mode(packet_debug_mode: PacketDebugMode) -> Self {
+    fn with_server_damage_calibration(use_server_damage_calibration: bool) -> Self {
         Self {
-            packet_debug_mode,
+            use_server_damage_calibration,
             ..Self::default()
         }
     }
-}
-
-fn target_update_from_hit(hit: &Hit, summary: &TargetResolutionSummary) -> HitTargetUpdate {
-    HitTargetUpdate {
-        hit_uid: stable_hit_uid(hit),
-        timestamp: hit.timestamp,
-        char_id: hit.char_id,
-        damage: hit.damage,
-        byte_offset: hit.byte_offset,
-        bit_shift: hit.bit_shift,
-        target_id: hit.target_id.clone(),
-        target_name: hit.target_name.clone(),
-        target_context: hit.target_context.clone(),
-        target_score: summary.score,
-        target_confidence: summary.confidence.as_str().to_owned(),
-        old_target_id: None,
-        update_reason: target_context_value(&hit.target_context, "target_name_resolution")
-            .map(str::to_owned),
-        update_strength: Some(summary.confidence.as_str().to_owned()),
-        target_generation: hit
-            .target_id
-            .as_deref()
-            .and_then(|target_id| target_id.rsplit_once('#').map(|(_, generation)| generation))
-            .map(str::to_owned),
-    }
-}
-
-fn target_lock_context_for_packet(
-    path_candidates: &[PathCandidate],
-    current_hp_updates: &[ParsedCurrentHpUpdate],
-    boss_hp_updates: &[ParsedBossHpUpdate],
-    resources: &ResourceIndex,
-) -> TrackPacketContext {
-    let mut canonical_target_paths = HashSet::new();
-    let mut canonical_target_names = HashSet::new();
-    for candidate in path_candidates {
-        if is_ignored_non_target_path(&candidate.value) || !is_targetish_path(&candidate.value) {
-            continue;
-        }
-        let canonical_path = resources
-            .canonical_target_path_for_path(&candidate.value)
-            .unwrap_or_else(|| candidate.value.clone());
-        let Some(name) = resources
-            .resolved_name_for_path(&candidate.value)
-            .or_else(|| resources.resolved_name_for_path(&canonical_path))
-        else {
-            continue;
-        };
-        canonical_target_paths.insert(canonical_path);
-        canonical_target_names.insert(name);
-    }
-    let mut hp_handles = HashSet::new();
-    for update in boss_hp_updates {
-        hp_handles.insert(format!(
-            "boss_hp_guid:{}",
-            hex::encode(update.target_handle)
-        ));
-    }
-    for update in current_hp_updates {
-        if let Some(token) = current_hp_target_token(&update.target_hint) {
-            hp_handles.insert(format!("current_hp_token:{}", hex::encode(token)));
-        }
-    }
-    let has_multiple_canonical_targets =
-        canonical_target_paths.len() > 1 || canonical_target_names.len() > 1;
-    TrackPacketContext {
-        canonical_target_paths,
-        canonical_target_names,
-        local_canonical_target_paths: HashSet::new(),
-        local_canonical_target_names: HashSet::new(),
-        hp_handle_keys: hp_handles,
-        has_multiple_canonical_targets,
-    }
-}
-
-fn enrich_track_context_from_hit(
-    context: &mut TrackPacketContext,
-    hit: &Hit,
-    resources: &ResourceIndex,
-) {
-    for entry in &hit.target_context {
-        let Some(path) = entry.strip_prefix("reason=near_object_path:") else {
-            continue;
-        };
-        if is_ignored_non_target_path(path) {
-            continue;
-        }
-        let canonical_path = resources
-            .canonical_target_path_for_path(path)
-            .unwrap_or_else(|| path.to_owned());
-        let Some(name) = resources
-            .resolved_name_for_path(path)
-            .or_else(|| resources.resolved_name_for_path(&canonical_path))
-        else {
-            continue;
-        };
-        context
-            .local_canonical_target_paths
-            .insert(canonical_path.clone());
-        context.local_canonical_target_names.insert(name.clone());
-        context.canonical_target_paths.insert(canonical_path);
-        context.canonical_target_names.insert(name);
-    }
-    context.has_multiple_canonical_targets =
-        context.canonical_target_paths.len() > 1 || context.canonical_target_names.len() > 1;
 }
 
 fn load_resource<T>(
@@ -1984,1787 +1262,277 @@ impl PacketDecoder {
         (!self.resource_warnings.is_empty()).then(|| self.resource_warnings.join("; "))
     }
 
-    fn reconcile_hp_confirmations(
-        &mut self,
-        timestamp: f64,
-        new_hits: Vec<Hit>,
-        current_hp_updates: &[ParsedCurrentHpUpdate],
-        boss_hp_updates: &[ParsedBossHpUpdate],
-        sdk_hp_updates: &[SdkTargetHpConfirmation],
-    ) -> Vec<Hit> {
-        let mut ready = Vec::new();
-        let mut still_pending = VecDeque::new();
-        let mut consumed_current_hp_after = Vec::new();
-        while let Some(mut pending) = self.pending_hp_reconciliation.pop_front() {
-            if let Some(kind) = apply_hp_confirmation_to_hit(
-                &mut pending.hit,
-                current_hp_updates,
-                boss_hp_updates,
-                sdk_hp_updates,
-                &self.runtime_handles,
-            ) {
-                if kind == HpConfirmationKind::CurrentHp {
-                    consumed_current_hp_after.push(pending.hit.target_hp_after);
-                }
-                ready.push(pending.hit);
-            } else if timestamp - pending.hit.timestamp >= HP_RECONCILIATION_WINDOW_SECONDS {
-                finalize_unconfirmed_hp_direction(&mut pending.hit);
-                ready.push(pending.hit);
+    fn take_expired_ambiguous_hits(&mut self, timestamp: f64) -> Vec<Hit> {
+        let mut expired = Vec::new();
+        let mut pending = Vec::with_capacity(self.pending_ambiguous_hits.len());
+        for hit in self.pending_ambiguous_hits.drain(..) {
+            if timestamp - hit.timestamp > AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS {
+                expired.push(hit);
             } else {
-                still_pending.push_back(pending);
+                pending.push(hit);
             }
         }
-        self.pending_hp_reconciliation = still_pending;
-
-        for mut hit in new_hits {
-            if is_current_hp_delta_hit(&hit)
-                && consumed_current_hp_after
-                    .iter()
-                    .any(|hp| hp_value_matches(*hp, hit.target_hp_after))
-            {
-                continue;
-            }
-            if apply_hp_confirmation_to_hit(
-                &mut hit,
-                current_hp_updates,
-                boss_hp_updates,
-                sdk_hp_updates,
-                &self.runtime_handles,
-            )
-            .is_some()
-            {
-                ready.push(hit);
-            } else if should_wait_for_hp_reconciliation(&hit) {
-                self.pending_hp_reconciliation
-                    .push_back(PendingHpReconciliationHit { hit });
-            } else {
-                if hit.direction == "unknown" {
-                    finalize_unconfirmed_hp_direction(&mut hit);
-                }
-                ready.push(hit);
-            }
-        }
-        ready
+        self.pending_ambiguous_hits = pending;
+        expired
     }
 
-    fn flush_pending_hp_reconciliation(
+    fn take_all_ambiguous_hits(&mut self) -> Vec<Hit> {
+        self.pending_ambiguous_hits.drain(..).collect()
+    }
+
+    fn emit_hits(
         &mut self,
-        include_incoming: bool,
+        hits: impl IntoIterator<Item = Hit>,
         characters: &HashMap<u32, CharacterInfo>,
         sender: &Sender<EngineEvent>,
     ) {
-        let hits = self
-            .pending_hp_reconciliation
-            .drain(..)
-            .map(|mut pending| {
-                finalize_unconfirmed_hp_direction(&mut pending.hit);
-                pending.hit
-            })
-            .collect::<Vec<_>>();
-        self.finalize_and_emit_hits(
-            hits,
-            TrackPacketContext::default(),
-            &[],
-            true,
-            true,
-            true,
-            include_incoming,
-            characters,
-            sender,
-        );
-    }
-
-    fn remember_target_hit(&mut self, hit: &Hit, summary: TargetResolutionSummary) {
-        if hit.direction != "outgoing" {
-            return;
-        }
-        self.register_target_handle_alias_for_hit(hit, &summary);
-        self.recent_target_hits.push_back(RecentTargetHit {
-            hit: hit.clone(),
-            summary,
-        });
-        while self.recent_target_hits.len() > MAX_RECENT_TARGET_HITS {
-            self.recent_target_hits.pop_front();
+        for hit in hits {
+            self.follow_up_damage
+                .observe_hit(&hit, hit.gameplay_effect_index, characters);
+            if self.use_server_damage_calibration {
+                self.server_damage_calibration.observe_hit(&hit);
+            }
+            let _ = sender.send(EngineEvent::Hit(hit));
         }
     }
 
-    fn backfill_recent_targets(&mut self, timestamp: f64, sender: &Sender<EngineEvent>) {
-        self.recent_target_hits
-            .retain(|recent| timestamp - recent.hit.timestamp <= TARGET_BACKFILL_WINDOW_SECONDS);
-        let discovered_aliases = self
-            .recent_target_hits
+    fn prepare_hits_for_emission(
+        &mut self,
+        hits: Vec<Hit>,
+        declared_ids: &[u32],
+        include_incoming: bool,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) -> PreparedHits {
+        let mut prepared = PreparedHits::default();
+        for mut hit in hits {
+            self.recent_confirmed_hits.retain(|confirmed| {
+                hit.timestamp - confirmed.timestamp <= RECENT_CONFIRMED_HIT_WINDOW_SECONDS
+            });
+            if !include_incoming && hit.direction == "incoming" {
+                prepared.filtered_incoming += 1;
+                continue;
+            }
+            if gameplay_effect_confirms_session_hit(&hit, declared_ids, characters) {
+                hit.direction = "outgoing".to_owned();
+                hit.char_source = "gameplay_effect".to_owned();
+            }
+            if is_recent_confirmed_duplicate(&hit, &self.recent_confirmed_hits) {
+                prepared.suppressed_ambiguous += 1;
+                continue;
+            }
+            if is_ambiguous_session_hit(&hit, declared_ids) {
+                self.pending_ambiguous_hits.push(hit);
+                prepared.deferred_ambiguous += 1;
+                continue;
+            }
+            prepared.suppressed_ambiguous += self.suppress_matching_ambiguous_hits(&hit);
+            if is_confirmed_packet_hit(&hit) {
+                self.recent_confirmed_hits.push(hit.clone());
+            }
+            prepared.emit.push(hit);
+        }
+        prepared
+    }
+
+    fn infer_boss_hp_sync_damage(
+        &mut self,
+        timestamp: f64,
+        current_hp: f64,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) -> Option<HitFollowUp> {
+        self.recent_confirmed_hits
+            .retain(|hit| timestamp - hit.timestamp <= BOSS_HP_SYNC_WINDOW_SECONDS);
+        if current_hp > 1.0 {
+            return None;
+        }
+        let current_hp = 0.0;
+        if self
+            .recent_confirmed_hits
             .iter()
-            .filter(|recent| can_register_target_handle_alias_from_hit(&recent.hit))
-            .flat_map(|recent| {
-                let old_alias_keys = target_alias_lookup_keys(
-                    recent
-                        .hit
-                        .target_id
-                        .as_ref()
-                        .or(recent.summary.target_id.as_ref()),
-                    &recent.hit.target_context,
-                );
-                let mut resolved = recent.hit.clone();
-                resolved.target_id = None;
-                resolved.target_name = None;
-                resolved.target_context.clear();
-                let resolved_summary = self.target_resolver.apply_to_hit_with_summary(
-                    &mut resolved,
-                    &self.object_state,
-                    &self.target_instances,
-                    &[],
-                    &self.resource_index,
-                );
-                let mut aliases =
-                    target_handle_aliases_from_summary(&resolved_summary, recent.hit.timestamp);
-                if let Some(alias) =
-                    handle_target_alias_from_summary(&resolved_summary, recent.hit.timestamp)
-                {
-                    aliases.extend(old_alias_keys.into_iter().map(|key| (key, alias.clone())));
-                }
-                aliases
-            })
-            .collect::<Vec<_>>();
-        for (target_id, alias) in discovered_aliases {
-            merge_target_handle_alias(&mut self.target_handle_aliases, target_id, alias);
-        }
-        let target_handle_aliases = self.target_handle_aliases.clone();
-        for recent in &mut self.recent_target_hits {
-            if apply_handle_alias_backfill(recent, &target_handle_aliases) {
-                let _ = sender.send(EngineEvent::HitTargetUpdate(target_update_from_hit(
-                    &recent.hit,
-                    &recent.summary,
-                )));
-                continue;
-            }
-            let old_alias_keys = target_alias_lookup_keys(
-                recent
-                    .hit
-                    .target_id
-                    .as_ref()
-                    .or(recent.summary.target_id.as_ref()),
-                &recent.hit.target_context,
-            );
-            let mut resolved = recent.hit.clone();
-            resolved.target_id = None;
-            resolved.target_name = None;
-            resolved.target_context.clear();
-            let resolved_summary = self.target_resolver.apply_to_hit_with_summary(
-                &mut resolved,
-                &self.object_state,
-                &self.target_instances,
-                &[],
-                &self.resource_index,
-            );
-            if should_apply_target_update(&recent.summary, &resolved_summary) {
-                let mut resolved_summary = resolved_summary;
-                if should_preserve_existing_target_id_for_name_update(
-                    &recent.summary,
-                    &resolved_summary,
-                ) {
-                    resolved.target_id = recent.hit.target_id.clone();
-                    resolved.target_context.push(format!(
-                        "target_id_preserved={}",
-                        recent.hit.target_id.as_deref().unwrap_or_default()
-                    ));
-                    resolved_summary.target_id = recent.summary.target_id.clone();
-                    resolved_summary.score = recent.summary.score;
-                    resolved_summary.confidence = recent.summary.confidence;
-                    resolved_summary.direct_hp_evidence = recent.summary.direct_hp_evidence;
-                    resolved_summary.target_context = resolved.target_context.clone();
-                }
-                recent.hit = resolved;
-                if can_register_target_handle_alias_from_hit(&recent.hit) {
-                    for (target_id, alias) in
-                        target_handle_aliases_from_summary(&resolved_summary, recent.hit.timestamp)
-                    {
-                        merge_target_handle_alias(
-                            &mut self.target_handle_aliases,
-                            target_id,
-                            alias,
-                        );
-                    }
-                    if let Some(alias) =
-                        handle_target_alias_from_summary(&resolved_summary, recent.hit.timestamp)
-                    {
-                        for target_id in old_alias_keys {
-                            merge_target_handle_alias(
-                                &mut self.target_handle_aliases,
-                                target_id,
-                                alias.clone(),
-                            );
-                        }
-                    }
-                }
-                recent.summary = resolved_summary;
-                let _ = sender.send(EngineEvent::HitTargetUpdate(target_update_from_hit(
-                    &recent.hit,
-                    &recent.summary,
-                )));
-            }
-        }
-    }
-
-    fn register_target_handle_alias(&mut self, summary: &TargetResolutionSummary, timestamp: f64) {
-        for (target_id, alias) in target_handle_aliases_from_summary(summary, timestamp) {
-            merge_target_handle_alias(&mut self.target_handle_aliases, target_id, alias);
-        }
-    }
-
-    fn register_target_handle_alias_for_hit(
-        &mut self,
-        hit: &Hit,
-        summary: &TargetResolutionSummary,
-    ) {
-        if can_register_target_handle_alias_from_hit(hit) {
-            self.register_target_handle_alias(summary, hit.timestamp);
-        }
-    }
-
-    fn apply_target_track_attribution(
-        &mut self,
-        hit: &mut Hit,
-        summary: &mut TargetResolutionSummary,
-        mut context: TrackPacketContext,
-    ) {
-        if hit.direction != "outgoing" {
-            return;
-        }
-        enrich_track_context_from_hit(&mut context, hit, &self.resource_index);
-        self.target_tracks
-            .attribute_damage_hit(hit, summary, context);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn finalize_and_emit_hits(
-        &mut self,
-        mut hits: Vec<Hit>,
-        target_lock_context: TrackPacketContext,
-        path_candidates: &[PathCandidate],
-        no_targetish_path: bool,
-        no_net_identity: bool,
-        no_runtime_identity: bool,
-        include_incoming: bool,
-        characters: &HashMap<u32, CharacterInfo>,
-        sender: &Sender<EngineEvent>,
-    ) -> usize {
-        let mut hit_summaries = Vec::with_capacity(hits.len());
-        for hit in &mut hits {
-            let stream_snapshot = target_stream_resolution_snapshot(hit);
-            let mut summary = if hit.direction == "outgoing" {
-                let mut summary = self.target_resolver.apply_to_hit_with_summary(
-                    hit,
-                    &self.object_state,
-                    &self.target_instances,
-                    path_candidates,
-                    &self.resource_index,
-                );
-                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
-                summary
-            } else {
-                TargetResolutionSummary::from_hit_and_candidates(hit, &[])
-            };
-            if hit.direction == "outgoing" {
-                if hit.target_id.is_none()
-                    && hit.target_name.is_none()
-                    && self.target_instances.observe_hit_vector_hit(hit).is_some()
-                {
-                    summary = self.target_resolver.apply_to_hit_with_summary(
-                        hit,
-                        &self.object_state,
-                        &self.target_instances,
-                        path_candidates,
-                        &self.resource_index,
-                    );
-                    preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
-                }
-                self.suppress_recently_dead_target_on_hit(hit, &mut summary);
-                self.register_target_handle_alias_for_hit(hit, &summary);
-                apply_handle_alias_to_hit_summary(hit, &mut summary, &self.target_handle_aliases);
-                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
-                self.register_target_handle_alias_for_hit(hit, &summary);
-            }
-            hit_summaries.push(summary);
-        }
-        for (hit, summary) in hits.iter_mut().zip(&mut hit_summaries) {
-            if hit.direction == "outgoing" {
-                let stream_snapshot = target_stream_resolution_snapshot(hit);
-                apply_handle_alias_to_hit_summary(hit, summary, &self.target_handle_aliases);
-                preserve_target_stream_resolution(hit, summary, &stream_snapshot);
-            }
-        }
-        let mut hit_order = (0..hits.len()).collect::<Vec<_>>();
-        hit_order.sort_by(|left, right| {
-            hits[*left]
-                .timestamp
-                .total_cmp(&hits[*right].timestamp)
-                .then_with(|| hits[*left].byte_offset.cmp(&hits[*right].byte_offset))
-                .then_with(|| hits[*left].bit_shift.cmp(&hits[*right].bit_shift))
-        });
-        let mut dead_hits: Vec<Hit> = Vec::new();
-        for &index in &hit_order {
-            let hit = &mut hits[index];
-            let summary = &mut hit_summaries[index];
-            if hit.direction == "outgoing"
-                && hit.target_hp_after > 1.0
-                && dead_hits.iter().any(|dead_hit| {
-                    hit.timestamp >= dead_hit.timestamp
-                        && hit.timestamp - dead_hit.timestamp
-                            <= DEAD_TARGET_HANDLE_REUSE_WINDOW_SECONDS
-                        && hits_share_hp_target_handle(hit, dead_hit)
-                })
-            {
-                suppress_hit_target_as_recent_death(hit, summary);
-            }
-            if hit.direction == "outgoing" && hit.target_hp_after <= 1.0 {
-                dead_hits.push(hit.clone());
-            }
-        }
-        for &index in &hit_order {
-            let hit = &mut hits[index];
-            let summary = &mut hit_summaries[index];
-            self.apply_target_track_attribution(hit, summary, target_lock_context.clone());
-            annotate_unknown_identity_gap(
-                hit,
-                no_targetish_path,
-                no_net_identity,
-                no_runtime_identity,
-            );
-        }
-        for index in hit_order {
-            let hit = &mut hits[index];
-            let summary = &mut hit_summaries[index];
-            if hit.direction == "outgoing" && hit.target_hp_after <= 1.0 {
-                self.clear_dead_target_handles_from_hit(hit);
-                summary.target_context = hit.target_context.clone();
-            }
-        }
-        let mut accepted = 0usize;
-        for (hit, summary) in hits.into_iter().zip(hit_summaries) {
-            if include_incoming || hit.direction != "incoming" {
-                self.follow_up_damage
-                    .observe_hit(&hit, hit.gameplay_effect_index, characters);
-                let mut hit = hit;
-                normalize_final_target_identity(&mut hit);
-                self.remember_target_hit(&hit, summary);
-                let _ = sender.send(EngineEvent::Hit(hit));
-                accepted += 1;
-            }
-        }
-        if accepted > 0 {
-            let latest_timestamp = self
-                .recent_target_hits
-                .back()
-                .map(|recent| recent.hit.timestamp)
-                .unwrap_or_default();
-            self.backfill_recent_targets(latest_timestamp, sender);
-        }
-        accepted
-    }
-
-    fn register_target_instance_alias_keys(
-        &mut self,
-        keys: impl IntoIterator<Item = String>,
-        instance_id: &str,
-        timestamp: f64,
-    ) {
-        let Some(instance) = self.target_instances.instance(instance_id) else {
-            return;
-        };
-        if instance.target_name.trim().is_empty()
-            || is_ignored_non_target_path(&instance.canonical_path)
+            .any(|hit| nearly_same(hit.target_hp_after, current_hp))
         {
-            return;
+            return None;
         }
-        let alias = HandleTargetAlias {
-            target_path: instance.canonical_path.clone(),
-            target_name: instance.target_name.clone(),
-            source: "runtime_instance_handle_alias".to_owned(),
-            first_seen_at: timestamp.to_bits(),
-            last_seen_at: timestamp.to_bits(),
+        let source_index = self.recent_confirmed_hits.iter().rev().position(|hit| {
+            hit.direction != "incoming"
+                && hit.target_max_hp > 0.0
+                && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
+        })?;
+        let source_index = self.recent_confirmed_hits.len() - 1 - source_index;
+        let source = self.recent_confirmed_hits[source_index].clone();
+        self.recent_confirmed_hits[source_index].target_hp_after = current_hp;
+        self.recent_confirmed_hits[source_index].target_hp_percent = if source.target_max_hp > 0.0 {
+            current_hp / source.target_max_hp * 100.0
+        } else {
+            0.0
         };
-        for key in keys {
-            merge_target_handle_alias(&mut self.target_handle_aliases, key, alias.clone());
-        }
-    }
-
-    fn remove_target_handle_alias_keys(&mut self, keys: impl IntoIterator<Item = String>) {
-        for key in keys {
-            for alias_key in equivalent_target_alias_keys(&key) {
-                self.target_handle_aliases.remove(&alias_key);
-            }
-        }
-    }
-
-    fn remember_dead_target_handle(&mut self, key: String, timestamp: f64) {
-        for key in equivalent_target_alias_keys(&key) {
-            self.recent_dead_target_handles.insert(key, timestamp);
-        }
-    }
-
-    fn target_handle_recently_dead(&self, key: &str, timestamp: f64) -> bool {
-        equivalent_target_alias_keys(key).into_iter().any(|key| {
-            self.recent_dead_target_handles
-                .get(&key)
-                .is_some_and(|dead_at| {
-                    timestamp >= *dead_at
-                        && timestamp - *dead_at <= DEAD_TARGET_HANDLE_REUSE_WINDOW_SECONDS
-                })
+        let damage = source.target_hp_after - current_hp;
+        let damage_attribute = source.damage_attribute.clone().or_else(|| {
+            characters
+                .get(&source.char_id)
+                .and_then(|character| character.attribute.clone())
+        });
+        Some(HitFollowUp {
+            source_timestamp: source.timestamp,
+            source_char_id: source.char_id,
+            source_damage: source.damage,
+            source_target_hp_before: source.target_hp_before,
+            source_target_hp_after: source.target_hp_after,
+            source_target_max_hp: source.target_max_hp,
+            source_gameplay_effect_index: source.gameplay_effect_index,
+            timestamp,
+            damage,
+            target_hp_after: current_hp,
+            target_hp_percent: if source.target_max_hp > 0.0 {
+                current_hp / source.target_max_hp * 100.0
+            } else {
+                0.0
+            },
+            damage_name: Some("HP同步伤害".to_owned()),
+            attack_type: Some("HP同步伤害".to_owned()),
+            damage_attribute,
         })
     }
 
-    fn cleanup_recent_dead_target_handles(&mut self, timestamp: f64) {
-        self.recent_dead_target_handles.retain(|_, dead_at| {
-            timestamp < *dead_at || timestamp - *dead_at <= DEAD_TARGET_HANDLE_REUSE_WINDOW_SECONDS
-        });
-    }
-
-    fn clear_reused_current_hp_handle(&mut self, timestamp: f64, token: &str, evidence: &str) {
-        let handle = format!("currenthp:{token}");
-        self.object_state.clear_handle_identity(
-            timestamp,
-            ObjectHandleKind::NetRefHandleCandidate,
-            &handle,
-            evidence.to_owned(),
-        );
-        self.remove_target_handle_alias_keys([
-            format!("current_hp_token:{token}"),
-            format!("NetRefHandleCandidate:currenthp:{token}"),
-        ]);
-        let alias = TargetAlias::new(TargetAliasKind::CurrentHpToken, token.to_owned());
-        let _ = self.target_instances.close_alias(timestamp, &alias, true);
-    }
-
-    fn clear_reused_boss_hp_handle(&mut self, timestamp: f64, handle: &str, evidence: &str) {
-        self.object_state.clear_handle_identity(
-            timestamp,
-            ObjectHandleKind::AttributeGuid,
-            handle,
-            evidence.to_owned(),
-        );
-        self.remove_target_handle_alias_keys([
-            format!("boss_hp_guid:{handle}"),
-            format!("AttributeGuid:{handle}"),
-        ]);
-        let alias = TargetAlias::new(TargetAliasKind::BossHpGuid, handle.to_owned());
-        let _ = self.target_instances.close_alias(timestamp, &alias, true);
-    }
-
-    fn clear_dead_target_handles_from_hit(&mut self, hit: &mut Hit) {
-        if hit.direction == "incoming" || hit.target_hp_after > 1.0 {
-            return;
+    fn suppress_matching_ambiguous_hits(&mut self, confirmed_hit: &Hit) -> usize {
+        if !is_confirmed_packet_hit(confirmed_hit) {
+            return 0;
         }
-        let mut current_hp_tokens = HashSet::new();
-        let mut boss_hp_handles = HashSet::new();
-        for key in target_alias_lookup_keys(hit.target_id.as_ref(), &hit.target_context) {
-            if let Some(token) = key
-                .strip_prefix("NetRefHandleCandidate:currenthp:")
-                .or_else(|| key.strip_prefix("current_hp_token:"))
-            {
-                current_hp_tokens.insert(token.to_owned());
-            } else if let Some(handle) = key
-                .strip_prefix("AttributeGuid:")
-                .or_else(|| key.strip_prefix("boss_hp_guid:"))
-            {
-                boss_hp_handles.insert(handle.to_owned());
-            }
-        }
-        for token in target_context_values(&hit.target_context, "current_hp_token") {
-            current_hp_tokens.insert(token.to_owned());
-        }
-        for value in target_context_values(&hit.target_context, "target_handle_candidate") {
-            if let Some(token) = value.strip_prefix("NetRefHandleCandidate:currenthp:") {
-                current_hp_tokens.insert(token.to_owned());
-            }
-        }
-        for handle in target_context_values(&hit.target_context, "boss_hp_guid") {
-            boss_hp_handles.insert(handle.to_owned());
-        }
-        for token in current_hp_tokens {
-            push_unique_context(
-                &mut hit.target_context,
-                format!("dead_current_hp_token_cleared={token}"),
-            );
-            self.remember_dead_target_handle(
-                format!("NetRefHandleCandidate:currenthp:{token}"),
-                hit.timestamp,
-            );
-            self.clear_reused_current_hp_handle(hit.timestamp, &token, "damage_hit_target_dead");
-        }
-        for handle in boss_hp_handles {
-            push_unique_context(
-                &mut hit.target_context,
-                format!("dead_boss_hp_guid_cleared={handle}"),
-            );
-            self.remember_dead_target_handle(format!("AttributeGuid:{handle}"), hit.timestamp);
-            self.clear_reused_boss_hp_handle(hit.timestamp, &handle, "damage_hit_target_dead");
-        }
-    }
-
-    fn suppress_recently_dead_target_on_hit(
-        &self,
-        hit: &mut Hit,
-        summary: &mut TargetResolutionSummary,
-    ) -> bool {
-        if hit.direction == "incoming" || hit.target_hp_after <= 1.0 {
-            return false;
-        }
-        let stale_alias_handle = target_alias_lookup_keys(
-            hit.target_id.as_ref().or(summary.target_id.as_ref()),
-            &hit.target_context,
-        )
-        .into_iter()
-        .filter(|key| is_hp_alias_key(key))
-        .any(|key| self.target_handle_recently_dead(&key, hit.timestamp));
-        let stale_current_hp_token = target_context_values(&hit.target_context, "current_hp_token")
-            .any(|token| {
-                self.target_handle_recently_dead(
-                    &format!("NetRefHandleCandidate:currenthp:{token}"),
-                    hit.timestamp,
-                )
-            });
-        let stale_boss_hp_guid =
-            target_context_values(&hit.target_context, "boss_hp_guid").any(|handle| {
-                self.target_handle_recently_dead(&format!("AttributeGuid:{handle}"), hit.timestamp)
-            });
-        let stale_recent_hit = self.recent_target_hits.iter().any(|recent| {
-            recent.hit.target_hp_after <= 1.0
-                && hit.timestamp >= recent.hit.timestamp
-                && hit.timestamp - recent.hit.timestamp <= DEAD_TARGET_HANDLE_REUSE_WINDOW_SECONDS
-                && hits_share_hp_target_handle(hit, &recent.hit)
-        });
-        let stale_handle =
-            stale_alias_handle || stale_current_hp_token || stale_boss_hp_guid || stale_recent_hit;
-        if !stale_handle {
-            return false;
-        }
-        suppress_hit_target_as_recent_death(hit, summary);
-        true
-    }
-
-    fn apply_hp_updates_to_state(
-        &mut self,
-        timestamp: f64,
-        current_hp_updates: &[ParsedCurrentHpUpdate],
-        boss_hp_updates: &[ParsedBossHpUpdate],
-    ) {
-        let mut current_hp_reuse = HashMap::<String, (bool, bool)>::new();
-        for update in current_hp_updates {
-            let Some(target_token) = current_hp_target_token(&update.target_hint) else {
-                continue;
-            };
-            let entry = current_hp_reuse
-                .entry(hex::encode(target_token))
-                .or_insert((false, false));
-            entry.0 |= update.current_hp <= 1.0;
-            entry.1 |= update.current_hp > 1.0;
-        }
-        let mut boss_hp_reuse = HashMap::<String, (bool, bool)>::new();
-        for update in boss_hp_updates {
-            let entry = boss_hp_reuse
-                .entry(hex::encode(update.target_handle))
-                .or_insert((false, false));
-            entry.0 |= update.current_hp <= 1.0;
-            entry.1 |= update.current_hp > 1.0;
-        }
-
-        for update in current_hp_updates {
-            let Some(target_token) = current_hp_target_token(&update.target_hint) else {
-                continue;
-            };
-            let token = hex::encode(target_token);
-            let dead_key = format!("NetRefHandleCandidate:currenthp:{token}");
-            let live_after_recent_death =
-                update.current_hp > 1.0 && self.target_handle_recently_dead(&dead_key, timestamp);
-            self.object_state.observe_net_target_hp_update(
-                timestamp,
-                "currenthp",
-                &target_token,
-                update.current_hp as f64,
-                None,
-                format!(
-                    "current_hp:{}={:.0}@{}:{}",
-                    short_hex(&target_token),
-                    update.current_hp,
-                    update.byte_offset,
-                    update.bit_shift
-                ),
-            );
-            if let Some(instance_id) = self.target_instances.observe_current_hp_token(
-                timestamp,
-                &target_token,
-                update.current_hp as f64,
-                format!(
-                    "current_hp:{}={:.0}@{}:{}",
-                    short_hex(&target_token),
-                    update.current_hp,
-                    update.byte_offset,
-                    update.bit_shift
-                ),
-            ) {
-                if update.current_hp <= 1.0 {
-                    self.remember_dead_target_handle(dead_key, timestamp);
-                    self.remove_target_handle_alias_keys([
-                        format!("current_hp_token:{token}"),
-                        format!("NetRefHandleCandidate:currenthp:{token}"),
-                    ]);
-                } else {
-                    self.register_target_instance_alias_keys(
-                        [
-                            format!("current_hp_token:{token}"),
-                            format!("NetRefHandleCandidate:currenthp:{token}"),
-                        ],
-                        &instance_id,
-                        timestamp,
-                    );
-                }
-            } else if update.current_hp <= 1.0 {
-                self.remember_dead_target_handle(dead_key, timestamp);
-                self.remove_target_handle_alias_keys([
-                    format!("current_hp_token:{token}"),
-                    format!("NetRefHandleCandidate:currenthp:{token}"),
-                ]);
-            }
-            if live_after_recent_death {
-                self.clear_reused_current_hp_handle(
-                    timestamp,
-                    &token,
-                    "hp_handle_live_after_recent_death",
-                );
-            }
-        }
-        for update in boss_hp_updates {
-            let handle = hex::encode(update.target_handle);
-            self.runtime_handles.observe_hp(
-                timestamp,
-                handle.clone(),
-                update.current_hp as f64,
-                "boss_hp",
-            );
-            let dead_key = format!("AttributeGuid:{handle}");
-            let live_after_recent_death =
-                update.current_hp > 1.0 && self.target_handle_recently_dead(&dead_key, timestamp);
-            self.object_state.observe_hp_guid_update(
-                timestamp,
-                update.target_handle,
-                update.current_hp as f64,
-                None,
-                format!(
-                    "boss_hp:{}={:.0}@{}:{}",
-                    hex::encode(update.target_handle),
-                    update.current_hp,
-                    update.byte_offset,
-                    update.bit_shift
-                ),
-            );
-            if let Some(instance_id) = self.target_instances.observe_boss_hp_guid(
-                timestamp,
-                update.target_handle,
-                update.current_hp as f64,
-                format!(
-                    "boss_hp:{}={:.0}@{}:{}",
-                    hex::encode(update.target_handle),
-                    update.current_hp,
-                    update.byte_offset,
-                    update.bit_shift
-                ),
-            ) {
-                if update.current_hp <= 1.0 {
-                    self.remember_dead_target_handle(dead_key, timestamp);
-                    self.remove_target_handle_alias_keys([
-                        format!("boss_hp_guid:{handle}"),
-                        format!("AttributeGuid:{handle}"),
-                    ]);
-                } else {
-                    self.register_target_instance_alias_keys(
-                        [
-                            format!("boss_hp_guid:{handle}"),
-                            format!("AttributeGuid:{handle}"),
-                        ],
-                        &instance_id,
-                        timestamp,
-                    );
-                }
-            } else if update.current_hp <= 1.0 {
-                self.remember_dead_target_handle(dead_key, timestamp);
-                self.remove_target_handle_alias_keys([
-                    format!("boss_hp_guid:{handle}"),
-                    format!("AttributeGuid:{handle}"),
-                ]);
-            }
-            if live_after_recent_death {
-                self.clear_reused_boss_hp_handle(
-                    timestamp,
-                    &handle,
-                    "hp_handle_live_after_recent_death",
-                );
-            }
-        }
-        for (token, (saw_dead, saw_live)) in current_hp_reuse {
-            if !(saw_dead && saw_live) {
-                continue;
-            }
-            self.clear_reused_current_hp_handle(timestamp, &token, "hp_handle_reused_after_death");
-        }
-        for (handle, (saw_dead, saw_live)) in boss_hp_reuse {
-            if !(saw_dead && saw_live) {
-                continue;
-            }
-            self.clear_reused_boss_hp_handle(timestamp, &handle, "hp_handle_reused_after_death");
-        }
-        self.cleanup_recent_dead_target_handles(timestamp);
-    }
-
-    fn apply_runtime_mapping_events(
-        &mut self,
-        events: Vec<RuntimeMappingEvent>,
-        sender: &Sender<EngineEvent>,
-    ) {
-        if events.is_empty() {
-            return;
-        }
-        let mut applied = 0_usize;
-        let mut latest_timestamp = 0.0_f64;
-        for event in events {
-            latest_timestamp = latest_timestamp.max(event.timestamp);
-            if self.apply_runtime_mapping_event(event) {
-                applied += 1;
-            }
-        }
-        if applied > 0 {
-            self.backfill_recent_targets(latest_timestamp, sender);
-        }
-    }
-
-    fn apply_runtime_mapping_event(&mut self, event: RuntimeMappingEvent) -> bool {
-        match event.action {
-            RuntimeMappingAction::Map => self.apply_runtime_mapping_map(event),
-            RuntimeMappingAction::Close | RuntimeMappingAction::Destroy => {
-                let expire_instance = event.action == RuntimeMappingAction::Destroy;
-                let mut applied = false;
-                for alias in &event.aliases {
-                    applied |= self
-                        .target_instances
-                        .close_alias(event.timestamp, alias, expire_instance)
-                        .is_some();
-                    self.remove_target_handle_alias_keys([alias.key()]);
-                }
-                applied
-            }
-        }
-    }
-
-    fn apply_runtime_mapping_map(&mut self, event: RuntimeMappingEvent) -> bool {
-        let Some((canonical_path, target_name)) = self.runtime_mapping_target(&event) else {
-            return false;
-        };
-        let aliases = event.aliases.clone();
-        let instance_id = self.target_instances.observe_runtime_mapping(
-            event.timestamp,
-            canonical_path.clone(),
-            target_name,
-            aliases.clone(),
-        );
-        for alias in &aliases {
-            self.observe_runtime_alias_in_object_state(event.timestamp, alias, &canonical_path);
-        }
-        self.register_target_instance_alias_keys(
-            runtime_mapping_alias_keys(&aliases),
-            &instance_id,
-            event.timestamp,
-        );
-        true
-    }
-
-    fn runtime_mapping_target(&self, event: &RuntimeMappingEvent) -> Option<(String, String)> {
-        let raw_path = event
-            .object_path
-            .as_deref()
-            .or(event.class_path.as_deref())?;
-        if is_ignored_non_target_path(raw_path) && event.target_name.is_none() {
-            return None;
-        }
-        let canonical_path = self
-            .resource_index
-            .canonical_target_path_for_path(raw_path)
-            .unwrap_or_else(|| raw_path.to_owned());
-        let target_name = event
-            .target_name
-            .clone()
-            .or_else(|| self.resource_index.resolved_name_for_path(raw_path))
-            .or_else(|| self.resource_index.resolved_name_for_path(&canonical_path))
-            .or_else(|| self.resource_index.display_name_for_path(&canonical_path))?;
-        if target_name.trim().is_empty() {
-            return None;
-        }
-        Some((canonical_path, target_name))
-    }
-
-    fn observe_runtime_alias_in_object_state(
-        &mut self,
-        timestamp: f64,
-        alias: &TargetAlias,
-        canonical_path: &str,
-    ) {
-        let Some(handle_kind) = object_handle_kind_for_runtime_alias(alias.kind) else {
-            return;
-        };
-        self.object_state.observe_path_handle_candidate(
-            timestamp,
-            handle_kind,
-            alias.value.clone(),
-            canonical_path,
-            &self.resource_index,
-            format!("runtime_mapping:{}={}", alias.kind.label(), alias.value),
-            255,
-        );
-    }
-
-    fn apply_net_runtime_events(
-        &mut self,
-        timestamp: f64,
-        events: &[NetRuntimeEvent],
-    ) -> (Vec<String>, bool) {
-        let mut notes = Vec::new();
-        let mut applied = false;
-        for event in events {
-            applied |= self.apply_net_runtime_event(timestamp, event);
-            notes.push(event.summary());
-        }
-        (notes, applied)
-    }
-
-    fn sdk_hp_confirmations_from_events(
-        &mut self,
-        timestamp: f64,
-        events: &[NetRuntimeEvent],
-    ) -> Vec<SdkTargetHpConfirmation> {
-        let nearby_hints = self.class_hints.hints_near(timestamp, 2.5, 0.5);
-        events
-            .iter()
-            .filter(|event| event.kind == NetRuntimeEventKind::SdkTargetData)
-            .filter_map(|event| {
-                let target_token = event.target_token.as_deref()?;
-                let current_hp = event.current_hp? as f64;
-                let stream = self.target_streams.observe_sdk_target(
-                    timestamp,
-                    target_token,
-                    current_hp,
-                    &nearby_hints,
-                )?;
-                self.runtime_handles.observe_hp(
-                    timestamp,
-                    stream.base_handle.clone(),
-                    current_hp,
-                    "sdk_target_hp",
-                );
-                let stream_state = self.target_streams.stream(&stream.stream_id);
-                let class_hint = stream_state
-                    .and_then(|state| state.class_hint.as_ref())
-                    .map(|hint| hint.canonical_class.clone());
-                let class_hint_name = stream_state.and_then(|state| state.target_name.clone());
-                let class_hint_confidence = stream_state
-                    .and_then(|state| state.class_hint.as_ref())
-                    .map(|hint| hint.confidence);
-                Some(SdkTargetHpConfirmation {
-                    current_hp,
-                    stream,
-                    class_hint,
-                    class_hint_name,
-                    class_hint_confidence,
-                })
-            })
-            .collect()
-    }
-
-    fn observe_advvision_context(
-        &mut self,
-        timestamp: f64,
-        decoded_text: &str,
-        boss_hp_updates: &[ParsedBossHpUpdate],
-    ) -> bool {
-        if let Some(advvision_id) = advvision_id_from_text(decoded_text) {
-            self.active_advvision_id = Some(advvision_id);
-        }
-        if let Some(stage_key) = abyss_scene_stage_key_from_text(decoded_text) {
-            if self.active_advvision_id.is_none()
-                && stage_key == "3"
-                && self
-                    .advvision_index
-                    .resolve_scene("AdvVision_Mammon", &stage_key)
-                    .is_some()
-            {
-                self.active_advvision_id = Some("AdvVision_Mammon".to_owned());
-            }
-            if let Some(advvision_id) = self.active_advvision_id.clone()
-                && let Some(target) = self
-                    .advvision_index
-                    .resolve_scene(&advvision_id, &stage_key)
-            {
-                self.active_stage_context = Some(StageContext {
-                    kind: "FAbyssGamePlayData".to_owned(),
-                    stage_key: Some(stage_key),
-                    half: abyss_half_from_text(decoded_text),
-                    runtime_guid: first_hex_guid_from_text(decoded_text),
-                    advvision_id: Some(advvision_id),
-                    scene_id: Some(target.scene_id),
-                });
-            }
-        }
-        let Some(target) = self
-            .active_stage_context
-            .as_ref()
-            .and_then(|context| context.scene_id.as_deref())
-            .and_then(|scene_id| self.advvision_index.target_for_scene(scene_id))
-        else {
-            return false;
-        };
-        if boss_hp_updates.is_empty() {
-            return false;
-        }
-        let target_path = target
-            .target_path
-            .clone()
-            .unwrap_or_else(|| target.scene_id.clone());
-        let context = self.active_stage_context.clone();
-        for update in boss_hp_updates {
-            let handle = hex::encode(update.target_handle);
-            self.runtime_handles.bind_target(
-                timestamp,
-                handle.clone(),
-                target_path.clone(),
-                target.target_name.clone(),
-                TargetConfidence::Confirmed,
-                "advvision_stage_context",
-            );
-            if let Some(context) = &context
-                && let Some(state) = self.runtime_handles.get_mut_for_context(&handle)
-            {
-                state.stage_context = Some(context.clone());
-            }
-            let alias = HandleTargetAlias {
-                target_path: target_path.clone(),
-                target_name: target.target_name.clone(),
-                source: "advvision_stage_context".to_owned(),
-                first_seen_at: timestamp.to_bits(),
-                last_seen_at: timestamp.to_bits(),
-            };
-            merge_target_handle_alias(
-                &mut self.target_handle_aliases,
-                format!("boss_hp_guid:{handle}"),
-                alias.clone(),
-            );
-            merge_target_handle_alias(
-                &mut self.target_handle_aliases,
-                format!("AttributeGuid:{handle}"),
-                alias,
-            );
-        }
-        !boss_hp_updates.is_empty()
-    }
-
-    fn apply_monster_gameplay_effect_links(
-        &mut self,
-        timestamp: f64,
-        effects: &[(String, usize, u8)],
-    ) -> bool {
-        let mut applied = false;
-        for (effect_name, byte_offset, bit_shift) in effects {
-            let lower = effect_name.to_ascii_lowercase();
-            if !lower.contains("dmg")
-                || lower.contains("steal")
-                || lower.contains("player")
-                || lower.contains("buff")
-            {
-                continue;
-            }
-            let Some(target_path) = self
-                .resource_index
-                .canonical_target_path_for_gameplay_effect(effect_name)
-            else {
-                continue;
-            };
-            if self
-                .resource_index
-                .resolved_name_for_gameplay_effect(effect_name)
-                .is_none()
-                && self
-                    .resource_index
-                    .resolved_name_for_path(&target_path)
-                    .is_none()
-            {
-                continue;
-            }
-            applied |= self.object_state.link_unique_active_boss_hp_handle_to_path(
-                timestamp,
-                &target_path,
-                &self.resource_index,
-                format!(
-                    "monster_gameplay_effect:{}@{}:{}",
-                    effect_name, byte_offset, bit_shift
-                ),
-            );
-        }
-        applied
-    }
-
-    fn apply_packet_target_path_links(
-        &mut self,
-        timestamp: f64,
-        path_candidates: &[&PathCandidate],
-    ) -> bool {
-        let mut candidates = path_candidates
-            .iter()
-            .filter_map(|candidate| {
-                let raw_is_target = !is_ignored_non_target_path(&candidate.value)
-                    && crate::object_state::is_targetish_path(&candidate.value)
-                    && self
-                        .resource_index
-                        .resolved_name_for_path(&candidate.value)
-                        .is_some();
-                let path = if raw_is_target {
-                    candidate.value.clone()
-                } else {
-                    self.resource_index
-                        .canonical_target_path_for_path(&candidate.value)
-                        .unwrap_or_else(|| candidate.value.clone())
-                };
-                if is_ignored_non_target_path(&path)
-                    || !crate::object_state::is_targetish_path(&path)
-                {
-                    return None;
-                }
-                let name = self
-                    .resource_index
-                    .resolved_name_for_path(&path)
-                    .or_else(|| self.resource_index.resolved_name_for_path(&candidate.value))?;
-                Some((path, name))
-            })
-            .collect::<Vec<_>>();
-        candidates.sort();
-        candidates.dedup();
-
-        let distinct_names = candidates
-            .iter()
-            .map(|(_, name)| name.as_str())
-            .collect::<HashSet<_>>();
-        if distinct_names.len() != 1 {
-            return false;
-        }
-
-        let Some((path, _)) = candidates
-            .iter()
-            .max_by_key(|(path, _)| packet_target_path_rank(path))
-        else {
-            return false;
-        };
-        self.object_state.link_unique_active_boss_hp_handle_to_path(
-            timestamp,
-            path,
-            &self.resource_index,
-            format!("packet_target_path:{path}"),
-        )
-    }
-
-    fn apply_net_runtime_event(&mut self, timestamp: f64, event: &NetRuntimeEvent) -> bool {
-        let mut applied = false;
-        let mut sdk_target_dead = false;
-        if event.kind == NetRuntimeEventKind::SdkTargetData
-            && let (Some(target_token), Some(current_hp)) =
-                (event.target_token.as_deref(), event.current_hp)
-        {
-            sdk_target_dead =
-                current_hp <= 1.0 || event.dead_state.is_some_and(|dead_state| dead_state != 0);
-            self.object_state.observe_net_target_hp_update(
-                timestamp,
-                "sdk_target",
-                target_token,
-                current_hp as f64,
-                None,
-                format!("sdk_target_data:{}", event.evidence),
-            );
-            let instance_id = self.target_instances.observe_sdk_net_target(
-                timestamp,
-                target_token,
-                current_hp as f64,
-                format!("sdk_target_data:{}", event.evidence),
-            );
-            if sdk_target_dead {
-                let token = hex::encode(target_token);
-                let mut keys = runtime_mapping_alias_keys(&event.aliases);
-                keys.push(format!("sdk_net_target:{token}"));
-                keys.push(format!("NetRefHandleCandidate:sdk_target:{token}"));
-                self.remove_target_handle_alias_keys(keys);
-            } else if let Some(instance_id) = instance_id {
-                self.register_target_instance_alias_keys(
-                    runtime_mapping_alias_keys(&event.aliases),
-                    &instance_id,
-                    timestamp,
-                );
-            }
-            applied = true;
-        }
-
-        if matches!(
-            event.action,
-            NetRuntimeAction::Close | NetRuntimeAction::Destroy
-        ) && let Some((canonical_path, _)) = self.net_runtime_event_target(event)
-        {
-            for alias_key in self
-                .target_instances
-                .expire_path(timestamp, &canonical_path)
-                .into_iter()
-                .flat_map(|key| equivalent_target_alias_keys(&key))
-            {
-                self.target_handle_aliases.remove(&alias_key);
-            }
-            applied = true;
-        }
-
-        if event.aliases.is_empty() {
-            return applied;
-        }
-        if sdk_target_dead {
-            return applied;
-        }
-        let Some((canonical_path, target_name)) = self.net_runtime_event_target(event) else {
-            return applied;
-        };
-        let instance_id = self.target_instances.observe_runtime_mapping(
-            timestamp,
-            canonical_path.clone(),
-            target_name,
-            event.aliases.clone(),
-        );
-        for alias in &event.aliases {
-            self.observe_runtime_alias_in_object_state(timestamp, alias, &canonical_path);
-        }
-        self.register_target_instance_alias_keys(
-            runtime_mapping_alias_keys(&event.aliases),
-            &instance_id,
-            timestamp,
-        );
-        true
-    }
-
-    fn net_runtime_event_target(&self, event: &NetRuntimeEvent) -> Option<(String, String)> {
-        let raw_path = event.path.as_deref()?;
-        if is_ignored_non_target_path(raw_path) {
-            return None;
-        }
-        let canonical_path = self
-            .resource_index
-            .canonical_target_path_for_path(raw_path)
-            .unwrap_or_else(|| raw_path.to_owned());
-        let target_name = self
-            .resource_index
-            .resolved_name_for_path(raw_path)
-            .or_else(|| self.resource_index.resolved_name_for_path(&canonical_path))
-            .or_else(|| self.resource_index.display_name_for_path(&canonical_path))?;
-        Some((canonical_path, target_name))
+        let before = self.pending_ambiguous_hits.len();
+        self.pending_ambiguous_hits
+            .retain(|pending| !same_damage_event(pending, confirmed_hit));
+        before - self.pending_ambiguous_hits.len()
     }
 }
 
-fn object_handle_kind_for_runtime_alias(kind: TargetAliasKind) -> Option<ObjectHandleKind> {
-    match kind {
-        TargetAliasKind::NetGuid32 | TargetAliasKind::NetGuidPacked => {
-            Some(ObjectHandleKind::NetGuidCandidate)
-        }
-        TargetAliasKind::IrisRef32
-        | TargetAliasKind::CurrentHpToken
-        | TargetAliasKind::SdkNetTarget => Some(ObjectHandleKind::NetRefHandleCandidate),
-        TargetAliasKind::BossHpGuid => Some(ObjectHandleKind::AttributeGuid),
-        TargetAliasKind::ActorChannel
-        | TargetAliasKind::HitTargetToken
-        | TargetAliasKind::HitVectorToken => None,
-    }
+fn is_ambiguous_session_hit(hit: &Hit, declared_ids: &[u32]) -> bool {
+    declared_ids.len() > 1
+        && hit.char_source == "session"
+        && hit.direction == "unknown"
+        && hit.gameplay_effect_index.is_some()
 }
 
-fn runtime_mapping_alias_keys(aliases: &[TargetAlias]) -> Vec<String> {
-    let mut keys = Vec::new();
-    for alias in aliases {
-        extend_equivalent_target_alias_keys(&mut keys, &alias.key());
-        match alias.kind {
-            TargetAliasKind::NetGuid32 | TargetAliasKind::NetGuidPacked => {
-                extend_equivalent_target_alias_keys(
-                    &mut keys,
-                    &format!("NetGuidCandidate:{}", alias.value),
-                );
-            }
-            TargetAliasKind::IrisRef32 => {
-                extend_equivalent_target_alias_keys(
-                    &mut keys,
-                    &format!("NetRefHandleCandidate:{}", alias.value),
-                );
-            }
-            TargetAliasKind::CurrentHpToken => {
-                extend_equivalent_target_alias_keys(
-                    &mut keys,
-                    &format!("NetRefHandleCandidate:currenthp:{}", alias.value),
-                );
-            }
-            TargetAliasKind::SdkNetTarget => {
-                extend_equivalent_target_alias_keys(
-                    &mut keys,
-                    &format!("NetRefHandleCandidate:sdk_target:{}", alias.value),
-                );
-            }
-            TargetAliasKind::BossHpGuid => {
-                extend_equivalent_target_alias_keys(
-                    &mut keys,
-                    &format!("AttributeGuid:{}", alias.value),
-                );
-            }
-            TargetAliasKind::ActorChannel
-            | TargetAliasKind::HitTargetToken
-            | TargetAliasKind::HitVectorToken => {}
-        }
+fn gameplay_effect_confirms_session_hit(
+    hit: &Hit,
+    declared_ids: &[u32],
+    characters: &HashMap<u32, CharacterInfo>,
+) -> bool {
+    if declared_ids.len() <= 1
+        || hit.char_source != "session"
+        || hit.direction != "unknown"
+        || !declared_ids.contains(&hit.char_id)
+    {
+        return false;
     }
-    keys
-}
-
-fn target_handle_aliases_from_summary(
-    summary: &TargetResolutionSummary,
-    timestamp: f64,
-) -> Vec<(String, HandleTargetAlias)> {
-    let Some(alias) = handle_target_alias_from_summary(summary, timestamp) else {
-        return Vec::new();
+    let Some(effect_name) = hit.gameplay_effect_name.as_deref() else {
+        return false;
     };
-    let allow_hp_aliases = has_runtime_target_source(&summary.target_context)
-        && !has_unreliable_target_name_source(&summary.target_context);
-    target_alias_lookup_keys(summary.target_id.as_ref(), &summary.target_context)
-        .into_iter()
-        .filter(|key| allow_hp_aliases || !is_hp_alias_key(key))
-        .map(|key| (key, alias.clone()))
-        .collect()
+    let Some(character) = characters.get(&hit.char_id) else {
+        return false;
+    };
+    let name = character.name_en.trim();
+    !name.is_empty()
+        && effect_name
+            .to_ascii_lowercase()
+            .contains(&name.to_ascii_lowercase())
 }
 
-fn handle_target_alias_from_summary(
-    summary: &TargetResolutionSummary,
-    timestamp: f64,
-) -> Option<HandleTargetAlias> {
-    let has_runtime_source = has_runtime_target_source(&summary.target_context);
-    let has_sdk_stream_source = has_sdk_target_stream_source(&summary.target_context);
-    if !has_runtime_source && !has_sdk_stream_source {
+fn is_confirmed_packet_hit(hit: &Hit) -> bool {
+    matches!(hit.char_source.as_str(), "packet" | "gameplay_effect") && hit.direction == "outgoing"
+}
+
+fn same_damage_event(left: &Hit, right: &Hit) -> bool {
+    (left.timestamp - right.timestamp).abs() <= AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS
+        && left.gameplay_effect_index.is_some()
+        && left.gameplay_effect_index == right.gameplay_effect_index
+        && nearly_same(left.damage, right.damage)
+        && nearly_same(left.target_hp_before, right.target_hp_before)
+        && nearly_same(left.target_hp_after, right.target_hp_after)
+        && nearly_same(left.target_max_hp, right.target_max_hp)
+}
+
+fn is_recent_confirmed_duplicate(hit: &Hit, confirmed_hits: &[Hit]) -> bool {
+    confirmed_hits.iter().any(|confirmed| {
+        let timestamp_delta = (hit.timestamp - confirmed.timestamp).abs();
+        hit.gameplay_effect_index.is_none()
+            && confirmed.gameplay_effect_index.is_some()
+            && timestamp_delta <= UNTYPED_SHADOW_HIT_WINDOW_SECONDS
+            && hit.char_id == confirmed.char_id
+            && nearly_same(hit.damage, confirmed.damage)
+    })
+}
+
+fn nearly_same(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 0.5
+}
+
+fn fuwen_start_pair(
+    payload: &[u8],
+    evidence: &[(u32, u8, usize)],
+    characters: &HashMap<u32, CharacterInfo>,
+) -> Option<(u32, u32)> {
+    if !matches_shifted_bytes_at(
+        payload,
+        FUWEN_START_SIGNATURE_SHIFT,
+        FUWEN_START_SIGNATURE_OFFSET,
+        FUWEN_START_SIGNATURE,
+    ) {
         return None;
     }
-    if has_unreliable_target_name_source(&summary.target_context) && !has_sdk_stream_source {
+    let entering_character_id = character_id_at_evidence_location(
+        evidence,
+        FUWEN_ENTERING_ID_SHIFT,
+        FUWEN_ENTERING_ID_OFFSET,
+    )?;
+    let previous_character_id = character_id_at_evidence_location(
+        evidence,
+        FUWEN_PREVIOUS_ID_SHIFT,
+        FUWEN_PREVIOUS_ID_OFFSET,
+    )?;
+    if entering_character_id == previous_character_id {
         return None;
     }
-    let target_name = summary.target_name.as_ref()?.trim();
-    if target_name.is_empty() {
-        return None;
-    }
-    let target_path = target_context_value(&summary.target_context, "target_path")?;
-    if is_ignored_non_target_path(target_path) {
-        return None;
-    }
-    Some(HandleTargetAlias {
-        target_path: target_path.to_owned(),
-        target_name: target_name.to_owned(),
-        source: if has_sdk_stream_source {
-            "sdk_target_stream_alias".to_owned()
-        } else {
-            "table_resolved_handle_alias".to_owned()
+    let entering_attribute = characters
+        .get(&entering_character_id)
+        .and_then(|character| character.attribute.as_deref())?;
+    let previous_attribute = characters
+        .get(&previous_character_id)
+        .and_then(|character| character.attribute.as_deref())?;
+    let has_fuwen_pair = (entering_attribute == "灵" && previous_attribute == "咒")
+        || (entering_attribute == "咒" && previous_attribute == "灵");
+    has_fuwen_pair.then_some((entering_character_id, previous_character_id))
+}
+
+fn character_id_at_evidence_location(
+    evidence: &[(u32, u8, usize)],
+    bit_shift: u8,
+    byte_offset: usize,
+) -> Option<u32> {
+    evidence
+        .iter()
+        .find(|(_, shift, offset)| *shift == bit_shift && *offset == byte_offset)
+        .map(|(character_id, _, _)| *character_id)
+}
+
+fn character_debug_label(character_id: u32, characters: &HashMap<u32, CharacterInfo>) -> String {
+    characters.get(&character_id).map_or_else(
+        || character_id.to_string(),
+        |character| {
+            let name = if character.name_zh.is_empty() {
+                character.name_en.as_str()
+            } else {
+                character.name_zh.as_str()
+            };
+            match character.attribute.as_deref() {
+                Some(attribute) if !name.is_empty() => {
+                    format!("{name}({character_id}/{attribute})")
+                }
+                Some(attribute) => format!("{character_id}/{attribute}"),
+                None if !name.is_empty() => format!("{name}({character_id})"),
+                None => character_id.to_string(),
+            }
         },
-        first_seen_at: timestamp.to_bits(),
-        last_seen_at: timestamp.to_bits(),
-    })
-}
-
-fn merge_target_handle_alias(
-    aliases: &mut HashMap<String, HandleTargetAlias>,
-    target_id: String,
-    alias: HandleTargetAlias,
-) {
-    for target_id in equivalent_target_alias_keys(&target_id) {
-        aliases
-            .entry(target_id)
-            .and_modify(|existing| {
-                if !existing
-                    .target_path
-                    .eq_ignore_ascii_case(&alias.target_path)
-                    || existing.target_name != alias.target_name
-                {
-                    existing.last_seen_at = existing.last_seen_at.max(alias.last_seen_at);
-                    return;
-                }
-                existing.target_path = alias.target_path.clone();
-                existing.target_name = alias.target_name.clone();
-                existing.source = alias.source.clone();
-                existing.first_seen_at = existing.first_seen_at.min(alias.first_seen_at);
-                existing.last_seen_at = existing.last_seen_at.max(alias.last_seen_at);
-            })
-            .or_insert_with(|| alias.clone());
-    }
-}
-
-fn apply_handle_alias_backfill(
-    recent: &mut RecentTargetHit,
-    aliases: &HashMap<String, HandleTargetAlias>,
-) -> bool {
-    let named_overwrite = recent.hit.target_name.is_some();
-    let current_name = recent.hit.target_name.as_deref();
-    let current_path = target_context_value(&recent.hit.target_context, "target_path");
-    let lookup_keys = target_alias_lookup_keys(
-        recent
-            .hit
-            .target_id
-            .as_ref()
-            .or(recent.summary.target_id.as_ref()),
-        &recent.hit.target_context,
     )
-    .into_iter()
-    .filter(|key| !is_hp_alias_key(key))
-    .collect::<Vec<_>>();
-    if lookup_keys.is_empty()
-        || (recent.hit.target_hp_after <= 1.0 && recent.hit.target_name.is_none())
-    {
-        return false;
-    }
-    let Some(alias) = lookup_keys.iter().find_map(|key| aliases.get(key)) else {
-        return false;
-    };
-    if current_name == Some(alias.target_name.as_str())
-        && current_path == Some(alias.target_path.as_str())
-    {
-        return false;
-    }
-    if named_overwrite && !alias_matches_existing_target_path(current_path, &alias.target_path) {
-        return false;
-    }
-    if recent.hit.target_name.is_some()
-        && recent.summary.direct_hp_evidence
-        && recent.summary.confidence.rank() >= TargetConfidence::Confirmed.rank()
-    {
-        return false;
-    }
-    apply_alias_to_hit(&mut recent.hit, alias);
-    push_unique_context(
-        &mut recent.hit.target_context,
-        "target_alias_backfill=non_hp_exact".to_owned(),
-    );
-    recent.summary.target_name = recent.hit.target_name.clone();
-    recent.summary.target_context = recent.hit.target_context.clone();
-    recent.summary.score = recent.summary.score.max(80);
-    if recent.summary.confidence.rank() < TargetConfidence::Probable.rank() {
-        recent.summary.confidence = TargetConfidence::Probable;
-    }
-    true
-}
-
-fn alias_matches_existing_target_path(current_path: Option<&str>, alias_path: &str) -> bool {
-    current_path.is_some_and(|path| path.eq_ignore_ascii_case(alias_path))
-}
-
-fn hits_share_hp_target_handle(left: &Hit, right: &Hit) -> bool {
-    let left_keys = target_alias_lookup_keys(left.target_id.as_ref(), &left.target_context)
-        .into_iter()
-        .filter(|key| is_hp_alias_key(key))
-        .collect::<HashSet<_>>();
-    !left_keys.is_empty()
-        && target_alias_lookup_keys(right.target_id.as_ref(), &right.target_context)
-            .into_iter()
-            .filter(|key| is_hp_alias_key(key))
-            .any(|key| left_keys.contains(&key))
-}
-
-fn suppress_hit_target_as_recent_death(hit: &mut Hit, summary: &mut TargetResolutionSummary) {
-    hit.target_id = None;
-    hit.target_name = None;
-    hit.target_context.retain(|entry| {
-        !entry.starts_with("target_path=")
-            && !entry.starts_with("target_name=")
-            && !entry.starts_with("target_name_resolution=")
-            && !entry.starts_with("target_name_candidates=")
-            && !entry.starts_with("reason=near_object_path:")
-            && entry != "reason=resolved_target_name_table"
-    });
-    push_unique_context(
-        &mut hit.target_context,
-        "reason=recent_death_suppressed_stale_target".to_owned(),
-    );
-    summary.target_id = None;
-    summary.target_name = None;
-    summary.target_context = hit.target_context.clone();
-    summary.score = 0;
-    summary.confidence = TargetConfidence::Unknown;
-    summary.direct_hp_evidence = false;
-}
-
-fn normalize_final_target_identity(hit: &mut Hit) {
-    if let Some(track_id) = target_context_value(&hit.target_context, "target_track_id") {
-        hit.target_id = Some(track_id.to_owned());
-        return;
-    }
-    let Some(target_id) = hit.target_id.clone() else {
-        return;
-    };
-    if is_legacy_handle_candidate_id(&target_id) {
-        push_unique_context(
-            &mut hit.target_context,
-            format!("target_handle_candidate={target_id}"),
-        );
-        hit.target_id = None;
-    } else if target_id.starts_with("runtime_unknown_target#") {
-        push_unique_context(
-            &mut hit.target_context,
-            format!("runtime_placeholder_id={target_id}"),
-        );
-        hit.target_id = None;
-    }
-}
-
-fn target_stream_resolution_snapshot(hit: &Hit) -> Option<TargetStreamResolutionSnapshot> {
-    let stream_id = hit
-        .target_id
-        .as_deref()
-        .filter(|target_id| target_id.starts_with("target_stream:"))
-        .map(str::to_owned)
-        .or_else(|| {
-            target_context_value(&hit.target_context, "target_stream").map(str::to_owned)
-        })?;
-    Some(TargetStreamResolutionSnapshot {
-        stream_id,
-        target_name: hit.target_name.clone(),
-        target_name_resolution: target_context_value(&hit.target_context, "target_name_resolution")
-            .map(str::to_owned),
-        had_class_hint_missing: hit
-            .target_context
-            .iter()
-            .any(|entry| entry == "target_unresolved=class_hint_missing"),
-    })
-}
-
-fn preserve_target_stream_resolution(
-    hit: &mut Hit,
-    summary: &mut TargetResolutionSummary,
-    snapshot: &Option<TargetStreamResolutionSnapshot>,
-) -> bool {
-    let Some(snapshot) = snapshot else {
-        return false;
-    };
-    hit.target_id = Some(snapshot.stream_id.clone());
-    replace_target_context_value(
-        &mut hit.target_context,
-        "target_id_resolution",
-        "sdk_target_stream",
-    );
-    replace_target_context_value(
-        &mut hit.target_context,
-        "target_stream",
-        &snapshot.stream_id,
-    );
-    if let Some(name) = &snapshot.target_name {
-        hit.target_name = Some(name.clone());
-        replace_target_context_value(&mut hit.target_context, "target_name", name);
-        replace_target_context_value(
-            &mut hit.target_context,
-            "target_name_resolution",
-            snapshot
-                .target_name_resolution
-                .as_deref()
-                .unwrap_or("class_hint_stream_order"),
-        );
-        summary.confidence = max_target_confidence(summary.confidence, TargetConfidence::Probable);
-    } else if snapshot.had_class_hint_missing {
-        hit.target_name = None;
-        hit.target_context.retain(|entry| {
-            !entry.starts_with("target_name=")
-                && !entry.starts_with("target_path=")
-                && !entry.starts_with("target_name_resolution=")
-                && !entry.starts_with("reason=runtime_unknown_target")
-                && *entry != "reason=runtime_placeholder"
-        });
-        push_unique_context(
-            &mut hit.target_context,
-            "target_unresolved=class_hint_missing".to_owned(),
-        );
-    }
-    summary.target_id = hit.target_id.clone();
-    summary.target_name = hit.target_name.clone();
-    summary.target_context = hit.target_context.clone();
-    true
-}
-
-fn max_target_confidence(left: TargetConfidence, right: TargetConfidence) -> TargetConfidence {
-    if left.rank() >= right.rank() {
-        left
-    } else {
-        right
-    }
-}
-
-fn net_runtime_events_have_identity(events: &[NetRuntimeEvent]) -> bool {
-    events.iter().any(|event| {
-        !event.aliases.is_empty()
-            || event.path.is_some()
-            || event.current_hp.is_some()
-            || event.target_token.is_some()
-    })
-}
-
-fn annotate_unknown_identity_gap(
-    hit: &mut Hit,
-    no_targetish_path: bool,
-    no_net_identity: bool,
-    no_runtime_identity: bool,
-) {
-    if hit.direction == "incoming"
-        || hit.target_name.is_some()
-        || target_context_value(&hit.target_context, "target_track_id").is_some()
-        || target_context_value(&hit.target_context, "target_unresolved").is_some()
-        || !no_targetish_path
-        || !no_net_identity
-        || !no_runtime_identity
-    {
-        return;
-    }
-    push_unique_context(
-        &mut hit.target_context,
-        "target_unresolved=network_identity_not_decoded".to_owned(),
-    );
-    push_unique_context(
-        &mut hit.target_context,
-        "target_identity_gap=actor_or_iris_config_id_not_decoded".to_owned(),
-    );
-}
-
-fn apply_handle_alias_to_hit_summary(
-    hit: &mut Hit,
-    summary: &mut TargetResolutionSummary,
-    aliases: &HashMap<String, HandleTargetAlias>,
-) -> bool {
-    if !can_register_target_handle_alias_from_hit(hit) {
-        return false;
-    }
-    if hit.target_name.is_some() {
-        return false;
-    }
-    let Some(alias) = target_alias_lookup_keys(
-        hit.target_id.as_ref().or(summary.target_id.as_ref()),
-        &hit.target_context,
-    )
-    .into_iter()
-    .filter(|key| !is_hp_alias_key(key))
-    .find_map(|key| aliases.get(&key)) else {
-        return false;
-    };
-    apply_alias_to_hit(hit, alias);
-    summary.target_name = hit.target_name.clone();
-    summary.target_context = hit.target_context.clone();
-    true
-}
-
-fn can_register_target_handle_alias_from_hit(hit: &Hit) -> bool {
-    if hit.target_hp_after > 1.0 && !has_unreliable_target_name_source(&hit.target_context) {
-        return true;
-    }
-    hit.target_name.is_some()
-        && target_context_value(&hit.target_context, "target_path").is_some()
-        && has_sdk_target_stream_source(&hit.target_context)
-}
-
-fn has_recent_death_suppressed_target(context: &[String]) -> bool {
-    context
-        .iter()
-        .any(|entry| entry == "reason=recent_death_suppressed_stale_target")
-}
-
-fn has_unreliable_target_name_source(context: &[String]) -> bool {
-    context.iter().any(|entry| {
-        matches!(
-            entry.as_str(),
-            "reason=recent_death_suppressed_stale_target"
-                | "reason=hp_handle_path_without_direct_hp_suppressed"
-                | "reason=path_only_target_name_suppressed"
-                | "reason=net_identity_path_anchor_unconfirmed"
-                | "reason=runtime_hp_timeline"
-                | "reason=runtime_unique_active_named_instance"
-        )
-    })
-}
-
-fn has_runtime_target_source(context: &[String]) -> bool {
-    context
-        .iter()
-        .any(|entry| entry.starts_with("reason=runtime_alias:"))
-}
-
-fn has_sdk_target_stream_source(context: &[String]) -> bool {
-    target_context_value(context, "target_stream").is_some()
-        && context
-            .iter()
-            .any(|entry| entry == "hp_timeline_match=sdk_target_after_match")
-}
-
-fn apply_alias_to_hit(hit: &mut Hit, alias: &HandleTargetAlias) {
-    hit.target_name = Some(alias.target_name.clone());
-    hit.target_context.retain(|entry| {
-        !entry.starts_with("target_name_candidates=")
-            && !entry.starts_with("reason=near_object_path:")
-            && entry != "reason=conflict:multiple_candidates"
-    });
-    push_unique_context(
-        &mut hit.target_context,
-        format!("reason=hp_handle_alias_target_path:{}", alias.target_path),
-    );
-    replace_target_path_context(&mut hit.target_context, &alias.target_path);
-    replace_target_context_value(&mut hit.target_context, "target_name", &alias.target_name);
-    replace_target_context_value(
-        &mut hit.target_context,
-        "target_name_resolution",
-        "handle_alias_applied",
-    );
-}
-
-fn replace_target_context_value(context: &mut Vec<String>, key: &str, value: &str) {
-    let prefix = format!("{key}=");
-    context.retain(|entry| !entry.starts_with(&prefix));
-    push_unique_context(context, format!("{key}={value}"));
-}
-
-fn replace_target_path_context(context: &mut Vec<String>, target_path: &str) {
-    let mut ignored_paths = Vec::new();
-    context.retain(|entry| {
-        let Some(path) = entry.strip_prefix("target_path=") else {
-            return true;
-        };
-        if is_ignored_non_target_path(path) {
-            ignored_paths.push(path.to_owned());
-        }
-        false
-    });
-    for path in ignored_paths {
-        push_unique_context(context, format!("ignored_non_target_path={path}"));
-    }
-    push_unique_context(context, format!("target_path={target_path}"));
-}
-
-fn push_unique_context(context: &mut Vec<String>, value: String) {
-    if !context.iter().any(|entry| entry == &value) {
-        context.push(value);
-    }
-}
-
-fn extend_equivalent_target_alias_keys(keys: &mut Vec<String>, key: &str) {
-    for key in equivalent_target_alias_keys(key) {
-        if !keys.iter().any(|existing| existing == &key) {
-            keys.push(key);
-        }
-    }
-}
-
-fn should_apply_target_update(
-    old: &TargetResolutionSummary,
-    new: &TargetResolutionSummary,
-) -> bool {
-    if summary_is_runtime_unknown_placeholder(new) {
-        return false;
-    }
-    if has_recent_death_suppressed_target(&old.target_context) && new.target_name.is_some() {
-        return false;
-    }
-    if let (Some(old_name), Some(new_name)) =
-        (old.target_name.as_deref(), new.target_name.as_deref())
-        && old_name != new_name
-    {
-        return false;
-    }
-    if old.target_id.is_some()
-        && new.target_id.is_some()
-        && old.target_id != new.target_id
-        && !new.direct_hp_evidence
-    {
-        return false;
-    }
-    if old.target_id == new.target_id
-        && new.target_id.is_some()
-        && old.target_name.is_none()
-        && new.target_name.is_some()
-    {
-        return true;
-    }
-    if named_target_paths_conflict(old, new) {
-        return false;
-    }
-    if old.target_id == new.target_id
-        && new.target_id.is_some()
-        && old.target_name != new.target_name
-        && new.target_name.is_some()
-        && new.confidence.rank() >= old.confidence.rank()
-    {
-        return true;
-    }
-    if old.target_name.is_none() && new.target_name.is_some() {
-        return true;
-    }
-    if new.confidence.rank() < old.confidence.rank() {
-        return false;
-    }
-    if old.target_id.is_some()
-        && new.target_id.is_some()
-        && old.target_id != new.target_id
-        && old.confidence.rank() >= TargetConfidence::Probable.rank()
-    {
-        return new.direct_hp_evidence && new.confidence.rank() >= old.confidence.rank();
-    }
-    if new.confidence.rank() > old.confidence.rank() {
-        return true;
-    }
-    if old.target_id.is_none() && new.target_id.is_some() {
-        return true;
-    }
-    if old.target_id == new.target_id && new.target_id.is_some() && new.score > old.score {
-        return true;
-    }
-    old.target_id != new.target_id
-        && new.target_id.is_some()
-        && new.direct_hp_evidence
-        && new.confidence.rank() >= old.confidence.rank()
-}
-
-fn summary_is_runtime_unknown_placeholder(summary: &TargetResolutionSummary) -> bool {
-    summary
-        .target_id
-        .as_deref()
-        .is_some_and(|target_id| target_id.starts_with("runtime_unknown_target#"))
-        || target_context_value(&summary.target_context, "target_path")
-            == Some("runtime://unknown_target")
-        || summary
-            .target_context
-            .iter()
-            .any(|entry| entry == "target_name_resolution=runtime_placeholder")
-}
-
-fn named_target_paths_conflict(
-    old: &TargetResolutionSummary,
-    new: &TargetResolutionSummary,
-) -> bool {
-    if old.target_name.is_none() || new.target_name.is_none() || old.target_name == new.target_name
-    {
-        return false;
-    }
-    let old_path = target_context_value(&old.target_context, "target_path");
-    let new_path = target_context_value(&new.target_context, "target_path");
-    match (old_path, new_path) {
-        (Some(old_path), Some(new_path)) => !old_path.eq_ignore_ascii_case(new_path),
-        (Some(_), None) | (None, Some(_)) => true,
-        (None, None) => false,
-    }
-}
-
-fn should_preserve_existing_target_id_for_name_update(
-    old: &TargetResolutionSummary,
-    new: &TargetResolutionSummary,
-) -> bool {
-    old.target_name.is_none()
-        && new.target_name.is_some()
-        && old.target_id.is_some()
-        && new.target_id.is_some()
-        && old.target_id != new.target_id
-        && old.confidence.rank() >= TargetConfidence::Probable.rank()
-        && !(new.direct_hp_evidence && new.confidence.rank() >= old.confidence.rank())
 }
 
 fn matching_gameplay_effect<'a>(
@@ -3812,6 +1580,24 @@ fn enrich_hit_with_gameplay_effect(
     } else {
         hit.attack_type = Some(classify_attack_type(None, effect_name, None));
     }
+    if is_player_outgoing_damage_effect(effect_name) {
+        hit.direction = "outgoing".to_owned();
+    }
+    if is_vehicle_physical_damage_effect(effect_name) {
+        hit.direction = "outgoing".to_owned();
+        hit.damage_attribute = Some("物理".to_owned());
+        hit.attack_type = Some("载具伤害".to_owned());
+    }
+}
+
+fn is_player_outgoing_damage_effect(effect_name: &str) -> bool {
+    effect_name.starts_with("GE_Player_") && effect_name.contains("_Damage")
+}
+
+fn is_vehicle_physical_damage_effect(effect_name: &str) -> bool {
+    effect_name.starts_with("GE_Vehicle_HitOut")
+        || effect_name.starts_with("GE_VehicleCombatDamage")
+        || effect_name == "GE_Player_VehicleExplode_HitOut"
 }
 
 fn resolve_damage_name(
@@ -3820,6 +1606,13 @@ fn resolve_damage_name(
     wooden_names: &HashMap<String, String>,
 ) -> Option<String> {
     if let Some(name) = wooden_names.get(effect_name) {
+        return Some(name.clone());
+    }
+    if let Some(base_effect_name) = effect_name
+        .strip_suffix("_Explode_Damage")
+        .map(|prefix| format!("{prefix}_Damage"))
+        && let Some(name) = wooden_names.get(&base_effect_name)
+    {
         return Some(name.clone());
     }
     let ability_name = skills.get(effect_name)?.ability_name.as_deref()?;
@@ -3844,14 +1637,16 @@ impl PacketDecoder {
         characters: &HashMap<u32, CharacterInfo>,
         sender: &Sender<EngineEvent>,
     ) {
-        self.packet_index = self.packet_index.saturating_add(1);
         let Some((src, src_port, dst, dst_port, payload)) = parse_udp_ipv4(packet) else {
             return;
         };
         if local_ip.is_some_and(|ip| src != ip && dst != ip) {
             return;
         }
+        let expired_hits = self.take_expired_ambiguous_hits(timestamp);
+        self.emit_hits(expired_hits, characters, sender);
 
+        let decoded_text = decode_payload_text(payload);
         let evidence = find_declared_character_evidence(payload);
         let ids = declared_character_ids_from_evidence(&evidence);
         self.follow_up_damage
@@ -3861,202 +1656,30 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
-        let packet_direction = if outgoing {
-            PacketDirection::ClientToServer
-        } else {
-            PacketDirection::ServerToClient
-        };
-        let current_hp_updates = if outgoing {
-            Vec::new()
-        } else {
-            parse_current_hp_updates(payload)
-        };
-        let boss_hp_updates = if outgoing {
-            Vec::new()
-        } else {
-            parse_boss_hp_updates(payload)
-        };
-        let payload_scan = PayloadScan::new(payload);
-        let has_fast_text_hint = payload_scan.contains_any_fast_hint();
-        if should_fast_skip_payload(
-            payload,
-            &ids,
-            !current_hp_updates.is_empty() || !boss_hp_updates.is_empty(),
-            has_fast_text_hint,
-        ) {
-            let ready_hits = self.reconcile_hp_confirmations(timestamp, Vec::new(), &[], &[], &[]);
-            if !ready_hits.is_empty() {
-                self.finalize_and_emit_hits(
-                    ready_hits,
-                    TrackPacketContext::default(),
-                    &[],
-                    true,
-                    true,
-                    true,
-                    include_incoming,
-                    characters,
-                    sender,
-                );
-            }
-            return;
-        }
-
-        let decoded_text = if has_fast_text_hint {
-            payload_scan.decode_text()
-        } else {
-            UNREADABLE_PROTOCOL_TEXT.to_owned()
-        };
-        let path_candidates = if has_fast_text_hint {
-            extract_path_candidates(payload)
-        } else {
-            Vec::new()
-        };
-        for candidate in &path_candidates {
-            let _ = self.class_hints.observe_path(
-                timestamp,
-                self.packet_index,
-                packet_direction,
-                &candidate.value,
-                &self.resource_index,
-            );
-        }
-        for candidate in &path_candidates {
-            self.object_state
-                .observe_path_candidate(timestamp, candidate, &self.resource_index);
-        }
-        let net_identity_candidates = extract_net_identity_candidates(payload, &path_candidates);
-        let target_instance_notes = self.target_instances.observe_paths(
-            timestamp,
-            &path_candidates,
-            &net_identity_candidates,
-            &self.resource_index,
-        );
-        for candidate in &net_identity_candidates {
-            let handle_kind = match candidate.kind {
-                NetIdentityCandidateKind::NetGuidPacked | NetIdentityCandidateKind::NetGuid32 => {
-                    ObjectHandleKind::NetGuidCandidate
-                }
-                NetIdentityCandidateKind::IrisNetRefHandle32 => {
-                    ObjectHandleKind::NetRefHandleCandidate
-                }
-            };
-            self.object_state.observe_path_handle_candidate(
-                timestamp,
-                handle_kind,
-                candidate.handle.clone(),
-                &candidate.path,
-                &self.resource_index,
-                format!(
-                    "net_identity:{}={} path_anchor:{}@{}:{} rel={} raw={}",
-                    candidate.kind.label(),
-                    candidate.handle,
-                    candidate.path,
-                    candidate.byte_offset,
-                    candidate.bit_shift,
-                    candidate.relative_offset,
-                    candidate.raw_hex
-                ),
-                candidate.score,
-            );
-        }
-        let gameplay_effects = if has_fast_text_hint {
-            parse_gameplay_effects(payload)
-        } else {
-            Vec::new()
-        };
-        let targetish_path_candidates = path_candidates
-            .iter()
-            .filter(|candidate| {
-                self.resource_index
-                    .resolved_name_for_path(&candidate.value)
-                    .is_some()
-                    || crate::object_state::is_targetish_path(&candidate.value)
-            })
-            .collect::<Vec<_>>();
-        let packet_advvision_applied =
-            self.observe_advvision_context(timestamp, &decoded_text, &boss_hp_updates);
-        let packet_target_path_link_applied =
-            self.apply_packet_target_path_links(timestamp, &targetish_path_candidates);
-        let transport_packet = parse_transport_packet(payload);
-        let single_bunch = match &transport_packet {
-            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
-            _ => None,
-        };
-        let has_pending_hp_reconciliation = !self.pending_hp_reconciliation.is_empty();
-        let has_nearby_class_hints = !self.class_hints.hints_near(timestamp, 3.0, 0.5).is_empty();
-        let sdk_target_scan_enabled = !outgoing
-            && (!current_hp_updates.is_empty()
-                || !boss_hp_updates.is_empty()
-                || has_pending_hp_reconciliation
-                || has_nearby_class_hints
-                || !targetish_path_candidates.is_empty()
-                || !gameplay_effects.is_empty()
-                || has_net_runtime_text_hint(&decoded_text));
-        let net_runtime_events = extract_net_runtime_events(
-            payload,
-            &path_candidates,
-            &net_identity_candidates,
-            transport_packet.as_ref(),
-            single_bunch.as_ref(),
-            NetRuntimeScanOptions {
-                include_text_markers: decoded_text != UNREADABLE_PROTOCOL_TEXT
-                    || !targetish_path_candidates.is_empty(),
-                include_sdk_target_data: sdk_target_scan_enabled,
-            },
-        );
-        let sdk_hp_confirmations =
-            self.sdk_hp_confirmations_from_events(timestamp, &net_runtime_events);
-        let (net_runtime_notes, net_runtime_applied) =
-            self.apply_net_runtime_events(timestamp, &net_runtime_events);
-        let (packet_char_id, fallback_char_id) = if outgoing {
-            let session_key = (src, src_port, dst, dst_port);
+        let gameplay_effects = parse_gameplay_effects(payload);
+        let mut hits = if outgoing {
             let packet_char_id = if ids.len() == 1 {
                 ids.first().copied()
             } else {
                 None
             };
+            let session_key = (src, src_port, dst, dst_port);
             if let Some(id) = packet_char_id {
                 self.session_characters.insert(session_key, id);
-                self.active_player_char_id = Some(id);
             }
             let fallback = self.session_characters.get(&session_key).copied();
-            (packet_char_id, fallback)
-        } else {
-            (None, None)
-        };
-        self.apply_hp_updates_to_state(timestamp, &current_hp_updates, &boss_hp_updates);
-        let mut hp_delta_hits = if outgoing {
-            Vec::new()
-        } else {
-            self.player_hp.observe_updates(
-                timestamp,
-                &current_hp_updates,
-                self.active_player_char_id,
-                fallback_char_id,
-                characters,
-            )
-        };
-        let mut hits = if outgoing
-            && payload.len() >= DAMAGE_RECORD_MIN_LEN
-            && payload_scan.may_contain_damage_record()
-        {
             parse_damage_payload(
                 payload,
-                DamageParseContext {
-                    timestamp,
-                    packet_char_id,
-                    fallback_char_id,
-                    packet_direction,
-                    characters,
-                    evidence: &evidence,
-                },
+                timestamp,
+                packet_char_id,
+                fallback,
+                characters,
+                &evidence,
             )
         } else {
             Vec::new()
         };
-        hits.append(&mut hp_delta_hits);
         for hit in &mut hits {
-            attach_runtime_alias_context(hit, &net_identity_candidates, &net_runtime_events);
             enrich_hit_with_gameplay_effect(
                 hit,
                 &gameplay_effects,
@@ -4064,7 +1687,6 @@ impl PacketDecoder {
                 &self.gameplay_effect_skills,
                 &self.wooden_damage_names,
             );
-            refine_hit_direction_after_effect(hit, packet_direction);
             if hit
                 .attack_type
                 .as_deref()
@@ -4086,277 +1708,102 @@ impl PacketDecoder {
                     .and_then(|character| character.attribute.as_deref());
                 if let (Some(previous_attribute), Some(entering_attribute)) =
                     (previous_attribute, entering_attribute)
-                    && let Some(reaction_type) = qte_reaction_type(
-                        previous_attribute,
-                        entering_attribute,
-                        &self.follow_up_damage.team_attributes,
-                    )
+                    && let Some(reaction_type) =
+                        qte_reaction_type(previous_attribute, entering_attribute)
                 {
                     hit.attack_type = Some(format!("环合·{reaction_type}"));
                 }
             }
+            self.follow_up_damage.observe_fuwen_trigger_hit(hit);
         }
-        hits.retain(|hit| !is_non_player_damage_effect(hit.gameplay_effect_name.as_deref()));
-        let mut hits = self.reconcile_hp_confirmations(
-            timestamp,
-            hits,
-            &current_hp_updates,
-            &boss_hp_updates,
-            &sdk_hp_confirmations,
-        );
-
-        let target_lock_context = target_lock_context_for_packet(
-            &path_candidates,
-            &current_hp_updates,
-            &boss_hp_updates,
-            &self.resource_index,
-        );
-        let mut hit_summaries = Vec::with_capacity(hits.len());
-        for hit in &mut hits {
-            let stream_snapshot = target_stream_resolution_snapshot(hit);
-            let mut summary = if hit.direction == "outgoing" {
-                let mut summary = self.target_resolver.apply_to_hit_with_summary(
-                    hit,
-                    &self.object_state,
-                    &self.target_instances,
-                    &path_candidates,
-                    &self.resource_index,
-                );
-                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
-                summary
-            } else {
-                TargetResolutionSummary::from_hit_and_candidates(hit, &[])
-            };
-            if hit.direction == "outgoing" {
-                if hit.target_id.is_none()
-                    && hit.target_name.is_none()
-                    && self.target_instances.observe_hit_vector_hit(hit).is_some()
-                {
-                    summary = self.target_resolver.apply_to_hit_with_summary(
-                        hit,
-                        &self.object_state,
-                        &self.target_instances,
-                        &path_candidates,
-                        &self.resource_index,
-                    );
-                    preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
-                }
-                self.suppress_recently_dead_target_on_hit(hit, &mut summary);
-                self.register_target_handle_alias_for_hit(hit, &summary);
-                apply_handle_alias_to_hit_summary(hit, &mut summary, &self.target_handle_aliases);
-                preserve_target_stream_resolution(hit, &mut summary, &stream_snapshot);
-                self.register_target_handle_alias_for_hit(hit, &summary);
-            }
-            hit_summaries.push(summary);
-        }
-        for (hit, summary) in hits.iter_mut().zip(&mut hit_summaries) {
-            if hit.direction == "outgoing" {
-                let stream_snapshot = target_stream_resolution_snapshot(hit);
-                apply_handle_alias_to_hit_summary(hit, summary, &self.target_handle_aliases);
-                preserve_target_stream_resolution(hit, summary, &stream_snapshot);
-            }
-        }
-        let mut packet_hit_order = (0..hits.len()).collect::<Vec<_>>();
-        packet_hit_order.sort_by(|left, right| {
-            hits[*left]
-                .timestamp
-                .total_cmp(&hits[*right].timestamp)
-                .then_with(|| hits[*left].byte_offset.cmp(&hits[*right].byte_offset))
-                .then_with(|| hits[*left].bit_shift.cmp(&hits[*right].bit_shift))
-        });
-        let mut packet_dead_hits: Vec<Hit> = Vec::new();
-        for &index in &packet_hit_order {
-            let hit = &mut hits[index];
-            let summary = &mut hit_summaries[index];
-            if hit.direction == "outgoing"
-                && hit.target_hp_after > 1.0
-                && packet_dead_hits.iter().any(|dead_hit| {
-                    hit.timestamp >= dead_hit.timestamp
-                        && hit.timestamp - dead_hit.timestamp
-                            <= DEAD_TARGET_HANDLE_REUSE_WINDOW_SECONDS
-                        && hits_share_hp_target_handle(hit, dead_hit)
-                })
-            {
-                suppress_hit_target_as_recent_death(hit, summary);
-            }
-            if hit.direction == "outgoing" && hit.target_hp_after <= 1.0 {
-                packet_dead_hits.push(hit.clone());
-            }
-        }
-        for &index in &packet_hit_order {
-            let hit = &mut hits[index];
-            let summary = &mut hit_summaries[index];
-            self.apply_target_track_attribution(hit, summary, target_lock_context.clone());
-            annotate_unknown_identity_gap(
-                hit,
-                targetish_path_candidates.is_empty(),
-                net_identity_candidates.is_empty(),
-                !net_runtime_events_have_identity(&net_runtime_events),
-            );
-        }
-        for index in packet_hit_order {
-            let hit = &mut hits[index];
-            let summary = &mut hit_summaries[index];
-            if hit.direction == "outgoing" && hit.target_hp_after <= 1.0 {
-                self.clear_dead_target_handles_from_hit(hit);
-                summary.target_context = hit.target_context.clone();
-            }
-        }
-        let monster_gameplay_effect_links = hits
-            .iter()
-            .filter(|hit| hit.direction == "incoming")
-            .filter_map(|hit| {
-                hit.gameplay_effect_name
-                    .clone()
-                    .map(|name| (name, hit.byte_offset, hit.bit_shift))
-            })
-            .collect::<Vec<_>>();
+        let prepared_hits =
+            self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
         for character_id in &ids {
             self.character_declarations.insert(*character_id, timestamp);
         }
         self.character_declarations
             .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
-        let accepted = hits
-            .iter()
-            .filter(|hit| include_incoming || hit.direction != "incoming")
-            .count();
-        let monster_gameplay_effect_applied =
-            self.apply_monster_gameplay_effect_links(timestamp, &monster_gameplay_effect_links);
-        if !current_hp_updates.is_empty()
-            || !boss_hp_updates.is_empty()
-            || !targetish_path_candidates.is_empty()
-            || packet_target_path_link_applied
-            || packet_advvision_applied
-            || net_runtime_applied
-            || monster_gameplay_effect_applied
+        let accepted = prepared_hits.emit.len();
+        let preview_len = payload.len().min(96);
+        let payload_hex = hex::encode(payload);
+        // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
+        let current_hp_updates = if outgoing {
+            Vec::new()
+        } else {
+            parse_current_hp_updates(payload)
+        };
+        let boss_hp_updates = if outgoing {
+            Vec::new()
+        } else {
+            parse_boss_hp_updates(payload)
+        };
+        let fuwen_start = if !outgoing
+            && gameplay_effects.is_empty()
+            && current_hp_updates.is_empty()
+            && boss_hp_updates.is_empty()
         {
-            self.backfill_recent_targets(timestamp, sender);
-        }
-        let abyss_events = abyss_events_from_text(timestamp, &decoded_text);
-        let has_targetish_or_runtime = !targetish_path_candidates.is_empty()
-            || !net_identity_candidates.is_empty()
-            || !net_runtime_events.is_empty()
-            || packet_target_path_link_applied
-            || packet_advvision_applied
-            || net_runtime_applied
-            || monster_gameplay_effect_applied;
-        let should_emit_packet_debug = self.packet_debug_mode != PacketDebugMode::Off
-            && should_keep_debug_packet(
-                accepted,
-                !current_hp_updates.is_empty() || !boss_hp_updates.is_empty(),
-                has_targetish_or_runtime,
-                !abyss_events.is_empty(),
-                self.packet_debug_mode,
+            fuwen_start_pair(payload, &evidence, characters)
+        } else {
+            None
+        };
+        if let Some((entering_character_id, previous_character_id)) = fuwen_start {
+            self.follow_up_damage.observe_fuwen_start_candidate(
+                timestamp,
+                entering_character_id,
+                previous_character_id,
+                characters,
             );
+        }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
-            && targetish_path_candidates.is_empty()
-            && net_runtime_notes.is_empty()
-            && !packet_advvision_applied
-            && accepted == 0
-            && abyss_events.is_empty()
-            && !should_emit_packet_debug
+            && prepared_hits.deferred_ambiguous == 0
+            && fuwen_start.is_none()
+            && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
         {
             return;
         }
-        let mut note = if hits.len() != accepted {
-            format!("过滤 {} 条 incoming 记录", hits.len() - accepted)
-        } else {
-            String::new()
-        };
+        let mut note = String::new();
+        if prepared_hits.filtered_incoming > 0 {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "过滤 {} 条 incoming 记录",
+                    prepared_hits.filtered_incoming
+                )),
+            );
+        }
+        if prepared_hits.deferred_ambiguous > 0 {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "暂存 {} 条多角色候选伤害等待确认",
+                    prepared_hits.deferred_ambiguous
+                )),
+            );
+        }
+        if prepared_hits.suppressed_ambiguous > 0 {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "丢弃 {} 条已确认重复候选伤害",
+                    prepared_hits.suppressed_ambiguous
+                )),
+            );
+        }
+        if let Some((entering_character_id, previous_character_id)) = fuwen_start {
+            append_packet_note(
+                &mut note,
+                Some(format!(
+                    "覆纹启动：{} + {}",
+                    character_debug_label(entering_character_id, characters),
+                    character_debug_label(previous_character_id, characters)
+                )),
+            );
+        }
         append_packet_note(
             &mut note,
             binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
         );
-        if !targetish_path_candidates.is_empty() {
-            append_packet_note(
-                &mut note,
-                Some(format!(
-                    "Object/path candidates: {}",
-                    targetish_path_candidates
-                        .iter()
-                        .take(5)
-                        .map(|candidate| format!(
-                            "{}@{}:{}",
-                            candidate.value, candidate.byte_offset, candidate.bit_shift
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-            );
-        }
-        if !net_identity_candidates.is_empty() {
-            append_packet_note(
-                &mut note,
-                Some(format!(
-                    "Net identity candidates: {}",
-                    net_identity_candidates
-                        .iter()
-                        .take(6)
-                        .map(|candidate| format!(
-                            "{}:{}->{}@{}:{}",
-                            candidate.kind.label(),
-                            candidate.handle,
-                            candidate.path,
-                            candidate.byte_offset,
-                            candidate.bit_shift
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-            );
-        }
-        if !target_instance_notes.is_empty() {
-            append_packet_note(
-                &mut note,
-                Some(format!(
-                    "Runtime target instances: {}",
-                    target_instance_notes
-                        .iter()
-                        .take(8)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-            );
-        }
-        if !net_runtime_notes.is_empty() {
-            append_packet_note(
-                &mut note,
-                Some(format!(
-                    "Net runtime events: {}",
-                    net_runtime_notes
-                        .iter()
-                        .take(8)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )),
-            );
-        }
-        let target_notes = hits
-            .iter()
-            .filter(|hit| !hit.target_context.is_empty())
-            .take(3)
-            .map(|hit| {
-                format!(
-                    "target hit {:.0}: {}",
-                    hit.damage,
-                    hit.target_context
-                        .iter()
-                        .take(4)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" | ")
-                )
-            })
-            .collect::<Vec<_>>();
-        if !target_notes.is_empty() {
-            append_packet_note(
-                &mut note,
-                Some(format!("Target candidates: {}", target_notes.join("; "))),
-            );
-        }
         if !gameplay_effects.is_empty() {
             append_packet_note(
                 &mut note,
@@ -4386,12 +1833,8 @@ impl PacketDecoder {
                     current_hp_updates
                         .iter()
                         .map(|update| format!(
-                            "{}={:.0}@{}:{}",
-                            current_hp_target_token(&update.target_hint)
-                                .map_or_else(|| "untracked".to_owned(), |token| short_hex(&token),),
-                            update.current_hp,
-                            update.byte_offset,
-                            update.bit_shift
+                            "{:.0}@{}:{}",
+                            update.current_hp, update.byte_offset, update.bit_shift
                         ))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -4417,44 +1860,35 @@ impl PacketDecoder {
                 )),
             );
         }
-        let inferred_follow_up_hit_values = boss_hp_updates
+        let inferred_follow_ups = boss_hp_updates
             .iter()
             .filter_map(|update| {
                 self.follow_up_damage
                     .observe_server_hp(timestamp, update.current_hp as f64)
             })
             .collect::<Vec<_>>();
-        let mut inferred_follow_up_hits = Vec::with_capacity(inferred_follow_up_hit_values.len());
-        for mut hit in inferred_follow_up_hit_values {
-            let mut summary = self.target_resolver.apply_to_hit_with_summary(
-                &mut hit,
-                &self.object_state,
-                &self.target_instances,
-                &[],
-                &self.resource_index,
-            );
-            self.suppress_recently_dead_target_on_hit(&mut hit, &mut summary);
-            inferred_follow_up_hits.push((hit, summary));
-        }
-        for (hit, summary) in &mut inferred_follow_up_hits {
-            self.register_target_handle_alias_for_hit(hit, summary);
-            apply_handle_alias_to_hit_summary(hit, summary, &self.target_handle_aliases);
-            self.register_target_handle_alias_for_hit(hit, summary);
-        }
-        for (hit, summary) in &mut inferred_follow_up_hits {
-            self.apply_target_track_attribution(hit, summary, target_lock_context.clone());
-            annotate_unknown_identity_gap(
-                hit,
-                targetish_path_candidates.is_empty(),
-                true,
-                !net_runtime_events_have_identity(&net_runtime_events),
-            );
-        }
-        for (hit, summary) in &mut inferred_follow_up_hits {
-            self.clear_dead_target_handles_from_hit(hit);
-            summary.target_context = hit.target_context.clone();
-        }
-        if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
+        let hp_sync_follow_ups = if self.use_server_damage_calibration {
+            Vec::new()
+        } else {
+            boss_hp_updates
+                .iter()
+                .filter_map(|update| {
+                    self.infer_boss_hp_sync_damage(timestamp, update.current_hp as f64, characters)
+                })
+                .collect::<Vec<_>>()
+        };
+        let server_damage_corrections = if self.use_server_damage_calibration {
+            boss_hp_updates
+                .iter()
+                .filter_map(|update| {
+                    self.server_damage_calibration
+                        .observe_boss_hp(timestamp, update)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        if let Some(TransportPacket::Sequenced(packet)) = parse_transport_packet(payload) {
             if packet.mode != 0 {
                 append_packet_note(
                     &mut note,
@@ -4466,7 +1900,7 @@ impl PacketDecoder {
                         packet.payload_bit_len
                     )),
                 );
-            } else if let Some(bunch) = &single_bunch {
+            } else if let Some(bunch) = parse_single_bunch(&packet) {
                 append_packet_note(
                     &mut note,
                     Some(format!(
@@ -4476,50 +1910,31 @@ impl PacketDecoder {
                 );
             }
         }
-        if should_emit_packet_debug {
-            let preview_len = payload.len().min(96);
-            let payload_preview = hex::encode(&payload[..preview_len]);
-            let payload_hex = if self.packet_debug_mode == PacketDebugMode::FullPayload {
-                hex::encode(payload)
-            } else {
-                String::new()
-            };
-            send_packet_events(
-                sender,
-                PacketDebug {
-                    timestamp,
-                    source: format!("{src}:{src_port}"),
-                    destination: format!("{dst}:{dst_port}"),
-                    direction: direction.to_owned(),
-                    payload_len: payload.len(),
-                    declared_ids: ids,
-                    parsed_hits: accepted,
-                    note,
-                    payload_preview,
-                    payload_hex,
-                    decoded_text,
-                },
-            );
-        } else {
-            for event in abyss_events {
-                let _ = sender.send(EngineEvent::Abyss(event));
-            }
+        send_packet_events(
+            sender,
+            PacketDebug {
+                timestamp,
+                source: format!("{src}:{src_port}"),
+                destination: format!("{dst}:{dst_port}"),
+                direction: direction.to_owned(),
+                payload_len: payload.len(),
+                declared_ids: ids,
+                parsed_hits: accepted,
+                note,
+                payload_preview: payload_hex[..preview_len * 2].to_owned(),
+                payload_hex,
+                decoded_text,
+            },
+        );
+        self.emit_hits(prepared_hits.emit, characters, sender);
+        for follow_up in inferred_follow_ups {
+            let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
         }
-        for (hit, summary) in hits.into_iter().zip(hit_summaries) {
-            if include_incoming || hit.direction != "incoming" {
-                self.follow_up_damage
-                    .observe_hit(&hit, hit.gameplay_effect_index, characters);
-                let mut hit = hit;
-                normalize_final_target_identity(&mut hit);
-                self.remember_target_hit(&hit, summary);
-                let _ = sender.send(EngineEvent::Hit(hit));
-            }
+        for follow_up in hp_sync_follow_ups {
+            let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
         }
-        for (hit, summary) in inferred_follow_up_hits {
-            let mut hit = hit;
-            normalize_final_target_identity(&mut hit);
-            self.remember_target_hit(&hit, summary);
-            let _ = sender.send(EngineEvent::Hit(hit));
+        for correction in server_damage_corrections {
+            let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
         }
     }
 }
@@ -4528,29 +1943,26 @@ pub fn start_capture(
     device: CaptureDevice,
     local_ip: Option<Ipv4Addr>,
     filter: String,
-    options: CaptureOptions,
+    include_incoming: bool,
+    use_server_damage_calibration: bool,
     characters: Arc<HashMap<u32, CharacterInfo>>,
     sender: Sender<EngineEvent>,
 ) -> CaptureHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
-    let raw_capture = options
-        .save_raw_capture
-        .then(|| RawCaptureBuffer::new(device.clone()));
-    let thread_raw_capture = raw_capture
-        .clone()
-        .unwrap_or_else(RawCaptureBuffer::disabled);
+    let raw_capture = RawCaptureBuffer::new(device.clone());
+    let thread_raw_capture = raw_capture.clone();
     let thread = thread::spawn(move || {
         let result = run_capture(CaptureRunConfig {
             device: &device,
             local_ip,
             filter: &filter,
-            include_incoming: options.include_incoming,
+            include_incoming,
+            use_server_damage_calibration,
             characters: &characters,
             sender: &sender,
             stop: &thread_stop,
             raw_capture: &thread_raw_capture,
-            packet_debug_mode: options.packet_debug_mode,
         });
         thread_raw_capture.finish();
         let _ = sender.send(EngineEvent::CaptureStopped);
@@ -4565,23 +1977,16 @@ pub fn start_capture(
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct CaptureOptions {
-    pub include_incoming: bool,
-    pub packet_debug_mode: PacketDebugMode,
-    pub save_raw_capture: bool,
-}
-
 struct CaptureRunConfig<'a> {
     device: &'a CaptureDevice,
     local_ip: Option<Ipv4Addr>,
     filter: &'a str,
     include_incoming: bool,
+    use_server_damage_calibration: bool,
     characters: &'a HashMap<u32, CharacterInfo>,
     sender: &'a Sender<EngineEvent>,
     stop: &'a AtomicBool,
     raw_capture: &'a RawCaptureBuffer,
-    packet_debug_mode: PacketDebugMode,
 }
 
 fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
@@ -4590,11 +1995,11 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         local_ip,
         filter,
         include_incoming,
+        use_server_damage_calibration,
         characters,
         sender,
         stop,
         raw_capture,
-        packet_debug_mode,
     } = config;
     // SAFETY: Function pointers are loaded from Npcap and used per the libpcap API.
     unsafe {
@@ -4642,7 +2047,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         }
         program.release();
         let raw_capture_status = raw_capture.path().map_or_else(
-            || "; raw capture disabled".to_owned(),
+            || "; raw capture unavailable".to_owned(),
             |path| format!("; writing raw capture to {}", path.display()),
         );
         let _ = sender.send(EngineEvent::Status(format!(
@@ -4654,7 +2059,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             raw_capture_status
         )));
 
-        let mut decoder = PacketDecoder::with_packet_debug_mode(packet_debug_mode);
+        let mut decoder =
+            PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
         if let Some(warning) = decoder.resource_warning() {
             let _ = sender.send(EngineEvent::Warning(warning));
         }
@@ -4693,7 +2099,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
                 sender,
             );
         }
-        decoder.flush_pending_hp_reconciliation(include_incoming, characters, sender);
+        let pending_hits = decoder.take_all_ambiguous_hits();
+        decoder.emit_hits(pending_hits, characters, sender);
     }
     Ok(())
 }
@@ -4703,7 +2110,7 @@ pub fn import_pcapng(
     characters: Arc<HashMap<u32, CharacterInfo>>,
     local_ip_hint: Option<Ipv4Addr>,
     include_incoming: bool,
-    packet_debug_mode: PacketDebugMode,
+    use_server_damage_calibration: bool,
     sender: Sender<EngineEvent>,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
@@ -4718,51 +2125,38 @@ pub fn import_pcapng(
         let result = (|| -> Result<(usize, usize), String> {
             let file = File::open(&path).map_err(|error| error.to_string())?;
             let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
-            let mut decoder = PacketDecoder::with_packet_debug_mode(packet_debug_mode);
-            let mut runtime_mapping = load_companion_runtime_mapping(&path, &sender);
+            let mut decoder =
+                PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
             if let Some(warning) = decoder.resource_warning() {
                 let _ = sender.send(EngineEvent::Warning(warning));
             }
             let mut packet_count = 0;
             let mut supported_count = 0;
 
-            loop {
-                let interface_linktypes = reader
-                    .interfaces()
-                    .iter()
-                    .map(|interface| interface.linktype)
-                    .collect::<Vec<_>>();
-                let Some(block) = reader.next_block() else {
-                    break;
-                };
+            while let Some(block) = reader.next_block() {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
                 let block = block.map_err(|error| error.to_string())?;
-                let (interface_id, timestamp) = match &block {
-                    Block::EnhancedPacket(packet) => {
-                        (packet.interface_id as usize, packet.timestamp.as_secs_f64())
-                    }
-                    Block::SimplePacket(_) => (0, 0.0),
+                let (interface_id, timestamp, data) = match block {
+                    Block::EnhancedPacket(packet) => (
+                        packet.interface_id as usize,
+                        packet.timestamp.as_secs_f64(),
+                        packet.data.into_owned(),
+                    ),
+                    Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
                     _ => continue,
                 };
                 packet_count += 1;
-                let Some(linktype) = interface_linktypes.get(interface_id) else {
+                let Some(interface) = reader.interfaces().get(interface_id) else {
                     continue;
                 };
-                if *linktype != DataLink::ETHERNET {
+                if interface.linktype != DataLink::ETHERNET {
                     continue;
                 }
                 supported_count += 1;
-                let data = match &block {
-                    Block::EnhancedPacket(packet) => packet.data.as_ref(),
-                    Block::SimplePacket(packet) => packet.data.as_ref(),
-                    _ => continue,
-                };
-                runtime_mapping.align_to_packet_time(timestamp);
-                decoder.apply_runtime_mapping_events(runtime_mapping.pop_due(timestamp), &sender);
                 decoder.process_ethernet_frame(
-                    data,
+                    &data,
                     timestamp,
                     local_ip_hint,
                     include_incoming,
@@ -4770,8 +2164,8 @@ pub fn import_pcapng(
                     &sender,
                 );
             }
-            decoder.apply_runtime_mapping_events(runtime_mapping.pop_all(), &sender);
-            decoder.flush_pending_hp_reconciliation(include_incoming, &characters, &sender);
+            let pending_hits = decoder.take_all_ambiguous_hits();
+            decoder.emit_hits(pending_hits, &characters, &sender);
             if packet_count > 0 && supported_count == 0 {
                 return Err("pcapng contains no supported Ethernet packets".to_owned());
             }
@@ -4790,32 +2184,6 @@ pub fn import_pcapng(
             }
         }
     })
-}
-
-fn load_companion_runtime_mapping(
-    path: &Path,
-    sender: &Sender<EngineEvent>,
-) -> RuntimeMappingTimeline {
-    let Some(sidecar_path) = find_companion_runtime_mapping_sidecar(path) else {
-        return RuntimeMappingTimeline::default();
-    };
-    match load_runtime_mapping_sidecar(&sidecar_path) {
-        Ok(timeline) => {
-            let count = timeline.len();
-            let _ = sender.send(EngineEvent::Status(format!(
-                "loaded runtime mapping sidecar: {} ({count} events)",
-                sidecar_path.display()
-            )));
-            timeline
-        }
-        Err(error) => {
-            let _ = sender.send(EngineEvent::Warning(format!(
-                "runtime mapping sidecar ignored: {}: {error}",
-                sidecar_path.display()
-            )));
-            RuntimeMappingTimeline::default()
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -4858,6 +2226,18 @@ struct ExportHit {
     damage_name: Option<String>,
     #[serde(default)]
     attack_type: Option<String>,
+    #[serde(default)]
+    damage_attribute: Option<String>,
+    #[serde(default)]
+    follow_up_damage: f64,
+    #[serde(default)]
+    follow_up_timestamp: Option<f64>,
+    #[serde(default)]
+    follow_up_damage_name: Option<String>,
+    #[serde(default)]
+    follow_up_attack_type: Option<String>,
+    #[serde(default)]
+    follow_up_damage_attribute: Option<String>,
 }
 
 fn default_outgoing_direction() -> String {
@@ -4889,7 +2269,6 @@ struct ExportPacket {
 
 pub fn import_capture_json(
     path: PathBuf,
-    packet_debug_mode: PacketDebugMode,
     sender: Sender<EngineEvent>,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
@@ -4921,7 +2300,7 @@ pub fn import_capture_json(
                 };
                 if take_packet {
                     let packet = packets.next().expect("peeked packet must exist");
-                    if send_export_packet(packet, packet_debug_mode, &sender)? {
+                    if send_export_packet(packet, &sender)? {
                         packet_count += 1;
                     }
                 } else {
@@ -4948,45 +2327,27 @@ pub fn import_capture_json(
     })
 }
 
-fn send_export_packet(
-    packet: ExportPacket,
-    packet_debug_mode: PacketDebugMode,
-    sender: &Sender<EngineEvent>,
-) -> Result<bool, String> {
-    if packet_debug_mode == PacketDebugMode::Off {
-        return Ok(false);
-    }
+fn send_export_packet(packet: ExportPacket, sender: &Sender<EngineEvent>) -> Result<bool, String> {
     let declared_ids = parse_export_ids(&packet.declared_ids);
-    let (payload, decoded_text) = if packet_debug_mode == PacketDebugMode::FullPayload
-        && !packet.payload_hex.trim().is_empty()
-    {
-        let payload = hex::decode(&packet.payload_hex)
-            .map_err(|error| format!("payload_hex 无效: {error}"))?;
-        let decoded_text = decode_payload_text(&payload);
-        (payload, decoded_text)
+    let payload = if packet.payload_hex.trim().is_empty() {
+        Vec::new()
     } else {
-        (Vec::new(), packet.decoded_text)
+        hex::decode(&packet.payload_hex).map_err(|error| format!("payload_hex 无效: {error}"))?
     };
-    let has_abyss_event = !abyss_events_from_text(packet.timestamp_unix, &decoded_text).is_empty();
-    if !should_keep_debug_packet(
-        packet.parsed_hits,
-        packet.note.contains("HP"),
-        packet.note.contains("Object/path")
-            || packet.note.contains("Net identity")
-            || packet.note.contains("Net runtime"),
-        has_abyss_event,
-        packet_debug_mode,
-    ) {
+    let decoded_text = if packet.decoded_text.trim().is_empty() && !payload.is_empty() {
+        decode_payload_text(&payload)
+    } else {
+        packet.decoded_text
+    };
+    if !should_keep_debug_packet(&payload, &declared_ids, packet.parsed_hits, &decoded_text) {
         return Ok(false);
     }
+    let evidence = find_declared_character_evidence(&payload);
     let mut note = packet.note;
-    if packet_debug_mode == PacketDebugMode::FullPayload {
-        let evidence = find_declared_character_evidence(&payload);
-        append_packet_note(
-            &mut note,
-            binary_payload_diagnostic(&payload, &packet.direction, &decoded_text, &evidence),
-        );
-    }
+    append_packet_note(
+        &mut note,
+        binary_payload_diagnostic(&payload, &packet.direction, &decoded_text, &evidence),
+    );
     let packet = PacketDebug {
         timestamp: packet.timestamp_unix,
         source: packet.source,
@@ -4997,11 +2358,7 @@ fn send_export_packet(
         parsed_hits: packet.parsed_hits,
         note,
         payload_preview: packet.payload_preview,
-        payload_hex: if packet_debug_mode == PacketDebugMode::FullPayload {
-            packet.payload_hex
-        } else {
-            String::new()
-        },
+        payload_hex: packet.payload_hex,
         decoded_text,
     };
     for event in abyss_events_from_text(packet.timestamp, &packet.decoded_text) {
@@ -5046,6 +2403,12 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
                 attack_type
             }
         }),
+        damage_attribute: hit.damage_attribute,
+        follow_up_damage: hit.follow_up_damage,
+        follow_up_timestamp: hit.follow_up_timestamp,
+        follow_up_damage_name: hit.follow_up_damage_name,
+        follow_up_attack_type: hit.follow_up_attack_type,
+        follow_up_damage_attribute: hit.follow_up_damage_attribute,
     })
 }
 
@@ -5087,22 +2450,477 @@ fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossbeam_channel::unbounded;
 
-    fn test_hit(timestamp: f64, before: f64, after: f64) -> Hit {
+    #[test]
+    fn follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve() {
+        let characters = HashMap::from([
+            (
+                1,
+                CharacterInfo {
+                    name_zh: "character1".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                2,
+                CharacterInfo {
+                    name_zh: "character2".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+        ]);
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.char_name = "character1".to_owned();
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 3_177.0;
+        for index in 0..MAX_PENDING_FOLLOW_UP_HITS + 20 {
+            hit.timestamp = index as f64 / 1_000.0;
+            tracker.observe_hit(&hit, Some(241), &characters);
+        }
+        assert_eq!(tracker.pending_hits.len(), MAX_PENDING_FOLLOW_UP_HITS);
+
+        hit.timestamp = 2.0;
+        tracker.observe_hit(&hit, Some(241), &characters);
+        assert_eq!(tracker.pending_hits.len(), 1);
+        let follow_up = tracker
+            .observe_server_hp(2.1, 996_150.0)
+            .expect("recent pending hit should still resolve follow-up damage");
+        assert_eq!(follow_up.damage, 673.0);
+        assert_eq!(follow_up.source_char_id, 1);
+        assert_eq!(follow_up.source_damage, 3_177.0);
+        assert_eq!(follow_up.damage_name.as_deref(), Some("覆纹追加攻击"));
+        assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
+    }
+
+    #[test]
+    fn follow_up_requires_visible_fuwen_trigger() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(0.1, 998_750.0).is_none());
+    }
+
+    #[test]
+    fn visible_fuwen_trigger_without_start_packet_records_follow_up() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 2;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.1, 798_750.0)
+            .expect("visible fuwen trigger should be enough to open follow-up tracking");
+        assert_eq!(follow_up.damage, 250.0);
+        assert_eq!(follow_up.damage_attribute.as_deref(), Some("咒"));
+    }
+
+    #[test]
+    fn creation_flower_does_not_trigger_fuwen_follow_up() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 2;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("创生花".to_owned());
+
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(0.1, 798_750.0).is_none());
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
+    fn non_ling_zhou_hit_does_not_end_active_fuwen() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.target_max_hp = 1_000_000.0;
+
+        hit.char_id = 3;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 500.0;
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.1, 999_500.0).is_none());
+        assert!(tracker.fuwen_active);
+
+        hit.char_id = 1;
+        hit.timestamp = 0.2;
+        hit.target_hp_before = 999_500.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.3, 998_250.0)
+            .expect("ling/zhou residual should still be recorded after other-attribute hit");
+        assert_eq!(follow_up.damage, 250.0);
+    }
+
+    #[test]
+    fn zero_residual_does_not_end_active_fuwen_after_recorded_residual() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(0.1, 999_000.0).is_none());
+        assert!(tracker.fuwen_active);
+
+        hit.timestamp = 0.2;
+        hit.target_hp_before = 999_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("普攻".to_owned());
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.3, 997_750.0)
+            .expect("first residual after fuwen start should be recorded");
+        assert_eq!(follow_up.damage, 250.0);
+        assert!(tracker.fuwen_active);
+
+        hit.timestamp = 0.4;
+        hit.target_hp_before = 997_750.0;
+        hit.damage = 1_000.0;
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(0.5, 996_750.0).is_none());
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
+    fn fuwen_stays_active_across_long_gaps_until_battle_reset() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+
+        hit.timestamp = 60.0;
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(60.1, 798_750.0)
+            .expect("fuwen follow-up should not expire just because of a long idle gap");
+        assert_eq!(follow_up.damage, 250.0);
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
+    fn hidden_fuwen_candidate_does_not_record_without_visible_trigger() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        let mut hit = targetless_hit();
+        hit.timestamp = 5.0;
+        hit.char_id = 2;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("普攻".to_owned());
+
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(5.1, 999_000.0).is_none());
+        assert!(!tracker.fuwen_active);
+        assert!(tracker.fuwen_start_pending);
+
+        hit.char_id = 1;
+        hit.timestamp = 5.2;
+        hit.target_hp_before = 999_000.0;
+        hit.attack_type = Some("Q技能".to_owned());
+        tracker.observe_hit(&hit, None, &characters);
+        assert!(tracker.observe_server_hp(5.3, 998_000.0).is_none());
+        assert!(!tracker.fuwen_active);
+        assert!(tracker.fuwen_start_pending);
+    }
+
+    #[test]
+    fn visible_fuwen_trigger_activates_follow_up_window() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 5.0);
+
+        assert!(tracker.fuwen_active);
+        assert!(!tracker.fuwen_start_pending);
+    }
+
+    #[test]
+    fn fuwen_start_pair_uses_shifted_signature_and_fixed_role_positions() {
+        let mut payload = vec![0_u8; 90];
+        write_shifted_bytes(
+            &mut payload,
+            FUWEN_START_SIGNATURE_SHIFT,
+            FUWEN_START_SIGNATURE_OFFSET,
+            FUWEN_START_SIGNATURE,
+        );
+        write_shifted_bytes(
+            &mut payload,
+            FUWEN_ENTERING_ID_SHIFT,
+            FUWEN_ENTERING_ID_OFFSET,
+            &character_evidence_row(1001),
+        );
+        write_shifted_bytes(
+            &mut payload,
+            FUWEN_PREVIOUS_ID_SHIFT,
+            FUWEN_PREVIOUS_ID_OFFSET,
+            &character_evidence_row(1002),
+        );
+        let evidence = find_declared_character_evidence(&payload);
+        let characters = HashMap::from([
+            (
+                1001,
+                CharacterInfo {
+                    name_zh: "entering".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                1002,
+                CharacterInfo {
+                    name_zh: "previous".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            fuwen_start_pair(&payload, &evidence, &characters),
+            Some((1001, 1002))
+        );
+    }
+
+    #[test]
+    fn parses_export_ids_from_array_and_legacy_string() {
+        assert_eq!(
+            parse_export_ids(&serde_json::json!([1001, 1002])),
+            [1001, 1002]
+        );
+        assert_eq!(
+            parse_export_ids(&serde_json::json!("[1001, 1002]")),
+            [1001, 1002]
+        );
+        assert!(parse_export_ids(&serde_json::json!([4294967296_u64])).is_empty());
+    }
+
+    #[test]
+    fn send_export_packet_rejects_invalid_hex_payload() {
+        let (sender, receiver) = unbounded();
+        let packet = ExportPacket {
+            timestamp_unix: 1.0,
+            source: "127.0.0.1:1234".to_owned(),
+            destination: "127.0.0.1:5678".to_owned(),
+            direction: "S2C".to_owned(),
+            payload_len: 0,
+            declared_ids: serde_json::json!([1]),
+            parsed_hits: 0,
+            note: String::new(),
+            payload_preview: String::new(),
+            payload_hex: "ZZ".to_owned(),
+            decoded_text: String::new(),
+        };
+        assert!(
+            send_export_packet(packet, &sender)
+                .unwrap_err()
+                .contains("payload_hex 无效")
+        );
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn send_export_packet_accepts_empty_payload_hex() {
+        let (sender, receiver) = unbounded();
+        let packet = ExportPacket {
+            timestamp_unix: 1.0,
+            source: "127.0.0.1:1234".to_owned(),
+            destination: "127.0.0.1:5678".to_owned(),
+            direction: "S2C".to_owned(),
+            payload_len: 0,
+            declared_ids: serde_json::json!([1]),
+            parsed_hits: 0,
+            note: String::new(),
+            payload_preview: String::new(),
+            payload_hex: String::new(),
+            decoded_text: "测试解码".to_owned(),
+        };
+        assert!(send_export_packet(packet, &sender).is_ok());
+        match receiver.try_recv().expect("packet event should be emitted") {
+            EngineEvent::Packet(packet) => {
+                assert_eq!(packet.payload_hex, String::new());
+                assert_eq!(packet.payload_len, 0);
+            }
+            _ => panic!("expected packet event"),
+        }
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn send_export_packet_preserves_exported_decoded_text() {
+        let (sender, receiver) = unbounded();
+        let packet = ExportPacket {
+            timestamp_unix: 1.0,
+            source: "127.0.0.1:1234".to_owned(),
+            destination: "127.0.0.1:5678".to_owned(),
+            direction: "S2C".to_owned(),
+            payload_len: 2,
+            declared_ids: serde_json::json!([]),
+            parsed_hits: 1,
+            note: String::new(),
+            payload_preview: "0000".to_owned(),
+            payload_hex: "0000".to_owned(),
+            decoded_text: "导出时的协议文本".to_owned(),
+        };
+
+        assert!(send_export_packet(packet, &sender).is_ok());
+        match receiver.try_recv().expect("packet event should be emitted") {
+            EngineEvent::Packet(packet) => {
+                assert_eq!(packet.decoded_text, "导出时的协议文本");
+                assert_eq!(packet.payload_hex, "0000");
+            }
+            _ => panic!("expected packet event"),
+        }
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn vehicle_hitout_is_outgoing_physical_damage() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 1845,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(1845, "GE_Vehicle_HitOut2".to_owned())]);
+        let mut hit = targetless_hit();
+        hit.direction = "incoming".to_owned();
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.attack_type.as_deref(), Some("载具伤害"));
+        assert_eq!(hit.damage_attribute.as_deref(), Some("物理"));
+    }
+
+    #[test]
+    fn player_damage_effect_is_outgoing_even_when_record_looks_incoming() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 2031,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(2031, "GE_Player_Hathor_QTE1_Damage".to_owned())]);
+        let mut hit = targetless_hit();
+        hit.direction = "incoming".to_owned();
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.attack_type.as_deref(), Some("环合"));
+    }
+
+    #[test]
+    fn local_ip_hint_controls_import_direction_inference() {
+        let local_ip = Ipv4Addr::new(10, 0, 0, 2);
+        let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
+        let endpoints = HashSet::new();
+
+        assert!(infer_outgoing(
+            local_ip,
+            50_000,
+            remote_ip,
+            Some(local_ip),
+            &[],
+            &endpoints,
+        ));
+        assert!(!infer_outgoing(
+            remote_ip,
+            40_000,
+            local_ip,
+            Some(local_ip),
+            &[1001],
+            &endpoints,
+        ));
+        assert!(infer_outgoing(
+            remote_ip,
+            40_000,
+            local_ip,
+            None,
+            &[1001],
+            &endpoints,
+        ));
+    }
+
+    fn targetless_hit() -> Hit {
         Hit {
-            timestamp,
+            timestamp: 0.0,
             char_id: 1,
-            char_name: "tester".to_owned(),
+            char_name: "test character".to_owned(),
             char_known: true,
-            damage: (before - after).abs().max(1.0),
-            byte_offset: timestamp as usize,
+            damage: 100.0,
+            byte_offset: 0,
             bit_shift: 0,
             char_source: "test".to_owned(),
             direction: "outgoing".to_owned(),
-            target_hp_before: before,
-            target_hp_after: after,
-            target_max_hp: before.max(1.0),
-            target_hp_percent: after / before.max(1.0) * 100.0,
+            target_hp_before: 0.0,
+            target_hp_after: 0.0,
+            target_max_hp: 0.0,
+            target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
             target_context: Vec::new(),
@@ -5111,841 +2929,466 @@ mod tests {
             ability_name: None,
             damage_name: None,
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 
-    fn named_summary(hit: &Hit) -> TargetResolutionSummary {
-        TargetResolutionSummary {
-            target_id: hit.target_id.clone(),
-            target_name: hit.target_name.clone(),
-            target_context: hit.target_context.clone(),
-            score: 120,
-            confidence: TargetConfidence::Confirmed,
-            direct_hp_evidence: true,
+    fn follow_up_test_characters() -> HashMap<u32, CharacterInfo> {
+        HashMap::from([
+            (
+                1,
+                CharacterInfo {
+                    name_zh: "ling".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                2,
+                CharacterInfo {
+                    name_zh: "zhou".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+            (
+                3,
+                CharacterInfo {
+                    name_zh: "other".to_owned(),
+                    name_en: String::new(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("光".to_owned()),
+                },
+            ),
+        ])
+    }
+
+    fn observe_visible_fuwen_trigger(
+        tracker: &mut FollowUpDamageTracker,
+        character_id: u32,
+        timestamp: f64,
+    ) {
+        let mut hit = targetless_hit();
+        hit.char_id = character_id;
+        hit.timestamp = timestamp;
+        hit.attack_type = Some("环合·覆纹".to_owned());
+        tracker.observe_fuwen_trigger_hit(&hit);
+    }
+
+    fn character_evidence_row(character_id: u32) -> [u8; 9] {
+        let digits = format!("{character_id:04}");
+        let mut row = [0_u8; 9];
+        row[..4].copy_from_slice(&[5, 0, 0, 0]);
+        row[4..8].copy_from_slice(digits.as_bytes());
+        row
+    }
+
+    fn write_shifted_bytes(payload: &mut [u8], bit_shift: u8, byte_offset: usize, bytes: &[u8]) {
+        for (index, byte) in bytes.iter().enumerate() {
+            for bit in 0..8 {
+                let bit_value = (byte >> bit) & 1;
+                let target_bit = bit_shift as usize + (byte_offset + index) * 8 + bit;
+                let target_byte = target_bit / 8;
+                let target_bit_offset = target_bit % 8;
+                if bit_value == 1 {
+                    payload[target_byte] |= 1 << target_bit_offset;
+                } else {
+                    payload[target_byte] &= !(1 << target_bit_offset);
+                }
+            }
         }
     }
 
-    #[test]
-    fn json_export_without_payload_hex_imports_fast() {
-        let packet = ExportPacket {
-            timestamp_unix: 1.0,
-            source: "1.1.1.1:1".to_owned(),
-            destination: "2.2.2.2:2".to_owned(),
-            direction: "C2S".to_owned(),
-            payload_len: 128,
-            declared_ids: serde_json::json!([1]),
-            parsed_hits: 1,
-            note: "hit packet".to_owned(),
-            payload_preview: "abcd".to_owned(),
-            payload_hex: "not-valid-hex".to_owned(),
-            decoded_text: UNREADABLE_PROTOCOL_TEXT.to_owned(),
+    fn duplicate_test_hit(timestamp: f64, char_source: &str, direction: &str) -> Hit {
+        let mut hit = targetless_hit();
+        hit.timestamp = timestamp;
+        hit.char_id = if char_source == "packet" { 1051 } else { 1010 };
+        hit.char_name = if char_source == "packet" {
+            "零(女)".to_owned()
+        } else {
+            "娜娜莉".to_owned()
         };
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        assert!(
-            send_export_packet(packet, PacketDebugMode::Summary, &sender).expect("summary import")
-        );
-        let event = receiver.try_recv().expect("packet event");
-        assert!(matches!(
-            event,
-            EngineEvent::Packet(PacketDebug {
-                payload_hex,
-                ..
-            }) if payload_hex.is_empty()
-        ));
+        hit.damage = 5_829.0;
+        hit.char_source = char_source.to_owned();
+        hit.direction = direction.to_owned();
+        hit.target_hp_before = 1_389_577.0;
+        hit.target_hp_after = 1_383_748.0;
+        hit.target_max_hp = 1_930_389.0;
+        hit.gameplay_effect_index = Some(52);
+        hit.gameplay_effect_name = Some("GE_ActorReaction_1_Damage".to_owned());
+        hit.attack_type = Some("创生花".to_owned());
+        hit
+    }
+
+    fn duplicate_test_characters() -> HashMap<u32, CharacterInfo> {
+        HashMap::from([
+            (
+                1010,
+                CharacterInfo {
+                    name_zh: "娜娜莉".to_owned(),
+                    name_en: "Nanally".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+            (
+                1020,
+                CharacterInfo {
+                    name_zh: "哈尼娅".to_owned(),
+                    name_en: "Haniel".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("光".to_owned()),
+                },
+            ),
+            (
+                1051,
+                CharacterInfo {
+                    name_zh: "零(女)".to_owned(),
+                    name_en: "Rei".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                1055,
+                CharacterInfo {
+                    name_zh: "测试角色".to_owned(),
+                    name_en: "Test".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: None,
+                },
+            ),
+        ])
     }
 
     #[test]
-    fn final_target_id_never_uses_attribute_guid_when_no_track() {
-        let mut hit = test_hit(1.0, 1000.0, 900.0);
-        hit.target_id = Some("AttributeGuid:ABCDEF|path=WorldBoss_Boss13".to_owned());
-        normalize_final_target_identity(&mut hit);
-        assert_eq!(hit.target_id, None);
-        assert!(hit.target_context.iter().any(|entry| {
-            entry == "target_handle_candidate=AttributeGuid:ABCDEF|path=WorldBoss_Boss13"
-        }));
-    }
+    fn packet_decoder_loads_attack_resources_outside_project_cwd() {
+        let decoder = PacketDecoder::default();
 
-    #[test]
-    fn final_target_id_drops_runtime_unknown_placeholder_when_no_track() {
-        let mut hit = test_hit(1.0, 1000.0, 900.0);
-        hit.target_id = Some("runtime_unknown_target#14".to_owned());
-        normalize_final_target_identity(&mut hit);
-
-        assert_eq!(hit.target_id, None);
         assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| entry == "runtime_placeholder_id=runtime_unknown_target#14")
+            decoder.resource_warnings.is_empty(),
+            "{}",
+            decoder.resource_warnings.join("; ")
+        );
+        assert_eq!(
+            decoder.gameplay_effect_names.get(&241).map(String::as_str),
+            Some("GE_Player_Nanally_Melee1_Damage")
+        );
+        assert_eq!(
+            decoder
+                .gameplay_effect_skills
+                .get("GE_Player_Nanally_Melee1_Damage")
+                .map(|skill| skill.attack_type.as_str()),
+            Some("普攻")
+        );
+        assert_eq!(
+            decoder
+                .wooden_damage_names
+                .get("GE_Player_Nanally_Melee1_Damage")
+                .map(String::as_str),
+            Some("娜娜莉普攻")
         );
     }
 
-    #[test]
-    fn unknown_hit_without_identity_candidates_records_decode_gap() {
-        let mut hit = test_hit(1.0, 1000.0, 900.0);
-        annotate_unknown_identity_gap(&mut hit, true, true, true);
-        assert_eq!(hit.target_name, None);
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| entry == "target_unresolved=network_identity_not_decoded")
-        );
-        assert!(
-            hit.target_context.iter().any(|entry| {
-                entry == "target_identity_gap=actor_or_iris_config_id_not_decoded"
-            })
-        );
-    }
-
-    #[test]
-    fn identity_gap_diagnostic_does_not_override_existing_resolution() {
-        let mut named = test_hit(1.0, 1000.0, 900.0);
-        named.target_name = Some("伤心英熊".to_owned());
-        named
-            .target_context
-            .push("target_track_id=monster:mon_019#1".to_owned());
-        annotate_unknown_identity_gap(&mut named, true, true, true);
-        assert!(
-            !named
-                .target_context
-                .iter()
-                .any(|entry| entry == "target_unresolved=network_identity_not_decoded")
-        );
-
-        let mut ambiguous = test_hit(2.0, 1000.0, 900.0);
-        ambiguous
-            .target_context
-            .push("target_unresolved=ambiguous_multi_target".to_owned());
-        annotate_unknown_identity_gap(&mut ambiguous, true, true, true);
-        assert!(
-            !ambiguous.target_context.iter().any(|entry| {
-                entry == "target_identity_gap=actor_or_iris_config_id_not_decoded"
-            })
-        );
-    }
-
-    #[test]
-    fn gameplay_effect_records_outgoing_candidate_but_waits_for_hp_confirmation() {
-        let mut hit = test_hit(1.0, 29104.0, 25681.0);
-        hit.direction = "unknown".to_owned();
-        hit.char_source = "packet".to_owned();
-        hit.gameplay_effect_name = Some("GE_Player_Haniel_QTE_Damage".to_owned());
-        refine_hit_direction_after_effect(&mut hit, PacketDirection::ClientToServer);
-
-        assert_eq!(hit.direction, "unknown");
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| entry == "direction_candidate=c2s_player_or_reaction_effect")
-        );
-    }
-
-    #[test]
-    fn payload_scan_reuses_shifted_buffers() {
-        let payload = b"prefix /Game/Monster/Boss CurrentHP suffix";
-        let scan = PayloadScan::new(payload);
-        assert_eq!(scan.shifted.len(), 8);
-        assert!(scan.contains_any_fast_hint());
-        assert!(scan.decode_text().contains("/Game/Monster/Boss"));
-        assert_eq!(scan.shifted.len(), 8);
-    }
-
-    fn current_hp_update(hint: [u8; 16], hp: f32, byte_offset: usize) -> ParsedCurrentHpUpdate {
-        ParsedCurrentHpUpdate {
-            target_hint: hint,
-            current_hp: hp,
-            byte_offset,
+    fn boss_hp_update(timestamp_hp: f32) -> crate::parser::ParsedBossHpUpdate {
+        crate::parser::ParsedBossHpUpdate {
+            target_handle: [7; 16],
+            current_hp: timestamp_hp,
+            byte_offset: 0,
             bit_shift: 0,
         }
     }
 
-    fn boss_hp_update(handle: [u8; 16], hp: f32, byte_offset: usize) -> ParsedBossHpUpdate {
-        ParsedBossHpUpdate {
-            target_handle: handle,
-            current_hp: hp,
-            byte_offset,
-            bit_shift: 0,
-        }
-    }
+    #[test]
+    fn server_damage_calibration_corrects_single_pending_hit() {
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        assert!(
+            tracker
+                .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
+                .is_none()
+        );
+        let mut hit = duplicate_test_hit(10.0, "packet", "outgoing");
+        hit.damage = 1_000.0;
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        tracker.observe_hit(&hit);
 
-    fn current_hp_hint(token_bytes: [u8; 4]) -> [u8; 16] {
-        let mut hint = [0_u8; 16];
-        hint[0] = token_bytes[0];
-        hint[7] = token_bytes[1];
-        hint[9] = token_bytes[2];
-        hint[10] = token_bytes[3];
-        hint
+        let correction = tracker
+            .observe_boss_hp(10.05, &boss_hp_update(8_750.0))
+            .expect("single pending hit should use server HP delta");
+
+        assert_eq!(correction.source_damage, 1_000.0);
+        assert_eq!(correction.damage, 1_250.0);
+        assert_eq!(correction.target_hp_before, 10_000.0);
+        assert_eq!(correction.target_hp_after, 8_750.0);
     }
 
     #[test]
-    fn current_hp_drop_generates_incoming_hit() {
-        let mut tracker = PlayerHpTracker::default();
-        let characters = HashMap::from([(
-            1001,
-            CharacterInfo {
-                name_zh: "测试角色".to_owned(),
-                name_en: String::new(),
-                color: None,
-                avatar: None,
-                attribute: None,
-            },
-        )]);
-        let hint = current_hp_hint([1, 2, 3, 4]);
+    fn server_damage_calibration_does_not_split_multiple_pending_hits() {
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        assert!(
+            tracker
+                .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
+                .is_none()
+        );
+        let mut first = duplicate_test_hit(10.0, "packet", "outgoing");
+        first.target_hp_before = 10_000.0;
+        first.target_hp_after = 9_000.0;
+        first.target_max_hp = 10_000.0;
+        let mut second = duplicate_test_hit(10.02, "packet", "outgoing");
+        second.target_hp_before = 9_000.0;
+        second.target_hp_after = 8_500.0;
+        second.target_max_hp = 10_000.0;
+        tracker.observe_hit(&first);
+        tracker.observe_hit(&second);
 
         assert!(
             tracker
-                .observe_updates(
-                    1.0,
-                    &[current_hp_update(hint, 10_000.0, 10)],
-                    Some(1001),
-                    None,
-                    &characters,
-                )
-                .is_empty()
-        );
-        let hits = tracker.observe_updates(
-            1.5,
-            &[current_hp_update(hint, 8_750.0, 20)],
-            Some(1001),
-            None,
-            &characters,
-        );
-
-        assert_eq!(hits.len(), 1);
-        let hit = &hits[0];
-        assert_eq!(hit.direction, "incoming");
-        assert_eq!(hit.damage, 1250.0);
-        assert_eq!(hit.char_id, 1001);
-        assert_eq!(hit.char_name, "测试角色");
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| { entry == "incoming_source=current_hp_delta" })
-        );
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| entry == "char_resolution=active_player")
+                .observe_boss_hp(10.05, &boss_hp_update(8_500.0))
+                .is_none()
         );
     }
 
     #[test]
-    fn current_hp_token_unstable_uses_active_player_fallback() {
-        let mut tracker = PlayerHpTracker::default();
-        let characters = HashMap::new();
-        let first_hint = current_hp_hint([1, 2, 3, 4]);
-        let second_hint = current_hp_hint([5, 6, 7, 8]);
-
-        tracker.observe_updates(
-            1.0,
-            &[current_hp_update(first_hint, 10_000.0, 10)],
-            Some(1001),
-            None,
-            &characters,
-        );
-        let hits = tracker.observe_updates(
-            2.0,
-            &[current_hp_update(second_hint, 9_000.0, 20)],
-            Some(1001),
-            None,
-            &characters,
-        );
-
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "incoming");
-        assert!(
-            hits[0]
-                .target_context
-                .iter()
-                .any(|entry| { entry == "current_hp_stream=active_player_fallback" })
-        );
-    }
-
-    #[test]
-    fn c2s_damage_confirmed_incoming_by_following_current_hp() {
+    fn confirmed_packet_hit_suppresses_ambiguous_session_candidate() {
         let mut decoder = PacketDecoder::default();
-        let mut hit = test_hit(10.000, 21_598.0, 20_779.0);
-        hit.damage = 819.0;
-        hit.char_id = 1004;
-        hit.direction = "unknown".to_owned();
-        hit.char_source = "packet".to_owned();
-        hit.target_context = vec![
-            "direction_candidate=c2s_packet_character".to_owned(),
-            "direction_pending=c2s_hp_reconciliation".to_owned(),
-        ];
+        let candidate = duplicate_test_hit(10.0, "session", "unknown");
 
-        let ready = decoder.reconcile_hp_confirmations(10.000, vec![hit], &[], &[], &[]);
-        assert!(ready.is_empty());
+        let characters = duplicate_test_characters();
 
-        let ready = decoder.reconcile_hp_confirmations(
-            10.121,
-            Vec::new(),
-            &[current_hp_update(
-                current_hp_hint([1, 2, 3, 4]),
-                20_779.0,
-                1747,
-            )],
-            &[],
-            &[],
-        );
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false, &characters);
 
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].direction, "incoming");
-        assert_eq!(ready[0].damage, 819.0);
-        assert!(
-            ready[0]
-                .target_context
-                .iter()
-                .any(|entry| { entry == "direction_confirmed=current_hp_after_match" })
-        );
+        assert!(prepared.emit.is_empty());
+        assert_eq!(prepared.deferred_ambiguous, 1);
+        assert_eq!(decoder.pending_ambiguous_hits.len(), 1);
+
+        let confirmed = duplicate_test_hit(10.1, "packet", "outgoing");
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![confirmed], &[1051], false, &characters);
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 1);
+        assert_eq!(prepared.emit[0].char_id, 1051);
+        assert!(decoder.pending_ambiguous_hits.is_empty());
     }
 
     #[test]
-    fn c2s_damage_confirmed_outgoing_by_following_boss_hp_not_placeholder() {
+    fn confirmed_packet_hit_suppresses_recent_duplicate_records() {
         let mut decoder = PacketDecoder::default();
-        let handle = [
-            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
-            0x6f, 0xe7,
-        ];
-        let mut hit = test_hit(20.000, 1_940_137.0, 1_939_334.0);
-        hit.damage = 803.0;
-        hit.direction = "unknown".to_owned();
-        hit.char_source = "packet".to_owned();
-        hit.target_context = vec![
-            "direction_candidate=c2s_packet_character".to_owned(),
-            "direction_pending=c2s_hp_reconciliation".to_owned(),
-            "hit_target_vector_token=boss-vector".to_owned(),
-            "hit_target_xyz=0.000,0.000,0.000".to_owned(),
-        ];
+        let characters = duplicate_test_characters();
+        let confirmed = duplicate_test_hit(10.0, "packet", "outgoing");
+        let mut duplicate = confirmed.clone();
+        duplicate.gameplay_effect_index = None;
+        duplicate.gameplay_effect_name = None;
+        duplicate.attack_type = None;
+        duplicate.target_hp_before += 2_000.0;
+        duplicate.target_hp_after += 2_000.0;
+
+        let prepared = decoder.prepare_hits_for_emission(
+            vec![confirmed, duplicate],
+            &[1051],
+            true,
+            &characters,
+        );
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.suppressed_ambiguous, 1);
+        assert_eq!(prepared.emit[0].attack_type.as_deref(), Some("创生花"));
+    }
+
+    #[test]
+    fn boss_hp_sync_damage_merges_into_recent_confirmed_hit() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut source = duplicate_test_hit(10.0, "packet", "outgoing");
+        source.damage = 26_185.0;
+        source.target_hp_before = 29_700.0;
+        source.target_hp_after = 3_515.0;
+        source.target_max_hp = 1_930_389.0;
+
+        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
+        assert_eq!(prepared.emit.len(), 1);
+
+        let follow_up = decoder
+            .infer_boss_hp_sync_damage(10.04, 1.0, &characters)
+            .expect("server HP sync should add the missing lethal delta");
+
+        assert_eq!(follow_up.damage, 3_515.0);
+        assert_eq!(follow_up.target_hp_after, 0.0);
+        assert_eq!(follow_up.damage_name.as_deref(), Some("HP同步伤害"));
+        assert_eq!(follow_up.source_char_id, 1051);
+    }
+
+    #[test]
+    fn nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut source = duplicate_test_hit(10.0, "packet", "outgoing");
+        source.damage = 8_446.0;
+        source.target_hp_after = 1_081_975.0;
+        source.target_max_hp = 1_930_389.0;
+
+        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
+        assert_eq!(prepared.emit.len(), 1);
 
         assert!(
             decoder
-                .reconcile_hp_confirmations(20.000, vec![hit], &[], &[], &[])
-                .is_empty()
-        );
-        let update = boss_hp_update(handle, 1_939_334.0, 1552);
-        decoder.apply_hp_updates_to_state(20.080, &[], std::slice::from_ref(&update));
-        let ready = decoder.reconcile_hp_confirmations(20.080, Vec::new(), &[], &[update], &[]);
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].direction, "outgoing");
-        assert!(
-            ready[0]
-                .target_context
-                .iter()
-                .any(|entry| { entry == "direction_confirmed=boss_hp_after_match" })
-        );
-        assert!(
-            ready[0]
-                .target_context
-                .iter()
-                .any(|entry| { entry == "boss_hp_guid=21f04e928995334f8c0bbcaa0ee16fe7" })
-        );
-
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let characters = HashMap::new();
-        decoder.finalize_and_emit_hits(
-            ready,
-            TrackPacketContext::default(),
-            &[],
-            true,
-            true,
-            true,
-            false,
-            &characters,
-            &sender,
-        );
-        let emitted = receiver
-            .try_iter()
-            .find_map(|event| match event {
-                EngineEvent::Hit(hit) => Some(hit),
-                _ => None,
-            })
-            .expect("emitted hit");
-        assert_eq!(emitted.direction, "outgoing");
-        assert!(
-            emitted
-                .target_context
-                .iter()
-                .any(|entry| entry == "boss_hp_guid=21f04e928995334f8c0bbcaa0ee16fe7")
-        );
-        assert!(
-            !emitted
-                .target_context
-                .iter()
-                .any(|entry| entry == "target_name_resolution=runtime_placeholder")
+                .infer_boss_hp_sync_damage(10.04, 1_057_660.0, &characters)
+                .is_none()
         );
     }
 
     #[test]
-    fn boss_hp_confirmation_projects_runtime_handle_bound_target() {
-        let handle = [
-            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
-            0x6f, 0xe7,
-        ];
-        let handle_hex = "21f04e928995334f8c0bbcaa0ee16fe7";
+    fn gameplay_effect_name_confirms_session_hit_in_multi_character_packet() {
         let mut decoder = PacketDecoder::default();
-        decoder.runtime_handles.bind_target(
-            20.010,
-            handle_hex,
-            "Boss_017_BP_Abyss",
-            "玛门",
-            TargetConfidence::Confirmed,
-            "advvision_stage_context",
-        );
-        let mut hit = test_hit(20.000, 1_940_137.0, 1_939_334.0);
+        let characters = duplicate_test_characters();
+        let mut hit = targetless_hit();
+        hit.timestamp = 10.0;
+        hit.char_id = 1020;
+        hit.char_name = "哈尼娅".to_owned();
+        hit.char_source = "session".to_owned();
         hit.direction = "unknown".to_owned();
-        hit.target_context = vec!["direction_pending=c2s_hp_reconciliation".to_owned()];
-        assert!(
-            decoder
-                .reconcile_hp_confirmations(20.000, vec![hit], &[], &[], &[])
-                .is_empty()
-        );
+        hit.damage = 6_961.0;
+        hit.gameplay_effect_index = Some(3261);
+        hit.gameplay_effect_name = Some("GE_Player_Haniel_Skill1_Damage".to_owned());
+        hit.attack_type = Some("E技能".to_owned());
 
-        let ready = decoder.reconcile_hp_confirmations(
-            20.080,
-            Vec::new(),
-            &[],
-            &[boss_hp_update(handle, 1_939_334.0, 1552)],
-            &[],
-        );
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![hit], &[1010, 1020], false, &characters);
 
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].target_name.as_deref(), Some("玛门"));
-        assert!(
-            ready[0]
-                .target_context
-                .iter()
-                .any(|entry| entry == "target_name_resolution=runtime_handle_bound")
-        );
-        assert!(
-            ready[0]
-                .target_context
-                .iter()
-                .any(|entry| entry == "target_path=Boss_017_BP_Abyss")
-        );
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.deferred_ambiguous, 0);
+        assert_eq!(prepared.emit[0].direction, "outgoing");
+        assert_eq!(prepared.emit[0].char_source, "gameplay_effect");
+        assert!(decoder.pending_ambiguous_hits.is_empty());
     }
 
     #[test]
-    fn advvision_mammon_stage_context_binds_boss_hp_handle() {
-        let handle = [
-            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
-            0x6f, 0xe7,
-        ];
+    fn ambiguous_session_candidate_expires_when_unconfirmed() {
         let mut decoder = PacketDecoder::default();
-        decoder
-            .advvision_index
-            .insert_monster_name_path_for_test("玛门", "Boss_017_BP_Abyss");
-        let applied = decoder.observe_advvision_context(
-            21.0,
-            "AdvVision_Mammon FAbyssGamePlayData Abyss_3 EAbyssFightStage::FirstHalf 21f04e928995334f8c0bbcaa0ee16fe7",
-            &[boss_hp_update(handle, 1_939_334.0, 1552)],
-        );
-        let target = decoder
-            .runtime_handles
-            .target_for_handle("21f04e928995334f8c0bbcaa0ee16fe7")
-            .expect("bound mammon handle");
+        let candidate = duplicate_test_hit(10.0, "session", "unknown");
 
-        assert!(applied);
-        assert_eq!(target.target_name, "玛门");
-        assert_eq!(target.target_path.as_deref(), Some("Boss_017_BP_Abyss"));
+        let characters = duplicate_test_characters();
+
+        decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false, &characters);
+
+        assert!(decoder.take_expired_ambiguous_hits(10.25).is_empty());
+        let expired = decoder.take_expired_ambiguous_hits(10.75);
+
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].char_source, "session");
+        assert!(decoder.pending_ambiguous_hits.is_empty());
+    }
+
+    #[test]
+    fn resolves_missing_damage_name_from_unique_name_in_same_ability() {
+        let skills = HashMap::from([
+            (
+                "GE_Player_Daffodill_Skill2_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Daffodill_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                },
+            ),
+            (
+                "GE_Player_Daffodill_Skill6_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Daffodill_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                },
+            ),
+        ]);
+        let names = HashMap::from([(
+            "GE_Player_Daffodill_Skill2_Damage".to_owned(),
+            "达芙蒂尔技能".to_owned(),
+        )]);
+
         assert_eq!(
-            decoder
-                .active_stage_context
-                .as_ref()
-                .and_then(|context| context.stage_key.as_deref()),
-            Some("3")
+            resolve_damage_name("GE_Player_Daffodill_Skill6_Damage", &skills, &names).as_deref(),
+            Some("达芙蒂尔技能")
         );
     }
 
     #[test]
-    fn abyss_stage_context_binds_later_boss_hp_handle() {
-        let handle = [
-            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
-            0x6f, 0xe7,
-        ];
-        let mut decoder = PacketDecoder::default();
-        decoder
-            .advvision_index
-            .insert_monster_name_path_for_test("玛门", "Boss_017_BP_Abyss");
+    fn resolves_explode_damage_name_from_base_effect() {
+        let skills = HashMap::from([(
+            "GE_Player_Lacrimosa_B_Melee3_Explode_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("A".to_owned()),
+                ability_name: Some("GA_Lacrimosa_Melee".to_owned()),
+                attack_type: "普攻".to_owned(),
+            },
+        )]);
+        let names = HashMap::from([(
+            "GE_Player_Lacrimosa_B_Melee3_Damage".to_owned(),
+            "安魂曲普攻B".to_owned(),
+        )]);
 
-        assert!(!decoder.observe_advvision_context(21.0, "FAbyssGamePlayData Abyss_3_11_0", &[]));
         assert_eq!(
-            decoder
-                .active_stage_context
-                .as_ref()
-                .and_then(|context| context.scene_id.as_deref()),
-            Some("AdvVision_Mammon_3")
-        );
-
-        let applied = decoder.observe_advvision_context(
-            21.1,
-            UNREADABLE_PROTOCOL_TEXT,
-            &[boss_hp_update(handle, 1_939_334.0, 1552)],
-        );
-        let target = decoder
-            .runtime_handles
-            .target_for_handle("21f04e928995334f8c0bbcaa0ee16fe7")
-            .expect("bound mammon handle");
-
-        assert!(applied);
-        assert_eq!(target.target_name, "玛门");
-        assert_eq!(target.target_path.as_deref(), Some("Boss_017_BP_Abyss"));
-    }
-
-    #[test]
-    fn c2s_damage_confirmed_outgoing_by_sdk_target_stream_with_class_hint() {
-        let mut hit = test_hit(30.000, 46_347.0, 43_155.0);
-        hit.direction = "unknown".to_owned();
-        hit.target_context = vec!["direction_pending=c2s_hp_reconciliation".to_owned()];
-        let stream = TargetStreamObservation {
-            stream_id: "target_stream:5b41c437d248b54e8959424b7501eae4:slot:1:gen:1".to_owned(),
-            base_handle: "5b41c437d248b54e8959424b7501eae4".to_owned(),
-            slot: Some(1),
-            suffix_hex: Some("01000000".to_owned()),
-        };
-        let sdk = SdkTargetHpConfirmation {
-            current_hp: 43_155.0,
-            stream,
-            class_hint: Some("mon_01_BP".to_owned()),
-            class_hint_name: Some("低语种".to_owned()),
-            class_hint_confidence: Some(TargetConfidence::Probable),
-        };
-
-        assert!(
-            apply_hp_confirmation_to_hit(
-                &mut hit,
-                &[],
-                &[],
-                &[sdk],
-                &RuntimeHandleStore::default()
+            resolve_damage_name(
+                "GE_Player_Lacrimosa_B_Melee3_Explode_Damage",
+                &skills,
+                &names
             )
-            .is_some()
+            .as_deref(),
+            Some("安魂曲普攻B")
         );
-        assert_eq!(hit.direction, "outgoing");
+    }
+
+    #[test]
+    fn does_not_merge_ambiguous_names_from_same_ability() {
+        let skills = HashMap::from([
+            (
+                "GE_Test_Skill1_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Test_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                },
+            ),
+            (
+                "GE_Test_Skill2_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Test_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                },
+            ),
+            (
+                "GE_Test_Skill3_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Test_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                },
+            ),
+        ]);
+        let names = HashMap::from([
+            ("GE_Test_Skill1_Damage".to_owned(), "测试技能一".to_owned()),
+            ("GE_Test_Skill2_Damage".to_owned(), "测试技能二".to_owned()),
+        ]);
+
         assert_eq!(
-            hit.target_id.as_deref(),
-            Some("target_stream:5b41c437d248b54e8959424b7501eae4:slot:1:gen:1")
+            resolve_damage_name("GE_Test_Skill3_Damage", &skills, &names),
+            None
         );
-        assert_eq!(hit.target_name.as_deref(), Some("低语种"));
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| { entry == "hp_timeline_match=sdk_target_after_match" })
-        );
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| entry.starts_with("target_stream=target_stream:"))
-        );
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| entry == "target_name_resolution=class_hint_stream_order")
-        );
-    }
-
-    #[test]
-    fn low_hp_c2s_without_current_hp_match_does_not_become_incoming() {
-        let mut decoder = PacketDecoder::default();
-        let mut hit = test_hit(40.000, 29_104.0, 25_681.0);
-        hit.direction = "unknown".to_owned();
-        hit.target_context = vec!["direction_pending=c2s_hp_reconciliation".to_owned()];
-
-        assert!(
-            decoder
-                .reconcile_hp_confirmations(40.000, vec![hit], &[], &[], &[])
-                .is_empty()
-        );
-        let ready = decoder.reconcile_hp_confirmations(40.500, Vec::new(), &[], &[], &[]);
-
-        assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].direction, "unknown");
-        assert!(
-            !ready[0]
-                .target_context
-                .iter()
-                .any(|entry| entry == "direction_confirmed=current_hp_after_match")
-        );
-    }
-
-    #[test]
-    fn pcap_import_does_not_clone_packet_data() {
-        let path = std::env::temp_dir().join(format!(
-            "nte_pcap_import_borrowed_{}.pcapng",
-            std::process::id()
-        ));
-        {
-            let file = File::create(&path).expect("create pcapng");
-            let mut writer = PcapNgWriter::new(BufWriter::new(file)).expect("pcap writer");
-            writer
-                .write_pcapng_block(InterfaceDescriptionBlock::new(
-                    DataLink::ETHERNET,
-                    CAPTURE_SNAPLEN,
-                ))
-                .expect("write interface");
-            let packet = [0_u8; 64];
-            writer
-                .write_pcapng_block(EnhancedPacketBlock {
-                    interface_id: 0,
-                    timestamp: Duration::from_secs(1),
-                    original_len: packet.len() as u32,
-                    data: Cow::Borrowed(&packet),
-                    options: Vec::new(),
-                })
-                .expect("write packet");
-        }
-
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_pcapng(
-            path.clone(),
-            Arc::new(HashMap::new()),
-            None,
-            false,
-            PacketDebugMode::Off,
-            sender,
-            stop,
-        );
-        handle.join().expect("import thread");
-        let events = receiver.try_iter().collect::<Vec<_>>();
-        assert!(
-            events
-                .iter()
-                .all(|event| !matches!(event, EngineEvent::Packet(_)))
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn packet_decoder_tracks_terminal_hit_before_death_cleanup() {
-        let mut decoder = PacketDecoder::default();
-        let mut first = test_hit(1.0, 1000.0, 100.0);
-        first.target_name = Some("斑蝶".to_owned());
-        first.target_context = vec![
-            "target_path=/Game/Monster/Boss_Butterfly.Boss_Butterfly_C".to_owned(),
-            "target_name=斑蝶".to_owned(),
-            "target_name_resolution=table_resolved".to_owned(),
-            "reason=hp_guid_timeline_match:test".to_owned(),
-            "boss_hp_guid=abc".to_owned(),
-        ];
-        let mut first_summary = named_summary(&first);
-        decoder.apply_target_track_attribution(
-            &mut first,
-            &mut first_summary,
-            TrackPacketContext::default(),
-        );
-
-        let mut death = test_hit(1.5, 100.0, 0.0);
-        let mut death_summary = TargetResolutionSummary::default();
-        decoder.apply_target_track_attribution(
-            &mut death,
-            &mut death_summary,
-            TrackPacketContext::default(),
-        );
-        decoder.clear_dead_target_handles_from_hit(&mut death);
-
-        assert_eq!(death.target_name.as_deref(), Some("斑蝶"));
-        assert!(
-            death
-                .target_context
-                .iter()
-                .any(|entry| entry.starts_with("target_track_id="))
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn replay_capture_target_track_invariants() {
-        let path = std::env::var("NTE_TEST_CAPTURE")
-            .map(PathBuf::from)
-            .expect("set NTE_TEST_CAPTURE to a pcapng path");
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_pcapng(
-            path,
-            Arc::new(HashMap::new()),
-            None,
-            false,
-            PacketDebugMode::Off,
-            sender,
-            stop,
-        );
-        let mut hits = Vec::new();
-        while let Ok(event) = receiver.recv_timeout(Duration::from_secs(30)) {
-            match event {
-                EngineEvent::Hit(hit) => hits.push(hit),
-                EngineEvent::CaptureStopped => break,
-                EngineEvent::Error(error) => panic!("{error}"),
-                _ => {}
-            }
-        }
-        handle.join().expect("import thread should finish");
-
-        let mut names_by_track = HashMap::<String, HashSet<String>>::new();
-        let mut outgoing = 0usize;
-        let mut incoming = 0usize;
-        let mut low_hp_hits = 0usize;
-        let mut low_hp_outgoing = 0usize;
-        let mut direction_evidence = 0usize;
-        let mut runtime_instances = 0usize;
-        let mut placeholders = 0usize;
-        for hit in &hits {
-            match hit.direction.as_str() {
-                "outgoing" => outgoing += 1,
-                "incoming" => incoming += 1,
-                _ => {}
-            }
-            if hit.target_max_hp <= 500_000.0 {
-                low_hp_hits += 1;
-                if hit.direction == "outgoing" {
-                    low_hp_outgoing += 1;
-                }
-            }
-            if hit.target_context.iter().any(|entry| {
-                entry == "direction_candidate=c2s_packet_character"
-                    || entry == "direction_candidate=c2s_session_character"
-                    || entry.starts_with("direction_confirmed=")
-                    || entry.starts_with("direction_unresolved=")
-                    || entry == "direction_low_hp_target_not_incoming"
-            }) {
-                direction_evidence += 1;
-            }
-            if hit
-                .target_context
-                .iter()
-                .any(|entry| entry.starts_with("runtime_target_instance="))
-            {
-                runtime_instances += 1;
-            }
-            if hit
-                .target_context
-                .iter()
-                .any(|entry| entry == "target_name_resolution=runtime_placeholder")
-            {
-                placeholders += 1;
-            }
-            let Some(track_id) = target_context_value(&hit.target_context, "target_track_id")
-            else {
-                continue;
-            };
-            let generation =
-                target_context_value(&hit.target_context, "target_generation").unwrap_or("unknown");
-            if let Some(name) = hit.target_name.as_deref() {
-                names_by_track
-                    .entry(format!("{track_id}#{generation}"))
-                    .or_default()
-                    .insert(name.to_owned());
-            }
-        }
-        let conflicting_tracks = names_by_track
-            .iter()
-            .filter(|(_, names)| names.len() > 1)
-            .collect::<Vec<_>>();
-        println!(
-            "replay target track stats: hits={} outgoing={} incoming={} low_hp_hits={} low_hp_outgoing={} direction_evidence={} runtime_instances={} placeholders={} named_tracks={} names_by_track={:?}",
-            hits.len(),
-            outgoing,
-            incoming,
-            low_hp_hits,
-            low_hp_outgoing,
-            direction_evidence,
-            runtime_instances,
-            placeholders,
-            names_by_track.len(),
-            names_by_track
-        );
-        assert!(
-            conflicting_tracks.is_empty(),
-            "same target_track_id/generation had multiple names: {conflicting_tracks:?}"
-        );
-        assert!(!hits.is_empty(), "capture should parse damage hits");
-        assert!(
-            outgoing > 0,
-            "C2S low HP player hits should remain outgoing"
-        );
-        assert_ne!(
-            incoming,
-            hits.len(),
-            "not all parsed hits should be incoming"
-        );
-        if low_hp_hits > 0 {
-            assert!(
-                low_hp_outgoing > 0,
-                "low target_max_hp hits should not be classified as incoming"
-            );
-        }
-        assert!(
-            direction_evidence > 0,
-            "hits should record direction inference/correction context"
-        );
-    }
-
-    #[test]
-    #[ignore]
-    fn dump_replay_target_diagnostics() {
-        let path = std::env::var("NTE_TEST_CAPTURE")
-            .map(PathBuf::from)
-            .expect("set NTE_TEST_CAPTURE to a pcapng path");
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_pcapng(
-            path,
-            Arc::new(HashMap::new()),
-            None,
-            false,
-            PacketDebugMode::Summary,
-            sender,
-            stop,
-        );
-        let mut hits = Vec::new();
-        let mut updates = Vec::new();
-        let mut packet_notes = Vec::new();
-        while let Ok(event) = receiver.recv_timeout(Duration::from_secs(30)) {
-            match event {
-                EngineEvent::Hit(hit) => hits.push(hit),
-                EngineEvent::HitTargetUpdate(update) => updates.push(update),
-                EngineEvent::Packet(packet) => {
-                    if packet.parsed_hits > 0 || packet.note.contains("Object/path candidates") {
-                        packet_notes.push(packet.note);
-                    }
-                }
-                EngineEvent::CaptureStopped => break,
-                EngineEvent::Error(error) => panic!("{error}"),
-                _ => {}
-            }
-        }
-        handle.join().expect("import thread should finish");
-
-        eprintln!("diagnostic hits={}", hits.len());
-        eprintln!("diagnostic updates={}", updates.len());
-        for update in updates.iter().take(80) {
-            eprintln!(
-                "update t={:.3} dmg={:.0} hp_after? target={:?} id={:?} reason={:?} ctx={}",
-                update.timestamp,
-                update.damage,
-                update.target_name,
-                update.target_id,
-                update.update_reason,
-                update.target_context.join(" | ")
-            );
-        }
-        for hit in hits.iter().take(120) {
-            eprintln!(
-                "hit t={:.3} dmg={:.0} hp={:.0}->{:.0}/{:.0} target={:?} id={:?} ge={:?} dmg_name={:?} ctx={}",
-                hit.timestamp,
-                hit.damage,
-                hit.target_hp_before,
-                hit.target_hp_after,
-                hit.target_max_hp,
-                hit.target_name,
-                hit.target_id,
-                hit.gameplay_effect_name,
-                hit.damage_name,
-                hit.target_context.join(" | ")
-            );
-        }
-        eprintln!("diagnostic packets={}", packet_notes.len());
-        for note in packet_notes.iter().take(120) {
-            eprintln!("packet {note}");
-        }
     }
 }

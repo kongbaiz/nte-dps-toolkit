@@ -11,21 +11,13 @@ const RECORD_FIELD_LENGTHS: [usize; 10] = [4, 4, 4, 8, 4, 4, 4, 4, 4, 4];
 const MAX_RECORD_FIELD_LENGTH: usize = 8;
 const MIN_DAMAGE: f32 = 2.0;
 const MAX_DAMAGE: f32 = 1_000_000_000.0;
-const MAX_PLAUSIBLE_CHARACTER_HP: f32 = 500_000.0;
+const MAX_PLAUSIBLE_CURRENT_HP_UPDATE: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
 const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
-#[allow(dead_code)]
-const SDK_NET_TARGET_SIZE: usize = 0x28;
-#[allow(dead_code)]
-const SDK_TARGET_HP_WINDOW_LENGTH: usize = SDK_NET_TARGET_SIZE + 8;
 const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
-const HIT_TARGET_TOKEN_SCAN_BEFORE: usize = 96;
-const HIT_TARGET_TOKEN_SCAN_AFTER: usize = 160;
-const HIT_TARGET_VECTOR_MARKER: [u8; 5] = [0x11, 0x18, 0x00, 0x00, 0x00];
-const HIT_TARGET_VECTOR_TOKEN_LEN: usize = 24;
 
 pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
@@ -55,13 +47,10 @@ pub struct ParsedDamageRecord {
     pub trailing_value: f32,
     pub byte_offset: usize,
     pub bit_shift: u8,
-    pub hit_target_vector_token: Option<String>,
-    pub hit_target_xyz: Option<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParsedCurrentHpUpdate {
-    pub target_hint: [u8; CURRENT_HP_PREFIX_LENGTH],
     pub current_hp: f32,
     pub byte_offset: usize,
     pub bit_shift: u8,
@@ -75,46 +64,11 @@ pub struct ParsedBossHpUpdate {
     pub bit_shift: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
-pub enum ParsedSdkTargetHpKind {
-    ClientRepExtraDamageInfo,
-    ClientRepFightData,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)]
-pub struct ParsedSdkTargetHpUpdate {
-    pub kind: ParsedSdkTargetHpKind,
-    pub target_token: [u8; SDK_NET_TARGET_SIZE],
-    pub current_hp: f32,
-    pub dead_state: i32,
-    pub byte_offset: usize,
-    pub bit_shift: u8,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedGameplayEffect {
     pub unique_index: u32,
     pub byte_offset: usize,
     pub bit_shift: u8,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PacketDirection {
-    ClientToServer,
-    ServerToClient,
-    #[allow(dead_code)]
-    Unknown,
-}
-
-pub struct DamageParseContext<'a> {
-    pub timestamp: f64,
-    pub packet_char_id: Option<u32>,
-    pub fallback_char_id: Option<u32>,
-    pub packet_direction: PacketDirection,
-    pub characters: &'a HashMap<u32, CharacterInfo>,
-    pub evidence: &'a [(u32, u8, usize)],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,10 +88,6 @@ pub fn find_data_file(relative_path: &Path) -> Option<PathBuf> {
         if candidate.is_file() {
             return Some(candidate);
         }
-        let candidate = current_dir.join("res").join(relative_path);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
     }
 
     if let Ok(executable) = std::env::current_exe() {
@@ -146,23 +96,11 @@ pub fn find_data_file(relative_path: &Path) -> Option<PathBuf> {
             if candidate.is_file() {
                 return Some(candidate);
             }
-            let candidate = ancestor.join("res").join(relative_path);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
         }
     }
 
     let manifest_candidate = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
-    if manifest_candidate.is_file() {
-        return Some(manifest_candidate);
-    }
-    let manifest_res_candidate = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("res")
-        .join(relative_path);
-    manifest_res_candidate
-        .is_file()
-        .then_some(manifest_res_candidate)
+    manifest_candidate.is_file().then_some(manifest_candidate)
 }
 
 pub fn load_characters(path: &Path) -> Result<HashMap<u32, CharacterInfo>> {
@@ -293,8 +231,13 @@ pub fn classify_attack_type(
     if searchable_lower.contains("parry") {
         return "格挡反击".to_owned();
     }
+    if ability_name.is_some_and(|name| name.starts_with("GA_CardTrigger_"))
+        || (effect_name.starts_with("GE_AbyssCard_") && effect_name.contains("_Damage"))
+    {
+        return "深渊场地Buff".to_owned();
+    }
     if effect_name.contains("Reaction_1") || effect_name.contains("Reaction1_") {
-        return "创生".to_owned();
+        return "创生花".to_owned();
     }
     if effect_name.contains("Reaction_2") || effect_name.contains("Reaction2_") {
         return "覆纹".to_owned();
@@ -303,10 +246,22 @@ pub fn classify_attack_type(
         return "延滞".to_owned();
     }
     if effect_name.contains("Reaction_4") || effect_name.contains("Reaction4_") {
-        return "默星".to_owned();
+        return "黯星".to_owned();
     }
     if effect_name.contains("Reaction_5") || effect_name.contains("Reaction5_") {
         return "浊燃".to_owned();
+    }
+    if effect_name.contains("Reaction_6") || effect_name.contains("Reaction6_") {
+        return "浸染".to_owned();
+    }
+    if effect_name.contains("Reaction_7") || effect_name.contains("Reaction7_") {
+        return "盈蓄".to_owned();
+    }
+    if effect_name.contains("Reaction_8")
+        || effect_name.contains("Reaction8_")
+        || effect_name.contains("AnHunZhou")
+    {
+        return "失谐".to_owned();
     }
 
     let category_type = match category {
@@ -314,7 +269,7 @@ pub fn classify_attack_type(
         Some("E") => Some("E技能"),
         Some("Q") => Some("Q技能"),
         Some("H") => Some("环合"),
-        Some("R") => Some("反应伤害"),
+        Some("R") => Some("环合伤害"),
         Some("Z") => Some("闪避反击"),
         _ => None,
     };
@@ -352,27 +307,11 @@ pub fn classify_attack_type_from_description(description: &str) -> Option<String
 pub fn qte_reaction_type(
     previous_attribute: &str,
     entering_attribute: &str,
-    team_attributes: &HashSet<String>,
 ) -> Option<&'static str> {
     let has_pair = |left: &str, right: &str| {
         (previous_attribute == left && entering_attribute == right)
             || (previous_attribute == right && entering_attribute == left)
     };
-
-    if team_attributes.contains("光")
-        && team_attributes.contains("灵")
-        && team_attributes.contains("相")
-        && (has_pair("光", "灵") || has_pair("光", "相"))
-    {
-        return Some("盈蓄");
-    }
-    if team_attributes.contains("暗")
-        && team_attributes.contains("魂")
-        && team_attributes.contains("咒")
-        && (has_pair("暗", "魂") || has_pair("咒", "暗"))
-    {
-        return Some("失谐");
-    }
 
     if has_pair("光", "灵") {
         Some("创生")
@@ -381,9 +320,11 @@ pub fn qte_reaction_type(
     } else if has_pair("光", "相") {
         Some("延滞")
     } else if has_pair("暗", "魂") {
-        Some("默星")
+        Some("黯星")
     } else if has_pair("暗", "咒") {
         Some("浊燃")
+    } else if has_pair("魂", "相") {
+        Some("浸染")
     } else {
         None
     }
@@ -420,6 +361,12 @@ fn decode_shifted_bytes(
     let mut output = vec![0; count];
     decode_shifted_into(data, byte_offset, bit_shift, start_bit_offset, &mut output)?;
     Some(output)
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn aligned_bytes_for_test(data: &[u8], bit_shift: u8) -> Option<Vec<u8>> {
+    decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
 }
 
 fn read_field(
@@ -465,32 +412,6 @@ fn i32_field(field: &Field) -> Option<i32> {
     Some(i32::from_le_bytes(field.raw[..field.len].try_into().ok()?))
 }
 
-fn plausible_hp(value: f32, max_value: f32) -> bool {
-    value.is_finite() && (0.0..=max_value).contains(&value)
-}
-
-#[allow(dead_code)]
-fn plausible_dead_state(value: i32) -> bool {
-    (0..=10).contains(&value)
-}
-
-#[allow(dead_code)]
-fn plausible_net_target_token(token: &[u8]) -> bool {
-    let non_zero = token.iter().filter(|byte| **byte != 0).count();
-    if non_zero < 4 {
-        return false;
-    }
-    let distinct = token.iter().copied().collect::<HashSet<_>>().len();
-    if distinct < 3 {
-        return false;
-    }
-    !token.windows(24).any(|window| {
-        window
-            .first()
-            .is_some_and(|first| window.iter().all(|byte| byte == first))
-    })
-}
-
 fn parse_damage_record_at(
     data: &[u8],
     byte_offset: usize,
@@ -524,8 +445,8 @@ fn parse_damage_record_at(
     ];
     let trailing_value = f32_field(&fields[9])?;
 
-    if !plausible_hp(damage, MAX_DAMAGE)
-        || damage < MIN_DAMAGE
+    if !damage.is_finite()
+        || !(MIN_DAMAGE..=MAX_DAMAGE).contains(&damage)
         || !target_hp_before.is_finite()
         || target_hp_before < 0.0
         || !target_max_hp.is_finite()
@@ -544,9 +465,6 @@ fn parse_damage_record_at(
         return None;
     }
 
-    let (hit_target_vector_token, hit_target_xyz) =
-        parse_hit_target_vector_token_near(data, byte_offset, bit_shift);
-
     Some(ParsedDamageRecord {
         damage,
         target_hp_before,
@@ -558,62 +476,7 @@ fn parse_damage_record_at(
         trailing_value,
         byte_offset: byte_offset + 5,
         bit_shift,
-        hit_target_vector_token,
-        hit_target_xyz,
     })
-}
-
-fn parse_hit_target_vector_token_near(
-    data: &[u8],
-    record_start: usize,
-    bit_shift: u8,
-) -> (Option<String>, Option<[f64; 3]>) {
-    let Some(shifted) = decode_shifted_bytes(
-        data,
-        0,
-        bit_shift,
-        0,
-        data.len().saturating_sub(usize::from(bit_shift != 0)),
-    ) else {
-        return (None, None);
-    };
-    let start = record_start.saturating_sub(HIT_TARGET_TOKEN_SCAN_BEFORE);
-    let end = record_start
-        .saturating_add(HIT_TARGET_TOKEN_SCAN_AFTER)
-        .min(shifted.len());
-    let Some(scan) = shifted.get(start..end) else {
-        return (None, None);
-    };
-    for (relative, window) in scan
-        .windows(HIT_TARGET_VECTOR_MARKER.len() + HIT_TARGET_VECTOR_TOKEN_LEN)
-        .enumerate()
-    {
-        if window[..HIT_TARGET_VECTOR_MARKER.len()] != HIT_TARGET_VECTOR_MARKER {
-            continue;
-        }
-        let token = &window[HIT_TARGET_VECTOR_MARKER.len()..];
-        if token.iter().filter(|byte| **byte != 0).count() < 6 {
-            continue;
-        }
-        let xyz = decode_xyz_token(token);
-        let token_hex = hex::encode(token);
-        let _absolute_offset = start + relative + HIT_TARGET_VECTOR_MARKER.len();
-        return (Some(token_hex), xyz);
-    }
-    (None, None)
-}
-
-fn decode_xyz_token(token: &[u8]) -> Option<[f64; 3]> {
-    if token.len() != HIT_TARGET_VECTOR_TOKEN_LEN {
-        return None;
-    }
-    let x = f64::from_le_bytes(token[0..8].try_into().unwrap());
-    let y = f64::from_le_bytes(token[8..16].try_into().unwrap());
-    let z = f64::from_le_bytes(token[16..24].try_into().unwrap());
-    let xyz = [x, y, z];
-    xyz.iter()
-        .all(|value| value.is_finite() && value.abs() <= 1_000_000.0)
-        .then_some(xyz)
 }
 
 pub fn parse_damage_records(data: &[u8]) -> Vec<ParsedDamageRecord> {
@@ -649,13 +512,12 @@ pub fn parse_current_hp_updates(data: &[u8]) -> Vec<ParsedCurrentHpUpdate> {
             }
             let current_hp =
                 f32::from_le_bytes([decoded[16], decoded[17], decoded[18], decoded[19]]);
-            if !plausible_hp(current_hp, MAX_PLAUSIBLE_CHARACTER_HP) {
+            if !current_hp.is_finite()
+                || !(0.0..=MAX_PLAUSIBLE_CURRENT_HP_UPDATE).contains(&current_hp)
+            {
                 continue;
             }
             updates.push(ParsedCurrentHpUpdate {
-                target_hint: prefix
-                    .try_into()
-                    .expect("CurrentHP prefix has a fixed sixteen-byte length"),
                 current_hp,
                 byte_offset: byte_offset + CURRENT_HP_PREFIX_LENGTH,
                 bit_shift,
@@ -684,7 +546,7 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
                     .try_into()
                     .expect("Boss HP field has a fixed four-byte length"),
             );
-            if !plausible_hp(current_hp, MAX_DAMAGE) {
+            if !current_hp.is_finite() || !(0.0..=MAX_DAMAGE).contains(&current_hp) {
                 continue;
             }
             updates.push(ParsedBossHpUpdate {
@@ -695,82 +557,6 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
                 byte_offset: byte_offset + BOSS_HP_PREFIX_LENGTH,
                 bit_shift,
             });
-        }
-    }
-    updates
-}
-
-#[allow(dead_code)]
-pub fn parse_sdk_target_hp_updates(data: &[u8]) -> Vec<ParsedSdkTargetHpUpdate> {
-    let mut updates = Vec::new();
-    let mut seen = HashSet::new();
-    for byte_offset in 0..data.len() {
-        for bit_shift in 0..8_u8 {
-            let mut decoded = [0; SDK_TARGET_HP_WINDOW_LENGTH];
-            if decode_shifted_into(data, byte_offset, bit_shift, 0, &mut decoded).is_none() {
-                continue;
-            }
-            let target_token: [u8; SDK_NET_TARGET_SIZE] = decoded[..SDK_NET_TARGET_SIZE]
-                .try_into()
-                .expect("SDK NetTarget token has a fixed forty-byte length");
-            if !plausible_net_target_token(&target_token) {
-                continue;
-            }
-
-            let first_value = i32::from_le_bytes(
-                decoded[SDK_NET_TARGET_SIZE..SDK_NET_TARGET_SIZE + 4]
-                    .try_into()
-                    .unwrap(),
-            );
-            let second_value = i32::from_le_bytes(
-                decoded[SDK_NET_TARGET_SIZE + 4..SDK_NET_TARGET_SIZE + 8]
-                    .try_into()
-                    .unwrap(),
-            );
-            let first_float = f32::from_bits(first_value as u32);
-            let second_float = f32::from_bits(second_value as u32);
-
-            if plausible_dead_state(first_value) && plausible_hp(second_float, MAX_DAMAGE) {
-                let key = (
-                    ParsedSdkTargetHpKind::ClientRepExtraDamageInfo,
-                    bit_shift,
-                    byte_offset,
-                    target_token,
-                    second_float.to_bits(),
-                    first_value,
-                );
-                if seen.insert(key) {
-                    updates.push(ParsedSdkTargetHpUpdate {
-                        kind: ParsedSdkTargetHpKind::ClientRepExtraDamageInfo,
-                        target_token,
-                        current_hp: second_float,
-                        dead_state: first_value,
-                        byte_offset: byte_offset + SDK_NET_TARGET_SIZE + 4,
-                        bit_shift,
-                    });
-                }
-            }
-
-            if plausible_hp(first_float, MAX_DAMAGE) && plausible_dead_state(second_value) {
-                let key = (
-                    ParsedSdkTargetHpKind::ClientRepFightData,
-                    bit_shift,
-                    byte_offset,
-                    target_token,
-                    first_float.to_bits(),
-                    second_value,
-                );
-                if seen.insert(key) {
-                    updates.push(ParsedSdkTargetHpUpdate {
-                        kind: ParsedSdkTargetHpKind::ClientRepFightData,
-                        target_token,
-                        current_hp: first_float,
-                        dead_state: second_value,
-                        byte_offset: byte_offset + SDK_NET_TARGET_SIZE,
-                        bit_shift,
-                    });
-                }
-            }
         }
     }
     updates
@@ -823,6 +609,21 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
         }
     }
     effects
+}
+
+pub fn matches_shifted_bytes_at(
+    data: &[u8],
+    bit_shift: u8,
+    byte_offset: usize,
+    expected: &[u8],
+) -> bool {
+    let Some(decoded) = decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1))
+    else {
+        return false;
+    };
+    decoded
+        .get(byte_offset..byte_offset + expected.len())
+        .is_some_and(|bytes| bytes == expected)
 }
 
 pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {
@@ -882,20 +683,45 @@ fn declared_character_for_shift(evidence: &[(u32, u8, usize)], bit_shift: u8) ->
     matched
 }
 
-pub fn parse_damage_payload(data: &[u8], context: DamageParseContext<'_>) -> Vec<Hit> {
+fn damage_record_targets_declared_character(
+    record: &ParsedDamageRecord,
+    character_id: Option<u32>,
+    evidence: &[(u32, u8, usize)],
+) -> bool {
+    let Some(character_id) = character_id else {
+        return false;
+    };
+    evidence.iter().any(|(id, shift, offset)| {
+        *id == character_id && *shift == record.bit_shift && *offset > record.byte_offset
+    })
+}
+
+fn damage_record_has_incoming_state_flags(
+    record: &ParsedDamageRecord,
+    character_id: Option<u32>,
+) -> bool {
+    character_id.is_some() && record.state_flags == [0, 1, 0]
+}
+
+pub fn parse_damage_payload(
+    data: &[u8],
+    timestamp: f64,
+    packet_char_id: Option<u32>,
+    fallback_char_id: Option<u32>,
+    characters: &HashMap<u32, CharacterInfo>,
+    evidence: &[(u32, u8, usize)],
+) -> Vec<Hit> {
     let mut hits = Vec::new();
     for record in parse_damage_records(data) {
         let damage = record.damage;
         let byte_offset = record.byte_offset;
         let bit_shift = record.bit_shift;
-        let aligned_char_id = declared_character_for_shift(context.evidence, bit_shift);
-        let resolved_packet_char_id = context.packet_char_id.or(aligned_char_id);
-        let char_id = resolved_packet_char_id
-            .or(context.fallback_char_id)
-            .unwrap_or(0);
+        let aligned_char_id = declared_character_for_shift(evidence, bit_shift);
+        let resolved_packet_char_id = packet_char_id.or(aligned_char_id);
+        let char_id = resolved_packet_char_id.or(fallback_char_id).unwrap_or(0);
         let target_hp_before = record.target_hp_before;
         let target_max_hp = record.target_max_hp;
-        let character = context.characters.get(&char_id);
+        let character = characters.get(&char_id);
         let name = character
             .map(|row| {
                 if row.name_zh.is_empty() {
@@ -912,27 +738,18 @@ pub fn parse_damage_payload(data: &[u8], context: DamageParseContext<'_>) -> Vec
                 }
             });
         let target_hp_after = (target_hp_before - damage).max(0.0);
-        let mut target_context = Vec::new();
-        let direction = infer_damage_direction(
-            context.packet_direction,
-            resolved_packet_char_id,
-            context.fallback_char_id,
-            &mut target_context,
-        );
-        if target_max_hp <= 500_000.0
-            && direction == "outgoing"
-            && context.packet_direction == PacketDirection::ClientToServer
-        {
-            target_context.push("direction_low_hp_target_not_incoming".to_owned());
-        }
-        if let Some(token) = &record.hit_target_vector_token {
-            target_context.push(format!("hit_target_vector_token={token}"));
-        }
-        if let Some([x, y, z]) = record.hit_target_xyz {
-            target_context.push(format!("hit_target_xyz={x:.3},{y:.3},{z:.3}"));
-        }
+        let targets_declared_character =
+            damage_record_targets_declared_character(&record, resolved_packet_char_id, evidence)
+                || damage_record_has_incoming_state_flags(&record, resolved_packet_char_id);
+        let direction = if targets_declared_character {
+            "incoming"
+        } else if resolved_packet_char_id.is_some() {
+            "outgoing"
+        } else {
+            "unknown"
+        };
         hits.push(Hit {
-            timestamp: context.timestamp,
+            timestamp,
             char_id,
             char_name: name,
             char_known: character.is_some(),
@@ -941,7 +758,7 @@ pub fn parse_damage_payload(data: &[u8], context: DamageParseContext<'_>) -> Vec
             bit_shift,
             char_source: if resolved_packet_char_id.is_some() {
                 "packet"
-            } else if context.fallback_char_id.is_some() {
+            } else if fallback_char_id.is_some() {
                 "session"
             } else {
                 "unknown"
@@ -958,134 +775,375 @@ pub fn parse_damage_payload(data: &[u8], context: DamageParseContext<'_>) -> Vec
             },
             target_id: None,
             target_name: None,
-            target_context,
+            target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: None,
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         });
     }
     hits
 }
 
-fn infer_damage_direction(
-    packet_direction: PacketDirection,
-    resolved_packet_char_id: Option<u32>,
-    fallback_char_id: Option<u32>,
-    target_context: &mut Vec<String>,
-) -> &'static str {
-    match packet_direction {
-        PacketDirection::ClientToServer => {
-            if resolved_packet_char_id.is_some() {
-                target_context.push("direction_candidate=c2s_packet_character".to_owned());
-                target_context.push("direction_pending=c2s_hp_reconciliation".to_owned());
-                "unknown"
-            } else if fallback_char_id.is_some() {
-                target_context.push("direction_candidate=c2s_session_character".to_owned());
-                target_context.push("direction_pending=c2s_hp_reconciliation".to_owned());
-                "unknown"
-            } else {
-                target_context.push("direction_unresolved=c2s_no_character".to_owned());
-                "unknown"
-            }
-        }
-        PacketDirection::ServerToClient => {
-            target_context.push("direction_unresolved=s2c_no_monster_attack_evidence".to_owned());
-            "unknown"
-        }
-        PacketDirection::Unknown => {
-            target_context.push("direction_unresolved=unknown_packet_direction".to_owned());
-            "unknown"
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
+mod character_tests {
     use super::*;
 
-    fn test_characters() -> HashMap<u32, CharacterInfo> {
-        HashMap::from([(
-            1020,
+    fn encoded_damage_record_with_flags(
+        damage: f32,
+        target_hp_before: f32,
+        target_max_hp: f32,
+        state_flags: [i32; 3],
+    ) -> Vec<u8> {
+        let fields = [
+            (12, damage.to_le_bytes().to_vec()),
+            (12, target_hp_before.to_le_bytes().to_vec()),
+            (12, target_max_hp.to_le_bytes().to_vec()),
+            (13, 1.0_f64.to_le_bytes().to_vec()),
+            (12, 1.0_f32.to_le_bytes().to_vec()),
+            (12, damage.to_le_bytes().to_vec()),
+            (6, state_flags[0].to_le_bytes().to_vec()),
+            (6, state_flags[1].to_le_bytes().to_vec()),
+            (6, state_flags[2].to_le_bytes().to_vec()),
+            (12, 0.0_f32.to_le_bytes().to_vec()),
+        ];
+        let mut encoded = Vec::new();
+        for (field_type, value) in fields {
+            encoded.push(field_type);
+            encoded.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            encoded.extend_from_slice(&value);
+        }
+        encoded
+    }
+
+    fn encoded_damage_record(damage: f32, target_hp_before: f32, target_max_hp: f32) -> Vec<u8> {
+        encoded_damage_record_with_flags(damage, target_hp_before, target_max_hp, [0, 0, 0])
+    }
+
+    #[test]
+    fn character_attribute_is_optional_and_loaded_when_present() {
+        let document: CharacterDocument = serde_json::from_str(
+            r#"{
+                "characters": {
+                    "1003": {"name_zh": "Sagiri"},
+                    "1010": {"name_zh": "Nanally", "attribute": "curse"}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(document.characters["1003"].attribute, None);
+        assert_eq!(
+            document.characters["1010"].attribute.as_deref(),
+            Some("curse")
+        );
+    }
+
+    #[test]
+    fn parses_gameplay_effect_unique_index_after_active_ge_anchor() {
+        let mut payload = vec![0xaa, 0xbb];
+        payload.extend_from_slice(ACTIVE_GAMEPLAY_EFFECT_ANCHOR);
+        payload.extend_from_slice(&[0; ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET]);
+        payload.extend_from_slice(&ACTIVE_GAMEPLAY_EFFECT_MARKER.to_le_bytes());
+        payload.extend_from_slice(&1012_u32.to_le_bytes());
+        payload.extend_from_slice(&[5, 0, 0, 0]);
+
+        assert_eq!(
+            parse_gameplay_effects(&payload),
+            vec![ParsedGameplayEffect {
+                unique_index: 1012,
+                byte_offset: 2
+                    + ACTIVE_GAMEPLAY_EFFECT_ANCHOR.len()
+                    + ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET
+                    + 4,
+                bit_shift: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn loads_gameplay_effect_names_from_assets() {
+        let mapping =
+            load_gameplay_effect_mapping(Path::new(GAMEPLAY_EFFECT_MAPPING_PATH)).unwrap();
+
+        assert_eq!(
+            mapping.get(&1012).map(String::as_str),
+            Some("GE_Player_Sagiri_QTE1_Damage")
+        );
+    }
+
+    #[test]
+    fn loads_attack_types_from_skill_damage_assets() {
+        let skills = load_gameplay_effect_skills(Path::new(SKILL_DAMAGE_DATA_PATH)).unwrap();
+
+        for (effect, expected_type, expected_ability) in [
+            (
+                "GE_Player_Nanally_Melee1_Damage",
+                "普攻",
+                "GA_Nanally_Melee",
+            ),
+            (
+                "GE_Player_Nanally_Skill1_Damage",
+                "E技能",
+                "GA_Nanally_Skill",
+            ),
+            (
+                "GE_Player_Nanally_UltraSkill1_Damage",
+                "Q技能",
+                "GA_Nanally_UltraSkill",
+            ),
+            ("GE_Player_Sagiri_QTE1_Damage", "环合", "GA_Sagiri_QTE"),
+            (
+                "GE_Player_Nanally_PerfectEvadeAttack_Damage",
+                "闪避反击",
+                "GA_Nanally_ExtremEvadeAtk",
+            ),
+            (
+                "GE_AbyssCard_T_004_Damage",
+                "深渊场地Buff",
+                "GA_CardTrigger_T_004",
+            ),
+            (
+                "GE_AbyssCard_T_006_Damage",
+                "深渊场地Buff",
+                "GA_CardTrigger_T_006",
+            ),
+        ] {
+            let skill = skills.get(effect).unwrap();
+            assert_eq!(skill.attack_type, expected_type);
+            assert_eq!(skill.ability_name.as_deref(), Some(expected_ability));
+        }
+    }
+
+    #[test]
+    fn classifies_qte_as_utf8_huanhe() {
+        assert_eq!(
+            classify_attack_type(None, "GE_Player_Test_QTE_Damage", Some("GA_Test_QTE")),
+            "环合"
+        );
+    }
+
+    #[test]
+    fn loads_chinese_damage_names_from_wooden_assets() {
+        let names = load_wooden_damage_names(Path::new(WOODEN_DAMAGE_DESCRIPTIONS_PATH)).unwrap();
+
+        assert_eq!(
+            names
+                .get("GE_Player_Sagiri_QTE1_Damage")
+                .map(String::as_str),
+            Some("早雾环合")
+        );
+        assert_eq!(
+            names
+                .get("GE_Player_Nanally_Melee1_Damage")
+                .map(String::as_str),
+            Some("娜娜莉普攻")
+        );
+        assert_eq!(
+            classify_attack_type_from_description("早雾大招1").as_deref(),
+            Some("Q技能")
+        );
+    }
+
+    #[test]
+    fn normalizes_damage_names_for_grouping() {
+        assert_eq!(normalize_damage_name("早雾大招2"), "早雾大招");
+        assert_eq!(normalize_damage_name("早雾普攻2_1"), "早雾普攻");
+        assert_eq!(normalize_damage_name("哈索尔QTE2"), "哈索尔环合");
+        assert_eq!(normalize_damage_name("法帝娅大招追加3_2"), "法帝娅大招追加");
+    }
+
+    #[test]
+    fn classifies_tenacity_and_parry_damage() {
+        assert_eq!(
+            classify_attack_type(Some("B"), "Buff_Tenacity_damage", None,),
+            "倾陷伤害"
+        );
+        assert_eq!(
+            classify_attack_type(Some("T"), "GE_Parry_Damage", None,),
+            "格挡反击"
+        );
+        assert_eq!(
+            classify_attack_type(None, "GE_Reaction_AnHunZhou", None,),
+            "失谐"
+        );
+        assert_eq!(classify_attack_type(None, "GE_Reaction_7", None,), "盈蓄");
+        assert_eq!(
+            classify_attack_type(None, "GE_Reaction6_5Point_Damage", None,),
+            "浸染"
+        );
+    }
+
+    #[test]
+    fn classifies_qte_reaction_from_participant_attributes() {
+        assert_eq!(qte_reaction_type("暗", "咒"), Some("浊燃"));
+        assert_eq!(qte_reaction_type("灵", "咒"), Some("覆纹"));
+
+        assert_eq!(qte_reaction_type("光", "灵"), Some("创生"));
+        assert_eq!(qte_reaction_type("光", "相"), Some("延滞"));
+
+        assert_eq!(qte_reaction_type("暗", "咒"), Some("浊燃"));
+        assert_eq!(qte_reaction_type("暗", "魂"), Some("黯星"));
+        assert_eq!(qte_reaction_type("魂", "相"), Some("浸染"));
+    }
+
+    #[test]
+    fn ignores_invalid_gameplay_effect_sentinel() {
+        let mut payload = ACTIVE_GAMEPLAY_EFFECT_ANCHOR.to_vec();
+        payload.extend_from_slice(&[0; ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET]);
+        payload.extend_from_slice(&ACTIVE_GAMEPLAY_EFFECT_MARKER.to_le_bytes());
+        payload.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        assert!(parse_gameplay_effects(&payload).is_empty());
+    }
+
+    #[test]
+    fn parses_target_handle_from_boss_hp_update() {
+        let handle = [
+            0x21, 0xf0, 0x4e, 0x92, 0x89, 0x95, 0x33, 0x4f, 0x8c, 0x0b, 0xbc, 0xaa, 0x0e, 0xe1,
+            0x6f, 0xe7,
+        ];
+        let mut payload = [0_u8; BOSS_HP_PREFIX_LENGTH + 4];
+        payload[..8].copy_from_slice(&BOSS_HP_PREFIX_HEAD);
+        payload[8..24].copy_from_slice(&handle);
+        payload[BOSS_HP_PREFIX_LENGTH..].copy_from_slice(&1_927_891_f32.to_le_bytes());
+
+        let updates = parse_boss_hp_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].target_handle, handle);
+        assert_eq!(updates[0].current_hp, 1_927_891.0);
+    }
+
+    #[test]
+    fn incoming_damage_keeps_legacy_target_fields_empty() {
+        let mut payload = b"/Game/Blueprints/Character/Monster/boss_07/".to_vec();
+        payload.extend_from_slice(&encoded_damage_record(100.0, 1_500_000.0, 2_000_000.0));
+        payload.extend_from_slice(&[5, 0, 0, 0, b'1', b'0', b'0', b'1', 0]);
+        let evidence = find_declared_character_evidence(&payload);
+        let characters = HashMap::from([(
+            1001,
             CharacterInfo {
-                name_zh: "测试角色".to_owned(),
-                name_en: "Tester".to_owned(),
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
                 color: None,
                 avatar: None,
                 attribute: None,
             },
-        )])
-    }
+        )]);
 
-    fn push_field(payload: &mut Vec<u8>, field_type: u8, value: &[u8]) {
-        payload.push(field_type);
-        payload.extend_from_slice(&(value.len() as u32).to_le_bytes());
-        payload.extend_from_slice(value);
-    }
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
 
-    fn damage_payload(damage: f32, hp_before: f32, max_hp: f32) -> Vec<u8> {
-        let mut payload = Vec::new();
-        push_field(&mut payload, 12, &damage.to_le_bytes());
-        push_field(&mut payload, 12, &hp_before.to_le_bytes());
-        push_field(&mut payload, 12, &max_hp.to_le_bytes());
-        push_field(&mut payload, 13, &1.0_f64.to_le_bytes());
-        push_field(&mut payload, 12, &1.0_f32.to_le_bytes());
-        push_field(&mut payload, 12, &damage.to_le_bytes());
-        push_field(&mut payload, 6, &0_i32.to_le_bytes());
-        push_field(&mut payload, 6, &0_i32.to_le_bytes());
-        push_field(&mut payload, 6, &0_i32.to_le_bytes());
-        push_field(&mut payload, 12, &0.0_f32.to_le_bytes());
-        payload.extend_from_slice(&HIT_TARGET_VECTOR_MARKER);
-        payload.extend_from_slice(&(-46161.772_f64).to_le_bytes());
-        payload.extend_from_slice(&(118050.467_f64).to_le_bytes());
-        payload.extend_from_slice(&(-14010.483_f64).to_le_bytes());
-        payload
-    }
-
-    #[test]
-    fn low_hp_c2s_player_damage_waits_for_hp_reconciliation() {
-        let characters = test_characters();
-        let evidence = vec![(1020, 0, 0)];
-        let hits = parse_damage_payload(
-            &damage_payload(3423.0, 29104.0, 29104.0),
-            DamageParseContext {
-                timestamp: 1.0,
-                packet_char_id: Some(1020),
-                fallback_char_id: None,
-                packet_direction: PacketDirection::ClientToServer,
-                characters: &characters,
-                evidence: &evidence,
-            },
-        );
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "unknown");
-        assert!(
-            hits[0]
-                .target_context
-                .iter()
-                .any(|entry| entry == "direction_pending=c2s_hp_reconciliation")
-        );
+        assert_eq!(hits[0].direction, "incoming");
+        assert_eq!(hits[0].char_id, 1001);
+        assert!(hits[0].target_id.is_none());
+        assert!(hits[0].target_name.is_none());
+        assert!(hits[0].target_context.is_empty());
     }
 
     #[test]
-    fn low_hp_unknown_or_s2c_does_not_force_outgoing_or_incoming() {
-        let characters = test_characters();
-        let evidence = Vec::new();
-        for packet_direction in [PacketDirection::ServerToClient, PacketDirection::Unknown] {
-            let hits = parse_damage_payload(
-                &damage_payload(3423.0, 29104.0, 29104.0),
-                DamageParseContext {
-                    timestamp: 1.0,
-                    packet_char_id: None,
-                    fallback_char_id: None,
-                    packet_direction,
-                    characters: &characters,
-                    evidence: &evidence,
-                },
-            );
-            assert_eq!(hits.len(), 1);
-            assert_eq!(hits[0].direction, "unknown");
-        }
+    fn low_target_max_hp_without_matching_character_alignment_stays_outgoing() {
+        let payload = encoded_damage_record(100.0, 10_000.0, 20_000.0);
+        let evidence = [(1001, 1, 200)];
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].char_id, 1001);
+    }
+
+    #[test]
+    fn incoming_state_flags_mark_known_character_damage_as_incoming() {
+        let payload = encoded_damage_record_with_flags(161.0, 5_388.0, 5_388.0, [0, 1, 0]);
+        let evidence = [(1023, 6, 400)];
+        let characters = HashMap::from([(
+            1023,
+            CharacterInfo {
+                name_zh: "白藏".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1023), None, &characters, &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "incoming");
+        assert_eq!(hits[0].char_id, 1023);
+    }
+
+    #[test]
+    fn outgoing_state_flags_do_not_mark_damage_as_incoming_without_target_anchor() {
+        let payload =
+            encoded_damage_record_with_flags(1_604.0, 1_340_986.0, 1_930_389.0, [0, 1, 1]);
+        let evidence = [(1001, 1, 200)];
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].char_id, 1001);
+    }
+
+    #[test]
+    fn same_shift_character_anchor_before_damage_record_stays_outgoing() {
+        let payload = encoded_damage_record(100.0, 10_000.0, 20_000.0);
+        let evidence = [(1001, 0, 0)];
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].char_id, 1001);
+    }
+
+    #[test]
+    fn resolves_character_from_matching_bit_alignment() {
+        let evidence = [(1003, 2, 241), (1004, 3, 50), (1003, 0, 606)];
+
+        assert_eq!(declared_character_for_shift(&evidence, 3), Some(1004));
+        assert_eq!(declared_character_for_shift(&evidence, 2), Some(1003));
+        assert_eq!(declared_character_for_shift(&evidence, 5), None);
     }
 }

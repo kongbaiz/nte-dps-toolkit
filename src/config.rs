@@ -13,6 +13,7 @@ pub struct UiConfig {
     pub opacity: f32,
     pub dark_mode: bool,
     pub always_on_top: bool,
+    pub server_damage_calibration: bool,
 }
 
 impl Default for UiConfig {
@@ -22,6 +23,7 @@ impl Default for UiConfig {
             opacity: 0.92,
             dark_mode: false,
             always_on_top: true,
+            server_damage_calibration: false,
         }
     }
 }
@@ -74,4 +76,31 @@ pub fn save(path: &Path, config: &UiConfig) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&config.clone().sanitized())
         .map_err(|error| error.to_string())?;
     fs::write(path, format!("{text}\n")).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitizes_invalid_opacity() {
+        assert_eq!(
+            UiConfig {
+                opacity: 2.0,
+                ..UiConfig::default()
+            }
+            .sanitized()
+            .opacity,
+            1.0
+        );
+        assert_eq!(
+            UiConfig {
+                opacity: f32::NAN,
+                ..UiConfig::default()
+            }
+            .sanitized()
+            .opacity,
+            UiConfig::default().opacity
+        );
+    }
 }

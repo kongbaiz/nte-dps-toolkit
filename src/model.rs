@@ -1,11 +1,8 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 const ABYSS_RESTART_STAGE_WINDOW_SECONDS: f64 = 10.0;
-const TARGET_NAME_BACKFILL_WINDOW_SECONDS: f64 = 30.0;
 
 use serde::{Deserialize, Serialize};
-
-use crate::target_alias::{target_alias_lookup_keys, target_context_value};
 
 const MAX_COMBAT_HITS: usize = 50_000;
 
@@ -54,25 +51,62 @@ pub struct Hit {
     pub damage_name: Option<String>,
     #[serde(default)]
     pub attack_type: Option<String>,
+    #[serde(default)]
+    pub damage_attribute: Option<String>,
+    #[serde(default)]
+    pub follow_up_damage: f64,
+    #[serde(default)]
+    pub follow_up_timestamp: Option<f64>,
+    #[serde(default)]
+    pub follow_up_damage_name: Option<String>,
+    #[serde(default)]
+    pub follow_up_attack_type: Option<String>,
+    #[serde(default)]
+    pub follow_up_damage_attribute: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-pub struct HitTargetUpdate {
-    pub hit_uid: String,
+impl Hit {
+    pub fn total_damage(&self) -> f64 {
+        self.damage + self.follow_up_damage
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HitFollowUp {
+    pub source_timestamp: f64,
+    pub source_char_id: u32,
+    pub source_damage: f64,
+    pub source_target_hp_before: f64,
+    pub source_target_hp_after: f64,
+    pub source_target_max_hp: f64,
+    #[serde(default)]
+    pub source_gameplay_effect_index: Option<u32>,
     pub timestamp: f64,
-    pub char_id: u32,
     pub damage: f64,
-    pub byte_offset: usize,
-    pub bit_shift: u8,
-    pub target_id: Option<String>,
-    pub target_name: Option<String>,
-    pub target_context: Vec<String>,
-    pub target_score: i32,
-    pub target_confidence: String,
-    pub old_target_id: Option<String>,
-    pub update_reason: Option<String>,
-    pub update_strength: Option<String>,
-    pub target_generation: Option<String>,
+    pub target_hp_after: f64,
+    pub target_hp_percent: f64,
+    #[serde(default)]
+    pub damage_name: Option<String>,
+    #[serde(default)]
+    pub attack_type: Option<String>,
+    #[serde(default)]
+    pub damage_attribute: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HitDamageCorrection {
+    pub source_timestamp: f64,
+    pub source_char_id: u32,
+    pub source_damage: f64,
+    pub source_target_hp_before: f64,
+    pub source_target_hp_after: f64,
+    pub source_target_max_hp: f64,
+    #[serde(default)]
+    pub source_gameplay_effect_index: Option<u32>,
+    pub damage: f64,
+    pub target_hp_before: f64,
+    pub target_hp_after: f64,
+    pub target_hp_percent: f64,
 }
 
 #[derive(Clone, Debug)]
@@ -88,14 +122,6 @@ pub struct PacketDebug {
     pub payload_preview: String,
     pub payload_hex: String,
     pub decoded_text: String,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum PacketDebugMode {
-    #[default]
-    Off,
-    Summary,
-    FullPayload,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -136,17 +162,18 @@ pub fn summarize_hit_directions<'a>(
 ) -> HitDirectionSummary {
     let mut summary = HitDirectionSummary::default();
     for hit in hits {
+        let damage = hit.total_damage();
         match hit.direction.as_str() {
             "incoming" => {
-                summary.incoming_damage += hit.damage;
+                summary.incoming_damage += damage;
                 summary.incoming_hits += 1;
             }
             "outgoing" => {
-                summary.outgoing_damage += hit.damage;
+                summary.outgoing_damage += damage;
                 summary.outgoing_hits += 1;
             }
             _ => {
-                summary.unknown_damage += hit.damage;
+                summary.unknown_damage += damage;
                 summary.unknown_hits += 1;
             }
         }
@@ -184,16 +211,17 @@ fn update_combat_totals(
         ..Default::default()
     });
     row.name.clone_from(&hit.char_name);
+    let damage = hit.total_damage();
     if hit.direction == "incoming" {
         row.hits_taken += 1;
-        row.damage_taken += hit.damage;
-        *total_damage_taken += hit.damage;
+        row.damage_taken += damage;
+        *total_damage_taken += damage;
         return;
     }
 
     *started_at = Some(started_at.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
     *ended_at = Some(ended_at.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
-    *total_damage += hit.damage;
+    *total_damage += damage;
     if row.hits == 0 {
         row.first_hit = hit.timestamp;
         row.last_hit = hit.timestamp;
@@ -202,7 +230,7 @@ fn update_combat_totals(
         row.last_hit = row.last_hit.max(hit.timestamp);
     }
     row.hits += 1;
-    row.damage += hit.damage;
+    row.damage += damage;
 }
 
 fn rebuild_combat_totals(
@@ -306,13 +334,36 @@ impl PartyCombatState {
         }
     }
 
-    fn apply_target_update(&mut self, update: &HitTargetUpdate) -> bool {
-        if apply_target_update_to_hits(&mut self.hits, update) {
+    pub fn apply_follow_up(&mut self, follow_up: &HitFollowUp) -> bool {
+        let updated = apply_follow_up_to_hits(&mut self.hits, follow_up);
+        if updated {
             self.hits_generation = self.hits_generation.wrapping_add(1);
-            true
-        } else {
-            false
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
         }
+        updated
+    }
+
+    pub fn apply_damage_correction(&mut self, correction: &HitDamageCorrection) -> bool {
+        let updated = apply_damage_correction_to_hits(&mut self.hits, correction);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        updated
     }
 
     pub fn duration(&self) -> f64 {
@@ -456,12 +507,6 @@ impl AbyssRunState {
             self.half_mut(half).push_hit(hit);
         }
     }
-
-    pub fn apply_target_update(&mut self, update: &HitTargetUpdate) -> bool {
-        let mut changed = self.first_half.apply_target_update(update);
-        changed |= self.second_half.apply_target_update(update);
-        changed
-    }
 }
 
 #[derive(Default)]
@@ -507,18 +552,44 @@ impl CombatState {
         }
     }
 
+    pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) {
+        let updated = apply_follow_up_to_hits(&mut self.hits, &follow_up);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        self.abyss.first_half.apply_follow_up(&follow_up);
+        self.abyss.second_half.apply_follow_up(&follow_up);
+    }
+
+    pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) {
+        let updated = apply_damage_correction_to_hits(&mut self.hits, &correction);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        self.abyss.first_half.apply_damage_correction(&correction);
+        self.abyss.second_half.apply_damage_correction(&correction);
+    }
+
     pub fn push_packet(&mut self, packet: PacketDebug) {
         self.packets.push_back(packet);
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
-        }
-    }
-
-    pub fn apply_target_update(&mut self, update: HitTargetUpdate) {
-        let mut changed = self.abyss.apply_target_update(&update);
-        changed |= apply_target_update_to_hits(&mut self.hits, &update);
-        if changed {
-            self.hits_generation = self.hits_generation.wrapping_add(1);
         }
     }
 
@@ -545,7 +616,8 @@ impl CombatState {
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Hit),
-    HitTargetUpdate(HitTargetUpdate),
+    HitFollowUp(HitFollowUp),
+    HitDamageCorrection(HitDamageCorrection),
     Packet(PacketDebug),
     Abyss(AbyssEvent),
     Status(String),
@@ -554,347 +626,320 @@ pub enum EngineEvent {
     CaptureStopped,
 }
 
-fn hit_matches_update(hit: &Hit, update: &HitTargetUpdate) -> bool {
-    let computed_uid = stable_hit_uid(hit);
-    if !update.hit_uid.is_empty() {
-        return update.hit_uid == computed_uid;
-    }
-    hit.timestamp.to_bits() == update.timestamp.to_bits()
-        && hit.char_id == update.char_id
-        && hit.damage.to_bits() == update.damage.to_bits()
-        && hit.byte_offset == update.byte_offset
-        && hit.bit_shift == update.bit_shift
-}
-
-pub fn stable_hit_uid(hit: &Hit) -> String {
-    format!(
-        "{:016x}:{:08x}:{:016x}:{}:{}:{:016x}:{:016x}",
-        hit.timestamp.to_bits(),
-        hit.char_id,
-        hit.damage.to_bits(),
-        hit.byte_offset,
-        hit.bit_shift,
-        hit.target_hp_before.to_bits(),
-        hit.target_hp_after.to_bits()
-    )
-}
-
-struct TargetBackfillRule {
-    timestamp: f64,
-    target_id: Option<String>,
-    target_name: String,
-    target_path: Option<String>,
-    alias_keys: HashSet<String>,
-}
-
-impl TargetBackfillRule {
-    fn from_update(update: &HitTargetUpdate) -> Option<Self> {
-        if has_unreliable_target_name_source(&update.target_context)
-            || !has_runtime_alias_target_source(&update.target_context)
-        {
-            return None;
-        }
-        let target_name = update.target_name.as_ref()?.trim();
-        if target_name.is_empty() {
-            return None;
-        }
-        Some(Self {
-            timestamp: update.timestamp,
-            target_id: update.target_id.clone(),
-            target_name: target_name.to_owned(),
-            target_path: target_context_value(&update.target_context, "target_path")
-                .map(str::to_owned),
-            alias_keys: target_alias_lookup_keys(update.target_id.as_ref(), &update.target_context),
-        })
-    }
-
-    fn matches_alias(&self, hit: &Hit) -> bool {
-        if self.alias_keys.is_empty() {
-            return false;
-        }
-        if let Some(rule_path) = self.target_path.as_deref()
-            && let Some(hit_path) = target_context_value(&hit.target_context, "target_path")
-            && !hit_path.eq_ignore_ascii_case(rule_path)
-        {
-            return false;
-        }
-        target_alias_lookup_keys(hit.target_id.as_ref(), &hit.target_context)
-            .iter()
-            .any(|key| self.alias_keys.contains(key))
-    }
-}
-
-fn apply_target_update_to_hits(hits: &mut VecDeque<Hit>, update: &HitTargetUpdate) -> bool {
-    let _ = update.target_score;
-    let _ = update.target_confidence.as_str();
-    let _ = update.old_target_id.as_deref();
-    let _ = update.update_reason.as_deref();
-    let _ = update.update_strength.as_deref();
-    let _ = update.target_generation.as_deref();
-    let mut changed = false;
-    for hit in hits
+fn apply_follow_up_to_hits(hits: &mut VecDeque<Hit>, follow_up: &HitFollowUp) -> bool {
+    let Some(hit) = hits
         .iter_mut()
-        .filter(|hit| hit_matches_update(hit, update))
-    {
-        changed |= apply_exact_target_update(hit, update);
-    }
-
-    let Some(rule) = TargetBackfillRule::from_update(update) else {
-        return changed;
+        .rev()
+        .find(|hit| hit_matches_follow_up_source(hit, follow_up))
+    else {
+        return false;
     };
-    let allow_alias_backfill = !has_conflicting_named_target(hits, &rule);
-    for hit in hits.iter_mut() {
-        if hit.direction == "incoming"
-            || hit.target_name.is_some()
-            || !can_backfill_target_name(hit)
-        {
-            continue;
-        }
-        if allow_alias_backfill && rule.matches_alias(hit) {
-            changed |= apply_target_backfill_rule(hit, &rule);
-        }
-    }
-    changed
-}
-
-fn apply_exact_target_update(hit: &mut Hit, update: &HitTargetUpdate) -> bool {
-    if has_recent_death_suppressed_target(&hit.target_context)
-        && update.target_name.is_some()
-        && !update_has_non_hp_exact_alias_backfill(update)
-    {
-        return false;
-    }
-    if let (Some(old_name), Some(new_name)) =
-        (hit.target_name.as_deref(), update.target_name.as_deref())
-        && old_name != new_name
-    {
-        return push_unique_context(
-            &mut hit.target_context,
-            "target_conflict=locked_name_mismatch".to_owned(),
-        );
-    }
-    if hit.target_id.is_some()
-        && update.target_id.is_some()
-        && hit.target_id != update.target_id
-        && !update_has_authoritative_lifecycle_reset(update)
-    {
-        return push_unique_context(
-            &mut hit.target_context,
-            "target_conflict=locked_path_mismatch".to_owned(),
-        );
-    }
-    let changed = hit.target_id != update.target_id
-        || hit.target_name != update.target_name
-        || hit.target_context != update.target_context;
-    if changed {
-        hit.target_id = update.target_id.clone();
-        hit.target_name = update.target_name.clone();
-        hit.target_context = update.target_context.clone();
-    }
-    changed
-}
-
-fn update_has_non_hp_exact_alias_backfill(update: &HitTargetUpdate) -> bool {
-    update
-        .target_context
-        .iter()
-        .any(|entry| entry == "target_alias_backfill=non_hp_exact")
-}
-
-fn update_has_authoritative_lifecycle_reset(update: &HitTargetUpdate) -> bool {
-    update
-        .target_context
-        .iter()
-        .any(|entry| entry.starts_with("target_lifecycle_reset="))
-}
-
-fn apply_target_backfill_rule(hit: &mut Hit, rule: &TargetBackfillRule) -> bool {
-    let mut changed = false;
-    if hit.target_id.is_none() && rule.target_id.is_some() {
-        hit.target_id.clone_from(&rule.target_id);
-        changed = true;
-    }
-    if hit.target_name.as_deref() != Some(rule.target_name.as_str()) {
-        hit.target_name = Some(rule.target_name.clone());
-        changed = true;
-    }
-    if let Some(target_path) = &rule.target_path {
-        changed |= replace_or_push_context(&mut hit.target_context, "target_path", target_path);
-    }
-    changed |= replace_or_push_context(&mut hit.target_context, "target_name", &rule.target_name);
-    changed |= replace_or_push_context(
-        &mut hit.target_context,
-        "target_name_resolution",
-        "state_backfill",
-    );
-    changed
-}
-
-fn can_backfill_target_name(hit: &Hit) -> bool {
-    hit.target_hp_after > 1.0 && !has_unreliable_target_name_source(&hit.target_context)
-}
-
-fn has_recent_death_suppressed_target(context: &[String]) -> bool {
-    context
-        .iter()
-        .any(|entry| entry == "reason=recent_death_suppressed_stale_target")
-}
-
-fn has_unreliable_target_name_source(context: &[String]) -> bool {
-    context.iter().any(|entry| {
-        matches!(
-            entry.as_str(),
-            "reason=recent_death_suppressed_stale_target"
-                | "reason=hp_handle_path_without_direct_hp_suppressed"
-                | "reason=path_only_target_name_suppressed"
-                | "reason=net_identity_path_anchor_unconfirmed"
-                | "reason=runtime_hp_timeline"
-                | "reason=runtime_unique_active_named_instance"
-        ) || entry == "target_name_resolution=handle_alias_applied"
-            || entry == "target_name_resolution=state_backfill"
-    })
-}
-
-fn has_runtime_alias_target_source(context: &[String]) -> bool {
-    context
-        .iter()
-        .any(|entry| entry.starts_with("reason=runtime_alias:"))
-}
-
-fn has_conflicting_named_target(hits: &VecDeque<Hit>, rule: &TargetBackfillRule) -> bool {
-    hits.iter()
-        .filter(|hit| hit.direction != "incoming")
-        .filter(|hit| (hit.timestamp - rule.timestamp).abs() <= TARGET_NAME_BACKFILL_WINDOW_SECONDS)
-        .filter_map(|hit| hit.target_name.as_deref())
-        .any(|name| name != rule.target_name)
-}
-
-fn replace_or_push_context(context: &mut Vec<String>, key: &str, value: &str) -> bool {
-    let prefix = format!("{key}=");
-    let next = format!("{key}={value}");
-    let mut changed = false;
-    context.retain(|entry| {
-        let keep = !entry.starts_with(&prefix);
-        changed |= !keep;
-        keep
-    });
-    if !context.iter().any(|entry| entry == &next) {
-        context.push(next);
-        changed = true;
-    }
-    changed
-}
-
-fn push_unique_context(context: &mut Vec<String>, value: String) -> bool {
-    if context.iter().any(|entry| entry == &value) {
-        return false;
-    }
-    context.push(value);
+    hit.follow_up_damage += follow_up.damage;
+    hit.follow_up_timestamp = Some(follow_up.timestamp);
+    hit.follow_up_damage_name = follow_up.damage_name.clone();
+    hit.follow_up_attack_type = follow_up.attack_type.clone();
+    hit.follow_up_damage_attribute = follow_up.damage_attribute.clone();
+    hit.target_hp_after = follow_up.target_hp_after;
+    hit.target_hp_percent = follow_up.target_hp_percent;
     true
+}
+
+fn apply_damage_correction_to_hits(
+    hits: &mut VecDeque<Hit>,
+    correction: &HitDamageCorrection,
+) -> bool {
+    let Some(hit) = hits
+        .iter_mut()
+        .rev()
+        .find(|hit| hit_matches_damage_correction_source(hit, correction))
+    else {
+        return false;
+    };
+    hit.damage = correction.damage;
+    hit.target_hp_before = correction.target_hp_before;
+    hit.target_hp_after = correction.target_hp_after;
+    hit.target_hp_percent = correction.target_hp_percent;
+    true
+}
+
+fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
+    hit.char_id == follow_up.source_char_id
+        && (hit.timestamp - follow_up.source_timestamp).abs() <= 0.001
+        && (hit.damage - follow_up.source_damage).abs() <= 0.5
+        && (hit.target_hp_before - follow_up.source_target_hp_before).abs() <= 0.5
+        && (hit.target_hp_after - follow_up.source_target_hp_after).abs() <= 0.5
+        && (hit.target_max_hp - follow_up.source_target_max_hp).abs() <= 0.5
+        && hit.gameplay_effect_index == follow_up.source_gameplay_effect_index
+}
+
+fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrection) -> bool {
+    hit.char_id == correction.source_char_id
+        && (hit.timestamp - correction.source_timestamp).abs() <= 0.001
+        && (hit.damage - correction.source_damage).abs() <= 0.5
+        && (hit.target_hp_before - correction.source_target_hp_before).abs() <= 0.5
+        && (hit.target_hp_after - correction.source_target_hp_after).abs() <= 0.5
+        && (hit.target_max_hp - correction.source_target_max_hp).abs() <= 0.5
+        && hit.gameplay_effect_index == correction.source_gameplay_effect_index
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn hit_with_target(name: Option<&str>, id: Option<&str>) -> Hit {
+    fn test_hit(timestamp: f64, char_id: u32, direction: &str, damage: f64) -> Hit {
         Hit {
-            timestamp: 1.0,
-            char_id: 7,
-            char_name: "tester".to_owned(),
+            timestamp,
+            char_id,
+            char_name: format!("角色{char_id}"),
             char_known: true,
-            damage: 100.0,
-            byte_offset: 22,
-            bit_shift: 1,
+            damage,
+            byte_offset: 0,
+            bit_shift: 0,
             char_source: "test".to_owned(),
-            direction: "outgoing".to_owned(),
-            target_hp_before: 1000.0,
-            target_hp_after: 900.0,
-            target_max_hp: 1000.0,
-            target_hp_percent: 90.0,
-            target_id: id.map(str::to_owned),
-            target_name: name.map(str::to_owned),
+            direction: direction.to_owned(),
+            target_hp_before: 0.0,
+            target_hp_after: 0.0,
+            target_max_hp: 0.0,
+            target_hp_percent: 0.0,
+            target_id: None,
+            target_name: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: None,
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 
-    #[test]
-    fn exact_update_cannot_rename_locked_hit() {
-        let mut hits = VecDeque::from([hit_with_target(Some("Target A"), Some("a#1"))]);
-        let original_uid = stable_hit_uid(hits.front().expect("hit"));
-        let update = HitTargetUpdate {
-            hit_uid: original_uid,
-            timestamp: 1.0,
-            char_id: 7,
-            damage: 100.0,
-            byte_offset: 22,
-            bit_shift: 1,
-            target_id: Some("b#1".to_owned()),
-            target_name: Some("Target B".to_owned()),
-            target_context: vec!["target_path=/Game/Monster/B".to_owned()],
-            target_score: 120,
-            target_confidence: "confirmed".to_owned(),
-            old_target_id: Some("a#1".to_owned()),
-            update_reason: Some("test".to_owned()),
-            update_strength: Some("confirmed".to_owned()),
-            target_generation: Some("1".to_owned()),
-        };
+    fn assert_totals_match_hits(
+        hits: &VecDeque<Hit>,
+        stats: &HashMap<u32, CharacterStats>,
+        total_damage: f64,
+        total_damage_taken: f64,
+        duration: f64,
+    ) {
+        assert_eq!(hits.len(), MAX_COMBAT_HITS);
 
-        assert!(apply_target_update_to_hits(&mut hits, &update));
-        let hit = hits.front().expect("hit after update");
-        assert_eq!(hit.target_name.as_deref(), Some("Target A"));
-        assert_eq!(hit.target_id.as_deref(), Some("a#1"));
-        assert!(
-            hit.target_context
-                .iter()
-                .any(|entry| { entry == "target_conflict=locked_name_mismatch" })
-        );
+        let expected_damage: f64 = hits
+            .iter()
+            .filter(|hit| hit.direction != "incoming")
+            .map(Hit::total_damage)
+            .sum();
+        let expected_damage_taken: f64 = hits
+            .iter()
+            .filter(|hit| hit.direction == "incoming")
+            .map(Hit::total_damage)
+            .sum();
+        assert_eq!(total_damage, expected_damage);
+        assert_eq!(total_damage_taken, expected_damage_taken);
+
+        for hit in hits {
+            assert!(stats.contains_key(&hit.char_id));
+        }
+        for (&char_id, row) in stats {
+            let char_hits: Vec<_> = hits.iter().filter(|hit| hit.char_id == char_id).collect();
+            assert_eq!(
+                row.hits,
+                char_hits
+                    .iter()
+                    .filter(|hit| hit.direction != "incoming")
+                    .count() as u64
+            );
+            assert_eq!(
+                row.damage,
+                char_hits
+                    .iter()
+                    .filter(|hit| hit.direction != "incoming")
+                    .map(|hit| hit.total_damage())
+                    .sum::<f64>()
+            );
+            assert_eq!(
+                row.hits_taken,
+                char_hits
+                    .iter()
+                    .filter(|hit| hit.direction == "incoming")
+                    .count() as u64
+            );
+            assert_eq!(
+                row.damage_taken,
+                char_hits
+                    .iter()
+                    .filter(|hit| hit.direction == "incoming")
+                    .map(|hit| hit.total_damage())
+                    .sum::<f64>()
+            );
+        }
+
+        let outgoing_timestamps: Vec<_> = hits
+            .iter()
+            .filter(|hit| hit.direction != "incoming")
+            .map(|hit| hit.timestamp)
+            .collect();
+        let expected_duration =
+            (outgoing_timestamps.last().unwrap() - outgoing_timestamps.first().unwrap()).max(0.001);
+        assert_eq!(duration, expected_duration);
+        assert!(duration < 100_000.0);
+    }
+
+    fn overflowing_hits() -> Vec<Hit> {
+        let mut hits = Vec::with_capacity(MAX_COMBAT_HITS + 1);
+        hits.push(test_hit(-100_000.0, 99, "outgoing", 1_000_000.0));
+        for index in 0..MAX_COMBAT_HITS {
+            let direction = if index % 3 == 0 {
+                "incoming"
+            } else {
+                "outgoing"
+            };
+            hits.push(test_hit(
+                index as f64,
+                (index % 4 + 1) as u32,
+                direction,
+                (index % 10 + 1) as f64,
+            ));
+        }
+        hits
     }
 
     #[test]
-    fn recent_death_hit_accepts_non_hp_exact_alias_update_only() {
-        let mut stale = hit_with_target(None, None);
-        stale
-            .target_context
-            .push("reason=recent_death_suppressed_stale_target".to_owned());
-        let uid = stable_hit_uid(&stale);
+    fn unknown_hits_remain_output_and_directions_are_summarized_separately() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
+        state.push_hit(test_hit(2.0, 1, "unknown", 40.0));
+        state.push_hit(test_hit(3.0, 1, "incoming", 25.0));
 
-        let mut blocked_hits = VecDeque::from([stale.clone()]);
-        let blocked = HitTargetUpdate {
-            hit_uid: uid.clone(),
-            timestamp: stale.timestamp,
-            char_id: stale.char_id,
-            damage: stale.damage,
-            byte_offset: stale.byte_offset,
-            bit_shift: stale.bit_shift,
-            target_id: None,
-            target_name: Some("低语种".to_owned()),
-            target_context: vec![
-                "reason=recent_death_suppressed_stale_target".to_owned(),
-                "target_name=低语种".to_owned(),
-                "target_name_resolution=handle_alias_applied".to_owned(),
-            ],
-            target_score: 80,
-            target_confidence: "probable".to_owned(),
-            old_target_id: None,
-            update_reason: Some("handle_alias_applied".to_owned()),
-            update_strength: Some("probable".to_owned()),
-            target_generation: None,
-        };
-        assert!(!apply_target_update_to_hits(&mut blocked_hits, &blocked));
-        assert_eq!(blocked_hits[0].target_name, None);
+        assert_eq!(state.total_damage, 140.0);
+        assert_eq!(state.total_damage_taken, 25.0);
+        let summary = summarize_hit_directions(&state.hits);
+        assert_eq!(summary.outgoing_damage, 100.0);
+        assert_eq!(summary.outgoing_hits, 1);
+        assert_eq!(summary.unknown_damage, 40.0);
+        assert_eq!(summary.unknown_hits, 1);
+        assert_eq!(summary.incoming_damage, 25.0);
+        assert_eq!(summary.incoming_hits, 1);
+        assert!((summary.unknown_share() - 28.571_428_571).abs() < 1e-6);
+    }
 
-        let mut allowed_hits = VecDeque::from([stale]);
-        let mut allowed = blocked;
-        allowed
-            .target_context
-            .push("target_alias_backfill=non_hp_exact".to_owned());
-        assert!(apply_target_update_to_hits(&mut allowed_hits, &allowed));
-        assert_eq!(allowed_hits[0].target_name.as_deref(), Some("低语种"));
+    #[test]
+    fn follow_up_damage_merges_into_source_hit_totals() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.gameplay_effect_index = Some(42);
+        state.push_hit(hit);
+
+        state.apply_follow_up(HitFollowUp {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            timestamp: 1.2,
+            damage: 250.0,
+            target_hp_after: 8_750.0,
+            target_hp_percent: 87.5,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
+            damage_attribute: Some("灵".to_owned()),
+        });
+
+        let merged = state.hits.front().unwrap();
+        assert_eq!(merged.damage, 1_000.0);
+        assert_eq!(merged.follow_up_damage, 250.0);
+        assert_eq!(merged.target_hp_after, 8_750.0);
+        assert_eq!(state.total_damage, 1_250.0);
+        let stats = state.stats.get(&7).unwrap();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.damage, 1_250.0);
+    }
+
+    #[test]
+    fn damage_correction_replaces_source_hit_totals() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.gameplay_effect_index = Some(42);
+        state.push_hit(hit);
+
+        state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 1_250.0,
+            target_hp_before: 10_250.0,
+            target_hp_after: 9_000.0,
+            target_hp_percent: 90.0,
+        });
+
+        let corrected = state.hits.front().unwrap();
+        assert_eq!(corrected.damage, 1_250.0);
+        assert_eq!(corrected.follow_up_damage, 0.0);
+        assert_eq!(corrected.target_hp_before, 10_250.0);
+        assert_eq!(state.total_damage, 1_250.0);
+        let stats = state.stats.get(&7).unwrap();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.damage, 1_250.0);
+    }
+
+    #[test]
+    fn abyss_half_labels_are_utf8_chinese() {
+        assert_eq!(AbyssHalf::First.label(), "上半");
+        assert_eq!(AbyssHalf::Second.label(), "下半");
+    }
+
+    #[test]
+    fn party_combat_totals_follow_trimmed_hits() {
+        let mut state = PartyCombatState::default();
+        let hits = overflowing_hits();
+        let expected_generation = hits.len() as u64;
+        for hit in hits {
+            state.push_hit(hit);
+        }
+
+        assert_eq!(state.hits_generation, expected_generation);
+        assert_totals_match_hits(
+            &state.hits,
+            &state.stats,
+            state.total_damage,
+            state.total_damage_taken,
+            state.duration(),
+        );
+        assert!(!state.stats.contains_key(&99));
+    }
+
+    #[test]
+    fn combat_totals_follow_trimmed_hits() {
+        let mut state = CombatState::default();
+        let hits = overflowing_hits();
+        let expected_generation = hits.len() as u64;
+        for hit in hits {
+            state.push_hit(hit);
+        }
+
+        assert_eq!(state.hits_generation, expected_generation);
+        assert_totals_match_hits(
+            &state.hits,
+            &state.stats,
+            state.total_damage,
+            state.total_damage_taken,
+            state.duration(),
+        );
+        assert!(!state.stats.contains_key(&99));
     }
 }
