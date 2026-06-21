@@ -231,6 +231,11 @@ pub fn classify_attack_type(
     if searchable_lower.contains("parry") {
         return "格挡反击".to_owned();
     }
+    if ability_name.is_some_and(|name| name.starts_with("GA_CardTrigger_"))
+        || (effect_name.starts_with("GE_AbyssCard_") && effect_name.contains("_Damage"))
+    {
+        return "深渊场地Buff".to_owned();
+    }
     if effect_name.contains("Reaction_1") || effect_name.contains("Reaction1_") {
         return "创生花".to_owned();
     }
@@ -899,6 +904,16 @@ mod character_tests {
                 "GE_Player_Nanally_PerfectEvadeAttack_Damage",
                 "闪避反击",
                 "GA_Nanally_ExtremEvadeAtk",
+            ),
+            (
+                "GE_AbyssCard_T_004_Damage",
+                "深渊场地Buff",
+                "GA_CardTrigger_T_004",
+            ),
+            (
+                "GE_AbyssCard_T_006_Damage",
+                "深渊场地Buff",
+                "GA_CardTrigger_T_006",
             ),
         ] {
             let skill = skills.get(effect).unwrap();
