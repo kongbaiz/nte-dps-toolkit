@@ -24,7 +24,9 @@ use pcap_file::pcapng::blocks::interface_description::{
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
-use crate::model::{AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, PacketDebug};
+use crate::model::{
+    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitFollowUp, PacketDebug,
+};
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
@@ -857,7 +859,6 @@ fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
     let _ = sender.send(EngineEvent::Packet(packet));
 }
 
-const INFERRED_FOLLOW_UP_CHAR_ID: u32 = u32::MAX;
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
 const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
 const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
@@ -867,8 +868,16 @@ const FUWEN_ENTERING_ID_SHIFT: u8 = 0;
 const FUWEN_ENTERING_ID_OFFSET: usize = 53;
 const FUWEN_PREVIOUS_ID_SHIFT: u8 = 2;
 const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
-const FUWEN_DURATION_SECONDS: f64 = 12.0;
 const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
+
+fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
+    match hit.attack_type.as_deref() {
+        Some("创生") | Some("创生花") | Some("覆纹") | Some("延滞") | Some("黯星")
+        | Some("浊燃") | Some("盈蓄") | Some("失谐") => false,
+        Some(attack_type) if attack_type.starts_with("环合·") => attack_type == "环合·覆纹",
+        _ => true,
+    }
+}
 
 #[derive(Clone)]
 struct PendingHit {
@@ -884,9 +893,7 @@ struct FollowUpDamageTracker {
     team_attributes: HashSet<String>,
     character_attributes: HashMap<u32, String>,
     fuwen_active: bool,
-    fuwen_opening_character_id: Option<u32>,
-    fuwen_opening_pending: bool,
-    fuwen_effect_started_at: Option<f64>,
+    fuwen_start_pending: bool,
     fuwen_recorded_damage: bool,
 }
 
@@ -895,11 +902,7 @@ impl FollowUpDamageTracker {
         self.pending_hits.clear();
         self.team_attributes.clear();
         self.character_attributes.clear();
-        self.fuwen_active = false;
-        self.fuwen_opening_character_id = None;
-        self.fuwen_opening_pending = false;
-        self.fuwen_effect_started_at = None;
-        self.fuwen_recorded_damage = false;
+        self.clear_fuwen_state();
     }
 
     fn observe_characters(
@@ -959,7 +962,7 @@ impl FollowUpDamageTracker {
         }
     }
 
-    fn observe_fuwen_start(
+    fn observe_fuwen_start_candidate(
         &mut self,
         _timestamp: f64,
         entering_character_id: u32,
@@ -967,14 +970,21 @@ impl FollowUpDamageTracker {
         characters: &HashMap<u32, CharacterInfo>,
     ) {
         self.observe_characters([entering_character_id, previous_character_id], characters);
-        self.fuwen_active = true;
-        self.fuwen_opening_character_id = Some(entering_character_id);
-        self.fuwen_opening_pending = true;
-        self.fuwen_effect_started_at = None;
-        self.fuwen_recorded_damage = false;
+        self.fuwen_start_pending = true;
     }
 
-    fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<Hit> {
+    fn observe_fuwen_trigger_hit(&mut self, hit: &Hit) {
+        if hit.direction == "incoming" || hit.attack_type.as_deref() != Some("环合·覆纹") {
+            return;
+        }
+        self.fuwen_active = true;
+        self.fuwen_start_pending = false;
+        self.fuwen_recorded_damage = false;
+        self.pending_hits.clear();
+        self.last_server_hp = None;
+    }
+
+    fn observe_server_hp(&mut self, timestamp: f64, current_hp: f64) -> Option<HitFollowUp> {
         self.pending_hits
             .retain(|pending| timestamp - pending.hit.timestamp <= 1.0);
         let previous_hp = self.last_server_hp.or_else(|| {
@@ -998,6 +1008,9 @@ impl FollowUpDamageTracker {
 
         let actual_damage = previous_hp - current_hp;
         let source = self.pending_hits.pop_front()?.hit;
+        if !hit_can_trigger_fuwen_follow_up(&source) {
+            return None;
+        }
         let residual_damage = actual_damage - source.damage;
         let has_required_team_attributes =
             self.team_attributes.contains("灵") && self.team_attributes.contains("咒");
@@ -1008,58 +1021,35 @@ impl FollowUpDamageTracker {
         if !self.fuwen_active {
             return None;
         }
-        if self.fuwen_opening_pending {
-            if self.fuwen_opening_character_id == Some(source.char_id) {
-                self.fuwen_opening_pending = false;
-                self.fuwen_effect_started_at = Some(source.timestamp);
-            }
-            return None;
-        }
-        if self
-            .fuwen_effect_started_at
-            .is_some_and(|started_at| source.timestamp - started_at > FUWEN_DURATION_SECONDS)
-        {
-            self.clear_fuwen_state();
-            return None;
-        }
         if residual_damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
             return None;
         }
         self.fuwen_recorded_damage = true;
-        Some(Hit {
+        Some(HitFollowUp {
+            source_timestamp: source.timestamp,
+            source_char_id: source.char_id,
+            source_damage: source.damage,
+            source_target_hp_before: source.target_hp_before,
+            source_target_hp_after: source.target_hp_after,
+            source_target_max_hp: source.target_max_hp,
+            source_gameplay_effect_index: source.gameplay_effect_index,
             timestamp,
-            char_id: INFERRED_FOLLOW_UP_CHAR_ID,
-            char_name: "覆纹伤害".to_owned(),
-            char_known: false,
             damage: residual_damage,
-            byte_offset: 0,
-            bit_shift: 0,
-            char_source: "boss_hp_residual".to_owned(),
-            direction: "outgoing".to_owned(),
-            target_hp_before: current_hp + residual_damage,
             target_hp_after: current_hp,
-            target_max_hp: source.target_max_hp,
             target_hp_percent: if source.target_max_hp > 0.0 {
                 current_hp / source.target_max_hp * 100.0
             } else {
                 0.0
             },
-            target_id: None,
-            target_name: None,
-            target_context: Vec::new(),
-            gameplay_effect_index: None,
-            gameplay_effect_name: None,
-            ability_name: None,
             damage_name: Some("覆纹追加攻击".to_owned()),
             attack_type: Some("覆纹".to_owned()),
+            damage_attribute: Some(source_attribute.clone()),
         })
     }
 
     fn clear_fuwen_state(&mut self) {
         self.fuwen_active = false;
-        self.fuwen_opening_character_id = None;
-        self.fuwen_opening_pending = false;
-        self.fuwen_effect_started_at = None;
+        self.fuwen_start_pending = false;
         self.fuwen_recorded_damage = false;
     }
 }
@@ -1180,12 +1170,17 @@ impl PacketDecoder {
         hits: Vec<Hit>,
         declared_ids: &[u32],
         include_incoming: bool,
+        characters: &HashMap<u32, CharacterInfo>,
     ) -> PreparedHits {
         let mut prepared = PreparedHits::default();
-        for hit in hits {
+        for mut hit in hits {
             if !include_incoming && hit.direction == "incoming" {
                 prepared.filtered_incoming += 1;
                 continue;
+            }
+            if gameplay_effect_confirms_session_hit(&hit, declared_ids, characters) {
+                hit.direction = "outgoing".to_owned();
+                hit.char_source = "gameplay_effect".to_owned();
             }
             if is_ambiguous_session_hit(&hit, declared_ids) {
                 self.pending_ambiguous_hits.push(hit);
@@ -1216,8 +1211,33 @@ fn is_ambiguous_session_hit(hit: &Hit, declared_ids: &[u32]) -> bool {
         && hit.gameplay_effect_index.is_some()
 }
 
+fn gameplay_effect_confirms_session_hit(
+    hit: &Hit,
+    declared_ids: &[u32],
+    characters: &HashMap<u32, CharacterInfo>,
+) -> bool {
+    if declared_ids.len() <= 1
+        || hit.char_source != "session"
+        || hit.direction != "unknown"
+        || !declared_ids.contains(&hit.char_id)
+    {
+        return false;
+    }
+    let Some(effect_name) = hit.gameplay_effect_name.as_deref() else {
+        return false;
+    };
+    let Some(character) = characters.get(&hit.char_id) else {
+        return false;
+    };
+    let name = character.name_en.trim();
+    !name.is_empty()
+        && effect_name
+            .to_ascii_lowercase()
+            .contains(&name.to_ascii_lowercase())
+}
+
 fn is_confirmed_packet_hit(hit: &Hit) -> bool {
-    hit.char_source == "packet" && hit.direction == "outgoing"
+    matches!(hit.char_source.as_str(), "packet" | "gameplay_effect") && hit.direction == "outgoing"
 }
 
 fn same_damage_event(left: &Hit, right: &Hit) -> bool {
@@ -1467,8 +1487,10 @@ impl PacketDecoder {
                     hit.attack_type = Some(format!("环合·{reaction_type}"));
                 }
             }
+            self.follow_up_damage.observe_fuwen_trigger_hit(hit);
         }
-        let prepared_hits = self.prepare_hits_for_emission(hits, &ids, include_incoming);
+        let prepared_hits =
+            self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
         for character_id in &ids {
             self.character_declarations.insert(*character_id, timestamp);
         }
@@ -1497,7 +1519,7 @@ impl PacketDecoder {
             None
         };
         if let Some((entering_character_id, previous_character_id)) = fuwen_start {
-            self.follow_up_damage.observe_fuwen_start(
+            self.follow_up_damage.observe_fuwen_start_candidate(
                 timestamp,
                 entering_character_id,
                 previous_character_id,
@@ -1610,7 +1632,7 @@ impl PacketDecoder {
                 )),
             );
         }
-        let inferred_follow_up_hits = boss_hp_updates
+        let inferred_follow_ups = boss_hp_updates
             .iter()
             .filter_map(|update| {
                 self.follow_up_damage
@@ -1656,8 +1678,8 @@ impl PacketDecoder {
             },
         );
         self.emit_hits(prepared_hits.emit, characters, sender);
-        for hit in inferred_follow_up_hits {
-            let _ = sender.send(EngineEvent::Hit(hit));
+        for follow_up in inferred_follow_ups {
+            let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
         }
     }
 }
@@ -1942,6 +1964,18 @@ struct ExportHit {
     damage_name: Option<String>,
     #[serde(default)]
     attack_type: Option<String>,
+    #[serde(default)]
+    damage_attribute: Option<String>,
+    #[serde(default)]
+    follow_up_damage: f64,
+    #[serde(default)]
+    follow_up_timestamp: Option<f64>,
+    #[serde(default)]
+    follow_up_damage_name: Option<String>,
+    #[serde(default)]
+    follow_up_attack_type: Option<String>,
+    #[serde(default)]
+    follow_up_damage_attribute: Option<String>,
 }
 
 fn default_outgoing_direction() -> String {
@@ -2107,6 +2141,12 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
                 attack_type
             }
         }),
+        damage_attribute: hit.damage_attribute,
+        follow_up_damage: hit.follow_up_damage,
+        follow_up_timestamp: hit.follow_up_timestamp,
+        follow_up_damage_name: hit.follow_up_damage_name,
+        follow_up_attack_type: hit.follow_up_attack_type,
+        follow_up_damage_attribute: hit.follow_up_damage_attribute,
     })
 }
 
@@ -2176,8 +2216,8 @@ mod tests {
         ]);
         let mut tracker = FollowUpDamageTracker::default();
         tracker.observe_characters([1, 2], &characters);
-        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
-        activate_fuwen_after_opening(&mut tracker, 0.0);
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
         let mut hit = targetless_hit();
         hit.char_id = 1;
         hit.char_name = "character1".to_owned();
@@ -2197,13 +2237,15 @@ mod tests {
             .observe_server_hp(2.1, 996_150.0)
             .expect("recent pending hit should still resolve follow-up damage");
         assert_eq!(follow_up.damage, 673.0);
-        assert_eq!(follow_up.char_name, "覆纹伤害");
+        assert_eq!(follow_up.source_char_id, 1);
+        assert_eq!(follow_up.source_damage, 3_177.0);
         assert_eq!(follow_up.damage_name.as_deref(), Some("覆纹追加攻击"));
         assert_eq!(follow_up.attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(follow_up.damage_attribute.as_deref(), Some("灵"));
     }
 
     #[test]
-    fn follow_up_requires_fuwen_start_packet() {
+    fn follow_up_requires_visible_fuwen_trigger() {
         let characters = follow_up_test_characters();
         let mut tracker = FollowUpDamageTracker::default();
         tracker.observe_characters([1, 2], &characters);
@@ -2219,11 +2261,50 @@ mod tests {
     }
 
     #[test]
+    fn visible_fuwen_trigger_without_start_packet_records_follow_up() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 2;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+
+        tracker.observe_hit(&hit, None, &characters);
+        let follow_up = tracker
+            .observe_server_hp(0.1, 798_750.0)
+            .expect("visible fuwen trigger should be enough to open follow-up tracking");
+        assert_eq!(follow_up.damage, 250.0);
+        assert_eq!(follow_up.damage_attribute.as_deref(), Some("咒"));
+    }
+
+    #[test]
+    fn creation_flower_does_not_trigger_fuwen_follow_up() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
+        let mut hit = targetless_hit();
+        hit.char_id = 2;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("创生花".to_owned());
+
+        tracker.observe_hit(&hit, None, &characters);
+
+        assert!(tracker.observe_server_hp(0.1, 798_750.0).is_none());
+        assert!(tracker.fuwen_active);
+    }
+
+    #[test]
     fn non_ling_zhou_hit_does_not_end_active_fuwen() {
         let characters = follow_up_test_characters();
         let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
-        activate_fuwen_after_opening(&mut tracker, 0.0);
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
         let mut hit = targetless_hit();
         hit.target_max_hp = 1_000_000.0;
 
@@ -2249,7 +2330,8 @@ mod tests {
     fn zero_residual_does_not_end_active_fuwen_after_recorded_residual() {
         let characters = follow_up_test_characters();
         let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
         let mut hit = targetless_hit();
         hit.char_id = 1;
         hit.target_max_hp = 1_000_000.0;
@@ -2260,7 +2342,6 @@ mod tests {
 
         assert!(tracker.observe_server_hp(0.1, 999_000.0).is_none());
         assert!(tracker.fuwen_active);
-        assert!(!tracker.fuwen_opening_pending);
 
         hit.timestamp = 0.2;
         hit.target_hp_before = 999_000.0;
@@ -2282,37 +2363,31 @@ mod tests {
     }
 
     #[test]
-    fn fuwen_expires_after_duration() {
+    fn fuwen_stays_active_across_long_gaps_until_battle_reset() {
         let characters = follow_up_test_characters();
         let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 0.0);
         let mut hit = targetless_hit();
         hit.char_id = 1;
         hit.target_max_hp = 1_000_000.0;
-        hit.target_hp_before = 1_000_000.0;
+        hit.target_hp_before = 800_000.0;
         hit.damage = 1_000.0;
 
+        hit.timestamp = 60.0;
         tracker.observe_hit(&hit, None, &characters);
-        assert!(tracker.observe_server_hp(0.1, 999_000.0).is_none());
+        let follow_up = tracker
+            .observe_server_hp(60.1, 798_750.0)
+            .expect("fuwen follow-up should not expire just because of a long idle gap");
+        assert_eq!(follow_up.damage, 250.0);
         assert!(tracker.fuwen_active);
-        assert!(!tracker.fuwen_opening_pending);
-
-        hit.timestamp = FUWEN_DURATION_SECONDS + 0.2;
-        hit.target_hp_before = 999_000.0;
-        tracker.observe_hit(&hit, None, &characters);
-        assert!(
-            tracker
-                .observe_server_hp(FUWEN_DURATION_SECONDS + 0.3, 997_750.0)
-                .is_none()
-        );
-        assert!(!tracker.fuwen_active);
     }
 
     #[test]
-    fn pre_opening_zero_residual_does_not_end_fuwen_after_pause() {
+    fn hidden_fuwen_candidate_does_not_record_without_visible_trigger() {
         let characters = follow_up_test_characters();
         let mut tracker = FollowUpDamageTracker::default();
-        tracker.observe_fuwen_start(0.0, 1, 2, &characters);
+        tracker.observe_fuwen_start_candidate(0.0, 1, 2, &characters);
         let mut hit = targetless_hit();
         hit.timestamp = 5.0;
         hit.char_id = 2;
@@ -2323,8 +2398,8 @@ mod tests {
 
         tracker.observe_hit(&hit, None, &characters);
         assert!(tracker.observe_server_hp(5.1, 999_000.0).is_none());
-        assert!(tracker.fuwen_active);
-        assert!(tracker.fuwen_opening_pending);
+        assert!(!tracker.fuwen_active);
+        assert!(tracker.fuwen_start_pending);
 
         hit.char_id = 1;
         hit.timestamp = 5.2;
@@ -2332,8 +2407,19 @@ mod tests {
         hit.attack_type = Some("Q技能".to_owned());
         tracker.observe_hit(&hit, None, &characters);
         assert!(tracker.observe_server_hp(5.3, 998_000.0).is_none());
+        assert!(!tracker.fuwen_active);
+        assert!(tracker.fuwen_start_pending);
+    }
+
+    #[test]
+    fn visible_fuwen_trigger_activates_follow_up_window() {
+        let characters = follow_up_test_characters();
+        let mut tracker = FollowUpDamageTracker::default();
+        tracker.observe_characters([1, 2], &characters);
+        observe_visible_fuwen_trigger(&mut tracker, 1, 5.0);
+
         assert!(tracker.fuwen_active);
-        assert!(!tracker.fuwen_opening_pending);
+        assert!(!tracker.fuwen_start_pending);
     }
 
     #[test]
@@ -2534,6 +2620,12 @@ mod tests {
             ability_name: None,
             damage_name: None,
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 
@@ -2572,9 +2664,16 @@ mod tests {
         ])
     }
 
-    fn activate_fuwen_after_opening(tracker: &mut FollowUpDamageTracker, timestamp: f64) {
-        tracker.fuwen_opening_pending = false;
-        tracker.fuwen_effect_started_at = Some(timestamp);
+    fn observe_visible_fuwen_trigger(
+        tracker: &mut FollowUpDamageTracker,
+        character_id: u32,
+        timestamp: f64,
+    ) {
+        let mut hit = targetless_hit();
+        hit.char_id = character_id;
+        hit.timestamp = timestamp;
+        hit.attack_type = Some("环合·覆纹".to_owned());
+        tracker.observe_fuwen_trigger_hit(&hit);
     }
 
     fn character_evidence_row(character_id: u32) -> [u8; 9] {
@@ -2622,6 +2721,51 @@ mod tests {
         hit
     }
 
+    fn duplicate_test_characters() -> HashMap<u32, CharacterInfo> {
+        HashMap::from([
+            (
+                1010,
+                CharacterInfo {
+                    name_zh: "娜娜莉".to_owned(),
+                    name_en: "Nanally".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("咒".to_owned()),
+                },
+            ),
+            (
+                1020,
+                CharacterInfo {
+                    name_zh: "哈尼娅".to_owned(),
+                    name_en: "Haniel".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("光".to_owned()),
+                },
+            ),
+            (
+                1051,
+                CharacterInfo {
+                    name_zh: "零(女)".to_owned(),
+                    name_en: "Rei".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: Some("灵".to_owned()),
+                },
+            ),
+            (
+                1055,
+                CharacterInfo {
+                    name_zh: "测试角色".to_owned(),
+                    name_en: "Test".to_owned(),
+                    color: None,
+                    avatar: None,
+                    attribute: None,
+                },
+            ),
+        ])
+    }
+
     #[test]
     fn packet_decoder_loads_attack_resources_outside_project_cwd() {
         let decoder = PacketDecoder::default();
@@ -2656,14 +2800,18 @@ mod tests {
         let mut decoder = PacketDecoder::default();
         let candidate = duplicate_test_hit(10.0, "session", "unknown");
 
-        let prepared = decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false);
+        let characters = duplicate_test_characters();
+
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false, &characters);
 
         assert!(prepared.emit.is_empty());
         assert_eq!(prepared.deferred_ambiguous, 1);
         assert_eq!(decoder.pending_ambiguous_hits.len(), 1);
 
         let confirmed = duplicate_test_hit(10.1, "packet", "outgoing");
-        let prepared = decoder.prepare_hits_for_emission(vec![confirmed], &[1051], false);
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![confirmed], &[1051], false, &characters);
 
         assert_eq!(prepared.emit.len(), 1);
         assert_eq!(prepared.suppressed_ambiguous, 1);
@@ -2672,11 +2820,38 @@ mod tests {
     }
 
     #[test]
+    fn gameplay_effect_name_confirms_session_hit_in_multi_character_packet() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut hit = targetless_hit();
+        hit.timestamp = 10.0;
+        hit.char_id = 1020;
+        hit.char_name = "哈尼娅".to_owned();
+        hit.char_source = "session".to_owned();
+        hit.direction = "unknown".to_owned();
+        hit.damage = 6_961.0;
+        hit.gameplay_effect_index = Some(3261);
+        hit.gameplay_effect_name = Some("GE_Player_Haniel_Skill1_Damage".to_owned());
+        hit.attack_type = Some("E技能".to_owned());
+
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![hit], &[1010, 1020], false, &characters);
+
+        assert_eq!(prepared.emit.len(), 1);
+        assert_eq!(prepared.deferred_ambiguous, 0);
+        assert_eq!(prepared.emit[0].direction, "outgoing");
+        assert_eq!(prepared.emit[0].char_source, "gameplay_effect");
+        assert!(decoder.pending_ambiguous_hits.is_empty());
+    }
+
+    #[test]
     fn ambiguous_session_candidate_expires_when_unconfirmed() {
         let mut decoder = PacketDecoder::default();
         let candidate = duplicate_test_hit(10.0, "session", "unknown");
 
-        decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false);
+        let characters = duplicate_test_characters();
+
+        decoder.prepare_hits_for_emission(vec![candidate], &[1051, 1055], false, &characters);
 
         assert!(decoder.take_expired_ambiguous_hits(10.25).is_empty());
         let expired = decoder.take_expired_ambiguous_hits(10.75);

@@ -51,6 +51,46 @@ pub struct Hit {
     pub damage_name: Option<String>,
     #[serde(default)]
     pub attack_type: Option<String>,
+    #[serde(default)]
+    pub damage_attribute: Option<String>,
+    #[serde(default)]
+    pub follow_up_damage: f64,
+    #[serde(default)]
+    pub follow_up_timestamp: Option<f64>,
+    #[serde(default)]
+    pub follow_up_damage_name: Option<String>,
+    #[serde(default)]
+    pub follow_up_attack_type: Option<String>,
+    #[serde(default)]
+    pub follow_up_damage_attribute: Option<String>,
+}
+
+impl Hit {
+    pub fn total_damage(&self) -> f64 {
+        self.damage + self.follow_up_damage
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HitFollowUp {
+    pub source_timestamp: f64,
+    pub source_char_id: u32,
+    pub source_damage: f64,
+    pub source_target_hp_before: f64,
+    pub source_target_hp_after: f64,
+    pub source_target_max_hp: f64,
+    #[serde(default)]
+    pub source_gameplay_effect_index: Option<u32>,
+    pub timestamp: f64,
+    pub damage: f64,
+    pub target_hp_after: f64,
+    pub target_hp_percent: f64,
+    #[serde(default)]
+    pub damage_name: Option<String>,
+    #[serde(default)]
+    pub attack_type: Option<String>,
+    #[serde(default)]
+    pub damage_attribute: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -106,17 +146,18 @@ pub fn summarize_hit_directions<'a>(
 ) -> HitDirectionSummary {
     let mut summary = HitDirectionSummary::default();
     for hit in hits {
+        let damage = hit.total_damage();
         match hit.direction.as_str() {
             "incoming" => {
-                summary.incoming_damage += hit.damage;
+                summary.incoming_damage += damage;
                 summary.incoming_hits += 1;
             }
             "outgoing" => {
-                summary.outgoing_damage += hit.damage;
+                summary.outgoing_damage += damage;
                 summary.outgoing_hits += 1;
             }
             _ => {
-                summary.unknown_damage += hit.damage;
+                summary.unknown_damage += damage;
                 summary.unknown_hits += 1;
             }
         }
@@ -154,16 +195,17 @@ fn update_combat_totals(
         ..Default::default()
     });
     row.name.clone_from(&hit.char_name);
+    let damage = hit.total_damage();
     if hit.direction == "incoming" {
         row.hits_taken += 1;
-        row.damage_taken += hit.damage;
-        *total_damage_taken += hit.damage;
+        row.damage_taken += damage;
+        *total_damage_taken += damage;
         return;
     }
 
     *started_at = Some(started_at.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
     *ended_at = Some(ended_at.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
-    *total_damage += hit.damage;
+    *total_damage += damage;
     if row.hits == 0 {
         row.first_hit = hit.timestamp;
         row.last_hit = hit.timestamp;
@@ -172,7 +214,7 @@ fn update_combat_totals(
         row.last_hit = row.last_hit.max(hit.timestamp);
     }
     row.hits += 1;
-    row.damage += hit.damage;
+    row.damage += damage;
 }
 
 fn rebuild_combat_totals(
@@ -274,6 +316,22 @@ impl PartyCombatState {
                 &mut self.total_damage_taken,
             );
         }
+    }
+
+    pub fn apply_follow_up(&mut self, follow_up: &HitFollowUp) -> bool {
+        let updated = apply_follow_up_to_hits(&mut self.hits, follow_up);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        updated
     }
 
     pub fn duration(&self) -> f64 {
@@ -462,6 +520,23 @@ impl CombatState {
         }
     }
 
+    pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) {
+        let updated = apply_follow_up_to_hits(&mut self.hits, &follow_up);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        self.abyss.first_half.apply_follow_up(&follow_up);
+        self.abyss.second_half.apply_follow_up(&follow_up);
+    }
+
     pub fn push_packet(&mut self, packet: PacketDebug) {
         self.packets.push_back(packet);
         while self.packets.len() > 10_000 {
@@ -492,12 +567,41 @@ impl CombatState {
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Hit),
+    HitFollowUp(HitFollowUp),
     Packet(PacketDebug),
     Abyss(AbyssEvent),
     Status(String),
     Warning(String),
     Error(String),
     CaptureStopped,
+}
+
+fn apply_follow_up_to_hits(hits: &mut VecDeque<Hit>, follow_up: &HitFollowUp) -> bool {
+    let Some(hit) = hits
+        .iter_mut()
+        .rev()
+        .find(|hit| hit_matches_follow_up_source(hit, follow_up))
+    else {
+        return false;
+    };
+    hit.follow_up_damage += follow_up.damage;
+    hit.follow_up_timestamp = Some(follow_up.timestamp);
+    hit.follow_up_damage_name = follow_up.damage_name.clone();
+    hit.follow_up_attack_type = follow_up.attack_type.clone();
+    hit.follow_up_damage_attribute = follow_up.damage_attribute.clone();
+    hit.target_hp_after = follow_up.target_hp_after;
+    hit.target_hp_percent = follow_up.target_hp_percent;
+    true
+}
+
+fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
+    hit.char_id == follow_up.source_char_id
+        && (hit.timestamp - follow_up.source_timestamp).abs() <= 0.001
+        && (hit.damage - follow_up.source_damage).abs() <= 0.5
+        && (hit.target_hp_before - follow_up.source_target_hp_before).abs() <= 0.5
+        && (hit.target_hp_after - follow_up.source_target_hp_after).abs() <= 0.5
+        && (hit.target_max_hp - follow_up.source_target_max_hp).abs() <= 0.5
+        && hit.gameplay_effect_index == follow_up.source_gameplay_effect_index
 }
 
 #[cfg(test)]
@@ -527,6 +631,12 @@ mod tests {
             ability_name: None,
             damage_name: None,
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 
@@ -542,12 +652,12 @@ mod tests {
         let expected_damage: f64 = hits
             .iter()
             .filter(|hit| hit.direction != "incoming")
-            .map(|hit| hit.damage)
+            .map(Hit::total_damage)
             .sum();
         let expected_damage_taken: f64 = hits
             .iter()
             .filter(|hit| hit.direction == "incoming")
-            .map(|hit| hit.damage)
+            .map(Hit::total_damage)
             .sum();
         assert_eq!(total_damage, expected_damage);
         assert_eq!(total_damage_taken, expected_damage_taken);
@@ -569,7 +679,7 @@ mod tests {
                 char_hits
                     .iter()
                     .filter(|hit| hit.direction != "incoming")
-                    .map(|hit| hit.damage)
+                    .map(|hit| hit.total_damage())
                     .sum::<f64>()
             );
             assert_eq!(
@@ -584,7 +694,7 @@ mod tests {
                 char_hits
                     .iter()
                     .filter(|hit| hit.direction == "incoming")
-                    .map(|hit| hit.damage)
+                    .map(|hit| hit.total_damage())
                     .sum::<f64>()
             );
         }
@@ -636,6 +746,43 @@ mod tests {
         assert_eq!(summary.incoming_damage, 25.0);
         assert_eq!(summary.incoming_hits, 1);
         assert!((summary.unknown_share() - 28.571_428_571).abs() < 1e-6);
+    }
+
+    #[test]
+    fn follow_up_damage_merges_into_source_hit_totals() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.gameplay_effect_index = Some(42);
+        state.push_hit(hit);
+
+        state.apply_follow_up(HitFollowUp {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            timestamp: 1.2,
+            damage: 250.0,
+            target_hp_after: 8_750.0,
+            target_hp_percent: 87.5,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
+            damage_attribute: Some("灵".to_owned()),
+        });
+
+        let merged = state.hits.front().unwrap();
+        assert_eq!(merged.damage, 1_000.0);
+        assert_eq!(merged.follow_up_damage, 250.0);
+        assert_eq!(merged.target_hp_after, 8_750.0);
+        assert_eq!(state.total_damage, 1_250.0);
+        let stats = state.stats.get(&7).unwrap();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.damage, 1_250.0);
     }
 
     #[test]

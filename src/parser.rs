@@ -11,7 +11,7 @@ const RECORD_FIELD_LENGTHS: [usize; 10] = [4, 4, 4, 8, 4, 4, 4, 4, 4, 4];
 const MAX_RECORD_FIELD_LENGTH: usize = 8;
 const MIN_DAMAGE: f32 = 2.0;
 const MAX_DAMAGE: f32 = 1_000_000_000.0;
-const MAX_PLAUSIBLE_CHARACTER_HP: f32 = 500_000.0;
+const MAX_PLAUSIBLE_CURRENT_HP_UPDATE: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
 const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
@@ -509,7 +509,8 @@ pub fn parse_current_hp_updates(data: &[u8]) -> Vec<ParsedCurrentHpUpdate> {
             }
             let current_hp =
                 f32::from_le_bytes([decoded[16], decoded[17], decoded[18], decoded[19]]);
-            if !current_hp.is_finite() || !(0.0..=MAX_PLAUSIBLE_CHARACTER_HP).contains(&current_hp)
+            if !current_hp.is_finite()
+                || !(0.0..=MAX_PLAUSIBLE_CURRENT_HP_UPDATE).contains(&current_hp)
             {
                 continue;
             }
@@ -692,6 +693,13 @@ fn damage_record_targets_declared_character(
     })
 }
 
+fn damage_record_has_incoming_state_flags(
+    record: &ParsedDamageRecord,
+    character_id: Option<u32>,
+) -> bool {
+    character_id.is_some() && record.state_flags == [0, 1, 0]
+}
+
 pub fn parse_damage_payload(
     data: &[u8],
     timestamp: f64,
@@ -727,15 +735,16 @@ pub fn parse_damage_payload(
                 }
             });
         let target_hp_after = (target_hp_before - damage).max(0.0);
-        let direction =
-            if damage_record_targets_declared_character(&record, resolved_packet_char_id, evidence)
-            {
-                "incoming"
-            } else if resolved_packet_char_id.is_some() {
-                "outgoing"
-            } else {
-                "unknown"
-            };
+        let targets_declared_character =
+            damage_record_targets_declared_character(&record, resolved_packet_char_id, evidence)
+                || damage_record_has_incoming_state_flags(&record, resolved_packet_char_id);
+        let direction = if targets_declared_character {
+            "incoming"
+        } else if resolved_packet_char_id.is_some() {
+            "outgoing"
+        } else {
+            "unknown"
+        };
         hits.push(Hit {
             timestamp,
             char_id,
@@ -769,6 +778,12 @@ pub fn parse_damage_payload(
             ability_name: None,
             damage_name: None,
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         });
     }
     hits
@@ -778,7 +793,12 @@ pub fn parse_damage_payload(
 mod character_tests {
     use super::*;
 
-    fn encoded_damage_record(damage: f32, target_hp_before: f32, target_max_hp: f32) -> Vec<u8> {
+    fn encoded_damage_record_with_flags(
+        damage: f32,
+        target_hp_before: f32,
+        target_max_hp: f32,
+        state_flags: [i32; 3],
+    ) -> Vec<u8> {
         let fields = [
             (12, damage.to_le_bytes().to_vec()),
             (12, target_hp_before.to_le_bytes().to_vec()),
@@ -786,9 +806,9 @@ mod character_tests {
             (13, 1.0_f64.to_le_bytes().to_vec()),
             (12, 1.0_f32.to_le_bytes().to_vec()),
             (12, damage.to_le_bytes().to_vec()),
-            (6, 0_i32.to_le_bytes().to_vec()),
-            (6, 0_i32.to_le_bytes().to_vec()),
-            (6, 0_i32.to_le_bytes().to_vec()),
+            (6, state_flags[0].to_le_bytes().to_vec()),
+            (6, state_flags[1].to_le_bytes().to_vec()),
+            (6, state_flags[2].to_le_bytes().to_vec()),
             (12, 0.0_f32.to_le_bytes().to_vec()),
         ];
         let mut encoded = Vec::new();
@@ -798,6 +818,10 @@ mod character_tests {
             encoded.extend_from_slice(&value);
         }
         encoded
+    }
+
+    fn encoded_damage_record(damage: f32, target_hp_before: f32, target_max_hp: f32) -> Vec<u8> {
+        encoded_damage_record_with_flags(damage, target_hp_before, target_max_hp, [0, 0, 0])
     }
 
     #[test]
@@ -1006,6 +1030,51 @@ mod character_tests {
     #[test]
     fn low_target_max_hp_without_matching_character_alignment_stays_outgoing() {
         let payload = encoded_damage_record(100.0, 10_000.0, 20_000.0);
+        let evidence = [(1001, 1, 200)];
+        let characters = HashMap::from([(
+            1001,
+            CharacterInfo {
+                name_zh: "Nanally".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].char_id, 1001);
+    }
+
+    #[test]
+    fn incoming_state_flags_mark_known_character_damage_as_incoming() {
+        let payload = encoded_damage_record_with_flags(161.0, 5_388.0, 5_388.0, [0, 1, 0]);
+        let evidence = [(1023, 6, 400)];
+        let characters = HashMap::from([(
+            1023,
+            CharacterInfo {
+                name_zh: "白藏".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        let hits = parse_damage_payload(&payload, 1.0, Some(1023), None, &characters, &evidence);
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].direction, "incoming");
+        assert_eq!(hits[0].char_id, 1023);
+    }
+
+    #[test]
+    fn outgoing_state_flags_do_not_mark_damage_as_incoming_without_target_anchor() {
+        let payload =
+            encoded_damage_record_with_flags(1_604.0, 1_340_986.0, 1_930_389.0, [0, 1, 1]);
         let evidence = [(1001, 1, 200)];
         let characters = HashMap::from([(
             1001,

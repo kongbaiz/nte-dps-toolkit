@@ -91,7 +91,9 @@ impl HitDetailFilter {
             Self::Outgoing => hit.direction != "incoming",
             Self::Incoming => hit.direction == "incoming",
             Self::QteType(attack_type) => {
-                hit.direction != "incoming" && hit.attack_type.as_deref() == Some(attack_type)
+                hit.direction != "incoming"
+                    && (hit.attack_type.as_deref() == Some(attack_type)
+                        || hit.follow_up_attack_type.as_deref() == Some(attack_type))
             }
         }
     }
@@ -180,6 +182,28 @@ const ATTRIBUTE_ICON_PATHS: [(&str, &str); 6] = [
     ("魂", "res/images/attributes/UI_avatarbg_Icon_05.png"),
     ("暗", "res/images/attributes/UI_avatarbg_Icon_03.png"),
     ("相", "res/images/attributes/UI_avatarbg_Icon_02.png"),
+];
+const DAMAGE_DIGIT_IMAGE_DIR: &str = "res/images/font/tiaozi1";
+const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 19] = [
+    ("灵", "ling"),
+    ("咒", "zhou"),
+    ("光", "guang"),
+    ("魂", "hun"),
+    ("暗", "an"),
+    ("相", "xiang"),
+    ("真实", "zhenshi"),
+    ("Guangling_G", "Guangling_G"),
+    ("Guangling_L", "Guangling_L"),
+    ("Guangxiang_G", "Guangxiang_G"),
+    ("Guangxiang_X", "Guangxiang_X"),
+    ("Hunxiang_H", "Hunxiang_H"),
+    ("Hunxiang_X", "Hunxiang_X"),
+    ("Anhun_A", "Anhun_A"),
+    ("Anhun_H", "Anhun_H"),
+    ("Zhouan_A", "Zhouan_A"),
+    ("Zhouan_Z", "Zhouan_Z"),
+    ("lingzhou_L", "lingzhou_L"),
+    ("lingzhou_Z", "lingzhou_Z"),
 ];
 
 struct CharacterEditorState {
@@ -488,6 +512,7 @@ pub struct DpsApp {
     characters: Arc<HashMap<u32, CharacterInfo>>,
     avatar_textures: HashMap<String, egui::TextureHandle>,
     attribute_textures: HashMap<String, egui::TextureHandle>,
+    damage_digit_textures: HashMap<String, Vec<egui::TextureHandle>>,
     state: CombatState,
     selected_abyss_half: AbyssHalf,
     abyss_compact_mode: bool,
@@ -572,6 +597,7 @@ impl DpsApp {
         };
         let avatar_textures = load_character_avatars(&cc.egui_ctx, &data_root, &characters);
         let attribute_textures = load_attribute_icons(&cc.egui_ctx, &data_root);
+        let damage_digit_textures = load_damage_digit_textures(&cc.egui_ctx, &data_root);
         let character_editor =
             CharacterEditorState::load(&characters_path).unwrap_or_else(|error| {
                 CharacterEditorState {
@@ -617,6 +643,7 @@ impl DpsApp {
             characters: Arc::new(characters),
             avatar_textures,
             attribute_textures,
+            damage_digit_textures,
             state: CombatState::default(),
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
@@ -1180,7 +1207,7 @@ impl DpsApp {
                     EngineEvent::Packet(_) => {
                         self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
                     }
-                    EngineEvent::Hit(_) | EngineEvent::Abyss(_) => {
+                    EngineEvent::Hit(_) | EngineEvent::HitFollowUp(_) | EngineEvent::Abyss(_) => {
                         if self.paused_events.len() == MAX_PAUSED_EVENTS {
                             self.paused_events.pop_front();
                         }
@@ -1238,6 +1265,7 @@ impl DpsApp {
     fn apply_engine_event(&mut self, event: EngineEvent) {
         match event {
             EngineEvent::Hit(hit) => self.state.push_hit(hit),
+            EngineEvent::HitFollowUp(follow_up) => self.state.apply_follow_up(follow_up),
             EngineEvent::Packet(packet) => self.state.push_packet(packet),
             EngineEvent::Abyss(event) => {
                 self.character_hit_cache = HitDetailCache::default();
@@ -1585,6 +1613,55 @@ impl DpsApp {
                 &mut out,
                 "      \"damage_name\": {},",
                 hit.damage_name
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"damage_attribute\": {},",
+                hit.damage_attribute
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"follow_up_damage\": {},",
+                json_f64(hit.follow_up_damage)
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"follow_up_timestamp\": {},",
+                hit.follow_up_timestamp
+                    .map_or_else(|| "null".to_owned(), json_f64)
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"follow_up_damage_name\": {},",
+                hit.follow_up_damage_name
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"follow_up_attack_type\": {},",
+                hit.follow_up_attack_type
+                    .as_deref()
+                    .map(json_string)
+                    .unwrap_or_else(|| "null".to_owned())
+            )
+            .ok();
+            writeln!(
+                &mut out,
+                "      \"follow_up_damage_attribute\": {},",
+                hit.follow_up_damage_attribute
                     .as_deref()
                     .map(json_string)
                     .unwrap_or_else(|| "null".to_owned())
@@ -2432,7 +2509,23 @@ impl DpsApp {
                         self.character_hit_cache.source_len,
                         generation.saturating_sub(self.character_hit_cache.generation),
                     ) {
-                        draw_character_hit_row(ui, layout, hit, max_damage);
+                        let damage_digits = damage_digit_textures_for_hit(
+                            hit,
+                            &self.characters,
+                            &self.damage_digit_textures,
+                        );
+                        let follow_up_digits = follow_up_damage_digit_textures_for_hit(
+                            hit,
+                            &self.damage_digit_textures,
+                        );
+                        draw_character_hit_row(
+                            ui,
+                            layout,
+                            hit,
+                            max_damage,
+                            damage_digits,
+                            follow_up_digits,
+                        );
                     }
                 }
             });
@@ -2525,7 +2618,23 @@ impl DpsApp {
                         .get(&hit.char_id)
                         .and_then(|character| character.avatar.as_deref())
                         .and_then(|avatar| self.avatar_textures.get(avatar));
-                    draw_team_hit_row(ui, layout, hit, max_damage, color, avatar_texture);
+                    let damage_digits = damage_digit_textures_for_hit(
+                        hit,
+                        &self.characters,
+                        &self.damage_digit_textures,
+                    );
+                    let follow_up_digits =
+                        follow_up_damage_digit_textures_for_hit(hit, &self.damage_digit_textures);
+                    draw_team_hit_row(
+                        ui,
+                        layout,
+                        hit,
+                        max_damage,
+                        color,
+                        avatar_texture,
+                        damage_digits,
+                        follow_up_digits,
+                    );
                 }
             });
         if self
@@ -3935,6 +4044,29 @@ fn load_attribute_icons(
         .collect()
 }
 
+fn load_damage_digit_textures(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+) -> HashMap<String, Vec<egui::TextureHandle>> {
+    let mut textures = HashMap::new();
+    for (key, prefix) in DAMAGE_DIGIT_TEXTURE_SETS {
+        let digits = (0..=9)
+            .filter_map(|digit| {
+                let path = damage_digit_resource_path(prefix, digit);
+                load_image_texture(ctx, root, &path, "damage-digit")
+            })
+            .collect::<Vec<_>>();
+        if digits.len() == 10 {
+            textures.insert(key.to_owned(), digits);
+        }
+    }
+    textures
+}
+
+fn damage_digit_resource_path(prefix: &str, digit: usize) -> String {
+    format!("{DAMAGE_DIGIT_IMAGE_DIR}/{prefix}_{digit}.png")
+}
+
 fn load_character_avatars(
     ctx: &egui::Context,
     root: &std::path::Path,
@@ -4156,9 +4288,14 @@ fn is_qte_follow_up_damage_type(attack_type: &str) -> bool {
 }
 
 fn is_qte_follow_up_damage_hit(hit: &crate::model::Hit) -> bool {
-    hit.attack_type
+    hit.follow_up_attack_type
         .as_deref()
         .is_some_and(is_qte_follow_up_damage_type)
+        || (!hit.char_known
+            && hit
+                .attack_type
+                .as_deref()
+                .is_some_and(is_qte_follow_up_damage_type))
 }
 
 fn is_party_member_row(row: &CharacterStats, hits: &VecDeque<crate::model::Hit>) -> bool {
@@ -4188,7 +4325,15 @@ fn hit_detail_hover_text(hit: &crate::model::Hit, include_character: bool) -> St
     } else {
         lines.push(hit_type_label(hit).to_owned());
     }
-    lines.push(format!("伤害：{}", format_number(hit.damage)));
+    if hit.follow_up_damage > 0.0 {
+        lines.push(format!(
+            "伤害：{} + {}",
+            format_number(hit.damage),
+            format_number(hit.follow_up_damage)
+        ));
+    } else {
+        lines.push(format!("伤害：{}", format_number(hit.damage)));
+    }
     if hit.target_max_hp > 0.0 {
         lines.push(format!(
             "目标 HP：{} / {}  {:.1}%",
@@ -4224,7 +4369,7 @@ fn aggregate_character_skill_damage(
                 damage: 0.0,
             });
         row.hits += 1;
-        row.damage += hit.damage;
+        row.damage += hit.total_damage();
     }
     let mut rows: Vec<_> = summaries.into_values().collect();
     rows.sort_by(|left, right| {
@@ -4244,10 +4389,9 @@ fn summarize_qte_type_filters(
     for hit in hits.iter().filter(|hit| {
         hit.direction != "incoming" && char_id.is_none_or(|char_id| hit.char_id == char_id)
     }) {
-        let Some(attack_type) = hit.attack_type.as_deref() else {
-            continue;
-        };
-        if is_qte_follow_up_damage_type(attack_type) {
+        if let Some(attack_type) = hit.attack_type.as_deref()
+            && is_qte_follow_up_damage_type(attack_type)
+        {
             let row =
                 summaries
                     .entry(attack_type.to_owned())
@@ -4258,6 +4402,21 @@ fn summarize_qte_type_filters(
                     });
             row.hits += 1;
             row.damage += hit.damage;
+        }
+        if hit.follow_up_damage > 0.0
+            && let Some(attack_type) = hit.follow_up_attack_type.as_deref()
+            && is_qte_follow_up_damage_type(attack_type)
+        {
+            let row =
+                summaries
+                    .entry(attack_type.to_owned())
+                    .or_insert_with(|| QteTypeFilterSummary {
+                        attack_type: attack_type.to_owned(),
+                        hits: 0,
+                        damage: 0.0,
+                    });
+            row.hits += 1;
+            row.damage += hit.follow_up_damage;
         }
     }
     let mut rows = summaries.into_values().collect::<Vec<_>>();
@@ -4469,7 +4628,7 @@ fn cached_hit_row(index: usize, hit: &crate::model::Hit) -> CachedHitRow {
     CachedHitRow {
         index,
         is_incoming,
-        damage: hit.damage,
+        damage: hit.total_damage(),
         char_id: hit.char_id,
         hp_fraction: (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32,
         timestamp: hit.timestamp,
@@ -4489,6 +4648,19 @@ fn resolve_cached_hit<'a>(
     let appended = usize::try_from(appended).unwrap_or(usize::MAX);
     adjusted_cached_index(row.index, source_len, hits.len(), appended)
         .and_then(|index| hits.get(index))
+        .filter(|hit| cached_hit_matches(row, hit))
+        .or_else(|| {
+            hits.get(row.index)
+                .filter(|hit| cached_hit_matches(row, hit))
+        })
+}
+
+fn cached_hit_matches(row: &CachedHitRow, hit: &crate::model::Hit) -> bool {
+    row.char_id == hit.char_id
+        && (row.timestamp - hit.timestamp).abs() <= 0.001
+        && row.byte_offset == hit.byte_offset
+        && row.bit_shift == hit.bit_shift
+        && (row.target_max_hp - hit.target_max_hp).abs() <= 0.5
 }
 
 fn adjusted_cached_index(
@@ -4786,11 +4958,258 @@ fn draw_character_hit_header(ui: &mut egui::Ui, layout: CharacterHitLayout) {
     );
 }
 
+fn damage_digit_textures_for_hit<'a>(
+    hit: &crate::model::Hit,
+    characters: &HashMap<u32, CharacterInfo>,
+    damage_digit_textures: &'a HashMap<String, Vec<egui::TextureHandle>>,
+) -> Option<&'a [egui::TextureHandle]> {
+    damage_digit_key_for_hit(hit, characters)
+        .and_then(|key| damage_digit_textures.get(key))
+        .map(Vec::as_slice)
+}
+
+fn follow_up_damage_digit_textures_for_hit<'a>(
+    hit: &crate::model::Hit,
+    damage_digit_textures: &'a HashMap<String, Vec<egui::TextureHandle>>,
+) -> Option<&'a [egui::TextureHandle]> {
+    follow_up_damage_digit_key_for_hit(hit)
+        .and_then(|key| damage_digit_textures.get(key))
+        .map(Vec::as_slice)
+}
+
+fn damage_digit_key_for_hit<'a>(
+    hit: &'a crate::model::Hit,
+    characters: &'a HashMap<u32, CharacterInfo>,
+) -> Option<&'a str> {
+    let source_attribute = hit.damage_attribute.as_deref().or_else(|| {
+        characters
+            .get(&hit.char_id)
+            .and_then(|character| character.attribute.as_deref())
+    });
+    let attack_type = hit.attack_type.as_deref();
+
+    if attack_type.is_some_and(|attack_type| attack_type == "倾陷伤害")
+        || hit
+            .damage_name
+            .as_deref()
+            .is_some_and(|damage_name| damage_name.contains("倾陷"))
+    {
+        return Some("真实");
+    }
+
+    attack_type
+        .and_then(|attack_type| mixed_damage_digit_key(attack_type, source_attribute?))
+        .or(source_attribute)
+}
+
+fn follow_up_damage_digit_key_for_hit(hit: &crate::model::Hit) -> Option<&str> {
+    let source_attribute = hit.follow_up_damage_attribute.as_deref()?;
+    hit.follow_up_attack_type
+        .as_deref()
+        .and_then(|attack_type| mixed_damage_digit_key(attack_type, source_attribute))
+        .or(Some(source_attribute))
+}
+
+fn mixed_damage_digit_key(attack_type: &str, source_attribute: &str) -> Option<&'static str> {
+    let reaction = attack_type.strip_prefix("环合·").unwrap_or(attack_type);
+    match reaction {
+        "创生" | "创生花" => match source_attribute {
+            "光" => Some("Guangling_G"),
+            "灵" => Some("Guangling_L"),
+            _ => None,
+        },
+        "覆纹" => match source_attribute {
+            "灵" => Some("lingzhou_L"),
+            "咒" => Some("lingzhou_Z"),
+            _ => None,
+        },
+        "延滞" => match source_attribute {
+            "光" => Some("Guangxiang_G"),
+            "相" => Some("Guangxiang_X"),
+            _ => None,
+        },
+        "黯星" => match source_attribute {
+            "暗" => Some("Anhun_A"),
+            "魂" => Some("Anhun_H"),
+            _ => None,
+        },
+        "浊燃" => match source_attribute {
+            "暗" => Some("Zhouan_A"),
+            "咒" => Some("Zhouan_Z"),
+            _ => None,
+        },
+        "盈蓄" => match source_attribute {
+            "光" => Some("Guangling_G"),
+            "灵" => Some("Guangling_L"),
+            "相" => Some("Guangxiang_X"),
+            _ => None,
+        },
+        "失谐" => match source_attribute {
+            "暗" => Some("Anhun_A"),
+            "魂" => Some("Anhun_H"),
+            "咒" => Some("Zhouan_Z"),
+            _ => None,
+        },
+        "魂相" => match source_attribute {
+            "魂" => Some("Hunxiang_H"),
+            "相" => Some("Hunxiang_X"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn draw_damage_number(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    value: f64,
+    damage_digits: Option<&[egui::TextureHandle]>,
+    fallback_color: Color32,
+) -> egui::Rect {
+    let text = damage_number_digits_text(value);
+    let Some(damage_digits) = damage_digits.filter(|digits| digits.len() == 10) else {
+        return draw_damage_number_fallback(ui, rect, &text, fallback_color);
+    };
+    if !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return draw_damage_number_fallback(ui, rect, &text, fallback_color);
+    }
+
+    let base_height = (rect.height() - 10.0).clamp(12.0, 22.0);
+    let Some(base_width) = damage_number_image_width(&text, damage_digits, base_height) else {
+        return draw_damage_number_fallback(ui, rect, &text, fallback_color);
+    };
+    if base_width <= 0.0 {
+        return draw_damage_number_fallback(ui, rect, &text, fallback_color);
+    }
+
+    let height = if base_width > rect.width() {
+        (base_height * rect.width() / base_width).max(10.0)
+    } else {
+        base_height
+    };
+    let Some(total_width) = damage_number_image_width(&text, damage_digits, height) else {
+        return draw_damage_number_fallback(ui, rect, &text, fallback_color);
+    };
+
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+    let mut cursor = rect.left();
+    let top = rect.center().y - height * 0.5;
+    let drawn_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), top),
+        egui::vec2(total_width, height),
+    );
+    for digit in text.bytes().map(|byte| (byte - b'0') as usize) {
+        let texture = &damage_digits[digit];
+        let size = texture.size_vec2();
+        if size.y <= 0.0 {
+            return draw_damage_number_fallback(ui, rect, &text, fallback_color);
+        }
+        let width = size.x / size.y * height;
+        let digit_rect =
+            egui::Rect::from_min_size(egui::pos2(cursor, top), egui::vec2(width, height));
+        painter.image(
+            texture.id(),
+            digit_rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        cursor += width;
+        if cursor - rect.left() >= total_width {
+            break;
+        }
+    }
+    drawn_rect
+}
+
+fn damage_number_image_width(
+    text: &str,
+    damage_digits: &[egui::TextureHandle],
+    height: f32,
+) -> Option<f32> {
+    let mut width = 0.0;
+    for digit in text.bytes().map(|byte| (byte - b'0') as usize) {
+        let size = damage_digits.get(digit)?.size_vec2();
+        if size.y <= 0.0 {
+            return None;
+        }
+        width += size.x / size.y * height;
+    }
+    Some(width)
+}
+
+fn damage_number_digits_text(value: f64) -> String {
+    let rounded = value.round() as i64;
+    if rounded < 0 {
+        format!("-{}", rounded.unsigned_abs())
+    } else {
+        rounded.to_string()
+    }
+}
+
+fn draw_damage_number_fallback(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    text: &str,
+    color: Color32,
+) -> egui::Rect {
+    ui.painter().with_clip_rect(rect).text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::monospace(15.0),
+        color,
+    );
+    let width = ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap(text.to_owned(), egui::FontId::monospace(15.0), color)
+            .size()
+            .x
+    });
+    egui::Rect::from_center_size(
+        egui::pos2(rect.left() + width * 0.5, rect.center().y),
+        egui::vec2(width, 18.0),
+    )
+}
+
+fn draw_follow_up_damage_badge(
+    ui: &egui::Ui,
+    damage_cell_rect: egui::Rect,
+    base_damage_rect: egui::Rect,
+    hit: &crate::model::Hit,
+    damage_digits: Option<&[egui::TextureHandle]>,
+    fallback_color: Color32,
+) {
+    if hit.follow_up_damage <= 0.0 {
+        return;
+    }
+    let badge_height = 15.0_f32.min((damage_cell_rect.height() - 8.0).max(12.0));
+    let text = damage_number_digits_text(hit.follow_up_damage);
+    let width = damage_digits
+        .filter(|digits| digits.len() == 10)
+        .and_then(|digits| damage_number_image_width(&text, digits, badge_height))
+        .unwrap_or_else(|| (text.chars().count() as f32 * 8.0).max(16.0));
+    let left = (base_damage_rect.right() - width * 0.18)
+        .max(damage_cell_rect.left())
+        .min((damage_cell_rect.right() - width).max(damage_cell_rect.left()));
+    let top = (base_damage_rect.top() - badge_height * 0.35).max(damage_cell_rect.top() + 1.0);
+    let badge_rect =
+        egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, badge_height));
+    draw_damage_number(
+        ui,
+        badge_rect,
+        hit.follow_up_damage,
+        damage_digits,
+        fallback_color,
+    );
+}
+
 fn draw_character_hit_row(
     ui: &mut egui::Ui,
     layout: CharacterHitLayout,
     hit: &crate::model::Hit,
     max_damage: f64,
+    damage_digits: Option<&[egui::TextureHandle]>,
+    follow_up_damage_digits: Option<&[egui::TextureHandle]>,
 ) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
@@ -4811,7 +5230,7 @@ fn draw_character_hit_row(
             Color32::from_rgba_unmultiplied(0, 0, 0, 5)
         },
     );
-    let damage_fraction = (hit.damage / max_damage).clamp(0.0, 1.0) as f32;
+    let damage_fraction = (hit.total_damage() / max_damage).clamp(0.0, 1.0) as f32;
     ui.painter().rect_filled(
         egui::Rect::from_min_size(
             rect.min,
@@ -4859,11 +5278,23 @@ fn draw_character_hit_row(
         egui::Align::Center,
         None,
     );
-    painter.text(
-        egui::pos2(x + layout.damage_x, y),
-        egui::Align2::LEFT_CENTER,
-        format_number(hit.damage),
-        egui::FontId::monospace(15.0),
+    let damage_cell_rect = egui::Rect::from_min_max(
+        egui::pos2(x + layout.damage_x, rect.top()),
+        egui::pos2(x + layout.hp_x - 8.0, rect.bottom()),
+    );
+    let base_damage_rect = draw_damage_number(
+        ui,
+        damage_cell_rect,
+        hit.damage,
+        damage_digits,
+        damage_color,
+    );
+    draw_follow_up_damage_badge(
+        ui,
+        damage_cell_rect,
+        base_damage_rect,
+        hit,
+        follow_up_damage_digits,
         damage_color,
     );
     let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
@@ -4926,6 +5357,8 @@ fn draw_team_hit_row(
     max_damage: f64,
     character_color: Color32,
     avatar_texture: Option<&egui::TextureHandle>,
+    damage_digits: Option<&[egui::TextureHandle]>,
+    follow_up_damage_digits: Option<&[egui::TextureHandle]>,
 ) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
@@ -4946,7 +5379,7 @@ fn draw_team_hit_row(
             Color32::from_rgba_unmultiplied(0, 0, 0, 5)
         },
     );
-    let damage_fraction = (hit.damage / max_damage).clamp(0.0, 1.0) as f32;
+    let damage_fraction = (hit.total_damage() / max_damage).clamp(0.0, 1.0) as f32;
     ui.painter().rect_filled(
         egui::Rect::from_min_size(
             rect.min,
@@ -5025,16 +5458,29 @@ fn draw_team_hit_row(
         egui::Align::Center,
         None,
     );
-    painter.text(
-        egui::pos2(x + layout.damage_x, y),
-        egui::Align2::LEFT_CENTER,
-        format_number(hit.damage),
-        egui::FontId::monospace(15.0),
-        if incoming {
-            semantic_danger(ui.visuals().dark_mode)
-        } else {
-            hit_output_text_color(ui.visuals().dark_mode)
-        },
+    let follow_up_color = if incoming {
+        semantic_danger(ui.visuals().dark_mode)
+    } else {
+        hit_output_text_color(ui.visuals().dark_mode)
+    };
+    let damage_cell_rect = egui::Rect::from_min_max(
+        egui::pos2(x + layout.damage_x, rect.top()),
+        egui::pos2(x + layout.hp_x - 8.0, rect.bottom()),
+    );
+    let base_damage_rect = draw_damage_number(
+        ui,
+        damage_cell_rect,
+        hit.damage,
+        damage_digits,
+        follow_up_color,
+    );
+    draw_follow_up_damage_badge(
+        ui,
+        damage_cell_rect,
+        base_damage_rect,
+        hit,
+        follow_up_damage_digits,
+        follow_up_color,
     );
 
     let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
@@ -6307,16 +6753,18 @@ fn data_root() -> PathBuf {
 mod tests {
     use super::{
         BASE64, DpsApp, EncryptedIniKey, HitDetailFilter, QteTypeFilterSummary, UiConfigSavePlan,
-        adjusted_cached_index, decrypt_encrypted_ini_text, encrypt_aes256_ecb,
-        encrypt_encrypted_ini_records, encrypt_encrypted_ini_text, encrypted_ini_search_matches,
-        encrypted_ini_text_fingerprint, hit_detail_filter_available, hit_type_label,
+        adjusted_cached_index, cached_hit_row, damage_digit_key_for_hit,
+        damage_digit_resource_path, damage_number_digits_text, decrypt_encrypted_ini_text,
+        encrypt_aes256_ecb, encrypt_encrypted_ini_records, encrypt_encrypted_ini_text,
+        encrypted_ini_search_matches, encrypted_ini_text_fingerprint,
+        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_label,
         is_party_member_row, parse_encrypted_ini_text, pkcs7_pad, qte_type_filter_label,
-        summarize_qte_type_filters,
+        resolve_cached_hit, summarize_qte_type_filters,
     };
     use crate::config::UiConfig;
-    use crate::model::{CharacterStats, Hit};
+    use crate::model::{CharacterInfo, CharacterStats, Hit};
     use base64::Engine as _;
-    use std::collections::VecDeque;
+    use std::collections::{HashMap, VecDeque};
     use std::time::{Duration, Instant};
 
     fn hit_with_direction(direction: &str) -> Hit {
@@ -6342,6 +6790,12 @@ mod tests {
             ability_name: None,
             damage_name: Some("招式".to_owned()),
             attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 
@@ -6356,6 +6810,18 @@ mod tests {
             adjusted_cached_index(9_000, 10_000, 10_020, 20),
             Some(9_000)
         );
+    }
+
+    #[test]
+    fn cached_hit_resolves_when_generation_changes_without_appending() {
+        let hit = hit_with_direction("outgoing");
+        let row = cached_hit_row(0, &hit);
+        let mut hits = VecDeque::from([hit]);
+        hits[0].follow_up_damage = 921.0;
+
+        let resolved = resolve_cached_hit(&hits, &row, 1, 1)
+            .expect("same-index hit should resolve after in-place follow-up update");
+        assert_eq!(resolved.follow_up_damage, 921.0);
     }
 
     #[test]
@@ -6408,6 +6874,24 @@ mod tests {
     }
 
     #[test]
+    fn qte_type_filters_include_merged_follow_up_damage() {
+        let mut source = hit_with_direction("outgoing");
+        source.attack_type = Some("Q技能".to_owned());
+        source.follow_up_damage = 921.0;
+        source.follow_up_attack_type = Some("覆纹".to_owned());
+        source.follow_up_damage_attribute = Some("咒".to_owned());
+
+        let hits = VecDeque::from([source]);
+        let summaries = summarize_qte_type_filters(&hits, None);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].attack_type, "覆纹");
+        assert_eq!(summaries[0].hits, 1);
+        assert_eq!(summaries[0].damage, 921.0);
+        assert!(HitDetailFilter::QteType("覆纹".to_owned()).matches(&hits[0]));
+    }
+
+    #[test]
     fn qte_type_filter_matches_only_that_attack_type() {
         let filter = HitDetailFilter::QteType("覆纹".to_owned());
         let mut matching = hit_with_direction("outgoing");
@@ -6434,6 +6918,53 @@ mod tests {
             qte_type_filter_label(&summary, 1_928_356.0),
             "覆纹 77,136 · 4.0%"
         );
+    }
+
+    #[test]
+    fn damage_digit_text_uses_plain_digits_for_image_rendering() {
+        assert_eq!(damage_number_digits_text(77_136.2), "77136");
+        assert_eq!(damage_number_digits_text(77_136.8), "77137");
+        assert_eq!(
+            damage_digit_resource_path("guang", 7),
+            "res/images/font/tiaozi1/guang_7.png"
+        );
+    }
+
+    #[test]
+    fn damage_digit_key_prefers_special_damage_types() {
+        let characters = HashMap::from([(
+            1,
+            CharacterInfo {
+                name_zh: "角色".to_owned(),
+                name_en: String::new(),
+                color: None,
+                avatar: None,
+                attribute: Some("灵".to_owned()),
+            },
+        )]);
+        let mut hit = hit_with_direction("outgoing");
+        assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("灵"));
+
+        hit.attack_type = Some("倾陷伤害".to_owned());
+        assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("真实"));
+
+        hit.attack_type = Some("覆纹".to_owned());
+        hit.damage_attribute = Some("咒".to_owned());
+        assert_eq!(
+            damage_digit_key_for_hit(&hit, &characters),
+            Some("lingzhou_Z")
+        );
+
+        hit.attack_type = Some("创生花".to_owned());
+        hit.damage_attribute = Some("光".to_owned());
+        assert_eq!(
+            damage_digit_key_for_hit(&hit, &characters),
+            Some("Guangling_G")
+        );
+
+        hit.follow_up_attack_type = Some("覆纹".to_owned());
+        hit.follow_up_damage_attribute = Some("咒".to_owned());
+        assert_eq!(follow_up_damage_digit_key_for_hit(&hit), Some("lingzhou_Z"));
     }
 
     #[test]
