@@ -1368,6 +1368,17 @@ fn enrich_hit_with_gameplay_effect(
     } else {
         hit.attack_type = Some(classify_attack_type(None, effect_name, None));
     }
+    if is_vehicle_physical_damage_effect(effect_name) {
+        hit.direction = "outgoing".to_owned();
+        hit.damage_attribute = Some("物理".to_owned());
+        hit.attack_type = Some("载具伤害".to_owned());
+    }
+}
+
+fn is_vehicle_physical_damage_effect(effect_name: &str) -> bool {
+    effect_name.starts_with("GE_Vehicle_HitOut")
+        || effect_name.starts_with("GE_VehicleCombatDamage")
+        || effect_name == "GE_Player_VehicleExplode_HitOut"
 }
 
 fn resolve_damage_name(
@@ -2563,6 +2574,30 @@ mod tests {
             _ => panic!("expected packet event"),
         }
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn vehicle_hitout_is_outgoing_physical_damage() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 1845,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(1845, "GE_Vehicle_HitOut2".to_owned())]);
+        let mut hit = targetless_hit();
+        hit.direction = "incoming".to_owned();
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+
+        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.attack_type.as_deref(), Some("载具伤害"));
+        assert_eq!(hit.damage_attribute.as_deref(), Some("物理"));
     }
 
     #[test]

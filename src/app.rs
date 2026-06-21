@@ -184,13 +184,15 @@ const ATTRIBUTE_ICON_PATHS: [(&str, &str); 6] = [
     ("相", "res/images/attributes/UI_avatarbg_Icon_02.png"),
 ];
 const DAMAGE_DIGIT_IMAGE_DIR: &str = "res/images/font/tiaozi1";
-const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 19] = [
+const REACTION_TEXT_IMAGE_COUNT: u8 = 8;
+const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 20] = [
     ("灵", "ling"),
     ("咒", "zhou"),
     ("光", "guang"),
     ("魂", "hun"),
     ("暗", "an"),
     ("相", "xiang"),
+    ("物理", "wuli"),
     ("真实", "zhenshi"),
     ("Guangling_G", "Guangling_G"),
     ("Guangling_L", "Guangling_L"),
@@ -513,6 +515,7 @@ pub struct DpsApp {
     avatar_textures: HashMap<String, egui::TextureHandle>,
     attribute_textures: HashMap<String, egui::TextureHandle>,
     damage_digit_textures: HashMap<String, Vec<egui::TextureHandle>>,
+    reaction_textures: HashMap<u8, Vec<egui::TextureHandle>>,
     state: CombatState,
     selected_abyss_half: AbyssHalf,
     abyss_compact_mode: bool,
@@ -598,6 +601,7 @@ impl DpsApp {
         let avatar_textures = load_character_avatars(&cc.egui_ctx, &data_root, &characters);
         let attribute_textures = load_attribute_icons(&cc.egui_ctx, &data_root);
         let damage_digit_textures = load_damage_digit_textures(&cc.egui_ctx, &data_root);
+        let reaction_textures = load_reaction_text_textures(&cc.egui_ctx, &data_root);
         let character_editor =
             CharacterEditorState::load(&characters_path).unwrap_or_else(|error| {
                 CharacterEditorState {
@@ -644,6 +648,7 @@ impl DpsApp {
             avatar_textures,
             attribute_textures,
             damage_digit_textures,
+            reaction_textures,
             state: CombatState::default(),
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
@@ -2525,6 +2530,7 @@ impl DpsApp {
                             max_damage,
                             damage_digits,
                             follow_up_digits,
+                            &self.reaction_textures,
                         );
                     }
                 }
@@ -2634,6 +2640,7 @@ impl DpsApp {
                         avatar_texture,
                         damage_digits,
                         follow_up_digits,
+                        &self.reaction_textures,
                     );
                 }
             });
@@ -4063,6 +4070,25 @@ fn load_damage_digit_textures(
     textures
 }
 
+fn load_reaction_text_textures(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+) -> HashMap<u8, Vec<egui::TextureHandle>> {
+    let mut textures = HashMap::new();
+    for reaction in 1..=REACTION_TEXT_IMAGE_COUNT {
+        let glyphs = (1..=2)
+            .filter_map(|part| {
+                let path = format!("{DAMAGE_DIGIT_IMAGE_DIR}/fanying{reaction:02}_{part:02}.png");
+                load_image_texture(ctx, root, &path, "reaction-text")
+            })
+            .collect::<Vec<_>>();
+        if glyphs.len() == 2 {
+            textures.insert(reaction, glyphs);
+        }
+    }
+    textures
+}
+
 fn damage_digit_resource_path(prefix: &str, digit: usize) -> String {
     format!("{DAMAGE_DIGIT_IMAGE_DIR}/{prefix}_{digit}.png")
 }
@@ -4315,6 +4341,26 @@ fn hit_type_label(hit: &crate::model::Hit) -> &str {
         "incoming" => "受击",
         "unknown" => "候选输出",
         _ => hit_specific_type(hit),
+    }
+}
+
+fn reaction_text_key_for_hit(hit: &crate::model::Hit) -> Option<u8> {
+    hit.attack_type
+        .as_deref()
+        .and_then(reaction_text_key_from_trigger_attack_type)
+}
+
+fn reaction_text_key_from_trigger_attack_type(attack_type: &str) -> Option<u8> {
+    let reaction = attack_type.strip_prefix("环合·")?;
+    match reaction {
+        "创生" | "创生花" => Some(1),
+        "覆纹" => Some(2),
+        "黯星" => Some(3),
+        "浊燃" | "灼燃" => Some(4),
+        "延滞" => Some(6),
+        "盈蓄" => Some(7),
+        "失谐" => Some(8),
+        _ => None,
     }
 }
 
@@ -5210,6 +5256,7 @@ fn draw_character_hit_row(
     max_damage: f64,
     damage_digits: Option<&[egui::TextureHandle]>,
     follow_up_damage_digits: Option<&[egui::TextureHandle]>,
+    reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
 ) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
@@ -5269,15 +5316,7 @@ fn draw_character_hit_row(
         egui::pos2(x + layout.type_x + (layout.type_width - 20.0) * 0.5, y),
         egui::vec2(layout.type_width - 20.0, 24.0),
     );
-    draw_clipped_label(
-        ui,
-        badge_rect.shrink2(egui::vec2(8.0, 0.0)),
-        hit_type_label(hit),
-        egui::FontId::proportional(12.0),
-        contrast_text(type_color),
-        egui::Align::Center,
-        None,
-    );
+    draw_hit_type_badge_content(ui, badge_rect, hit, type_color, reaction_textures);
     let damage_cell_rect = egui::Rect::from_min_max(
         egui::pos2(x + layout.damage_x, rect.top()),
         egui::pos2(x + layout.hp_x - 8.0, rect.bottom()),
@@ -5350,6 +5389,75 @@ fn draw_team_hit_header(ui: &mut egui::Ui, layout: TeamHitLayout) {
     }
 }
 
+fn draw_hit_type_badge_content(
+    ui: &mut egui::Ui,
+    badge_rect: egui::Rect,
+    hit: &crate::model::Hit,
+    type_color: Color32,
+    reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
+) {
+    if hit.direction == "outgoing"
+        && let Some(textures) =
+            reaction_text_key_for_hit(hit).and_then(|key| reaction_textures.get(&key))
+        && textures.len() == 2
+    {
+        draw_reaction_text_images(ui, badge_rect.shrink2(egui::vec2(8.0, 3.0)), textures);
+        return;
+    }
+    draw_clipped_label(
+        ui,
+        badge_rect.shrink2(egui::vec2(8.0, 0.0)),
+        hit_type_label(hit),
+        egui::FontId::proportional(12.0),
+        contrast_text(type_color),
+        egui::Align::Center,
+        None,
+    );
+}
+
+fn draw_reaction_text_images(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    textures: &[egui::TextureHandle],
+) {
+    let gap = 2.0;
+    let mut height = rect.height().min(19.0).max(1.0);
+    let mut widths = textures
+        .iter()
+        .map(|texture| {
+            let size = texture.size_vec2();
+            if size.y > 0.0 {
+                size.x / size.y * height
+            } else {
+                height
+            }
+        })
+        .collect::<Vec<_>>();
+    let total_width = widths.iter().sum::<f32>() + gap * (widths.len().saturating_sub(1) as f32);
+    if total_width > rect.width() && total_width > 0.0 {
+        let scale = rect.width() / total_width;
+        height *= scale;
+        for width in &mut widths {
+            *width *= scale;
+        }
+    }
+    let total_width = widths.iter().sum::<f32>() + gap * (widths.len().saturating_sub(1) as f32);
+    let mut left = rect.center().x - total_width * 0.5;
+    let top = rect.center().y - height * 0.5;
+    let painter = ui.painter().with_clip_rect(rect);
+    for (texture, width) in textures.iter().zip(widths) {
+        let image_rect =
+            egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, height));
+        painter.image(
+            texture.id(),
+            image_rect,
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        left += width + gap;
+    }
+}
+
 fn draw_team_hit_row(
     ui: &mut egui::Ui,
     layout: TeamHitLayout,
@@ -5359,6 +5467,7 @@ fn draw_team_hit_row(
     avatar_texture: Option<&egui::TextureHandle>,
     damage_digits: Option<&[egui::TextureHandle]>,
     follow_up_damage_digits: Option<&[egui::TextureHandle]>,
+    reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
 ) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
@@ -5449,15 +5558,7 @@ fn draw_team_hit_row(
         egui::vec2(layout.type_width - 20.0, 24.0),
     );
     painter.rect_filled(badge_rect, 10.0, type_color);
-    draw_clipped_label(
-        ui,
-        badge_rect.shrink2(egui::vec2(8.0, 0.0)),
-        hit_type_label(hit),
-        egui::FontId::proportional(12.0),
-        contrast_text(type_color),
-        egui::Align::Center,
-        None,
-    );
+    draw_hit_type_badge_content(ui, badge_rect, hit, type_color, reaction_textures);
     let follow_up_color = if incoming {
         semantic_danger(ui.visuals().dark_mode)
     } else {
@@ -6759,7 +6860,8 @@ mod tests {
         encrypted_ini_search_matches, encrypted_ini_text_fingerprint,
         follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_label,
         is_party_member_row, parse_encrypted_ini_text, pkcs7_pad, qte_type_filter_label,
-        resolve_cached_hit, summarize_qte_type_filters,
+        reaction_text_key_for_hit, reaction_text_key_from_trigger_attack_type, resolve_cached_hit,
+        summarize_qte_type_filters,
     };
     use crate::config::UiConfig;
     use crate::model::{CharacterInfo, CharacterStats, Hit};
@@ -6836,6 +6938,44 @@ mod tests {
         assert!(!incoming.is_empty());
         assert!(!unknown.is_empty());
         assert_ne!(unknown, incoming);
+    }
+
+    #[test]
+    fn reaction_text_key_only_marks_reaction_trigger_hits() {
+        assert_eq!(
+            reaction_text_key_from_trigger_attack_type("环合·覆纹"),
+            Some(2)
+        );
+        assert_eq!(reaction_text_key_from_trigger_attack_type("覆纹"), None);
+        assert_eq!(reaction_text_key_from_trigger_attack_type("创生花"), None);
+        assert_eq!(
+            reaction_text_key_from_trigger_attack_type("环合·黯星"),
+            Some(3)
+        );
+        assert_eq!(
+            reaction_text_key_from_trigger_attack_type("环合·浊燃"),
+            Some(4)
+        );
+        assert_eq!(
+            reaction_text_key_from_trigger_attack_type("环合·延滞"),
+            Some(6)
+        );
+        assert_eq!(
+            reaction_text_key_from_trigger_attack_type("环合·盈蓄"),
+            Some(7)
+        );
+        assert_eq!(
+            reaction_text_key_from_trigger_attack_type("环合·失谐"),
+            Some(8)
+        );
+
+        let mut hit = hit_with_direction("outgoing");
+        hit.gameplay_effect_name = Some("GE_ActorReaction_1_Damage".to_owned());
+        hit.attack_type = Some("创生花".to_owned());
+        assert_eq!(reaction_text_key_for_hit(&hit), None);
+
+        hit.attack_type = Some("环合·覆纹".to_owned());
+        assert_eq!(reaction_text_key_for_hit(&hit), Some(2));
     }
 
     #[test]
@@ -6961,6 +7101,9 @@ mod tests {
             damage_digit_key_for_hit(&hit, &characters),
             Some("Guangling_G")
         );
+        hit.attack_type = Some("载具伤害".to_owned());
+        hit.damage_attribute = Some("物理".to_owned());
+        assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("物理"));
 
         hit.follow_up_attack_type = Some("覆纹".to_owned());
         hit.follow_up_damage_attribute = Some("咒".to_owned());
