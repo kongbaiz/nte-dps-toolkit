@@ -299,7 +299,6 @@ pub fn classify_attack_type_from_description(description: &str) -> Option<String
 pub fn qte_reaction_type(
     previous_attribute: &str,
     entering_attribute: &str,
-    _team_attributes: &HashSet<String>,
 ) -> Option<&'static str> {
     let has_pair = |left: &str, right: &str| {
         (previous_attribute == left && entering_attribute == right)
@@ -959,18 +958,15 @@ mod character_tests {
     }
 
     #[test]
-    fn classifies_qte_reaction_from_participant_and_team_attributes() {
-        let attributes = ["灵", "咒", "暗"].into_iter().map(str::to_owned).collect();
-        assert_eq!(qte_reaction_type("暗", "咒", &attributes), Some("浊燃"));
-        assert_eq!(qte_reaction_type("灵", "咒", &attributes), Some("覆纹"));
+    fn classifies_qte_reaction_from_participant_attributes() {
+        assert_eq!(qte_reaction_type("暗", "咒"), Some("浊燃"));
+        assert_eq!(qte_reaction_type("灵", "咒"), Some("覆纹"));
 
-        let accumulation = ["光", "灵", "相"].into_iter().map(str::to_owned).collect();
-        assert_eq!(qte_reaction_type("光", "灵", &accumulation), Some("创生"));
-        assert_eq!(qte_reaction_type("光", "相", &accumulation), Some("延滞"));
+        assert_eq!(qte_reaction_type("光", "灵"), Some("创生"));
+        assert_eq!(qte_reaction_type("光", "相"), Some("延滞"));
 
-        let discord = ["暗", "魂", "咒"].into_iter().map(str::to_owned).collect();
-        assert_eq!(qte_reaction_type("暗", "咒", &discord), Some("浊燃"));
-        assert_eq!(qte_reaction_type("暗", "魂", &discord), Some("黯星"));
+        assert_eq!(qte_reaction_type("暗", "咒"), Some("浊燃"));
+        assert_eq!(qte_reaction_type("暗", "魂"), Some("黯星"));
     }
 
     #[test]

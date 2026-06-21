@@ -1489,11 +1489,8 @@ impl PacketDecoder {
                     .and_then(|character| character.attribute.as_deref());
                 if let (Some(previous_attribute), Some(entering_attribute)) =
                     (previous_attribute, entering_attribute)
-                    && let Some(reaction_type) = qte_reaction_type(
-                        previous_attribute,
-                        entering_attribute,
-                        &self.follow_up_damage.team_attributes,
-                    )
+                    && let Some(reaction_type) =
+                        qte_reaction_type(previous_attribute, entering_attribute)
                 {
                     hit.attack_type = Some(format!("环合·{reaction_type}"));
                 }
@@ -1510,6 +1507,7 @@ impl PacketDecoder {
         let accepted = prepared_hits.emit.len();
         let preview_len = payload.len().min(96);
         let payload_hex = hex::encode(payload);
+        // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
         let current_hp_updates = if outgoing {
             Vec::new()
         } else {
