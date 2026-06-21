@@ -9,7 +9,6 @@
 .env
 /tools/.venv/
 /tools/.python-version
-/tools/README.md
 __pycache__/
 *.py[cod]
 .ruff_cache/
