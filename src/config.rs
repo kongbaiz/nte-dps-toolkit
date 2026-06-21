@@ -13,6 +13,7 @@ pub struct UiConfig {
     pub opacity: f32,
     pub dark_mode: bool,
     pub always_on_top: bool,
+    pub server_damage_calibration: bool,
 }
 
 impl Default for UiConfig {
@@ -22,6 +23,7 @@ impl Default for UiConfig {
             opacity: 0.92,
             dark_mode: false,
             always_on_top: true,
+            server_damage_calibration: false,
         }
     }
 }

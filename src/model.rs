@@ -93,6 +93,22 @@ pub struct HitFollowUp {
     pub damage_attribute: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HitDamageCorrection {
+    pub source_timestamp: f64,
+    pub source_char_id: u32,
+    pub source_damage: f64,
+    pub source_target_hp_before: f64,
+    pub source_target_hp_after: f64,
+    pub source_target_max_hp: f64,
+    #[serde(default)]
+    pub source_gameplay_effect_index: Option<u32>,
+    pub damage: f64,
+    pub target_hp_before: f64,
+    pub target_hp_after: f64,
+    pub target_hp_percent: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct PacketDebug {
     pub timestamp: f64,
@@ -334,6 +350,22 @@ impl PartyCombatState {
         updated
     }
 
+    pub fn apply_damage_correction(&mut self, correction: &HitDamageCorrection) -> bool {
+        let updated = apply_damage_correction_to_hits(&mut self.hits, correction);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        updated
+    }
+
     pub fn duration(&self) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => (end - start).max(0.001),
@@ -537,6 +569,23 @@ impl CombatState {
         self.abyss.second_half.apply_follow_up(&follow_up);
     }
 
+    pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) {
+        let updated = apply_damage_correction_to_hits(&mut self.hits, &correction);
+        if updated {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+        self.abyss.first_half.apply_damage_correction(&correction);
+        self.abyss.second_half.apply_damage_correction(&correction);
+    }
+
     pub fn push_packet(&mut self, packet: PacketDebug) {
         self.packets.push_back(packet);
         while self.packets.len() > 10_000 {
@@ -568,6 +617,7 @@ impl CombatState {
 pub enum EngineEvent {
     Hit(Hit),
     HitFollowUp(HitFollowUp),
+    HitDamageCorrection(HitDamageCorrection),
     Packet(PacketDebug),
     Abyss(AbyssEvent),
     Status(String),
@@ -594,6 +644,24 @@ fn apply_follow_up_to_hits(hits: &mut VecDeque<Hit>, follow_up: &HitFollowUp) ->
     true
 }
 
+fn apply_damage_correction_to_hits(
+    hits: &mut VecDeque<Hit>,
+    correction: &HitDamageCorrection,
+) -> bool {
+    let Some(hit) = hits
+        .iter_mut()
+        .rev()
+        .find(|hit| hit_matches_damage_correction_source(hit, correction))
+    else {
+        return false;
+    };
+    hit.damage = correction.damage;
+    hit.target_hp_before = correction.target_hp_before;
+    hit.target_hp_after = correction.target_hp_after;
+    hit.target_hp_percent = correction.target_hp_percent;
+    true
+}
+
 fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
     hit.char_id == follow_up.source_char_id
         && (hit.timestamp - follow_up.source_timestamp).abs() <= 0.001
@@ -602,6 +670,16 @@ fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
         && (hit.target_hp_after - follow_up.source_target_hp_after).abs() <= 0.5
         && (hit.target_max_hp - follow_up.source_target_max_hp).abs() <= 0.5
         && hit.gameplay_effect_index == follow_up.source_gameplay_effect_index
+}
+
+fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrection) -> bool {
+    hit.char_id == correction.source_char_id
+        && (hit.timestamp - correction.source_timestamp).abs() <= 0.001
+        && (hit.damage - correction.source_damage).abs() <= 0.5
+        && (hit.target_hp_before - correction.source_target_hp_before).abs() <= 0.5
+        && (hit.target_hp_after - correction.source_target_hp_after).abs() <= 0.5
+        && (hit.target_max_hp - correction.source_target_max_hp).abs() <= 0.5
+        && hit.gameplay_effect_index == correction.source_gameplay_effect_index
 }
 
 #[cfg(test)]
@@ -779,6 +857,40 @@ mod tests {
         assert_eq!(merged.damage, 1_000.0);
         assert_eq!(merged.follow_up_damage, 250.0);
         assert_eq!(merged.target_hp_after, 8_750.0);
+        assert_eq!(state.total_damage, 1_250.0);
+        let stats = state.stats.get(&7).unwrap();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.damage, 1_250.0);
+    }
+
+    #[test]
+    fn damage_correction_replaces_source_hit_totals() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.gameplay_effect_index = Some(42);
+        state.push_hit(hit);
+
+        state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 1_250.0,
+            target_hp_before: 10_250.0,
+            target_hp_after: 9_000.0,
+            target_hp_percent: 90.0,
+        });
+
+        let corrected = state.hits.front().unwrap();
+        assert_eq!(corrected.damage, 1_250.0);
+        assert_eq!(corrected.follow_up_damage, 0.0);
+        assert_eq!(corrected.target_hp_before, 10_250.0);
         assert_eq!(state.total_damage, 1_250.0);
         let stats = state.stats.get(&7).unwrap();
         assert_eq!(stats.hits, 1);

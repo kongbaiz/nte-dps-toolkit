@@ -25,7 +25,8 @@ use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
 use crate::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitFollowUp, PacketDebug,
+    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitDamageCorrection, HitFollowUp,
+    PacketDebug,
 };
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
@@ -871,6 +872,8 @@ const FUWEN_PREVIOUS_ID_OFFSET: usize = 66;
 const MIN_FOLLOW_UP_RESIDUAL_DAMAGE: f64 = 1.0;
 const RECENT_CONFIRMED_HIT_WINDOW_SECONDS: f64 = 0.75;
 const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
+const BOSS_HP_SYNC_WINDOW_SECONDS: f64 = 1.0;
+const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
 
 fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
     match hit.attack_type.as_deref() {
@@ -1056,6 +1059,114 @@ impl FollowUpDamageTracker {
     }
 }
 
+#[derive(Clone)]
+struct ServerDamagePendingHit {
+    hit: Hit,
+}
+
+#[derive(Clone, Copy)]
+struct ServerHpSnapshot {
+    timestamp: f64,
+    hp: f64,
+}
+
+#[derive(Default)]
+struct ServerDamageCalibrationTracker {
+    hp_by_handle: HashMap<[u8; 16], ServerHpSnapshot>,
+    pending_hits: VecDeque<ServerDamagePendingHit>,
+}
+
+impl ServerDamageCalibrationTracker {
+    fn observe_hit(&mut self, hit: &Hit) {
+        if hit.direction == "incoming"
+            || hit.char_id == 0
+            || hit.target_max_hp <= 0.0
+            || hit.target_hp_before <= 0.0
+        {
+            return;
+        }
+        if self
+            .pending_hits
+            .back()
+            .is_some_and(|pending| hit.timestamp - pending.hit.timestamp > 2.0)
+        {
+            self.pending_hits.clear();
+        }
+        self.pending_hits
+            .push_back(ServerDamagePendingHit { hit: hit.clone() });
+        while self.pending_hits.len() > MAX_PENDING_FOLLOW_UP_HITS {
+            self.pending_hits.pop_front();
+        }
+    }
+
+    fn observe_boss_hp(
+        &mut self,
+        timestamp: f64,
+        update: &crate::parser::ParsedBossHpUpdate,
+    ) -> Option<HitDamageCorrection> {
+        let current_hp = if update.current_hp <= 1.0 {
+            0.0
+        } else {
+            update.current_hp as f64
+        };
+        let previous = self.hp_by_handle.insert(
+            update.target_handle,
+            ServerHpSnapshot {
+                timestamp,
+                hp: current_hp,
+            },
+        );
+        self.pending_hits.retain(|pending| {
+            timestamp - pending.hit.timestamp <= SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS
+        });
+        let previous = previous?;
+        if current_hp >= previous.hp {
+            self.pending_hits
+                .retain(|pending| pending.hit.timestamp > timestamp);
+            return None;
+        }
+        let candidates = self
+            .pending_hits
+            .iter()
+            .enumerate()
+            .filter(|(_, pending)| {
+                pending.hit.timestamp > previous.timestamp
+                    && pending.hit.timestamp <= timestamp
+                    && pending.hit.target_max_hp > 0.0
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return None;
+        }
+        let source_index = candidates[0];
+        let source = self.pending_hits[source_index].hit.clone();
+        self.pending_hits
+            .retain(|pending| pending.hit.timestamp > source.timestamp);
+        let damage = previous.hp - current_hp;
+        if damage < MIN_FOLLOW_UP_RESIDUAL_DAMAGE {
+            return None;
+        }
+        Some(HitDamageCorrection {
+            source_timestamp: source.timestamp,
+            source_char_id: source.char_id,
+            source_damage: source.damage,
+            source_target_hp_before: source.target_hp_before,
+            source_target_hp_after: source.target_hp_after,
+            source_target_max_hp: source.target_max_hp,
+            source_gameplay_effect_index: source.gameplay_effect_index,
+            damage,
+            target_hp_before: previous.hp,
+            target_hp_after: current_hp,
+            target_hp_percent: if source.target_max_hp > 0.0 {
+                current_hp / source.target_max_hp * 100.0
+            } else {
+                0.0
+            },
+        })
+    }
+}
+
 struct PacketDecoder {
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
@@ -1063,6 +1174,8 @@ struct PacketDecoder {
     gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
     wooden_damage_names: HashMap<String, String>,
     follow_up_damage: FollowUpDamageTracker,
+    server_damage_calibration: ServerDamageCalibrationTracker,
+    use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
     pending_ambiguous_hits: Vec<Hit>,
     recent_confirmed_hits: Vec<Hit>,
@@ -1103,10 +1216,21 @@ impl Default for PacketDecoder {
             gameplay_effect_skills,
             wooden_damage_names,
             follow_up_damage: FollowUpDamageTracker::default(),
+            server_damage_calibration: ServerDamageCalibrationTracker::default(),
+            use_server_damage_calibration: false,
             character_declarations: HashMap::new(),
             pending_ambiguous_hits: Vec::new(),
             recent_confirmed_hits: Vec::new(),
             resource_warnings,
+        }
+    }
+}
+
+impl PacketDecoder {
+    fn with_server_damage_calibration(use_server_damage_calibration: bool) -> Self {
+        Self {
+            use_server_damage_calibration,
+            ..Self::default()
         }
     }
 }
@@ -1165,6 +1289,9 @@ impl PacketDecoder {
         for hit in hits {
             self.follow_up_damage
                 .observe_hit(&hit, hit.gameplay_effect_index, characters);
+            if self.use_server_damage_calibration {
+                self.server_damage_calibration.observe_hit(&hit);
+            }
             let _ = sender.send(EngineEvent::Hit(hit));
         }
     }
@@ -1205,6 +1332,66 @@ impl PacketDecoder {
             prepared.emit.push(hit);
         }
         prepared
+    }
+
+    fn infer_boss_hp_sync_damage(
+        &mut self,
+        timestamp: f64,
+        current_hp: f64,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) -> Option<HitFollowUp> {
+        self.recent_confirmed_hits
+            .retain(|hit| timestamp - hit.timestamp <= BOSS_HP_SYNC_WINDOW_SECONDS);
+        if current_hp > 1.0 {
+            return None;
+        }
+        let current_hp = 0.0;
+        if self
+            .recent_confirmed_hits
+            .iter()
+            .any(|hit| nearly_same(hit.target_hp_after, current_hp))
+        {
+            return None;
+        }
+        let source_index = self.recent_confirmed_hits.iter().rev().position(|hit| {
+            hit.direction != "incoming"
+                && hit.target_max_hp > 0.0
+                && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
+        })?;
+        let source_index = self.recent_confirmed_hits.len() - 1 - source_index;
+        let source = self.recent_confirmed_hits[source_index].clone();
+        self.recent_confirmed_hits[source_index].target_hp_after = current_hp;
+        self.recent_confirmed_hits[source_index].target_hp_percent = if source.target_max_hp > 0.0 {
+            current_hp / source.target_max_hp * 100.0
+        } else {
+            0.0
+        };
+        let damage = source.target_hp_after - current_hp;
+        let damage_attribute = source.damage_attribute.clone().or_else(|| {
+            characters
+                .get(&source.char_id)
+                .and_then(|character| character.attribute.clone())
+        });
+        Some(HitFollowUp {
+            source_timestamp: source.timestamp,
+            source_char_id: source.char_id,
+            source_damage: source.damage,
+            source_target_hp_before: source.target_hp_before,
+            source_target_hp_after: source.target_hp_after,
+            source_target_max_hp: source.target_max_hp,
+            source_gameplay_effect_index: source.gameplay_effect_index,
+            timestamp,
+            damage,
+            target_hp_after: current_hp,
+            target_hp_percent: if source.target_max_hp > 0.0 {
+                current_hp / source.target_max_hp * 100.0
+            } else {
+                0.0
+            },
+            damage_name: Some("HP同步伤害".to_owned()),
+            attack_type: Some("HP同步伤害".to_owned()),
+            damage_attribute,
+        })
     }
 
     fn suppress_matching_ambiguous_hits(&mut self, confirmed_hit: &Hit) -> usize {
@@ -1680,6 +1867,27 @@ impl PacketDecoder {
                     .observe_server_hp(timestamp, update.current_hp as f64)
             })
             .collect::<Vec<_>>();
+        let hp_sync_follow_ups = if self.use_server_damage_calibration {
+            Vec::new()
+        } else {
+            boss_hp_updates
+                .iter()
+                .filter_map(|update| {
+                    self.infer_boss_hp_sync_damage(timestamp, update.current_hp as f64, characters)
+                })
+                .collect::<Vec<_>>()
+        };
+        let server_damage_corrections = if self.use_server_damage_calibration {
+            boss_hp_updates
+                .iter()
+                .filter_map(|update| {
+                    self.server_damage_calibration
+                        .observe_boss_hp(timestamp, update)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         if let Some(TransportPacket::Sequenced(packet)) = parse_transport_packet(payload) {
             if packet.mode != 0 {
                 append_packet_note(
@@ -1722,6 +1930,12 @@ impl PacketDecoder {
         for follow_up in inferred_follow_ups {
             let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
         }
+        for follow_up in hp_sync_follow_ups {
+            let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
+        }
+        for correction in server_damage_corrections {
+            let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
+        }
     }
 }
 
@@ -1730,6 +1944,7 @@ pub fn start_capture(
     local_ip: Option<Ipv4Addr>,
     filter: String,
     include_incoming: bool,
+    use_server_damage_calibration: bool,
     characters: Arc<HashMap<u32, CharacterInfo>>,
     sender: Sender<EngineEvent>,
 ) -> CaptureHandle {
@@ -1743,6 +1958,7 @@ pub fn start_capture(
             local_ip,
             filter: &filter,
             include_incoming,
+            use_server_damage_calibration,
             characters: &characters,
             sender: &sender,
             stop: &thread_stop,
@@ -1766,6 +1982,7 @@ struct CaptureRunConfig<'a> {
     local_ip: Option<Ipv4Addr>,
     filter: &'a str,
     include_incoming: bool,
+    use_server_damage_calibration: bool,
     characters: &'a HashMap<u32, CharacterInfo>,
     sender: &'a Sender<EngineEvent>,
     stop: &'a AtomicBool,
@@ -1778,6 +1995,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         local_ip,
         filter,
         include_incoming,
+        use_server_damage_calibration,
         characters,
         sender,
         stop,
@@ -1841,7 +2059,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             raw_capture_status
         )));
 
-        let mut decoder = PacketDecoder::default();
+        let mut decoder =
+            PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
         if let Some(warning) = decoder.resource_warning() {
             let _ = sender.send(EngineEvent::Warning(warning));
         }
@@ -1891,6 +2110,7 @@ pub fn import_pcapng(
     characters: Arc<HashMap<u32, CharacterInfo>>,
     local_ip_hint: Option<Ipv4Addr>,
     include_incoming: bool,
+    use_server_damage_calibration: bool,
     sender: Sender<EngineEvent>,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
@@ -1905,7 +2125,8 @@ pub fn import_pcapng(
         let result = (|| -> Result<(usize, usize), String> {
             let file = File::open(&path).map_err(|error| error.to_string())?;
             let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
-            let mut decoder = PacketDecoder::default();
+            let mut decoder =
+                PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
             if let Some(warning) = decoder.resource_warning() {
                 let _ = sender.send(EngineEvent::Warning(warning));
             }
@@ -2883,6 +3104,66 @@ mod tests {
         );
     }
 
+    fn boss_hp_update(timestamp_hp: f32) -> crate::parser::ParsedBossHpUpdate {
+        crate::parser::ParsedBossHpUpdate {
+            target_handle: [7; 16],
+            current_hp: timestamp_hp,
+            byte_offset: 0,
+            bit_shift: 0,
+        }
+    }
+
+    #[test]
+    fn server_damage_calibration_corrects_single_pending_hit() {
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        assert!(
+            tracker
+                .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
+                .is_none()
+        );
+        let mut hit = duplicate_test_hit(10.0, "packet", "outgoing");
+        hit.damage = 1_000.0;
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        tracker.observe_hit(&hit);
+
+        let correction = tracker
+            .observe_boss_hp(10.05, &boss_hp_update(8_750.0))
+            .expect("single pending hit should use server HP delta");
+
+        assert_eq!(correction.source_damage, 1_000.0);
+        assert_eq!(correction.damage, 1_250.0);
+        assert_eq!(correction.target_hp_before, 10_000.0);
+        assert_eq!(correction.target_hp_after, 8_750.0);
+    }
+
+    #[test]
+    fn server_damage_calibration_does_not_split_multiple_pending_hits() {
+        let mut tracker = ServerDamageCalibrationTracker::default();
+        assert!(
+            tracker
+                .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
+                .is_none()
+        );
+        let mut first = duplicate_test_hit(10.0, "packet", "outgoing");
+        first.target_hp_before = 10_000.0;
+        first.target_hp_after = 9_000.0;
+        first.target_max_hp = 10_000.0;
+        let mut second = duplicate_test_hit(10.02, "packet", "outgoing");
+        second.target_hp_before = 9_000.0;
+        second.target_hp_after = 8_500.0;
+        second.target_max_hp = 10_000.0;
+        tracker.observe_hit(&first);
+        tracker.observe_hit(&second);
+
+        assert!(
+            tracker
+                .observe_boss_hp(10.05, &boss_hp_update(8_500.0))
+                .is_none()
+        );
+    }
+
     #[test]
     fn confirmed_packet_hit_suppresses_ambiguous_session_candidate() {
         let mut decoder = PacketDecoder::default();
@@ -2929,6 +3210,48 @@ mod tests {
         assert_eq!(prepared.emit.len(), 1);
         assert_eq!(prepared.suppressed_ambiguous, 1);
         assert_eq!(prepared.emit[0].attack_type.as_deref(), Some("创生花"));
+    }
+
+    #[test]
+    fn boss_hp_sync_damage_merges_into_recent_confirmed_hit() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut source = duplicate_test_hit(10.0, "packet", "outgoing");
+        source.damage = 26_185.0;
+        source.target_hp_before = 29_700.0;
+        source.target_hp_after = 3_515.0;
+        source.target_max_hp = 1_930_389.0;
+
+        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
+        assert_eq!(prepared.emit.len(), 1);
+
+        let follow_up = decoder
+            .infer_boss_hp_sync_damage(10.04, 1.0, &characters)
+            .expect("server HP sync should add the missing lethal delta");
+
+        assert_eq!(follow_up.damage, 3_515.0);
+        assert_eq!(follow_up.target_hp_after, 0.0);
+        assert_eq!(follow_up.damage_name.as_deref(), Some("HP同步伤害"));
+        assert_eq!(follow_up.source_char_id, 1051);
+    }
+
+    #[test]
+    fn nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut source = duplicate_test_hit(10.0, "packet", "outgoing");
+        source.damage = 8_446.0;
+        source.target_hp_after = 1_081_975.0;
+        source.target_max_hp = 1_930_389.0;
+
+        let prepared = decoder.prepare_hits_for_emission(vec![source], &[1051], false, &characters);
+        assert_eq!(prepared.emit.len(), 1);
+
+        assert!(
+            decoder
+                .infer_boss_hp_sync_damage(10.04, 1_057_660.0, &characters)
+                .is_none()
+        );
     }
 
     #[test]

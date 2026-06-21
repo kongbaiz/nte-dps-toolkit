@@ -537,6 +537,7 @@ pub struct DpsApp {
     filter: String,
     active_capture_filter: Option<String>,
     include_incoming: bool,
+    server_damage_calibration: bool,
     capture: Option<CaptureHandle>,
     raw_capture: Option<RawCaptureBuffer>,
     replay_stop: Option<Arc<AtomicBool>>,
@@ -670,6 +671,7 @@ impl DpsApp {
             filter: "udp".to_owned(),
             active_capture_filter: None,
             include_incoming: true,
+            server_damage_calibration: ui_config.server_damage_calibration,
             capture: None,
             raw_capture: None,
             replay_stop: None,
@@ -960,6 +962,7 @@ impl DpsApp {
             local_ip,
             capture_filter.clone(),
             self.include_incoming,
+            self.server_damage_calibration,
             self.characters.clone(),
             self.sender.clone(),
         );
@@ -1000,6 +1003,7 @@ impl DpsApp {
             self.characters.clone(),
             local_ip_hint,
             self.include_incoming,
+            self.server_damage_calibration,
             self.sender.clone(),
             stop.clone(),
         ));
@@ -1068,6 +1072,7 @@ impl DpsApp {
             opacity: self.opacity,
             dark_mode: self.dark_mode,
             always_on_top: self.always_on_top,
+            server_damage_calibration: self.server_damage_calibration,
         }
         .sanitized()
     }
@@ -1212,7 +1217,10 @@ impl DpsApp {
                     EngineEvent::Packet(_) => {
                         self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
                     }
-                    EngineEvent::Hit(_) | EngineEvent::HitFollowUp(_) | EngineEvent::Abyss(_) => {
+                    EngineEvent::Hit(_)
+                    | EngineEvent::HitFollowUp(_)
+                    | EngineEvent::HitDamageCorrection(_)
+                    | EngineEvent::Abyss(_) => {
                         if self.paused_events.len() == MAX_PAUSED_EVENTS {
                             self.paused_events.pop_front();
                         }
@@ -1271,6 +1279,9 @@ impl DpsApp {
         match event {
             EngineEvent::Hit(hit) => self.state.push_hit(hit),
             EngineEvent::HitFollowUp(follow_up) => self.state.apply_follow_up(follow_up),
+            EngineEvent::HitDamageCorrection(correction) => {
+                self.state.apply_damage_correction(correction)
+            }
             EngineEvent::Packet(packet) => self.state.push_packet(packet),
             EngineEvent::Abyss(event) => {
                 self.character_hit_cache = HitDetailCache::default();
@@ -3433,6 +3444,15 @@ impl DpsApp {
                         ui.label("BPF");
                         ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(220.0));
                         ui.end_row();
+                        ui.label("伤害来源");
+                        let calibration_response = ui.checkbox(
+                            &mut self.server_damage_calibration,
+                            "使用服务端 HP 差值校准",
+                        );
+                        calibration_response.on_hover_text(
+                            "重新抓包或重新导入后生效；只在服务端 HP 同步能与单条命中明确配对时覆盖伤害数值",
+                        );
+                        ui.end_row();
                         ui.label("实际 BPF");
                         ui.monospace(self.active_capture_filter.as_deref().unwrap_or_else(|| {
                             if self.capture.is_some() {
@@ -4742,6 +4762,8 @@ fn compare_cached_team_hits(left: &CachedHitRow, right: &CachedHitRow) -> std::c
                 right.target_hp_after <= 0.0 || right.hp_fraction <= 0.0,
             ))
         })
+        .then_with(|| cached_health_pool_key(left).cmp(&cached_health_pool_key(right)))
+        .then_with(|| right.target_hp_after.total_cmp(&left.target_hp_after))
         .then_with(|| left.timestamp.total_cmp(&right.timestamp))
         .then_with(|| left.byte_offset.cmp(&right.byte_offset))
         .then_with(|| left.bit_shift.cmp(&right.bit_shift))
@@ -6858,7 +6880,7 @@ fn data_root() -> PathBuf {
 mod tests {
     use super::{
         BASE64, DpsApp, EncryptedIniKey, HitDetailFilter, QteTypeFilterSummary, UiConfigSavePlan,
-        adjusted_cached_index, cached_hit_row, damage_digit_key_for_hit,
+        adjusted_cached_index, cached_hit_row, compare_cached_team_hits, damage_digit_key_for_hit,
         damage_digit_resource_path, damage_number_digits_text, decrypt_encrypted_ini_text,
         encrypt_aes256_ecb, encrypt_encrypted_ini_records, encrypt_encrypted_ini_text,
         encrypted_ini_search_matches, encrypted_ini_text_fingerprint,
@@ -6928,6 +6950,26 @@ mod tests {
         let resolved = resolve_cached_hit(&hits, &row, 1, 1)
             .expect("same-index hit should resolve after in-place follow-up update");
         assert_eq!(resolved.follow_up_damage, 921.0);
+    }
+
+    #[test]
+    fn team_hit_rows_order_higher_hp_first_within_same_second() {
+        let mut high_hp = hit_with_direction("outgoing");
+        high_hp.timestamp = 1.9;
+        high_hp.target_hp_after = 30_000.0;
+        high_hp.target_max_hp = 100_000.0;
+        high_hp.target_hp_percent = 30.0;
+        let mut low_hp = hit_with_direction("outgoing");
+        low_hp.timestamp = 1.1;
+        low_hp.target_hp_after = 7_000.0;
+        low_hp.target_max_hp = 100_000.0;
+        low_hp.target_hp_percent = 7.0;
+
+        let mut rows = [cached_hit_row(0, &low_hp), cached_hit_row(1, &high_hp)];
+        rows.sort_by(compare_cached_team_hits);
+
+        assert_eq!(rows[0].target_hp_after, 30_000.0);
+        assert_eq!(rows[1].target_hp_after, 7_000.0);
     }
 
     #[test]
@@ -7299,12 +7341,14 @@ mod tests {
             opacity: 0.8,
             dark_mode: false,
             always_on_top: true,
+            server_damage_calibration: false,
         };
         let current = UiConfig {
             version: 1,
             opacity: 0.9,
             dark_mode: false,
             always_on_top: true,
+            server_damage_calibration: false,
         };
         match DpsApp::ui_config_save_plan(&current, &saved, None, now) {
             UiConfigSavePlan::SetPending((pending, save_at)) => {
@@ -7323,12 +7367,14 @@ mod tests {
             opacity: 0.8,
             dark_mode: false,
             always_on_top: true,
+            server_damage_calibration: false,
         };
         let current = UiConfig {
             version: 1,
             opacity: 0.9,
             dark_mode: false,
             always_on_top: true,
+            server_damage_calibration: false,
         };
         let future = now + Duration::from_millis(500);
         let pending = Some((current.clone(), future));
