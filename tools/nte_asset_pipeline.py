@@ -57,7 +57,6 @@ ATTRIBUTE_IMAGES = {
     "咒": "UI_avatarbg_Icon_06.png",
 }
 
-DEFAULT_COLOR = "#808080"
 ASSET_PATH_RE = re.compile(r"^(?P<package>/Game/.+?)\.(?P<object>[^./]+)(?:_C)?$")
 PLAYER_NAME_RE = re.compile(r"player_\d+_(.+)$", re.IGNORECASE)
 
@@ -232,7 +231,6 @@ def build_characters(
                 old.get("codename")
                 or character_codename(row, name_en or name_zh or character_id)
             ),
-            "color": str(old.get("color", DEFAULT_COLOR)),
             "name_en": name_en or str(old.get("name_en", "")),
             "name_zh": name_zh or str(old.get("name_zh", "")),
             "verified": bool(old.get("verified", True)),
@@ -241,7 +239,11 @@ def build_characters(
     stale_ids = sorted(set(existing) - set(generated))
     if not prune_stale:
         for character_id in stale_ids:
-            generated[character_id] = existing[character_id]
+            stale = existing[character_id]
+            if isinstance(stale, dict):
+                stale = dict(stale)
+                stale.pop("color", None)
+            generated[character_id] = stale
 
     write_json(
         output_res / "data/characters/characters.json",

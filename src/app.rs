@@ -1051,10 +1051,10 @@ impl DpsApp {
 
     fn restore_window_levels_after_file_dialog(&mut self) {
         restore_visible_process_windows_topmost();
-        if !self.always_on_top {
-            if let Some(hwnd) = self.corner_applied_hwnd {
-                set_window_topmost(hwnd, false);
-            }
+        if !self.always_on_top
+            && let Some(hwnd) = self.corner_applied_hwnd
+        {
+            set_window_topmost(hwnd, false);
         }
         self.opacity_reapply_frames = 2;
     }
