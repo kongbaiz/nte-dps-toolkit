@@ -45,7 +45,7 @@ use crate::model::{
     HitDirectionSummary, PartyCombatState, summarize_hit_directions,
 };
 use crate::network::{GameNetwork, detect_game_device};
-use crate::parser::{CHARACTER_DATA_PATH, load_characters};
+use crate::parser::{CHARACTER_DATA_PATH, find_data_file, load_characters};
 
 const MAX_UI_EVENTS_PER_FRAME: usize = 2_048;
 const MAX_UI_EVENTS_WHILE_SCROLLING: usize = 256;
@@ -59,6 +59,7 @@ const TITLE_BAR_BUTTON_SIZE: egui::Vec2 = egui::vec2(28.0, 22.0);
 const TITLE_BAR_TOGGLE_SIZE: egui::Vec2 = egui::vec2(64.0, 24.0);
 const UI_CONFIG_SAVE_DELAY: Duration = Duration::from_millis(350);
 const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
+const ABYSS_STAT_NAMES_ZH_CN_PATH: &str = "res/data/abyss/monster_stat_names_zh_cn.json";
 
 #[derive(Clone, Copy)]
 enum DebugImportKind {
@@ -515,6 +516,7 @@ impl EncryptedIniEditorState {
 #[derive(Default)]
 struct AbyssOverviewState {
     dataset: Option<AbyssMonsterDataset>,
+    stat_display_names: HashMap<String, String>,
     load_error: Option<String>,
     selected_season: Option<u32>,
     selected_floor: Option<u32>,
@@ -523,13 +525,38 @@ struct AbyssOverviewState {
     search: String,
 }
 
+fn load_abyss_stat_display_names() -> HashMap<String, String> {
+    let Some(path) = find_data_file(Path::new(ABYSS_STAT_NAMES_ZH_CN_PATH)) else {
+        return HashMap::new();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    let Ok(names) = serde_json::from_str::<HashMap<String, String>>(&text) else {
+        return HashMap::new();
+    };
+
+    let mut display_names = HashMap::with_capacity(names.len() * 2);
+    for (key, value) in names {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        display_names.insert(key.to_ascii_lowercase(), value.to_owned());
+        display_names.insert(key, value.to_owned());
+    }
+    display_names
+}
+
 impl AbyssOverviewState {
     fn load() -> Self {
+        let stat_display_names = load_abyss_stat_display_names();
         match AbyssMonsterDataset::load() {
             Ok(dataset) => {
                 let first = dataset.first_floor_key();
                 Self {
                     dataset: Some(dataset),
+                    stat_display_names,
                     load_error: None,
                     selected_season: first.map(|(season, _)| season),
                     selected_floor: first.map(|(_, floor)| floor),
@@ -540,6 +567,7 @@ impl AbyssOverviewState {
             }
             Err(error) => Self {
                 load_error: Some(error.to_string()),
+                stat_display_names,
                 ..Default::default()
             },
         }
@@ -3016,7 +3044,7 @@ impl DpsApp {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(format!(
-                    "{} 个赛季 · {} 层 · {} 条深渊怪物数值",
+                    "共 {} 期 · {} 层 · {} 条深渊怪物数值",
                     season_count, floor_count, total_monsters
                 ))
                 .size(12.0)
@@ -3086,7 +3114,7 @@ impl DpsApp {
     ) {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(format!("赛季 {} · 第 {} 层", floor.season, floor.floor))
+                RichText::new(format!("第 {} 期 · 第 {} 层", floor.season, floor.floor))
                     .size(16.0)
                     .strong()
                     .color(shadcn_foreground(self.dark_mode)),
@@ -3177,6 +3205,7 @@ impl DpsApp {
                 monster_texture(&self.monster_textures, &monster.monster_id),
                 self.dark_mode,
                 ui.available_height(),
+                &self.abyss_overview.stat_display_names,
             );
         } else {
             ui.allocate_ui_with_layout(
@@ -4454,7 +4483,7 @@ fn draw_abyss_floor_nav(
                 let expanded = *expanded_season == Some(*season);
                 let selected_in_season = *selected_season == Some(*season);
                 let season_label = format!(
-                    "{} 赛季 {season}  ·  {} 层",
+                    "{} 第 {season} 期 ·  {} 层",
                     if expanded { "▼" } else { "▶" },
                     floors.len()
                 );
@@ -4708,7 +4737,9 @@ fn draw_abyss_monster_detail(
     texture: Option<&egui::TextureHandle>,
     dark_mode: bool,
     height: f32,
+    stat_display_names: &HashMap<String, String>,
 ) {
+    let inner_height = (height - 24.0).max(180.0);
     egui::Frame::new()
         .fill(shadcn_card(dark_mode))
         .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
@@ -4716,7 +4747,7 @@ fn draw_abyss_monster_detail(
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.set_min_height(height.max(180.0));
+            ui.set_min_height(inner_height);
             ui.horizontal(|ui| {
                 let icon_size = egui::vec2(56.0, 56.0);
                 let (icon_rect, _) = ui.allocate_exact_size(icon_size, egui::Sense::hover());
@@ -4753,7 +4784,7 @@ fn draw_abyss_monster_detail(
                     .strong()
                     .color(shadcn_foreground(dark_mode)),
             );
-            let grid_height = (height - 92.0).max(120.0);
+            let grid_height = ui.available_height().max(120.0);
             egui::ScrollArea::vertical()
                 .id_salt(("abyss_raw_props", monster.pack_id.as_str()))
                 .auto_shrink([false, false])
@@ -4799,12 +4830,14 @@ fn draw_abyss_monster_detail(
                                     dark_mode,
                                     label_width,
                                     value_width,
+                                    stat_display_names,
                                 );
                             } else {
                                 row_ui.add_space(label_width + value_width);
                             }
                         }
                     }
+                    ui.add_space(14.0);
                 });
         });
 }
@@ -4816,16 +4849,25 @@ fn abyss_stat_pair_sized(
     dark_mode: bool,
     label_width: f32,
     value_width: f32,
+    stat_display_names: &HashMap<String, String>,
 ) {
-    ui.add_sized(
+    let display_label = stat_display_names
+        .get(label)
+        .or_else(|| stat_display_names.get(&label.to_ascii_lowercase()))
+        .map(String::as_str)
+        .unwrap_or(label);
+    let label_response = ui.add_sized(
         egui::vec2(label_width, 18.0),
         egui::Label::new(
-            RichText::new(label)
+            RichText::new(display_label)
                 .size(11.0)
                 .color(ui.visuals().weak_text_color()),
         )
         .truncate(),
     );
+    if display_label != label {
+        label_response.on_hover_text(label);
+    }
     ui.add_sized(
         egui::vec2(value_width, 18.0),
         egui::Label::new(
