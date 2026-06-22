@@ -28,8 +28,9 @@ use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowThreadProcessId, LWA_ALPHA,
-    SetLayeredWindowAttributes, SetWindowLongPtrW, WS_EX_LAYERED,
+    EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowThreadProcessId, HWND_NOTOPMOST,
+    HWND_TOPMOST, IsWindowVisible, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WS_EX_LAYERED,
 };
 
 use crate::abyss_data::{AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry};
@@ -1249,14 +1250,33 @@ impl DpsApp {
     }
 
     fn request_debug_import(&mut self, ctx: &egui::Context, kind: DebugImportKind) {
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-            egui::WindowLevel::Normal,
-        ));
-        ctx.send_viewport_cmd_to(
-            egui::ViewportId::ROOT,
-            egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal),
-        );
+        clear_process_windows_topmost(false);
+        ctx.request_repaint();
         self.pending_debug_import = Some((kind, 1));
+    }
+
+    fn open_native_file_dialog<T>(
+        &mut self,
+        ctx: &egui::Context,
+        dialog: impl FnOnce() -> Option<T>,
+    ) -> Option<T> {
+        clear_process_windows_topmost(false);
+
+        let result = dialog();
+
+        self.restore_window_levels_after_file_dialog();
+        ctx.request_repaint();
+        result
+    }
+
+    fn restore_window_levels_after_file_dialog(&mut self) {
+        restore_visible_process_windows_topmost();
+        if !self.always_on_top {
+            if let Some(hwnd) = self.corner_applied_hwnd {
+                set_window_topmost(hwnd as HWND, false);
+            }
+        }
+        self.opacity_reapply_frames = 2;
     }
 
     fn process_debug_import_dialog(&mut self, ctx: &egui::Context) {
@@ -1268,7 +1288,7 @@ impl DpsApp {
             return;
         }
         self.pending_debug_import = None;
-        let path = match kind {
+        let path = self.open_native_file_dialog(ctx, || match kind {
             DebugImportKind::Pcapng => rfd::FileDialog::new()
                 .add_filter("Wireshark 抓包", &["pcapng"])
                 .pick_file(),
@@ -1279,20 +1299,7 @@ impl DpsApp {
                 .add_filter("NTE 加密 INI", &["ini"])
                 .add_filter("所有文件", &["*"])
                 .pick_file(),
-        };
-        ctx.send_viewport_cmd_to(
-            debug_viewport_id(),
-            egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop),
-        );
-        ctx.send_viewport_cmd_to(
-            egui::ViewportId::ROOT,
-            egui::ViewportCommand::WindowLevel(if self.always_on_top {
-                egui::WindowLevel::AlwaysOnTop
-            } else {
-                egui::WindowLevel::Normal
-            }),
-        );
-        self.opacity_reapply_frames = 2;
+        });
         if let Some(path) = path {
             match kind {
                 DebugImportKind::Pcapng => self.start_pcapng_import(path),
@@ -1424,7 +1431,7 @@ impl DpsApp {
         }
     }
 
-    fn export_capture_info(&mut self) {
+    fn export_capture_info(&mut self, ctx: &egui::Context) {
         self.drain_pending_events();
         if self.state.hits.is_empty() && self.state.packets.is_empty() {
             self.last_error = Some("当前没有可导出的抓包信息".to_owned());
@@ -1435,11 +1442,12 @@ impl DpsApp {
             return;
         }
 
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter("抓包信息 JSON", &["json"])
-            .set_file_name(default_export_filename())
-            .save_file()
-        else {
+        let Some(path) = self.open_native_file_dialog(ctx, || {
+            rfd::FileDialog::new()
+                .add_filter("抓包信息 JSON", &["json"])
+                .set_file_name(default_export_filename())
+                .save_file()
+        }) else {
             return;
         };
 
@@ -1458,23 +1466,26 @@ impl DpsApp {
         }
     }
 
-    fn export_raw_capture(&mut self) {
+    fn export_raw_capture(&mut self, ctx: &egui::Context) {
         if self.capture.is_some() {
             self.last_error = Some("请先停止抓包，再另存完整 PCAPNG".to_owned());
             return;
         }
-        let Some(raw_capture) = self.raw_capture.as_ref() else {
+        if self.raw_capture.is_none() {
             self.last_error = Some("当前没有可另存的完整 PCAPNG".to_owned());
             return;
+        }
+        let default_file_name = format!("nte_raw_{}.pcapng", Local::now().format("%Y%m%d_%H%M%S"));
+        let Some(destination) = self.open_native_file_dialog(ctx, || {
+            rfd::FileDialog::new()
+                .add_filter("完整原始抓包", &["pcapng"])
+                .set_file_name(default_file_name)
+                .save_file()
+        }) else {
+            return;
         };
-        let Some(destination) = rfd::FileDialog::new()
-            .add_filter("完整原始抓包", &["pcapng"])
-            .set_file_name(format!(
-                "nte_raw_{}.pcapng",
-                Local::now().format("%Y%m%d_%H%M%S")
-            ))
-            .save_file()
-        else {
+        let Some(raw_capture) = self.raw_capture.as_ref() else {
+            self.last_error = Some("当前没有可另存的完整 PCAPNG".to_owned());
             return;
         };
         match raw_capture.save(&destination) {
@@ -3887,7 +3898,7 @@ impl DpsApp {
                         .add_enabled(can_export_json, egui::Button::new("导出解析 JSON"))
                         .clicked()
                     {
-                        self.export_capture_info();
+                        self.export_capture_info(ui.ctx());
                     }
                     let can_export_raw = self.capture.is_none()
                         && self
@@ -3898,7 +3909,7 @@ impl DpsApp {
                         .add_enabled(can_export_raw, egui::Button::new("另存完整 PCAPNG"))
                         .clicked()
                     {
-                        self.export_raw_capture();
+                        self.export_raw_capture(ui.ctx());
                     }
                 });
                 ui.horizontal(|ui| {
@@ -5386,6 +5397,104 @@ fn apply_rounding_to_process_windows() {
     unsafe {
         EnumWindows(Some(apply_rounding), std::process::id() as LPARAM);
     }
+}
+
+fn clear_process_windows_topmost(visible_only: bool) {
+    unsafe extern "system" fn clear_topmost(hwnd: HWND, request: LPARAM) -> i32 {
+        let request = unsafe { &*(request as *const TopmostWindowRequest) };
+        let mut window_process_id = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut window_process_id);
+        }
+        if window_process_id != request.process_id
+            || (request.visible_only && unsafe { IsWindowVisible(hwnd) } == 0)
+        {
+            return 1;
+        }
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND_NOTOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+        1
+    }
+
+    let request = TopmostWindowRequest {
+        process_id: std::process::id(),
+        visible_only,
+    };
+    unsafe {
+        EnumWindows(
+            Some(clear_topmost),
+            std::ptr::from_ref(&request).addr() as LPARAM,
+        );
+    }
+}
+
+fn restore_visible_process_windows_topmost() {
+    unsafe extern "system" fn restore_topmost(hwnd: HWND, request: LPARAM) -> i32 {
+        let request = unsafe { &*(request as *const TopmostWindowRequest) };
+        let mut window_process_id = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut window_process_id);
+        }
+        if window_process_id != request.process_id || unsafe { IsWindowVisible(hwnd) } == 0 {
+            return 1;
+        }
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+        1
+    }
+
+    let request = TopmostWindowRequest {
+        process_id: std::process::id(),
+        visible_only: true,
+    };
+    unsafe {
+        EnumWindows(
+            Some(restore_topmost),
+            std::ptr::from_ref(&request).addr() as LPARAM,
+        );
+    }
+}
+
+fn set_window_topmost(hwnd: HWND, topmost: bool) {
+    let insert_after = if topmost {
+        HWND_TOPMOST
+    } else {
+        HWND_NOTOPMOST
+    };
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            insert_after,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+struct TopmostWindowRequest {
+    process_id: u32,
+    visible_only: bool,
 }
 
 #[derive(Clone)]

@@ -153,6 +153,14 @@
       "name_zh": "海月",
       "verified": true
     },
+    "1071": {
+      "attribute": "相",
+      "avatar": "res/images/characters/player_kaesi1_256.png",
+      "codename": "Chaos",
+      "name_en": "Chaos",
+      "name_zh": "卡厄斯",
+      "verified": true
+    },
     "1073": {
       "attribute": "光",
       "avatar": "res/images/characters/player_073_256.png",
