@@ -27,10 +27,11 @@ fn main() -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("NTE DPS TOOL")
-            .with_inner_size([520.0, 420.0])
-            .with_min_inner_size([460.0, 390.0])
+            // 100% size; the title-bar −／＋ stepper scales it. Free drag-resize is
+            // disabled (with_resizable(false)) to avoid the Windows resize crash.
+            .with_inner_size(app::MAIN_WINDOW_BASE_SIZE)
             .with_decorations(false)
-            .with_resizable(true)
+            .with_resizable(false)
             .with_transparent(true)
             .with_icon(Arc::new(app_icon()))
             .with_window_level(if ui_config.always_on_top {
