@@ -734,12 +734,17 @@ impl DpsApp {
 
     fn title_bar(&mut self, ui: &mut egui::Ui) {
         let title_height = 28.0;
-        let full_rect = ui
-            .allocate_exact_size(
-                egui::vec2(ui.available_width(), title_height),
-                egui::Sense::hover(),
-            )
-            .0;
+        // The whole title bar is the drag-to-move zone: allocate it first with a
+        // drag sense, then draw the label/buttons on top. Buttons (added later)
+        // win the pointer where they are, so dragging works on any empty area —
+        // the title text included — no matter how many controls crowd the bar.
+        let (full_rect, title_drag) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), title_height),
+            egui::Sense::click_and_drag(),
+        );
+        if title_drag.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(full_rect)
@@ -846,15 +851,6 @@ impl DpsApp {
                 {
                     self.toggle_always_on_top(ui.ctx());
                 }
-            }
-
-            let drag_width = ui.available_width();
-            let drag_response = ui.allocate_response(
-                egui::vec2(drag_width, title_height),
-                egui::Sense::click_and_drag(),
-            );
-            if drag_response.drag_started() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
         });
     }
@@ -4368,38 +4364,44 @@ fn secondary_title_bar(
 ) -> bool {
     let title_height = 28.0;
     let mut close_clicked = false;
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(title)
-                .size(13.0)
-                .strong()
-                .color(ui.visuals().text_color()),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("×").frame(false))
-                .on_hover_text("关闭")
-                .clicked()
-            {
-                close_clicked = true;
-            }
-            if ui
-                .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("−").frame(false))
-                .on_hover_text("最小化")
-                .clicked()
-            {
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-            window_scale_stepper(ui, scale, base_size);
-            let drag_response = ui.allocate_response(
-                egui::vec2(ui.available_width(), title_height),
-                egui::Sense::click_and_drag(),
-            );
-            if drag_response.drag_started() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            }
-        });
+    // Whole bar drags the window; buttons drawn on top win their own clicks. See
+    // the matching note in `title_bar` — keeps the bar draggable on any empty
+    // area regardless of how the controls pack in.
+    let (full_rect, title_drag) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), title_height),
+        egui::Sense::click_and_drag(),
+    );
+    if title_drag.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    let mut bar = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(full_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    bar.label(
+        RichText::new(title)
+            .size(13.0)
+            .strong()
+            .color(bar.visuals().text_color()),
+    );
+    bar.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        if ui
+            .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("×").frame(false))
+            .on_hover_text("关闭")
+            .clicked()
+        {
+            close_clicked = true;
+        }
+        if ui
+            .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("−").frame(false))
+            .on_hover_text("最小化")
+            .clicked()
+        {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        window_scale_stepper(ui, scale, base_size);
     });
     close_clicked
 }
