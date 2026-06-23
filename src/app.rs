@@ -56,6 +56,18 @@ const MAX_DETAIL_HITS: usize = 10_000;
 const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
 const TITLE_BAR_BUTTON_SIZE: egui::Vec2 = egui::vec2(28.0, 22.0);
 const TITLE_BAR_TOGGLE_SIZE: egui::Vec2 = egui::vec2(64.0, 24.0);
+/// Default (100%) inner sizes for each window. The title-bar −／＋ stepper scales
+/// these proportionally instead of free drag-resize, which keeps the aspect ratio
+/// and avoids the Windows resize crash (egui #4061 / #4091). `main` is also used
+/// by `main.rs` for the initial root viewport size.
+pub(crate) const MAIN_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(520.0, 420.0);
+const ABYSS_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(1040.0, 720.0);
+const HIT_DETAIL_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(1120.0, 760.0);
+const TEAM_HIT_DETAIL_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(980.0, 660.0);
+const DEBUG_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(980.0, 640.0);
+const WINDOW_SCALE_MIN: f32 = 0.7;
+const WINDOW_SCALE_MAX: f32 = 1.5;
+const WINDOW_SCALE_STEP: f32 = 0.1;
 const UI_CONFIG_SAVE_DELAY: Duration = Duration::from_millis(350);
 const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const ABYSS_STAT_NAMES_ZH_CN_PATH: &str = "res/data/abyss/monster_stat_names_zh_cn.json";
@@ -448,6 +460,13 @@ pub struct DpsApp {
     opacity: f32,
     applied_opacity: Option<f32>,
     corner_applied_hwnd: Option<isize>,
+    // Per-window proportional size factor (1.0 = the window's default size). Set
+    // by the title-bar −／＋ stepper; not persisted across launches.
+    main_window_scale: f32,
+    abyss_window_scale: f32,
+    hit_detail_window_scale: f32,
+    team_hit_detail_window_scale: f32,
+    debug_window_scale: f32,
     style_dark_mode_applied: Option<bool>,
     opacity_reapply_frames: u8,
     theme_transition_from: Option<Color32>,
@@ -588,6 +607,11 @@ impl DpsApp {
             opacity: ui_config.opacity,
             applied_opacity: None,
             corner_applied_hwnd: None,
+            main_window_scale: 1.0,
+            abyss_window_scale: 1.0,
+            hit_detail_window_scale: 1.0,
+            team_hit_detail_window_scale: 1.0,
+            debug_window_scale: 1.0,
             // eframe may replace the context style after app construction.
             style_dark_mode_applied: None,
             opacity_reapply_frames: 4,
@@ -761,6 +785,7 @@ impl DpsApp {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
+            window_scale_stepper(ui, &mut self.main_window_scale, MAIN_WINDOW_BASE_SIZE);
             if !self.abyss_compact_mode || !self.state.abyss.is_active() {
                 ui.allocate_ui_with_layout(
                     TITLE_BAR_TOGGLE_SIZE,
@@ -2655,17 +2680,12 @@ impl DpsApp {
             team_hit_detail_viewport_id(),
             egui::ViewportBuilder::default()
                 .with_title(&title)
-                .with_inner_size([980.0, 660.0])
-                .with_min_inner_size([760.0, 460.0])
+                .with_inner_size(TEAM_HIT_DETAIL_WINDOW_BASE_SIZE)
                 .with_window_level(egui::WindowLevel::AlwaysOnTop)
                 .with_decorations(false)
-                // Deliberately NOT transparent: a transparent + always-on-top
-                // immediate viewport crashes with a native access violation
-                // (STATUS_ACCESS_VIOLATION, no Rust panic) when resized on
-                // Windows — see egui #4061 / #4091. The window is painted with an
-                // opaque full-rect background and DWM still rounds the corners
-                // (DWMWCP_ROUND), so dropping transparency is visually a no-op.
-                .with_resizable(true),
+                // Not transparent and not resizable on purpose — see
+                // window_scale_stepper for the Windows resize-crash rationale.
+                .with_resizable(false),
             |ctx, _class| {
                 if !self.team_hit_detail_corner_applied {
                     apply_rounding_to_process_windows();
@@ -2681,7 +2701,12 @@ impl DpsApp {
                             .inner_margin(egui::Margin::symmetric(10, 3)),
                     )
                     .show(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, &title);
+                        close_clicked = secondary_title_bar(
+                            ui,
+                            &title,
+                            &mut self.team_hit_detail_window_scale,
+                            TEAM_HIT_DETAIL_WINDOW_BASE_SIZE,
+                        );
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -2756,7 +2781,6 @@ impl DpsApp {
                         ui.separator();
                         self.team_hits(ui, self.team_hit_detail_filter.clone());
                     });
-                window_resize_handles(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
         );
@@ -2771,17 +2795,12 @@ impl DpsApp {
             abyss_overview_viewport_id(),
             egui::ViewportBuilder::default()
                 .with_title("深渊怪物数值")
-                .with_inner_size([1040.0, 720.0])
-                .with_min_inner_size([820.0, 560.0])
+                .with_inner_size(ABYSS_WINDOW_BASE_SIZE)
                 .with_window_level(egui::WindowLevel::AlwaysOnTop)
                 .with_decorations(false)
-                // Deliberately NOT transparent: a transparent + always-on-top
-                // immediate viewport crashes with a native access violation
-                // (STATUS_ACCESS_VIOLATION, no Rust panic) when resized on
-                // Windows — see egui #4061 / #4091. The window is painted with an
-                // opaque full-rect background and DWM still rounds the corners
-                // (DWMWCP_ROUND), so dropping transparency is visually a no-op.
-                .with_resizable(true),
+                // Not transparent and not resizable on purpose — see
+                // window_scale_stepper for the Windows resize-crash rationale.
+                .with_resizable(false),
             |ctx, _class| {
                 if !self.abyss_overview_corner_applied {
                     apply_rounding_to_process_windows();
@@ -2797,7 +2816,12 @@ impl DpsApp {
                             .inner_margin(egui::Margin::symmetric(10, 3)),
                     )
                     .show(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, "深渊怪物数值");
+                        close_clicked = secondary_title_bar(
+                            ui,
+                            "深渊怪物数值",
+                            &mut self.abyss_window_scale,
+                            ABYSS_WINDOW_BASE_SIZE,
+                        );
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -2808,7 +2832,6 @@ impl DpsApp {
                     .show(ctx, |ui| {
                         self.abyss_overview_contents(ui);
                     });
-                window_resize_handles(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
         );
@@ -3109,17 +3132,12 @@ impl DpsApp {
             hit_detail_viewport_id(),
             egui::ViewportBuilder::default()
                 .with_title(&title)
-                .with_inner_size([1120.0, 760.0])
-                .with_min_inner_size([860.0, 560.0])
+                .with_inner_size(HIT_DETAIL_WINDOW_BASE_SIZE)
                 .with_window_level(egui::WindowLevel::AlwaysOnTop)
                 .with_decorations(false)
-                // Deliberately NOT transparent: a transparent + always-on-top
-                // immediate viewport crashes with a native access violation
-                // (STATUS_ACCESS_VIOLATION, no Rust panic) when resized on
-                // Windows — see egui #4061 / #4091. The window is painted with an
-                // opaque full-rect background and DWM still rounds the corners
-                // (DWMWCP_ROUND), so dropping transparency is visually a no-op.
-                .with_resizable(true),
+                // Not transparent and not resizable on purpose — see
+                // window_scale_stepper for the Windows resize-crash rationale.
+                .with_resizable(false),
             |ctx, _class| {
                 if !self.hit_detail_corner_applied {
                     apply_rounding_to_process_windows();
@@ -3135,7 +3153,12 @@ impl DpsApp {
                             .inner_margin(egui::Margin::symmetric(10, 3)),
                     )
                     .show(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, &title);
+                        close_clicked = secondary_title_bar(
+                            ui,
+                            &title,
+                            &mut self.hit_detail_window_scale,
+                            HIT_DETAIL_WINDOW_BASE_SIZE,
+                        );
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -3340,7 +3363,6 @@ impl DpsApp {
                             &skill_filter,
                         );
                     });
-                window_resize_handles(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
         );
@@ -3355,17 +3377,12 @@ impl DpsApp {
             debug_viewport_id(),
             egui::ViewportBuilder::default()
                 .with_title("NTE Debug")
-                .with_inner_size([980.0, 640.0])
-                .with_min_inner_size([720.0, 480.0])
+                .with_inner_size(DEBUG_WINDOW_BASE_SIZE)
                 .with_window_level(egui::WindowLevel::AlwaysOnTop)
                 .with_decorations(false)
-                // Deliberately NOT transparent: a transparent + always-on-top
-                // immediate viewport crashes with a native access violation
-                // (STATUS_ACCESS_VIOLATION, no Rust panic) when resized on
-                // Windows — see egui #4061 / #4091. The window is painted with an
-                // opaque full-rect background and DWM still rounds the corners
-                // (DWMWCP_ROUND), so dropping transparency is visually a no-op.
-                .with_resizable(true),
+                // Not transparent and not resizable on purpose — see
+                // window_scale_stepper for the Windows resize-crash rationale.
+                .with_resizable(false),
             |ctx, _class| {
                 if !self.debug_corner_applied {
                     apply_rounding_to_process_windows();
@@ -3381,7 +3398,12 @@ impl DpsApp {
                             .inner_margin(egui::Margin::symmetric(10, 3)),
                     )
                     .show(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, "NTE Debug");
+                        close_clicked = secondary_title_bar(
+                            ui,
+                            "NTE Debug",
+                            &mut self.debug_window_scale,
+                            DEBUG_WINDOW_BASE_SIZE,
+                        );
                     });
                 egui::CentralPanel::default()
                     .frame(
@@ -3392,7 +3414,6 @@ impl DpsApp {
                     .show(ctx, |ui| {
                         self.debug_contents(ui);
                     });
-                window_resize_handles(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
         );
@@ -4174,8 +4195,6 @@ impl eframe::App for DpsApp {
                 }
             });
 
-        window_resize_handles(ctx);
-
         #[cfg(not(feature = "no_debug"))]
         if self.debug_open {
             self.debug_panel(ctx);
@@ -4284,72 +4303,69 @@ fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-/// Width (logical points) of the invisible grab zone along each window edge.
-const WINDOW_RESIZE_BORDER: f32 = 6.0;
-/// Side of the corner grab zones — a bit larger than the edges so the diagonal
-/// resize handles are easy to hit.
-const WINDOW_RESIZE_CORNER: f32 = 14.0;
-
-/// Lets a decoration-less viewport be resized by dragging its edges/corners.
-/// The native title bars are off (`with_decorations(false)`), which also strips
-/// the OS resize borders, so we recreate them with `ViewportCommand::BeginResize`.
+/// Title-bar −／＋ stepper that resizes the current viewport proportionally.
 ///
-/// It lays down **no** interactable overlay — an earlier version put
-/// `Order::Foreground` areas on every edge, which swallowed clicks on widgets
-/// near a border (the close button, edge controls, scrollbars). Instead it
-/// hit-tests the pointer against thin edge bands and only acts on a fresh press.
+/// Free drag-resize was removed: dragging a window edge on Windows can trigger a
+/// native access violation in eframe (egui #4061 / #4091), and there is no OS
+/// resize border anyway (`with_decorations(false)`). Instead the user steps the
+/// window between [`WINDOW_SCALE_MIN`]..=[`WINDOW_SCALE_MAX`] of its default size.
 ///
-/// The **top** edge is deliberately skipped: the custom title bar (and its
-/// minimize/close buttons + drag-to-move zone) lives there, so a top resize band
-/// would fight those widgets. The left/right/bottom edges sit entirely over the
-/// panels' frame margins, where there are no widgets — so a press there is
-/// unambiguous and nothing else is ever blocked.
-///
-/// Call once per frame for each viewport.
-fn window_resize_handles(ctx: &egui::Context) {
-    use egui::{CursorIcon, ResizeDirection, ViewportCommand};
-
-    // A maximized window has no movable border; don't fight the OS. Likewise,
-    // don't start a new resize while a drag (resize or move) is already going.
-    if ctx.input(|input| input.viewport().maximized.unwrap_or(false)) || ctx.is_using_pointer() {
-        return;
-    }
-    let Some(pos) = ctx.pointer_latest_pos() else {
-        return;
+/// `scale` is clamped to that range; on a click it sends exactly one
+/// `InnerSize(base_size * scale)` — a discrete resize, never the per-pixel drag
+/// or rapid `InnerSize` stream that the upstream bug chokes on. `base_size` keeps
+/// the window's original aspect ratio. Draw inside a right-to-left layout.
+fn window_scale_stepper(ui: &mut egui::Ui, scale: &mut f32, base_size: egui::Vec2) {
+    let apply = |ui: &egui::Ui, scale: f32| {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                (base_size.x * scale).round(),
+                (base_size.y * scale).round(),
+            )));
     };
-    let rect = ctx.screen_rect();
-    if !rect.contains(pos) {
-        return;
+    // right-to-left: ＋ is added first (rightmost), then the readout, then －.
+    if ui
+        .add_enabled(
+            *scale < WINDOW_SCALE_MAX - f32::EPSILON,
+            egui::Button::new("＋")
+                .frame(false)
+                .min_size(TITLE_BAR_BUTTON_SIZE),
+        )
+        .on_hover_text("放大窗口")
+        .clicked()
+    {
+        *scale = (*scale + WINDOW_SCALE_STEP).min(WINDOW_SCALE_MAX);
+        apply(ui, *scale);
     }
-    let b = WINDOW_RESIZE_BORDER;
-    let c = WINDOW_RESIZE_CORNER;
-    let (west, east) = (pos.x <= rect.left() + b, pos.x >= rect.right() - b);
-    let south = pos.y >= rect.bottom() - b;
-    // Corner squares are a touch larger so the diagonal grab is easy to hit.
-    let (west_c, east_c) = (pos.x <= rect.left() + c, pos.x >= rect.right() - c);
-    let south_c = pos.y >= rect.bottom() - c;
-
-    let (direction, cursor) = if south_c && west_c {
-        (ResizeDirection::SouthWest, CursorIcon::ResizeNeSw)
-    } else if south_c && east_c {
-        (ResizeDirection::SouthEast, CursorIcon::ResizeNwSe)
-    } else if west {
-        (ResizeDirection::West, CursorIcon::ResizeWest)
-    } else if east {
-        (ResizeDirection::East, CursorIcon::ResizeEast)
-    } else if south {
-        (ResizeDirection::South, CursorIcon::ResizeSouth)
-    } else {
-        return; // interior or top edge — leave the pointer alone
-    };
-
-    ctx.set_cursor_icon(cursor);
-    if ctx.input(|input| input.pointer.primary_pressed()) {
-        ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+    ui.add(
+        egui::Label::new(
+            RichText::new(format!("{:.0}%", *scale * 100.0))
+                .size(11.0)
+                .color(ui.visuals().weak_text_color()),
+        )
+        .selectable(false),
+    )
+    .on_hover_text("窗口缩放比例");
+    if ui
+        .add_enabled(
+            *scale > WINDOW_SCALE_MIN + f32::EPSILON,
+            egui::Button::new("－")
+                .frame(false)
+                .min_size(TITLE_BAR_BUTTON_SIZE),
+        )
+        .on_hover_text("缩小窗口")
+        .clicked()
+    {
+        *scale = (*scale - WINDOW_SCALE_STEP).max(WINDOW_SCALE_MIN);
+        apply(ui, *scale);
     }
 }
 
-fn secondary_title_bar(ui: &mut egui::Ui, title: &str) -> bool {
+fn secondary_title_bar(
+    ui: &mut egui::Ui,
+    title: &str,
+    scale: &mut f32,
+    base_size: egui::Vec2,
+) -> bool {
     let title_height = 28.0;
     let mut close_clicked = false;
     ui.horizontal(|ui| {
@@ -4375,6 +4391,7 @@ fn secondary_title_bar(ui: &mut egui::Ui, title: &str) -> bool {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
+            window_scale_stepper(ui, scale, base_size);
             let drag_response = ui.allocate_response(
                 egui::vec2(ui.available_width(), title_height),
                 egui::Sense::click_and_drag(),
