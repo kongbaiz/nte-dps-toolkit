@@ -186,7 +186,11 @@ const ATTRIBUTE_ICON_PATHS: [(&str, &str); 6] = [
 const DAMAGE_DIGIT_IMAGE_DIR: &str = "res/images/font/tiaozi1";
 const MONSTER_IMAGE_DIR: &str = "res/images/monsters";
 const REACTION_TEXT_IMAGE_COUNT: u8 = 8;
-const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 20] = [
+// The `_L`/`_H`/`_Z` "non-trigger side" reaction digit sets (Guangling_L,
+// Anhun_H, Zhouan_Z, lingzhou_Z) were removed along with their PNGs: reactions
+// now always render the trigger-side series (see mixed_damage_digit_key), so
+// those sets had no remaining users.
+const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 16] = [
     ("灵", "ling"),
     ("咒", "zhou"),
     ("光", "guang"),
@@ -196,17 +200,13 @@ const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 20] = [
     ("物理", "wuli"),
     ("真实", "zhenshi"),
     ("Guangling_G", "Guangling_G"),
-    ("Guangling_L", "Guangling_L"),
     ("Guangxiang_G", "Guangxiang_G"),
     ("Guangxiang_X", "Guangxiang_X"),
     ("Hunxiang_H", "Hunxiang_H"),
     ("Hunxiang_X", "Hunxiang_X"),
     ("Anhun_A", "Anhun_A"),
-    ("Anhun_H", "Anhun_H"),
     ("Zhouan_A", "Zhouan_A"),
-    ("Zhouan_Z", "Zhouan_Z"),
     ("lingzhou_L", "lingzhou_L"),
-    ("lingzhou_Z", "lingzhou_Z"),
 ];
 
 #[derive(Default)]
@@ -6101,16 +6101,17 @@ fn mixed_damage_digit_key(
             "相" => Some("Hunxiang_X"),
             _ => None,
         },
+        // 盈蓄 / 失谐 only keep the reaction series whose digit PNGs still exist
+        // (the trigger-side ones). The removed `_L`/`_H`/`_Z` sides fall through
+        // to `None`, so the caller uses the credited character's plain element
+        // digits instead of a missing texture.
         "盈蓄" => match source_attribute? {
             "光" => Some("Guangling_G"),
-            "灵" => Some("Guangling_L"),
             "相" => Some("Guangxiang_X"),
             _ => None,
         },
         "失谐" => match source_attribute? {
             "暗" => Some("Anhun_A"),
-            "魂" => Some("Anhun_H"),
-            "咒" => Some("Zhouan_Z"),
             _ => None,
         },
         _ => None,
