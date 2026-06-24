@@ -50,10 +50,19 @@ python tools/nte_asset_pipeline.py build --assets-root .\NTE_Assets --output-res
 - `res/data/skills/wooden_damage_descriptions.json`
 - `res/data/skills/ability_tips.json`
 - `res/data/reactions/reactions.json`
+- `res/data/abyss/season_names_zh_cn.json`
 - `res/data/asset_report.json`
 - `res/data/asset_manifest.json`
 
 默认会保留现有角色配置里的人工颜色和旧角色记录；需要删除角色表中不存在的旧记录时再加 `--prune-stale-characters`。
+
+深渊怪物波次和数量还依赖以下稳定运行资源：
+
+- `res/data/abyss/AbyssCloneLevelDataTable.json`
+- `res/data/abyss/DT_AbyssMonsterPool.json`
+- `res/data/abyss/abyss_floor_monster_summary.json`
+
+它们来自客户端 `DataAssets/DataAssetSet/Abyss` 下的层配置和怪物池表；汇总表把层、上下行线、波次、怪物池和怪物数量展开，供主程序直接加载。
 
 ## 辅助分析
 
