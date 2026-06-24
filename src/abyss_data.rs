@@ -8,12 +8,14 @@ use crate::parser::find_data_file;
 
 const ABYSS_MONSTER_STATIC_PATH: &str = "res/data/abyss/DT_MonsterStaticData_Abyss.json";
 const MONSTER_PACK_DATA_PATH: &str = "res/data/abyss/DT_MonsterPackData.json";
+const ABYSS_FLOOR_MONSTER_SUMMARY_PATH: &str = "res/data/abyss/abyss_floor_monster_summary.json";
 const ABYSS_SEASON_NAMES_PATH: &str = "res/data/abyss/season_names_zh_cn.json";
 const LEGACY_ABYSS_MONSTER_STATIC_PATH: &str =
     "NTE_Assets/DataTable/Monster/DT_MonsterStaticData_Abyss.json";
 const LEGACY_MONSTER_PACK_DATA_PATH: &str = "NTE_Assets/DataTable/PackData/DT_MonsterPackData.json";
 const LEGACY_ABYSS_LOCALIZATION_PATH: &str = "NTE_Assets/Localization/zh-CN/game.json";
 type AbyssPackIdParts = (u32, u32, Option<u32>, Option<u32>, String);
+const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=4;
 
 #[derive(Clone, Debug, Default)]
 pub struct AbyssMonsterDataset {
@@ -32,16 +34,22 @@ pub struct AbyssFloor {
     pub season: u32,
     pub season_name: Option<String>,
     pub floor: u32,
+    pub name: Option<String>,
     pub monsters: Vec<AbyssMonsterEntry>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AbyssMonsterEntry {
     pub pack_id: String,
+    pub attribute_id: String,
+    pub monster_pool_id: Option<String>,
     pub monster_id: String,
     pub name: String,
+    pub count: u32,
+    pub level: Option<u32>,
     pub half: Option<u32>,
     pub wave: Option<u32>,
+    pub is_boss: bool,
     pub stats: AbyssMonsterStats,
 }
 
@@ -70,62 +78,24 @@ impl AbyssMonsterDataset {
             load_rows(&pack_path).with_context(|| format!("无法读取 {}", pack_path.display()))?;
         let static_index = build_static_index(&static_rows);
         let season_names = load_abyss_season_names();
-        let mut floors = HashMap::<(u32, u32), Vec<AbyssMonsterEntry>>::new();
-
-        for (pack_id, row) in &pack_rows {
-            let Some((season, floor, half, wave, monster_id)) = parse_abyss_pack_id(pack_id) else {
-                continue;
-            };
-            let stats = monster_stats(row);
-            let static_info = lookup_static_monster(&static_index, &monster_id);
-            let name = static_info
-                .and_then(|info| info.name.clone())
-                .unwrap_or_else(|| monster_id.clone());
-            floors
-                .entry((season, floor))
-                .or_default()
-                .push(AbyssMonsterEntry {
-                    pack_id: pack_id.clone(),
-                    monster_id,
-                    name: name.clone(),
-                    half,
-                    wave,
-                    stats,
-                });
+        if let Some(summary_path) = find_data_file(ABYSS_FLOOR_MONSTER_SUMMARY_PATH.as_ref()) {
+            let summary_rows = load_summary_rows(&summary_path)
+                .with_context(|| format!("无法读取 {}", summary_path.display()))?;
+            if !summary_rows.is_empty() {
+                return Ok(build_dataset_from_summary(
+                    &summary_rows,
+                    &pack_rows,
+                    &static_index,
+                    &season_names,
+                ));
+            }
         }
 
-        let mut grouped = HashMap::<u32, Vec<AbyssFloor>>::new();
-        for ((season, floor), mut monsters) in floors {
-            monsters.sort_by(|left, right| {
-                left.half
-                    .cmp(&right.half)
-                    .then_with(|| left.wave.cmp(&right.wave))
-                    .then_with(|| left.name.cmp(&right.name))
-                    .then_with(|| left.pack_id.cmp(&right.pack_id))
-            });
-            let season_name = season_names.get(&season).cloned();
-            grouped.entry(season).or_default().push(AbyssFloor {
-                season,
-                season_name,
-                floor,
-                monsters,
-            });
-        }
-
-        let mut seasons = grouped
-            .into_iter()
-            .map(|(season, mut floors)| {
-                floors.sort_by_key(|floor| floor.floor);
-                AbyssSeason {
-                    season,
-                    name: season_names.get(&season).cloned(),
-                    floors,
-                }
-            })
-            .collect::<Vec<_>>();
-        seasons.sort_by_key(|season| season.season);
-
-        Ok(Self { seasons })
+        Ok(build_dataset_from_pack_rows(
+            &pack_rows,
+            &static_index,
+            &season_names,
+        ))
     }
 
     pub fn first_floor_key(&self) -> Option<(u32, u32)> {
@@ -153,6 +123,194 @@ impl AbyssMonsterDataset {
     }
 }
 
+impl AbyssFloor {
+    pub fn monster_count(&self) -> u32 {
+        self.monsters.iter().map(|monster| monster.count).sum()
+    }
+
+    pub fn wave_count(&self) -> usize {
+        self.monsters
+            .iter()
+            .filter_map(|monster| monster.wave)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    }
+}
+
+fn build_dataset_from_pack_rows(
+    pack_rows: &HashMap<String, Value>,
+    static_index: &HashMap<String, StaticMonsterInfo>,
+    season_names: &HashMap<u32, String>,
+) -> AbyssMonsterDataset {
+    let mut floors = HashMap::<(u32, u32), Vec<AbyssMonsterEntry>>::new();
+
+    for (pack_id, row) in pack_rows {
+        let Some((season, floor, half, wave, monster_id)) = parse_abyss_pack_id(pack_id) else {
+            continue;
+        };
+        let stats = monster_stats(row);
+        let static_info = lookup_static_monster(static_index, &monster_id);
+        let name = static_info
+            .and_then(|info| info.name.clone())
+            .unwrap_or_else(|| monster_id.clone());
+        floors
+            .entry((season, floor))
+            .or_default()
+            .push(AbyssMonsterEntry {
+                pack_id: pack_id.clone(),
+                attribute_id: pack_id.clone(),
+                monster_pool_id: None,
+                monster_id,
+                name: name.clone(),
+                count: 1,
+                level: None,
+                half,
+                wave,
+                is_boss: false,
+                stats,
+            });
+    }
+
+    build_dataset(floors, HashMap::new(), season_names)
+}
+
+fn build_dataset_from_summary(
+    summary_rows: &[Value],
+    pack_rows: &HashMap<String, Value>,
+    static_index: &HashMap<String, StaticMonsterInfo>,
+    season_names: &HashMap<u32, String>,
+) -> AbyssMonsterDataset {
+    let mut floors = HashMap::<(u32, u32), Vec<AbyssMonsterEntry>>::new();
+    let mut floor_names = HashMap::<(u32, u32), String>::new();
+
+    for row in summary_rows {
+        let Some(abyss_key) = string(row, "abyss") else {
+            continue;
+        };
+        let Some(season) = parse_abyss_group(abyss_key) else {
+            continue;
+        };
+        let Some(floor) = u32_value(row, "level_id") else {
+            continue;
+        };
+        if let Some(level_name) = string(row, "level_name").filter(|value| !value.trim().is_empty())
+        {
+            floor_names
+                .entry((season, floor))
+                .or_insert_with(|| level_name.to_owned());
+        }
+        let half = string(row, "route").and_then(parse_abyss_route_half);
+        let wave = u32_value(row, "wave");
+        let monster_pool_id = string(row, "monster_pool_id").map(str::to_owned);
+        let Some(monsters) = row.get("monsters").and_then(Value::as_array) else {
+            continue;
+        };
+
+        for (index, monster) in monsters.iter().enumerate() {
+            let Some(attribute_id) = string(monster, "attribute_id") else {
+                continue;
+            };
+            let monster_id = parse_abyss_attribute_monster_id(attribute_id)
+                .or_else(|| {
+                    monster_id_from_class_path(string(monster, "class").unwrap_or_default())
+                })
+                .unwrap_or_else(|| attribute_id.to_owned());
+            let stats = pack_rows
+                .get(attribute_id)
+                .map(monster_stats)
+                .unwrap_or_default();
+            let static_info = lookup_static_monster(static_index, &monster_id);
+            let name = string(monster, "name")
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned)
+                .or_else(|| static_info.and_then(|info| info.name.clone()))
+                .unwrap_or_else(|| monster_id.clone());
+            let count = u32_value(monster, "count").unwrap_or(1).max(1);
+            let pack_id = match &monster_pool_id {
+                Some(pool) => format!(
+                    "{pool}:{}:{}:{attribute_id}:{index}",
+                    half.map_or_else(|| "-".to_owned(), |value| value.to_string()),
+                    wave.map_or_else(|| "-".to_owned(), |value| value.to_string())
+                ),
+                None => attribute_id.to_owned(),
+            };
+            floors
+                .entry((season, floor))
+                .or_default()
+                .push(AbyssMonsterEntry {
+                    pack_id,
+                    attribute_id: attribute_id.to_owned(),
+                    monster_pool_id: monster_pool_id.clone(),
+                    monster_id,
+                    name,
+                    count,
+                    level: u32_value(monster, "level"),
+                    half,
+                    wave,
+                    is_boss: bool_value(monster, "is_boss"),
+                    stats,
+                });
+        }
+    }
+
+    build_dataset(floors, floor_names, season_names)
+}
+
+fn build_dataset(
+    floors: HashMap<(u32, u32), Vec<AbyssMonsterEntry>>,
+    floor_names: HashMap<(u32, u32), String>,
+    season_names: &HashMap<u32, String>,
+) -> AbyssMonsterDataset {
+    let mut grouped = HashMap::<u32, Vec<AbyssFloor>>::new();
+    for ((season, floor), mut monsters) in floors {
+        if !is_supported_abyss_season(season) {
+            continue;
+        }
+        monsters.sort_by(|left, right| {
+            left.half
+                .cmp(&right.half)
+                .then_with(|| left.wave.cmp(&right.wave))
+                .then_with(|| left.monster_pool_id.cmp(&right.monster_pool_id))
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.pack_id.cmp(&right.pack_id))
+        });
+        let season_name = season_names
+            .get(&season)
+            .cloned()
+            .or_else(|| (season == 0).then(|| "通用配置".to_owned()));
+        let name = floor_names.get(&(season, floor)).cloned();
+        grouped.entry(season).or_default().push(AbyssFloor {
+            season,
+            season_name,
+            floor,
+            name,
+            monsters,
+        });
+    }
+
+    let mut seasons = grouped
+        .into_iter()
+        .map(|(season, mut floors)| {
+            floors.sort_by_key(|floor| floor.floor);
+            AbyssSeason {
+                season,
+                name: season_names
+                    .get(&season)
+                    .cloned()
+                    .or_else(|| (season == 0).then(|| "通用配置".to_owned())),
+                floors,
+            }
+        })
+        .collect::<Vec<_>>();
+    seasons.sort_by_key(|season| season.season);
+
+    AbyssMonsterDataset { seasons }
+}
+
+fn is_supported_abyss_season(season: u32) -> bool {
+    SUPPORTED_ABYSS_SEASONS.contains(&season)
+}
+
 fn load_rows(path: &PathBuf) -> Result<HashMap<String, Value>> {
     let text = std::fs::read_to_string(path)?;
     let document: Value = serde_json::from_str(&text)?;
@@ -166,6 +324,16 @@ fn load_rows(path: &PathBuf) -> Result<HashMap<String, Value>> {
         .iter()
         .map(|(key, row)| (key.clone(), row.clone()))
         .collect())
+}
+
+fn load_summary_rows(path: &PathBuf) -> Result<Vec<Value>> {
+    let text = std::fs::read_to_string(path)?;
+    let document: Value = serde_json::from_str(&text)?;
+    let rows = document
+        .get("rows")
+        .and_then(Value::as_array)
+        .context("深渊怪物汇总缺少 rows 数组")?;
+    Ok(rows.clone())
 }
 
 fn load_abyss_season_names() -> HashMap<u32, String> {
@@ -327,8 +495,81 @@ fn parse_abyss_pack_id(pack_id: &str) -> Option<AbyssPackIdParts> {
     (!monster_id.is_empty()).then_some((season, floor, half, wave, monster_id))
 }
 
+fn parse_abyss_group(value: &str) -> Option<u32> {
+    value.strip_prefix("Abyss_").and_then(|suffix| {
+        if suffix == "Common" {
+            Some(0)
+        } else {
+            suffix.parse::<u32>().ok()
+        }
+    })
+}
+
+fn parse_abyss_route_half(value: &str) -> Option<u32> {
+    if value.ends_with("FirstHalf") {
+        Some(0)
+    } else if value.ends_with("SecondHalf") {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+fn parse_abyss_attribute_monster_id(attribute_id: &str) -> Option<String> {
+    let parts = attribute_id.split('_').collect::<Vec<_>>();
+    if parts.len() < 4 || parts.first().copied() != Some("Abyss") {
+        return None;
+    }
+    let monster_start = if parts.get(1).copied() == Some("Common") {
+        3
+    } else if parts.get(1).is_some_and(|value| is_u32(value))
+        && parts.get(2).is_some_and(|value| is_u32(value))
+        && parts.get(3).is_some_and(|value| is_u32(value))
+        && parts.get(4).is_some_and(|value| is_u32(value))
+    {
+        5
+    } else if parts.get(1).is_some_and(|value| is_u32(value))
+        && parts.get(2).is_some_and(|value| is_u32(value))
+    {
+        3
+    } else {
+        return None;
+    };
+    let monster_id = parts.get(monster_start..)?.join("_");
+    (!monster_id.is_empty()).then_some(monster_id)
+}
+
+fn monster_id_from_class_path(path: &str) -> Option<String> {
+    let asset_name = path
+        .rsplit_once('/')
+        .map(|(_, name)| name)
+        .unwrap_or(path)
+        .split('.')
+        .next()
+        .unwrap_or(path);
+    let normalized = asset_name
+        .trim_end_matches("_C")
+        .trim_end_matches("_Abyss")
+        .trim_end_matches("_abyss");
+    (!normalized.is_empty()).then(|| normalized.to_owned())
+}
+
 fn is_u32(value: &str) -> bool {
     !value.is_empty() && value.chars().all(|character| character.is_ascii_digit())
+}
+
+fn string<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
+    row.get(key).and_then(Value::as_str)
+}
+
+fn u32_value(row: &Value, key: &str) -> Option<u32> {
+    row.get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn bool_value(row: &Value, key: &str) -> bool {
+    row.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn monster_stats(row: &Value) -> AbyssMonsterStats {
@@ -355,7 +596,9 @@ fn number(row: &Value, key: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_static_index, lookup_static_monster, parse_abyss_pack_id, parse_abyss_season_names,
+        build_dataset_from_summary, build_static_index, lookup_static_monster,
+        parse_abyss_attribute_monster_id, parse_abyss_group, parse_abyss_pack_id,
+        parse_abyss_route_half, parse_abyss_season_names,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -373,6 +616,107 @@ mod tests {
         assert_eq!(
             parse_abyss_pack_id("Abyss_4_6_1_2_mon_03_BP"),
             Some((4, 6, Some(1), Some(2), "mon_03_BP".to_owned()))
+        );
+    }
+
+    #[test]
+    fn parses_summary_abyss_identifiers() {
+        assert_eq!(parse_abyss_group("Abyss_Common"), Some(0));
+        assert_eq!(parse_abyss_group("Abyss_4"), Some(4));
+        assert_eq!(
+            parse_abyss_route_half("EAbyssFightStage::FirstHalf"),
+            Some(0)
+        );
+        assert_eq!(
+            parse_abyss_route_half("EAbyssFightStage::SecondHalf"),
+            Some(1)
+        );
+        assert_eq!(
+            parse_abyss_attribute_monster_id("Abyss_Common_2_mon_35_Blue_BP").as_deref(),
+            Some("mon_35_Blue_BP")
+        );
+        assert_eq!(
+            parse_abyss_attribute_monster_id("Abyss_4_6_1_2_mon_03_BP").as_deref(),
+            Some("mon_03_BP")
+        );
+    }
+
+    #[test]
+    fn builds_summary_dataset_with_counts_and_stats() {
+        let summary_rows = vec![json!({
+            "abyss": "Abyss_4",
+            "level_id": 2,
+            "level_name": "第二站",
+            "route": "EAbyssFightStage::FirstHalf",
+            "wave": 1,
+            "monster_pool_id": "Abyss_4_2_0_1",
+            "monsters": [
+                {
+                    "name": "罐头锡兵",
+                    "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+                    "count": 2,
+                    "level": 46,
+                    "attribute_id": "Abyss_4_2_0_1_mon_35_Blue_BP",
+                    "element_types": ["CHARACTER_ELEMENT_TYPE_COSMOS"],
+                    "is_boss": false,
+                    "spawn_points": ["MonPoint_01", "MonPoint_02"]
+                }
+            ]
+        })];
+        let pack_rows = HashMap::from([(
+            "Abyss_4_2_0_1_mon_35_Blue_BP".to_owned(),
+            json!({
+                "HPMaxBase": 1000.0,
+                "AttackBase": 50.0
+            }),
+        )]);
+        let static_rows = HashMap::from([(
+            "mon_35_BP_Blue_Abyss".to_owned(),
+            json!({
+                "Comment": "蓝锡兵",
+                "Tags": ["mon_35_Blue_BP_Abyss"]
+            }),
+        )]);
+        let static_index = build_static_index(&static_rows);
+        let dataset =
+            build_dataset_from_summary(&summary_rows, &pack_rows, &static_index, &HashMap::new());
+        let floor = dataset.floor(4, 2).expect("summary floor should exist");
+        assert_eq!(floor.name.as_deref(), Some("第二站"));
+        assert_eq!(floor.monster_count(), 2);
+        assert_eq!(floor.wave_count(), 1);
+
+        let monster = floor
+            .monsters
+            .first()
+            .expect("summary monster should exist");
+        assert_eq!(monster.count, 2);
+        assert_eq!(monster.level, Some(46));
+        assert_eq!(monster.half, Some(0));
+        assert_eq!(monster.wave, Some(1));
+        assert_eq!(monster.monster_id, "mon_35_Blue_BP");
+        assert_eq!(monster.stats.hp_max_base, 1000.0);
+    }
+
+    #[test]
+    fn loads_current_abyss_summary_resource_shape() {
+        let dataset = super::AbyssMonsterDataset::load().expect("abyss resource should load");
+        let seasons = dataset
+            .seasons
+            .iter()
+            .map(|season| season.season)
+            .collect::<Vec<_>>();
+        assert_eq!(seasons, [1, 2, 3, 4]);
+
+        let floor = dataset
+            .floor(4, 1)
+            .expect("current abyss floor should exist");
+        assert_eq!(floor.wave_count(), 2);
+        assert_eq!(floor.monster_count(), 16);
+        assert!(
+            floor
+                .monsters
+                .iter()
+                .any(|monster| monster.monster_id == "mon_14_BP")
         );
     }
 
