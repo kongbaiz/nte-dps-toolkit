@@ -15,7 +15,7 @@ Usage:
   Cue4ParseProbe --paks <directory> [--output <directory>]
                  [--usmap <file>] [--aes-key-file <file>]
                  [--target <package suffix>]... [--all-datatables]
-                 [--mapping-filter <text>]...
+                 [--mapping-filter <text>]... [--file-filter <text>]...
 
 The AES key file must contain one authorized 32-byte hexadecimal key.
 The key is never written to logs or reports.
@@ -100,7 +100,9 @@ try
 {
     using var provider = new DefaultFileProvider(
         paksDirectory,
-        options.AllDataTables ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly,
+        options.AllDataTables || options.FileFilters.Count > 0 || options.Targets.Count > 0
+            ? SearchOption.AllDirectories
+            : SearchOption.TopDirectoryOnly,
         new VersionContainer(EGame.GAME_NevernessToEverness),
         StringComparer.OrdinalIgnoreCase);
 
@@ -158,6 +160,26 @@ try
         .Where(file => file.IsUePackage)
         .ToArray();
     var targetResults = new JArray();
+
+    if (options.FileFilters.Count > 0)
+    {
+        report["file_matches"] = new JArray(
+            packageFiles
+                .Where(file => options.FileFilters.Any(filter =>
+                    file.PathWithoutExtension.Contains(
+                        filter,
+                        StringComparison.OrdinalIgnoreCase)))
+                .GroupBy(
+                    file => file.PathWithoutExtension,
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(file => file.Path)
+                .Select(file => new JObject
+                {
+                    ["path"] = file.Path,
+                    ["path_without_extension"] = file.PathWithoutExtension
+                }));
+    }
 
     if (options.AllDataTables && !blockedByEncryption)
     {
@@ -236,7 +258,7 @@ try
         };
     }
 
-    if (!options.AllDataTables)
+    if (!options.AllDataTables && options.FileFilters.Count == 0)
     {
         foreach (var target in targets)
         {
@@ -318,6 +340,7 @@ static Options? ParseArguments(string[] arguments)
     var allDataTables = false;
     var targets = new List<string>();
     var mappingFilters = new List<string>();
+    var fileFilters = new List<string>();
 
     for (var index = 0; index < arguments.Length; index++)
     {
@@ -356,6 +379,9 @@ static Options? ParseArguments(string[] arguments)
                 case "--mapping-filter":
                     mappingFilters.Add(NextValue());
                     break;
+                case "--file-filter":
+                    fileFilters.Add(NextValue());
+                    break;
                 default:
                     return null;
             }
@@ -368,7 +394,15 @@ static Options? ParseArguments(string[] arguments)
 
     return paks is null
         ? null
-        : new Options(paks, output, usmap, aesKeyFile, targets, allDataTables, mappingFilters);
+        : new Options(
+            paks,
+            output,
+            usmap,
+            aesKeyFile,
+            targets,
+            allDataTables,
+            mappingFilters,
+            fileFilters);
 }
 
 internal sealed record Options(
@@ -378,4 +412,5 @@ internal sealed record Options(
     string? AesKeyFile,
     List<string> Targets,
     bool AllDataTables,
-    List<string> MappingFilters);
+    List<string> MappingFilters,
+    List<string> FileFilters);
