@@ -53,6 +53,16 @@ cargo run --release
 
 请勿把 `logs/`、`target/`、`data/`、本机抓包、完整载荷、授权资源路径、资源导出密钥、usmap 或完整解包数据提交到仓库、Issue、PR 或公开报告。
 
+## 界面截图
+
+| 主界面 | 深渊统计 |
+|---|---|
+| <img src="images/main_menu.png" alt="主界面" width="360"> | <img src="images/abyss.png" alt="深渊统计" width="520"> |
+
+| 队伍命中明细 | 角色命中明细 |
+|---|---|
+| <img src="images/team_battle_detail.png" alt="队伍命中明细" width="520"> | <img src="images/char_battle_detail.png" alt="角色命中明细" width="520"> |
+
 ## 资源目录
 
 ```text
