@@ -68,7 +68,7 @@ const TEAM_HIT_DETAIL_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(980.0, 660.0);
 const CONSOLE_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(980.0, 640.0);
 /// Width the HUD window shrinks to; height is computed per row count so the
 /// window hugs the readout with no empty translucent area.
-const HUD_WINDOW_WIDTH: f32 = 320.0;
+const HUD_WINDOW_WIDTH: f32 = 380.0;
 const WINDOW_SCALE_MIN: f32 = 0.7;
 const WINDOW_SCALE_MAX: f32 = 1.5;
 const WINDOW_SCALE_STEP: f32 = 0.1;
@@ -440,9 +440,9 @@ pub struct DpsApp {
     /// Chrome-less "战斗 HUD" overlay: hides the toolbar/cards and paints a
     /// background-less readout that floats directly on the game (see [`Self::hud_panel`]).
     hud_mode: bool,
-    /// Row count the HUD window was last sized to. Drives shrinking the window to
-    /// hug the HUD (so there is no big translucent rectangle) and restoring it on exit.
-    hud_sized_rows: Option<usize>,
+    /// Row count and title-strip visibility the HUD window was last sized to.
+    /// Drives shrinking the window to hug the HUD and restoring it on exit.
+    hud_size_key: Option<(usize, bool)>,
     abyss_overview: AbyssOverviewState,
     abyss_overview_open: bool,
     abyss_overview_corner_applied: bool,
@@ -591,7 +591,7 @@ impl DpsApp {
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
             hud_mode: false,
-            hud_sized_rows: None,
+            hud_size_key: None,
             abyss_overview,
             abyss_overview_open: false,
             abyss_overview_corner_applied: false,
@@ -898,30 +898,23 @@ impl DpsApp {
         });
     }
 
-    /// Compact title strip for HUD mode: a drag zone plus the only two controls
-    /// that matter while floating on the game — 穿透 (click-through) and an obvious
-    /// 退出 back to the normal window. Sized to fit the narrow HUD window.
+    /// Compact title strip for HUD mode: a drag zone plus the two controls that
+    /// matter while positioning the overlay. It is hidden completely while
+    /// click-through is active so the combat readout sits directly on the game.
     fn hud_title_bar(&mut self, ui: &mut egui::Ui) {
+        if self.mouse_passthrough {
+            return;
+        }
         let (full_rect, drag) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), 32.0),
+            egui::vec2(ui.available_width(), ui.available_height().max(24.0)),
             egui::Sense::click_and_drag(),
         );
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        // Show the controls whenever not passing through. We can't hover-reveal
-        // here: the chroma key makes empty pixels click-through, so egui never
-        // receives a pointer over them and a hover gate could never trigger. While
-        // 穿透 is on, hide the strip for a clean, fully click-through readout —
-        // press Home to drop passthrough and bring the controls back.
-        if self.mouse_passthrough {
-            return;
-        }
-        // A solid (non-key) bar spanning the full width makes the whole strip
-        // grabbable: under the chroma key, transparent pixels are click-through, so
-        // without this only the few opaque glyphs would receive the drag. Rounded
-        // top corners match the window; a thin accent underline separates it from
-        // the transparent readout below so it reads as an intentional title bar.
+        // A solid (non-key) rail makes the strip grabbable: under the chroma key,
+        // transparent pixels are click-through, so only painted pixels receive
+        // drag/click input.
         let painter = ui.painter();
         painter.rect_filled(
             full_rect,
@@ -931,35 +924,34 @@ impl DpsApp {
                 sw: 0,
                 se: 0,
             },
-            Color32::from_rgb(24, 25, 31),
+            Color32::from_rgb(14, 16, 20),
         );
         painter.hline(
             full_rect.x_range(),
             full_rect.bottom() - 0.5,
-            Stroke::new(1.0, Color32::from_rgb(54, 224, 166)),
+            Stroke::new(1.0, Color32::from_rgb(39, 201, 146)),
         );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(full_rect.shrink2(egui::vec2(10.0, 0.0)))
+                .max_rect(full_rect.shrink2(egui::vec2(8.0, 0.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         child.label(
-            RichText::new("NTE HUD")
-                .size(11.5)
+            RichText::new("NTE DPS")
+                .size(10.5)
                 .strong()
-                .color(Color32::from_rgb(224, 224, 230)),
+                .color(Color32::from_rgb(218, 224, 228)),
         );
         child.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("退出").on_hover_text("返回普通窗口").clicked() {
+            if ui
+                .small_button("退出")
+                .on_hover_text("返回普通窗口")
+                .clicked()
+            {
                 self.hud_mode = false;
             }
-            let passthrough_label = if self.mouse_passthrough {
-                "穿透中"
-            } else {
-                "穿透"
-            };
             if ui
-                .selectable_label(self.mouse_passthrough, passthrough_label)
+                .selectable_label(self.mouse_passthrough, "穿透")
                 .on_hover_text("Home 可随时切换；穿透时点不到按钮，先按 Home 关闭再退出")
                 .clicked()
             {
@@ -2395,45 +2387,44 @@ impl DpsApp {
         }
     }
 
-    /// Chrome-less "战斗 HUD": a background-less readout painted directly over the
-    /// game. Legibility comes from per-glyph dark halos (see [`paint_haloed`])
-    /// rather than a panel fill, so it stays readable on bright and dark scenes.
-    /// Its visual signature is its own — character-colored spines, one proportional
-    /// share bar, and square avatars — not the rounded-pill reference it echoes.
+    /// Combat HUD optimized for quick scanning: one team DPS header and a compact
+    /// horizontal damage-share board. Details stay in the normal window.
     fn hud_panel(&mut self, ui: &mut egui::Ui) {
-        const ACCENT: Color32 = Color32::from_rgb(54, 224, 166);
-        const NAME: Color32 = Color32::from_rgb(244, 244, 248);
-        const MUTED: Color32 = Color32::from_rgb(206, 206, 212);
+        const ACCENT: Color32 = Color32::from_rgb(44, 214, 150);
+        const TEXT: Color32 = Color32::from_rgb(242, 246, 248);
+        const MUTED: Color32 = Color32::from_rgb(176, 187, 194);
+        let track_color = Color32::from_black_alpha(96);
 
         let (rows, total_damage, team_dps, duration) = self.party_readout();
         let area = ui.available_rect_before_wrap();
         let left = area.left();
-        let width = area.width().min(304.0);
+        let width = area.width().min(HUD_WINDOW_WIDTH - 16.0);
         let right = left + width;
         let painter = ui.painter().clone();
 
         if rows.is_empty() {
+            let empty = egui::Rect::from_min_size(
+                egui::pos2(left, area.top()),
+                egui::vec2(width.min(210.0), 38.0),
+            );
             paint_haloed(
                 &painter,
-                egui::pos2(left, area.top() + 14.0),
+                egui::pos2(empty.left(), empty.center().y),
                 egui::Align2::LEFT_CENTER,
                 "等待伤害数据",
-                egui::FontId::proportional(14.0),
+                egui::FontId::proportional(13.0),
                 MUTED,
             );
+            ui.allocate_rect(empty, egui::Sense::hover());
             return;
         }
 
-        let lead = &rows[0];
-        let lead_color = character_color(lead.char_id, &self.characters, 0);
-        let avatar =
-            egui::Rect::from_min_size(egui::pos2(left, area.top()), egui::vec2(40.0, 40.0));
-        self.draw_hud_avatar(ui, avatar, lead.char_id, lead_color, &lead.name);
+        let header =
+            egui::Rect::from_min_size(egui::pos2(left, area.top()), egui::vec2(width, 50.0));
 
-        let header_x = avatar.right() + 10.0;
         paint_haloed(
             &painter,
-            egui::pos2(header_x, area.top() + 7.0),
+            egui::pos2(header.left(), header.top() + 12.0),
             egui::Align2::LEFT_CENTER,
             format!("队伍 DPS · {duration:.1}s"),
             egui::FontId::proportional(10.5),
@@ -2441,7 +2432,7 @@ impl DpsApp {
         );
         paint_haloed(
             &painter,
-            egui::pos2(header_x, area.top() + 27.0),
+            egui::pos2(header.left(), header.bottom() - 17.0),
             egui::Align2::LEFT_CENTER,
             format_number(team_dps),
             egui::FontId::proportional(26.0),
@@ -2449,7 +2440,7 @@ impl DpsApp {
         );
         paint_haloed(
             &painter,
-            egui::pos2(right, area.top() + 7.0),
+            egui::pos2(header.right(), header.top() + 12.0),
             egui::Align2::RIGHT_CENTER,
             "总伤害",
             egui::FontId::proportional(10.5),
@@ -2457,90 +2448,112 @@ impl DpsApp {
         );
         paint_haloed(
             &painter,
-            egui::pos2(right, area.top() + 24.0),
+            egui::pos2(header.right(), header.bottom() - 17.0),
             egui::Align2::RIGHT_CENTER,
             format_number(total_damage),
-            egui::FontId::monospace(12.0),
-            NAME,
+            egui::FontId::monospace(13.0),
+            TEXT,
         );
 
-        // Single proportional share bar: each character a segment colored by their
-        // own color, width = damage share. Replaces the reference's per-row bars.
-        let bar = egui::Rect::from_min_size(
-            egui::pos2(left, avatar.bottom() + 8.0),
-            egui::vec2(width, 6.0),
+        let share_strip = egui::Rect::from_min_size(
+            egui::pos2(header.left(), header.bottom() - 3.0),
+            egui::vec2(header.width(), 2.0),
         );
-        painter.rect_filled(bar, 3.0, Color32::from_black_alpha(90));
+        painter.rect_filled(share_strip, 1.0, track_color);
         if total_damage > 0.0 {
-            let gap = 1.5;
-            let mut seg_left = bar.left();
+            let mut seg_left = share_strip.left();
             for (index, row) in rows.iter().enumerate() {
                 let frac = (row.damage / total_damage) as f32;
-                let seg_width = (bar.width() * frac - gap).max(0.0);
+                let seg_width = share_strip.width() * frac;
+                if seg_width <= 0.5 {
+                    continue;
+                }
                 let seg = egui::Rect::from_min_size(
-                    egui::pos2(seg_left, bar.top()),
-                    egui::vec2(seg_width, bar.height()),
+                    egui::pos2(seg_left, share_strip.top()),
+                    egui::vec2(seg_width, share_strip.height()),
                 );
                 painter.rect_filled(
                     seg,
-                    2.0,
+                    1.0,
                     character_color(row.char_id, &self.characters, index),
                 );
-                seg_left += bar.width() * frac;
+                seg_left += seg_width;
             }
         }
-        painter.rect_stroke(
-            bar,
-            3.0,
-            Stroke::new(1.0, Color32::from_black_alpha(120)),
-            egui::StrokeKind::Inside,
-        );
 
-        // Per-character rows: color spine · square avatar · name · DPS · share%.
-        let row_h = 26.0;
-        let row_gap = 5.0;
-        let mut row_top = bar.bottom() + 8.0;
+        let row_h = 24.0;
+        let row_gap = 4.0;
+        let mut row_top = header.bottom() + 6.0;
         for (index, row) in rows.iter().enumerate() {
             let color = character_color(row.char_id, &self.characters, index);
-            let center_y = row_top + row_h * 0.5;
+            let row_rect =
+                egui::Rect::from_min_size(egui::pos2(left, row_top), egui::vec2(width, row_h));
+            let center_y = row_rect.center().y;
             painter.rect_filled(
-                egui::Rect::from_min_size(egui::pos2(left, row_top), egui::vec2(3.0, row_h)),
+                egui::Rect::from_min_size(row_rect.min, egui::vec2(3.0, row_h)),
                 1.5,
                 color,
             );
-            let mini = egui::Rect::from_min_size(
-                egui::pos2(left + 8.0, center_y - 11.0),
-                egui::vec2(22.0, 22.0),
+
+            let avatar = egui::Rect::from_min_size(
+                egui::pos2(row_rect.left() + 8.0, center_y - 9.0),
+                egui::vec2(18.0, 18.0),
             );
-            self.draw_hud_avatar(ui, mini, row.char_id, color, &row.name);
+            self.draw_hud_avatar(ui, avatar, row.char_id, color, &row.name);
+
+            let name_x = avatar.right() + 7.0;
+            let bar_left = row_rect.left() + 104.0;
+            let bar_right = row_rect.right() - 96.0;
+            let clipped = painter.with_clip_rect(egui::Rect::from_min_max(
+                egui::pos2(name_x, row_rect.top()),
+                egui::pos2(bar_left - 7.0, row_rect.bottom()),
+            ));
             paint_haloed(
-                &painter,
-                egui::pos2(mini.right() + 8.0, center_y),
+                &clipped,
+                egui::pos2(name_x, center_y),
                 egui::Align2::LEFT_CENTER,
                 &row.name,
-                egui::FontId::proportional(13.0),
-                NAME,
+                egui::FontId::proportional(12.0),
+                TEXT,
             );
+
             let share = if total_damage > 0.0 {
                 row.damage / total_damage * 100.0
             } else {
                 0.0
             };
+            let track = egui::Rect::from_min_max(
+                egui::pos2(bar_left, center_y - 3.5),
+                egui::pos2(bar_right.max(bar_left + 8.0), center_y + 3.5),
+            );
+            painter.rect_filled(track, 3.5, track_color);
+            let fill_width = if total_damage > 0.0 {
+                track.width() * (share as f32 / 100.0)
+            } else {
+                0.0
+            };
+            if fill_width > 0.5 {
+                painter.rect_filled(
+                    egui::Rect::from_min_size(track.min, egui::vec2(fill_width, track.height())),
+                    3.5,
+                    color,
+                );
+            }
             paint_haloed(
                 &painter,
-                egui::pos2(right, center_y),
+                egui::pos2(row_rect.right() - 8.0, center_y),
                 egui::Align2::RIGHT_CENTER,
                 format!("{share:.1}%"),
-                egui::FontId::proportional(11.0),
+                egui::FontId::proportional(10.5),
                 color,
             );
             paint_haloed(
                 &painter,
-                egui::pos2(right - 48.0, center_y),
+                egui::pos2(right - 52.0, center_y),
                 egui::Align2::RIGHT_CENTER,
                 format_number(row.dps()),
-                egui::FontId::monospace(12.5),
-                NAME,
+                egui::FontId::monospace(12.0),
+                TEXT,
             );
             row_top += row_h + row_gap;
         }
@@ -4723,16 +4736,11 @@ impl DpsApp {
 }
 
 impl eframe::App for DpsApp {
-    /// In HUD mode clear to the chroma key so empty pixels match the `LWA_COLORKEY`
-    /// the window uses to punch transparent, click-through holes (see
-    /// `apply_window_attributes`). In normal mode the opaque panels cover the clear.
+    /// Clear to transparent alpha. HUD mode relies on this so empty pixels
+    /// disappear while painted text/images stay opaque; normal mode covers the
+    /// clear with opaque panels.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.hud_mode {
-            let key = f32::from(crate::window_attributes::HUD_CHROMA_KEY_RGB) / 255.0;
-            [key, key, key, 1.0]
-        } else {
-            egui::Rgba::TRANSPARENT.to_array()
-        }
+        egui::Rgba::TRANSPARENT.to_array()
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -4765,11 +4773,15 @@ impl eframe::App for DpsApp {
         // the safe discrete resize — see `window_scale_stepper`.
         if self.hud_mode {
             let rows = self.party_member_count();
-            if self.hud_sized_rows != Some(rows) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(hud_window_size(rows)));
-                self.hud_sized_rows = Some(rows);
+            let show_title = !self.mouse_passthrough;
+            let size_key = (rows, show_title);
+            if self.hud_size_key != Some(size_key) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(hud_window_size(
+                    rows, show_title,
+                )));
+                self.hud_size_key = Some(size_key);
             }
-        } else if self.hud_sized_rows.take().is_some() {
+        } else if self.hud_size_key.take().is_some() {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
                 MAIN_WINDOW_BASE_SIZE * self.main_window_scale,
             ));
@@ -4777,25 +4789,28 @@ impl eframe::App for DpsApp {
 
         // HUD mode replaces the full title bar with a compact strip (drag · 穿透 ·
         // 退出) and strips the panel fill so only the game shows behind it.
-        let title_frame = if self.hud_mode {
-            // No margin so the HUD's control bar can span the full window width.
-            egui::Frame::new()
-        } else {
-            egui::Frame::new()
-                .fill(ctx.style().visuals.panel_fill)
-                .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
-                .inner_margin(egui::Margin::symmetric(8, 2))
-        };
-        egui::TopBottomPanel::top("custom_title_bar")
-            .exact_height(32.0)
-            .frame(title_frame)
-            .show(ctx, |ui| {
-                if self.hud_mode {
-                    self.hud_title_bar(ui);
-                } else {
-                    self.title_bar(ui);
-                }
-            });
+        let show_hud_title = self.hud_mode && !self.mouse_passthrough;
+        if !self.hud_mode || show_hud_title {
+            let title_frame = if self.hud_mode {
+                // No margin so the HUD's control rail can span the full window width.
+                egui::Frame::new()
+            } else {
+                egui::Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
+                    .inner_margin(egui::Margin::symmetric(8, 2))
+            };
+            egui::TopBottomPanel::top("custom_title_bar")
+                .exact_height(if self.hud_mode { 24.0 } else { 32.0 })
+                .frame(title_frame)
+                .show(ctx, |ui| {
+                    if self.hud_mode {
+                        self.hud_title_bar(ui);
+                    } else {
+                        self.title_bar(ui);
+                    }
+                });
+        }
 
         let central_fill = if self.hud_mode {
             Color32::TRANSPARENT
@@ -6284,9 +6299,8 @@ fn is_qte_follow_up_damage_hit(hit: &crate::model::Hit) -> bool {
                 .is_some_and(is_qte_follow_up_damage_type))
 }
 
-/// Paint text with a dark per-glyph halo by stamping the string in a near-black
-/// at 8 surrounding offsets, then the colored text on top. Lets the chrome-less
-/// HUD stay legible over arbitrary (bright or dark) game scenes without a panel.
+/// Paint text with a light dark halo so HUD text stays readable without the
+/// heavy caption-like outline that would compete with the game scene.
 fn paint_haloed(
     painter: &egui::Painter,
     pos: egui::Pos2,
@@ -6296,31 +6310,28 @@ fn paint_haloed(
     color: Color32,
 ) {
     let text = text.into();
-    let halo = Color32::from_black_alpha(225);
+    let halo = Color32::from_black_alpha(185);
     for offset in [
-        egui::vec2(-1.2, 0.0),
-        egui::vec2(1.2, 0.0),
-        egui::vec2(0.0, -1.2),
-        egui::vec2(0.0, 1.2),
-        egui::vec2(-1.0, -1.0),
-        egui::vec2(1.0, -1.0),
-        egui::vec2(-1.0, 1.0),
-        egui::vec2(1.0, 1.0),
+        egui::vec2(-0.8, 0.0),
+        egui::vec2(0.8, 0.0),
+        egui::vec2(0.0, -0.8),
+        egui::vec2(0.0, 0.8),
+        egui::vec2(-0.65, -0.65),
+        egui::vec2(0.65, 0.65),
     ] {
         painter.text(pos + offset, anchor, text.clone(), font.clone(), halo);
     }
     painter.text(pos, anchor, text, font, color);
 }
 
-/// Window size the HUD shrinks to: fixed width, height sized to hug `rows`
-/// readout rows plus the header, share bar, and compact title strip. Keeps the
-/// window tight so transparent areas don't read as a dimmed rectangle.
-fn hud_window_size(rows: usize) -> egui::Vec2 {
+/// Window size the HUD shrinks to: fixed width, height sized to hug `rows`,
+/// the team header, and the optional positioning rail.
+fn hud_window_size(rows: usize, show_title: bool) -> egui::Vec2 {
     let rows = rows.max(1) as f32;
-    // header(40) + bar gap(8) + bar(6) + gap(8) → 62 to the first row; each row
-    // is 26 tall + 5 gap; plus the title strip(32) and central margins(16) + pad.
-    let content = 62.0 + rows * 31.0;
-    egui::vec2(HUD_WINDOW_WIDTH, (content + 56.0).round())
+    let title = if show_title { 24.0 } else { 0.0 };
+    // central margins(16) + header(50) + row gap(6) + rows(24 + 4) + bottom pad.
+    let content = 16.0 + 50.0 + 6.0 + rows * 28.0 + 4.0;
+    egui::vec2(HUD_WINDOW_WIDTH, (title + content).round())
 }
 
 fn is_party_member_row(row: &CharacterStats, hits: &VecDeque<crate::model::Hit>) -> bool {
