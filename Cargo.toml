@@ -2,6 +2,9 @@
 name = "nte-dps-tool"
 version = "0.1.0"
 edition = "2024"
+description = "Local Windows DPS diagnostics tool for NTE."
+repository = "https://github.com/kongbaiz/NTE_DPS_TOOL"
+license = "PolyForm-Noncommercial-1.0.0"
 
 [features]
 default = []

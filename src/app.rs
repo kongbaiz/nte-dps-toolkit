@@ -1460,11 +1460,13 @@ impl DpsApp {
         };
         match raw_capture.save(&destination) {
             Ok((packet_count, captured_bytes)) => {
+                let file_name = destination
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("PCAPNG 文件");
                 self.status = format!(
                     "已另存完整抓包至 {}（{} 包，{} 字节）",
-                    destination.display(),
-                    packet_count,
-                    captured_bytes
+                    file_name, packet_count, captured_bytes
                 );
                 self.last_error = None;
             }
@@ -4368,11 +4370,16 @@ impl DpsApp {
                         let raw_capture_label = self.raw_capture.as_ref().map_or_else(
                             || "无原始抓包".to_owned(),
                             |capture| {
-                                let path = capture.path().map_or_else(
+                                let file = capture.path().map_or_else(
                                     || "写入不可用".to_owned(),
-                                    |path| path.display().to_string(),
+                                    |path| {
+                                        path.file_name()
+                                            .and_then(|name| name.to_str())
+                                            .unwrap_or("原始抓包文件")
+                                            .to_owned()
+                                    },
                                 );
-                                format!("{} 包 · {path}", capture.packet_count())
+                                format!("{} 包 · {file}", capture.packet_count())
                             },
                         );
                         ui.monospace(raw_capture_label);
