@@ -5,7 +5,7 @@ use windows_sys::Win32::Graphics::Dwm::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowThreadProcessId, HWND_NOTOPMOST,
-    HWND_TOPMOST, IsWindowVisible, LWA_ALPHA, LWA_COLORKEY, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    HWND_TOPMOST, IsWindowVisible, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WS_EX_LAYERED, WS_EX_TRANSPARENT,
 };
 
@@ -13,19 +13,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 /// border for a true overlay, or restore the system default.
 const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
 const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
-
-/// Grey value the HUD clears its empty pixels to; `LWA_COLORKEY` then makes
-/// exactly this colour transparent *and* click-through. The app paints this same
-/// value as its clear colour in HUD mode (see `DpsApp::clear_color`). Kept very
-/// dark and off pure-black so text/avatar pixels never accidentally match it, and
-/// so anti-aliased fringes blend toward the dark halo rather than a bright key.
-pub(crate) const HUD_CHROMA_KEY_RGB: u8 = 2;
-
-/// `HUD_CHROMA_KEY_RGB` as a Win32 `COLORREF` (`0x00BBGGRR`).
-fn hud_chroma_key_colorref() -> u32 {
-    let value = HUD_CHROMA_KEY_RGB as u32;
-    value | (value << 8) | (value << 16)
-}
 
 pub(crate) fn apply_window_attributes(
     frame: &eframe::Frame,
@@ -58,16 +45,23 @@ pub(crate) fn apply_window_attributes(
             *corner_applied_hwnd = Some(hwnd_key);
         }
 
-        // Click-through to the game beneath requires WS_EX_TRANSPARENT *on a
-        // layered window*. Testing showed WS_EX_TRANSPARENT alone (non-layered)
-        // does NOT pass clicks to a separate-process game, and WM_NCHITTEST→
-        // HTTRANSPARENT only cascades within one thread. So both modes stay
-        // layered; the HUD gets its transparency from a colour key instead.
+        // Normal windows use layered uniform alpha for the opacity slider. HUD
+        // mode prefers the transparent framebuffer created by eframe/winit and
+        // avoids SetLayeredWindowAttributes so text/images can stay opaque while
+        // empty pixels keep real alpha. Click-through still needs
+        // WS_EX_TRANSPARENT, and on Windows that is reliable only on a layered
+        // top-level window.
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        let mut new_style = style | WS_EX_LAYERED as isize;
-        if passthrough {
-            new_style |= WS_EX_TRANSPARENT as isize;
+        let mut new_style = style;
+        if hud_overlay {
+            if passthrough {
+                new_style |= (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize;
+            } else {
+                new_style &= !(WS_EX_LAYERED as isize);
+                new_style &= !(WS_EX_TRANSPARENT as isize);
+            }
         } else {
+            new_style |= WS_EX_LAYERED as isize;
             new_style &= !(WS_EX_TRANSPARENT as isize);
         }
         let style_changed = new_style != style;
@@ -89,12 +83,9 @@ pub(crate) fn apply_window_attributes(
         );
 
         if hud_overlay {
-            // A layered GL window can't do per-pixel alpha (UpdateLayeredWindow is
-            // incompatible with the swapchain). So the HUD clears its empty pixels
-            // to HUD_CHROMA_KEY_RGB and LWA_COLORKEY makes exactly that colour
-            // transparent and click-through, while painted content stays opaque.
-            SetLayeredWindowAttributes(hwnd, hud_chroma_key_colorref(), 0, LWA_COLORKEY);
-            // Force the uniform-alpha path to re-run when we leave HUD mode.
+            // HUD transparency comes from the transparent swapchain/clear colour,
+            // not a colour key. Force the uniform-alpha path to re-run when we
+            // leave HUD mode.
             *applied_opacity = None;
             return;
         }
