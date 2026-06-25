@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   windows-release:
@@ -33,14 +33,45 @@ jobs:
       - name: Build release executable
         run: cargo build --release
 
+      - name: Prepare release package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/nte-dps-tool.exe dist/
+          Copy-Item README.md, LICENSE, NOTICE.md, THIRD_PARTY_LICENSES.md dist/
+          Compress-Archive -Path dist/* -DestinationPath nte-dps-tool-windows.zip -Force
+
       - name: Upload executable artifact
         uses: actions/upload-artifact@v4
         with:
           name: nte-dps-tool-windows-${{ github.sha }}
           if-no-files-found: error
           path: |
+            nte-dps-tool-windows.zip
             target/release/nte-dps-tool.exe
-            README.md
-            LICENSE
-            NOTICE.md
-            THIRD_PARTY_LICENSES.md
+
+      - name: Publish latest GitHub Release
+        if: github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: latest
+          RELEASE_TITLE: Latest Windows build
+        run: |
+          if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+            $PSNativeCommandUseErrorActionPreference = $false
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --force $env:RELEASE_TAG $env:GITHUB_SHA
+          git push --force origin "refs/tags/$env:RELEASE_TAG"
+
+          $notes = "Automated Windows build from commit $env:GITHUB_SHA."
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG nte-dps-tool-windows.zip target/release/nte-dps-tool.exe --clobber
+            gh release edit $env:RELEASE_TAG --title $env:RELEASE_TITLE --notes $notes --latest
+          } else {
+            gh release create $env:RELEASE_TAG nte-dps-tool-windows.zip target/release/nte-dps-tool.exe --title $env:RELEASE_TITLE --notes $notes --latest
+          }
