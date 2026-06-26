@@ -26,13 +26,14 @@ use serde::Deserialize;
 
 use crate::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitDamageCorrection, HitFollowUp,
-    PacketDebug,
+    PacketDebug, TimeStopEvent,
 };
 use crate::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
-    SKILL_DAMAGE_DATA_PATH, WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type,
-    classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
-    find_declared_character_evidence, load_gameplay_effect_mapping, load_gameplay_effect_skills,
+    SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry,
+    WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type, classify_attack_type_from_description,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_ultra_time_stops,
     load_wooden_damage_names, matches_shifted_bytes_at, normalize_damage_name,
     parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects,
     qte_reaction_type,
@@ -823,11 +824,9 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
     let is_success = decoded_text.contains("ConditionState_Success")
         && decoded_text.contains("FAbyssGamePlayData");
     let mut explicit_stage = None;
-    if !is_success {
-        for value in decoded_text.lines() {
-            if let Some(stage) = parse_abyss_stage_id(value) {
-                explicit_stage = Some(stage);
-            }
+    for value in decoded_text.lines() {
+        if let Some(stage) = parse_abyss_stage_id(value) {
+            explicit_stage = Some(stage);
         }
     }
     if let Some((cycle, floor, half)) = explicit_stage {
@@ -837,10 +836,9 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
             floor: Some(floor),
             half,
         });
-    } else if !is_success
-        && !is_restart
+    } else if !is_restart
         && decoded_text.contains("FAbyssGamePlayData")
-        && !decoded_text.contains("AbyssClone")
+        && (is_success || !decoded_text.contains("AbyssClone"))
     {
         let first = decoded_text.contains("EAbyssFightStage::FirstHalf");
         let second = decoded_text.contains("EAbyssFightStage::SecondHalf");
@@ -864,6 +862,191 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
         events.push(AbyssEvent::Exit { timestamp });
     }
     events
+}
+
+fn fixed_ultra_time_stop_event(
+    timestamp: f64,
+    char_id: u32,
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+    recent_ultra_time_stops: &mut HashMap<u32, f64>,
+) -> Option<TimeStopEvent> {
+    let entry = ultra_time_stops.get(&char_id)?;
+    let duration = entry.end_ability_event_seconds;
+    if !duration.is_finite() || duration <= 0.0 {
+        return None;
+    }
+    if recent_ultra_time_stops
+        .get(&char_id)
+        .is_some_and(|previous| timestamp - previous < duration.max(1.0))
+    {
+        return None;
+    }
+    recent_ultra_time_stops.insert(char_id, timestamp);
+    recent_ultra_time_stops.retain(|_, previous| timestamp - *previous <= 30.0);
+    Some(TimeStopEvent::UltraAnimation {
+        timestamp,
+        char_id,
+        ability_id: entry.ability_id.clone(),
+        duration_seconds: duration,
+    })
+}
+
+fn extra_time_stop_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<TimeStopEvent> {
+    let mut events = Vec::new();
+    for line in decoded_text.lines() {
+        if line.contains(JIN_ENTER_TIME_STOP_TAG) {
+            events.push(TimeStopEvent::ExtraStart {
+                timestamp,
+                reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
+            });
+        }
+        if line.contains(JIN_CLEAR_TIME_STOP_TAG) {
+            events.push(TimeStopEvent::ExtraEnd {
+                timestamp,
+                reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
+            });
+        }
+    }
+    events
+}
+
+#[derive(Default)]
+struct UltraTimeStopTracker {
+    recent_emitted: HashMap<u32, f64>,
+    pending_cooldowns: Vec<PendingUltraTimeStop>,
+}
+
+struct PendingUltraTimeStop {
+    timestamp: f64,
+}
+
+impl UltraTimeStopTracker {
+    fn events_from_packet(
+        &mut self,
+        timestamp: f64,
+        decoded_text: &str,
+        declared_ids: &[u32],
+        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+    ) -> Vec<TimeStopEvent> {
+        let mut events = extra_time_stop_events_from_text(timestamp, decoded_text);
+        self.resolve_finished_cooldowns(timestamp, decoded_text, ultra_time_stops, &mut events);
+
+        if !decoded_text.contains(ULTRA_COOLDOWN_TAG_PREFIX) {
+            return events;
+        }
+        match declared_ids {
+            [char_id] => {
+                if let Some(event) = fixed_ultra_time_stop_event(
+                    timestamp,
+                    *char_id,
+                    ultra_time_stops,
+                    &mut self.recent_emitted,
+                ) {
+                    events.push(event);
+                }
+            }
+            [] => {
+                self.pending_cooldowns
+                    .push(PendingUltraTimeStop { timestamp });
+                events.push(TimeStopEvent::ExtraStart {
+                    timestamp,
+                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+                });
+            }
+            _ => {}
+        }
+        events
+    }
+
+    fn events_from_hits(
+        &mut self,
+        hits: &[Hit],
+        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+    ) -> Vec<TimeStopEvent> {
+        let mut events = Vec::new();
+        for hit in hits {
+            self.resolve_cooldown_from_hit(hit, ultra_time_stops, &mut events);
+        }
+        events
+    }
+
+    fn resolve_cooldown_from_hit(
+        &mut self,
+        hit: &Hit,
+        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+        events: &mut Vec<TimeStopEvent>,
+    ) {
+        let Some(char_id) = ultra_damage_time_stop_char_id(hit, ultra_time_stops) else {
+            return;
+        };
+        let Some(index) = self.pending_cooldowns.iter().position(|pending| {
+            hit.timestamp >= pending.timestamp
+                && hit.timestamp - pending.timestamp <= ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
+        }) else {
+            return;
+        };
+        let pending = self.pending_cooldowns.swap_remove(index);
+        if let Some(event) = fixed_ultra_time_stop_event(
+            pending.timestamp,
+            char_id,
+            ultra_time_stops,
+            &mut self.recent_emitted,
+        ) {
+            let TimeStopEvent::UltraAnimation {
+                timestamp,
+                duration_seconds,
+                ..
+            } = &event
+            else {
+                unreachable!("fixed ultra time stop always emits an ultra animation event");
+            };
+            events.push(TimeStopEvent::ExtraEnd {
+                timestamp: timestamp + duration_seconds,
+                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+            });
+            events.push(event);
+        } else {
+            events.push(TimeStopEvent::ExtraEnd {
+                timestamp: pending.timestamp,
+                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+            });
+        }
+    }
+
+    fn resolve_finished_cooldowns(
+        &mut self,
+        timestamp: f64,
+        _decoded_text: &str,
+        _ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+        events: &mut Vec<TimeStopEvent>,
+    ) {
+        let mut index = 0;
+        while index < self.pending_cooldowns.len() {
+            let pending_timestamp = self.pending_cooldowns[index].timestamp;
+            let expired = timestamp - pending_timestamp > ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS;
+            if !expired {
+                index += 1;
+                continue;
+            }
+            let pending = self.pending_cooldowns.swap_remove(index);
+            events.push(TimeStopEvent::ExtraEnd {
+                timestamp: pending.timestamp,
+                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+            });
+        }
+    }
+}
+
+fn ultra_damage_time_stop_char_id(
+    hit: &Hit,
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+) -> Option<u32> {
+    if hit.direction == "incoming" {
+        return None;
+    }
+    let ability_name = hit.ability_name.as_deref()?;
+    let entry = ultra_time_stops.get(&hit.char_id)?;
+    (ability_name == entry.ability_id && ability_name.contains("UltraSkill")).then_some(hit.char_id)
 }
 
 fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
@@ -890,6 +1073,12 @@ const RECENT_CONFIRMED_HIT_WINDOW_SECONDS: f64 = 0.75;
 const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
 const BOSS_HP_SYNC_WINDOW_SECONDS: f64 = 1.0;
 const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
+const JIN_EXTRA_TIME_STOP_REASON: &str = "Event.Montage.Player.UltraSkill.Jin";
+const JIN_ENTER_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop";
+const JIN_CLEAR_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.ClearTimeStop";
+const ULTRA_COOLDOWN_TAG_PREFIX: &str = "CoolDown.Player.UltraSkill";
+const PENDING_ULTRA_TIME_STOP_REASON: &str = "CoolDown.Player.UltraSkill.Pending";
+const ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS: f64 = 4.5;
 
 fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
     match hit.attack_type.as_deref() {
@@ -1188,11 +1377,13 @@ struct PacketDecoder {
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
     gameplay_effect_names: HashMap<u32, String>,
     gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
+    ultra_time_stops: HashMap<u32, UltraTimeStopEntry>,
     wooden_damage_names: HashMap<String, String>,
     follow_up_damage: FollowUpDamageTracker,
     server_damage_calibration: ServerDamageCalibrationTracker,
     use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
+    ultra_time_stop: UltraTimeStopTracker,
     pending_ambiguous_hits: Vec<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     resource_warnings: Vec<String>,
@@ -1219,6 +1410,11 @@ impl Default for PacketDecoder {
             &mut resource_warnings,
             load_gameplay_effect_skills,
         );
+        let ultra_time_stops = load_resource(
+            ULTRA_TIME_STOP_DATA_PATH,
+            &mut resource_warnings,
+            load_ultra_time_stops,
+        );
         let wooden_damage_names = load_resource(
             WOODEN_DAMAGE_DESCRIPTIONS_PATH,
             &mut resource_warnings,
@@ -1230,11 +1426,13 @@ impl Default for PacketDecoder {
             client_endpoints: HashSet::new(),
             gameplay_effect_names,
             gameplay_effect_skills,
+            ultra_time_stops,
             wooden_damage_names,
             follow_up_damage: FollowUpDamageTracker::default(),
             server_damage_calibration: ServerDamageCalibrationTracker::default(),
             use_server_damage_calibration: false,
             character_declarations: HashMap::new(),
+            ultra_time_stop: UltraTimeStopTracker::default(),
             pending_ambiguous_hits: Vec::new(),
             recent_confirmed_hits: Vec::new(),
             resource_warnings,
@@ -1843,6 +2041,16 @@ impl PacketDecoder {
             reattribute_orphan_reaction(hit, &self.character_declarations, timestamp, characters);
             self.follow_up_damage.observe_fuwen_trigger_hit(hit);
         }
+        let mut time_stop_events = self.ultra_time_stop.events_from_packet(
+            timestamp,
+            &decoded_text,
+            &ids,
+            &self.ultra_time_stops,
+        );
+        time_stop_events.extend(
+            self.ultra_time_stop
+                .events_from_hits(&hits, &self.ultra_time_stops),
+        );
         let prepared_hits =
             self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
         for character_id in &ids {
@@ -2036,6 +2244,9 @@ impl PacketDecoder {
                     )),
                 );
             }
+        }
+        for event in time_stop_events {
+            let _ = sender.send(EngineEvent::TimeStop(event));
         }
         send_packet_events(
             sender,
@@ -2452,6 +2663,10 @@ pub fn import_capture_json(
             let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
             let mut document = parse_capture_export(&text)?;
             drop(text);
+            let ultra_time_stops = find_data_file(Path::new(ULTRA_TIME_STOP_DATA_PATH))
+                .and_then(|path| load_ultra_time_stops(&path).ok())
+                .unwrap_or_default();
+            let mut ultra_time_stop = UltraTimeStopTracker::default();
             let hit_count = document.hits.len();
             let mut packet_count = 0;
             document
@@ -2475,14 +2690,23 @@ pub fn import_capture_json(
                 };
                 if take_packet {
                     let packet = packets.next().expect("peeked packet must exist");
-                    if send_export_packet(packet, &sender)? {
+                    if send_export_packet(packet, &sender, &ultra_time_stops, &mut ultra_time_stop)?
+                    {
                         packet_count += 1;
                     }
                 } else {
                     let hit = hits.next().expect("peeked hit must exist");
-                    sender
-                        .send(export_hit_event(hit))
-                        .map_err(|error| error.to_string())?;
+                    let event = export_hit_event(hit);
+                    if let EngineEvent::Hit(hit) = &event {
+                        for time_stop in ultra_time_stop
+                            .events_from_hits(std::slice::from_ref(hit.as_ref()), &ultra_time_stops)
+                        {
+                            sender
+                                .send(EngineEvent::TimeStop(time_stop))
+                                .map_err(|error| error.to_string())?;
+                        }
+                    }
+                    sender.send(event).map_err(|error| error.to_string())?;
                 }
             }
             Ok((hit_count, packet_count))
@@ -2502,7 +2726,12 @@ pub fn import_capture_json(
     })
 }
 
-fn send_export_packet(packet: ExportPacket, sender: &Sender<EngineEvent>) -> Result<bool, String> {
+fn send_export_packet(
+    packet: ExportPacket,
+    sender: &Sender<EngineEvent>,
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+    ultra_time_stop: &mut UltraTimeStopTracker,
+) -> Result<bool, String> {
     let declared_ids = parse_export_ids(&packet.declared_ids);
     let payload = if packet.payload_hex.trim().is_empty() {
         Vec::new()
@@ -2539,6 +2768,16 @@ fn send_export_packet(packet: ExportPacket, sender: &Sender<EngineEvent>) -> Res
     for event in abyss_events_from_text(packet.timestamp, &packet.decoded_text) {
         sender
             .send(EngineEvent::Abyss(event))
+            .map_err(|error| error.to_string())?;
+    }
+    for event in ultra_time_stop.events_from_packet(
+        packet.timestamp,
+        &packet.decoded_text,
+        &packet.declared_ids,
+        ultra_time_stops,
+    ) {
+        sender
+            .send(EngineEvent::TimeStop(event))
             .map_err(|error| error.to_string())?;
     }
     sender
@@ -2992,9 +3231,14 @@ mod tests {
             decoded_text: String::new(),
         };
         assert!(
-            send_export_packet(packet, &sender)
-                .unwrap_err()
-                .contains("payload_hex 无效")
+            send_export_packet(
+                packet,
+                &sender,
+                &HashMap::new(),
+                &mut UltraTimeStopTracker::default()
+            )
+            .unwrap_err()
+            .contains("payload_hex 无效")
         );
         assert!(receiver.try_recv().is_err());
     }
@@ -3015,7 +3259,15 @@ mod tests {
             payload_hex: String::new(),
             decoded_text: "测试解码".to_owned(),
         };
-        assert!(send_export_packet(packet, &sender).is_ok());
+        assert!(
+            send_export_packet(
+                packet,
+                &sender,
+                &HashMap::new(),
+                &mut UltraTimeStopTracker::default()
+            )
+            .is_ok()
+        );
         match receiver.try_recv().expect("packet event should be emitted") {
             EngineEvent::Packet(packet) => {
                 assert_eq!(packet.payload_hex, String::new());
@@ -3043,7 +3295,15 @@ mod tests {
             decoded_text: "导出时的协议文本".to_owned(),
         };
 
-        assert!(send_export_packet(packet, &sender).is_ok());
+        assert!(
+            send_export_packet(
+                packet,
+                &sender,
+                &HashMap::new(),
+                &mut UltraTimeStopTracker::default()
+            )
+            .is_ok()
+        );
         match receiver.try_recv().expect("packet event should be emitted") {
             EngineEvent::Packet(packet) => {
                 assert_eq!(packet.decoded_text, "导出时的协议文本");
@@ -3052,6 +3312,184 @@ mod tests {
             _ => panic!("expected packet event"),
         }
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn ultra_cooldown_packet_emits_fixed_time_stop_once() {
+        let table = HashMap::from([(
+            1052,
+            UltraTimeStopEntry {
+                ability_id: "GA_Jin_UltraSkill".to_owned(),
+                end_ability_event_seconds: 2.183333,
+                source: "test".to_owned(),
+                confidence: "high".to_owned(),
+            },
+        )]);
+        let mut tracker = UltraTimeStopTracker::default();
+        let events =
+            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[1052], &table);
+
+        assert_eq!(
+            events,
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1052,
+                ability_id: "GA_Jin_UltraSkill".to_owned(),
+                duration_seconds: 2.183333,
+            }]
+        );
+        assert!(
+            tracker
+                .events_from_packet(11.0, "CoolDown.Player.UltraSkill.F", &[1052], &table)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn pending_ultra_cooldown_is_claimed_by_later_ultra_damage_hit() {
+        let table = HashMap::from([(
+            1010,
+            UltraTimeStopEntry {
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                end_ability_event_seconds: 3.584608,
+                source: "test".to_owned(),
+                confidence: "high".to_owned(),
+            },
+        )]);
+        let mut tracker = UltraTimeStopTracker::default();
+        assert_eq!(
+            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[], &table),
+            vec![TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+            }]
+        );
+        let mut hit = targetless_hit();
+        hit.timestamp = 12.0;
+        hit.char_id = 1010;
+        hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
+        let events = tracker.events_from_hits(&[hit], &table);
+
+        assert_eq!(
+            events,
+            vec![
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 13.584608,
+                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+                },
+                TimeStopEvent::UltraAnimation {
+                    timestamp: 10.0,
+                    char_id: 1010,
+                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                    duration_seconds: 3.584608,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn pending_ultra_cooldown_ignores_non_ultra_damage_before_claim() {
+        let table = HashMap::from([
+            (
+                1010,
+                UltraTimeStopEntry {
+                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                    end_ability_event_seconds: 3.584608,
+                    source: "test".to_owned(),
+                    confidence: "high".to_owned(),
+                },
+            ),
+            (
+                1052,
+                UltraTimeStopEntry {
+                    ability_id: "GA_Jin_UltraSkill".to_owned(),
+                    end_ability_event_seconds: 2.183333,
+                    source: "test".to_owned(),
+                    confidence: "high".to_owned(),
+                },
+            ),
+        ]);
+        let mut tracker = UltraTimeStopTracker::default();
+        assert_eq!(
+            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[], &table),
+            vec![TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+            }]
+        );
+        let mut jin_skill_hit = targetless_hit();
+        jin_skill_hit.timestamp = 10.5;
+        jin_skill_hit.char_id = 1052;
+        jin_skill_hit.ability_name = Some("GA_Jin_Skill".to_owned());
+        assert!(
+            tracker
+                .events_from_hits(&[jin_skill_hit], &table)
+                .is_empty()
+        );
+
+        let mut nanally_ultra_hit = targetless_hit();
+        nanally_ultra_hit.timestamp = 12.0;
+        nanally_ultra_hit.char_id = 1010;
+        nanally_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
+        assert_eq!(
+            tracker.events_from_hits(&[nanally_ultra_hit], &table),
+            vec![
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 13.584608,
+                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+                },
+                TimeStopEvent::UltraAnimation {
+                    timestamp: 10.0,
+                    char_id: 1010,
+                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                    duration_seconds: 3.584608,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn abyss_success_packet_can_also_identify_second_half_stage() {
+        let events = abyss_events_from_text(
+            30.0,
+            "FAbyssGamePlayData\nConditionState_Success\nEAbyssFightStage::SecondHalf\nAbyssCloneCharacterItemData",
+        );
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AbyssEvent::Stage {
+                timestamp: 30.0,
+                cycle: None,
+                floor: None,
+                half: AbyssHalf::Second,
+            }
+        ));
+        assert!(matches!(events[1], AbyssEvent::Success { timestamp: 30.0 }));
+    }
+
+    #[test]
+    fn jin_packet_events_emit_extra_time_stop_interval_markers() {
+        let mut tracker = UltraTimeStopTracker::default();
+        let events = tracker.events_from_packet(
+            12.0,
+            "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop\nEvent.Montage.Player.UltraSkill.Jin.ClearTimeStop",
+            &[],
+            &HashMap::new(),
+        );
+
+        assert_eq!(
+            events,
+            vec![
+                TimeStopEvent::ExtraStart {
+                    timestamp: 12.0,
+                    reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
+                },
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 12.0,
+                    reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
+                },
+            ]
+        );
     }
 
     #[test]

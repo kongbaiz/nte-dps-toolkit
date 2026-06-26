@@ -67,7 +67,15 @@ jobs:
           git tag --force $env:RELEASE_TAG $env:GITHUB_SHA
           git push --force origin "refs/tags/$env:RELEASE_TAG"
 
-          $notes = "Automated Windows build from commit $env:GITHUB_SHA."
+          $notes = @(
+            "自动构建：$env:GITHUB_SHA"
+            ""
+            "中文更新内容："
+            "- DPS 时间支持扣除大招时停：大招动画时停按资源表中的 end_ability_event_seconds 计算。"
+            "- 支持额外时停机制，固定大招动画时停和额外时停会按区间并集扣除，重叠部分只扣一次。"
+            "- 控制台新增 DPS 时间口径切换，可在“扣除时停”和“现实时间”之间切换。"
+            "- 改进深渊下半场直接开始抓包、当前半场重开后的统计归属。"
+          ) -join "`n"
           gh release view $env:RELEASE_TAG *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:RELEASE_TAG nte-dps-tool-windows.zip target/release/nte-dps-tool.exe --clobber

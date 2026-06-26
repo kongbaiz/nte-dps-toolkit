@@ -22,7 +22,9 @@ use crate::capture::{
 use crate::character_editor::{
     CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
 };
-use crate::config::{self, PassthroughHotkey, UiConfig, WINDOW_SCALE_MAX, WINDOW_SCALE_MIN};
+use crate::config::{
+    self, DpsTimeMode, PassthroughHotkey, UiConfig, WINDOW_SCALE_MAX, WINDOW_SCALE_MIN,
+};
 use crate::encrypted_ini::{
     EncryptedIniKey, EncryptedIniRecord, encrypt_encrypted_ini_records,
     encrypted_ini_search_matches, encrypted_ini_text_fingerprint, parse_encrypted_ini_text,
@@ -55,6 +57,8 @@ const MAX_ENGINE_QUEUE_BACKLOG: usize = 20_000;
 const MAX_ENGINE_QUEUE_HARD_CAP: usize = 100_000;
 const MAX_DETAIL_HITS: usize = 10_000;
 const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
+const MAIN_TITLE_BAR_HEIGHT: f32 = 40.0;
+const MAIN_CONTROLS_HEIGHT: f32 = 44.0;
 const TITLE_BAR_BUTTON_SIZE: egui::Vec2 = egui::vec2(28.0, 22.0);
 const TITLE_BAR_TOGGLE_SIZE: egui::Vec2 = egui::vec2(64.0, 24.0);
 /// Default (100%) inner sizes for each window. The title-bar −／＋ stepper scales
@@ -508,6 +512,7 @@ pub struct DpsApp {
     active_capture_filter: Option<String>,
     include_incoming: bool,
     server_damage_calibration: bool,
+    dps_time_mode: DpsTimeMode,
     capture: Option<CaptureHandle>,
     raw_capture: Option<RawCaptureBuffer>,
     replay_stop: Option<Arc<AtomicBool>>,
@@ -665,6 +670,7 @@ impl DpsApp {
             active_capture_filter: None,
             include_incoming: true,
             server_damage_calibration: ui_config.server_damage_calibration,
+            dps_time_mode: ui_config.dps_time_mode,
             capture: None,
             raw_capture: None,
             replay_stop: None,
@@ -1331,6 +1337,7 @@ impl DpsApp {
             dark_mode: self.dark_mode,
             always_on_top: self.always_on_top,
             server_damage_calibration: self.server_damage_calibration,
+            dps_time_mode: self.dps_time_mode,
             passthrough_hotkey: self.passthrough_hotkey,
             main_window_scale: self.main_window_scale,
             abyss_window_scale: self.abyss_window_scale,
@@ -1536,7 +1543,8 @@ impl DpsApp {
             EngineEvent::Hit(_)
             | EngineEvent::HitFollowUp(_)
             | EngineEvent::HitDamageCorrection(_)
-            | EngineEvent::Abyss(_) => {
+            | EngineEvent::Abyss(_)
+            | EngineEvent::TimeStop(_) => {
                 if self.paused_events.len() == MAX_PAUSED_EVENTS {
                     self.paused_events.pop_front();
                 }
@@ -1608,6 +1616,7 @@ impl DpsApp {
                 }
                 self.state.apply_abyss_event(event);
             }
+            EngineEvent::TimeStop(event) => self.state.apply_time_stop_event(event),
             EngineEvent::Status(status) => self.status = status,
             EngineEvent::Warning(warning) => {
                 self.diagnostic = Some(format!("部分资源加载失败，功能降级：{warning}"));
@@ -1718,7 +1727,8 @@ impl DpsApp {
     }
 
     fn write_capture_export_json(&self, mut out: &mut dyn std::fmt::Write) {
-        let duration = self.state.duration().max(0.001);
+        let subtract_time_stop = self.subtract_time_stop_for_dps();
+        let duration = self.state_duration_for_current_mode().max(0.001);
         let packet_count = self.state.packets.len();
         let hit_count = self.state.hits.len();
         let started_at = self.state.started_at;
@@ -1776,11 +1786,22 @@ impl DpsApp {
             json_f64(self.state.total_damage)
         )
         .ok();
-        writeln!(&mut out, "    \"dps\": {},", json_f64(self.state.dps())).ok();
+        writeln!(
+            &mut out,
+            "    \"dps\": {},",
+            json_f64(self.state_dps_for_current_mode())
+        )
+        .ok();
         writeln!(
             &mut out,
             "    \"duration_seconds\": {},",
             json_f64(duration)
+        )
+        .ok();
+        writeln!(
+            &mut out,
+            "    \"dps_time_mode\": {},",
+            json_string(self.dps_time_mode.label())
         )
         .ok();
         writeln!(
@@ -1816,16 +1837,22 @@ impl DpsApp {
             } else {
                 0.0
             };
+            let row_duration = self
+                .state
+                .character_duration_with_time_stop(row, subtract_time_stop);
+            let row_dps = self
+                .state
+                .character_dps_with_time_stop(row, subtract_time_stop);
             writeln!(&mut out, "    {{").ok();
             writeln!(&mut out, "      \"char_id\": {},", row.char_id).ok();
             writeln!(&mut out, "      \"name\": {},", json_string(&row.name)).ok();
             writeln!(&mut out, "      \"hits\": {},", row.hits).ok();
             writeln!(&mut out, "      \"damage\": {},", json_f64(row.damage)).ok();
-            writeln!(&mut out, "      \"dps\": {},", json_f64(row.dps())).ok();
+            writeln!(&mut out, "      \"dps\": {},", json_f64(row_dps)).ok();
             writeln!(
                 &mut out,
                 "      \"duration_seconds\": {},",
-                json_f64(row.duration())
+                json_f64(row_duration)
             )
             .ok();
             writeln!(&mut out, "      \"share_percent\": {}", json_f64(share)).ok();
@@ -1888,11 +1915,18 @@ impl DpsApp {
             json_option_f64(self.state.abyss.exited_at)
         )
         .ok();
-        write_abyss_half_json(&mut out, "first_half", &self.state.abyss.first_half, true);
+        write_abyss_half_json(
+            &mut out,
+            "first_half",
+            &self.state.abyss.first_half,
+            subtract_time_stop,
+            true,
+        );
         write_abyss_half_json(
             &mut out,
             "second_half",
             &self.state.abyss.second_half,
+            subtract_time_stop,
             false,
         );
         writeln!(&mut out, "  }},").ok();
@@ -2162,6 +2196,46 @@ impl DpsApp {
             .then(|| self.state.abyss.half(self.selected_abyss_half))
     }
 
+    fn subtract_time_stop_for_dps(&self) -> bool {
+        matches!(self.dps_time_mode, DpsTimeMode::TimeStopAdjusted)
+    }
+
+    fn party_duration_for_current_mode(&self, party: &PartyCombatState) -> f64 {
+        party.duration_with_time_stop(self.subtract_time_stop_for_dps())
+    }
+
+    fn party_dps_for_current_mode(&self, party: &PartyCombatState) -> f64 {
+        party.dps_with_time_stop(self.subtract_time_stop_for_dps())
+    }
+
+    fn state_duration_for_current_mode(&self) -> f64 {
+        self.state
+            .duration_with_time_stop(self.subtract_time_stop_for_dps())
+    }
+
+    fn state_dps_for_current_mode(&self) -> f64 {
+        self.state
+            .dps_with_time_stop(self.subtract_time_stop_for_dps())
+    }
+
+    fn character_duration_for_current_source(&self, row: &CharacterStats) -> f64 {
+        if let Some(party) = self.selected_party_state() {
+            party.character_duration_with_time_stop(row, self.subtract_time_stop_for_dps())
+        } else {
+            self.state
+                .character_duration_with_time_stop(row, self.subtract_time_stop_for_dps())
+        }
+    }
+
+    fn character_dps_for_current_source(&self, row: &CharacterStats) -> f64 {
+        if let Some(party) = self.selected_party_state() {
+            party.character_dps_with_time_stop(row, self.subtract_time_stop_for_dps())
+        } else {
+            self.state
+                .character_dps_with_time_stop(row, self.subtract_time_stop_for_dps())
+        }
+    }
+
     fn detail_source(&self) -> (HitDetailSource, u64) {
         if self.state.abyss.is_active() {
             let party = self.state.abyss.half(self.selected_abyss_half);
@@ -2285,15 +2359,15 @@ impl DpsApp {
         let (duration, dps, total_damage, total_damage_taken) =
             if let Some(party) = self.selected_party_state() {
                 (
-                    party.duration(),
-                    party.dps(),
+                    self.party_duration_for_current_mode(party),
+                    self.party_dps_for_current_mode(party),
                     party.total_damage,
                     party.total_damage_taken,
                 )
             } else {
                 (
-                    self.state.duration(),
-                    self.state.dps(),
+                    self.state_duration_for_current_mode(),
+                    self.state_dps_for_current_mode(),
                     self.state.total_damage,
                     self.state.total_damage_taken,
                 )
@@ -2337,7 +2411,9 @@ impl DpsApp {
     /// Everything else (settings, team data, abyss tables, debug) moved into the
     /// console window — see [`Self::console_panel`] — to keep this bar uncrowded.
     fn controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.spacing_mut().button_padding = egui::vec2(14.0, 6.0);
+        ui.horizontal_centered(|ui| {
             if self.capture.is_none() && self.replay_thread.is_none() {
                 if ui
                     .add(primary_button("开始", self.dark_mode))
@@ -2444,15 +2520,15 @@ impl DpsApp {
             return;
         }
 
-        let full_height = 35.0;
+        let full_height = MAIN_CONTROLS_HEIGHT;
         let visible_height = full_height * ease_out_cubic(progress);
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), visible_height),
             egui::Sense::hover(),
         );
         let full_rect = egui::Rect::from_min_size(
-            rect.min + egui::vec2(2.0, 0.0),
-            egui::vec2((rect.width() - 4.0).max(0.0), full_height - 1.0),
+            rect.min + egui::vec2(2.0, 5.0),
+            egui::vec2((rect.width() - 4.0).max(0.0), full_height - 6.0),
         );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -2627,16 +2703,16 @@ impl DpsApp {
                 &party.stats,
                 &party.hits,
                 party.total_damage,
-                party.dps(),
-                party.duration(),
+                self.party_dps_for_current_mode(party),
+                self.party_duration_for_current_mode(party),
             )
         } else {
             prep(
                 &self.state.stats,
                 &self.state.hits,
                 self.state.total_damage,
-                self.state.dps(),
-                self.state.duration(),
+                self.state_dps_for_current_mode(),
+                self.state_duration_for_current_mode(),
             )
         }
     }
@@ -2800,6 +2876,7 @@ impl DpsApp {
         let mut row_top = header.bottom() + 6.0;
         for (index, row) in rows.iter().enumerate() {
             let color = character_color(row.char_id, &self.characters, index);
+            let row_dps = self.character_dps_for_current_source(row);
             let row_rect =
                 egui::Rect::from_min_size(egui::pos2(left, row_top), egui::vec2(width, row_h));
             let center_y = row_rect.center().y;
@@ -2865,7 +2942,7 @@ impl DpsApp {
                 &painter,
                 egui::pos2(right - 52.0, center_y),
                 egui::Align2::RIGHT_CENTER,
-                format_number(row.dps()),
+                format_number(row_dps),
                 egui::FontId::monospace(12.0),
                 TEXT,
             );
@@ -2945,6 +3022,8 @@ impl DpsApp {
         } else {
             0.0
         };
+        let duration = self.character_duration_for_current_source(row);
+        let dps = self.character_dps_for_current_source(row);
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), row_height),
             egui::Sense::click(),
@@ -3065,14 +3144,14 @@ impl DpsApp {
         ui.painter().text(
             egui::pos2(text_left, rect.center().y + 9.0),
             egui::Align2::LEFT_CENTER,
-            format!("{}次 · {:.1}s", row.hits, row.duration()),
+            format!("{}次 · {:.1}s", row.hits, duration),
             egui::FontId::monospace(10.5),
             ui.visuals().weak_text_color(),
         );
         ui.painter().text(
             egui::pos2(rect.right() - 10.0, rect.center().y - 8.0),
             egui::Align2::RIGHT_CENTER,
-            format!("{} DPS", format_number(row.dps())),
+            format!("{} DPS", format_number(dps)),
             egui::FontId::monospace(12.0),
             theme_accent(self.dark_mode),
         );
@@ -3323,8 +3402,8 @@ impl DpsApp {
                 (
                     party.total_damage,
                     party.total_damage_taken,
-                    party.duration(),
-                    party.dps(),
+                    self.party_duration_for_current_mode(party),
+                    self.party_dps_for_current_mode(party),
                     party
                         .stats
                         .values()
@@ -3340,8 +3419,8 @@ impl DpsApp {
                 (
                     self.state.total_damage,
                     self.state.total_damage_taken,
-                    self.state.duration(),
-                    self.state.dps(),
+                    self.state_duration_for_current_mode(),
+                    self.state_dps_for_current_mode(),
                     self.state
                         .stats
                         .values()
@@ -3689,11 +3768,15 @@ impl DpsApp {
                 AbyssHalf::Second
             };
             let party = self.state.abyss.half(half);
-            snapshot_team_from_stats(party.dps(), party.duration(), party.stats.values())
+            snapshot_team_from_stats(
+                party.dps_with_time_stop(self.subtract_time_stop_for_dps()),
+                party.duration_with_time_stop(self.subtract_time_stop_for_dps()),
+                party.stats.values(),
+            )
         } else {
             snapshot_team_from_stats(
-                self.state.dps(),
-                self.state.duration(),
+                self.state_dps_for_current_mode(),
+                self.state_duration_for_current_mode(),
                 self.state.stats.values(),
             )
         }
@@ -3792,7 +3875,11 @@ impl DpsApp {
     /// Prediction-panel teams are kept as a fallback for manually imported data.
     /// No packets or per-hit data, latest DPS only, serialized without indentation.
     fn export_team_dps(&mut self, ctx: &egui::Context) {
-        let Some(export) = build_team_dps_export(&self.state, &self.abyss_overview) else {
+        let Some(export) = build_team_dps_export(
+            &self.state,
+            &self.abyss_overview,
+            self.subtract_time_stop_for_dps(),
+        ) else {
             self.set_last_error_in(ctx, "没有可导出的队伍数据，请先抓包或设置深渊队伍", None);
             return;
         };
@@ -3891,7 +3978,7 @@ impl DpsApp {
             let selected_pack_id = self.abyss_overview.selected_monster_pack_id.clone();
             let upper_team = self.abyss_overview.upper_team.clone();
             let lower_team = self.abyss_overview.lower_team.clone();
-            let can_import = self.state.dps() > 0.0;
+            let can_import = self.state_dps_for_current_mode() > 0.0;
             let mut upper_action = LinePredictionAction::None;
             let mut lower_action = LinePredictionAction::None;
             if !upper_line.is_empty() || !lower_line.is_empty() {
@@ -3986,6 +4073,8 @@ impl DpsApp {
             self.hit_detail_corner_applied = false;
             return;
         };
+        let stats_duration = self.character_duration_for_current_source(&stats);
+        let stats_dps = self.character_dps_for_current_source(&stats);
         let outgoing_count = stats.hits as usize;
         let incoming_count = stats.hits_taken as usize;
         let (detail_source, _) = self.detail_source();
@@ -4145,7 +4234,7 @@ impl DpsApp {
                                                         ),
                                                         (
                                                             "DPS",
-                                                            format_number(stats.dps()),
+                                                            format_number(stats_dps),
                                                             theme_accent(self.dark_mode),
                                                         ),
                                                         (
@@ -4160,7 +4249,7 @@ impl DpsApp {
                                                         ),
                                                         (
                                                             "战斗时间",
-                                                            format!("{:.1}s", stats.duration()),
+                                                            format!("{stats_duration:.1}s"),
                                                             text_color,
                                                         ),
                                                     ],
@@ -4648,6 +4737,30 @@ impl DpsApp {
                         .on_hover_text(
                             "重新抓包或重新导入后生效；只在服务端 HP 同步能与单条命中明确配对时覆盖伤害数值",
                         );
+                        ui.end_row();
+                        ui.label("DPS 时间");
+                        let mut dps_time_mode = self.dps_time_mode;
+                        egui::ComboBox::from_id_salt("dps_time_mode")
+                            .width(150.0)
+                            .selected_text(dps_time_mode.label())
+                            .show_ui(ui, |ui| {
+                                ui.set_min_width(150.0);
+                                for option in DpsTimeMode::all() {
+                                    stable_popup_selectable_value(
+                                        ui,
+                                        &mut dps_time_mode,
+                                        *option,
+                                        option.label(),
+                                    );
+                                }
+                            })
+                            .response
+                            .on_hover_text(dps_time_mode.description());
+                        if dps_time_mode != self.dps_time_mode {
+                            self.dps_time_mode = dps_time_mode;
+                            self.character_hit_cache = HitDetailCache::default();
+                            self.team_hit_cache = HitDetailCache::default();
+                        }
                         ui.end_row();
                         ui.label("穿透热键");
                         let mut hotkey = self.passthrough_hotkey;
@@ -5354,10 +5467,14 @@ impl eframe::App for DpsApp {
             } else {
                 egui::Frame::new()
                     .fill(ctx.global_style().visuals.panel_fill)
-                    .inner_margin(egui::Margin::symmetric(8, 0))
+                    .inner_margin(egui::Margin::symmetric(10, 4))
             };
             egui::Panel::top("custom_title_bar")
-                .exact_size(if self.hud_mode { 24.0 } else { 32.0 })
+                .exact_size(if self.hud_mode {
+                    24.0
+                } else {
+                    MAIN_TITLE_BAR_HEIGHT
+                })
                 .frame(title_frame)
                 .show_inside(ui, |ui| {
                     if self.hud_mode {
@@ -5379,7 +5496,7 @@ impl eframe::App for DpsApp {
             egui::Margin {
                 left: 8,
                 right: 8,
-                top: 0,
+                top: 4,
                 bottom: 8,
             }
         };
@@ -5761,19 +5878,28 @@ fn abyss_overview_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("nte_abyss_overview_viewport")
 }
 
-fn snapshot_party_team(party: &PartyCombatState) -> Option<TeamDps> {
-    snapshot_team_from_stats(party.dps(), party.duration(), party.stats.values())
+fn snapshot_party_team(party: &PartyCombatState, subtract_time_stop: bool) -> Option<TeamDps> {
+    snapshot_team_from_stats(
+        party.dps_with_time_stop(subtract_time_stop),
+        party.duration_with_time_stop(subtract_time_stop),
+        party.stats.values(),
+    )
 }
 
 fn build_team_dps_export(
     state: &CombatState,
     abyss_overview: &AbyssOverviewState,
+    subtract_time_stop: bool,
 ) -> Option<TeamDpsExport> {
-    let single = snapshot_team_from_stats(state.dps(), state.duration(), state.stats.values());
-    let upper =
-        snapshot_party_team(&state.abyss.first_half).or_else(|| abyss_overview.upper_team.clone());
-    let lower =
-        snapshot_party_team(&state.abyss.second_half).or_else(|| abyss_overview.lower_team.clone());
+    let single = snapshot_team_from_stats(
+        state.dps_with_time_stop(subtract_time_stop),
+        state.duration_with_time_stop(subtract_time_stop),
+        state.stats.values(),
+    );
+    let upper = snapshot_party_team(&state.abyss.first_half, subtract_time_stop)
+        .or_else(|| abyss_overview.upper_team.clone());
+    let lower = snapshot_party_team(&state.abyss.second_half, subtract_time_stop)
+        .or_else(|| abyss_overview.lower_team.clone());
     if single.is_none() && upper.is_none() && lower.is_none() {
         return None;
     }
@@ -8838,6 +8964,7 @@ fn write_abyss_half_json<W: std::fmt::Write + ?Sized>(
     out: &mut W,
     key: &str,
     party: &PartyCombatState,
+    subtract_time_stop: bool,
     trailing_comma: bool,
 ) {
     let mut rows: Vec<_> = party.stats.values().collect();
@@ -8856,11 +8983,16 @@ fn write_abyss_half_json<W: std::fmt::Write + ?Sized>(
         json_f64(party.total_damage_taken)
     )
     .ok();
-    writeln!(out, "      \"dps\": {},", json_f64(party.dps())).ok();
+    writeln!(
+        out,
+        "      \"dps\": {},",
+        json_f64(party.dps_with_time_stop(subtract_time_stop))
+    )
+    .ok();
     writeln!(
         out,
         "      \"duration_seconds\": {},",
-        json_f64(party.duration())
+        json_f64(party.duration_with_time_stop(subtract_time_stop))
     )
     .ok();
     writeln!(
@@ -8882,6 +9014,8 @@ fn write_abyss_half_json<W: std::fmt::Write + ?Sized>(
         } else {
             0.0
         };
+        let row_duration = party.character_duration_with_time_stop(row, subtract_time_stop);
+        let row_dps = party.character_dps_with_time_stop(row, subtract_time_stop);
         writeln!(out, "        {{").ok();
         writeln!(out, "          \"char_id\": {},", row.char_id).ok();
         writeln!(out, "          \"name\": {},", json_string(&row.name)).ok();
@@ -8894,7 +9028,13 @@ fn write_abyss_half_json<W: std::fmt::Write + ?Sized>(
             json_f64(row.damage_taken)
         )
         .ok();
-        writeln!(out, "          \"dps\": {},", json_f64(row.dps())).ok();
+        writeln!(out, "          \"dps\": {},", json_f64(row_dps)).ok();
+        writeln!(
+            out,
+            "          \"duration_seconds\": {},",
+            json_f64(row_duration)
+        )
+        .ok();
         writeln!(out, "          \"share_percent\": {}", json_f64(share)).ok();
         writeln!(
             out,
@@ -9676,7 +9816,7 @@ mod tests {
             }],
         });
 
-        let export = build_team_dps_export(&state, &overview).unwrap();
+        let export = build_team_dps_export(&state, &overview, true).unwrap();
 
         assert!(export.single.is_none());
         assert_eq!(export.upper.unwrap().members[0].id, 10);
