@@ -22,6 +22,7 @@ const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
 pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
 pub const SKILL_DAMAGE_DATA_PATH: &str = "res/data/skills/skill_damage.json";
+pub const ULTRA_TIME_STOP_DATA_PATH: &str = "res/data/skills/ultra_time_stop.json";
 pub const WOODEN_DAMAGE_DESCRIPTIONS_PATH: &str = "res/data/skills/wooden_damage_descriptions.json";
 
 #[derive(Deserialize)]
@@ -76,6 +77,18 @@ pub struct GameplayEffectSkill {
     pub damage_source_category: Option<String>,
     pub ability_name: Option<String>,
     pub attack_type: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct UltraTimeStopEntry {
+    #[serde(default)]
+    pub ability_id: String,
+    #[serde(default)]
+    pub end_ability_event_seconds: f64,
+    #[serde(default)]
+    pub source: String,
+    #[serde(default)]
+    pub confidence: String,
 }
 
 pub fn find_data_file(relative_path: &Path) -> Option<PathBuf> {
@@ -173,6 +186,31 @@ pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, Gamepl
                     attack_type,
                 },
             )
+        })
+        .collect())
+}
+
+#[derive(Deserialize)]
+struct UltraTimeStopDocument {
+    characters: HashMap<String, UltraTimeStopEntry>,
+}
+
+pub fn load_ultra_time_stops(path: &Path) -> Result<HashMap<u32, UltraTimeStopEntry>> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("无法读取大招时停表 {}", path.display()))?;
+    let document: UltraTimeStopDocument =
+        serde_json::from_str(&text).context("大招时停表 JSON 无效")?;
+    Ok(document
+        .characters
+        .into_iter()
+        .filter_map(|(key, value)| {
+            key.parse::<u32>()
+                .ok()
+                .filter(|_| {
+                    value.end_ability_event_seconds.is_finite()
+                        && value.end_ability_event_seconds > 0.0
+                })
+                .map(|id| (id, value))
         })
         .collect())
 }
