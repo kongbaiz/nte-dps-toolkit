@@ -14,6 +14,7 @@ const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::F8,
     PassthroughHotkey::F9,
 ];
+const DPS_TIME_MODES: [DpsTimeMode; 2] = [DpsTimeMode::TimeStopAdjusted, DpsTimeMode::RealTime];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -40,6 +41,34 @@ impl PassthroughHotkey {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DpsTimeMode {
+    #[default]
+    TimeStopAdjusted,
+    RealTime,
+}
+
+impl DpsTimeMode {
+    pub fn all() -> &'static [Self] {
+        &DPS_TIME_MODES
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TimeStopAdjusted => "扣除时停",
+            Self::RealTime => "现实时间",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::TimeStopAdjusted => "大招/额外时停期间不累计输出时间",
+            Self::RealTime => "按抓包时间跨度累计输出时间",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -47,6 +76,7 @@ pub struct UiConfig {
     pub dark_mode: bool,
     pub always_on_top: bool,
     pub server_damage_calibration: bool,
+    pub dps_time_mode: DpsTimeMode,
     pub passthrough_hotkey: PassthroughHotkey,
     pub main_window_scale: f32,
     pub abyss_window_scale: f32,
@@ -62,6 +92,7 @@ impl Default for UiConfig {
             dark_mode: false,
             always_on_top: true,
             server_damage_calibration: false,
+            dps_time_mode: DpsTimeMode::default(),
             passthrough_hotkey: PassthroughHotkey::default(),
             main_window_scale: 1.0,
             abyss_window_scale: 1.0,
