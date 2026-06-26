@@ -326,6 +326,7 @@ pub enum AbyssEvent {
         cycle: Option<u32>,
         floor: Option<u32>,
         half: AbyssHalf,
+        allow_late_backfill: bool,
     },
     Success {
         timestamp: f64,
@@ -633,6 +634,7 @@ impl AbyssRunState {
                 cycle: _,
                 floor,
                 half,
+                allow_late_backfill: _,
             } => {
                 if floor.is_some() {
                     self.floor = floor;
@@ -828,11 +830,15 @@ impl CombatState {
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
         let late_detected_half = match &event {
-            AbyssEvent::Stage { half, .. }
-                if self.abyss.active_half.is_none()
-                    && self.abyss.first_half.hits.is_empty()
-                    && self.abyss.second_half.hits.is_empty()
-                    && !self.hits.is_empty() =>
+            AbyssEvent::Stage {
+                half,
+                allow_late_backfill,
+                ..
+            } if *allow_late_backfill
+                && self.abyss.active_half.is_none()
+                && self.abyss.first_half.hits.is_empty()
+                && self.abyss.second_half.hits.is_empty()
+                && !self.hits.is_empty() =>
             {
                 Some(*half)
             }
@@ -1324,6 +1330,7 @@ mod tests {
             cycle: Some(1),
             floor: Some(1),
             half: AbyssHalf::First,
+            allow_late_backfill: false,
         });
         state.push_hit(test_hit(1.0, 1010, "outgoing", 100.0));
         state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
@@ -1364,6 +1371,7 @@ mod tests {
             cycle: None,
             floor: None,
             half: AbyssHalf::Second,
+            allow_late_backfill: true,
         });
         state.apply_abyss_event(AbyssEvent::Success { timestamp: 21.0 });
 
@@ -1372,5 +1380,23 @@ mod tests {
         assert_eq!(state.abyss.second_half.total_damage, 300.0);
         assert_eq!(state.abyss.second_half.hits.len(), 2);
         assert!((state.abyss.second_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn first_normal_stage_does_not_backfill_previous_global_hits() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(1.0, 1010, "outgoing", 100.0));
+
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 20.0,
+            cycle: None,
+            floor: None,
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+
+        assert_eq!(state.total_damage, 100.0);
+        assert_eq!(state.abyss.first_half.total_damage, 0.0);
+        assert!(state.abyss.first_half.hits.is_empty());
     }
 }

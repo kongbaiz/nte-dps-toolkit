@@ -835,6 +835,7 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
             cycle: Some(cycle),
             floor: Some(floor),
             half,
+            allow_late_backfill: false,
         });
     } else if !is_restart
         && decoded_text.contains("FAbyssGamePlayData")
@@ -852,6 +853,7 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
                 } else {
                     AbyssHalf::Second
                 },
+                allow_late_backfill: is_success,
             });
         }
     }
@@ -2089,6 +2091,9 @@ impl PacketDecoder {
                 characters,
             );
         }
+        for event in time_stop_events {
+            let _ = sender.send(EngineEvent::TimeStop(event));
+        }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
             && prepared_hits.deferred_ambiguous == 0
@@ -2244,9 +2249,6 @@ impl PacketDecoder {
                     )),
                 );
             }
-        }
-        for event in time_stop_events {
-            let _ = sender.send(EngineEvent::TimeStop(event));
         }
         send_packet_events(
             sender,
@@ -3449,6 +3451,69 @@ mod tests {
     }
 
     #[test]
+    fn ignored_packet_still_emits_pending_ultra_time_stop_end() {
+        let (sender, receiver) = unbounded();
+        let mut decoder = PacketDecoder::default();
+        decoder.ultra_time_stops = HashMap::from([(
+            1010,
+            UltraTimeStopEntry {
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                end_ability_event_seconds: 3.584608,
+                source: "test".to_owned(),
+                confidence: "high".to_owned(),
+            },
+        )]);
+        let characters = HashMap::new();
+        let local_ip = Ipv4Addr::new(10, 0, 0, 2);
+        let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
+
+        decoder.process_ethernet_frame(
+            &udp_ipv4_packet(
+                b"CoolDown.Player.UltraSkill.F",
+                local_ip,
+                50_000,
+                remote_ip,
+                7_777,
+            ),
+            10.0,
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(matches!(
+            receiver
+                .try_recv()
+                .expect("pending start should be emitted"),
+            EngineEvent::TimeStop(TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                ..
+            })
+        ));
+        assert!(matches!(
+            receiver.try_recv().expect("debug packet should be emitted"),
+            EngineEvent::Packet(_)
+        ));
+
+        decoder.process_ethernet_frame(
+            &udp_ipv4_packet(&[0, 0, 0, 0], local_ip, 50_000, remote_ip, 7_777),
+            15.0,
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(matches!(
+            receiver.try_recv().expect("pending end should be emitted"),
+            EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
+                timestamp: 10.0,
+                ..
+            })
+        ));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn abyss_success_packet_can_also_identify_second_half_stage() {
         let events = abyss_events_from_text(
             30.0,
@@ -3462,6 +3527,7 @@ mod tests {
                 cycle: None,
                 floor: None,
                 half: AbyssHalf::Second,
+                allow_late_backfill: true,
             }
         ));
         assert!(matches!(events[1], AbyssEvent::Success { timestamp: 30.0 }));
@@ -3743,6 +3809,37 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
         }
+    }
+
+    fn udp_ipv4_packet(
+        payload: &[u8],
+        src: Ipv4Addr,
+        src_port: u16,
+        dst: Ipv4Addr,
+        dst_port: u16,
+    ) -> Vec<u8> {
+        let ip_len = 20 + 8 + payload.len();
+        let udp_len = 8 + payload.len();
+        let mut packet = Vec::with_capacity(14 + ip_len);
+        packet.extend_from_slice(&[0, 1, 2, 3, 4, 5]);
+        packet.extend_from_slice(&[6, 7, 8, 9, 10, 11]);
+        packet.extend_from_slice(&0x0800_u16.to_be_bytes());
+        packet.push(0x45);
+        packet.push(0);
+        packet.extend_from_slice(&(ip_len as u16).to_be_bytes());
+        packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.push(64);
+        packet.push(17);
+        packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.extend_from_slice(&src.octets());
+        packet.extend_from_slice(&dst.octets());
+        packet.extend_from_slice(&src_port.to_be_bytes());
+        packet.extend_from_slice(&dst_port.to_be_bytes());
+        packet.extend_from_slice(&(udp_len as u16).to_be_bytes());
+        packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.extend_from_slice(payload);
+        packet
     }
 
     fn follow_up_test_characters() -> HashMap<u32, CharacterInfo> {
