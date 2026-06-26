@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "source": "CUE4Parse GA/Montage JSON exports; local paths redacted",
+  "characters": {
+    "1003": {
+      "ability_id": "GA_Sagiri_UltraSkill",
+      "end_ability_event_seconds": 3.533936,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_003_Sagiri/GA_Sagiri_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/003_sagiri_1/animation/Skill/Sagiri_UltralSkill.Sagiri_UltralSkill"
+    },
+    "1004": {
+      "ability_id": "GA_Lacrimosa_UltraSkill",
+      "end_ability_event_seconds": 4.218461,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_004_Lacrimosa/GA_Lacrimosa_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/004_lacrimosa/animation/Skill/Lacrimosa_UltraSkill_ModB.Lacrimosa_UltraSkill_ModB"
+    },
+    "1008": {
+      "ability_id": "GA_Skia_UltraSkill",
+      "end_ability_event_seconds": 4.162118,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_008_Skia/GA_Skia_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/008_Skia/animation/Skill/Skia_UltraSkill.Skia_UltraSkill"
+    },
+    "1010": {
+      "ability_id": "GA_Nanally_UltraSkill",
+      "end_ability_event_seconds": 3.584608,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_010_Nanally/GA_Nanally_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill.Nanally_UltralSkill"
+    },
+    "1019": {
+      "ability_id": "GA_Mint019_UltraSkill",
+      "end_ability_event_seconds": 3.903489,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_019_Mint/GA_Mint019_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/019_mint/animation/Skill/Mint_UltraSkill.Mint_UltraSkill"
+    },
+    "1020": {
+      "ability_id": "GA_Haniel_UltraSkill",
+      "end_ability_event_seconds": 4.237614,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_020_haniel/GA_Haniel_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/020_haniel_1/animation/Skill/char_Haniel_skill_ultraskill_Montage.char_Haniel_skill_ultraskill_Montage"
+    },
+    "1021": {
+      "ability_id": "GA_Edgar_UltraSkill",
+      "end_ability_event_seconds": 3.402224,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_021_Edgar/GA_Edgar_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/021_edgar_1/animation/Skill/Edgar_UltraSkill.Edgar_UltraSkill"
+    },
+    "1023": {
+      "ability_id": "GA_Cang_UltraSkill",
+      "end_ability_event_seconds": 2.854958,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_023_Cang/GA_Cang_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/023_cang/animation/Skill/Cang_UltralSkill.Cang_UltralSkill"
+    },
+    "1025": {
+      "ability_id": "GA_Hathor_UltraSkill",
+      "end_ability_event_seconds": 4.518597,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_025_Hathor/GA_Hathor_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill.Hathor_UltraSkill"
+    },
+    "1033": {
+      "ability_id": "GA_Adler_UltraSkill",
+      "end_ability_event_seconds": 3.025935,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_033_Adler/GA_Adler_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/033_adler_new/animation/Skill/Adler_UltralSkill.Adler_UltralSkill"
+    },
+    "1039": {
+      "ability_id": "GA_Fadia_UltraSkill",
+      "end_ability_event_seconds": 4.417366,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_039_Fadia/GA_Fadia_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/039_fadia/animation/Skill/Fadia_UltraSkill.Fadia_UltraSkill"
+    },
+    "1051": {
+      "ability_id": "GA_Female051_UltraSkill",
+      "end_ability_event_seconds": 4.161653,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_051_Female/GA_Female051_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/051_female/animation/Skill/char_f_skill_utraskill_Montage.char_f_skill_utraskill_Montage"
+    },
+    "1052": {
+      "ability_id": "GA_Jin_UltraSkill",
+      "end_ability_event_seconds": 2.183333,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_052_Jin/GA_Jin_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/052_jin/animation/Skill/Jin_UltraSkill.Jin_UltraSkill"
+    },
+    "1054": {
+      "ability_id": "GA_Daffodill_UltraSkill",
+      "end_ability_event_seconds": 4.798081,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_054_daffodill/GA_Daffodill_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/054_daffodill/animation/skill/Daffodill_UltraSkill.Daffodill_UltraSkill"
+    },
+    "1055": {
+      "ability_id": "GA_Kuhara_UltraSkill",
+      "end_ability_event_seconds": 5.599441,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_055_Kuhara/GA_Kuhara_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/055_kuhara/animation/skill/Kuhara_UltraSkill.Kuhara_UltraSkill"
+    },
+    "1070": {
+      "ability_id": "GA_Mitsuki_UltraSkill",
+      "end_ability_event_seconds": 4.987703,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": null,
+      "source": "trigger_end_ability_effect_notify",
+      "confidence": "medium",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_070_Mitsuki/GA_Mitsuki_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/070_mitsuki/animation/Skill/Mitsuki_UltraSkill.Mitsuki_UltraSkill"
+    },
+    "1071": {
+      "ability_id": "GA_Chaos071_UltraSkill",
+      "end_ability_event_seconds": 4.802493,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_071_Chaos/GA_Chaos071_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/071_chaos/animation/skill/char_Chaos_skill_ultraskill_Montage.char_Chaos_skill_ultraskill_Montage"
+    },
+    "1073": {
+      "ability_id": "GA_Chiichan073_UltraSkill",
+      "end_ability_event_seconds": 4.250936,
+      "trigger_end_event_tags": [
+        "Event.Montage.Player.Common.EndAbilitySkill"
+      ],
+      "matched_trigger_end_event_tag": "Event.Montage.Player.Common.EndAbilitySkill",
+      "source": "ability_game_paused_trigger_end_tag",
+      "confidence": "high",
+      "ga_asset": "/Game/Blueprints/Abilities/Player/Ability_073_Chiichan/GA_Chiichan073_UltraSkill",
+      "montage_asset": "/Game/Characters/Player/073_rabbit/animation/Skill/char_rabbit_ultraskill_1_Montage.char_rabbit_ultraskill_1_Montage"
+    }
+  }
+}
