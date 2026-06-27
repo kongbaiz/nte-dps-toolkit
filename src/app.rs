@@ -72,6 +72,8 @@ const TEAM_HIT_DETAIL_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(980.0, 660.0);
 const CONSOLE_WINDOW_BASE_SIZE: egui::Vec2 = egui::vec2(980.0, 640.0);
 const PASSTHROUGH_HOTKEY_COMBO_WIDTH: f32 = 150.0;
 const CHARACTER_ATTRIBUTE_COMBO_WIDTH: f32 = 150.0;
+const CHARACTER_EDITOR_CARD_HEIGHT: f32 = 68.0;
+const CHARACTER_EDITOR_AVATAR_SIZE: f32 = 48.0;
 /// Width the HUD window shrinks to; height is computed per row count so the
 /// window hugs the readout with no empty translucent area.
 const HUD_WINDOW_WIDTH: f32 = 380.0;
@@ -5090,6 +5092,7 @@ impl DpsApp {
                 .id_salt("character_editor_list")
                 .auto_shrink([false, false])
                 .show(&mut columns[0], |ui| {
+                    ui.spacing_mut().item_spacing.y = 7.0;
                     for id in ids {
                         let row = self
                             .character_editor
@@ -5104,6 +5107,10 @@ impl DpsApp {
                             row.map_or_else(String::new, |row| json_string_field(row, "name_en"));
                         let attribute =
                             row.map_or_else(String::new, |row| json_string_field(row, "attribute"));
+                        let avatar =
+                            row.map_or_else(String::new, |row| json_string_field(row, "avatar"));
+                        let color =
+                            row.map_or_else(String::new, |row| json_string_field(row, "color"));
                         let searchable =
                             format!("{id} {name_zh} {name_en} {attribute}").to_lowercase();
                         if !search.is_empty() && !searchable.contains(&search) {
@@ -5111,22 +5118,34 @@ impl DpsApp {
                         }
                         let selected =
                             self.character_editor.selected_id.as_deref() == Some(id.as_str());
-                        let attribute_label = if attribute.is_empty() {
-                            String::new()
-                        } else {
-                            format!("  [{attribute}]")
-                        };
-                        let label = if name_zh.is_empty() {
-                            format!("{id}  {name_en}{attribute_label}")
-                        } else {
-                            format!("{id}  {name_zh}  {name_en}{attribute_label}")
-                        };
-                        if ui
-                            .add(
-                                egui::Button::selectable(selected, label).frame_when_inactive(true),
+                        let fallback_color = parse_hex_color(color.trim()).unwrap_or_else(|| {
+                            character_color(
+                                id.parse::<u32>().unwrap_or_default(),
+                                self.characters.as_ref(),
+                                0,
+                            )
+                        });
+                        let dark_mode = self.dark_mode;
+                        let fallback_color = readable_accent(fallback_color, dark_mode);
+                        let clicked = {
+                            let avatar_texture =
+                                self.character_editor_avatar_texture(ui.ctx(), &avatar);
+                            draw_character_editor_card(
+                                ui,
+                                CharacterEditorCard {
+                                    id: &id,
+                                    name_zh: &name_zh,
+                                    name_en: &name_en,
+                                    attribute: &attribute,
+                                    avatar_texture,
+                                    selected,
+                                    fallback_color,
+                                    dark_mode,
+                                },
                             )
                             .clicked()
-                        {
+                        };
+                        if clicked {
                             if self.character_editor.dirty {
                                 self.character_editor.message =
                                     "请先保存当前修改，再切换角色".to_owned();
@@ -5251,6 +5270,23 @@ impl DpsApp {
                 }
             });
         });
+    }
+
+    fn character_editor_avatar_texture(
+        &mut self,
+        ctx: &egui::Context,
+        avatar: &str,
+    ) -> Option<&egui::TextureHandle> {
+        let avatar = avatar.trim();
+        if avatar.is_empty() {
+            return None;
+        }
+        if !self.avatar_textures.contains_key(avatar)
+            && let Some(texture) = load_image_texture(ctx, &data_root(), avatar, "character-avatar")
+        {
+            self.avatar_textures.insert(avatar.to_owned(), texture);
+        }
+        self.avatar_textures.get(avatar)
     }
 
     fn save_character_editor(&mut self, ctx: &egui::Context) {
@@ -8766,6 +8802,160 @@ fn character_text_field(ui: &mut egui::Ui, label: &str, value: &mut String, dirt
         *dirty = true;
     }
     ui.end_row();
+}
+
+struct CharacterEditorCard<'a> {
+    id: &'a str,
+    name_zh: &'a str,
+    name_en: &'a str,
+    attribute: &'a str,
+    avatar_texture: Option<&'a egui::TextureHandle>,
+    selected: bool,
+    fallback_color: Color32,
+    dark_mode: bool,
+}
+
+fn draw_character_editor_card(ui: &mut egui::Ui, card: CharacterEditorCard<'_>) -> egui::Response {
+    let size = egui::vec2(ui.available_width().max(1.0), CHARACTER_EDITOR_CARD_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    let corner_radius = egui::CornerRadius::same(7);
+    let fill = if card.selected {
+        shadcn_muted(card.dark_mode)
+    } else if response.hovered() {
+        shadcn_card_hover(card.dark_mode)
+    } else {
+        shadcn_card(card.dark_mode)
+    };
+    let border_color = if card.selected {
+        theme_accent(card.dark_mode)
+    } else {
+        shadcn_border(card.dark_mode)
+    };
+    ui.painter().rect(
+        rect,
+        corner_radius,
+        fill,
+        Stroke::new(if card.selected { 1.5 } else { 1.0 }, border_color),
+        egui::StrokeKind::Inside,
+    );
+
+    let avatar_rect = egui::Rect::from_center_size(
+        egui::pos2(
+            rect.left() + 12.0 + CHARACTER_EDITOR_AVATAR_SIZE * 0.5,
+            rect.center().y,
+        ),
+        egui::vec2(CHARACTER_EDITOR_AVATAR_SIZE, CHARACTER_EDITOR_AVATAR_SIZE),
+    );
+    let primary_name = character_editor_primary_name(card.name_zh, card.name_en, card.id);
+    draw_character_editor_avatar(
+        ui,
+        avatar_rect,
+        card.avatar_texture,
+        card.fallback_color,
+        &primary_name,
+    );
+
+    let text_rect = egui::Rect::from_min_max(
+        egui::pos2(avatar_rect.right() + 12.0, rect.top() + 9.0),
+        egui::pos2(rect.right() - 12.0, rect.bottom() - 9.0),
+    );
+    let secondary_line = character_editor_secondary_line(card.name_zh, card.name_en, card.id);
+    let painter = ui.painter().with_clip_rect(text_rect);
+    painter.text(
+        egui::pos2(text_rect.left(), text_rect.top() + 15.0),
+        egui::Align2::LEFT_CENTER,
+        &primary_name,
+        egui::FontId::proportional(16.0),
+        shadcn_foreground(card.dark_mode),
+    );
+    painter.text(
+        egui::pos2(text_rect.left(), text_rect.top() + 38.0),
+        egui::Align2::LEFT_CENTER,
+        secondary_line,
+        egui::FontId::monospace(11.5),
+        ui.visuals().weak_text_color(),
+    );
+
+    response.on_hover_text(character_editor_card_hover_text(
+        card.id,
+        card.name_zh,
+        card.name_en,
+        card.attribute,
+    ))
+}
+
+fn draw_character_editor_avatar(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    texture: Option<&egui::TextureHandle>,
+    fallback_color: Color32,
+    fallback_text: &str,
+) {
+    if let Some(texture) = texture {
+        ui.painter().rect_filled(rect, 8.0, ui.visuals().panel_fill);
+        egui::Image::new((texture.id(), rect.size()))
+            .corner_radius(8)
+            .paint_at(ui, rect);
+    } else {
+        ui.painter()
+            .rect_filled(rect, 8.0, fallback_color.gamma_multiply(0.85));
+        if let Some(initial) = fallback_text.chars().next() {
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                initial,
+                egui::FontId::proportional(22.0),
+                contrast_text(fallback_color),
+            );
+        }
+    }
+    ui.painter().rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(1.0, shadcn_border(ui.visuals().dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn character_editor_primary_name(name_zh: &str, name_en: &str, id: &str) -> String {
+    let name_zh = name_zh.trim();
+    let name_en = name_en.trim();
+    if !name_zh.is_empty() {
+        name_zh.to_owned()
+    } else if !name_en.is_empty() {
+        name_en.to_owned()
+    } else {
+        format!("ID {id}")
+    }
+}
+
+fn character_editor_secondary_line(name_zh: &str, name_en: &str, id: &str) -> String {
+    let name_zh = name_zh.trim();
+    let name_en = name_en.trim();
+    if !name_zh.is_empty() && !name_en.is_empty() && name_zh != name_en {
+        format!("ID {id} · {name_en}")
+    } else {
+        format!("ID {id}")
+    }
+}
+
+fn character_editor_card_hover_text(
+    id: &str,
+    name_zh: &str,
+    name_en: &str,
+    attribute: &str,
+) -> String {
+    let primary_name = character_editor_primary_name(name_zh, name_en, id);
+    let mut text = format!("{primary_name}\nID {id}");
+    let name_en = name_en.trim();
+    if !name_en.is_empty() && name_en != primary_name {
+        write!(&mut text, "\n英文名 {name_en}").ok();
+    }
+    let attribute = attribute.trim();
+    if !attribute.is_empty() {
+        write!(&mut text, "\n属性 {attribute}").ok();
+    }
+    text
 }
 
 fn next_search_match(current: Option<usize>, len: usize) -> Option<usize> {
