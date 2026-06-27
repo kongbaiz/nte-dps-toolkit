@@ -50,22 +50,24 @@ jobs:
             nte-dps-tool-windows.zip
             target/release/nte-dps-tool.exe
 
-      - name: Publish latest GitHub Release
+      - name: Publish GitHub Release
         if: github.ref == 'refs/heads/master'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: latest
           RELEASE_TITLE: Latest Windows build
         run: |
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
           }
 
+          $shortSha = $env:GITHUB_SHA.Substring(0, 7)
+          $releaseTag = "build-$env:GITHUB_RUN_NUMBER-$env:GITHUB_RUN_ATTEMPT-$shortSha"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag --force $env:RELEASE_TAG $env:GITHUB_SHA
-          git push --force origin "refs/tags/$env:RELEASE_TAG"
+          git tag $releaseTag $env:GITHUB_SHA
+          git push origin "refs/tags/$releaseTag"
 
           $notes = @(
             "自动构建：$env:GITHUB_SHA"
@@ -76,10 +78,4 @@ jobs:
             "- 控制台新增 DPS 时间口径切换，可在'扣除时停'和'现实时间'之间切换。"
             "- 改进深渊下半场直接开始抓包、当前半场重开后的统计归属。"
           ) -join "`n"
-          gh release view $env:RELEASE_TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:RELEASE_TAG nte-dps-tool-windows.zip target/release/nte-dps-tool.exe --clobber
-            gh release edit $env:RELEASE_TAG --title $env:RELEASE_TITLE --notes $notes --latest
-          } else {
-            gh release create $env:RELEASE_TAG nte-dps-tool-windows.zip target/release/nte-dps-tool.exe --title $env:RELEASE_TITLE --notes $notes --latest
-          }
+          gh release create $releaseTag nte-dps-tool-windows.zip target/release/nte-dps-tool.exe --title $env:RELEASE_TITLE --notes $notes --latest
