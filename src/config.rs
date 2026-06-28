@@ -7,6 +7,9 @@ const CONFIG_DIRECTORY: &str = "NTE DPS Tool";
 const CONFIG_FILENAME: &str = "config.json";
 pub const WINDOW_SCALE_MIN: f32 = 0.7;
 pub const WINDOW_SCALE_MAX: f32 = 1.5;
+pub const TIMELINE_BUCKET_SECONDS_DEFAULT: f32 = 1.0;
+pub const TIMELINE_BUCKET_SECONDS_MIN: f32 = 0.2;
+pub const TIMELINE_BUCKET_SECONDS_MAX: f32 = 10.0;
 
 const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::Home,
@@ -15,6 +18,8 @@ const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::F9,
 ];
 const DPS_TIME_MODES: [DpsTimeMode; 2] = [DpsTimeMode::TimeStopAdjusted, DpsTimeMode::RealTime];
+const TIMELINE_DPS_VIEW_MODES: [TimelineDpsViewMode; 2] =
+    [TimelineDpsViewMode::Team, TimelineDpsViewMode::Characters];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +74,27 @@ impl DpsTimeMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelineDpsViewMode {
+    #[default]
+    Team,
+    Characters,
+}
+
+impl TimelineDpsViewMode {
+    pub fn all() -> &'static [Self] {
+        &TIMELINE_DPS_VIEW_MODES
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Team => "整队",
+            Self::Characters => "按角色",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiConfig {
@@ -77,6 +103,8 @@ pub struct UiConfig {
     pub always_on_top: bool,
     pub server_damage_calibration: bool,
     pub dps_time_mode: DpsTimeMode,
+    pub timeline_bucket_seconds: f32,
+    pub timeline_dps_view_mode: TimelineDpsViewMode,
     pub passthrough_hotkey: PassthroughHotkey,
     pub main_window_scale: f32,
     pub abyss_window_scale: f32,
@@ -93,6 +121,8 @@ impl Default for UiConfig {
             always_on_top: true,
             server_damage_calibration: false,
             dps_time_mode: DpsTimeMode::default(),
+            timeline_bucket_seconds: TIMELINE_BUCKET_SECONDS_DEFAULT,
+            timeline_dps_view_mode: TimelineDpsViewMode::default(),
             passthrough_hotkey: PassthroughHotkey::default(),
             main_window_scale: 1.0,
             abyss_window_scale: 1.0,
@@ -116,7 +146,17 @@ impl UiConfig {
         self.team_hit_detail_window_scale =
             sanitized_window_scale(self.team_hit_detail_window_scale);
         self.console_window_scale = sanitized_window_scale(self.console_window_scale);
+        self.timeline_bucket_seconds =
+            sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
         self
+    }
+}
+
+pub fn sanitize_timeline_bucket_seconds(seconds: f32) -> f32 {
+    if seconds.is_finite() {
+        seconds.clamp(TIMELINE_BUCKET_SECONDS_MIN, TIMELINE_BUCKET_SECONDS_MAX)
+    } else {
+        TIMELINE_BUCKET_SECONDS_DEFAULT
     }
 }
 
@@ -209,6 +249,37 @@ mod tests {
             .sanitized()
             .console_window_scale,
             1.0
+        );
+    }
+
+    #[test]
+    fn sanitizes_invalid_timeline_bucket_seconds() {
+        assert_eq!(
+            UiConfig {
+                timeline_bucket_seconds: 0.05,
+                ..UiConfig::default()
+            }
+            .sanitized()
+            .timeline_bucket_seconds,
+            TIMELINE_BUCKET_SECONDS_MIN
+        );
+        assert_eq!(
+            UiConfig {
+                timeline_bucket_seconds: 99.0,
+                ..UiConfig::default()
+            }
+            .sanitized()
+            .timeline_bucket_seconds,
+            TIMELINE_BUCKET_SECONDS_MAX
+        );
+        assert_eq!(
+            UiConfig {
+                timeline_bucket_seconds: f32::NAN,
+                ..UiConfig::default()
+            }
+            .sanitized()
+            .timeline_bucket_seconds,
+            TIMELINE_BUCKET_SECONDS_DEFAULT
         );
     }
 }

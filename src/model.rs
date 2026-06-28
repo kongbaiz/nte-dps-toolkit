@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
 
 const ABYSS_RESTART_STAGE_WINDOW_SECONDS: f64 = 10.0;
 
@@ -226,6 +227,425 @@ pub fn summarize_hit_directions<'a>(
     summary
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TimelineTimeStopInterval {
+    pub start_offset: f64,
+    pub end_offset: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimelineRoleBucket {
+    pub char_id: u32,
+    pub char_name: String,
+    pub damage: f64,
+    pub dps: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimelineBucket {
+    pub start_offset: f64,
+    pub end_offset: f64,
+    pub damage: f64,
+    pub dps: f64,
+    pub cumulative_damage: f64,
+    pub hits: u64,
+    pub role_damage: Vec<TimelineRoleBucket>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimelineMarkerKind {
+    HalfStart,
+    Clear,
+    Exit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TimelineMarker {
+    pub offset: f64,
+    pub label: String,
+    pub kind: TimelineMarkerKind,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimelineSeries {
+    pub bucket_seconds: f64,
+    pub start_timestamp: Option<f64>,
+    pub end_timestamp: Option<f64>,
+    pub total_damage: f64,
+    pub buckets: Vec<TimelineBucket>,
+    pub time_stop_intervals: Vec<TimelineTimeStopInterval>,
+    pub markers: Vec<TimelineMarker>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkillBreakdown {
+    pub total_damage: f64,
+    pub total_hits: u64,
+    pub rows: Vec<SkillBreakdownRow>,
+    pub unknown: UnknownAttributionSummary,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkillBreakdownRow {
+    pub char_id: u32,
+    pub char_name: String,
+    pub name: String,
+    pub category: String,
+    pub ability_name: Option<String>,
+    pub damage_name: Option<String>,
+    pub gameplay_effect_index: Option<u32>,
+    pub gameplay_effect_name: Option<String>,
+    pub is_follow_up: bool,
+    pub hits: u64,
+    pub damage: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UnknownAttributionSummary {
+    pub unknown_character_count: usize,
+    pub unknown_character_hits: u64,
+    pub unknown_direction_hits: u64,
+    pub unknown_direction_damage: f64,
+    pub unmapped_skill_rows: usize,
+    pub unmapped_skill_hits: u64,
+    pub unmapped_skill_damage: f64,
+    pub unmapped_gameplay_effects: Vec<UnknownGameplayEffect>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UnknownGameplayEffect {
+    pub index: u32,
+    pub hits: u64,
+    pub damage: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CaptureQualitySource {
+    Live,
+    PcapngReplay,
+    JsonReplay,
+    #[default]
+    Unknown,
+}
+
+impl CaptureQualitySource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Live => "实时抓包",
+            Self::PcapngReplay => "PCAPNG 回放",
+            Self::JsonReplay => "JSON 回放",
+            Self::Unknown => "当前会话",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CaptureQualitySummary {
+    pub source: CaptureQualitySource,
+    pub packet_count: usize,
+    pub packets_with_hits: usize,
+    pub hit_count: usize,
+    pub outgoing_hits: u64,
+    pub outgoing_damage: f64,
+    pub unknown_direction_hits: u64,
+    pub unknown_direction_damage: f64,
+    pub incoming_hits: u64,
+    pub incoming_damage: f64,
+    pub unknown_character_count: usize,
+    pub unknown_character_hits: u64,
+    pub unmapped_skill_rows: usize,
+    pub unmapped_skill_hits: u64,
+    pub unmapped_gameplay_effect_count: usize,
+    pub time_stop_event_count: u64,
+    pub time_stop_interval_count: usize,
+    pub abyss_event_count: u64,
+    pub server_damage_corrections: u64,
+}
+
+impl CaptureQualitySummary {
+    pub fn redacted_text(&self) -> String {
+        let mut text = String::new();
+        let _ = writeln!(text, "NTE DPS TOOL 解析质量报告");
+        let _ = writeln!(text, "统计来源：{}", self.source.label());
+        let _ = writeln!(
+            text,
+            "封包：{} 个（含命中 {} 个）",
+            self.packet_count, self.packets_with_hits
+        );
+        let _ = writeln!(text, "命中：{} 条", self.hit_count);
+        let _ = writeln!(
+            text,
+            "方向：输出 {} 条 / 候选 {} 条 / 受击 {} 条",
+            self.outgoing_hits, self.unknown_direction_hits, self.incoming_hits
+        );
+        let _ = writeln!(
+            text,
+            "伤害：输出 {:.0} / 候选 {:.0} / 受击 {:.0}",
+            self.outgoing_damage, self.unknown_direction_damage, self.incoming_damage
+        );
+        let _ = writeln!(
+            text,
+            "未知角色：{} 个，{} 条命中",
+            self.unknown_character_count, self.unknown_character_hits
+        );
+        let _ = writeln!(
+            text,
+            "待映射技能：{} 类，{} 条命中",
+            self.unmapped_skill_rows, self.unmapped_skill_hits
+        );
+        let _ = writeln!(
+            text,
+            "未映射 GE：{} 个",
+            self.unmapped_gameplay_effect_count
+        );
+        let _ = writeln!(
+            text,
+            "时停事件：{} 个，合并区间 {} 段",
+            self.time_stop_event_count, self.time_stop_interval_count
+        );
+        let _ = writeln!(text, "深渊事件：{} 个", self.abyss_event_count);
+        let _ = write!(
+            text,
+            "服务端伤害校准：{} 条",
+            self.server_damage_corrections
+        );
+        text
+    }
+}
+
+#[allow(dead_code)]
+pub fn summarize_timeline<'a>(
+    hits: impl IntoIterator<Item = &'a Hit>,
+    bucket_seconds: f64,
+) -> TimelineSeries {
+    summarize_timeline_with_time_stop(
+        hits,
+        &TimeStopTracker::default(),
+        Vec::new(),
+        bucket_seconds,
+        false,
+    )
+}
+
+pub fn summarize_skill_breakdown<'a>(
+    hits: impl IntoIterator<Item = &'a Hit>,
+    char_filter: Option<u32>,
+) -> SkillBreakdown {
+    let mut rows = HashMap::<SkillBreakdownKey, SkillBreakdownRow>::new();
+    let mut unknown_characters = HashSet::<u32>::new();
+    let mut unknown = UnknownAttributionSummary::default();
+    let mut unmapped_gameplay_effects = HashMap::<u32, UnknownGameplayEffect>::new();
+    let mut total_damage = 0.0;
+    let mut total_hits = 0;
+
+    for hit in hits.into_iter().filter(|hit| {
+        hit.direction != "incoming" && char_filter.is_none_or(|char_id| hit.char_id == char_id)
+    }) {
+        if !hit.char_known {
+            unknown_characters.insert(hit.char_id);
+            unknown.unknown_character_hits += 1;
+        }
+        if hit.direction == "unknown" {
+            unknown.unknown_direction_hits += 1;
+            unknown.unknown_direction_damage += hit.total_damage();
+        }
+
+        if hit.damage > 0.0 {
+            let entry = SkillEntryRef::from_hit(hit, false);
+            push_skill_breakdown_entry(&mut rows, hit, entry, hit.damage);
+            total_damage += hit.damage;
+            total_hits += 1;
+            observe_unknown_skill(
+                hit,
+                hit.damage,
+                &mut unknown,
+                &mut unmapped_gameplay_effects,
+            );
+        }
+        if hit.follow_up_damage > 0.0 {
+            let entry = SkillEntryRef::from_hit(hit, true);
+            push_skill_breakdown_entry(&mut rows, hit, entry, hit.follow_up_damage);
+            total_damage += hit.follow_up_damage;
+            total_hits += 1;
+        }
+    }
+
+    let mut sorted_rows = rows.into_values().collect::<Vec<_>>();
+    sorted_rows.sort_by(|left, right| {
+        right
+            .damage
+            .total_cmp(&left.damage)
+            .then_with(|| left.char_name.cmp(&right.char_name))
+            .then_with(|| left.name.cmp(&right.name))
+            .then_with(|| left.is_follow_up.cmp(&right.is_follow_up))
+    });
+    unknown.unknown_character_count = unknown_characters.len();
+    unknown.unmapped_skill_rows = sorted_rows
+        .iter()
+        .filter(|row| is_unmapped_skill_row(row))
+        .count();
+    unknown.unmapped_gameplay_effects = unmapped_gameplay_effects.into_values().collect();
+    unknown
+        .unmapped_gameplay_effects
+        .sort_by_key(|effect| effect.index);
+
+    SkillBreakdown {
+        total_damage,
+        total_hits,
+        rows: sorted_rows,
+        unknown,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SkillBreakdownKey {
+    char_id: u32,
+    name: String,
+    category: String,
+    ability_name: Option<String>,
+    damage_name: Option<String>,
+    gameplay_effect_index: Option<u32>,
+    gameplay_effect_name: Option<String>,
+    is_follow_up: bool,
+}
+
+struct SkillEntryRef {
+    name: String,
+    category: String,
+    ability_name: Option<String>,
+    damage_name: Option<String>,
+    gameplay_effect_index: Option<u32>,
+    gameplay_effect_name: Option<String>,
+    is_follow_up: bool,
+}
+
+impl SkillEntryRef {
+    fn from_hit(hit: &Hit, is_follow_up: bool) -> Self {
+        if is_follow_up {
+            return Self {
+                name: hit
+                    .follow_up_damage_name
+                    .as_deref()
+                    .or(hit.follow_up_attack_type.as_deref())
+                    .unwrap_or("后续伤害")
+                    .to_owned(),
+                category: hit
+                    .follow_up_attack_type
+                    .clone()
+                    .unwrap_or_else(|| "后续伤害".to_owned()),
+                ability_name: hit.ability_name.clone(),
+                damage_name: hit.follow_up_damage_name.clone(),
+                gameplay_effect_index: hit.gameplay_effect_index,
+                gameplay_effect_name: hit.gameplay_effect_name.clone(),
+                is_follow_up,
+            };
+        }
+
+        Self {
+            name: hit
+                .damage_name
+                .as_deref()
+                .or(hit.ability_name.as_deref())
+                .or(hit.gameplay_effect_name.as_deref())
+                .or(hit.attack_type.as_deref())
+                .unwrap_or("待映射技能")
+                .to_owned(),
+            category: hit
+                .attack_type
+                .clone()
+                .unwrap_or_else(|| "未归类".to_owned()),
+            ability_name: hit.ability_name.clone(),
+            damage_name: hit.damage_name.clone(),
+            gameplay_effect_index: hit.gameplay_effect_index,
+            gameplay_effect_name: hit.gameplay_effect_name.clone(),
+            is_follow_up,
+        }
+    }
+}
+
+fn push_skill_breakdown_entry(
+    rows: &mut HashMap<SkillBreakdownKey, SkillBreakdownRow>,
+    hit: &Hit,
+    entry: SkillEntryRef,
+    damage: f64,
+) {
+    if !damage.is_finite() || damage <= 0.0 {
+        return;
+    }
+    let keep_gameplay_effect_key = entry.damage_name.is_none() && entry.ability_name.is_none();
+    let key = SkillBreakdownKey {
+        char_id: hit.char_id,
+        name: entry.name,
+        category: entry.category,
+        ability_name: entry.ability_name,
+        damage_name: entry.damage_name,
+        gameplay_effect_index: if keep_gameplay_effect_key {
+            entry.gameplay_effect_index
+        } else {
+            None
+        },
+        gameplay_effect_name: if keep_gameplay_effect_key {
+            entry.gameplay_effect_name
+        } else {
+            None
+        },
+        is_follow_up: entry.is_follow_up,
+    };
+    let row_key = key.clone();
+    let row = rows.entry(key).or_insert_with(move || SkillBreakdownRow {
+        char_id: hit.char_id,
+        char_name: hit.char_name.clone(),
+        name: row_key.name,
+        category: row_key.category,
+        ability_name: row_key.ability_name,
+        damage_name: row_key.damage_name,
+        gameplay_effect_index: row_key.gameplay_effect_index,
+        gameplay_effect_name: row_key.gameplay_effect_name,
+        is_follow_up: row_key.is_follow_up,
+        hits: 0,
+        damage: 0.0,
+    });
+    row.char_name.clone_from(&hit.char_name);
+    row.hits += 1;
+    row.damage += damage;
+}
+
+fn observe_unknown_skill(
+    hit: &Hit,
+    damage: f64,
+    unknown: &mut UnknownAttributionSummary,
+    unmapped_gameplay_effects: &mut HashMap<u32, UnknownGameplayEffect>,
+) {
+    if is_hit_skill_unmapped(hit) {
+        unknown.unmapped_skill_hits += 1;
+        unknown.unmapped_skill_damage += damage;
+    }
+    if let Some(index) = hit.gameplay_effect_index
+        && hit.gameplay_effect_name.is_none()
+    {
+        let effect =
+            unmapped_gameplay_effects
+                .entry(index)
+                .or_insert_with(|| UnknownGameplayEffect {
+                    index,
+                    ..Default::default()
+                });
+        effect.hits += 1;
+        effect.damage += damage;
+    }
+}
+
+fn is_hit_skill_unmapped(hit: &Hit) -> bool {
+    hit.damage_name.is_none() && hit.ability_name.is_none() && hit.gameplay_effect_name.is_none()
+}
+
+fn is_unmapped_skill_row(row: &SkillBreakdownRow) -> bool {
+    !row.is_follow_up
+        && row.damage_name.is_none()
+        && row.ability_name.is_none()
+        && row.gameplay_effect_name.is_none()
+}
+
 impl CharacterStats {
     pub fn duration(&self) -> f64 {
         if self.hits > 1 {
@@ -364,10 +784,12 @@ struct TimeStopInterval {
 struct TimeStopTracker {
     intervals: Vec<TimeStopInterval>,
     active_extra_starts: HashMap<String, f64>,
+    event_count: u64,
 }
 
 impl TimeStopTracker {
     fn apply_event(&mut self, event: &TimeStopEvent) {
+        self.event_count = self.event_count.saturating_add(1);
         match event {
             TimeStopEvent::UltraAnimation {
                 timestamp,
@@ -394,8 +816,15 @@ impl TimeStopTracker {
     }
 
     fn frozen_between(&self, start: f64, end: f64) -> f64 {
+        self.intervals_between(start, end)
+            .into_iter()
+            .map(|interval| interval.end - interval.start)
+            .sum()
+    }
+
+    fn intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
         if !start.is_finite() || !end.is_finite() || end <= start {
-            return 0.0;
+            return Vec::new();
         }
         let mut intervals = self
             .intervals
@@ -421,7 +850,7 @@ impl TimeStopTracker {
             .collect::<Vec<_>>();
         intervals.sort_by(|left, right| left.start.total_cmp(&right.start));
 
-        let mut total = 0.0;
+        let mut merged_intervals = Vec::new();
         let mut merged: Option<TimeStopInterval> = None;
         for interval in intervals {
             match merged {
@@ -430,16 +859,16 @@ impl TimeStopTracker {
                     merged = Some(current);
                 }
                 Some(current) => {
-                    total += current.end - current.start;
+                    merged_intervals.push(current);
                     merged = Some(interval);
                 }
                 None => merged = Some(interval),
             }
         }
         if let Some(current) = merged {
-            total += current.end - current.start;
+            merged_intervals.push(current);
         }
-        total
+        merged_intervals
     }
 }
 
@@ -554,6 +983,25 @@ impl PartyCombatState {
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         self.time_stop.apply_event(event);
     }
+
+    #[allow(dead_code)]
+    pub fn time_stop_intervals_between(
+        &self,
+        start: f64,
+        end: f64,
+    ) -> Vec<TimelineTimeStopInterval> {
+        relative_time_stop_intervals(&self.time_stop, start, end)
+    }
+
+    pub fn timeline(&self, bucket_seconds: f64, subtract_time_stop: bool) -> TimelineSeries {
+        summarize_timeline_with_time_stop(
+            &self.hits,
+            &self.time_stop,
+            Vec::new(),
+            bucket_seconds,
+            subtract_time_stop,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -570,6 +1018,7 @@ pub struct AbyssRunState {
     pub second_half: PartyCombatState,
     pub success_at: Option<f64>,
     pub exited_at: Option<f64>,
+    pub event_count: u64,
 }
 
 impl AbyssRunState {
@@ -614,6 +1063,7 @@ impl AbyssRunState {
     }
 
     pub fn apply_event(&mut self, event: AbyssEvent) {
+        self.event_count = self.event_count.saturating_add(1);
         match event {
             AbyssEvent::RestartDetected { timestamp } => {
                 if let Some(half) = self.active_half {
@@ -700,6 +1150,48 @@ impl AbyssRunState {
             }
         }
     }
+
+    fn timeline_markers_between(&self, start: f64, end: f64) -> Vec<TimelineMarker> {
+        let mut markers = Vec::new();
+        push_timeline_marker(
+            &mut markers,
+            self.first_half_at,
+            start,
+            end,
+            "上行线",
+            TimelineMarkerKind::HalfStart,
+        );
+        push_timeline_marker(
+            &mut markers,
+            self.second_half_at,
+            start,
+            end,
+            "下行线",
+            TimelineMarkerKind::HalfStart,
+        );
+        push_timeline_marker(
+            &mut markers,
+            self.success_at,
+            start,
+            end,
+            "通关",
+            TimelineMarkerKind::Clear,
+        );
+        push_timeline_marker(
+            &mut markers,
+            self.exited_at,
+            start,
+            end,
+            "离开",
+            TimelineMarkerKind::Exit,
+        );
+        markers.sort_by(|left, right| {
+            left.offset
+                .total_cmp(&right.offset)
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        markers
+    }
 }
 
 #[derive(Default)]
@@ -713,6 +1205,7 @@ pub struct CombatState {
     pub total_damage: f64,
     pub total_damage_taken: f64,
     pub abyss: AbyssRunState,
+    pub damage_correction_count: u64,
     time_stop: TimeStopTracker,
 }
 
@@ -764,6 +1257,7 @@ impl CombatState {
     pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) {
         let updated = apply_damage_correction_to_hits(&mut self.hits, &correction);
         if updated {
+            self.damage_correction_count = self.damage_correction_count.saturating_add(1);
             self.hits_generation = self.hits_generation.wrapping_add(1);
             rebuild_combat_totals(
                 &self.hits,
@@ -853,6 +1347,69 @@ impl CombatState {
         self.abyss.apply_time_stop_event(&event);
     }
 
+    #[allow(dead_code)]
+    pub fn time_stop_intervals_between(
+        &self,
+        start: f64,
+        end: f64,
+    ) -> Vec<TimelineTimeStopInterval> {
+        relative_time_stop_intervals(&self.time_stop, start, end)
+    }
+
+    pub fn timeline(&self, bucket_seconds: f64, subtract_time_stop: bool) -> TimelineSeries {
+        let mut series = summarize_timeline_with_time_stop(
+            &self.hits,
+            &self.time_stop,
+            Vec::new(),
+            bucket_seconds,
+            subtract_time_stop,
+        );
+        if let (Some(start), Some(end)) = (series.start_timestamp, series.end_timestamp) {
+            series.markers = self.abyss.timeline_markers_between(start, end);
+        }
+        series
+    }
+
+    pub fn skill_breakdown(&self, char_filter: Option<u32>) -> SkillBreakdown {
+        summarize_skill_breakdown(&self.hits, char_filter)
+    }
+
+    pub fn capture_quality_summary(&self, source: CaptureQualitySource) -> CaptureQualitySummary {
+        let directions = summarize_hit_directions(&self.hits);
+        let skills = self.skill_breakdown(None);
+        CaptureQualitySummary {
+            source,
+            packet_count: self.packets.len(),
+            packets_with_hits: self
+                .packets
+                .iter()
+                .filter(|packet| packet.parsed_hits > 0)
+                .count(),
+            hit_count: self.hits.len(),
+            outgoing_hits: directions.outgoing_hits,
+            outgoing_damage: directions.outgoing_damage,
+            unknown_direction_hits: directions.unknown_hits,
+            unknown_direction_damage: directions.unknown_damage,
+            incoming_hits: directions.incoming_hits,
+            incoming_damage: directions.incoming_damage,
+            unknown_character_count: skills.unknown.unknown_character_count,
+            unknown_character_hits: skills.unknown.unknown_character_hits,
+            unmapped_skill_rows: skills.unknown.unmapped_skill_rows,
+            unmapped_skill_hits: skills.unknown.unmapped_skill_hits,
+            unmapped_gameplay_effect_count: skills.unknown.unmapped_gameplay_effects.len(),
+            time_stop_event_count: self.time_stop.event_count,
+            time_stop_interval_count: self
+                .time_stop
+                .intervals_between(
+                    self.started_at.unwrap_or_default(),
+                    self.ended_at.unwrap_or_default(),
+                )
+                .len(),
+            abyss_event_count: self.abyss.event_count,
+            server_damage_corrections: self.damage_correction_count,
+        }
+    }
+
     fn backfill_abyss_half_from_global(&mut self, half: AbyssHalf) {
         let party = self.abyss.half_mut(half);
         if !party.hits.is_empty() {
@@ -878,6 +1435,140 @@ fn character_duration_after_time_stop(
         return raw;
     }
     (raw - time_stop.frozen_between(row.first_hit, row.last_hit)).max(0.001)
+}
+
+fn summarize_timeline_with_time_stop<'a>(
+    hits: impl IntoIterator<Item = &'a Hit>,
+    time_stop: &TimeStopTracker,
+    markers: Vec<TimelineMarker>,
+    bucket_seconds: f64,
+    _subtract_time_stop: bool,
+) -> TimelineSeries {
+    let bucket_seconds = if bucket_seconds.is_finite() && bucket_seconds > 0.0 {
+        bucket_seconds
+    } else {
+        1.0
+    };
+    let hits = hits
+        .into_iter()
+        .filter(|hit| hit.direction != "incoming" && hit.timestamp.is_finite())
+        .collect::<Vec<_>>();
+    let Some(start) = hits
+        .iter()
+        .map(|hit| hit.timestamp)
+        .min_by(|left, right| left.total_cmp(right))
+    else {
+        return TimelineSeries {
+            bucket_seconds,
+            markers,
+            ..Default::default()
+        };
+    };
+    let end = hits
+        .iter()
+        .map(|hit| hit.timestamp)
+        .max_by(|left, right| left.total_cmp(right))
+        .unwrap_or(start);
+    let bucket_count = ((end - start).max(0.0) / bucket_seconds).floor() as usize + 1;
+    let mut buckets = (0..bucket_count)
+        .map(|index| TimelineBucket {
+            start_offset: index as f64 * bucket_seconds,
+            end_offset: (index + 1) as f64 * bucket_seconds,
+            ..Default::default()
+        })
+        .collect::<Vec<_>>();
+    let mut role_buckets = vec![HashMap::<u32, (String, f64)>::new(); bucket_count];
+
+    for hit in hits {
+        let damage = hit.total_damage();
+        if !damage.is_finite() {
+            continue;
+        }
+        let bucket_index = (((hit.timestamp - start).max(0.0) / bucket_seconds).floor() as usize)
+            .min(bucket_count - 1);
+        let bucket = &mut buckets[bucket_index];
+        bucket.damage += damage;
+        bucket.hits += 1;
+        let role = role_buckets[bucket_index]
+            .entry(hit.char_id)
+            .or_insert_with(|| (hit.char_name.clone(), 0.0));
+        role.0.clone_from(&hit.char_name);
+        role.1 += damage;
+    }
+
+    let mut total_damage = 0.0;
+    for (index, bucket) in buckets.iter_mut().enumerate() {
+        total_damage += bucket.damage;
+        bucket.cumulative_damage = total_damage;
+        // Timeline buckets stay on real wall-clock seconds. Time-stop periods
+        // are drawn as bands; subtracting them inside a fixed 1s bucket can
+        // shrink the divisor to almost zero and produce unusable peak spikes.
+        let duration = bucket_seconds.max(0.001);
+        bucket.dps = bucket.damage / duration;
+        let mut roles = role_buckets[index]
+            .drain()
+            .map(|(char_id, (char_name, damage))| TimelineRoleBucket {
+                char_id,
+                char_name,
+                damage,
+                dps: damage / duration,
+            })
+            .collect::<Vec<_>>();
+        roles.sort_by(|left, right| {
+            right
+                .damage
+                .total_cmp(&left.damage)
+                .then_with(|| left.char_name.cmp(&right.char_name))
+                .then_with(|| left.char_id.cmp(&right.char_id))
+        });
+        bucket.role_damage = roles;
+    }
+
+    TimelineSeries {
+        bucket_seconds,
+        start_timestamp: Some(start),
+        end_timestamp: Some(end),
+        total_damage,
+        buckets,
+        time_stop_intervals: relative_time_stop_intervals(time_stop, start, end),
+        markers,
+    }
+}
+
+fn relative_time_stop_intervals(
+    time_stop: &TimeStopTracker,
+    start: f64,
+    end: f64,
+) -> Vec<TimelineTimeStopInterval> {
+    time_stop
+        .intervals_between(start, end)
+        .into_iter()
+        .map(|interval| TimelineTimeStopInterval {
+            start_offset: interval.start - start,
+            end_offset: interval.end - start,
+        })
+        .collect()
+}
+
+fn push_timeline_marker(
+    markers: &mut Vec<TimelineMarker>,
+    timestamp: Option<f64>,
+    start: f64,
+    end: f64,
+    label: &str,
+    kind: TimelineMarkerKind,
+) {
+    let Some(timestamp) = timestamp else {
+        return;
+    };
+    if !timestamp.is_finite() || timestamp < start || timestamp > end {
+        return;
+    }
+    markers.push(TimelineMarker {
+        offset: timestamp - start,
+        label: label.to_owned(),
+        kind,
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -1130,6 +1821,152 @@ mod tests {
     }
 
     #[test]
+    fn timeline_handles_empty_hits() {
+        let hits = Vec::<Hit>::new();
+        let timeline = summarize_timeline(hits.iter(), 1.0);
+
+        assert_eq!(timeline.bucket_seconds, 1.0);
+        assert!(timeline.buckets.is_empty());
+        assert_eq!(timeline.total_damage, 0.0);
+    }
+
+    #[test]
+    fn timeline_buckets_damage_by_second_and_role() {
+        let mut first = test_hit(10.0, 1, "outgoing", 100.0);
+        first.char_name = "一号".to_owned();
+        let mut same_bucket = test_hit(10.9, 2, "unknown", 50.0);
+        same_bucket.char_name = "二号".to_owned();
+        let mut next_bucket = test_hit(11.0, 1, "outgoing", 200.0);
+        next_bucket.char_name = "一号".to_owned();
+        let incoming = test_hit(11.2, 3, "incoming", 999.0);
+        let hits = Vec::from([first, same_bucket, next_bucket, incoming]);
+
+        let timeline = summarize_timeline(hits.iter(), 1.0);
+
+        assert_eq!(timeline.buckets.len(), 2);
+        assert_eq!(timeline.total_damage, 350.0);
+        assert_eq!(timeline.buckets[0].damage, 150.0);
+        assert_eq!(timeline.buckets[0].hits, 2);
+        assert_eq!(timeline.buckets[0].role_damage.len(), 2);
+        assert_eq!(timeline.buckets[1].damage, 200.0);
+        assert_eq!(timeline.buckets[1].cumulative_damage, 350.0);
+    }
+
+    #[test]
+    fn timeline_marks_time_stop_without_inflating_bucket_dps() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(0.0, 1, "outgoing", 100.0));
+        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
+            timestamp: 0.25,
+            char_id: 1,
+            ability_id: "GA_Test_UltraSkill".to_owned(),
+            duration_seconds: 0.5,
+        });
+        state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
+
+        let timeline = state.timeline(1.0, true);
+
+        assert_eq!(timeline.time_stop_intervals.len(), 1);
+        assert!((timeline.time_stop_intervals[0].start_offset - 0.25).abs() < 1e-9);
+        assert!((timeline.time_stop_intervals[0].end_offset - 0.75).abs() < 1e-9);
+        assert!((timeline.buckets[0].dps - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn skill_breakdown_splits_follow_up_and_unknown_attribution() {
+        let mut source = test_hit(1.0, 10, "outgoing", 100.0);
+        source.char_name = "主输出".to_owned();
+        source.attack_type = Some("普攻".to_owned());
+        source.damage_name = Some("普攻一段".to_owned());
+        source.ability_name = Some("GA_Test_Melee".to_owned());
+        source.follow_up_damage = 25.0;
+        source.follow_up_damage_name = Some("覆纹追加".to_owned());
+        source.follow_up_attack_type = Some("覆纹".to_owned());
+
+        let mut unknown = test_hit(2.0, 99, "unknown", 50.0);
+        unknown.char_known = false;
+        unknown.char_name = "未知角色".to_owned();
+        unknown.gameplay_effect_index = Some(777);
+
+        let hits = Vec::from([source, unknown]);
+        let breakdown = summarize_skill_breakdown(hits.iter(), None);
+
+        assert_eq!(breakdown.total_damage, 175.0);
+        assert_eq!(breakdown.total_hits, 3);
+        assert_eq!(breakdown.rows.len(), 3);
+        assert!(
+            breakdown
+                .rows
+                .iter()
+                .any(|row| row.name == "覆纹追加" && row.is_follow_up)
+        );
+        assert_eq!(breakdown.unknown.unknown_character_count, 1);
+        assert_eq!(breakdown.unknown.unknown_direction_hits, 1);
+        assert_eq!(breakdown.unknown.unmapped_skill_hits, 1);
+        assert_eq!(breakdown.unknown.unmapped_gameplay_effects[0].index, 777);
+    }
+
+    #[test]
+    fn skill_breakdown_merges_same_ability_across_effects() {
+        let mut first = test_hit(1.0, 10, "outgoing", 100.0);
+        first.attack_type = Some("Q技能".to_owned());
+        first.ability_name = Some("GA_Test_UltraSkill".to_owned());
+        first.gameplay_effect_index = Some(101);
+        first.gameplay_effect_name = Some("GE_Test_UltraSkill1_Damage".to_owned());
+
+        let mut second = test_hit(2.0, 10, "outgoing", 75.0);
+        second.attack_type = Some("Q技能".to_owned());
+        second.ability_name = Some("GA_Test_UltraSkill".to_owned());
+        second.gameplay_effect_index = Some(102);
+        second.gameplay_effect_name = Some("GE_Test_UltraSkill2_Damage".to_owned());
+
+        let hits = Vec::from([first, second]);
+        let breakdown = summarize_skill_breakdown(hits.iter(), None);
+
+        assert_eq!(breakdown.rows.len(), 1);
+        assert_eq!(breakdown.rows[0].name, "GA_Test_UltraSkill");
+        assert_eq!(breakdown.rows[0].hits, 2);
+        assert_eq!(breakdown.rows[0].damage, 175.0);
+    }
+
+    #[test]
+    fn capture_quality_summary_is_redacted() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
+        state.push_packet(PacketDebug {
+            timestamp: 1.0,
+            source: "192.0.2.1:1111".to_owned(),
+            destination: "198.51.100.1:2222".to_owned(),
+            direction: "outgoing".to_owned(),
+            payload_len: 128,
+            declared_ids: vec![1],
+            parsed_hits: 1,
+            note: "sensitive note".to_owned(),
+            payload_preview: "preview text".to_owned(),
+            payload_hex: "deadbeef".to_owned(),
+            decoded_text: "decoded text".to_owned(),
+        });
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: None,
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+
+        let summary = state.capture_quality_summary(CaptureQualitySource::PcapngReplay);
+        let text = summary.redacted_text();
+
+        assert_eq!(summary.packet_count, 1);
+        assert_eq!(summary.packets_with_hits, 1);
+        assert_eq!(summary.abyss_event_count, 1);
+        assert!(text.contains("PCAPNG 回放"));
+        assert!(!text.contains("deadbeef"));
+        assert!(!text.contains("192.0.2.1"));
+        assert!(!text.contains("decoded text"));
+    }
+
+    #[test]
     fn follow_up_damage_merges_into_source_hit_totals() {
         let mut state = CombatState::default();
         let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
@@ -1164,6 +2001,7 @@ mod tests {
         let stats = state.stats.get(&7).unwrap();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.damage, 1_250.0);
+        assert_eq!(state.damage_correction_count, 0);
     }
 
     #[test]
@@ -1198,6 +2036,7 @@ mod tests {
         let stats = state.stats.get(&7).unwrap();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.damage, 1_250.0);
+        assert_eq!(state.damage_correction_count, 1);
     }
 
     #[test]
