@@ -6,7 +6,8 @@
     "wooden_descriptions": 449,
     "ability_tips": 196,
     "reaction_details": 8,
-    "characters": 22
+    "characters": 22,
+    "abyss_monsters": 44
   },
   "coverage": {
     "skill_damage_in_mapping": 750,

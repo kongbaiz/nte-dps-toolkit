@@ -3440,10 +3440,19 @@
         },
         {
           "type": "ADT_DES",
+          "title_zh": "普通攻击：清明梦",
+          "title_en": "普通攻击：清明梦",
+          "description_zh": "在伊洛伊发动「普通攻击：白日梦」后，再次长按普攻，消耗「臆想」，召唤莫尔甫斯发动长时间的连续射击，造成灵属性异能伤害。",
+          "description_en": "在伊洛伊发动「普通攻击：白日梦」后，再次长按普攻，消耗「臆想」，召唤莫尔甫斯发动长时间的连续射击，造成灵属性异能伤害。",
+          "short_description_zh": "「普通攻击：白日梦」后再次长按普攻，消耗「臆想」造成灵属性异能伤害。",
+          "short_description_en": "「普通攻击：白日梦」后再次长按普攻，消耗「臆想」造成灵属性异能伤害。"
+        },
+        {
+          "type": "ADT_DES",
           "title_zh": "普通攻击：起床时间",
           "title_en": "普通攻击：起床时间",
-          "description_zh": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升x%。攻击命中时积攒「臆想」。",
-          "description_en": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升x%。攻击命中时积攒「臆想」。",
+          "description_zh": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。。攻击命中时积攒「臆想」。",
+          "description_en": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。。攻击命中时积攒「臆想」。",
           "short_description_zh": "造成灵属性异能伤害，命中积攒「臆想」。",
           "short_description_en": "造成灵属性异能伤害，命中积攒「臆想」。"
         },
@@ -3571,8 +3580,8 @@
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益（最高不超过XX），持续X秒。\r\n与此同时，三只小羊分别进行攻击，基于伊洛伊基础攻击力的x%，每名处于「退行」状态的队友额外造成基础攻击力y%的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下斗伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
-          "description_en": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益（最高不超过XX），持续X秒。\r\n与此同时，三只小羊分别进行攻击，基于伊洛伊基础攻击力的x%，每名处于「退行」状态的队友额外造成基础攻击力y%的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下斗伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
+          "description_zh": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下斗伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
+          "description_en": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下斗伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
           "short_description_zh": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战状态下使3名队友进入「退行」状态协助战斗。",
           "short_description_en": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战状态下使3名队友进入「退行」状态协助战斗。"
         },
@@ -3595,10 +3604,10 @@
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复其x%的生命值。（期间最多只能复活1名角色）\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。释放「极轨终结：三十八亿年的海市蜃楼」后，该状态将得到强化。\r\n任意队友死亡进入「退行」状态时，获得x点「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "description_en": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复其x%的生命值。（期间最多只能复活1名角色）\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。释放「极轨终结：三十八亿年的海市蜃楼」后，该状态将得到强化。\r\n任意队友死亡进入「退行」状态时，获得x点「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "short_description_zh": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复其x%的生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态，并获得x点「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "short_description_en": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复其x%的生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态，并获得x点「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。"
+          "description_zh": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "description_en": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "short_description_zh": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "short_description_en": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。"
         },
         {
           "type": "ADT_AFFIX",
@@ -3840,37 +3849,37 @@
           "type": "ADT_DES",
           "title_zh": "<Title>普通攻击：惊骇急袭</>",
           "title_en": "<Title>普通攻击：惊骇急袭</>",
-          "description_zh": "完全解放了异能的真红带着慑人的气势，进行至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "description_en": "完全解放了异能的真红带着慑人的气势，进行至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_zh": "至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_en": "至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。"
+          "description_zh": "完全解放了异能的真红带着慑人的气势，进行至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "description_en": "完全解放了异能的真红带着慑人的气势，进行至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_zh": "至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_en": "至多<NumGreen>5</>段的连续攻击，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>普通攻击：落锤</>",
           "title_en": "<Title>普通攻击：落锤</>",
-          "description_zh": "真红滞空时点按普通攻击，落地后造成<NumGreen>1</>次<Guang>光属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "description_en": "真红滞空时点按普通攻击，落地后造成<NumGreen>1</>次<Guang>光属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_zh": "滞空时点按普攻，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_en": "滞空时点按普攻，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。"
+          "description_zh": "真红滞空时点按普通攻击，落地后造成<NumGreen>1</>次<Guang>光属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "description_en": "真红滞空时点按普通攻击，落地后造成<NumGreen>1</>次<Guang>光属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_zh": "滞空时点按普攻，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_en": "滞空时点按普攻，造成<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>普通攻击：惊骇急袭—轻蔑</>",
           "title_en": "<Title>普通攻击：惊骇急袭—轻蔑</>",
-          "description_zh": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得可获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "description_en": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得可获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_zh": "普攻第3/4/5段中长按普攻，造成<NumGreen>1</>次<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_en": "普攻第3/4/5段中长按普攻，造成<NumGreen>1</>次<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。"
+          "description_zh": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "description_en": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_zh": "普攻第3/4/5段中长按普攻，造成<NumGreen>1</>次<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_en": "普攻第3/4/5段中长按普攻，造成<NumGreen>1</>次<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "极限反击：不容喘息",
           "title_en": "极限反击：不容喘息",
-          "description_zh": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。\r\n在「威慑凝视」状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪，并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
-          "description_en": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。\r\n在「威慑凝视」状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪，并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
-          "short_description_zh": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。",
-          "short_description_en": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&RageEEnergy\">「清醒边缘」</>。"
+          "description_zh": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪，并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
+          "description_en": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪，并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
+          "short_description_zh": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "short_description_en": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。"
         },
         {
           "type": "ADT_AFFIX",
@@ -3990,8 +3999,8 @@
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "当真红在场上且进入战斗状态下超过5秒未主动发动攻击时进入「威慑凝视」状态，每秒叠加「威慑凝视」层数。当处于「威慑凝视」状态下时，真红每次成功发动极限闪避额外获得<NumGreen>1</>层「威慑凝视」。\r\n「威慑凝视」层数上限为<NumGreen>8</>，切换角色移除「威慑凝视」状态和层数。\r\n\r\n真红主动发动攻击时解除「威慑凝视」状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层「威慑凝视」，额外伤害提升<NumGreen>100%</>。",
-          "description_en": "当真红在场上且进入战斗状态下超过5秒未主动发动攻击时进入「威慑凝视」状态，每秒叠加「威慑凝视」层数。当处于「威慑凝视」状态下时，真红每次成功发动极限闪避额外获得<NumGreen>1</>层「威慑凝视」。\r\n「威慑凝视」层数上限为<NumGreen>8</>，切换角色移除「威慑凝视」状态和层数。\r\n\r\n真红主动发动攻击时解除「威慑凝视」状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层「威慑凝视」，额外伤害提升<NumGreen>100%</>。",
+          "description_zh": "当真红在场上且进入战斗状态下超过5秒未主动发动攻击时进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，每秒叠加层数。状态期间，真红每次成功发动极限闪避额外获得<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>层数上限为<NumGreen>8</>，切换角色移除状态和层数。\r\n真红主动发动攻击时解除<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>，额外伤害提升<NumGreen>100%</>。",
+          "description_en": "当真红在场上且进入战斗状态下超过5秒未主动发动攻击时进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，每秒叠加层数。状态期间，真红每次成功发动极限闪避额外获得<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>层数上限为<NumGreen>8</>，切换角色移除状态和层数。\r\n真红主动发动攻击时解除<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>，额外伤害提升<NumGreen>100%</>。",
           "short_description_zh": "",
           "short_description_en": ""
         },
@@ -4047,10 +4056,10 @@
           "type": "ADT_DES",
           "title_zh": "<Title>变轨技能：天降赤锋</>",
           "title_en": "<Title>变轨技能：天降赤锋</>",
-          "description_zh": "消耗所有「清醒边缘」，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "description_en": "消耗所有「清醒边缘」，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_zh": "消耗所有「清醒边缘」，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_en": "消耗所有「清醒边缘」，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。"
+          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
+          "description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
+          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。",
+          "short_description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4080,10 +4089,10 @@
           "type": "ADT_DES",
           "title_zh": "<Title>变轨技能：天降赤锋</>",
           "title_en": "<Title>变轨技能：天降赤锋</>",
-          "description_zh": "消耗所有「清醒边缘」，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "description_en": "消耗所有「清醒边缘」，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_zh": "消耗所有「清醒边缘」，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_en": "消耗所有「清醒边缘」，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。"
+          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
+          "description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
+          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。",
+          "short_description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4104,28 +4113,28 @@
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：沸血赤红</>",
           "title_en": "<Title>极轨终结：沸血赤红</>",
-          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有「桀骜斗志」进入「升腾之赤」状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有「桀骜斗志」进入「升腾之赤」状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "short_description_zh": "真红消耗所有「桀骜斗志」进入「升腾之赤」状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "short_description_en": "真红消耗所有「桀骜斗志」进入「升腾之赤」状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。"
+          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：赤红的处决</>",
           "title_en": "<Title>极轨终结：赤红的处决</>",
-          "description_zh": "「升腾之赤」即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "description_en": "「升腾之赤」即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_zh": "「升腾之赤」即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_en": "「升腾之赤」即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：处决的龙炎</>",
           "title_en": "<Title>极轨终结：处决的龙炎</>",
-          "description_zh": "当所有「极轨终结：赤红的处决」次数均被使用或「升腾之赤」持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。",
-          "description_en": "当所有「极轨终结：赤红的处决」次数均被使用或「升腾之赤」持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_zh": "当所有「极轨终结：赤红的处决」次数均被使用或「升腾之赤」持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_en": "当所有「极轨终结：赤红的处决」次数均被使用或「升腾之赤」持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。"
+          "description_zh": "当所有「极轨终结：赤红的处决」次数均被使用或<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。",
+          "description_en": "当所有「极轨终结：赤红的处决」次数均被使用或<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。",
+          "short_description_zh": "当所有「极轨终结：赤红的处决」次数均被使用或<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。",
+          "short_description_en": "当所有「极轨终结：赤红的处决」次数均被使用或<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续时间结束后，再次点按「极轨终结」释放「极轨终结：处决的龙炎」，对大范围目标造成高额<Guang>光属性异能伤害</>。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4146,19 +4155,19 @@
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：沸血赤红</>",
           "title_en": "<Title>极轨终结：沸血赤红</>",
-          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有「桀骜斗志」进入「升腾之赤」状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有「桀骜斗志」进入「升腾之赤」状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "short_description_zh": "真红消耗所有「桀骜斗志」进入「升腾之赤」状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "short_description_en": "真红消耗所有「桀骜斗志」进入「升腾之赤」状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。"
+          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：赤红的处决</>",
           "title_en": "<Title>极轨终结：赤红的处决</>",
-          "description_zh": "「升腾之赤」即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "description_en": "「升腾之赤」即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_zh": "「升腾之赤」即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_en": "「升腾之赤」即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4179,19 +4188,19 @@
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：沸血赤红</>",
           "title_en": "<Title>极轨终结：沸血赤红</>",
-          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有「桀骜斗志」进入「升腾之赤」状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有「桀骜斗志」进入「升腾之赤」状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "short_description_zh": "真红消耗所有「桀骜斗志」进入「升腾之赤」状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。",
-          "short_description_en": "真红消耗所有「桀骜斗志」进入「升腾之赤」状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出「升腾之赤」。"
+          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
+          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：赤红的处决</>",
           "title_en": "<Title>极轨终结：赤红的处决</>",
-          "description_zh": "「升腾之赤」即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "description_en": "「升腾之赤」即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_zh": "「升腾之赤」即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_en": "「升腾之赤」即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
+          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
         },
         {
           "type": "ADT_AFFIX",
