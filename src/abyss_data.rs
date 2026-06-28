@@ -17,7 +17,7 @@ const LEGACY_ABYSS_MONSTER_STATIC_PATH: &str =
 const LEGACY_MONSTER_PACK_DATA_PATH: &str = "NTE_Assets/DataTable/PackData/DT_MonsterPackData.json";
 const LEGACY_ABYSS_LOCALIZATION_PATH: &str = "NTE_Assets/Localization/zh-CN/game.json";
 type AbyssPackIdParts = (u32, u32, Option<u32>, Option<u32>, String);
-const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=4;
+const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=7;
 
 #[derive(Clone, Debug, Default)]
 pub struct AbyssMonsterDataset {
@@ -873,7 +873,7 @@ mod tests {
             .iter()
             .map(|season| season.season)
             .collect::<Vec<_>>();
-        assert_eq!(seasons, [1, 2, 3, 4]);
+        assert_eq!(seasons, [1, 2, 3, 4, 5, 6, 7]);
 
         let floor = dataset
             .floor(4, 1)
@@ -886,6 +886,12 @@ mod tests {
                 .iter()
                 .any(|monster| monster.monster_id == "mon_14_BP")
         );
+
+        let latest_floor = dataset
+            .floor(7, 1)
+            .expect("latest abyss floor should exist");
+        assert_eq!(latest_floor.wave_count(), 2);
+        assert_eq!(latest_floor.monster_count(), 4);
     }
 
     #[test]

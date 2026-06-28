@@ -6,6 +6,7 @@ mod app;
 mod capture;
 mod character_editor;
 mod config;
+mod diagnostics;
 mod encrypted_ini;
 mod file_drop;
 mod history;
@@ -16,6 +17,7 @@ mod network;
 mod parser;
 mod protocol;
 mod resource;
+mod resource_audit;
 mod window_attributes;
 
 use anyhow::Result;

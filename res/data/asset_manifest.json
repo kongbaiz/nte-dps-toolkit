@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-06-27T20:00:11.856205+00:00",
-  "assets_root_name": "nte-test-assets",
+  "generated_at": "2026-06-28T11:55:11.465274+00:00",
+  "assets_root_name": "nte-assets",
   "paths_redacted": true,
-  "assets_git_revision": "e11304dabbe484a148b43b5560e12d8591d1e1e8",
+  "assets_git_revision": "1b8f7d51835065b282c14a7f7edc37ae292190e8",
   "inputs": {
     "characters": {
       "path": "DataTable/Character/DT_Character.json",
@@ -22,7 +22,19 @@
     },
     "ability_tips": {
       "path": "DataTable/Skill/DT_GameplayAbilityTipsData.json",
-      "sha256": "7d31ea4bb6186117da72a8b8c46dbf25f4854bb61feabcd7e094bba6e12ba09d"
+      "sha256": "5a583f886f977d1d06962aed2d180901ea11fa92ba411ed37010eb33e0ca7de9"
+    },
+    "abyss_monster_static": {
+      "path": "DataTable/Monster/DT_MonsterStaticData_Abyss.json",
+      "sha256": "f31fdfaf6da6553251ebdecf60d90dd0d996b232c422cc64590a62afb35ce840"
+    },
+    "abyss_monster_pack": {
+      "path": "DataTable/PackData/DT_MonsterPackData.json",
+      "sha256": "8232f935ea9bd2247fbd18cbdccb834affd98580fa241a1cadb34dba55d9df7c"
+    },
+    "abyss_combat_award_quest": {
+      "path": "DataTable/SimpleQuest/DT_CombatAwardQuest.json",
+      "sha256": "d29617ea31d30e262a520b33f7e1dc322308726e6046a496c03bafed2456aba3"
     },
     "reaction_data": {
       "path": "DataTable/Reaction/DT_ReactionData.json",
@@ -43,6 +55,10 @@
     "reaction_extensions": {
       "path": "DataTable/Reaction/DT_ReactionExtendDataTable.json",
       "sha256": "aee200e6413e41559a7eabf0736f69ea26eaac58adc7c2e80fbe12f27517405a"
+    },
+    "zh_cn_localization": {
+      "path": "Localization/Game/zh-CN/game.json",
+      "sha256": "c013a6d42a5fcac06800461b6ceee07d8eea8098a314d2ebfe77eeb07cdde2a4"
     }
   },
   "outputs": {
