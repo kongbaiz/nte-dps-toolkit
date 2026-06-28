@@ -33,10 +33,10 @@ use crate::parser::{
     SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry,
     WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type, classify_attack_type_from_description,
     declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_ultra_time_stops,
-    load_wooden_damage_names, matches_shifted_bytes_at, normalize_damage_name,
-    parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects,
-    qte_reaction_type,
+    find_final_tower_character_evidence, load_gameplay_effect_mapping, load_gameplay_effect_skills,
+    load_ultra_time_stops, load_wooden_damage_names, matches_shifted_bytes_at,
+    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
+    parse_gameplay_effects, qte_reaction_type,
 };
 
 use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
@@ -537,6 +537,34 @@ fn infer_outgoing(
     }
 }
 
+fn merged_character_evidence(
+    declared: &[(u32, u8, usize)],
+    final_tower: &[(u32, u8, usize)],
+) -> Vec<(u32, u8, usize)> {
+    let mut merged = declared.to_vec();
+    for evidence in final_tower {
+        if !merged.contains(evidence) {
+            merged.push(*evidence);
+        }
+    }
+    merged
+}
+
+fn append_unique_ids(ids: &mut Vec<u32>, new_ids: impl IntoIterator<Item = u32>) {
+    for id in new_ids {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+}
+
+fn character_ids_from_evidence_sources(
+    declared: &[(u32, u8, usize)],
+    final_tower: &[(u32, u8, usize)],
+) -> Vec<u32> {
+    declared_character_ids_from_evidence(&merged_character_evidence(declared, final_tower))
+}
+
 fn decode_shifted_payload(data: &[u8], bit_shift: u8) -> Vec<u8> {
     if bit_shift == 0 {
         return data.to_vec();
@@ -591,6 +619,7 @@ fn protocol_text_score(value: &str) -> usize {
         "Phase",
         "Wave",
         "MaxHP",
+        "ft_character_",
     ];
     if protocol_markers.iter().any(|marker| value.contains(marker)) {
         return 100 + length.min(100);
@@ -1878,6 +1907,58 @@ fn enrich_hit_with_gameplay_effect(
     }
 }
 
+fn character_id_from_ability_name(
+    ability_name: &str,
+    characters: &HashMap<u32, CharacterInfo>,
+) -> Option<u32> {
+    for token in ability_name.split('_') {
+        let bytes = token.as_bytes();
+        if bytes.len() < 4 {
+            continue;
+        }
+        let suffix = &bytes[bytes.len() - 3..];
+        if !suffix.iter().all(u8::is_ascii_digit) {
+            continue;
+        }
+        let prefix = &bytes[..bytes.len() - 3];
+        if prefix.is_empty() || !prefix.iter().any(u8::is_ascii_alphabetic) {
+            continue;
+        }
+        let id = 1000
+            + suffix
+                .iter()
+                .fold(0_u32, |value, digit| value * 10 + (digit - b'0') as u32);
+        if characters.contains_key(&id) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn reattribute_hit_from_ability_name(
+    hit: &mut Hit,
+    can_override_packet_id: bool,
+    characters: &HashMap<u32, CharacterInfo>,
+) {
+    if hit.direction == "incoming" {
+        return;
+    }
+    if hit.char_source == "packet" && !can_override_packet_id {
+        return;
+    }
+    let Some(ability_name) = hit.ability_name.as_deref() else {
+        return;
+    };
+    let Some(character_id) = character_id_from_ability_name(ability_name, characters) else {
+        return;
+    };
+    if character_id == hit.char_id {
+        return;
+    }
+    set_hit_character(hit, character_id, characters);
+    hit.char_source = "gameplay_effect".to_owned();
+}
+
 fn is_known_outgoing_damage_effect(effect_name: &str, skill: Option<&GameplayEffectSkill>) -> bool {
     let effect_name_lower = effect_name.to_ascii_lowercase();
     if effect_name_lower.starts_with("ge_mon_") {
@@ -1947,6 +2028,21 @@ fn resolve_damage_name(
     (names.len() == 1).then(|| names.remove(0))
 }
 
+fn set_hit_character(hit: &mut Hit, new_char_id: u32, characters: &HashMap<u32, CharacterInfo>) {
+    let character = characters.get(&new_char_id);
+    hit.char_id = new_char_id;
+    hit.char_known = character.is_some();
+    hit.char_name = character
+        .map(|row| {
+            if row.name_zh.is_empty() {
+                row.name_en.clone()
+            } else {
+                row.name_zh.clone()
+            }
+        })
+        .unwrap_or_else(|| format!("未知角色({new_char_id})"));
+}
+
 /// The two character attributes whose 环合 produces a given reaction *burst*
 /// (`Buff_Reaction_*`, classified by [`classify_attack_type`]). Only reactions
 /// that are attribute-locked and whose damage packets carry no caster need this;
@@ -2007,18 +2103,7 @@ fn reattribute_orphan_reaction(
     if new_char_id == hit.char_id {
         return;
     }
-    let character = characters.get(&new_char_id);
-    hit.char_id = new_char_id;
-    hit.char_known = character.is_some();
-    hit.char_name = character
-        .map(|row| {
-            if row.name_zh.is_empty() {
-                row.name_en.clone()
-            } else {
-                row.name_zh.clone()
-            }
-        })
-        .unwrap_or_else(|| format!("未知角色({new_char_id})"));
+    set_hit_character(hit, new_char_id, characters);
 }
 
 impl PacketDecoder {
@@ -2042,7 +2127,9 @@ impl PacketDecoder {
 
         let decoded_text = decode_payload_text(payload);
         let evidence = find_declared_character_evidence(payload);
-        let ids = declared_character_ids_from_evidence(&evidence);
+        let final_tower_evidence = find_final_tower_character_evidence(payload);
+        let character_evidence = merged_character_evidence(&evidence, &final_tower_evidence);
+        let ids = character_ids_from_evidence_sources(&evidence, &final_tower_evidence);
         self.follow_up_damage
             .observe_characters(ids.iter().copied(), characters);
         let outgoing = infer_outgoing(src, src_port, dst, local_ip, &ids, &self.client_endpoints);
@@ -2081,6 +2168,7 @@ impl PacketDecoder {
                 &self.gameplay_effect_skills,
                 &self.wooden_damage_names,
             );
+            reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
             if hit
                 .attack_type
                 .as_deref()
@@ -2210,7 +2298,7 @@ impl PacketDecoder {
         }
         append_packet_note(
             &mut note,
-            binary_payload_diagnostic(payload, direction, &decoded_text, &evidence),
+            binary_payload_diagnostic(payload, direction, &decoded_text, &character_evidence),
         );
         if !gameplay_effects.is_empty() {
             append_packet_note(
@@ -2802,12 +2890,19 @@ fn send_export_packet(
     ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     ultra_time_stop: &mut UltraTimeStopTracker,
 ) -> Result<bool, String> {
-    let declared_ids = parse_export_ids(&packet.declared_ids);
+    let mut declared_ids = parse_export_ids(&packet.declared_ids);
     let payload = if packet.payload_hex.trim().is_empty() {
         Vec::new()
     } else {
         hex::decode(&packet.payload_hex).map_err(|error| format!("payload_hex 无效: {error}"))?
     };
+    let evidence = find_declared_character_evidence(&payload);
+    let final_tower_evidence = find_final_tower_character_evidence(&payload);
+    let character_evidence = merged_character_evidence(&evidence, &final_tower_evidence);
+    append_unique_ids(
+        &mut declared_ids,
+        character_ids_from_evidence_sources(&evidence, &final_tower_evidence),
+    );
     let decoded_text = if packet.decoded_text.trim().is_empty() && !payload.is_empty() {
         decode_payload_text(&payload)
     } else {
@@ -2826,11 +2921,15 @@ fn send_export_packet(
     if !should_keep_debug_packet(&payload, &declared_ids, packet.parsed_hits, &decoded_text) {
         return Ok(false);
     }
-    let evidence = find_declared_character_evidence(&payload);
     let mut note = packet.note;
     append_packet_note(
         &mut note,
-        binary_payload_diagnostic(&payload, &packet.direction, &decoded_text, &evidence),
+        binary_payload_diagnostic(
+            &payload,
+            &packet.direction,
+            &decoded_text,
+            &character_evidence,
+        ),
     );
     let packet = PacketDebug {
         timestamp: packet.timestamp_unix,
@@ -3287,6 +3386,17 @@ mod tests {
     }
 
     #[test]
+    fn final_tower_ids_merge_with_declared_ids() {
+        let declared = [(1001, 0, 4)];
+        let final_tower = [(1076, 5, 30), (1001, 5, 52)];
+
+        assert_eq!(
+            character_ids_from_evidence_sources(&declared, &final_tower),
+            [1001, 1076]
+        );
+    }
+
+    #[test]
     fn send_export_packet_rejects_invalid_hex_payload() {
         let (sender, receiver) = unbounded();
         let packet = ExportPacket {
@@ -3312,6 +3422,43 @@ mod tests {
             .unwrap_err()
             .contains("payload_hex 无效")
         );
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn send_export_packet_adds_final_tower_ids_from_payload() {
+        let (sender, receiver) = unbounded();
+        let payload = b"FCharacterForNet....ft_character_1076".to_vec();
+        let packet = ExportPacket {
+            timestamp_unix: 1.0,
+            source: "127.0.0.1:1234".to_owned(),
+            destination: "127.0.0.1:5678".to_owned(),
+            direction: "C2S".to_owned(),
+            payload_len: payload.len(),
+            declared_ids: serde_json::json!([]),
+            parsed_hits: 0,
+            note: String::new(),
+            payload_preview: hex::encode(&payload[..payload.len().min(48)]),
+            payload_hex: hex::encode(&payload),
+            decoded_text: String::new(),
+        };
+
+        assert!(
+            send_export_packet(
+                packet,
+                &sender,
+                &HashMap::new(),
+                &mut UltraTimeStopTracker::default()
+            )
+            .is_ok()
+        );
+        match receiver.try_recv().expect("packet event should be emitted") {
+            EngineEvent::Packet(packet) => {
+                assert_eq!(packet.declared_ids, [1076]);
+                assert!(packet.decoded_text.contains("ft_character_1076"));
+            }
+            _ => panic!("expected packet event"),
+        }
         assert!(receiver.try_recv().is_err());
     }
 
@@ -3900,6 +4047,63 @@ mod tests {
 
         assert_eq!(hit.direction, "outgoing");
         assert_eq!(hit.attack_type.as_deref(), Some("普攻"));
+    }
+
+    #[test]
+    fn numeric_ability_owner_overrides_final_tower_packet_id() {
+        let characters = HashMap::from([
+            (1019, character_with_attribute("薄荷", "灵")),
+            (1076, character_with_attribute("真红", "光")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1076;
+        hit.char_name = "真红".to_owned();
+        hit.char_source = "packet".to_owned();
+        hit.ability_name = Some("GA_Mint019_Skill".to_owned());
+
+        reattribute_hit_from_ability_name(&mut hit, true, &characters);
+
+        assert_eq!(hit.char_id, 1019);
+        assert_eq!(hit.char_name, "薄荷");
+        assert_eq!(hit.char_source, "gameplay_effect");
+    }
+
+    #[test]
+    fn numeric_ability_owner_keeps_regular_packet_id() {
+        let characters = HashMap::from([
+            (1019, character_with_attribute("薄荷", "灵")),
+            (1076, character_with_attribute("真红", "光")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1076;
+        hit.char_name = "真红".to_owned();
+        hit.char_source = "packet".to_owned();
+        hit.ability_name = Some("GA_Mint019_Skill".to_owned());
+
+        reattribute_hit_from_ability_name(&mut hit, false, &characters);
+
+        assert_eq!(hit.char_id, 1076);
+        assert_eq!(hit.char_name, "真红");
+        assert_eq!(hit.char_source, "packet");
+    }
+
+    #[test]
+    fn numeric_ability_owner_overrides_session_id() {
+        let characters = HashMap::from([
+            (1019, character_with_attribute("薄荷", "灵")),
+            (1076, character_with_attribute("真红", "光")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1076;
+        hit.char_name = "真红".to_owned();
+        hit.char_source = "session".to_owned();
+        hit.ability_name = Some("GA_Mint019_QTE".to_owned());
+
+        reattribute_hit_from_ability_name(&mut hit, false, &characters);
+
+        assert_eq!(hit.char_id, 1019);
+        assert_eq!(hit.char_name, "薄荷");
+        assert_eq!(hit.char_source, "gameplay_effect");
     }
 
     #[test]

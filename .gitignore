@@ -2,6 +2,7 @@
 /logs/
 /data/
 /NTE_Assets/
+/res/data/direct_export_report.json
 /Dumper-7/
 /nte-resource-exporter/
 *.usmap
