@@ -84,16 +84,9 @@ res/
 
 ## 资源维护
 
-资源维护脚本位于 `tools/`：
+普通运行只依赖仓库内 `res/`。资源导出、CUE4Parse probe、NTE_Assets 后处理和清单分析脚本已迁出到独立私有仓库 `kongbaiz/nte-resource-exporter`，避免主程序仓库携带资源解包工具链、usmap、授权 key 或完整导出树。
 
-- `tools/nte_asset_pipeline.py`：从已有导出树生成稳定资源和覆盖率报告。
-- `tools/export_nte_res.py`：直接调用项目内 CUE4Parse probe 导出工具所需的稳定表数据。
-- `tools/unpack_nte_reslist.py`：解密并解压启动器 ResList/lastdiff 清单。
-- `tools/analyze_nte_ini.py`：分析 NTE 加密 INI，报告会脱敏敏感字段。
-
-可导出的稳定数据组包括 `gameplay-effect-mapping`、`skill-damage`、`wooden-descriptions`、`characters`、`ability-tips`、`reactions` 和 `all`。深渊怪物数据当前作为稳定运行资源放在 `res/data/abyss/`，主程序直接读取。
-
-更多命令见 `tools/README.md`。脚本生成的 `target`、`logs`、`NTE_Assets`、C# `bin/obj`、第三方工具目录、资源导出 AES key、usmap 和解包数据不应提交。
+脚本生成的 `target`、`logs`、`NTE_Assets`、C# `bin/obj`、第三方工具目录、资源导出 AES key、usmap 和解包数据不应提交。需要更新 `res/` 时，在资源工具仓库生成确认可分发的稳定资源后，只同步必要的 `res/` 文件到本仓库。
 
 顶层 `NTE_封包解析算法.md` 是降敏后的维护摘要，只记录解析模块的公开设计边界。更细的样本、特征、偏移、函数名和抓包对照不应随公开仓库发布。
 

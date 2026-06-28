@@ -2,8 +2,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const IMAGE_EXTENSIONS: &[&str] = &["jpeg", "jpg", "png", "webp"];
-
 fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let resource_dir = manifest_dir.join("res");
@@ -23,24 +21,24 @@ fn main() {
 }
 
 fn generate_embedded_resources(manifest_dir: &Path, resource_dir: &Path, output_dir: &Path) {
-    let mut images = Vec::new();
-    collect_images(resource_dir, &mut images);
-    images.sort();
+    let mut resources = Vec::new();
+    collect_resources(resource_dir, &mut resources);
+    resources.sort();
 
     let mut generated = String::from(concat!(
-        "fn embedded_image_resource(path: &str) -> Option<&'static [u8]> {\n",
+        "fn embedded_resource(path: &str) -> Option<&'static [u8]> {\n",
         "  let normalized = path.replace('\\\\', \"/\");\n",
         "  match normalized.as_str() {\n",
     ));
 
-    for image in images {
-        println!("cargo:rerun-if-changed={}", image.display());
-        let relative = image
+    for resource in resources {
+        println!("cargo:rerun-if-changed={}", resource.display());
+        let relative = resource
             .strip_prefix(manifest_dir)
             .expect("resource must be inside the project")
             .to_string_lossy()
             .replace('\\', "/");
-        let absolute = image.to_string_lossy();
+        let absolute = resource.to_string_lossy();
         generated.push_str(&format!(
             "        {relative:?} => Some(include_bytes!({absolute:?})),\n"
         ));
@@ -51,7 +49,7 @@ fn generate_embedded_resources(manifest_dir: &Path, resource_dir: &Path, output_
     fs::write(output_path, generated).expect("failed to generate embedded resource map");
 }
 
-fn collect_images(directory: &Path, images: &mut Vec<PathBuf>) {
+fn collect_resources(directory: &Path, resources: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
@@ -60,19 +58,10 @@ fn collect_images(directory: &Path, images: &mut Vec<PathBuf>) {
         let entry = entry.expect("failed to read res directory entry");
         let path = entry.path();
         if path.is_dir() {
-            collect_images(&path, images);
+            collect_resources(&path, resources);
             continue;
         }
 
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .map(str::to_ascii_lowercase);
-        if extension
-            .as_deref()
-            .is_some_and(|extension| IMAGE_EXTENSIONS.contains(&extension))
-        {
-            images.push(path);
-        }
+        resources.push(path);
     }
 }

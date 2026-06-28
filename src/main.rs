@@ -14,11 +14,13 @@ mod model;
 mod network;
 mod parser;
 mod protocol;
+mod resource;
 mod window_attributes;
 
 use anyhow::Result;
 use app::DpsApp;
 use eframe::egui;
+use std::path::Path;
 use std::sync::Arc;
 
 fn main() -> Result<()> {
@@ -55,7 +57,9 @@ fn main() -> Result<()> {
 }
 
 fn app_icon() -> egui::IconData {
-    let image = image::load_from_memory(include_bytes!("../res/icons/app-icon.png"))
+    let bytes = resource::read_resource_bytes(Path::new("res/icons/app-icon.png"))
+        .expect("application icon resource must be available");
+    let image = image::load_from_memory(bytes.as_ref())
         .expect("embedded application icon must be valid")
         .into_rgba8();
     let (width, height) = image.dimensions();
