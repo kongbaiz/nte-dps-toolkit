@@ -14,7 +14,11 @@ use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
-use crate::abyss_data::{AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry};
+use crate::abyss_data::{
+    AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry, abyss_line_hp_total,
+    abyss_monster_total_hp, line_hp_by_wave, predict_wave_clear_times,
+    required_dps_for_target_time,
+};
 use crate::capture::{
     CaptureDevice, CaptureHandle, RawCaptureBuffer, import_capture_json, import_pcapng,
     list_devices, start_capture,
@@ -31,11 +35,13 @@ use crate::encrypted_ini::{
     encrypted_ini_search_matches, encrypted_ini_text_fingerprint, parse_encrypted_ini_text,
 };
 use crate::file_drop::NativeFileDrop;
+use crate::history::{self, HistoryComparison, HistoryRecord};
 use crate::hotkey::{HotkeyEvent, HotkeyHandle};
 use crate::io_util::{atomic_write_file, atomic_write_text};
 use crate::model::{
     AbyssEvent, AbyssHalf, CaptureQualitySource, CaptureQualitySummary, CharacterInfo,
-    CharacterStats, CombatState, EngineEvent, HitDirectionSummary, PartyCombatState,
+    CharacterStats, CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary,
+    CombatSessionSkillSummary, CombatState, EngineEvent, HitDirectionSummary, PartyCombatState,
     SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps,
     TeamDpsExport, TeamDpsMember, TimelineMarkerKind, TimelineSeries, summarize_hit_directions,
 };
@@ -61,9 +67,9 @@ const MAX_ENGINE_QUEUE_HARD_CAP: usize = 100_000;
 const MAX_DETAIL_HITS: usize = 10_000;
 const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
 const MAIN_TITLE_BAR_HEIGHT: f32 = 40.0;
-const MAIN_CONTROLS_HEIGHT: f32 = 44.0;
-const TITLE_BAR_BUTTON_SIZE: egui::Vec2 = egui::vec2(28.0, 22.0);
-const TITLE_BAR_TOGGLE_SIZE: egui::Vec2 = egui::vec2(64.0, 24.0);
+const MAIN_CONTROLS_SINGLE_ROW_HEIGHT: f32 = 34.0;
+const TITLE_BAR_BUTTON_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
+const TITLE_BAR_TOGGLE_SIZE: egui::Vec2 = egui::vec2(64.0, 28.0);
 /// Default (100%) inner sizes for each window. The title-bar −／＋ stepper scales
 /// these proportionally instead of free drag-resize, which keeps the aspect ratio
 /// and avoids the Windows resize crash (egui #4061 / #4091). `main` is also used
@@ -83,7 +89,10 @@ const HUD_WINDOW_WIDTH: f32 = 380.0;
 const WINDOW_SCALE_STEP: f32 = 0.1;
 const UI_CONFIG_SAVE_DELAY: Duration = Duration::from_millis(350);
 const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
+const STATUS_TOAST_DURATION: Duration = Duration::from_secs(4);
 const ABYSS_STAT_NAMES_ZH_CN_PATH: &str = "res/data/abyss/monster_stat_names_zh_cn.json";
+const INLINE_CONTROL_HEIGHT: f32 = 28.0;
+const INLINE_CONTROL_TEXT_SIZE: f32 = 13.0;
 
 #[derive(Clone, Copy)]
 enum DebugImportKind {
@@ -123,6 +132,7 @@ enum ConfirmationAction {
     ImportCaptureJson(PathBuf),
     ClearEncryptedIni,
     ReloadEncryptedIni(PathBuf),
+    DeleteHistory(String),
 }
 
 #[derive(Clone, Copy)]
@@ -144,6 +154,7 @@ enum ConsoleTab {
     Settings,
     Timeline,
     Skills,
+    History,
     Characters,
     EncryptedIni,
     Packets,
@@ -414,6 +425,8 @@ struct AbyssOverviewState {
     // clear time for a line = that line's total HP / team.dps.
     upper_team: Option<TeamDps>,
     lower_team: Option<TeamDps>,
+    upper_target_seconds: f64,
+    lower_target_seconds: f64,
 }
 
 fn load_abyss_stat_display_names() -> HashMap<String, String> {
@@ -456,6 +469,8 @@ impl AbyssOverviewState {
                     search: String::new(),
                     upper_team: None,
                     lower_team: None,
+                    upper_target_seconds: 90.0,
+                    lower_target_seconds: 90.0,
                 }
             }
             Err(error) => Self {
@@ -472,10 +487,14 @@ impl AbyssOverviewState {
         let search = self.search.clone();
         let upper_team = self.upper_team.take();
         let lower_team = self.lower_team.take();
+        let upper_target_seconds = self.upper_target_seconds;
+        let lower_target_seconds = self.lower_target_seconds;
         *self = Self::load();
         self.search = search;
         self.upper_team = upper_team;
         self.lower_team = lower_team;
+        self.upper_target_seconds = upper_target_seconds;
+        self.lower_target_seconds = lower_target_seconds;
     }
 
     fn swap_teams(&mut self) {
@@ -508,6 +527,87 @@ impl AbyssOverviewState {
     }
 }
 
+#[derive(Default)]
+struct HistoryState {
+    records: Vec<HistoryRecord>,
+    selected_id: Option<String>,
+    compare_left_id: Option<String>,
+    compare_right_id: Option<String>,
+    skipped_files: usize,
+    message: String,
+}
+
+impl HistoryState {
+    fn load() -> Self {
+        let result = history::load_history();
+        let mut state = Self {
+            records: result.records,
+            skipped_files: result.skipped_files,
+            ..Default::default()
+        };
+        state.ensure_selection();
+        state
+    }
+
+    fn reload(&mut self) {
+        let selected_id = self.selected_id.clone();
+        let compare_left_id = self.compare_left_id.clone();
+        let compare_right_id = self.compare_right_id.clone();
+        let result = history::load_history();
+        self.records = result.records;
+        self.skipped_files = result.skipped_files;
+        self.selected_id = selected_id;
+        self.compare_left_id = compare_left_id;
+        self.compare_right_id = compare_right_id;
+        self.ensure_selection();
+    }
+
+    fn ensure_selection(&mut self) {
+        if self
+            .selected_id
+            .as_deref()
+            .is_none_or(|id| !self.records.iter().any(|record| record.id == id))
+        {
+            self.selected_id = self.records.first().map(|record| record.id.clone());
+        }
+        if self
+            .compare_left_id
+            .as_deref()
+            .is_none_or(|id| !self.records.iter().any(|record| record.id == id))
+        {
+            self.compare_left_id = self.records.first().map(|record| record.id.clone());
+        }
+        if self
+            .compare_right_id
+            .as_deref()
+            .is_none_or(|id| !self.records.iter().any(|record| record.id == id))
+        {
+            self.compare_right_id = self.records.get(1).map(|record| record.id.clone());
+        }
+    }
+
+    fn selected_record(&self) -> Option<&HistoryRecord> {
+        let selected_id = self.selected_id.as_deref()?;
+        self.records.iter().find(|record| record.id == selected_id)
+    }
+
+    fn compare_records(&self) -> Option<(&HistoryRecord, &HistoryRecord, HistoryComparison)> {
+        let left_id = self.compare_left_id.as_deref()?;
+        let right_id = self.compare_right_id.as_deref()?;
+        if left_id == right_id {
+            return None;
+        }
+        let left = self.records.iter().find(|record| record.id == left_id)?;
+        let right = self.records.iter().find(|record| record.id == right_id)?;
+        Some((left, right, history::compare_records(left, right)))
+    }
+}
+
+struct StatusToast {
+    text: String,
+    shown_until: Instant,
+}
+
 pub struct DpsApp {
     characters: Arc<HashMap<u32, CharacterInfo>>,
     avatar_textures: HashMap<String, egui::TextureHandle>,
@@ -525,6 +625,7 @@ pub struct DpsApp {
     /// Drives shrinking the window to hug the HUD and restoring it on exit.
     hud_size_key: Option<(usize, bool)>,
     abyss_overview: AbyssOverviewState,
+    history: HistoryState,
     abyss_overview_open: bool,
     abyss_overview_corner_applied: bool,
     hit_detail_char_id: Option<u32>,
@@ -563,6 +664,8 @@ pub struct DpsApp {
     paused_events: VecDeque<EngineEvent>,
     dropped_debug_packets: u64,
     status: String,
+    last_status_toast: String,
+    status_toast: Option<StatusToast>,
     diagnostic: Option<String>,
     last_error: Option<String>,
     last_error_action: Option<ErrorAction>,
@@ -637,6 +740,7 @@ impl DpsApp {
         let damage_digit_textures = load_damage_digit_textures(&cc.egui_ctx, &data_root);
         let reaction_textures = load_reaction_text_textures(&cc.egui_ctx, &data_root);
         let abyss_overview = AbyssOverviewState::load();
+        let history = HistoryState::load();
         let monster_textures = load_monster_textures(&cc.egui_ctx, &data_root, &abyss_overview);
         let character_editor =
             CharacterEditorState::load(&characters_path).unwrap_or_else(|error| {
@@ -679,6 +783,7 @@ impl DpsApp {
             (Some(error), None) | (None, Some(error)) => Some(error),
             (None, None) => None,
         };
+        let last_status_toast = status.clone();
         Self {
             characters: Arc::new(characters),
             avatar_textures,
@@ -692,6 +797,7 @@ impl DpsApp {
             hud_mode: false,
             hud_size_key: None,
             abyss_overview,
+            history,
             abyss_overview_open: false,
             abyss_overview_corner_applied: false,
             hit_detail_char_id: None,
@@ -730,6 +836,8 @@ impl DpsApp {
             paused_events: VecDeque::new(),
             dropped_debug_packets: 0,
             status,
+            last_status_toast,
+            status_toast: None,
             diagnostic,
             last_error: startup_error,
             last_error_action: None,
@@ -884,6 +992,9 @@ impl DpsApp {
             }
             ConfirmationAction::ReloadEncryptedIni(path) => {
                 self.load_encrypted_ini_for(path, viewport)
+            }
+            ConfirmationAction::DeleteHistory(record_id) => {
+                self.delete_history_record_for(record_id, viewport);
             }
         }
     }
@@ -1052,18 +1163,6 @@ impl DpsApp {
         if title_drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(full_rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-
-        child.label(
-            RichText::new("NTE DPS TOOL")
-                .size(13.0)
-                .strong()
-                .color(theme_accent(self.dark_mode)),
-        );
         let title_status = if self.paused {
             format!(
                 "已暂停 · 待处理 {} · 已丢弃调试封包 {}",
@@ -1073,15 +1172,57 @@ impl DpsApp {
         } else {
             self.status.clone()
         };
-        child
-            .label(RichText::new("●").size(9.0).color(status_color(
-                &self.status,
-                self.paused,
-                self.dark_mode,
-            )))
-            .on_hover_text(title_status);
+        let show_title_toggles = !self.abyss_compact_mode || !self.state.abyss.is_active();
+        let spacing = 4.0;
+        let scale_stepper_width = TITLE_BAR_BUTTON_SIZE.x * 2.0 + 42.0 + spacing * 2.0;
+        let window_buttons_width = TITLE_BAR_BUTTON_SIZE.x * 2.0 + spacing;
+        let toggle_width = if show_title_toggles {
+            TITLE_BAR_TOGGLE_SIZE.x * 3.0 + spacing * 3.0
+        } else {
+            0.0
+        };
+        let right_width = (window_buttons_width + scale_stepper_width + toggle_width)
+            .min((full_rect.width() - 120.0).max(0.0));
+        let left_width = (full_rect.width() - right_width - 8.0).max(0.0);
+        let left_rect =
+            egui::Rect::from_min_size(full_rect.min, egui::vec2(left_width, full_rect.height()));
+        let right_rect = egui::Rect::from_min_size(
+            egui::pos2(full_rect.right() - right_width, full_rect.top()),
+            egui::vec2(right_width, full_rect.height()),
+        );
+        let title_button_text = |text: &'static str| RichText::new(text).size(13.0);
 
-        child.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let mut title_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(left_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        title_ui.set_clip_rect(left_rect);
+        title_ui.spacing_mut().item_spacing.x = 6.0;
+        title_ui.label(
+            RichText::new("NTE DPS TOOL")
+                .size(13.0)
+                .strong()
+                .color(theme_accent(self.dark_mode)),
+        );
+        let (dot_rect, dot_response) = title_ui
+            .allocate_exact_size(egui::vec2(10.0, full_rect.height()), egui::Sense::hover());
+        title_ui.painter().circle_filled(
+            dot_rect.center(),
+            3.5,
+            status_color(&self.status, self.paused, self.dark_mode),
+        );
+        dot_response.on_hover_text(title_status);
+
+        let mut controls_ui = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(right_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        controls_ui.set_clip_rect(right_rect);
+        controls_ui.spacing_mut().item_spacing.x = spacing;
+        controls_ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+        controls_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("×").frame(false))
                 .on_hover_text("关闭")
@@ -1098,53 +1239,49 @@ impl DpsApp {
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
             window_scale_stepper(ui, &mut self.main_window_scale, MAIN_WINDOW_BASE_SIZE);
-            if !self.abyss_compact_mode || !self.state.abyss.is_active() {
-                ui.allocate_ui_with_layout(
-                    TITLE_BAR_TOGGLE_SIZE,
-                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                    |ui| {
-                        ui.menu_button("外观", |ui| {
-                            ui.set_min_width(190.0);
-                            ui.horizontal(|ui| {
-                                ui.label("透明度");
-                                ui.add(
-                                    egui::Slider::new(&mut self.opacity, 0.35..=1.0)
-                                        .show_value(true)
-                                        .custom_formatter(|value, _| {
-                                            format!("{:.0}%", value * 100.0)
-                                        }),
-                                );
-                            });
-                            if ui
-                                .button(if self.dark_mode {
-                                    "切换为亮色"
-                                } else {
-                                    "切换为深色"
-                                })
-                                .clicked()
-                            {
-                                self.theme_transition_from =
-                                    Some(shadcn_background(self.dark_mode));
-                                self.theme_transition_started_at =
-                                    Some(ui.input(|input| input.time));
-                                self.dark_mode = !self.dark_mode;
-                                ui.close();
-                            }
-                            ui.separator();
-                            if ui
-                                .add(
-                                    egui::Button::selectable(self.hud_mode, "战斗 HUD")
-                                        .frame_when_inactive(true),
-                                )
-                                .on_hover_text("无底板 HUD，直接叠在游戏画面上")
-                                .clicked()
-                            {
-                                self.set_hud_mode(ui.ctx(), !self.hud_mode);
-                                ui.close();
-                            }
-                        });
-                    },
-                );
+            if show_title_toggles {
+                let appearance_button =
+                    egui::Button::new(title_button_text("外观")).min_size(TITLE_BAR_TOGGLE_SIZE);
+                let (appearance_response, _) = egui::containers::menu::MenuButton::from_button(
+                    appearance_button,
+                )
+                .ui(ui, |ui| {
+                    ui.set_min_width(190.0);
+                    ui.horizontal(|ui| {
+                        ui.label("透明度");
+                        ui.add(
+                            egui::Slider::new(&mut self.opacity, 0.35..=1.0)
+                                .show_value(true)
+                                .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+                        );
+                    });
+                    if ui
+                        .button(if self.dark_mode {
+                            "切换为亮色"
+                        } else {
+                            "切换为深色"
+                        })
+                        .clicked()
+                    {
+                        self.theme_transition_from = Some(shadcn_background(self.dark_mode));
+                        self.theme_transition_started_at = Some(ui.input(|input| input.time));
+                        self.dark_mode = !self.dark_mode;
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui
+                        .add(
+                            egui::Button::selectable(self.hud_mode, "战斗 HUD")
+                                .frame_when_inactive(true),
+                        )
+                        .on_hover_text("无底板 HUD，直接叠在游戏画面上")
+                        .clicked()
+                    {
+                        self.set_hud_mode(ui.ctx(), !self.hud_mode);
+                        ui.close();
+                    }
+                });
+                appearance_response.on_hover_text("调整透明度、主题和 HUD 模式");
                 let passthrough_label = if self.mouse_passthrough {
                     "穿透中"
                 } else {
@@ -1153,8 +1290,11 @@ impl DpsApp {
                 if ui
                     .add_sized(
                         TITLE_BAR_TOGGLE_SIZE,
-                        egui::Button::selectable(self.mouse_passthrough, passthrough_label)
-                            .frame_when_inactive(true),
+                        egui::Button::selectable(
+                            self.mouse_passthrough,
+                            title_button_text(passthrough_label),
+                        )
+                        .frame_when_inactive(true),
                     )
                     .on_hover_text(passthrough_hint)
                     .clicked()
@@ -1164,7 +1304,7 @@ impl DpsApp {
                 if ui
                     .add_sized(
                         TITLE_BAR_TOGGLE_SIZE,
-                        egui::Button::selectable(self.always_on_top, "置顶")
+                        egui::Button::selectable(self.always_on_top, title_button_text("置顶"))
                             .frame_when_inactive(true),
                     )
                     .on_hover_text("保持主窗口位于游戏上方")
@@ -1712,6 +1852,72 @@ impl DpsApp {
                 }
             }
         }
+    }
+
+    fn update_status_toast(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        if self.last_status_toast != self.status {
+            self.last_status_toast = self.status.clone();
+            if !self.status.trim().is_empty() {
+                self.status_toast = Some(StatusToast {
+                    text: self.status.clone(),
+                    shown_until: now + STATUS_TOAST_DURATION,
+                });
+            }
+        }
+
+        if let Some(toast) = &self.status_toast {
+            if toast.shown_until <= now {
+                self.status_toast = None;
+            } else {
+                ctx.request_repaint_after(toast.shown_until.saturating_duration_since(now));
+            }
+        }
+    }
+
+    fn show_status_toast(&mut self, ctx: &egui::Context) {
+        let Some(toast) = &self.status_toast else {
+            return;
+        };
+        let now = Instant::now();
+        if toast.shown_until <= now {
+            self.status_toast = None;
+            return;
+        }
+
+        let color = status_color(&toast.text, self.paused, self.dark_mode);
+        let text = toast.text.clone();
+        let anchor_y = if self.hud_mode {
+            14.0
+        } else {
+            MAIN_TITLE_BAR_HEIGHT + 14.0
+        };
+        egui::Area::new(egui::Id::new("status_toast"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-14.0, anchor_y))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(shadcn_card(self.dark_mode))
+                    .stroke(Stroke::new(1.0, color.gamma_multiply(0.85)))
+                    .corner_radius(8)
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .show(ui, |ui| {
+                        ui.set_max_width(420.0);
+                        ui.horizontal(|ui| {
+                            let (dot_rect, _) =
+                                ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                            ui.painter().circle_filled(dot_rect.center(), 4.0, color);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(text)
+                                        .size(11.5)
+                                        .color(shadcn_foreground(self.dark_mode)),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    });
+            });
     }
 
     fn export_capture_info(&mut self, ctx: &egui::Context) {
@@ -2541,101 +2747,75 @@ impl DpsApp {
     /// console window — see [`Self::console_panel`] — to keep this bar uncrowded.
     fn controls(&mut self, ui: &mut egui::Ui) {
         ui.spacing_mut().item_spacing.x = 8.0;
-        ui.spacing_mut().button_padding = egui::vec2(14.0, 6.0);
-        ui.horizontal_centered(|ui| {
-            if self.capture.is_none() && self.replay_thread.is_none() {
-                if ui
-                    .add(primary_button("开始", self.dark_mode))
-                    .on_hover_text("自动检测 HTGame.exe 连接和网卡后开始实时抓包")
-                    .clicked()
-                {
-                    self.request_start_live();
-                }
-            } else if ui
-                .add(
-                    egui::Button::new(
-                        RichText::new("停止")
-                            .strong()
-                            .color(semantic_danger(self.dark_mode)),
-                    )
-                    .stroke(Stroke::new(1.0, semantic_danger(self.dark_mode))),
-                )
-                .on_hover_text("停止当前实时抓包或导入回放")
-                .clicked()
-            {
-                self.stop_engine();
-                self.drain_pending_events();
-            }
-            if ui
-                .button("重置")
-                .on_hover_text("清空当前统计，执行前会确认")
-                .clicked()
-            {
-                self.request_reset_combat_session();
-            }
-            if ui
-                .add(
-                    egui::Button::selectable(
-                        self.paused,
-                        if self.paused { "继续" } else { "暂停" },
-                    )
-                    .frame_when_inactive(true),
-                )
-                .on_hover_text("暂停 UI 处理；继续后会补处理已缓存的命中事件")
-                .clicked()
-            {
-                self.paused = !self.paused;
-            }
-            if self.state.abyss.is_active()
-                && ui
-                    .button("折叠")
-                    .on_hover_text("折叠深渊上下行线选择和工具栏")
-                    .clicked()
-            {
-                self.abyss_compact_mode = true;
-            }
-            if ui
-                .button("HUD")
-                .on_hover_text("切换为无底板战斗 HUD（叠在游戏上 · 从外观菜单退出）")
-                .clicked()
-            {
-                self.set_hud_mode(ui.ctx(), true);
-            }
-            if ui
-                .button("控制台")
-                .on_hover_text("设置 · 队伍数据 · 深渊数值 · 角色/INI · 调试（F12）")
-                .clicked()
-            {
-                self.console_open = true;
-                self.console_corner_applied = false;
-            }
-            ui.separator();
-            self.status_label(ui);
-        });
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.spacing_mut().button_padding = egui::vec2(14.0, 4.0);
+        ui.horizontal_centered(|ui| self.control_buttons(ui));
     }
 
-    /// Capture-status indicator shown at the end of the main toolbar.
-    fn status_label(&self, ui: &mut egui::Ui) {
-        let status_color = status_color(&self.status, self.paused, self.dark_mode);
-        let status = if self.paused {
-            format!(
-                "已暂停 · 待处理 {} · 已丢弃调试封包 {}",
-                self.paused_events.len(),
-                self.dropped_debug_packets
+    fn control_buttons(&mut self, ui: &mut egui::Ui) {
+        if self.capture.is_none() && self.replay_thread.is_none() {
+            if ui
+                .add(primary_button("开始", self.dark_mode))
+                .on_hover_text("自动检测 HTGame.exe 连接和网卡后开始实时抓包")
+                .clicked()
+            {
+                self.request_start_live();
+            }
+        } else if ui
+            .add(
+                egui::Button::new(
+                    RichText::new("停止")
+                        .strong()
+                        .color(semantic_danger(self.dark_mode)),
+                )
+                .stroke(Stroke::new(1.0, semantic_danger(self.dark_mode))),
             )
-        } else if self.receiver.is_empty() {
-            self.status.clone()
-        } else {
-            format!("{} · 队列 {}", self.status, self.receiver.len())
-        };
-        ui.add(
-            egui::Label::new(
-                RichText::new(format!("● {status}"))
-                    .size(10.5)
-                    .color(status_color),
+            .on_hover_text("停止当前实时抓包或导入回放")
+            .clicked()
+        {
+            self.stop_engine();
+            self.drain_pending_events();
+        }
+        if ui
+            .button("重置")
+            .on_hover_text("清空当前统计，执行前会确认")
+            .clicked()
+        {
+            self.request_reset_combat_session();
+        }
+        if ui
+            .add(
+                egui::Button::selectable(self.paused, if self.paused { "继续" } else { "暂停" })
+                    .frame_when_inactive(true),
             )
-            .truncate(),
-        );
+            .on_hover_text("暂停 UI 处理；继续后会补处理已缓存的命中事件")
+            .clicked()
+        {
+            self.paused = !self.paused;
+        }
+        if self.state.abyss.is_active()
+            && ui
+                .button("折叠")
+                .on_hover_text("折叠深渊上下行线选择和工具栏")
+                .clicked()
+        {
+            self.abyss_compact_mode = true;
+        }
+        if ui
+            .button("HUD")
+            .on_hover_text("切换为无底板战斗 HUD（叠在游戏上 · 从外观菜单退出）")
+            .clicked()
+        {
+            self.set_hud_mode(ui.ctx(), true);
+        }
+        if ui
+            .button("控制台")
+            .on_hover_text("设置 · 队伍数据 · 深渊数值 · 角色/INI · 调试（F12）")
+            .clicked()
+        {
+            self.console_open = true;
+            self.console_corner_applied = false;
+        }
     }
 
     fn animated_controls(&mut self, ui: &mut egui::Ui) {
@@ -2649,15 +2829,16 @@ impl DpsApp {
             return;
         }
 
-        let full_height = MAIN_CONTROLS_HEIGHT;
+        let full_height = MAIN_CONTROLS_SINGLE_ROW_HEIGHT;
+        let content_top_offset = 2.5;
         let visible_height = full_height * ease_out_cubic(progress);
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), visible_height),
             egui::Sense::hover(),
         );
         let full_rect = egui::Rect::from_min_size(
-            rect.min + egui::vec2(2.0, 5.0),
-            egui::vec2((rect.width() - 4.0).max(0.0), full_height - 6.0),
+            rect.min + egui::vec2(2.0, content_top_offset),
+            egui::vec2((rect.width() - 4.0).max(0.0), full_height),
         );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -2668,7 +2849,6 @@ impl DpsApp {
         child.set_clip_rect(rect);
         child.set_opacity(progress);
         self.controls(&mut child);
-        child.separator();
     }
 
     fn animated_party_content(&mut self, ui: &mut egui::Ui) {
@@ -4034,6 +4214,47 @@ impl DpsApp {
         }
     }
 
+    fn save_current_history_summary(&mut self, ctx: &egui::Context) {
+        let Some(summary) = self.state.session_summary(
+            self.capture_quality_source,
+            self.dps_time_mode.label(),
+            self.subtract_time_stop_for_dps(),
+        ) else {
+            self.set_last_error_in(ctx, "没有可保存的战斗摘要，请先抓包或导入回放", None);
+            return;
+        };
+        match history::save_summary(summary) {
+            Ok(record) => {
+                self.history.reload();
+                self.history.selected_id = Some(record.id);
+                self.history.ensure_selection();
+                self.history.message = "已保存本次摘要".to_owned();
+                self.status = "历史摘要已保存".to_owned();
+                self.clear_last_error();
+            }
+            Err(error) => {
+                self.set_last_error_in(ctx, format!("保存历史摘要失败：{error}"), None);
+            }
+        }
+    }
+
+    fn delete_history_record_for(&mut self, record_id: String, viewport: egui::ViewportId) {
+        match history::delete_record(&record_id) {
+            Ok(true) => {
+                self.history.reload();
+                self.history.message = "已删除历史摘要".to_owned();
+                self.status = "历史摘要已删除".to_owned();
+                self.clear_last_error();
+            }
+            Ok(false) => {
+                self.set_last_error_for(viewport, "未找到要删除的历史摘要", None);
+            }
+            Err(error) => {
+                self.set_last_error_for(viewport, format!("删除历史摘要失败：{error}"), None);
+            }
+        }
+    }
+
     fn abyss_floor_contents(
         &mut self,
         ui: &mut egui::Ui,
@@ -4107,11 +4328,13 @@ impl DpsApp {
             let selected_pack_id = self.abyss_overview.selected_monster_pack_id.clone();
             let upper_team = self.abyss_overview.upper_team.clone();
             let lower_team = self.abyss_overview.lower_team.clone();
+            let mut upper_target_seconds = self.abyss_overview.upper_target_seconds;
+            let mut lower_target_seconds = self.abyss_overview.lower_target_seconds;
             let can_import = self.state_dps_for_current_mode() > 0.0;
             let mut upper_action = LinePredictionAction::None;
             let mut lower_action = LinePredictionAction::None;
             if !upper_line.is_empty() || !lower_line.is_empty() {
-                upper_action = draw_abyss_line_section(
+                let upper_result = draw_abyss_line_section(
                     ui,
                     "上行线",
                     &upper_line,
@@ -4121,14 +4344,17 @@ impl DpsApp {
                     self.dark_mode,
                     Some(LinePredictionView {
                         team: upper_team.as_ref(),
-                        line_hp: abyss_line_hp_total(&upper_line),
+                        line_hp: abyss_line_hp_total(upper_line.iter().copied()),
+                        target_seconds: upper_target_seconds,
                         can_import,
                         avatar_textures: &self.avatar_textures,
                         characters: &self.characters,
                     }),
                 );
+                upper_action = upper_result.action;
+                upper_target_seconds = upper_result.target_seconds;
                 ui.add_space(6.0);
-                lower_action = draw_abyss_line_section(
+                let lower_result = draw_abyss_line_section(
                     ui,
                     "下行线",
                     &lower_line,
@@ -4138,13 +4364,18 @@ impl DpsApp {
                     self.dark_mode,
                     Some(LinePredictionView {
                         team: lower_team.as_ref(),
-                        line_hp: abyss_line_hp_total(&lower_line),
+                        line_hp: abyss_line_hp_total(lower_line.iter().copied()),
+                        target_seconds: lower_target_seconds,
                         can_import,
                         avatar_textures: &self.avatar_textures,
                         characters: &self.characters,
                     }),
                 );
+                lower_action = lower_result.action;
+                lower_target_seconds = lower_result.target_seconds;
             }
+            self.abyss_overview.upper_target_seconds = upper_target_seconds;
+            self.abyss_overview.lower_target_seconds = lower_target_seconds;
             if !unassigned.is_empty() {
                 if !upper_line.is_empty() || !lower_line.is_empty() {
                     ui.add_space(6.0);
@@ -4554,6 +4785,7 @@ impl DpsApp {
             stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::Settings, "设置");
             stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::Timeline, "时间轴");
             stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::Skills, "技能");
+            stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::History, "历史");
             stable_selectable_value(
                 ui,
                 &mut self.console_tab,
@@ -4579,6 +4811,7 @@ impl DpsApp {
             ConsoleTab::Settings => self.settings_contents(ui),
             ConsoleTab::Timeline => self.timeline_contents(ui),
             ConsoleTab::Skills => self.skills_contents(ui),
+            ConsoleTab::History => self.history_contents(ui),
             ConsoleTab::Characters => self.debug_characters_contents(ui),
             ConsoleTab::EncryptedIni => self.debug_encrypted_ini_contents(ui),
             ConsoleTab::Packets => self.debug_packets_contents(ui),
@@ -4588,13 +4821,13 @@ impl DpsApp {
 
     fn timeline_contents(&mut self, ui: &mut egui::Ui) {
         self.abyss_selector(ui);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("统计间隔").color(ui.visuals().weak_text_color()));
+        inline_controls(ui, |ui| {
+            ui.label(inline_text("统计间隔", ui.visuals().weak_text_color()));
             let mut bucket_seconds =
                 config::sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
             let changed = ui
                 .add_sized(
-                    egui::vec2(220.0, 24.0),
+                    egui::vec2(220.0, INLINE_CONTROL_HEIGHT),
                     egui::Slider::new(
                         &mut bucket_seconds,
                         TIMELINE_BUCKET_SECONDS_MIN..=TIMELINE_BUCKET_SECONDS_MAX,
@@ -4611,7 +4844,7 @@ impl DpsApp {
                 self.timeline_cache = TimelineCache::default();
             }
             ui.separator();
-            ui.label(RichText::new("曲线").color(ui.visuals().weak_text_color()));
+            ui.label(inline_text("曲线", ui.visuals().weak_text_color()));
             for mode in TimelineDpsViewMode::all() {
                 stable_selectable_value(ui, &mut self.timeline_dps_view_mode, *mode, mode.label());
             }
@@ -4853,6 +5086,322 @@ impl DpsApp {
                 );
             },
         );
+    }
+
+    fn history_contents(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button("保存本次摘要")
+                .on_hover_text("保存脱敏统计摘要，不包含封包、payload、IP、端口或本机路径")
+                .clicked()
+            {
+                self.save_current_history_summary(ui.ctx());
+            }
+            if ui.button("重新加载").clicked() {
+                self.history.reload();
+                self.history.message = "历史列表已刷新".to_owned();
+            }
+            ui.label(
+                RichText::new(format!("{} 条记录", self.history.records.len()))
+                    .color(ui.visuals().weak_text_color()),
+            );
+            if self.history.skipped_files > 0 {
+                ui.label(
+                    RichText::new(format!("跳过 {} 个损坏文件", self.history.skipped_files))
+                        .color(semantic_warning(self.dark_mode)),
+                );
+            }
+            if !self.history.message.is_empty() {
+                ui.label(
+                    RichText::new(&self.history.message).color(ui.visuals().weak_text_color()),
+                );
+            }
+        });
+        ui.add_space(6.0);
+
+        if self.history.records.is_empty() {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), 160.0),
+                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                |ui| {
+                    ui.label(RichText::new("暂无历史摘要").color(ui.visuals().weak_text_color()));
+                },
+            );
+            return;
+        }
+
+        let content_height = ui.available_height().max(420.0);
+        let record_rows = self
+            .history
+            .records
+            .iter()
+            .map(|record| {
+                (
+                    record.id.clone(),
+                    record.display_time(),
+                    record.short_party_label(),
+                    record.summary.total_dps,
+                    record.summary.total_damage,
+                )
+            })
+            .collect::<Vec<_>>();
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), content_height),
+            egui::Layout::left_to_right(egui::Align::Min),
+            |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(300.0, content_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.label(
+                            RichText::new("记录")
+                                .strong()
+                                .color(shadcn_foreground(self.dark_mode)),
+                        );
+                        ui.add_space(4.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("history_record_list")
+                            .max_height((content_height - 24.0).max(160.0))
+                            .auto_shrink([false, false])
+                            .show_rows(ui, 64.0, record_rows.len(), |ui, row_range| {
+                                for row_index in row_range {
+                                    let (id, time, party, dps, damage) = &record_rows[row_index];
+                                    let selected = self.history.selected_id.as_deref() == Some(id);
+                                    let label = format!(
+                                        "{time}\n{party}\n{} DPS · {}",
+                                        format_number(*dps),
+                                        format_number(*damage)
+                                    );
+                                    if ui.selectable_label(selected, label).clicked() {
+                                        self.history.selected_id = Some(id.clone());
+                                    }
+                                }
+                            });
+                    },
+                );
+                ui.separator();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), content_height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        let selected = self.history.selected_record().cloned();
+                        if let Some(record) = selected {
+                            self.history_detail_contents(ui, &record);
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+                            self.history_compare_contents(ui);
+                        }
+                    },
+                );
+            },
+        );
+    }
+
+    fn history_detail_contents(&mut self, ui: &mut egui::Ui, record: &HistoryRecord) {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(record.display_time())
+                    .strong()
+                    .color(shadcn_foreground(self.dark_mode)),
+            );
+            ui.label(
+                RichText::new(format!("· {}", record.summary.dps_time_mode))
+                    .color(ui.visuals().weak_text_color()),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("删除")
+                    .on_hover_text("删除这条本地历史摘要")
+                    .clicked()
+                {
+                    self.request_confirmation_for(
+                        ui.ctx().viewport_id(),
+                        ConfirmationAction::DeleteHistory(record.id.clone()),
+                    );
+                }
+                if let Some(team) = record.lower_team_dps()
+                    && ui.button("设为下行预测").clicked()
+                {
+                    self.abyss_overview.lower_team = Some(team);
+                    self.history.message = "已设为下行线预测队伍".to_owned();
+                }
+                if let Some(team) = record.upper_team_dps()
+                    && ui.button("设为上行预测").clicked()
+                {
+                    self.abyss_overview.upper_team = Some(team);
+                    self.history.message = "已设为上行线预测队伍".to_owned();
+                }
+            });
+        });
+        ui.add_space(6.0);
+        ui.columns(4, |columns| {
+            let damage_color = columns[1].visuals().text_color();
+            let duration_color = columns[2].visuals().text_color();
+            let quality_color = columns[3].visuals().text_color();
+            compact_metric(
+                &mut columns[0],
+                "总 DPS",
+                format_number(record.summary.total_dps),
+                theme_accent(self.dark_mode),
+                true,
+            );
+            compact_metric(
+                &mut columns[1],
+                "总伤害",
+                format_number(record.summary.total_damage),
+                damage_color,
+                false,
+            );
+            compact_metric(
+                &mut columns[2],
+                "战斗时间",
+                format_clear_seconds(record.summary.duration_seconds),
+                duration_color,
+                false,
+            );
+            compact_metric(
+                &mut columns[3],
+                "解析质量",
+                format!(
+                    "{} 命中 / {} 待映射",
+                    record.summary.quality.hit_count, record.summary.quality.unmapped_skill_hits
+                ),
+                quality_color,
+                false,
+            );
+        });
+        ui.add_space(8.0);
+        if record.summary.abyss.first_half.is_some() || record.summary.abyss.second_half.is_some() {
+            egui::ScrollArea::vertical()
+                .id_salt("history_abyss_half_detail")
+                .max_height((ui.available_height() - 8.0).max(220.0))
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    if let Some(half) = &record.summary.abyss.first_half {
+                        let visual = HistoryVisualContext {
+                            dark_mode: self.dark_mode,
+                            characters: &self.characters,
+                            avatar_textures: &self.avatar_textures,
+                        };
+                        draw_history_abyss_half(ui, half, visual);
+                    }
+                    if record.summary.abyss.first_half.is_some()
+                        && record.summary.abyss.second_half.is_some()
+                    {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                    }
+                    if let Some(half) = &record.summary.abyss.second_half {
+                        let visual = HistoryVisualContext {
+                            dark_mode: self.dark_mode,
+                            characters: &self.characters,
+                            avatar_textures: &self.avatar_textures,
+                        };
+                        draw_history_abyss_half(ui, half, visual);
+                    }
+                });
+        } else {
+            draw_history_summary_rows(
+                ui,
+                "角色",
+                &record.summary.characters,
+                "技能",
+                &record.summary.skills,
+                HistoryVisualContext {
+                    dark_mode: self.dark_mode,
+                    characters: &self.characters,
+                    avatar_textures: &self.avatar_textures,
+                },
+            );
+        }
+    }
+
+    fn history_compare_contents(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            RichText::new("对比")
+                .strong()
+                .color(shadcn_foreground(self.dark_mode)),
+        );
+        let choices = self
+            .history
+            .records
+            .iter()
+            .map(|record| {
+                (
+                    record.id.clone(),
+                    format!("{} · {}", record.display_time(), record.party_label()),
+                )
+            })
+            .collect::<Vec<_>>();
+        ui.horizontal(|ui| {
+            history_record_combo(
+                ui,
+                "history_compare_left",
+                &mut self.history.compare_left_id,
+                &choices,
+            );
+            ui.label("vs");
+            history_record_combo(
+                ui,
+                "history_compare_right",
+                &mut self.history.compare_right_id,
+                &choices,
+            );
+        });
+        let Some((left, right, comparison)) = self.history.compare_records() else {
+            ui.label(RichText::new("请选择两条不同记录").color(ui.visuals().weak_text_color()));
+            return;
+        };
+        if left.summary.dps_time_mode != right.summary.dps_time_mode {
+            ui.label(
+                RichText::new("两条记录的 DPS 时间口径不同，请谨慎比较")
+                    .color(semantic_warning(self.dark_mode)),
+            );
+        }
+        ui.columns(3, |columns| {
+            delta_metric(
+                &mut columns[0],
+                "总 DPS 差异",
+                comparison.total_dps_delta,
+                self.dark_mode,
+            );
+            delta_metric(
+                &mut columns[1],
+                "总伤害差异",
+                comparison.total_damage_delta,
+                self.dark_mode,
+            );
+            delta_metric(
+                &mut columns[2],
+                "时间差异",
+                comparison.duration_delta,
+                self.dark_mode,
+            );
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new("角色差异").color(ui.visuals().weak_text_color()));
+                for row in &comparison.character_deltas {
+                    ui.horizontal(|ui| {
+                        ui.add_sized([120.0, 20.0], egui::Label::new(&row.name));
+                        ui.monospace(format_signed_number(row.delta_dps));
+                    });
+                }
+            });
+            ui.separator();
+            ui.vertical(|ui| {
+                ui.label(RichText::new("技能差异").color(ui.visuals().weak_text_color()));
+                for row in &comparison.skill_deltas {
+                    ui.horizontal(|ui| {
+                        ui.add_sized([190.0, 20.0], egui::Label::new(&row.name).truncate());
+                        ui.monospace(format_signed_number(row.delta_damage));
+                    });
+                }
+            });
+        });
     }
 
     fn debug_encrypted_ini_contents(&mut self, ui: &mut egui::Ui) {
@@ -5892,6 +6441,7 @@ impl eframe::App for DpsApp {
                 self.main_window_scale,
             )));
         }
+        self.update_status_toast(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -5933,9 +6483,12 @@ impl eframe::App for DpsApp {
             egui::Margin::ZERO
         } else {
             egui::Margin {
-                left: 8,
-                right: 8,
-                top: 4,
+                // Match the title bar's 10px side margins so the metric cards and
+                // party rows line up with the window controls above and the
+                // rightmost card keeps clearance from the window edge.
+                left: 10,
+                right: 10,
+                top: 0,
                 bottom: 8,
             }
         };
@@ -5992,6 +6545,7 @@ impl eframe::App for DpsApp {
                         });
                 });
         }
+        self.show_status_toast(&ctx);
         self.paint_theme_transition(&ctx);
         self.show_viewport_dialogs(&ctx);
         self.persist_ui_config();
@@ -6059,6 +6613,443 @@ fn stable_popup_selectable_value<'a, Value: PartialEq>(
     .inner
 }
 
+fn inline_controls<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.scope(|ui| {
+        let mut style = (**ui.style()).clone();
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::proportional(INLINE_CONTROL_TEXT_SIZE),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::proportional(INLINE_CONTROL_TEXT_SIZE),
+        );
+        ui.set_style(style);
+        ui.spacing_mut().interact_size.y = INLINE_CONTROL_HEIGHT;
+        ui.spacing_mut().button_padding = egui::vec2(10.0, 3.0);
+        ui.horizontal(|ui| {
+            ui.set_min_height(INLINE_CONTROL_HEIGHT);
+            add_contents(ui)
+        })
+        .inner
+    })
+    .inner
+}
+
+fn inline_text(text: impl Into<String>, color: Color32) -> RichText {
+    RichText::new(text)
+        .size(INLINE_CONTROL_TEXT_SIZE)
+        .color(color)
+}
+
+fn history_record_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    selected_id: &mut Option<String>,
+    choices: &[(String, String)],
+) {
+    let selected_text = selected_id
+        .as_deref()
+        .and_then(|id| choices.iter().find(|(choice_id, _)| choice_id == id))
+        .map(|(_, label)| label.as_str())
+        .unwrap_or("未选择");
+    egui::ComboBox::from_id_salt(id)
+        .width(260.0)
+        .selected_text(selected_text)
+        .show_ui(ui, |ui| {
+            ui.set_min_width(260.0);
+            for (choice_id, label) in choices {
+                stable_popup_selectable_value(ui, selected_id, Some(choice_id.clone()), label);
+            }
+        });
+}
+
+fn delta_metric(ui: &mut egui::Ui, label: &str, value: f64, dark_mode: bool) {
+    let color = if value > 0.0 {
+        semantic_success(dark_mode)
+    } else if value < 0.0 {
+        semantic_danger(dark_mode)
+    } else {
+        ui.visuals().text_color()
+    };
+    compact_metric(ui, label, format_signed_number(value), color, false);
+}
+
+fn format_signed_number(value: f64) -> String {
+    if value > 0.0 {
+        format!("+{}", format_number(value))
+    } else if value < 0.0 {
+        format!("-{}", format_number(value.abs()))
+    } else {
+        format_number(0.0)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct HistoryVisualContext<'a> {
+    dark_mode: bool,
+    characters: &'a HashMap<u32, CharacterInfo>,
+    avatar_textures: &'a HashMap<String, egui::TextureHandle>,
+}
+
+fn draw_history_abyss_half(
+    ui: &mut egui::Ui,
+    half: &CombatSessionAbyssHalfSummary,
+    visual: HistoryVisualContext<'_>,
+) {
+    let dark_mode = visual.dark_mode;
+    let accent = history_half_accent(&half.half, dark_mode);
+    egui::Frame::new()
+        .fill(shadcn_card(dark_mode))
+        .stroke(Stroke::new(1.0, accent.gamma_multiply(0.55)))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::same(12))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (dot_rect, _) =
+                    ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot_rect.center(), 5.0, accent);
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(&half.half)
+                        .size(18.0)
+                        .strong()
+                        .color(shadcn_foreground(dark_mode)),
+                );
+                ui.add_space(8.0);
+                history_metric_chip(ui, "DPS", format_number(half.total_dps), accent, dark_mode);
+                history_metric_chip(
+                    ui,
+                    "伤害",
+                    format_number(half.total_damage),
+                    ui.visuals().text_color(),
+                    dark_mode,
+                );
+            });
+            ui.add_space(10.0);
+            draw_history_summary_rows(
+                ui,
+                "角色贡献",
+                &half.characters,
+                "技能构成",
+                &half.skills,
+                visual,
+            );
+        });
+    ui.add_space(2.0);
+}
+
+fn history_half_accent(half: &str, dark_mode: bool) -> Color32 {
+    if half.contains('上') {
+        if dark_mode {
+            Color32::from_rgb(96, 165, 250)
+        } else {
+            Color32::from_rgb(37, 99, 235)
+        }
+    } else if dark_mode {
+        Color32::from_rgb(52, 211, 153)
+    } else {
+        Color32::from_rgb(5, 150, 105)
+    }
+}
+
+fn history_metric_chip(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: String,
+    color: Color32,
+    dark_mode: bool,
+) {
+    egui::Frame::new()
+        .fill(shadcn_card_hover(dark_mode))
+        .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(9, 4))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(label)
+                        .size(11.0)
+                        .color(ui.visuals().weak_text_color()),
+                );
+                ui.monospace(RichText::new(value).size(14.0).strong().color(color));
+            });
+        });
+}
+
+fn draw_history_avatar(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    row: &CombatSessionCharacterSummary,
+    color: Color32,
+    characters: &HashMap<u32, CharacterInfo>,
+    avatar_textures: &HashMap<String, egui::TextureHandle>,
+    dark_mode: bool,
+) {
+    let texture = characters
+        .get(&row.char_id)
+        .and_then(|info| info.avatar.as_deref())
+        .and_then(|avatar| avatar_textures.get(avatar));
+    if let Some(texture) = texture {
+        egui::Image::new((texture.id(), rect.size()))
+            .corner_radius(8.0)
+            .paint_at(ui, rect);
+    } else {
+        ui.painter()
+            .rect_filled(rect, 8.0, color.gamma_multiply(0.85));
+        let initial = row.name.chars().next().unwrap_or('?');
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            initial,
+            egui::FontId::proportional(16.0),
+            contrast_text(color),
+        );
+    }
+    ui.painter().rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(1.0, shadcn_border(dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn draw_history_progress_row(
+    ui: &mut egui::Ui,
+    color: Color32,
+    progress: f32,
+    height: f32,
+    add_contents: impl FnOnce(&mut egui::Ui, egui::Rect),
+) {
+    let size = egui::vec2(ui.available_width().max(1.0), height);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let dark_mode = ui.visuals().dark_mode;
+    ui.painter()
+        .rect_filled(rect, 7.0, shadcn_card_hover(dark_mode));
+    let progress_rect = egui::Rect::from_min_max(
+        rect.left_top(),
+        egui::pos2(
+            rect.left() + rect.width() * progress.clamp(0.0, 1.0),
+            rect.bottom(),
+        ),
+    );
+    ui.painter()
+        .rect_filled(progress_rect, 7.0, color.gamma_multiply(0.18));
+    ui.painter().rect_stroke(
+        rect,
+        7.0,
+        Stroke::new(1.0, shadcn_border(dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+    let content_rect = rect.shrink2(egui::vec2(8.0, 5.0));
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(content_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| add_contents(ui, content_rect),
+    );
+}
+
+fn history_section_heading(ui: &mut egui::Ui, title: &str, color: Color32) {
+    ui.horizontal(|ui| {
+        let (dot_rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
+        ui.painter().circle_filled(dot_rect.center(), 4.0, color);
+        ui.label(
+            RichText::new(title)
+                .strong()
+                .color(ui.visuals().text_color()),
+        );
+    });
+}
+
+fn draw_history_summary_rows(
+    ui: &mut egui::Ui,
+    character_title: &str,
+    character_rows: &[CombatSessionCharacterSummary],
+    skill_title: &str,
+    skills: &[CombatSessionSkillSummary],
+    visual: HistoryVisualContext<'_>,
+) {
+    ui.columns(2, |columns| {
+        draw_history_character_rows(&mut columns[0], character_title, character_rows, visual);
+        draw_history_skill_rows(&mut columns[1], skill_title, skills, visual.dark_mode);
+    });
+}
+
+fn draw_history_character_rows(
+    ui: &mut egui::Ui,
+    title: &str,
+    rows: &[CombatSessionCharacterSummary],
+    visual: HistoryVisualContext<'_>,
+) {
+    let dark_mode = visual.dark_mode;
+    history_section_heading(ui, title, theme_accent(dark_mode));
+    ui.add_space(4.0);
+    for (index, row) in rows.iter().take(6).enumerate() {
+        let color = readable_accent(
+            character_color(row.char_id, visual.characters, index),
+            dark_mode,
+        );
+        draw_history_progress_row(
+            ui,
+            color,
+            (row.damage_share_percent / 100.0) as f32,
+            48.0,
+            |ui, content_rect| {
+                let avatar_rect = egui::Rect::from_center_size(
+                    egui::pos2(content_rect.left() + 16.0, content_rect.center().y),
+                    egui::vec2(30.0, 30.0),
+                );
+                draw_history_avatar(
+                    ui,
+                    avatar_rect,
+                    row,
+                    color,
+                    visual.characters,
+                    visual.avatar_textures,
+                    dark_mode,
+                );
+                ui.add_space(36.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(&row.name)
+                            .strong()
+                            .color(shadcn_foreground(dark_mode)),
+                    );
+                    ui.label(
+                        RichText::new(format!("{} DPS", format_number(row.dps)))
+                            .size(11.0)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{:.1}%", row.damage_share_percent))
+                            .strong()
+                            .color(color),
+                    );
+                });
+            },
+        );
+        ui.add_space(4.0);
+    }
+}
+
+fn skill_row_color(row: &CombatSessionSkillSummary, index: usize, dark_mode: bool) -> Color32 {
+    if row.is_follow_up {
+        semantic_warning(dark_mode)
+    } else if row.category.contains("深渊") {
+        semantic_success(dark_mode)
+    } else {
+        readable_accent(
+            deterministic_character_fallback_color(
+                format!("skill:{index}:{}", row.name).as_bytes(),
+            ),
+            dark_mode,
+        )
+    }
+}
+
+fn skill_display_name(row: &CombatSessionSkillSummary) -> String {
+    if contains_cjk(&row.name) {
+        return row.name.clone();
+    }
+
+    let skill_name = fallback_skill_display_name(row);
+    if !row.char_name.trim().is_empty() {
+        format!("{} · {skill_name}", row.char_name.trim())
+    } else {
+        skill_name
+    }
+}
+
+fn contains_cjk(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(
+            ch as u32,
+            0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+        )
+    })
+}
+
+fn fallback_skill_display_name(row: &CombatSessionSkillSummary) -> String {
+    let normalized = row.name.to_ascii_lowercase();
+    if normalized.contains("ultraskill") || normalized.contains("ultimate") {
+        "大招".to_owned()
+    } else if normalized.contains("melee") || normalized.contains("normal") {
+        "普攻".to_owned()
+    } else if normalized.contains("qte") {
+        "环合".to_owned()
+    } else if normalized.contains("skill") {
+        "技能".to_owned()
+    } else if contains_cjk(&row.category) && row.category != "未归类" {
+        row.category.clone()
+    } else {
+        "技能".to_owned()
+    }
+}
+
+fn draw_skill_glyph(ui: &mut egui::Ui, rect: egui::Rect, color: Color32, index: usize) {
+    ui.painter()
+        .rect_filled(rect, 8.0, color.gamma_multiply(0.82));
+    let label = (index + 1).min(99).to_string();
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(14.0),
+        contrast_text(color),
+    );
+}
+
+fn draw_history_skill_rows(
+    ui: &mut egui::Ui,
+    title: &str,
+    rows: &[CombatSessionSkillSummary],
+    dark_mode: bool,
+) {
+    history_section_heading(ui, title, semantic_success(dark_mode));
+    ui.add_space(4.0);
+    for (index, row) in rows.iter().take(6).enumerate() {
+        let color = skill_row_color(row, index, dark_mode);
+        draw_history_progress_row(
+            ui,
+            color,
+            (row.damage_share_percent / 100.0) as f32,
+            48.0,
+            |ui, content_rect| {
+                let glyph_rect = egui::Rect::from_center_size(
+                    egui::pos2(content_rect.left() + 16.0, content_rect.center().y),
+                    egui::vec2(30.0, 30.0),
+                );
+                draw_skill_glyph(ui, glyph_rect, color, index);
+                ui.add_space(36.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(skill_display_name(row))
+                            .strong()
+                            .color(shadcn_foreground(dark_mode)),
+                    );
+                    ui.label(
+                        RichText::new(format!("{} 次命中", row.hits))
+                            .size(11.0)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(format!("{:.1}%", row.damage_share_percent))
+                            .strong()
+                            .color(color),
+                    );
+                    ui.monospace(format_number(row.damage));
+                });
+            },
+        );
+        ui.add_space(4.0);
+    }
+}
+
 fn file_display_name(path: &Path) -> String {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -6106,6 +7097,11 @@ fn confirmation_content(action: &ConfirmationAction) -> (&'static str, String, &
                 file_display_name(path)
             ),
             "重新载入",
+        ),
+        ConfirmationAction::DeleteHistory(record_id) => (
+            "确认删除",
+            format!("删除历史摘要 {record_id} 后不可撤销。"),
+            "删除",
         ),
     }
 }
@@ -6531,24 +7527,19 @@ enum LinePredictionAction {
     Clear,
 }
 
+struct LinePredictionResult {
+    action: LinePredictionAction,
+    target_seconds: f64,
+}
+
 /// Inputs for the per-line clear-time prediction shown in a line section header.
 struct LinePredictionView<'a> {
     team: Option<&'a TeamDps>,
     line_hp: f64,
+    target_seconds: f64,
     can_import: bool,
     avatar_textures: &'a HashMap<String, egui::TextureHandle>,
     characters: &'a HashMap<u32, CharacterInfo>,
-}
-
-fn abyss_line_hp_total(monsters: &[&AbyssMonsterEntry]) -> f64 {
-    monsters
-        .iter()
-        .map(|monster| abyss_monster_total_hp(monster))
-        .sum()
-}
-
-fn abyss_monster_total_hp(monster: &AbyssMonsterEntry) -> f64 {
-    monster.stats.hp_max_base * f64::from(monster.count)
 }
 
 fn abyss_monster_count(monsters: &[&AbyssMonsterEntry]) -> u32 {
@@ -6557,6 +7548,14 @@ fn abyss_monster_count(monsters: &[&AbyssMonsterEntry]) -> u32 {
 
 fn predicted_clear_seconds(line_hp: f64, team: &TeamDps) -> Option<f64> {
     (team.dps > 0.0 && line_hp > 0.0).then(|| line_hp / team.dps)
+}
+
+fn sanitize_prediction_target_seconds(seconds: f64) -> f64 {
+    if seconds.is_finite() {
+        seconds.clamp(1.0, 600.0)
+    } else {
+        90.0
+    }
 }
 
 fn format_clear_seconds(seconds: f64) -> String {
@@ -6617,9 +7616,11 @@ fn draw_line_prediction_header(
     ui: &mut egui::Ui,
     view: &LinePredictionView,
     dark_mode: bool,
-) -> LinePredictionAction {
+) -> LinePredictionResult {
     let mut action = LinePredictionAction::None;
+    let mut target_seconds = sanitize_prediction_target_seconds(view.target_seconds);
     ui.add_space(10.0);
+    let weak_color = ui.visuals().weak_text_color();
     if let Some(team) = view.team {
         for member in team.members.iter().take(TEAM_DPS_MAX_MEMBERS) {
             draw_team_avatar(
@@ -6638,17 +7639,19 @@ fn draw_line_prediction_header(
         };
         ui.label(
             RichText::new(time_text)
-                .size(12.0)
+                .size(INLINE_CONTROL_TEXT_SIZE)
                 .strong()
                 .color(theme_accent(dark_mode)),
         );
-        ui.label(
-            RichText::new(format!("· {} DPS", format_number(team.dps)))
-                .size(10.0)
-                .color(ui.visuals().weak_text_color()),
-        );
+        ui.label(inline_text(
+            format!("· {} DPS", format_number(team.dps)),
+            weak_color,
+        ));
         if ui
-            .add(egui::Button::new("清除").small())
+            .add_sized(
+                egui::vec2(56.0, INLINE_CONTROL_HEIGHT),
+                egui::Button::new("清除"),
+            )
             .on_hover_text("清除该行预测队伍")
             .clicked()
         {
@@ -6657,30 +7660,99 @@ fn draw_line_prediction_header(
     } else {
         if view.can_import
             && ui
-                .add(egui::Button::new("用当前队伍预测").small())
+                .add_sized(
+                    egui::vec2(128.0, INLINE_CONTROL_HEIGHT),
+                    egui::Button::new("用当前队伍预测"),
+                )
                 .on_hover_text("把当前会话测得的队伍设为该行预测队伍")
                 .clicked()
         {
             action = LinePredictionAction::ImportCurrent;
         }
         if !view.can_import {
-            ui.label(
-                RichText::new("导入数据预测通关时间")
-                    .size(11.0)
-                    .color(ui.visuals().weak_text_color()),
-            );
+            ui.label(inline_text("导入数据预测通关时间", weak_color));
         }
+    }
+    ui.add_space(4.0);
+    ui.label(inline_text("目标", weak_color));
+    ui.add_sized(
+        egui::vec2(72.0, INLINE_CONTROL_HEIGHT),
+        egui::DragValue::new(&mut target_seconds)
+            .range(1.0..=600.0)
+            .speed(1.0)
+            .suffix("s"),
+    )
+    .on_hover_text("按该目标时间反推所需 DPS");
+    if let Some(required_dps) = required_dps_for_target_time(view.line_hp, target_seconds) {
+        ui.label(inline_text(
+            format!("需 {} DPS", format_number(required_dps)),
+            weak_color,
+        ));
     }
     // Per-line file import is always available (the "单独导入" button): load a
     // DPS data file into just this line.
     if ui
-        .add(egui::Button::new("单独导入").small())
+        .add_sized(
+            egui::vec2(96.0, INLINE_CONTROL_HEIGHT),
+            egui::Button::new("单独导入"),
+        )
         .on_hover_text("为该行单独导入 DPS 数据文件")
         .clicked()
     {
         action = LinePredictionAction::ImportFile;
     }
-    action
+    LinePredictionResult {
+        action,
+        target_seconds: sanitize_prediction_target_seconds(target_seconds),
+    }
+}
+
+fn draw_abyss_wave_prediction(
+    ui: &mut egui::Ui,
+    monsters: &[&AbyssMonsterEntry],
+    team: Option<&TeamDps>,
+    dark_mode: bool,
+) {
+    let waves = line_hp_by_wave(monsters.iter().copied());
+    if waves.is_empty() {
+        return;
+    }
+    let total_hp = waves.iter().map(|wave| wave.hp).sum::<f64>().max(1.0);
+    let predictions = team
+        .map(|team| predict_wave_clear_times(&waves, team.dps))
+        .unwrap_or_default();
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let width = ui.available_width().max(120.0);
+        let height = 12.0;
+        for (index, wave) in waves.iter().enumerate() {
+            let segment_width = ((wave.hp / total_hp) as f32 * width).max(18.0);
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(segment_width, height), egui::Sense::hover());
+            let color =
+                theme_accent(dark_mode).gamma_multiply((0.45 + index as f32 * 0.09).min(0.92));
+            ui.painter().rect_filled(rect, 2.0, color);
+            let prediction = predictions.get(index);
+            let label = wave
+                .wave
+                .map_or_else(|| "未分波".to_owned(), |wave| format!("第 {wave} 波"));
+            let mut hover = format!(
+                "{label}\n{} 只敌人\nHP {}",
+                wave.monster_count,
+                format_number(wave.hp)
+            );
+            if let Some(prediction) = prediction {
+                let _ = write!(
+                    hover,
+                    "\n预计 {}，累计 {}",
+                    format_clear_seconds(prediction.seconds),
+                    format_clear_seconds(prediction.cumulative_seconds)
+                );
+            }
+            response.on_hover_text(hover);
+        }
+    });
 }
 
 // UI draw helper: each argument is a distinct, unrelated input (selection state,
@@ -6696,10 +7768,15 @@ fn draw_abyss_line_section(
     monster_textures: &HashMap<String, egui::TextureHandle>,
     dark_mode: bool,
     prediction: Option<LinePredictionView>,
-) -> LinePredictionAction {
+) -> LinePredictionResult {
     const SLOT_COUNT: usize = 6;
     const GAP: f32 = 6.0;
-    let mut action = LinePredictionAction::None;
+    let mut result = LinePredictionResult {
+        action: LinePredictionAction::None,
+        target_seconds: prediction.as_ref().map_or(90.0, |view| {
+            sanitize_prediction_target_seconds(view.target_seconds)
+        }),
+    };
     egui::Frame::new()
         .fill(shadcn_card(dark_mode))
         .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
@@ -6707,10 +7784,10 @@ fn draw_abyss_line_section(
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
+            inline_controls(ui, |ui| {
                 ui.label(
                     RichText::new(title)
-                        .size(13.0)
+                        .size(INLINE_CONTROL_TEXT_SIZE)
                         .strong()
                         .color(shadcn_foreground(dark_mode)),
                 );
@@ -6720,13 +7797,16 @@ fn draw_abyss_line_section(
                         abyss_monster_count(monsters),
                         monsters.len()
                     ))
-                    .size(11.0)
+                    .size(INLINE_CONTROL_TEXT_SIZE)
                     .color(ui.visuals().weak_text_color()),
                 );
                 if let Some(view) = prediction.as_ref() {
-                    action = draw_line_prediction_header(ui, view, dark_mode);
+                    result = draw_line_prediction_header(ui, view, dark_mode);
                 }
             });
+            if let Some(view) = prediction.as_ref() {
+                draw_abyss_wave_prediction(ui, monsters, view.team, dark_mode);
+            }
             ui.add_space(5.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = GAP;
@@ -6756,7 +7836,7 @@ fn draw_abyss_line_section(
                 }
             });
         });
-    action
+    result
 }
 
 fn draw_abyss_monster_chip(
@@ -7631,6 +8711,7 @@ fn configure_style(ctx: &egui::Context, dark_mode: bool) {
     style.animation_time = 0.14;
     style.interaction.selectable_labels = false;
     style.spacing.item_spacing = egui::vec2(8.0, 5.0);
+    style.spacing.interact_size.y = INLINE_CONTROL_HEIGHT;
     style.spacing.button_padding = egui::vec2(11.0, 4.0);
     let mut scroll = egui::style::ScrollStyle::solid();
     scroll.bar_width = 8.0;
@@ -10925,7 +12006,8 @@ mod tests {
         follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_label,
         is_party_member_row, mixed_damage_digit_key, parse_hex_color, qte_type_filter_label,
         reaction_text_key_for_hit, reaction_text_key_from_trigger_attack_type, resolve_cached_hit,
-        scaled_window_size, snapshot_team_from_stats, summarize_qte_type_filters,
+        scaled_window_size, skill_display_name, snapshot_team_from_stats,
+        summarize_qte_type_filters,
     };
     use crate::config::UiConfig;
     use crate::encrypted_ini::{
@@ -10933,7 +12015,10 @@ mod tests {
         encrypt_encrypted_ini_records, encrypt_encrypted_ini_text, encrypted_ini_search_matches,
         encrypted_ini_text_fingerprint, parse_encrypted_ini_text, pkcs7_pad,
     };
-    use crate::model::{CharacterInfo, CharacterStats, CombatState, Hit, TeamDps, TeamDpsMember};
+    use crate::model::{
+        CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
+        TeamDpsMember,
+    };
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
     use eframe::egui;
@@ -10995,6 +12080,28 @@ mod tests {
         let resolved = resolve_cached_hit(&hits, &row, 1, 1)
             .expect("same-index hit should resolve after in-place follow-up update");
         assert_eq!(resolved.follow_up_damage, 921.0);
+    }
+
+    #[test]
+    fn history_skill_display_prefixes_unknown_descriptions_with_character() {
+        let english = CombatSessionSkillSummary {
+            name: "GA_Shinku_UltraSkill".to_owned(),
+            category: "技能".to_owned(),
+            char_id: 1076,
+            char_name: "真红".to_owned(),
+            damage: 593_779.0,
+            hits: 29,
+            damage_share_percent: 31.2,
+            is_follow_up: false,
+        };
+        assert_eq!(skill_display_name(&english), "真红 · 大招");
+
+        let chinese = CombatSessionSkillSummary {
+            name: "安魂曲流血伤害L".to_owned(),
+            char_name: "安魂曲".to_owned(),
+            ..english
+        };
+        assert_eq!(skill_display_name(&chinese), "安魂曲流血伤害L");
     }
 
     #[test]
