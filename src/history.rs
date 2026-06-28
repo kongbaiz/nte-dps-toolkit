@@ -409,15 +409,12 @@ fn compare_skills(
     let mut rows = std::collections::HashMap::<(String, String), HistorySkillDelta>::new();
     for row in left {
         let key = (row.name.clone(), row.category.clone());
-        rows.insert(
-            key,
-            HistorySkillDelta {
-                name: row.name.clone(),
-                category: row.category.clone(),
-                left_damage: row.damage,
-                ..Default::default()
-            },
-        );
+        let entry = rows.entry(key).or_insert_with(|| HistorySkillDelta {
+            name: row.name.clone(),
+            category: row.category.clone(),
+            ..Default::default()
+        });
+        entry.left_damage += row.damage;
     }
     for row in right {
         let key = (row.name.clone(), row.category.clone());
@@ -426,7 +423,7 @@ fn compare_skills(
             category: row.category.clone(),
             ..Default::default()
         });
-        entry.right_damage = row.damage;
+        entry.right_damage += row.damage;
     }
     for row in rows.values_mut() {
         row.delta_damage = row.right_damage - row.left_damage;
@@ -535,6 +532,40 @@ mod tests {
         assert_eq!(record.lower_team_dps().unwrap().members[0].id, 2);
     }
 
+    #[test]
+    fn compare_records_aggregates_duplicate_skill_rows() {
+        let left = HistoryRecord {
+            id: "left".to_owned(),
+            summary: CombatSessionSummary {
+                skills: vec![
+                    skill("待映射技能", "未知", 100.0),
+                    skill("待映射技能", "未知", 25.0),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let right = HistoryRecord {
+            id: "right".to_owned(),
+            summary: CombatSessionSummary {
+                skills: vec![
+                    skill("待映射技能", "未知", 10.0),
+                    skill("待映射技能", "未知", 5.0),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &right);
+
+        assert_eq!(comparison.skill_deltas.len(), 1);
+        let delta = &comparison.skill_deltas[0];
+        assert_eq!(delta.left_damage, 125.0);
+        assert_eq!(delta.right_damage, 15.0);
+        assert_eq!(delta.delta_damage, -110.0);
+    }
+
     fn temp_history_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "nte_history_test_{}_{}_{}",
@@ -550,6 +581,15 @@ mod tests {
             name: name.to_owned(),
             damage,
             dps,
+            ..Default::default()
+        }
+    }
+
+    fn skill(name: &str, category: &str, damage: f64) -> CombatSessionSkillSummary {
+        CombatSessionSkillSummary {
+            name: name.to_owned(),
+            category: category.to_owned(),
+            damage,
             ..Default::default()
         }
     }

@@ -1216,6 +1216,45 @@ impl AbyssRunState {
         }
     }
 
+    pub fn timeline_markers_for_half(
+        &self,
+        half: AbyssHalf,
+        start: f64,
+        end: f64,
+    ) -> Vec<TimelineMarker> {
+        let mut markers = Vec::new();
+        let (timestamp, label) = match half {
+            AbyssHalf::First => (self.first_half_at, "上行线"),
+            AbyssHalf::Second => (self.second_half_at, "下行线"),
+        };
+        push_timeline_marker(
+            &mut markers,
+            timestamp,
+            start,
+            end,
+            label,
+            TimelineMarkerKind::HalfStart,
+        );
+        push_timeline_marker(
+            &mut markers,
+            self.success_at,
+            start,
+            end,
+            "通关",
+            TimelineMarkerKind::Clear,
+        );
+        push_timeline_marker(
+            &mut markers,
+            self.exited_at,
+            start,
+            end,
+            "离开",
+            TimelineMarkerKind::Exit,
+        );
+        sort_timeline_markers(&mut markers);
+        markers
+    }
+
     fn timeline_markers_between(&self, start: f64, end: f64) -> Vec<TimelineMarker> {
         let mut markers = Vec::new();
         push_timeline_marker(
@@ -1250,11 +1289,7 @@ impl AbyssRunState {
             "离开",
             TimelineMarkerKind::Exit,
         );
-        markers.sort_by(|left, right| {
-            left.offset
-                .total_cmp(&right.offset)
-                .then_with(|| left.label.cmp(&right.label))
-        });
+        sort_timeline_markers(&mut markers);
         markers
     }
 }
@@ -1764,6 +1799,14 @@ fn push_timeline_marker(
     });
 }
 
+fn sort_timeline_markers(markers: &mut [TimelineMarker]) {
+    markers.sort_by(|left, right| {
+        left.offset
+            .total_cmp(&right.offset)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+}
+
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Box<Hit>),
@@ -2081,6 +2124,47 @@ mod tests {
         state.apply_abyss_event(AbyssEvent::Exit { timestamp: 4.0 });
 
         let timeline = state.timeline(1.0, false);
+
+        assert_eq!(timeline.start_timestamp, Some(1.0));
+        assert_eq!(timeline.end_timestamp, Some(2.0));
+        assert!(timeline.markers.iter().any(|marker| {
+            marker.label == "上行线"
+                && marker.kind == TimelineMarkerKind::HalfStart
+                && marker.offset == 0.0
+        }));
+        assert!(timeline.markers.iter().any(|marker| {
+            marker.label == "通关"
+                && marker.kind == TimelineMarkerKind::Clear
+                && (marker.offset - 1.0).abs() < 1e-9
+        }));
+        assert!(timeline.markers.iter().any(|marker| {
+            marker.label == "离开"
+                && marker.kind == TimelineMarkerKind::Exit
+                && (marker.offset - 1.0).abs() < 1e-9
+        }));
+    }
+
+    #[test]
+    fn abyss_half_timeline_can_include_run_markers() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
+        state.push_hit(test_hit(2.0, 1, "outgoing", 100.0));
+        state.apply_abyss_event(AbyssEvent::Success { timestamp: 3.0 });
+        state.apply_abyss_event(AbyssEvent::Exit { timestamp: 4.0 });
+
+        let mut timeline = state.abyss.first_half.timeline(1.0, false);
+        if let (Some(start), Some(end)) = (timeline.start_timestamp, timeline.end_timestamp) {
+            timeline.markers = state
+                .abyss
+                .timeline_markers_for_half(AbyssHalf::First, start, end);
+        }
 
         assert_eq!(timeline.start_timestamp, Some(1.0));
         assert_eq!(timeline.end_timestamp, Some(2.0));

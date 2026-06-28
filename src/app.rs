@@ -2715,16 +2715,16 @@ impl DpsApp {
                 HitDetailSource::Global => self
                     .state
                     .timeline(bucket_seconds as f64, subtract_time_stop),
-                HitDetailSource::AbyssFirst => self
-                    .state
-                    .abyss
-                    .first_half
-                    .timeline(bucket_seconds as f64, subtract_time_stop),
-                HitDetailSource::AbyssSecond => self
-                    .state
-                    .abyss
-                    .second_half
-                    .timeline(bucket_seconds as f64, subtract_time_stop),
+                HitDetailSource::AbyssFirst => self.abyss_half_timeline_series(
+                    AbyssHalf::First,
+                    bucket_seconds as f64,
+                    subtract_time_stop,
+                ),
+                HitDetailSource::AbyssSecond => self.abyss_half_timeline_series(
+                    AbyssHalf::Second,
+                    bucket_seconds as f64,
+                    subtract_time_stop,
+                ),
             };
             self.timeline_cache = TimelineCache {
                 key: Some(key),
@@ -2732,6 +2732,23 @@ impl DpsApp {
             };
         }
         self.timeline_cache.series.clone()
+    }
+
+    fn abyss_half_timeline_series(
+        &self,
+        half: AbyssHalf,
+        bucket_seconds: f64,
+        subtract_time_stop: bool,
+    ) -> TimelineSeries {
+        let mut series = self
+            .state
+            .abyss
+            .half(half)
+            .timeline(bucket_seconds, subtract_time_stop);
+        if let (Some(start), Some(end)) = (series.start_timestamp, series.end_timestamp) {
+            series.markers = self.state.abyss.timeline_markers_for_half(half, start, end);
+        }
+        series
     }
 
     fn cached_skill_breakdown(&mut self, char_id: Option<u32>) -> SkillBreakdown {

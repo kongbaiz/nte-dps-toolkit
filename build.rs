@@ -145,13 +145,13 @@ enum EmbeddedResourceKind {
 }
 
 fn process_embedded_resource(relative: &str, original: &[u8]) -> EmbeddedResource {
-    if relative.ends_with(".json") {
-        if let Ok(document) = serde_json::from_slice::<Value>(original) {
-            return EmbeddedResource {
-                bytes: serde_json::to_vec(&document).expect("failed to minify JSON resource"),
-                kind: EmbeddedResourceKind::Json,
-            };
-        }
+    if relative.ends_with(".json")
+        && let Ok(document) = serde_json::from_slice::<Value>(original)
+    {
+        return EmbeddedResource {
+            bytes: serde_json::to_vec(&document).expect("failed to minify JSON resource"),
+            kind: EmbeddedResourceKind::Json,
+        };
     }
 
     if relative.ends_with(".png")
