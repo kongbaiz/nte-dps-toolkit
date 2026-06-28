@@ -8,6 +8,7 @@ mod character_editor;
 mod config;
 mod encrypted_ini;
 mod file_drop;
+mod history;
 mod hotkey;
 mod io_util;
 mod model;

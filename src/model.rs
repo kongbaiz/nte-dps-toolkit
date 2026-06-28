@@ -319,7 +319,8 @@ pub struct UnknownGameplayEffect {
     pub damage: f64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CaptureQualitySource {
     Live,
     PcapngReplay,
@@ -339,7 +340,8 @@ impl CaptureQualitySource {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CaptureQualitySummary {
     pub source: CaptureQualitySource,
     pub packet_count: usize,
@@ -411,6 +413,69 @@ impl CaptureQualitySummary {
         );
         text
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CombatSessionSummary {
+    pub duration_seconds: f64,
+    pub dps_time_mode: String,
+    pub total_damage: f64,
+    pub total_dps: f64,
+    pub total_damage_taken: f64,
+    pub total_hits: u64,
+    pub characters: Vec<CombatSessionCharacterSummary>,
+    pub skills: Vec<CombatSessionSkillSummary>,
+    pub abyss: CombatSessionAbyssSummary,
+    pub quality: CaptureQualitySummary,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CombatSessionCharacterSummary {
+    pub char_id: u32,
+    pub name: String,
+    pub hits: u64,
+    pub damage: f64,
+    pub dps: f64,
+    pub damage_share_percent: f64,
+    pub hits_taken: u64,
+    pub damage_taken: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CombatSessionSkillSummary {
+    pub char_id: u32,
+    pub char_name: String,
+    pub name: String,
+    pub category: String,
+    pub hits: u64,
+    pub damage: f64,
+    pub damage_share_percent: f64,
+    pub is_follow_up: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CombatSessionAbyssSummary {
+    pub detected: bool,
+    pub floor: Option<u32>,
+    pub active_half: Option<String>,
+    pub success: bool,
+    pub first_half: Option<CombatSessionAbyssHalfSummary>,
+    pub second_half: Option<CombatSessionAbyssHalfSummary>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CombatSessionAbyssHalfSummary {
+    pub half: String,
+    pub duration_seconds: f64,
+    pub total_damage: f64,
+    pub total_dps: f64,
+    pub characters: Vec<CombatSessionCharacterSummary>,
+    pub skills: Vec<CombatSessionSkillSummary>,
 }
 
 #[allow(dead_code)]
@@ -1410,6 +1475,39 @@ impl CombatState {
         }
     }
 
+    pub fn session_summary(
+        &self,
+        source: CaptureQualitySource,
+        dps_time_mode: impl Into<String>,
+        subtract_time_stop: bool,
+    ) -> Option<CombatSessionSummary> {
+        if self.hits.is_empty() && self.stats.is_empty() && !self.abyss.is_active() {
+            return None;
+        }
+        let duration = self.duration_with_time_stop(subtract_time_stop);
+        let skills = summarize_session_skills(self.skill_breakdown(None).rows);
+        Some(CombatSessionSummary {
+            duration_seconds: duration,
+            dps_time_mode: dps_time_mode.into(),
+            total_damage: self.total_damage,
+            total_dps: self.dps_with_time_stop(subtract_time_stop),
+            total_damage_taken: self.total_damage_taken,
+            total_hits: self
+                .hits
+                .iter()
+                .filter(|hit| hit.direction != "incoming")
+                .count() as u64,
+            characters: summarize_session_characters(
+                self.stats.values(),
+                self.total_damage,
+                |row| self.character_dps_with_time_stop(row, subtract_time_stop),
+            ),
+            skills,
+            abyss: summarize_session_abyss(&self.abyss, subtract_time_stop),
+            quality: self.capture_quality_summary(source),
+        })
+    }
+
     fn backfill_abyss_half_from_global(&mut self, half: AbyssHalf) {
         let party = self.abyss.half_mut(half);
         if !party.hits.is_empty() {
@@ -1420,6 +1518,100 @@ impl CombatState {
         }
         party.time_stop = self.time_stop.clone();
     }
+}
+
+fn summarize_session_abyss(
+    abyss: &AbyssRunState,
+    subtract_time_stop: bool,
+) -> CombatSessionAbyssSummary {
+    CombatSessionAbyssSummary {
+        detected: abyss.is_active(),
+        floor: abyss.floor,
+        active_half: abyss.active_half.map(|half| half.label().to_owned()),
+        success: abyss.success_at.is_some(),
+        first_half: summarize_session_abyss_half(
+            AbyssHalf::First,
+            &abyss.first_half,
+            subtract_time_stop,
+        ),
+        second_half: summarize_session_abyss_half(
+            AbyssHalf::Second,
+            &abyss.second_half,
+            subtract_time_stop,
+        ),
+    }
+}
+
+fn summarize_session_abyss_half(
+    half: AbyssHalf,
+    party: &PartyCombatState,
+    subtract_time_stop: bool,
+) -> Option<CombatSessionAbyssHalfSummary> {
+    if party.hits.is_empty() && party.stats.is_empty() {
+        return None;
+    }
+    Some(CombatSessionAbyssHalfSummary {
+        half: half.label().to_owned(),
+        duration_seconds: party.duration_with_time_stop(subtract_time_stop),
+        total_damage: party.total_damage,
+        total_dps: party.dps_with_time_stop(subtract_time_stop),
+        characters: summarize_session_characters(party.stats.values(), party.total_damage, |row| {
+            party.character_dps_with_time_stop(row, subtract_time_stop)
+        }),
+        skills: summarize_session_skills(summarize_skill_breakdown(&party.hits, None).rows),
+    })
+}
+
+fn summarize_session_characters<'a>(
+    rows: impl IntoIterator<Item = &'a CharacterStats>,
+    total_damage: f64,
+    dps_for_row: impl Fn(&CharacterStats) -> f64,
+) -> Vec<CombatSessionCharacterSummary> {
+    let mut rows = rows
+        .into_iter()
+        .filter(|row| row.damage > 0.0 || row.damage_taken > 0.0 || row.hits > 0)
+        .map(|row| CombatSessionCharacterSummary {
+            char_id: row.char_id,
+            name: row.name.clone(),
+            hits: row.hits,
+            damage: row.damage,
+            dps: dps_for_row(row),
+            damage_share_percent: if total_damage > 0.0 {
+                row.damage / total_damage * 100.0
+            } else {
+                0.0
+            },
+            hits_taken: row.hits_taken,
+            damage_taken: row.damage_taken,
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        right
+            .damage
+            .total_cmp(&left.damage)
+            .then_with(|| left.char_id.cmp(&right.char_id))
+    });
+    rows
+}
+
+fn summarize_session_skills(rows: Vec<SkillBreakdownRow>) -> Vec<CombatSessionSkillSummary> {
+    let total_damage = rows.iter().map(|row| row.damage).sum::<f64>();
+    rows.into_iter()
+        .map(|row| CombatSessionSkillSummary {
+            char_id: row.char_id,
+            char_name: row.char_name,
+            name: row.name,
+            category: row.category,
+            hits: row.hits,
+            damage: row.damage,
+            damage_share_percent: if total_damage > 0.0 {
+                row.damage / total_damage * 100.0
+            } else {
+                0.0
+            },
+            is_follow_up: row.is_follow_up,
+        })
+        .collect()
 }
 
 fn character_duration_after_time_stop(
@@ -1964,6 +2156,65 @@ mod tests {
         assert!(!text.contains("deadbeef"));
         assert!(!text.contains("192.0.2.1"));
         assert!(!text.contains("decoded text"));
+    }
+
+    #[test]
+    fn combat_session_summary_contains_redacted_aggregates() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 10, "outgoing", 120.0);
+        hit.char_name = "测试角色".to_owned();
+        hit.attack_type = Some("普攻".to_owned());
+        hit.damage_name = Some("普攻一段".to_owned());
+        state.push_hit(hit);
+
+        let summary = state
+            .session_summary(CaptureQualitySource::JsonReplay, "扣除时停", true)
+            .expect("summary should exist");
+
+        assert_eq!(summary.dps_time_mode, "扣除时停");
+        assert_eq!(summary.total_damage, 120.0);
+        assert_eq!(summary.total_hits, 1);
+        assert_eq!(summary.characters[0].name, "测试角色");
+        assert_eq!(summary.skills[0].name, "普攻一段");
+        assert_eq!(summary.quality.source, CaptureQualitySource::JsonReplay);
+    }
+
+    #[test]
+    fn combat_session_summary_keeps_abyss_halves_separate() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: None,
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        let mut first = test_hit(1.0, 1, "outgoing", 100.0);
+        first.char_name = "上半角色".to_owned();
+        first.damage_name = Some("上半技能".to_owned());
+        state.push_hit(first);
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 5.0,
+            cycle: None,
+            floor: Some(1),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        let mut second = test_hit(6.0, 2, "outgoing", 200.0);
+        second.char_name = "下半角色".to_owned();
+        second.damage_name = Some("下半技能".to_owned());
+        state.push_hit(second);
+
+        let summary = state
+            .session_summary(CaptureQualitySource::JsonReplay, "扣除时停", true)
+            .expect("summary should exist");
+        let first_half = summary.abyss.first_half.expect("first half summary");
+        let second_half = summary.abyss.second_half.expect("second half summary");
+
+        assert_eq!(first_half.characters[0].name, "上半角色");
+        assert_eq!(first_half.skills[0].name, "上半技能");
+        assert_eq!(second_half.characters[0].name, "下半角色");
+        assert_eq!(second_half.skills[0].name, "下半技能");
     }
 
     #[test]
