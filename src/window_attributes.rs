@@ -112,8 +112,12 @@ pub(crate) fn apply_window_attributes(
 
         if config.hud_overlay {
             // HUD transparency comes from the transparent swapchain/clear colour,
-            // not a colour key. Force the uniform-alpha path to re-run when we
-            // leave HUD mode.
+            // not layered uniform alpha. If click-through keeps WS_EX_LAYERED
+            // enabled, reset any opacity slider alpha left from normal mode.
+            if (new_style & WS_EX_LAYERED as isize) != 0 {
+                let _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+            }
+            // Force the uniform-alpha path to re-run when we leave HUD mode.
             *applied_opacity = None;
             return;
         }
