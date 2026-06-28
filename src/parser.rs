@@ -743,6 +743,56 @@ pub fn find_declared_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {
     found
 }
 
+pub fn find_final_tower_character_evidence(data: &[u8]) -> Vec<(u32, u8, usize)> {
+    const CHARACTER_FOR_NET: &[u8] = b"FCharacterForNet";
+    const FINAL_TOWER_CHARACTER: &[u8] = b"ft_character_";
+
+    let mut found = Vec::new();
+    for bit_shift in 0..8 {
+        let shifted = if bit_shift == 0 {
+            data.to_vec()
+        } else {
+            match decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1)) {
+                Some(value) => value,
+                None => continue,
+            }
+        };
+        if shifted.len() < CHARACTER_FOR_NET.len() + FINAL_TOWER_CHARACTER.len() + 4 {
+            continue;
+        }
+        if !shifted
+            .windows(CHARACTER_FOR_NET.len())
+            .any(|window| window == CHARACTER_FOR_NET)
+        {
+            continue;
+        }
+        for offset in 0..=shifted.len() - FINAL_TOWER_CHARACTER.len() - 4 {
+            if &shifted[offset..offset + FINAL_TOWER_CHARACTER.len()] != FINAL_TOWER_CHARACTER {
+                continue;
+            }
+            let digit_offset = offset + FINAL_TOWER_CHARACTER.len();
+            let digits = &shifted[digit_offset..digit_offset + 4];
+            if !digits.iter().all(u8::is_ascii_digit) {
+                continue;
+            }
+            if shifted
+                .get(digit_offset + 4)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                continue;
+            }
+            let id = digits
+                .iter()
+                .fold(0_u32, |value, digit| value * 10 + (digit - b'0') as u32);
+            let evidence = (id, bit_shift, offset);
+            if (1000..=9999).contains(&id) && !found.contains(&evidence) {
+                found.push(evidence);
+            }
+        }
+    }
+    found
+}
+
 pub fn declared_character_ids_from_evidence(evidence: &[(u32, u8, usize)]) -> Vec<u32> {
     let mut ids = Vec::new();
     for (id, _, _) in evidence {
@@ -905,6 +955,22 @@ mod character_tests {
 
     fn encoded_damage_record(damage: f32, target_hp_before: f32, target_max_hp: f32) -> Vec<u8> {
         encoded_damage_record_with_flags(damage, target_hp_before, target_max_hp, [0, 0, 0])
+    }
+
+    fn write_shifted_bytes(payload: &mut [u8], bit_shift: u8, byte_offset: usize, bytes: &[u8]) {
+        for (index, byte) in bytes.iter().enumerate() {
+            for bit in 0..8 {
+                let bit_value = (byte >> bit) & 1;
+                let target_bit = bit_shift as usize + (byte_offset + index) * 8 + bit;
+                let target_byte = target_bit / 8;
+                let target_bit_offset = target_bit % 8;
+                if bit_value == 1 {
+                    payload[target_byte] |= 1 << target_bit_offset;
+                } else {
+                    payload[target_byte] &= !(1 << target_bit_offset);
+                }
+            }
+        }
     }
 
     fn write_temp_json(name: &str, content: &str) -> PathBuf {
@@ -1317,5 +1383,41 @@ mod character_tests {
         assert_eq!(declared_character_for_shift(&evidence, 3), Some(1004));
         assert_eq!(declared_character_for_shift(&evidence, 2), Some(1003));
         assert_eq!(declared_character_for_shift(&evidence, 5), None);
+    }
+
+    #[test]
+    fn final_tower_character_evidence_requires_character_for_net_anchor() {
+        let payload = b"ft_character_1076".to_vec();
+
+        assert!(find_final_tower_character_evidence(&payload).is_empty());
+    }
+
+    #[test]
+    fn finds_final_tower_character_evidence() {
+        let payload = b"FCharacterForNet....ft_character_1076".to_vec();
+
+        assert_eq!(
+            find_final_tower_character_evidence(&payload),
+            vec![(1076, 0, 20)]
+        );
+    }
+
+    #[test]
+    fn finds_shifted_final_tower_character_evidence() {
+        let mut payload = vec![0_u8; 64];
+        write_shifted_bytes(&mut payload, 5, 7, b"FCharacterForNet");
+        write_shifted_bytes(&mut payload, 5, 30, b"ft_character_1076");
+
+        assert_eq!(
+            find_final_tower_character_evidence(&payload),
+            vec![(1076, 5, 30)]
+        );
+    }
+
+    #[test]
+    fn final_tower_character_evidence_ignores_longer_numeric_suffix() {
+        let payload = b"FCharacterForNet....ft_character_10760".to_vec();
+
+        assert!(find_final_tower_character_evidence(&payload).is_empty());
     }
 }

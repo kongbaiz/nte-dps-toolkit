@@ -5637,14 +5637,20 @@ impl DpsApp {
                     egui::vec2(ui.available_width(), content_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        let selected = self.history.selected_record().cloned();
-                        if let Some(record) = selected {
-                            self.history_detail_contents(ui, &record);
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(8.0);
-                            self.history_compare_contents(ui);
-                        }
+                        egui::ScrollArea::vertical()
+                            .id_salt("history_detail_compare")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                let selected = self.history.selected_record().cloned();
+                                if let Some(record) = selected {
+                                    self.history_detail_contents(ui, &record);
+                                    ui.add_space(8.0);
+                                    ui.separator();
+                                    ui.add_space(8.0);
+                                    self.history_compare_contents(ui);
+                                }
+                            });
                     },
                 );
             },
@@ -5726,35 +5732,29 @@ impl DpsApp {
         });
         ui.add_space(8.0);
         if record.summary.abyss.first_half.is_some() || record.summary.abyss.second_half.is_some() {
-            egui::ScrollArea::vertical()
-                .id_salt("history_abyss_half_detail")
-                .max_height((ui.available_height() - 8.0).max(220.0))
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    if let Some(half) = &record.summary.abyss.first_half {
-                        let visual = HistoryVisualContext {
-                            dark_mode: self.dark_mode,
-                            characters: &self.characters,
-                            avatar_textures: &self.avatar_textures,
-                        };
-                        draw_history_abyss_half(ui, half, visual);
-                    }
-                    if record.summary.abyss.first_half.is_some()
-                        && record.summary.abyss.second_half.is_some()
-                    {
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-                    }
-                    if let Some(half) = &record.summary.abyss.second_half {
-                        let visual = HistoryVisualContext {
-                            dark_mode: self.dark_mode,
-                            characters: &self.characters,
-                            avatar_textures: &self.avatar_textures,
-                        };
-                        draw_history_abyss_half(ui, half, visual);
-                    }
-                });
+            if let Some(half) = &record.summary.abyss.first_half {
+                let visual = HistoryVisualContext {
+                    dark_mode: self.dark_mode,
+                    characters: &self.characters,
+                    avatar_textures: &self.avatar_textures,
+                };
+                draw_history_abyss_half(ui, half, visual);
+            }
+            if record.summary.abyss.first_half.is_some()
+                && record.summary.abyss.second_half.is_some()
+            {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+            }
+            if let Some(half) = &record.summary.abyss.second_half {
+                let visual = HistoryVisualContext {
+                    dark_mode: self.dark_mode,
+                    characters: &self.characters,
+                    avatar_textures: &self.avatar_textures,
+                };
+                draw_history_abyss_half(ui, half, visual);
+            }
         } else {
             draw_history_summary_rows(
                 ui,
