@@ -292,14 +292,14 @@ fn audit_characters(reader: &dyn ResourceReader, audit: &mut ResourceAuditSummar
         }
         match json_string(row, "avatar").filter(|value| !value.trim().is_empty()) {
             Some(avatar) if reader.exists(&avatar) => {}
-            Some(avatar) => push_item(
+            Some(_) => push_item(
                 audit,
                 ResourceAuditSeverity::Error,
                 ResourceAuditCategory::Character,
                 id,
                 display_or_id(&name, id),
                 "头像资源缺失",
-                &avatar,
+                CHARACTER_DATA_PATH,
             ),
             None => push_item(
                 audit,
@@ -768,6 +768,37 @@ mod tests {
                 .redacted_text()
                 .contains(&root.display().to_string())
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn redacted_report_does_not_copy_missing_avatar_paths() {
+        let root = temp_root("avatar-redaction");
+        let private_avatar = r#"C:\Users\KongBai\Pictures\custom_avatar.png"#;
+        write(
+            &root,
+            CHARACTER_DATA_PATH,
+            &format!(
+                r#"{{"characters":{{"1001":{{"name_zh":"测试","attribute":"灵","avatar":{}}}}}}}"#,
+                serde_json::to_string(private_avatar).unwrap()
+            ),
+        );
+        write(&root, "res/images/attributes/UI_avatarbg_Icon_01.png", "");
+
+        let summary = audit_resource_root(&root);
+        let avatar_item = summary
+            .items
+            .iter()
+            .find(|item| {
+                item.category == ResourceAuditCategory::Character && item.message == "头像资源缺失"
+            })
+            .expect("missing avatar item");
+        let report = summary.redacted_text();
+
+        assert_eq!(avatar_item.suggested_source, CHARACTER_DATA_PATH);
+        assert!(!report.contains(private_avatar));
+        assert!(!report.contains("KongBai"));
 
         let _ = std::fs::remove_dir_all(root);
     }
