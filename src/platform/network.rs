@@ -13,7 +13,7 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 
-use crate::capture::CaptureDevice;
+use crate::engine::capture::CaptureDevice;
 
 const GAME_PROCESS: &str = "HTGame.exe";
 const GAME_TCP_PORT: u16 = 30031;

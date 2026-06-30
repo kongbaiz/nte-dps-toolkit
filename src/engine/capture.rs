@@ -24,11 +24,11 @@ use pcap_file::pcapng::blocks::interface_description::{
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
-use crate::model::{
+use crate::engine::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitDamageCorrection, HitFollowUp,
     PacketDebug, TimeStopEvent,
 };
-use crate::parser::{
+use crate::engine::parser::{
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry,
     WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type, classify_attack_type_from_description,
@@ -39,7 +39,7 @@ use crate::parser::{
     parse_gameplay_effects, qte_reaction_type,
 };
 
-use crate::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
+use crate::engine::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 
 const PCAP_ERRBUF_SIZE: usize = 256;
 const MIN_READABLE_TEXT_LEN: usize = 4;
@@ -1406,7 +1406,7 @@ impl ServerDamageCalibrationTracker {
     fn observe_boss_hp(
         &mut self,
         timestamp: f64,
-        update: &crate::parser::ParsedBossHpUpdate,
+        update: &crate::engine::parser::ParsedBossHpUpdate,
     ) -> Option<HitDamageCorrection> {
         let current_hp = if update.current_hp <= 1.0 {
             0.0
@@ -3035,7 +3035,7 @@ mod tests {
     use super::*;
     use crossbeam_channel::unbounded;
 
-    use crate::parser::{CHARACTER_DATA_PATH, UltraTimeStopCooldown, load_characters};
+    use crate::engine::parser::{CHARACTER_DATA_PATH, UltraTimeStopCooldown, load_characters};
 
     #[test]
     fn follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve() {
@@ -4486,8 +4486,8 @@ mod tests {
         );
     }
 
-    fn boss_hp_update(timestamp_hp: f32) -> crate::parser::ParsedBossHpUpdate {
-        crate::parser::ParsedBossHpUpdate {
+    fn boss_hp_update(timestamp_hp: f32) -> crate::engine::parser::ParsedBossHpUpdate {
+        crate::engine::parser::ParsedBossHpUpdate {
             target_handle: [7; 16],
             current_hp: timestamp_hp,
             byte_offset: 0,

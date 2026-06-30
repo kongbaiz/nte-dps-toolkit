@@ -1,24 +1,11 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![cfg_attr(feature = "no_debug", allow(dead_code))]
 
-mod abyss_data;
 mod app;
-mod capture;
-mod character_editor;
-mod config;
-mod diagnostics;
-mod encrypted_ini;
-mod file_drop;
-mod history;
-mod hotkey;
-mod io_util;
-mod model;
-mod network;
-mod parser;
-mod protocol;
-mod resource;
-mod resource_audit;
-mod window_attributes;
+mod engine;
+mod platform;
+mod storage;
+mod support;
 
 use anyhow::Result;
 use app::DpsApp;
@@ -28,7 +15,7 @@ use std::sync::Arc;
 
 fn main() -> Result<()> {
     install_panic_log();
-    let (ui_config, config_warning) = config::load();
+    let (ui_config, config_warning) = storage::config::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("NTE DPS TOOL")
@@ -60,7 +47,7 @@ fn main() -> Result<()> {
 }
 
 fn app_icon() -> egui::IconData {
-    let bytes = resource::read_resource_bytes(Path::new("res/icons/app-icon.png"))
+    let bytes = storage::resource::read_resource_bytes(Path::new("res/icons/app-icon.png"))
         .expect("application icon resource must be available");
     let image = image::load_from_memory(bytes.as_ref())
         .expect("embedded application icon must be valid")

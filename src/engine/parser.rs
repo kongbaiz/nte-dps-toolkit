@@ -3,8 +3,8 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::model::{CharacterInfo, Hit};
-use crate::resource::{read_resource_text, resource_exists, resource_file_path};
+use crate::engine::model::{CharacterInfo, Hit};
+use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
 
 const RECORD_FIELD_TYPES: [u8; 10] = [12, 12, 12, 13, 12, 12, 6, 6, 6, 12];
 const RECORD_FIELD_LENGTHS: [usize; 10] = [4, 4, 4, 8, 4, 4, 4, 4, 4, 4];

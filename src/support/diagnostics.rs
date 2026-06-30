@@ -1,5 +1,5 @@
-use crate::capture::list_devices;
-use crate::network::detect_game_device;
+use crate::engine::capture::list_devices;
+use crate::platform::network::detect_game_device;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DiagnosticStatus {

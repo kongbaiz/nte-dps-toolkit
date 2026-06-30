@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::io_util::atomic_write_text;
-use crate::model::{
+use crate::engine::model::{
     CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary, CombatSessionSkillSummary,
     CombatSessionSummary, TeamDps, TeamDpsMember,
 };
+use crate::storage::io_util::atomic_write_text;
 
 pub const HISTORY_RECORD_VERSION: u32 = 1;
 pub const MAX_HISTORY_RECORDS: usize = 200;
@@ -129,7 +129,7 @@ fn team_from_characters(dps: f64, characters: &[CombatSessionCharacterSummary]) 
         members: characters
             .iter()
             .filter(|row| row.damage > 0.0)
-            .take(crate::model::TEAM_DPS_MAX_MEMBERS)
+            .take(crate::engine::model::TEAM_DPS_MAX_MEMBERS)
             .map(|row| TeamDpsMember {
                 id: row.char_id,
                 dps: row.dps,
@@ -434,7 +434,7 @@ fn compare_skills(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
+    use crate::engine::model::{
         CombatSessionAbyssHalfSummary, CombatSessionAbyssSummary, CombatSessionCharacterSummary,
         CombatSessionSummary,
     };

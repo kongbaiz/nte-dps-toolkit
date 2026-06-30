@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::resource::read_resource_text;
+use crate::storage::resource::read_resource_text;
 
 pub(crate) const CHARACTER_ATTRIBUTES: [&str; 6] = ["灵", "咒", "光", "魂", "暗", "相"];
 
