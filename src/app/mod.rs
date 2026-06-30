@@ -41,9 +41,8 @@ use crate::platform::window_attributes::{
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
-    self, DpsTimeMode, HUD_MAX_CHARACTERS_MAX, HUD_MAX_CHARACTERS_MIN, HudConfig,
-    PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
-    TimelineDpsViewMode, UiConfig, WINDOW_SCALE_MAX, WINDOW_SCALE_MIN,
+    self, DpsTimeMode, HudConfig, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX,
+    TIMELINE_BUCKET_SECONDS_MIN, TimelineDpsViewMode, UiConfig, WINDOW_SCALE_MAX, WINDOW_SCALE_MIN,
 };
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::io_util::{atomic_write_file, atomic_write_text};
