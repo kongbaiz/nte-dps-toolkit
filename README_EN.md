@@ -9,6 +9,8 @@
 
 [中文](README.md) | **English**
 
+**[Official Site →](https://dps.o-na-ni.com/)**
+
 <!-- Shields badges -->
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Commercial license available](https://img.shields.io/badge/commercial%20license-available-orange.svg)](LICENSING.md)
@@ -140,6 +142,14 @@ The program looks for `res` in the current directory or the executable's parent 
 | Team hit details | Character hit details |
 |---|---|
 | <img src="images/team_battle_detail.png" alt="Team hit details" width="520"> | <img src="images/character_battle_detail.png" alt="Character hit details" width="520"> |
+
+| Combat timeline | History |
+|---|---|
+| <img src="images/timeline.png" alt="Combat timeline" width="520"> | <img src="images/history.png" alt="History" width="520"> |
+
+| Customizable HUD |
+|---|
+| <img src="images/HUD.png" alt="Customizable HUD" width="520"> |
 
 ### Verifying a build
 
