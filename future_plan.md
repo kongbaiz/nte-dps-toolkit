@@ -25,18 +25,18 @@
 
 调整方向：
 
-- 新增纯聚合逻辑，优先放在 `src/model.rs`。建议新增 `TimelineBucket`、`TimelineSeries`、`TimelineMarker`，输入 `&[Hit]`、时停事件或已合并时停区间，输出按秒分桶的数据。
+- 新增纯聚合逻辑，优先放在 `src/engine/model.rs`。建议新增 `TimelineBucket`、`TimelineSeries`、`TimelineMarker`，输入 `&[Hit]`、时停事件或已合并时停区间，输出按秒分桶的数据。
 - 如果 `TimeStopTracker` 仍是私有实现，可先增加只读摘要方法，例如 `time_stop_intervals_between(start, end)`，不要把 tracker 暴露给 UI 直接改。
 - `PartyCombatState` 和 `CombatState` 都需要能生成时间轴；深渊上下行线使用 `AbyssRunState::half()` 的 hit 集合生成。
-- 在 `src/app.rs` 中给 Console 增加一个页签，例如 `ConsoleTab::Timeline`，或者在队伍战斗明细窗口顶部增加小型曲线。
+- 在 `src/app/` 中给 Console 增加一个页签，例如 `ConsoleTab::Timeline`，或者在队伍战斗明细窗口顶部增加小型曲线。
 - UI 初版建议用 `egui::Painter` 手绘：固定高度 120-160px，横轴为战斗时间，纵轴为 DPS 或伤害，角色曲线使用角色颜色，时停用半透明竖向背景带，深渊事件用竖线和短标签。
-- 如果后续引入 `egui_plot`，改动集中在 `src/app.rs` 绘图函数和 `Cargo.toml`，聚合模型不需要变化。
+- 如果后续引入 `egui_plot`，改动集中在 `src/app/` 绘图函数和 `Cargo.toml`，聚合模型不需要变化。
 
 涉及文件：
 
-- `src/model.rs`：新增时间轴聚合结构和测试；避免 UI 类型进入模型层。
-- `src/app.rs`：新增页签状态、缓存 key、绘图函数；不要在每帧重建大 Vec，按 `hits_generation` 刷新。
-- `src/config.rs`：如需保存曲线显示选项，新增 `timeline_bucket_seconds`、`timeline_show_roles` 等字段，并给默认值。
+- `src/engine/model.rs`：新增时间轴聚合结构和测试；避免 UI 类型进入模型层。
+- `src/app/`：新增页签状态、缓存 key、绘图函数；不要在每帧重建大 Vec，按 `hits_generation` 刷新。
+- `src/storage/config.rs`：如需保存曲线显示选项，新增 `timeline_bucket_seconds`、`timeline_show_roles` 等字段，并给默认值。
 - `README.md`：功能稳定后补充说明和截图。
 
 注意事项：
@@ -53,19 +53,19 @@
 
 调整方向：
 
-- 在 `src/model.rs` 增加聚合函数，例如 `summarize_skill_breakdown(hits, char_id/filter)`，输出按角色、技能分类、伤害名称、GE 名称的层级统计。
+- 在 `src/engine/model.rs` 增加聚合函数，例如 `summarize_skill_breakdown(hits, char_id/filter)`，输出按角色、技能分类、伤害名称、GE 名称的层级统计。
 - 优先用现有字段：`attack_type` 作为一层分类，`ability_name` / `damage_name` 作为展示名，`gameplay_effect_index` / `gameplay_effect_name` 用于诊断缺口。
-- 在 `src/app.rs` 的 Console 增加“技能”或“归因”页签。顶部显示全队技能占比，点击角色后显示角色技能明细。
+- 在 `src/app/` 的 Console 增加“技能”或“归因”页签。顶部显示全队技能占比，点击角色后显示角色技能明细。
 - UI 可以借鉴性能面板的高密度读数：左侧角色列表，右侧技能条形图；每行展示技能名、伤害、占比、命中数、均伤、是否 follow-up。
 - 未知项不要混在普通技能里，应单独放“待映射”区，支持复制 GE index/name，方便维护 `res/data/skills/`。
 
 涉及文件：
 
-- `src/model.rs`：新增技能聚合结构，例如 `SkillBreakdownRow`、`UnknownAttributionSummary`。
-- `src/app.rs`：新增 Console 页签、技能聚合缓存、条形图/表格绘制函数。
-- `src/parser.rs`：只有在发现分类规则缺口时才改；不要为 UI 展示硬塞解析规则。
+- `src/engine/model.rs`：新增技能聚合结构，例如 `SkillBreakdownRow`、`UnknownAttributionSummary`。
+- `src/app/`：新增 Console 页签、技能聚合缓存、条形图/表格绘制函数。
+- `src/engine/parser.rs`：只有在发现分类规则缺口时才改；不要为 UI 展示硬塞解析规则。
 - `res/data/skills/gameplay_effect_mapping.json`、`res/data/skills/skill_damage.json`：只在确认资源映射缺失时更新。
-- `src/capture.rs` 测试：如果新增分类规则，必须覆盖正常、边界、误判规避场景。
+- `src/engine/capture.rs` 测试：如果新增分类规则，必须覆盖正常、边界、误判规避场景。
 
 注意事项：
 
@@ -81,15 +81,15 @@
 调整方向：
 
 - 把当前散落在 Debug 诊断和状态栏里的统计整理成一个 `CaptureQualitySummary`。
-- 在 `src/capture.rs` 的导入/实时解析路径中，不要改变 `EngineEvent` 语义；质量报告优先从已进入 `CombatState` 的数据和现有 `PacketDebug` 汇总生成。
-- 在 `src/app.rs` 的“诊断”页增加报告区域；如果是导入任务结束，状态栏提示“可在诊断页查看解析质量”。
+- 在 `src/engine/capture.rs` 的导入/实时解析路径中，不要改变 `EngineEvent` 语义；质量报告优先从已进入 `CombatState` 的数据和现有 `PacketDebug` 汇总生成。
+- 在 `src/app/` 的“诊断”页增加报告区域；如果是导入任务结束，状态栏提示“可在诊断页查看解析质量”。
 - 报告支持复制脱敏文本，但不能包含 payload preview、payload hex、decoded text、IP、端口或本机路径。
 
 涉及文件：
 
-- `src/model.rs`：新增 `CaptureQualitySummary` 及从 `CombatState` 构建的函数。
-- `src/app.rs`：诊断页新增报告卡片和复制按钮。
-- `src/capture.rs`：若需要新增计数事件，必须保证实时、PCAPNG、JSON 三条链路一致。
+- `src/engine/model.rs`：新增 `CaptureQualitySummary` 及从 `CombatState` 构建的函数。
+- `src/app/`：诊断页新增报告卡片和复制按钮。
+- `src/engine/capture.rs`：若需要新增计数事件，必须保证实时、PCAPNG、JSON 三条链路一致。
 - `README.md`：补充用户提交问题时推荐附带“脱敏解析质量报告”。
 
 注意事项：
@@ -106,19 +106,19 @@
 
 调整方向：
 
-- 新增模块 `src/history.rs`，负责历史记录结构、加载、保存、迁移和裁剪。
+- 新增模块 `src/storage/history.rs`，负责历史记录结构、加载、保存、迁移和裁剪。
 - 历史目录建议放在 `%LOCALAPPDATA%\NTE DPS Tool\history\`，不要写入仓库 `logs/` 或 `data/`。
 - 记录结构建议包含：版本、保存时间、来源类型、战斗时长、DPS 时间口径、总伤害、总受击、角色摘要、技能摘要、深渊站点/上下行线摘要、解析质量摘要。
-- 在 `src/app.rs` Console 增加“历史”页：列表 + 详情。列表用虚拟滚动；详情复用技能占比和时间轴组件。
+- 在 `src/app/` Console 增加“历史”页：列表 + 详情。列表用虚拟滚动；详情复用技能占比和时间轴组件。
 - 增加“保存本次摘要”按钮，初期不要自动保存，避免用户不知情地产生本地数据。
 
 涉及文件：
 
-- `src/history.rs`：新增文件，处理 JSON schema、读写和错误展示字符串。
-- `src/model.rs`：提供从当前状态构建 `CombatSessionSummary` 的纯函数。
-- `src/app.rs`：新增历史页、保存/删除确认、导入历史摘要。
-- `src/io_util.rs`：复用原子写；如需目录枚举辅助，可放通用函数。
-- `src/config.rs`：如果增加“自动保存摘要”开关，默认必须为 false。
+- `src/storage/history.rs`：新增文件，处理 JSON schema、读写和错误展示字符串。
+- `src/engine/model.rs`：提供从当前状态构建 `CombatSessionSummary` 的纯函数。
+- `src/app/`：新增历史页、保存/删除确认、导入历史摘要。
+- `src/storage/io_util.rs`：复用原子写；如需目录枚举辅助，可放通用函数。
+- `src/storage/config.rs`：如果增加“自动保存摘要”开关，默认必须为 false。
 - `README.md`：说明历史库位置和隐私边界。
 
 注意事项：
@@ -134,16 +134,16 @@
 
 调整方向：
 
-- 在 `src/history.rs` 增加查询和排序辅助，例如按角色、深渊站点、时间范围、队伍成员过滤。
-- 在 `src/app.rs` 历史页增加两种视图：列表视图和对比视图。
+- 在 `src/storage/history.rs` 增加查询和排序辅助，例如按角色、深渊站点、时间范围、队伍成员过滤。
+- 在 `src/app/` 历史页增加两种视图：列表视图和对比视图。
 - 对比视图初版只支持选择 2 条记录，展示总 DPS、角色 DPS、技能占比差异、战斗时间差异。
 - UI 使用左右两列或上下两段，不要用复杂嵌套卡片；差异值用颜色和箭头表达。
 
 涉及文件：
 
-- `src/history.rs`：过滤、排序、摘要对比函数。
-- `src/model.rs`：必要时新增 `CombatSessionDiff` 纯结构。
-- `src/app.rs`：历史选择状态、对比 UI、详情复用组件。
+- `src/storage/history.rs`：过滤、排序、摘要对比函数。
+- `src/engine/model.rs`：必要时新增 `CombatSessionDiff` 纯结构。
+- `src/app/`：历史选择状态、对比 UI、详情复用组件。
 
 注意事项：
 
@@ -157,17 +157,17 @@
 
 调整方向：
 
-- 在 `src/abyss_data.rs` 或 `src/model.rs` 增加纯计算函数：`line_hp_by_wave`、`required_dps_for_target_time`、`predict_wave_clear_times`。
-- 在 `src/app.rs` 的深渊数值窗口中扩展每条线路 header：显示总 HP、预计耗时、目标时间输入、所需 DPS。
-- 增加“从历史选择队伍”入口，读取 `src/history.rs` 的摘要；没有历史模块时可先只增强当前导入队伍。
+- 在 `src/engine/abyss_data.rs` 或 `src/engine/model.rs` 增加纯计算函数：`line_hp_by_wave`、`required_dps_for_target_time`、`predict_wave_clear_times`。
+- 在 `src/app/` 的深渊数值窗口中扩展每条线路 header：显示总 HP、预计耗时、目标时间输入、所需 DPS。
+- 增加“从历史选择队伍”入口，读取 `src/storage/history.rs` 的摘要；没有历史模块时可先只增强当前导入队伍。
 - 波次展示使用紧凑横条：每波一段，段宽按 HP 占比，tooltip 显示怪物、数量、HP、预计秒数。
 
 涉及文件：
 
-- `src/abyss_data.rs`：如需要按波次汇总怪物 HP，放纯数据计算，不依赖 UI。
-- `src/model.rs`：预测结果结构可放这里，保持可测试。
-- `src/app.rs`：深渊窗口 UI、目标时间输入、队伍选择状态。
-- `src/history.rs`：历史队伍选择完成后接入。
+- `src/engine/abyss_data.rs`：如需要按波次汇总怪物 HP，放纯数据计算，不依赖 UI。
+- `src/engine/model.rs`：预测结果结构可放这里，保持可测试。
+- `src/app/`：深渊窗口 UI、目标时间输入、队伍选择状态。
+- `src/storage/history.rs`：历史队伍选择完成后接入。
 - `README.md`：说明预测只是基于当前 DPS 和静态 HP 的估算。
 
 注意事项：
@@ -184,16 +184,16 @@
 
 调整方向：
 
-- 新增纯检查模块，可以放 `src/resource_audit.rs`，只读取仓库内 `res/`，不触碰授权客户端资源。
+- 新增纯检查模块，可以放 `src/support/resource_audit.rs`，只读取仓库内 `res/`，不触碰授权客户端资源。
 - 检查结果结构包括 severity、category、resource id、display name、suggested source。
-- 在 `src/app.rs` Debug 或 Console 增加“资源”页，只在 debug 构建或维护入口展示。
+- 在 `src/app/` Debug 或 Console 增加“资源”页，只在 debug 构建或维护入口展示。
 - 工具侧 `tools/nte_asset_pipeline.py` 已经会生成报告，主程序面板只做运行资源覆盖检查，不调用 Python。
 
 涉及文件：
 
-- `src/resource_audit.rs`：新增文件，做轻量资源完整性检查。
-- `src/app.rs`：新增资源页和筛选 UI。
-- `src/parser.rs`：暴露已有资源路径常量时注意不要引入循环依赖。
+- `src/support/resource_audit.rs`：新增文件，做轻量资源完整性检查。
+- `src/app/`：新增资源页和筛选 UI。
+- `src/engine/parser.rs`：暴露已有资源路径常量时注意不要引入循环依赖。
 - `tools/README.md`：如资源面板能辅助维护，补充说明。
 
 注意事项：
@@ -208,17 +208,17 @@
 
 调整方向：
 
-- 复用 `src/network.rs` 的 `HTGame.exe` 检测、Npcap 动态加载错误、设备枚举、BPF 设置结果、原始 PCAPNG 写入状态。
-- 新增 `DiagnosticCheck` 结构，建议放 `src/capture.rs` 或新文件 `src/diagnostics.rs`；UI 只消费检查结果。
-- 在 `src/app.rs` 的“诊断”页增加“运行诊断”按钮，逐项显示状态：通过、警告、失败、建议。
+- 复用 `src/platform/network.rs` 的 `HTGame.exe` 检测、Npcap 动态加载错误、设备枚举、BPF 设置结果、原始 PCAPNG 写入状态。
+- 新增 `DiagnosticCheck` 结构，建议放 `src/engine/capture.rs` 或新文件 `src/support/diagnostics.rs`；UI 只消费检查结果。
+- 在 `src/app/` 的“诊断”页增加“运行诊断”按钮，逐项显示状态：通过、警告、失败、建议。
 - 支持复制脱敏诊断报告，不包含本机 IP、网卡 GUID、完整路径或 payload。
 
 涉及文件：
 
-- `src/diagnostics.rs`：可新增，承载诊断模型和组合逻辑。
-- `src/network.rs`：必要时拆出更细的检查函数，但保持 Windows API 边界。
-- `src/capture.rs`：复用 Npcap 加载/设备枚举错误；不要让诊断影响实时抓包状态。
-- `src/app.rs`：诊断向导 UI、复制脱敏结果。
+- `src/support/diagnostics.rs`：可新增，承载诊断模型和组合逻辑。
+- `src/platform/network.rs`：必要时拆出更细的检查函数，但保持 Windows API 边界。
+- `src/engine/capture.rs`：复用 Npcap 加载/设备枚举错误；不要让诊断影响实时抓包状态。
+- `src/app/`：诊断向导 UI、复制脱敏结果。
 
 注意事项：
 
@@ -232,16 +232,16 @@
 
 调整方向：
 
-- 在 `src/config.rs` 增加 HUD 配置结构，例如 `HudConfig`，字段包括模块开关、最大角色数、是否显示标题、曲线开关。
-- 在 `src/app.rs` 把当前 `hud_panel()` 拆成小组件：`hud_summary_row`、`hud_character_rows`、`hud_abyss_row`、`hud_mini_timeline`。
+- 在 `src/storage/config.rs` 增加 HUD 配置结构，例如 `HudConfig`，字段包括模块开关、最大角色数、是否显示标题、曲线开关。
+- 在 `src/app/` 把当前 `hud_panel()` 拆成小组件：`hud_summary_row`、`hud_character_rows`、`hud_abyss_row`、`hud_mini_timeline`。
 - 设置页增加 HUD 区域，使用 checkbox/toggle 和小数字输入，不要塞太多文字说明。
 - 保持透明背景和窗口穿透行为不变，避免影响现有游戏内覆盖体验。
 
 涉及文件：
 
-- `src/config.rs`：新增 `HudConfig`，默认保持当前 HUD 行为。
-- `src/app.rs`：拆分 HUD 绘制函数，设置页新增 HUD 控制。
-- `src/window_attributes.rs`、`src/hotkey.rs`：一般不需要改；只有新增快捷键时再动。
+- `src/storage/config.rs`：新增 `HudConfig`，默认保持当前 HUD 行为。
+- `src/app/`：拆分 HUD 绘制函数，设置页新增 HUD 控制。
+- `src/platform/window_attributes.rs`、`src/platform/hotkey.rs`：一般不需要改；只有新增快捷键时再动。
 
 注意事项：
 
@@ -263,7 +263,7 @@
 
 涉及文件：
 
-- 研究分支可新增独立模块；主线最多触碰 `src/model.rs` 的匿名序列摘要和 `src/app.rs` 的 Debug 诊断展示。
+- 研究分支可新增独立模块；主线最多触碰 `src/engine/model.rs` 的匿名序列摘要和 `src/app/` 的 Debug 诊断展示。
 - 不要修改 `README.md` 让用户以为主线已经支持敌方目标识别。
 
 注意事项：

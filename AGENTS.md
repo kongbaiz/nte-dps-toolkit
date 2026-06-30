@@ -12,25 +12,32 @@
 
 - 不提交 `target/`、`logs/`、`data/`、`NTE_Assets/`、资源工具外部依赖目录、C# `bin/obj`、`.env`、资源导出 AES key、`*.usmap`、完整解包数据或抓包样本。
 - 不把资源导出 AES key、授权资源路径、完整载荷、PCAP 内容、用户本机路径写入日志、报告或提交说明。
-- `src/encrypted_ini.rs` 中用于 NTE 加密 INI 读写的固定 key 属于长期稳定的协议兼容常量，可保留；不得把资源解包/导出 AES key 或用户授权 key 写入源码。
+- `src/support/encrypted_ini.rs` 中用于 NTE 加密 INI 读写的固定 key 属于长期稳定的协议兼容常量，可保留；不得把资源解包/导出 AES key 或用户授权 key 写入源码。
 - 不绕过现有 debug 回放链路：实时抓包、JSON 导出导入、PCAPNG 导入必须尽量复用同一稳定解析流程。
 - 不在 `master` 主线重新启用敌方目标识别显示；相关研究只应在 `research/scene-target-identification` 或明确授权的分支进行。
 - 不无理由提高 Rust 最低版本、.NET 目标版本、Python 版本或升级 `egui/eframe` 主版本。
 
 ## 架构边界
 
+源码按职责分目录：`src/app/`（UI）、`src/engine/`（采集→解析→模型管线）、`src/platform/`（Win32/系统集成）、`src/storage/`（持久化与资源读取）、`src/support/`（调试/维护辅助）。`src/main.rs` 只声明这五个目录模块。
+
 - `src/main.rs`：启动入口，只负责 panic 日志、配置加载、`eframe::NativeOptions` 和 `DpsApp` 创建。
-- `src/app.rs`：UI、应用状态和事件编排。不要把新解析算法、资源扫描、网络枚举或长耗时任务塞进帧渲染路径；必要时下沉到独立模块。
-- `src/capture.rs`：Npcap FFI、设备枚举、实时抓包、PCAPNG/JSON 导入、原始帧写入和 `EngineEvent` 产生。不得依赖 UI。
-- `src/protocol.rs`：UE 传输层位级解析。必须保持纯函数、确定性、无文件系统、无时间、无 UI。
-- `src/parser.rs`：伤害载荷、GameplayEffect、技能分类和资源表读取。解析失败应返回 `Option`/`Result`，不得 panic。
-- `src/model.rs`：领域模型、序列化结构、战斗聚合和深渊状态。不得加入 UI 或 Win32 API。
-- `src/network.rs`：Windows 进程和 TCP 连接检测，仅用于定位 `HTGame.exe` 的本机 IP 与网卡。
-- `src/config.rs`：UI 配置加载、保存、迁移与净化。新增字段必须有默认值和兼容旧 JSON 的行为。
-- `src/character_editor.rs`：角色表 Debug 编辑器的数据状态、JSON 字段读写和表单校验。不得依赖 egui。
-- `src/encrypted_ini.rs`：NTE 加密 INI 的解析、搜索、加解密和记录复用。不得依赖 UI，不得用于资源解包。
-- `src/io_util.rs`：原子写文件等通用 I/O 辅助。不得依赖 UI。
-- `src/window_attributes.rs`：Win32 窗口圆角、透明度和进程窗口属性处理。平台相关 `unsafe` 必须有 `SAFETY:` 注释。
+- `src/app/`：UI、应用状态和事件编排。`mod.rs` 持有 `DpsApp` 结构、`eframe::App`/`Drop` 实现、共享辅助类型/常量与测试模块；按窗口/页签拆分为子模块（方法子模块 `lifecycle`、`main_view`、`detail_panels`、`console_view` 以 `impl DpsApp` 续写；视图/自由函数子模块 `abyss`、`hit_detail`、`timeline`、`history_ui`、`resources`、`diagnostics_ui`、`editor`、`chrome`、`hud`、`theme`，由 `mod.rs` 以 `pub(crate) use` 再导出，子模块统一 `use super::*` 共享一个扁平 `app` 命名空间）。不要把新解析算法、资源扫描、网络枚举或长耗时任务塞进帧渲染路径；必要时下沉到对应非 UI 模块。
+- `src/engine/capture.rs`：Npcap FFI、设备枚举、实时抓包、PCAPNG/JSON 导入、原始帧写入和 `EngineEvent` 产生。不得依赖 UI。
+- `src/engine/protocol.rs`：UE 传输层位级解析。必须保持纯函数、确定性、无文件系统、无时间、无 UI。
+- `src/engine/parser.rs`：伤害载荷、GameplayEffect、技能分类和资源表读取。解析失败应返回 `Option`/`Result`，不得 panic。
+- `src/engine/model.rs`：领域模型、序列化结构、战斗聚合和深渊状态。不得加入 UI 或 Win32 API。
+- `src/engine/abyss_data.rs`：深渊怪物静态表、数值与波次预测的纯数据计算。不得依赖 UI。
+- `src/platform/network.rs`：Windows 进程和 TCP 连接检测，仅用于定位 `HTGame.exe` 的本机 IP 与网卡。
+- `src/platform/window_attributes.rs`：Win32 窗口圆角、透明度和进程窗口属性处理。平台相关 `unsafe` 必须有 `SAFETY:` 注释。
+- `src/platform/hotkey.rs`、`src/platform/file_drop.rs`：全局穿透热键与原生文件拖放桥接，平台相关边界同上。
+- `src/storage/config.rs`：UI 配置加载、保存、迁移与净化。新增字段必须有默认值和兼容旧 JSON 的行为。
+- `src/storage/history.rs`：本地脱敏战斗历史库的结构、读写、迁移与裁剪。
+- `src/storage/io_util.rs`：原子写文件等通用 I/O 辅助。不得依赖 UI。
+- `src/storage/resource.rs`：内嵌/外置运行资源的字节与文本读取。
+- `src/support/character_editor.rs`：角色表 Debug 编辑器的数据状态、JSON 字段读写和表单校验。不得依赖 egui。
+- `src/support/encrypted_ini.rs`：NTE 加密 INI 的解析、搜索、加解密和记录复用。不得依赖 UI，不得用于资源解包。
+- `src/support/diagnostics.rs`、`src/support/resource_audit.rs`：采集诊断与运行资源覆盖率检查，只消费只读数据，不得阻塞帧。
 - `build.rs`：资源内嵌和 Windows 图标。输出必须确定，新增资源路径需保持大小写和分隔符稳定。
 - `res/`：稳定运行资源。手工字段优先保留，批量生成必须说明来源。
 - 资源导出、CUE4Parse probe 和离线资源维护工具已迁出到独立私有仓库 `kongbaiz/nte-resource-exporter`。主程序仓库不得依赖这些工具运行。
