@@ -4,9 +4,23 @@ on:
   push:
     branches:
       - master
+    paths:
+      - "src/**"
+      - "res/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - ".github/workflows/build.yml"
   pull_request:
     branches:
       - master
+    paths:
+      - "src/**"
+      - "res/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -80,7 +94,6 @@ jobs:
           }
 
           foreach ($variant in $variantNotes.Keys) {
-            Copy-Item README.md, LICENSE, NOTICE.md, THIRD_PARTY_LICENSES.md "dist/$variant/"
             $variantNotes[$variant] | Set-Content -Encoding UTF8 "dist/$variant/BUILD_VARIANT.md"
             Compress-Archive -Path "dist/$variant/*" -DestinationPath "$variant.zip" -Force
           }

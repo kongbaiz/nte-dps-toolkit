@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+  (function(){
+    var saved = null;
+    try { saved = localStorage.getItem('nte-dps-theme'); } catch(e){}
+    var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<title>NTE DPS Toolkit — 异环 / Neverness to Everness 实时 DPS 伤害分析工具</title>
+<meta name="description" content="NTE DPS Toolkit 是基于 Rust + egui 的本机实时 DPS（每秒伤害）分析与战斗诊断工具，支持角色/技能伤害统计、深渊上下行线预测、抓包回放与 Debug 面板。开源、完全本机运行、不上传任何数据。Real-time DPS analyzer for Neverness to Everness (NTE), built with Rust, runs 100% locally.">
+<meta name="keywords" content="NTE DPS Toolkit, NTE DPS, 异环 DPS, Neverness to Everness DPS, DPS Analyzer, 伤害分析工具, 战斗诊断, 深渊预测, Npcap, egui, Rust, 封包解析">
+<meta name="author" content="kongbaiz">
+<link rel="canonical" href="https://dps.o-na-ni.com/">
+
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="NTE DPS Toolkit">
+<meta property="og:title" content="NTE DPS Toolkit — 异环实时 DPS 伤害分析工具">
+<meta property="og:description" content="基于 Rust + egui 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。开源、本机运行、不上传数据。">
+<meta property="og:image" content="https://dps.o-na-ni.com/assets/img/main_menu.png">
+<meta property="og:url" content="https://dps.o-na-ni.com/">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="NTE DPS Toolkit — 异环实时 DPS 伤害分析工具">
+<meta name="twitter:description" content="基于 Rust + egui 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。">
+<meta name="twitter:image" content="https://dps.o-na-ni.com/assets/img/main_menu.png">
+
+<link rel="icon" type="image/png" href="assets/img/app-icon.png">
+<link rel="apple-touch-icon" href="assets/img/app-icon.png">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "NTE DPS Toolkit",
+  "alternateName": "NTE DPS Tool",
+  "description": "本机运行的 NTE（异环 / Neverness to Everness）实时 DPS 伤害分析与战斗诊断工具，基于 Rust + egui，通过 Npcap 解析本机网络流量统计伤害、技能和深渊数据。",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Windows 10, Windows 11",
+  "softwareVersion": "see GitHub Releases",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "license": "https://github.com/kongbaiz/nte-dps-toolkit/blob/master/LICENSE",
+  "downloadUrl": "https://github.com/kongbaiz/nte-dps-toolkit/releases/latest",
+  "codeRepository": "https://github.com/kongbaiz/nte-dps-toolkit",
+  "author": {
+    "@type": "Person",
+    "name": "kongbaiz"
+  }
+}
+</script>
+
+<style>
+  :root{
+    --bg: #0d1117;
+    --bg-soft: #131a23;
+    --card: #161d27;
+    --border: #232b36;
+    --text: #e6edf3;
+    --text-dim: #9aa7b4;
+    --accent: #5ec8ff;
+    --accent-2: #7b68ee;
+    --good: #3fb950;
+    --header-bg: rgba(13,17,23,0.85);
+    --shadow: rgba(0,0,0,0.45);
+  }
+  :root[data-theme="light"]{
+    --bg: #f6f8fa;
+    --bg-soft: #ffffff;
+    --card: #ffffff;
+    --border: #d8dee4;
+    --text: #1b1f24;
+    --text-dim: #57606a;
+    --accent: #0969da;
+    --accent-2: #6639ba;
+    --good: #1a7f37;
+    --header-bg: rgba(246,248,250,0.85);
+    --shadow: rgba(140,149,159,0.25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    transition: background-color .2s ease, color .2s ease;
+  }
+  a{color: var(--accent); text-decoration:none}
+  a:hover{text-decoration:underline}
+  img{max-width:100%; display:block}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px}
+
+  header.site{
+    position: sticky; top:0; z-index:10;
+    background: var(--header-bg);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav{display:flex; align-items:center; justify-content:space-between; padding:14px 0}
+  .brand{display:flex; align-items:center; gap:10px; font-weight:700; font-size:18px}
+  .brand img{width:28px; height:28px; border-radius:6px}
+  .nav-links{display:flex; align-items:center; gap:20px; font-size:14px}
+  .nav-links a{color: var(--text-dim)}
+  .nav-links a:hover{color: var(--text)}
+  #lang-toggle, #theme-toggle{
+    background: var(--card); border:1px solid var(--border); color:var(--text);
+    padding:6px 12px; border-radius:6px; cursor:pointer; font-size:13px;
+  }
+  #lang-toggle:hover, #theme-toggle:hover{border-color: var(--accent)}
+  #theme-toggle{display:flex; align-items:center; justify-content:center; width:32px; padding:6px; font-size:15px; line-height:1}
+
+  .hero{padding:64px 0 40px; text-align:center}
+  .hero h1{font-size:34px; margin:0 0 12px; font-weight:800}
+  .hero .tagline{color: var(--text-dim); font-size:17px; max-width:640px; margin:0 auto 28px}
+  .badges{display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:28px}
+  .badges img{height:20px}
+  .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-bottom:40px}
+  .btn{
+    padding:11px 22px; border-radius:8px; font-weight:600; font-size:15px;
+    display:inline-flex; align-items:center; gap:8px;
+  }
+  .btn-primary{background: var(--accent); color:#04131d}
+  .btn-primary:hover{background:#7fd4ff; text-decoration:none}
+  .btn-secondary{background: var(--card); border:1px solid var(--border); color:var(--text)}
+  .btn-secondary:hover{border-color: var(--accent); text-decoration:none}
+  .hero-shot{
+    border-radius:12px; border:1px solid var(--border);
+    box-shadow: 0 20px 60px var(--shadow);
+    max-width: 720px; margin: 0 auto;
+  }
+
+  section{padding:48px 0; border-top:1px solid var(--border)}
+  h2{font-size:24px; margin:0 0 28px; text-align:center}
+  .disclaimer{
+    font-size:13px; color: var(--text-dim); text-align:center; max-width:700px;
+    margin:0 auto; padding:16px 0 0;
+  }
+
+  .grid-features{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px;
+  }
+  .feature{
+    background: var(--card); border:1px solid var(--border); border-radius:10px; padding:18px 20px;
+  }
+  .feature h3{margin:0 0 6px; font-size:15px; color: var(--accent)}
+  .feature p{margin:0; font-size:14px; color: var(--text-dim)}
+
+  .gallery{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px;
+  }
+  .gallery figure{margin:0; background:var(--card); border:1px solid var(--border); border-radius:10px; overflow:hidden}
+  .gallery img{width:100%}
+  .gallery figcaption{padding:10px 14px; font-size:13px; color:var(--text-dim)}
+
+  .usecases{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px}
+  .usecases div{background:var(--bg-soft); border:1px solid var(--border); border-radius:10px; padding:16px 18px}
+  .usecases h3{margin:0 0 6px; font-size:15px}
+  .usecases p{margin:0; font-size:14px; color:var(--text-dim)}
+
+  .install{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px 24px}
+  .install ol{margin:0; padding-left:20px; font-size:14px; color:var(--text-dim)}
+  .install li{margin-bottom:8px}
+  .install code, pre code{
+    background:#0a0f15; color:#a8e6a3; padding:2px 6px; border-radius:4px; font-size:13px;
+  }
+  pre{background:#0a0f15; border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow-x:auto}
+  pre code{background:none; padding:0}
+
+  footer{padding:36px 0 48px; border-top:1px solid var(--border); text-align:center}
+  .footer-links{display:flex; gap:18px; justify-content:center; flex-wrap:wrap; font-size:14px; margin-bottom:14px}
+  .copyright{font-size:12px; color: var(--text-dim)}
+
+  [data-lang="zh"] .lang-en{display:none}
+  [data-lang="en"] .lang-zh{display:none}
+
+  @media (max-width:600px){
+    .hero h1{font-size:26px}
+    .nav-links span.nl-text{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap nav">
+    <div class="brand">
+      <img src="assets/img/app-icon.png" alt="NTE DPS Toolkit logo">
+      <span>NTE DPS Toolkit</span>
+    </div>
+    <div class="nav-links">
+      <a href="#features"><span class="lang-zh">功能</span><span class="lang-en">Features</span></a>
+      <a href="#screenshots"><span class="lang-zh">截图</span><span class="lang-en">Screenshots</span></a>
+      <a href="#install"><span class="lang-zh">安装</span><span class="lang-en">Install</span></a>
+      <a href="https://github.com/kongbaiz/nte-dps-toolkit" target="_blank" rel="noopener">GitHub</a>
+      <button id="lang-toggle" type="button">English</button>
+      <button id="theme-toggle" type="button" aria-label="Toggle light/dark theme">🌙</button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <h1>
+      <span class="lang-zh">NTE 实时 DPS 伤害分析 &amp; 战斗诊断工具</span>
+      <span class="lang-en">Real-time DPS Analysis &amp; Combat Diagnostics for NTE</span>
+    </h1>
+    <p class="tagline">
+      <span class="lang-zh">基于 Rust + egui，完全在你的电脑本机运行。通过 Npcap 解析本机网络流量，统计角色 / 技能伤害，预测深渊清线时间——不联网上传任何数据。</span>
+      <span class="lang-en">Built with Rust + egui, runs 100% on your own machine. Parses local network traffic via Npcap to track per-character / per-skill damage and predict Abyss clear times — no data is ever uploaded.</span>
+    </p>
+
+    <div class="badges">
+      <img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License AGPL v3">
+      <img src="https://img.shields.io/badge/commercial%20license-available-orange.svg" alt="Commercial license available">
+      <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg?logo=windows" alt="Platform Windows 10/11">
+      <img src="https://img.shields.io/badge/Rust-1.85%2B-000000.svg?logo=rust" alt="Rust 1.85+">
+      <img src="https://img.shields.io/github/stars/kongbaiz/nte-dps-toolkit?style=social" alt="GitHub stars">
+    </div>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/kongbaiz/nte-dps-toolkit/releases/latest" target="_blank" rel="noopener">
+        <span class="lang-zh">下载最新版本</span><span class="lang-en">Download Latest Release</span>
+      </a>
+      <a class="btn btn-secondary" href="https://github.com/kongbaiz/nte-dps-toolkit" target="_blank" rel="noopener">
+        <span class="lang-zh">查看源代码</span><span class="lang-en">View Source on GitHub</span>
+      </a>
+    </div>
+
+    <img class="hero-shot" src="assets/img/main_menu.png" alt="NTE DPS Toolkit 主界面总览截图 / main overview screenshot">
+  </section>
+
+  <section id="features" class="wrap">
+    <h2><span class="lang-zh">功能特点</span><span class="lang-en">Features</span></h2>
+    <div class="grid-features">
+      <div class="feature">
+        <h3><span class="lang-zh">实时 DPS 统计</span><span class="lang-en">Real-time DPS stats</span></h3>
+        <p><span class="lang-zh">实时计算总伤害、DPS、命中数、受击统计和战斗时长。</span><span class="lang-en">Live total damage, DPS, hit count, taken-damage, and combat duration.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">角色维度分析</span><span class="lang-en">Per-character analysis</span></h3>
+        <p><span class="lang-zh">按角色展示伤害、占比、命中数、DPS、技能分类和可筛选命中明细。</span><span class="lang-en">Damage, share, hit count, DPS, skill categories, and filterable hit details per character.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">技能与效果映射</span><span class="lang-en">Skill &amp; effect mapping</span></h3>
+        <p><span class="lang-zh">解析并展示 GameplayEffect 映射、技能分类、ability_name、damage_name、attack_type。</span><span class="lang-en">Parses GameplayEffect mappings, skill categories, ability_name, damage_name, attack_type.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">深渊上 / 下行线统计</span><span class="lang-en">Abyss up/down-line stats</span></h3>
+        <p><span class="lang-zh">独立统计上下行线，保留重开、进线、通关和离开事件状态。</span><span class="lang-en">Tracked independently, preserving restart, line-entry, clear, and exit events.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">深渊预测</span><span class="lang-en">Abyss prediction</span></h3>
+        <p><span class="lang-zh">按上下行线估算清怪时间，或按目标时间反推所需 DPS。</span><span class="lang-en">Estimate clear time per line, or back-solve the DPS needed for a target time.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">Console 复盘面板</span><span class="lang-en">Console review panel</span></h3>
+        <p><span class="lang-zh">战斗时间轴、技能占比、解析质量与本地历史页，支持保存与对比脱敏战斗摘要。</span><span class="lang-en">Combat timeline, skill share, parse quality, and a local history page with save/compare.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">抓包与回放</span><span class="lang-en">Capture &amp; replay</span></h3>
+        <p><span class="lang-zh">实时保存完整帧到 pcapng；支持导出 JSON、导入回放用于 Debug。</span><span class="lang-en">Saves full frames to pcapng live; export JSON, import for debug replay.</span></p>
+      </div>
+      <div class="feature">
+        <h3><span class="lang-zh">本机运行，不上传数据</span><span class="lang-en">100% local, no uploads</span></h3>
+        <p><span class="lang-zh">所有解析与存储都在本机完成，不依赖任何远程服务器。</span><span class="lang-en">All parsing and storage happen on your machine — no remote server involved.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="screenshots" class="wrap">
+    <h2><span class="lang-zh">截图</span><span class="lang-en">Screenshots</span></h2>
+    <div class="gallery">
+      <figure>
+        <img src="assets/img/character_battle_detail.png" alt="角色战斗明细截图 / per-character battle detail screenshot" loading="lazy">
+        <figcaption><span class="lang-zh">角色战斗明细</span><span class="lang-en">Per-character battle detail</span></figcaption>
+      </figure>
+      <figure>
+        <img src="assets/img/team_battle_detail.png" alt="队伍战斗明细截图 / team battle detail screenshot" loading="lazy">
+        <figcaption><span class="lang-zh">队伍战斗明细</span><span class="lang-en">Team battle detail</span></figcaption>
+      </figure>
+      <figure>
+        <img src="assets/img/abyss.png" alt="深渊统计与预测截图 / Abyss stats and prediction screenshot" loading="lazy">
+        <figcaption><span class="lang-zh">深渊统计与预测</span><span class="lang-en">Abyss stats &amp; prediction</span></figcaption>
+      </figure>
+      <figure>
+        <img src="assets/img/timeline.png" alt="战斗时间轴截图 / combat timeline screenshot" loading="lazy">
+        <figcaption><span class="lang-zh">战斗时间轴</span><span class="lang-en">Combat timeline</span></figcaption>
+      </figure>
+      <figure>
+        <img src="assets/img/history.png" alt="本地历史记录截图 / local history screenshot" loading="lazy">
+        <figcaption><span class="lang-zh">本地历史记录</span><span class="lang-en">Local history</span></figcaption>
+      </figure>
+      <figure>
+        <img src="assets/img/HUD.png" alt="可定制 HUD 截图 / customizable HUD screenshot" loading="lazy">
+        <figcaption><span class="lang-zh">可定制 HUD</span><span class="lang-en">Customizable HUD</span></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wrap">
+    <h2><span class="lang-zh">使用场景</span><span class="lang-en">Use Cases</span></h2>
+    <div class="usecases">
+      <div>
+        <h3><span class="lang-zh">战斗复盘</span><span class="lang-en">Combat review</span></h3>
+        <p><span class="lang-zh">记录单场战斗的总伤害、DPS 曲线和命中明细，找出输出循环的瓶颈。</span><span class="lang-en">Record total damage, DPS curve, and hit details to find rotation bottlenecks.</span></p>
+      </div>
+      <div>
+        <h3><span class="lang-zh">配队评估</span><span class="lang-en">Team evaluation</span></h3>
+        <p><span class="lang-zh">按角色对比伤害占比与技能贡献，验证不同队伍的输出表现。</span><span class="lang-en">Compare damage share and skill contribution across characters and teams.</span></p>
+      </div>
+      <div>
+        <h3><span class="lang-zh">深渊规划</span><span class="lang-en">Abyss planning</span></h3>
+        <p><span class="lang-zh">用历史队伍 DPS 与静态怪物 HP 估算清怪时间，或反推目标 DPS。</span><span class="lang-en">Use historical team DPS and static monster HP to estimate clear time or target DPS.</span></p>
+      </div>
+      <div>
+        <h3><span class="lang-zh">数据研究</span><span class="lang-en">Data research</span></h3>
+        <p><span class="lang-zh">导出 JSON / PCAPNG 离线分析，或导入样本做可复现的解析回放。</span><span class="lang-en">Export JSON / PCAPNG for offline analysis, or import samples for reproducible replay.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="install" class="wrap">
+    <h2><span class="lang-zh">安装方式</span><span class="lang-en">Installation</span></h2>
+    <div class="install">
+      <p class="lang-zh">普通使用只需要 Rust、Npcap 和仓库内的 <code>res</code> 资源：</p>
+      <p class="lang-en">For normal use, you only need Rust, Npcap, and the bundled <code>res</code> assets:</p>
+      <pre><code>git clone https://github.com/kongbaiz/nte-dps-toolkit.git
+cd nte-dps-toolkit
+cargo test
+cargo run --release</code></pre>
+      <ol>
+        <li><span class="lang-zh">安装 <a href="https://npcap.com/" target="_blank" rel="noopener">Npcap</a> 并启用 WinPcap API-compatible Mode。</span><span class="lang-en">Install <a href="https://npcap.com/" target="_blank" rel="noopener">Npcap</a> with WinPcap API-compatible Mode enabled.</span></li>
+        <li><span class="lang-zh">以管理员身份运行程序（实时抓包通常需要）。</span><span class="lang-en">Run as Administrator (usually required for live packet capture).</span></li>
+        <li><span class="lang-zh">启动 NTE 客户端，工具会自动选择网卡和本机 IP。</span><span class="lang-en">Launch the NTE client; the tool auto-selects the adapter and local IP.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <p class="disclaimer">
+    <span class="lang-zh">本项目为独立社区工具，与 NTE 游戏发行方、开发方、平台方或相关权利方无从属、授权、背书或合作关系。</span>
+    <span class="lang-en">This is an independent community tool with no affiliation, authorization, endorsement, or partnership with the NTE publisher, developer, platform, or related rights holders.</span>
+  </p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="footer-links">
+      <a href="https://github.com/kongbaiz/nte-dps-toolkit" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/kongbaiz/nte-dps-toolkit/releases" target="_blank" rel="noopener"><span class="lang-zh">发布版本</span><span class="lang-en">Releases</span></a>
+      <a href="https://github.com/kongbaiz/nte-dps-toolkit/issues" target="_blank" rel="noopener"><span class="lang-zh">问题反馈</span><span class="lang-en">Issues</span></a>
+      <a href="https://github.com/kongbaiz/nte-dps-toolkit/blob/master/LICENSE" target="_blank" rel="noopener">AGPL v3</a>
+      <a href="https://github.com/kongbaiz/nte-dps-toolkit/blob/master/LICENSING.md" target="_blank" rel="noopener"><span class="lang-zh">商业授权</span><span class="lang-en">Commercial License</span></a>
+    </div>
+    <p class="copyright">&copy; <span id="year"></span> kongbaiz · NTE DPS Toolkit</p>
+  </div>
+</footer>
+
+<script>
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  var toggle = document.getElementById('lang-toggle');
+  var html = document.documentElement;
+
+  function applyLang(lang){
+    html.setAttribute('data-lang', lang);
+    html.setAttribute('lang', lang === 'en' ? 'en' : 'zh-CN');
+    toggle.textContent = lang === 'en' ? '中文' : 'English';
+    try { localStorage.setItem('nte-dps-lang', lang); } catch(e){}
+  }
+
+  var saved = null;
+  try { saved = localStorage.getItem('nte-dps-lang'); } catch(e){}
+  if(!saved){
+    saved = (navigator.language || '').toLowerCase().indexOf('zh') === 0 ? 'zh' : 'zh';
+  }
+  applyLang(saved);
+
+  toggle.addEventListener('click', function(){
+    var current = html.getAttribute('data-lang');
+    applyLang(current === 'en' ? 'zh' : 'en');
+  });
+
+  var themeToggle = document.getElementById('theme-toggle');
+
+  function applyTheme(theme){
+    html.setAttribute('data-theme', theme);
+    themeToggle.textContent = theme === 'light' ? '☀️' : '🌙';
+    try { localStorage.setItem('nte-dps-theme', theme); } catch(e){}
+  }
+
+  applyTheme(html.getAttribute('data-theme') || 'dark');
+
+  themeToggle.addEventListener('click', function(){
+    var current = html.getAttribute('data-theme');
+    applyTheme(current === 'light' ? 'dark' : 'light');
+  });
+</script>
+
+</body>
+</html>
