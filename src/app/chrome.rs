@@ -135,6 +135,11 @@ pub(crate) fn confirmation_content(
             format!("删除历史摘要 {record_id} 后不可撤销。"),
             "删除",
         ),
+        ConfirmationAction::ClearCaptureLogs => (
+            "确认清空",
+            "将删除 logs 目录下的全部原始抓包文件（nte_raw_*.pcapng）；正在抓包时当前文件会被占用而保留。此操作不可撤销。".to_owned(),
+            "清空",
+        ),
     }
 }
 

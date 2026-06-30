@@ -1156,6 +1156,19 @@ impl DpsApp {
                                 .speed(1),
                         );
                         ui.end_row();
+                        ui.label("预设");
+                        ui.horizontal(|ui| {
+                            if ui.button("精简").clicked() {
+                                self.hud_config = HudConfig::minimal();
+                            }
+                            if ui.button("标准").clicked() {
+                                self.hud_config = HudConfig::default();
+                            }
+                            if ui.button("详细").clicked() {
+                                self.hud_config = HudConfig::detailed();
+                            }
+                        });
+                        ui.end_row();
                     });
             });
         self.hud_config = self.hud_config.clone().sanitized();
@@ -1182,6 +1195,34 @@ impl DpsApp {
                     }
                 });
                 ui.small("导入/导出与场景无关，大世界与深渊均可使用");
+            });
+        egui::CollapsingHeader::new("抓包文件")
+            .default_open(false)
+            .show(ui, |ui| {
+                if self.capture_log_stats.is_none() {
+                    self.refresh_capture_log_stats();
+                }
+                let stats = self.capture_log_stats.unwrap_or_default();
+                ui.horizontal(|ui| {
+                    ui.label(format!(
+                        "原始抓包：{} 个 · {}",
+                        stats.count,
+                        capture_logs::format_bytes(stats.total_bytes)
+                    ));
+                    if ui.button("刷新").clicked() {
+                        self.refresh_capture_log_stats();
+                    }
+                    if ui
+                        .add_enabled(stats.count > 0, egui::Button::new("清空"))
+                        .clicked()
+                    {
+                        self.request_confirmation_for(
+                            ui.ctx().viewport_id(),
+                            ConfirmationAction::ClearCaptureLogs,
+                        );
+                    }
+                });
+                ui.small("实时抓包会把原始帧写入 logs/nte_raw_*.pcapng；清空不影响统计与历史。");
             });
         egui::CollapsingHeader::new("深渊数值")
             .default_open(true)
