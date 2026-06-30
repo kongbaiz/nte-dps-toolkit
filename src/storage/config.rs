@@ -10,8 +10,6 @@ pub const WINDOW_SCALE_MAX: f32 = 1.5;
 pub const TIMELINE_BUCKET_SECONDS_DEFAULT: f32 = 1.0;
 pub const TIMELINE_BUCKET_SECONDS_MIN: f32 = 0.2;
 pub const TIMELINE_BUCKET_SECONDS_MAX: f32 = 10.0;
-pub const HUD_MAX_CHARACTERS_MIN: usize = 1;
-pub const HUD_MAX_CHARACTERS_MAX: usize = 8;
 
 const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::Home,
@@ -109,7 +107,6 @@ pub struct HudConfig {
     pub show_abyss_half: bool,
     pub show_passthrough_state: bool,
     pub show_mini_timeline: bool,
-    pub max_characters: usize,
 }
 
 impl Default for HudConfig {
@@ -124,7 +121,6 @@ impl Default for HudConfig {
             show_abyss_half: false,
             show_passthrough_state: false,
             show_mini_timeline: false,
-            max_characters: 4,
         }
     }
 }
@@ -144,7 +140,6 @@ impl HudConfig {
             show_abyss_half: false,
             show_passthrough_state: false,
             show_mini_timeline: false,
-            max_characters: 3,
         }
     }
 
@@ -160,14 +155,12 @@ impl HudConfig {
             show_abyss_half: true,
             show_passthrough_state: true,
             show_mini_timeline: true,
-            max_characters: HUD_MAX_CHARACTERS_MAX,
         }
     }
 
-    pub fn sanitized(mut self) -> Self {
-        self.max_characters = self
-            .max_characters
-            .clamp(HUD_MAX_CHARACTERS_MIN, HUD_MAX_CHARACTERS_MAX);
+    /// Retained as the config-sanitize hook even though no field currently needs
+    /// clamping, so callers (and `UiConfig::sanitized`) stay stable.
+    pub fn sanitized(self) -> Self {
         self
     }
 
@@ -398,50 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn sanitizes_hud_config() {
-        assert_eq!(
-            UiConfig {
-                hud: HudConfig {
-                    max_characters: 0,
-                    ..HudConfig::default()
-                },
-                ..UiConfig::default()
-            }
-            .sanitized()
-            .hud
-            .max_characters,
-            HUD_MAX_CHARACTERS_MIN
-        );
-        assert_eq!(
-            UiConfig {
-                hud: HudConfig {
-                    max_characters: 99,
-                    ..HudConfig::default()
-                },
-                ..UiConfig::default()
-            }
-            .sanitized()
-            .hud
-            .max_characters,
-            HUD_MAX_CHARACTERS_MAX
-        );
-    }
-
-    #[test]
-    fn hud_presets_are_in_bounds_and_distinct() {
-        for preset in [
-            HudConfig::minimal(),
-            HudConfig::default(),
-            HudConfig::detailed(),
-        ] {
-            assert_eq!(
-                preset.clone().sanitized(),
-                preset,
-                "preset must be sanitized"
-            );
-            assert!(preset.max_characters >= HUD_MAX_CHARACTERS_MIN);
-            assert!(preset.max_characters <= HUD_MAX_CHARACTERS_MAX);
-        }
+    fn hud_presets_are_distinct() {
         assert_ne!(HudConfig::minimal(), HudConfig::default());
         assert_ne!(HudConfig::detailed(), HudConfig::default());
         assert!(HudConfig::detailed().show_mini_timeline);

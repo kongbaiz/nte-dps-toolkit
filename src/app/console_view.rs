@@ -1170,13 +1170,6 @@ impl DpsApp {
                             ui.checkbox(&mut self.hud_config.show_mini_timeline, "曲线");
                         });
                         ui.end_row();
-                        ui.label("角色数");
-                        ui.add(
-                            egui::DragValue::new(&mut self.hud_config.max_characters)
-                                .range(HUD_MAX_CHARACTERS_MIN..=HUD_MAX_CHARACTERS_MAX)
-                                .speed(1),
-                        );
-                        ui.end_row();
                         ui.label("预设");
                         ui.horizontal(|ui| {
                             if ui.button("精简").clicked() {

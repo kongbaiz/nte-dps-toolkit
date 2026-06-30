@@ -408,8 +408,7 @@ impl DpsApp {
 
     pub(crate) fn hud_visible_row_count(&self) -> usize {
         if self.hud_config.show_character_rows {
-            self.party_member_count()
-                .min(self.hud_config.max_characters)
+            self.party_member_count().min(TEAM_DPS_MAX_MEMBERS)
         } else {
             0
         }
@@ -472,7 +471,7 @@ impl DpsApp {
 
         let (mut rows, total_damage, team_dps, duration) = self.party_readout();
         if self.hud_config.show_character_rows {
-            rows.truncate(self.hud_config.max_characters);
+            rows.truncate(TEAM_DPS_MAX_MEMBERS);
         } else {
             rows.clear();
         }
