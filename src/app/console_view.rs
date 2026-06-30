@@ -1076,6 +1076,27 @@ impl DpsApp {
     /// Always available (not gated behind the debug feature).
     pub(crate) fn settings_contents(&mut self, ui: &mut egui::Ui) {
         let previous_hud_config = self.hud_config.clone();
+        // Two-column, scrollable layout: the tall 解析设置 fills the left column while
+        // HUD and the lighter sections stack on the right, so neither side is empty and
+        // the page scrolls when it overflows the console window.
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.columns(2, |columns| {
+                    self.settings_parse_section(&mut columns[0]);
+                    self.settings_hud_section(&mut columns[1]);
+                    self.settings_team_section(&mut columns[1]);
+                    self.settings_capture_logs_section(&mut columns[1]);
+                    self.settings_abyss_section(&mut columns[1]);
+                });
+            });
+        self.hud_config = self.hud_config.clone().sanitized();
+        if self.hud_config != previous_hud_config {
+            self.hud_size_key = None;
+        }
+    }
+
+    fn settings_parse_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("解析设置")
             .default_open(true)
             .show(ui, |ui| {
@@ -1146,6 +1167,9 @@ impl DpsApp {
                         ui.end_row();
                     });
             });
+    }
+
+    fn settings_hud_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("HUD")
             .default_open(true)
             .show(ui, |ui| {
@@ -1185,10 +1209,9 @@ impl DpsApp {
                         ui.end_row();
                     });
             });
-        self.hud_config = self.hud_config.clone().sanitized();
-        if self.hud_config != previous_hud_config {
-            self.hud_size_key = None;
-        }
+    }
+
+    fn settings_team_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("队伍数据")
             .default_open(true)
             .show(ui, |ui| {
@@ -1210,6 +1233,9 @@ impl DpsApp {
                 });
                 ui.small("导入/导出与场景无关，大世界与深渊均可使用");
             });
+    }
+
+    fn settings_capture_logs_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("抓包文件")
             .default_open(false)
             .show(ui, |ui| {
@@ -1238,6 +1264,9 @@ impl DpsApp {
                 });
                 ui.small("实时抓包会把原始帧写入 logs/nte_raw_*.pcapng；清空不影响统计与历史。");
             });
+    }
+
+    fn settings_abyss_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new("深渊数值")
             .default_open(true)
             .show(ui, |ui| {
