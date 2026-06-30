@@ -139,7 +139,7 @@ res/
 
 | 队伍命中明细 | 角色命中明细 |
 |---|---|
-| <img src="images/team_battle_detail.png" alt="队伍命中明细" width="520"> | <img src="images/char_battle_detail.png" alt="角色命中明细" width="520"> |
+| <img src="images/team_battle_detail.png" alt="队伍命中明细" width="520"> | <img src="images/character_battle_detail.png" alt="角色命中明细" width="520"> |
 
 ### 验证构建
 
