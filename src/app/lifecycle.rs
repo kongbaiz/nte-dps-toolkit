@@ -28,13 +28,47 @@ impl DpsApp {
                 ),
             };
         fill_missing_character_colors_from_avatars(&mut characters, &data_root);
-        let avatar_textures = load_character_avatars(&cc.egui_ctx, &data_root, &characters);
-        let attribute_textures = load_attribute_icons(&cc.egui_ctx, &data_root);
-        let damage_digit_textures = load_damage_digit_textures(&cc.egui_ctx, &data_root);
-        let reaction_textures = load_reaction_text_textures(&cc.egui_ctx, &data_root);
+        let characters = Arc::new(characters);
         let abyss_overview = AbyssOverviewState::load();
         let history = HistoryState::load();
-        let monster_textures = load_monster_textures(&cc.egui_ctx, &data_root, &abyss_overview);
+        // Decode the texture sets (avatars, attribute icons, damage digits,
+        // reaction glyphs, monster portraits) on a background thread so the window
+        // appears immediately instead of blocking on ~6 MB of PNG decode. The maps
+        // start empty; every texture lookup in the draw code already falls back when
+        // a key is missing, so rows show their color/initial placeholder until the
+        // sets stream in. The loader repaints after each set so an idle UI wakes to
+        // pick them up.
+        let (texture_load_sender, texture_load_receiver) = unbounded();
+        {
+            let ctx = cc.egui_ctx.clone();
+            let root = data_root.clone();
+            let avatar_characters = Arc::clone(&characters);
+            let monster_ids = abyss_overview.monster_ids();
+            thread::spawn(move || {
+                let send = |load: TextureLoad| {
+                    if texture_load_sender.send(load).is_ok() {
+                        ctx.request_repaint();
+                    }
+                };
+                send(TextureLoad::Avatars(load_character_avatars(
+                    &ctx,
+                    &root,
+                    &avatar_characters,
+                )));
+                send(TextureLoad::Attributes(load_attribute_icons(&ctx, &root)));
+                send(TextureLoad::DamageDigits(load_damage_digit_textures(
+                    &ctx, &root,
+                )));
+                send(TextureLoad::Reactions(load_reaction_text_textures(
+                    &ctx, &root,
+                )));
+                send(TextureLoad::Monsters(load_monster_textures(
+                    &ctx,
+                    &root,
+                    &monster_ids,
+                )));
+            });
+        }
         let character_editor =
             CharacterEditorState::load(&characters_path).unwrap_or_else(|error| {
                 CharacterEditorState {
@@ -111,12 +145,12 @@ impl DpsApp {
         };
         let last_status_toast = status.clone();
         Self {
-            characters: Arc::new(characters),
-            avatar_textures,
-            attribute_textures,
-            monster_textures,
-            damage_digit_textures,
-            reaction_textures,
+            characters,
+            avatar_textures: HashMap::new(),
+            attribute_textures: HashMap::new(),
+            monster_textures: HashMap::new(),
+            damage_digit_textures: HashMap::new(),
+            reaction_textures: HashMap::new(),
             state: CombatState::default(),
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
@@ -170,6 +204,7 @@ impl DpsApp {
             diagnostics_thread: None,
             diagnostics_report: None,
             diagnostics_running: false,
+            texture_load_receiver,
             paused_events: VecDeque::new(),
             dropped_debug_packets: 0,
             status,
@@ -2052,6 +2087,21 @@ impl DpsApp {
             let summary = audit_runtime_resources();
             let _ = sender.send(summary);
         }));
+    }
+
+    /// Pick up texture sets decoded by the background loader thread and swap them
+    /// into the live maps. Until a set arrives its map stays empty and draw-sites
+    /// fall back gracefully, so this never blocks the first paint.
+    pub(crate) fn drain_texture_loads(&mut self) {
+        while let Ok(load) = self.texture_load_receiver.try_recv() {
+            match load {
+                TextureLoad::Avatars(map) => self.avatar_textures = map,
+                TextureLoad::Attributes(map) => self.attribute_textures = map,
+                TextureLoad::DamageDigits(map) => self.damage_digit_textures = map,
+                TextureLoad::Reactions(map) => self.reaction_textures = map,
+                TextureLoad::Monsters(map) => self.monster_textures = map,
+            }
+        }
     }
 
     pub(crate) fn drain_resource_audit(&mut self) {
