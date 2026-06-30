@@ -35,6 +35,7 @@
 - `src/storage/history.rs`：本地脱敏战斗历史库的结构、读写、迁移与裁剪。
 - `src/storage/io_util.rs`：原子写文件等通用 I/O 辅助。不得依赖 UI。
 - `src/storage/resource.rs`：内嵌/外置运行资源的字节与文本读取。
+- `src/storage/capture_logs.rs`：`logs/nte_raw_*.pcapng` 原始抓包文件的容量统计与清理（纯文件 I/O，不依赖 UI，删除失败的占用文件跳过）。
 - `src/support/character_editor.rs`：角色表 Debug 编辑器的数据状态、JSON 字段读写和表单校验。不得依赖 egui。
 - `src/support/encrypted_ini.rs`：NTE 加密 INI 的解析、搜索、加解密和记录复用。不得依赖 UI，不得用于资源解包。
 - `src/support/diagnostics.rs`、`src/support/resource_audit.rs`：采集诊断与运行资源覆盖率检查，只消费只读数据，不得阻塞帧。
