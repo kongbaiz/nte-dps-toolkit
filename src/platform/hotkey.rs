@@ -5,7 +5,7 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use crate::config::PassthroughHotkey;
+use crate::storage::config::PassthroughHotkey;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui;
 use windows_sys::Win32::Foundation::{GetLastError, LPARAM, LRESULT, WPARAM};

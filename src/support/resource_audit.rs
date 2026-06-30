@@ -5,11 +5,11 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use crate::parser::{
+use crate::engine::parser::{
     CHARACTER_DATA_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, SKILL_DAMAGE_DATA_PATH,
     WOODEN_DAMAGE_DESCRIPTIONS_PATH,
 };
-use crate::resource::{read_resource_text, resource_exists};
+use crate::storage::resource::{read_resource_text, resource_exists};
 
 const ABYSS_MONSTERS_PATH: &str = "res/data/abyss/abyss_monsters.json";
 const REACTIONS_PATH: &str = "res/data/reactions/reactions.json";

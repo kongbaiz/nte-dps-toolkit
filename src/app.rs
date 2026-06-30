@@ -14,51 +14,51 @@ use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
-use crate::abyss_data::{
+use crate::engine::abyss_data::{
     AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry, abyss_line_hp_total,
     abyss_monster_total_hp, line_hp_by_wave, predict_wave_clear_times,
     required_dps_for_target_time,
 };
-use crate::capture::{
+use crate::engine::capture::{
     CaptureDevice, CaptureHandle, RawCaptureBuffer, import_capture_json, import_pcapng,
     list_devices, start_capture,
 };
-use crate::character_editor::{
-    CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
-};
-use crate::config::{
-    self, DpsTimeMode, HUD_MAX_CHARACTERS_MAX, HUD_MAX_CHARACTERS_MIN, HudConfig,
-    PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
-    TimelineDpsViewMode, UiConfig, WINDOW_SCALE_MAX, WINDOW_SCALE_MIN,
-};
-use crate::diagnostics::{
-    DiagnosticReport, DiagnosticSnapshot, DiagnosticStatus, run_capture_diagnostics,
-};
-use crate::encrypted_ini::{
-    EncryptedIniKey, EncryptedIniRecord, encrypt_encrypted_ini_records,
-    encrypted_ini_search_matches, encrypted_ini_text_fingerprint, parse_encrypted_ini_text,
-};
-use crate::file_drop::NativeFileDrop;
-use crate::history::{self, HistoryComparison, HistoryRecord};
-use crate::hotkey::{HotkeyEvent, HotkeyHandle};
-use crate::io_util::{atomic_write_file, atomic_write_text};
-use crate::model::{
+use crate::engine::model::{
     AbyssEvent, AbyssHalf, CaptureQualitySource, CaptureQualitySummary, CharacterInfo,
     CharacterStats, CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary,
     CombatSessionSkillSummary, CombatState, EngineEvent, HitDirectionSummary, PartyCombatState,
     SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps,
     TeamDpsExport, TeamDpsMember, TimelineMarkerKind, TimelineSeries, summarize_hit_directions,
 };
-use crate::network::{GameNetwork, detect_game_device, detect_game_network};
-use crate::parser::{CHARACTER_DATA_PATH, find_data_file, load_characters};
-use crate::resource::{read_resource_bytes, read_resource_text};
-use crate::resource_audit::{
-    ResourceAuditCategory, ResourceAuditItem, ResourceAuditSeverity, ResourceAuditSummary,
-    audit_runtime_resources,
-};
-use crate::window_attributes::{
+use crate::engine::parser::{CHARACTER_DATA_PATH, find_data_file, load_characters};
+use crate::platform::file_drop::NativeFileDrop;
+use crate::platform::hotkey::{HotkeyEvent, HotkeyHandle};
+use crate::platform::network::{GameNetwork, detect_game_device, detect_game_network};
+use crate::platform::window_attributes::{
     WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
     clear_process_windows_topmost, restore_visible_process_windows_topmost, set_window_topmost,
+};
+use crate::storage::config::{
+    self, DpsTimeMode, HUD_MAX_CHARACTERS_MAX, HUD_MAX_CHARACTERS_MIN, HudConfig,
+    PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
+    TimelineDpsViewMode, UiConfig, WINDOW_SCALE_MAX, WINDOW_SCALE_MIN,
+};
+use crate::storage::history::{self, HistoryComparison, HistoryRecord};
+use crate::storage::io_util::{atomic_write_file, atomic_write_text};
+use crate::storage::resource::{read_resource_bytes, read_resource_text};
+use crate::support::character_editor::{
+    CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
+};
+use crate::support::diagnostics::{
+    DiagnosticReport, DiagnosticSnapshot, DiagnosticStatus, run_capture_diagnostics,
+};
+use crate::support::encrypted_ini::{
+    EncryptedIniKey, EncryptedIniRecord, encrypt_encrypted_ini_records,
+    encrypted_ini_search_matches, encrypted_ini_text_fingerprint, parse_encrypted_ini_text,
+};
+use crate::support::resource_audit::{
+    ResourceAuditCategory, ResourceAuditItem, ResourceAuditSeverity, ResourceAuditSummary,
+    audit_runtime_resources,
 };
 
 const MAX_UI_EVENTS_PER_FRAME: usize = 2_048;
@@ -180,7 +180,7 @@ enum HitDetailFilter {
 }
 
 impl HitDetailFilter {
-    fn matches(&self, hit: &crate::model::Hit) -> bool {
+    fn matches(&self, hit: &crate::engine::model::Hit) -> bool {
         match self {
             Self::All => true,
             Self::Outgoing => hit.direction != "incoming",
@@ -2832,7 +2832,7 @@ impl DpsApp {
             char_id,
         };
         if self.skill_breakdown_cache.key.as_ref() != Some(&key) {
-            let breakdown = crate::model::summarize_skill_breakdown(
+            let breakdown = crate::engine::model::summarize_skill_breakdown(
                 detail_hits_for_source(&self.state, source),
                 char_id,
             );
@@ -3276,7 +3276,7 @@ impl DpsApp {
     /// a borrow on `state`. Tuple: `(rows, total_damage, team_dps, duration)`.
     fn party_readout(&self) -> (Vec<CharacterStats>, f64, f64, f64) {
         let prep = |stats: &HashMap<u32, CharacterStats>,
-                    hits: &VecDeque<crate::model::Hit>,
+                    hits: &VecDeque<crate::engine::model::Hit>,
                     total: f64,
                     dps: f64,
                     duration: f64| {
@@ -10648,7 +10648,7 @@ fn is_qte_follow_up_damage_type(attack_type: &str) -> bool {
     )
 }
 
-fn is_qte_follow_up_damage_hit(hit: &crate::model::Hit) -> bool {
+fn is_qte_follow_up_damage_hit(hit: &crate::engine::model::Hit) -> bool {
     hit.follow_up_attack_type
         .as_deref()
         .is_some_and(is_qte_follow_up_damage_type)
@@ -10706,19 +10706,19 @@ fn hud_window_size(
     egui::vec2(HUD_WINDOW_WIDTH, (title_strip + content).round())
 }
 
-fn is_party_member_row(row: &CharacterStats, hits: &VecDeque<crate::model::Hit>) -> bool {
+fn is_party_member_row(row: &CharacterStats, hits: &VecDeque<crate::engine::model::Hit>) -> bool {
     hits.iter()
         .any(|hit| hit.char_id == row.char_id && !is_qte_follow_up_damage_hit(hit))
 }
 
-fn hit_specific_type(hit: &crate::model::Hit) -> &str {
+fn hit_specific_type(hit: &crate::engine::model::Hit) -> &str {
     hit.damage_name
         .as_deref()
         .or(hit.attack_type.as_deref())
         .unwrap_or("未知招式")
 }
 
-fn hit_type_label(hit: &crate::model::Hit) -> &str {
+fn hit_type_label(hit: &crate::engine::model::Hit) -> &str {
     match hit.direction.as_str() {
         "incoming" => "受击",
         "unknown" => "候选输出",
@@ -10726,7 +10726,7 @@ fn hit_type_label(hit: &crate::model::Hit) -> &str {
     }
 }
 
-fn reaction_text_key_for_hit(hit: &crate::model::Hit) -> Option<u8> {
+fn reaction_text_key_for_hit(hit: &crate::engine::model::Hit) -> Option<u8> {
     hit.attack_type
         .as_deref()
         .and_then(reaction_text_key_from_trigger_attack_type)
@@ -10747,7 +10747,7 @@ fn reaction_text_key_from_trigger_attack_type(attack_type: &str) -> Option<u8> {
     }
 }
 
-fn hit_detail_hover_text(hit: &crate::model::Hit, include_character: bool) -> String {
+fn hit_detail_hover_text(hit: &crate::engine::model::Hit, include_character: bool) -> String {
     let mut lines = Vec::new();
     if include_character {
         lines.push(format!("{} · {}", hit.char_name, hit_type_label(hit)));
@@ -10780,7 +10780,7 @@ fn hit_detail_hover_text(hit: &crate::model::Hit, include_character: bool) -> St
 }
 
 fn aggregate_character_skill_damage(
-    hits: &std::collections::VecDeque<crate::model::Hit>,
+    hits: &std::collections::VecDeque<crate::engine::model::Hit>,
     char_id: u32,
 ) -> Vec<SkillDamageSummary> {
     let mut summaries = HashMap::<String, SkillDamageSummary>::new();
@@ -10811,7 +10811,7 @@ fn aggregate_character_skill_damage(
 }
 
 fn summarize_qte_type_filters(
-    hits: &VecDeque<crate::model::Hit>,
+    hits: &VecDeque<crate::engine::model::Hit>,
     char_id: Option<u32>,
 ) -> Vec<QteTypeFilterSummary> {
     let mut summaries = HashMap::<String, QteTypeFilterSummary>::new();
@@ -11007,7 +11007,7 @@ fn qte_damage_summary_chip(
 fn detail_hits_for_source(
     state: &CombatState,
     source: HitDetailSource,
-) -> &VecDeque<crate::model::Hit> {
+) -> &VecDeque<crate::engine::model::Hit> {
     match source {
         HitDetailSource::Global => &state.hits,
         HitDetailSource::AbyssFirst => &state.abyss.first_half.hits,
@@ -11016,7 +11016,7 @@ fn detail_hits_for_source(
 }
 
 fn build_hit_detail_cache(
-    hits: &VecDeque<crate::model::Hit>,
+    hits: &VecDeque<crate::engine::model::Hit>,
     generation: u64,
     key: HitDetailCacheKey,
 ) -> HitDetailCache {
@@ -11053,7 +11053,7 @@ fn build_hit_detail_cache(
     }
 }
 
-fn cached_hit_row(index: usize, hit: &crate::model::Hit) -> CachedHitRow {
+fn cached_hit_row(index: usize, hit: &crate::engine::model::Hit) -> CachedHitRow {
     let is_incoming = hit.direction == "incoming";
     CachedHitRow {
         index,
@@ -11070,11 +11070,11 @@ fn cached_hit_row(index: usize, hit: &crate::model::Hit) -> CachedHitRow {
 }
 
 fn resolve_cached_hit<'a>(
-    hits: &'a VecDeque<crate::model::Hit>,
+    hits: &'a VecDeque<crate::engine::model::Hit>,
     row: &CachedHitRow,
     source_len: usize,
     appended: u64,
-) -> Option<&'a crate::model::Hit> {
+) -> Option<&'a crate::engine::model::Hit> {
     let appended = usize::try_from(appended).unwrap_or(usize::MAX);
     adjusted_cached_index(row.index, source_len, hits.len(), appended)
         .and_then(|index| hits.get(index))
@@ -11085,7 +11085,7 @@ fn resolve_cached_hit<'a>(
         })
 }
 
-fn cached_hit_matches(row: &CachedHitRow, hit: &crate::model::Hit) -> bool {
+fn cached_hit_matches(row: &CachedHitRow, hit: &crate::engine::model::Hit) -> bool {
     row.char_id == hit.char_id
         && (row.timestamp - hit.timestamp).abs() <= 0.001
         && row.byte_offset == hit.byte_offset
@@ -11398,7 +11398,7 @@ fn draw_character_hit_header(ui: &mut egui::Ui, layout: CharacterHitLayout) {
 }
 
 fn damage_digit_textures_for_hit<'a>(
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     characters: &HashMap<u32, CharacterInfo>,
     damage_digit_textures: &'a HashMap<String, Vec<egui::TextureHandle>>,
 ) -> Option<&'a [egui::TextureHandle]> {
@@ -11408,7 +11408,7 @@ fn damage_digit_textures_for_hit<'a>(
 }
 
 fn follow_up_damage_digit_textures_for_hit<'a>(
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     damage_digit_textures: &'a HashMap<String, Vec<egui::TextureHandle>>,
 ) -> Option<&'a [egui::TextureHandle]> {
     follow_up_damage_digit_key_for_hit(hit)
@@ -11417,7 +11417,7 @@ fn follow_up_damage_digit_textures_for_hit<'a>(
 }
 
 fn damage_digit_key_for_hit<'a>(
-    hit: &'a crate::model::Hit,
+    hit: &'a crate::engine::model::Hit,
     characters: &'a HashMap<u32, CharacterInfo>,
 ) -> Option<&'a str> {
     if hit.direction == "incoming" {
@@ -11444,7 +11444,7 @@ fn damage_digit_key_for_hit<'a>(
         .or(source_attribute)
 }
 
-fn follow_up_damage_digit_key_for_hit(hit: &crate::model::Hit) -> Option<&str> {
+fn follow_up_damage_digit_key_for_hit(hit: &crate::engine::model::Hit) -> Option<&str> {
     let source_attribute = hit.follow_up_damage_attribute.as_deref()?;
     hit.follow_up_attack_type
         .as_deref()
@@ -11617,7 +11617,7 @@ fn draw_follow_up_damage_badge(
     ui: &egui::Ui,
     damage_cell_rect: egui::Rect,
     base_damage_rect: egui::Rect,
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     damage_digits: Option<&[egui::TextureHandle]>,
     fallback_color: Color32,
 ) {
@@ -11648,7 +11648,7 @@ fn draw_follow_up_damage_badge(
 fn draw_character_hit_row(
     ui: &mut egui::Ui,
     layout: CharacterHitLayout,
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     max_damage: f64,
     damage_digits: Option<&[egui::TextureHandle]>,
     follow_up_damage_digits: Option<&[egui::TextureHandle]>,
@@ -11788,7 +11788,7 @@ fn draw_team_hit_header(ui: &mut egui::Ui, layout: TeamHitLayout) {
 fn draw_hit_type_badge_content(
     ui: &mut egui::Ui,
     badge_rect: egui::Rect,
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     type_color: Color32,
     reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
 ) {
@@ -11857,7 +11857,7 @@ fn draw_reaction_text_images(
 fn draw_team_hit_row(
     ui: &mut egui::Ui,
     layout: TeamHitLayout,
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     max_damage: f64,
     character_color: Color32,
     assets: TeamHitRowAssets<'_>,
@@ -12139,7 +12139,7 @@ fn truncate_text_to_width(
 fn draw_target_hp_text(
     ui: &mut egui::Ui,
     cell_rect: egui::Rect,
-    hit: &crate::model::Hit,
+    hit: &crate::engine::model::Hit,
     target_color: Color32,
     hp_font: egui::FontId,
 ) {
@@ -13084,15 +13084,15 @@ mod tests {
         scaled_window_size, skill_display_name, snapshot_team_from_stats,
         summarize_qte_type_filters,
     };
-    use crate::config::UiConfig;
-    use crate::encrypted_ini::{
+    use crate::engine::model::{
+        CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
+        TeamDpsMember,
+    };
+    use crate::storage::config::UiConfig;
+    use crate::support::encrypted_ini::{
         EncryptedIniKey, decrypt_encrypted_ini_text, encrypt_aes256_ecb,
         encrypt_encrypted_ini_records, encrypt_encrypted_ini_text, encrypted_ini_search_matches,
         encrypted_ini_text_fingerprint, parse_encrypted_ini_text, pkcs7_pad,
-    };
-    use crate::model::{
-        CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
-        TeamDpsMember,
     };
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;

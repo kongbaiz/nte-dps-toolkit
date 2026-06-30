@@ -4,8 +4,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use crate::parser::find_data_file;
-use crate::resource::read_resource_text;
+use crate::engine::parser::find_data_file;
+use crate::storage::resource::read_resource_text;
 
 const ABYSS_MONSTER_STATIC_PATH: &str = "res/data/abyss/DT_MonsterStaticData_Abyss.json";
 const MONSTER_PACK_DATA_PATH: &str = "res/data/abyss/DT_MonsterPackData.json";

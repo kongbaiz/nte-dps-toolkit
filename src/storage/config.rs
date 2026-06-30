@@ -259,7 +259,7 @@ pub fn save(path: &Path, config: &UiConfig) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&config.clone().sanitized())
         .map_err(|error| error.to_string())?;
     // Atomic write so a crash mid-write cannot leave a truncated/corrupt config.json.
-    crate::io_util::atomic_write_text(path, &format!("{text}\n"))
+    crate::storage::io_util::atomic_write_text(path, &format!("{text}\n"))
 }
 
 #[cfg(test)]
