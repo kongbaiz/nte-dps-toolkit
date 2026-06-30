@@ -38,6 +38,7 @@ use crate::platform::window_attributes::{
     WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
     clear_process_windows_topmost, restore_visible_process_windows_topmost, set_window_topmost,
 };
+use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
     self, DpsTimeMode, HUD_MAX_CHARACTERS_MAX, HUD_MAX_CHARACTERS_MIN, HudConfig,
     PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
@@ -141,6 +142,7 @@ pub(crate) enum ConfirmationAction {
     ClearEncryptedIni,
     ReloadEncryptedIni(PathBuf),
     DeleteHistory(String),
+    ClearCaptureLogs,
 }
 
 #[derive(Clone, Copy)]
@@ -815,6 +817,10 @@ pub struct DpsApp {
     texture_load_receiver: Receiver<TextureLoad>,
     device_detection_receiver: Receiver<DeviceDetection>,
     awaiting_device_detection: bool,
+    /// Cached size/count of `logs/nte_raw_*.pcapng`, scanned lazily for the
+    /// capture-file section in settings (never per frame). `None` until first
+    /// shown or after a refresh request.
+    capture_log_stats: Option<CaptureLogStats>,
     paused_events: VecDeque<EngineEvent>,
     dropped_debug_packets: u64,
     status: String,

@@ -2,6 +2,7 @@
 //! de-identified history library, atomic file I/O helpers and embedded/external
 //! resource reads.
 
+pub mod capture_logs;
 pub mod config;
 pub mod history;
 pub mod io_util;

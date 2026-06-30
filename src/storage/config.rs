@@ -130,6 +130,40 @@ impl Default for HudConfig {
 }
 
 impl HudConfig {
+    /// Pared-down overlay: just team DPS and a short character ranking. Pairs
+    /// with [`Self::default`] ("标准") and [`Self::detailed`] ("详细") as the
+    /// one-click HUD presets in settings.
+    pub fn minimal() -> Self {
+        Self {
+            show_title: false,
+            show_team_dps: true,
+            show_duration: false,
+            show_total_damage: false,
+            show_character_rows: true,
+            show_damage_taken: false,
+            show_abyss_half: false,
+            show_passthrough_state: false,
+            show_mini_timeline: false,
+            max_characters: 3,
+        }
+    }
+
+    /// Everything on, for a full diagnostic readout.
+    pub fn detailed() -> Self {
+        Self {
+            show_title: true,
+            show_team_dps: true,
+            show_duration: true,
+            show_total_damage: true,
+            show_character_rows: true,
+            show_damage_taken: true,
+            show_abyss_half: true,
+            show_passthrough_state: true,
+            show_mini_timeline: true,
+            max_characters: HUD_MAX_CHARACTERS_MAX,
+        }
+    }
+
     pub fn sanitized(mut self) -> Self {
         self.max_characters = self
             .max_characters
@@ -391,5 +425,26 @@ mod tests {
             .max_characters,
             HUD_MAX_CHARACTERS_MAX
         );
+    }
+
+    #[test]
+    fn hud_presets_are_in_bounds_and_distinct() {
+        for preset in [
+            HudConfig::minimal(),
+            HudConfig::default(),
+            HudConfig::detailed(),
+        ] {
+            assert_eq!(
+                preset.clone().sanitized(),
+                preset,
+                "preset must be sanitized"
+            );
+            assert!(preset.max_characters >= HUD_MAX_CHARACTERS_MIN);
+            assert!(preset.max_characters <= HUD_MAX_CHARACTERS_MAX);
+        }
+        assert_ne!(HudConfig::minimal(), HudConfig::default());
+        assert_ne!(HudConfig::detailed(), HudConfig::default());
+        assert!(HudConfig::detailed().show_mini_timeline);
+        assert!(!HudConfig::minimal().show_total_damage);
     }
 }
