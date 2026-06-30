@@ -16,20 +16,10 @@ pub(crate) fn load_attribute_icons(
 pub(crate) fn load_monster_textures(
     ctx: &egui::Context,
     root: &std::path::Path,
-    abyss_overview: &AbyssOverviewState,
+    monster_ids: &[String],
 ) -> HashMap<String, egui::TextureHandle> {
     let mut textures = HashMap::new();
-    let Some(dataset) = &abyss_overview.dataset else {
-        return textures;
-    };
-
-    for monster_id in dataset
-        .seasons
-        .iter()
-        .flat_map(|season| season.floors.iter())
-        .flat_map(|floor| floor.monsters.iter())
-        .map(|monster| monster.monster_id.as_str())
-    {
+    for monster_id in monster_ids.iter().map(String::as_str) {
         for stem in monster_image_stem_candidates(monster_id) {
             let resource_keys = monster_image_resource_keys(&stem);
             if resource_keys.iter().any(|key| textures.contains_key(key)) {

@@ -462,6 +462,21 @@ fn load_abyss_stat_display_names() -> HashMap<String, String> {
 }
 
 impl AbyssOverviewState {
+    /// Every monster id referenced by the loaded dataset, used to drive the
+    /// background monster-portrait loader without sharing the whole state.
+    fn monster_ids(&self) -> Vec<String> {
+        let Some(dataset) = &self.dataset else {
+            return Vec::new();
+        };
+        dataset
+            .seasons
+            .iter()
+            .flat_map(|season| season.floors.iter())
+            .flat_map(|floor| floor.monsters.iter())
+            .map(|monster| monster.monster_id.clone())
+            .collect()
+    }
+
     fn load() -> Self {
         let stat_display_names = load_abyss_stat_display_names();
         match AbyssMonsterDataset::load() {
@@ -706,6 +721,18 @@ pub(crate) struct HudRowsLayout {
     width: f32,
 }
 
+/// A decoded texture set handed from the background loader thread to the UI.
+/// Texture decode (the 6 MB of PNGs) runs off the main thread so the window
+/// paints immediately; the maps start empty and every draw-site lookup already
+/// falls back when a key is missing, so placeholders show until these arrive.
+enum TextureLoad {
+    Avatars(HashMap<String, egui::TextureHandle>),
+    Attributes(HashMap<String, egui::TextureHandle>),
+    DamageDigits(HashMap<String, Vec<egui::TextureHandle>>),
+    Reactions(HashMap<u8, Vec<egui::TextureHandle>>),
+    Monsters(HashMap<String, egui::TextureHandle>),
+}
+
 pub struct DpsApp {
     characters: Arc<HashMap<u32, CharacterInfo>>,
     avatar_textures: HashMap<String, egui::TextureHandle>,
@@ -772,6 +799,7 @@ pub struct DpsApp {
     diagnostics_thread: Option<thread::JoinHandle<()>>,
     diagnostics_report: Option<DiagnosticReport>,
     diagnostics_running: bool,
+    texture_load_receiver: Receiver<TextureLoad>,
     paused_events: VecDeque<EngineEvent>,
     dropped_debug_packets: u64,
     status: String,
@@ -867,6 +895,7 @@ impl eframe::App for DpsApp {
         self.drain_events();
         self.drain_resource_audit();
         self.drain_capture_diagnostics();
+        self.drain_texture_loads();
         self.drain_hotkeys(ctx);
         self.process_file_drops(ctx, frame);
         self.process_debug_import_dialog(ctx);
