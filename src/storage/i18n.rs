@@ -98,6 +98,12 @@ pub fn set_language(language: Language) {
     store.map = map;
 }
 
+/// The active UI language. Lets non-UI display helpers pick a localized field
+/// without threading the setting through every call.
+pub fn current_language() -> Language {
+    STORE.read().expect("i18n store lock poisoned").language
+}
+
 /// Translate an English key into the active language. Returns the key unchanged for
 /// English or when the locale map has no entry for it.
 pub fn t(key: &str) -> String {

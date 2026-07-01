@@ -79,7 +79,6 @@ const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
 const MAIN_TITLE_BAR_HEIGHT: f32 = 40.0;
 const MAIN_CONTROLS_SINGLE_ROW_HEIGHT: f32 = 34.0;
 const TITLE_BAR_BUTTON_SIZE: egui::Vec2 = egui::vec2(28.0, 28.0);
-const TITLE_BAR_TOGGLE_SIZE: egui::Vec2 = egui::vec2(64.0, 28.0);
 /// Default inner size each window opens at before the user has dragged it (and no persisted size
 /// exists). `main` is also used by `main.rs` for the initial root viewport size. Windows are now
 /// freely resizable from their edges (`window_resize_grips`); these are just the starting sizes.
@@ -868,6 +867,12 @@ pub struct DpsApp {
     /// Windows applies the resize asynchronously and `content_rect` still reports the old HUD size.
     /// Without this, tracking would clobber `main_window_size` with the small HUD size.
     main_size_restore_frames: u8,
+    /// Content width (logical points) the live toolbar needs at the current language, measured each
+    /// frame from the real button labels. Feeds [`Self::enforce_main_min_size`] so the enforced
+    /// window minimum grows with a longer translation and the two button groups can never overlap.
+    toolbar_min_content_width: f32,
+    /// Last `MinInnerSize` pushed to the main viewport, so the command is only re-sent on change.
+    applied_main_min_size: egui::Vec2,
     style_dark_mode_applied: Option<bool>,
     opacity_reapply_frames: u8,
     theme_transition_from: Option<Color32>,
@@ -977,10 +982,13 @@ impl eframe::App for DpsApp {
                 self.hud_size_key = Some(size_key);
             }
         } else if self.hud_size_key.take().is_some() {
-            // Leaving HUD mode: restore the normal window to the size the user last dragged it to.
-            // Suppress size tracking until Windows applies the resize, so the transient HUD size is
-            // not mistaken for a user drag and written back over `main_window_size`.
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.main_window_size));
+            // Leaving HUD mode: restore the normal window to the size the user last dragged it to,
+            // but never below the enforced minimum (a stale small saved size would otherwise come
+            // back cramped and overlap the toolbar). Suppress size tracking until Windows applies
+            // the resize, so the transient HUD size is not mistaken for a user drag and written
+            // back over `main_window_size`.
+            let restore = self.main_window_size.max(self.applied_main_min_size);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(restore));
             self.main_size_restore_frames = 8;
         }
         self.update_status_toast(ctx);
@@ -1059,10 +1067,27 @@ impl eframe::App for DpsApp {
         // Native edge/corner drag-resize for the borderless main window, plus tracking its size so
         // it restores on the next launch. Skipped in HUD mode, where the window auto-hugs the HUD.
         if !self.hud_mode {
+            let maximized = ctx
+                .input(|input| input.viewport().maximized)
+                .unwrap_or(false);
             if self.main_size_restore_frames > 0 {
+                // A programmatic resize (e.g. the HUD-exit restore) is still being
+                // applied by Windows. Skip both tracking — so the transient size is
+                // not written back over `main_window_size` — and min enforcement, so
+                // it does not clamp a larger restored size down to the minimum before
+                // the restore lands.
                 self.main_size_restore_frames -= 1;
             } else {
-                track_window_size(&ctx, &mut self.main_window_size);
+                if !maximized {
+                    // While maximized the inner size is the screen work area, not a
+                    // size the user chose — persisting it would make the window reopen
+                    // huge, so only the last restored size is tracked.
+                    track_window_size(&ctx, &mut self.main_window_size);
+                }
+                // Grow the window minimum to whatever the current-language toolbar
+                // needs, and heal an undersized window, so the button groups can never
+                // be squeezed into overlapping.
+                self.enforce_main_min_size(&ctx, maximized);
             }
             window_resize_grips(&ctx);
         }

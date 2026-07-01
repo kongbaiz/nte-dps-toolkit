@@ -285,7 +285,8 @@ pub(crate) fn draw_timeline_chart(
         let mut row = 0;
         for (rank, (char_id, name, _)) in role_totals.iter().enumerate() {
             let color = readable_accent(character_color(*char_id, characters, rank), dark_mode);
-            let label = name.as_str();
+            let display_name = character_display_name(characters, *char_id, name);
+            let label = display_name.as_str();
             let label_width = (label.chars().count() as f32 * 11.0 + 34.0).clamp(76.0, 164.0);
             if x + label_width > rect.right() - 12.0 {
                 row += 1;
@@ -552,7 +553,11 @@ pub(crate) fn draw_timeline_chart(
                         ui.separator();
                         for role in roles.iter().take(4) {
                             ui.horizontal(|ui| {
-                                ui.label(&role.char_name);
+                                ui.label(character_display_name(
+                                    characters,
+                                    role.char_id,
+                                    &role.char_name,
+                                ));
                                 ui.monospace(format!(
                                     "{} · DPS {}",
                                     format_number(role.damage),
@@ -686,7 +691,11 @@ pub(crate) fn draw_skill_breakdown_rows(
                 ui.painter().with_clip_rect(left_clip).text(
                     rect.left_center() + egui::vec2(10.0, 9.0),
                     egui::Align2::LEFT_CENTER,
-                    format!("{} · {}", row.char_name, row.category),
+                    format!(
+                        "{} · {}",
+                        character_display_name(characters, row.char_id, &row.char_name),
+                        row.category
+                    ),
                     egui::FontId::proportional(10.0),
                     ui.visuals().weak_text_color(),
                 );

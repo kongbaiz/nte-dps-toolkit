@@ -6,8 +6,8 @@ use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::model::{
-    CombatSessionAbyssHalfSummary, CombatSessionCharacterSummary, CombatSessionSkillSummary,
-    CombatSessionSummary, TeamDps, TeamDpsMember,
+    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary, TeamDps,
+    TeamDpsMember,
 };
 use crate::storage::io_util::atomic_write_text;
 
@@ -44,44 +44,6 @@ impl HistoryRecord {
             .to_string()
     }
 
-    pub fn party_label(&self) -> String {
-        self.party_label_with_limit(4)
-    }
-
-    pub fn short_party_label(&self) -> String {
-        self.party_label_with_limit(2)
-    }
-
-    fn party_label_with_limit(&self, limit: usize) -> String {
-        let first = self
-            .summary
-            .abyss
-            .first_half
-            .as_ref()
-            .map(|half| format!("上: {}", half_party_names(half, limit)));
-        let second = self
-            .summary
-            .abyss
-            .second_half
-            .as_ref()
-            .map(|half| format!("下: {}", half_party_names(half, limit)));
-        let halves = [first, second]
-            .into_iter()
-            .flatten()
-            .filter(|label| !label.ends_with("未记录角色"))
-            .collect::<Vec<_>>();
-        if !halves.is_empty() {
-            return halves.join(" | ");
-        }
-
-        let names = character_names(&self.summary.characters, limit);
-        if names == "未记录角色" {
-            "未记录角色".to_owned()
-        } else {
-            names
-        }
-    }
-
     pub fn to_team_dps(&self) -> Option<TeamDps> {
         team_from_characters(self.summary.total_dps, &self.summary.characters)
     }
@@ -102,24 +64,6 @@ impl HistoryRecord {
             .as_ref()
             .and_then(|half| team_from_characters(half.total_dps, &half.characters))
             .or_else(|| self.to_team_dps())
-    }
-}
-
-fn half_party_names(half: &CombatSessionAbyssHalfSummary, limit: usize) -> String {
-    character_names(&half.characters, limit)
-}
-
-fn character_names(characters: &[CombatSessionCharacterSummary], limit: usize) -> String {
-    let names = characters
-        .iter()
-        .take(limit)
-        .map(|row| row.name.as_str())
-        .filter(|name| !name.is_empty())
-        .collect::<Vec<_>>();
-    if names.is_empty() {
-        "未记录角色".to_owned()
-    } else {
-        names.join(" / ")
     }
 }
 
@@ -527,7 +471,6 @@ mod tests {
             ..Default::default()
         };
 
-        assert_eq!(record.party_label(), "上: 上角色 | 下: 下角色");
         assert_eq!(record.upper_team_dps().unwrap().members[0].id, 1);
         assert_eq!(record.lower_team_dps().unwrap().members[0].id, 2);
     }

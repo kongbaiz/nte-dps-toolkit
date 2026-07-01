@@ -364,6 +364,150 @@ pub(crate) fn track_window_size(ctx: &egui::Context, target: &mut egui::Vec2) {
     }
 }
 
+/// Which native window control a [`window_control_button`] paints.
+#[derive(Clone, Copy)]
+pub(crate) enum WindowControlIcon {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// A frameless, fixed-size window-control button with a hand-painted glyph.
+///
+/// The glyphs are painted (not font characters) so they render identically
+/// regardless of which CJK fallback font [`install_fonts`] picks — the box /
+/// restore shapes are not reliably present in every Windows system font. Close
+/// tints red on hover to match the native title bar; the others brighten.
+pub(crate) fn window_control_button(
+    ui: &mut egui::Ui,
+    icon: WindowControlIcon,
+    tooltip: &str,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(TITLE_BAR_BUTTON_SIZE, egui::Sense::click());
+    let color = match (icon, response.hovered()) {
+        (WindowControlIcon::Close, true) => Color32::from_rgb(232, 76, 76),
+        (_, true) => ui.visuals().strong_text_color(),
+        (_, false) => ui.visuals().text_color(),
+    };
+    paint_window_control_icon(ui.painter(), rect, icon, color, ui.visuals().panel_fill);
+    response.on_hover_text(tooltip.to_owned())
+}
+
+fn paint_window_control_icon(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    icon: WindowControlIcon,
+    color: Color32,
+    bg: Color32,
+) {
+    let center = rect.center().round();
+    let stroke = Stroke::new(1.2, color);
+    match icon {
+        WindowControlIcon::Minimize => {
+            painter.hline(center.x - 5.0..=center.x + 5.0, center.y, stroke);
+        }
+        WindowControlIcon::Maximize => {
+            let square = egui::Rect::from_center_size(center, egui::vec2(9.0, 9.0));
+            painter.rect_stroke(square, 0.0, stroke, egui::StrokeKind::Inside);
+        }
+        WindowControlIcon::Restore => {
+            const SIDE: f32 = 8.0;
+            const OFFSET: f32 = 2.0;
+            // Back square peeks out to the top-right; the front square is filled
+            // with the bar's own color first so it cleanly occludes the overlap,
+            // giving the classic two-square "restore" look.
+            let back = egui::Rect::from_min_size(
+                egui::pos2(
+                    center.x - SIDE * 0.5 + OFFSET,
+                    center.y - SIDE * 0.5 - OFFSET,
+                ),
+                egui::vec2(SIDE, SIDE),
+            );
+            painter.rect_stroke(back, 0.0, stroke, egui::StrokeKind::Inside);
+            let front = egui::Rect::from_min_size(
+                egui::pos2(
+                    center.x - SIDE * 0.5 - OFFSET,
+                    center.y - SIDE * 0.5 + OFFSET,
+                ),
+                egui::vec2(SIDE, SIDE),
+            );
+            painter.rect_filled(front, 0.0, bg);
+            painter.rect_stroke(front, 0.0, stroke, egui::StrokeKind::Inside);
+        }
+        WindowControlIcon::Close => {
+            let half = 5.0;
+            painter.line_segment(
+                [
+                    egui::pos2(center.x - half, center.y - half),
+                    egui::pos2(center.x + half, center.y + half),
+                ],
+                stroke,
+            );
+            painter.line_segment(
+                [
+                    egui::pos2(center.x - half, center.y + half),
+                    egui::pos2(center.x + half, center.y - half),
+                ],
+                stroke,
+            );
+        }
+    }
+}
+
+/// Shared borderless, always-on-top, resizable [`egui::ViewportBuilder`] for a
+/// secondary window (console and the detail panels).
+///
+/// `already_open` must be the window's "first-frame setup done" flag (its
+/// `*_corner_applied`): the persisted `size` is written into the builder only on the
+/// opening frame. Re-passing `inner_size` every frame would fight the user's live
+/// resize — [`egui::ViewportBuilder::patch`] re-sends `InnerSize` whenever the builder
+/// value changes, and [`track_window_size`] feeds the DPI-rounded OS size straight
+/// back into that field, so requesting it again rounds again: a resize→round→resize
+/// loop seen as window-edge jitter. After the first frame the builder omits
+/// `inner_size` (patch sends nothing) and the OS owns the size; `track_window_size`
+/// still records it for persistence.
+pub(crate) fn secondary_viewport_builder(
+    title: impl Into<String>,
+    size: egui::Vec2,
+    min_size: [f32; 2],
+    already_open: bool,
+) -> egui::ViewportBuilder {
+    let mut builder = egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_min_inner_size(egui::Vec2::from(min_size))
+        .with_window_level(egui::WindowLevel::AlwaysOnTop)
+        .with_decorations(false)
+        // Borderless but freely resizable via the edge grips (window_resize_grips).
+        .with_resizable(true);
+    if !already_open {
+        builder = builder.with_inner_size(size);
+    }
+    builder
+}
+
+/// Renders the top title-bar strip shared by every secondary window, wrapping
+/// [`secondary_title_bar`] in the same frame the main window uses: a subtle
+/// panel-fill tone with no border stroke, so there is no hard divider line under the
+/// title (the strokes here used to read as an abrupt full-width rule). Returns whether
+/// the close button was clicked. `ui` is the viewport's root ui (the immediate-viewport
+/// callback's first argument). Safe to reuse the same panel id across windows — each
+/// secondary window is its own viewport with an independent ui tree.
+pub(crate) fn secondary_title_panel(ui: &mut egui::Ui, title: &str) -> bool {
+    let mut close_clicked = false;
+    egui::Panel::top("secondary_title_bar")
+        .exact_size(34.0)
+        .frame(
+            egui::Frame::new()
+                .fill(ui.style().visuals.panel_fill)
+                .inner_margin(egui::Margin::symmetric(10, 3)),
+        )
+        .show_inside(ui, |ui| {
+            close_clicked = secondary_title_bar(ui, title);
+        });
+    close_clicked
+}
+
 pub(crate) fn secondary_title_bar(ui: &mut egui::Ui, title: &str) -> bool {
     let title_height = 28.0;
     let mut close_clicked = false;
@@ -387,18 +531,25 @@ pub(crate) fn secondary_title_bar(ui: &mut egui::Ui, title: &str) -> bool {
     controls.set_clip_rect(full_rect);
     {
         let ui = &mut controls;
-        if ui
-            .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("×").frame(false))
-            .on_hover_text(t("Close"))
-            .clicked()
-        {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        // Native window controls, matching the main title bar: minimize ·
+        // maximize/restore · close (painted glyphs so they render regardless of font).
+        if window_control_button(ui, WindowControlIcon::Close, &t("Close")).clicked() {
             close_clicked = true;
         }
-        if ui
-            .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("−").frame(false))
-            .on_hover_text(t("Minimize"))
-            .clicked()
-        {
+        let maximized = ui
+            .input(|input| input.viewport().maximized)
+            .unwrap_or(false);
+        let (icon, tooltip) = if maximized {
+            (WindowControlIcon::Restore, t("Restore"))
+        } else {
+            (WindowControlIcon::Maximize, t("Maximize"))
+        };
+        if window_control_button(ui, icon, &tooltip).clicked() {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
+        if window_control_button(ui, WindowControlIcon::Minimize, &t("Minimize")).clicked() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }

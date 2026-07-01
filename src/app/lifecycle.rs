@@ -227,6 +227,8 @@ impl DpsApp {
                 .map(egui::Vec2::from)
                 .unwrap_or(CONSOLE_WINDOW_BASE_SIZE),
             main_size_restore_frames: 0,
+            toolbar_min_content_width: 0.0,
+            applied_main_min_size: egui::Vec2::ZERO,
             // eframe may replace the context style after app construction.
             style_dark_mode_applied: None,
             opacity_reapply_frames: 4,
@@ -543,6 +545,12 @@ impl DpsApp {
         } else {
             self.set_mouse_passthrough(ctx, false);
             self.status = t("Exited combat HUD");
+            // The exit click lands mid-frame — after this frame's HUD size command and
+            // the HUD strip render, but before size tracking runs — so `hud_mode` is
+            // already false when tracking executes. Suppress it now, otherwise the
+            // still-HUD-sized window is written over `main_window_size` and the window
+            // then "restores" to that small size instead of its pre-HUD size.
+            self.main_size_restore_frames = 8;
         }
     }
 
@@ -564,14 +572,10 @@ impl DpsApp {
 
     pub(crate) fn title_bar(&mut self, ui: &mut egui::Ui) {
         let title_height = ui.available_height().max(28.0);
-        let passthrough_hint = tf(
-            "{} toggles mouse passthrough anytime",
-            &[self.passthrough_hotkey.label()],
-        );
         // The whole title bar is the drag-to-move zone: allocate it first with a
-        // drag sense, then draw the label/buttons on top. Buttons (added later)
-        // win the pointer where they are, so dragging works on any empty area —
-        // the title text included — no matter how many controls crowd the bar.
+        // drag sense, then draw the dot/title/buttons on top. Interactive widgets
+        // (added later) win the pointer where they are, so dragging still works on
+        // any empty area — the centered title included.
         let (full_rect, title_drag) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), title_height),
             egui::Sense::click_and_drag(),
@@ -590,15 +594,11 @@ impl DpsApp {
         } else {
             self.status.clone()
         };
-        let show_title_toggles = !self.abyss_compact_mode || !self.state.abyss.is_active();
-        let title_button_text = |text: String| RichText::new(text).size(13.0);
 
-        // The right-aligned controls are drawn first, into their own child spanning
-        // the full bar, so their natural (localized) width is known before the title
-        // claims space. Whatever the controls don't use goes to the title, which
-        // truncates with an ellipsis into that remainder — so a longer translation
-        // (e.g. English "Passthrough"/"Appearance" vs. the shorter Chinese originals)
-        // can never overlap or paint over the title instead of politely eliding it.
+        // Native window controls, right-aligned: minimize · maximize/restore ·
+        // close. Drawn first so their extent is known before the title centers
+        // itself. The overlay toggles (pin/passthrough/appearance) moved off the
+        // title bar onto the live toolbar — see `control_buttons`.
         let mut controls = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(full_rect)
@@ -607,137 +607,108 @@ impl DpsApp {
         controls.set_clip_rect(full_rect);
         {
             let ui = &mut controls;
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-            if ui
-                .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("×").frame(false))
-                .on_hover_text(t("Close"))
-                .clicked()
-            {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if window_control_button(ui, WindowControlIcon::Close, &t("Close")).clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if ui
-                .add_sized(TITLE_BAR_BUTTON_SIZE, egui::Button::new("−").frame(false))
-                .on_hover_text(t("Minimize"))
-                .clicked()
-            {
+            let maximized = ui
+                .input(|input| input.viewport().maximized)
+                .unwrap_or(false);
+            let (icon, tooltip) = if maximized {
+                (WindowControlIcon::Restore, t("Restore"))
+            } else {
+                (WindowControlIcon::Maximize, t("Maximize"))
+            };
+            if window_control_button(ui, icon, &tooltip).clicked() {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+            if window_control_button(ui, WindowControlIcon::Minimize, &t("Minimize")).clicked() {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-            if show_title_toggles {
-                let appearance_button = egui::Button::new(title_button_text(t("Appearance")))
-                    .min_size(TITLE_BAR_TOGGLE_SIZE);
-                let (appearance_response, _) = egui::containers::menu::MenuButton::from_button(
-                    appearance_button,
-                )
-                .ui(ui, |ui| {
-                    ui.set_min_width(190.0);
-                    ui.horizontal(|ui| {
-                        ui.label(t("Opacity"));
-                        ui.add(
-                            egui::Slider::new(&mut self.opacity, 0.35..=1.0)
-                                .show_value(true)
-                                .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
-                        );
-                    });
-                    if ui
-                        .button(if self.dark_mode {
-                            t("Switch to light")
-                        } else {
-                            t("Switch to dark")
-                        })
-                        .clicked()
-                    {
-                        self.theme_transition_from = Some(shadcn_background(self.dark_mode));
-                        self.theme_transition_started_at = Some(ui.input(|input| input.time));
-                        self.dark_mode = !self.dark_mode;
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui
-                        .add(
-                            egui::Button::selectable(self.hud_mode, t("Combat HUD"))
-                                .frame_when_inactive(true),
-                        )
-                        .on_hover_text(t("Backing-less HUD, overlaid directly on the game"))
-                        .clicked()
-                    {
-                        self.set_hud_mode(ui.ctx(), !self.hud_mode);
-                        ui.close();
-                    }
-                });
-                appearance_response.on_hover_text(t("Adjust opacity, theme and HUD mode"));
-                let passthrough_label = if self.mouse_passthrough {
-                    t("Passthrough on")
-                } else {
-                    t("Passthrough")
-                };
-                if ui
-                    .add(
-                        egui::Button::selectable(
-                            self.mouse_passthrough,
-                            title_button_text(passthrough_label),
-                        )
-                        .frame_when_inactive(true)
-                        .min_size(TITLE_BAR_TOGGLE_SIZE),
-                    )
-                    .on_hover_text(passthrough_hint)
-                    .clicked()
-                {
-                    self.toggle_mouse_passthrough(ui.ctx());
-                }
-                if ui
-                    .add(
-                        egui::Button::selectable(self.always_on_top, title_button_text(t("Pin")))
-                            .frame_when_inactive(true)
-                            .min_size(TITLE_BAR_TOGGLE_SIZE),
-                    )
-                    .on_hover_text(t("Keep the main window above the game"))
-                    .clicked()
-                {
-                    self.toggle_always_on_top(ui.ctx());
-                }
             }
         }
         let controls_left = controls.min_rect().left();
 
-        // Whatever the controls didn't claim goes to the branding label + status
-        // dot. Bounding it to a child rect (rather than just drawing a plain label
-        // into the shared bar) means a too-narrow remainder truncates the text with
-        // an ellipsis instead of the controls drawing over it.
-        let title_rect = egui::Rect::from_min_max(
-            full_rect.min,
-            egui::pos2((controls_left - 6.0).max(full_rect.left()), full_rect.max.y),
-        );
-        let mut left = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(title_rect)
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        left.set_clip_rect(title_rect);
-        left.spacing_mut().item_spacing.x = 6.0;
-        const DOT_WIDTH: f32 = 10.0;
-        let label_width = (title_rect.width() - DOT_WIDTH - left.spacing().item_spacing.x).max(0.0);
-        left.add_sized(
-            egui::vec2(label_width, title_rect.height()),
-            egui::Label::new(
-                RichText::new("NTE DPS TOOL")
-                    .size(13.0)
-                    .strong()
-                    .color(theme_accent(self.dark_mode)),
-            )
-            .truncate(),
-        );
-        let (dot_rect, dot_response) = left.allocate_exact_size(
-            egui::vec2(DOT_WIDTH, title_rect.height()),
+        // Status dot pinned to the far left; hovering it shows the current status.
+        let dot_center = egui::pos2(full_rect.left() + 5.0, full_rect.center().y);
+        let dot_rect =
+            egui::Rect::from_center_size(dot_center, egui::vec2(12.0, full_rect.height()));
+        let dot_response = ui.interact(
+            dot_rect,
+            ui.id().with("title_status_dot"),
             egui::Sense::hover(),
         );
-        left.painter().circle_filled(
-            dot_rect.center(),
+        ui.painter().circle_filled(
+            dot_center,
             3.5,
             status_color(&self.status, self.paused, self.dark_mode),
         );
         dot_response.on_hover_text(title_status);
+
+        // Centered branding, clipped to the gap between the dot and the window
+        // controls so a too-narrow window elides it against the buttons instead of
+        // painting over them.
+        let title_clip = egui::Rect::from_min_max(
+            egui::pos2(dot_rect.right(), full_rect.top()),
+            egui::pos2(
+                (controls_left - 6.0).max(dot_rect.right()),
+                full_rect.bottom(),
+            ),
+        );
+        ui.painter().with_clip_rect(title_clip).text(
+            full_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "NTE DPS TOOL",
+            egui::FontId::proportional(13.0),
+            theme_accent(self.dark_mode),
+        );
+    }
+
+    /// Keeps the main window wide enough that the live toolbar's two button groups
+    /// can never overlap — even when a longer-text language widens the buttons.
+    ///
+    /// `toolbar_min_content_width` is remeasured every frame from the real localized
+    /// labels ([`Self::control_buttons`]); here it becomes the enforced `MinInnerSize`
+    /// (never below the configured floor). Height keeps the configured floor since the
+    /// vertical stack only clips, never overlaps. If the window is meaningfully
+    /// narrower than the minimum it is nudged back up — this heals a small persisted
+    /// size or the size restored after leaving HUD, not just a freshly grown minimum.
+    ///
+    /// The caller must skip this while a programmatic resize is still settling (see
+    /// `main_size_restore_frames`), otherwise it would clamp the in-flight restore to
+    /// the minimum instead of the user's larger saved size.
+    pub(crate) fn enforce_main_min_size(&mut self, ctx: &egui::Context, maximized: bool) {
+        // Panel side margins (10 each) + the animated_controls 2px inset each side +
+        // a little slack so the rightmost button keeps clear of the window edge.
+        const SIDE_ALLOWANCE: f32 = 28.0;
+        // Deadband: after the OS rounds a requested logical size to physical pixels
+        // and back, the reported width can sit a hair under the minimum. Only correct
+        // a shortfall larger than this, so rounding noise can't set up a per-frame
+        // resize oscillation (edge "jitter"). The toolbar reserves a 24px inter-group
+        // gap, so being a few px under the enforced minimum still never overlaps.
+        const UNDERSIZE_DEADBAND: f32 = 6.0;
+        let min_width =
+            (self.toolbar_min_content_width + SIDE_ALLOWANCE).max(config::MAIN_WINDOW_MIN_SIZE[0]);
+        let min_size = egui::vec2(min_width.ceil(), config::MAIN_WINDOW_MIN_SIZE[1]);
+        if (min_size - self.applied_main_min_size).length() > 0.5 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_size));
+            self.applied_main_min_size = min_size;
+        }
+        // winit clamps only *future* user resizes to the minimum, so a window that is
+        // already too small (startup default, stale saved size, HUD-exit restore, or a
+        // language switch that grew the minimum) must be nudged wider here. Skipped
+        // while maximized (would drop that state) and until the viewport reports a real
+        // size (an early degenerate rect must not shrink it).
+        if !maximized {
+            let current = ctx.content_rect().size();
+            if current.x >= 1.0 && current.y >= 1.0 && current.x < min_size.x - UNDERSIZE_DEADBAND {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                    min_size.x,
+                    current.y.max(min_size.y),
+                )));
+            }
+        }
     }
 
     /// Compact title strip for HUD mode: a drag zone plus the two controls that
@@ -798,11 +769,12 @@ impl DpsApp {
             {
                 self.set_hud_mode(ui.ctx(), false);
             }
+            // A plain small button to match Exit: this strip only renders while
+            // passthrough is off (it returns early otherwise), so a selectable
+            // toggle's active state would never show here — it just read as a
+            // heavier, out-of-place control on the compact rail.
             if ui
-                .add(
-                    egui::Button::selectable(self.mouse_passthrough, t("Passthrough"))
-                        .frame_when_inactive(true),
-                )
+                .small_button(t("Passthrough"))
                 .on_hover_text(passthrough_hint)
                 .clicked()
             {

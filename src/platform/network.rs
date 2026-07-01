@@ -14,6 +14,7 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 
 use crate::engine::capture::CaptureDevice;
+use crate::storage::i18n::{t, tf};
 
 const GAME_PROCESS: &str = "HTGame.exe";
 const GAME_TCP_PORT: u16 = 30031;
@@ -31,8 +32,8 @@ pub struct GameNetwork {
 /// matching Npcap device. Manual capture mode uses this to recover `local_ip` for direction
 /// inference even when auto device matching would fail (e.g. the game routes over a VPN adapter).
 pub fn detect_game_network() -> Result<GameNetwork, String> {
-    let pid =
-        find_process_id(GAME_PROCESS)?.ok_or_else(|| format!("未检测到游戏进程 {GAME_PROCESS}"))?;
+    let pid = find_process_id(GAME_PROCESS)?
+        .ok_or_else(|| tf("Game process {} not detected", &[GAME_PROCESS]))?;
     let connections = tcp_connections_for_pid(pid)?;
     connections
         .iter()
@@ -40,7 +41,10 @@ pub fn detect_game_network() -> Result<GameNetwork, String> {
         .or_else(|| connections.first())
         .cloned()
         .ok_or_else(|| {
-            format!("已检测到 {GAME_PROCESS} (PID {pid})，但尚未建立可用于定位网卡的 IPv4 TCP 连接")
+            tf(
+                "Detected {} (PID {}) but no usable IPv4 TCP connection for NIC lookup yet",
+                &[GAME_PROCESS, &pid.to_string()],
+            )
         })
 }
 
@@ -50,9 +54,9 @@ pub fn detect_game_device(devices: &[CaptureDevice]) -> Result<(usize, GameNetwo
         .iter()
         .position(|device| device.ipv4.contains(&network.local_ip))
         .ok_or_else(|| {
-            format!(
-                "游戏使用本机 IP {}，但 Npcap 设备列表中没有对应网卡",
-                network.local_ip
+            tf(
+                "The game uses local IP {}, but no matching NIC is in the Npcap device list",
+                &[&network.local_ip.to_string()],
             )
         })?;
     Ok((device_index, network))
@@ -63,7 +67,7 @@ fn find_process_id(executable: &str) -> Result<Option<u32>, String> {
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snapshot == INVALID_HANDLE_VALUE {
-            return Err("无法枚举系统进程".to_owned());
+            return Err(t("Failed to enumerate system processes"));
         }
         let mut entry = PROCESSENTRY32W {
             dwSize: size_of::<PROCESSENTRY32W>() as u32,
@@ -106,7 +110,10 @@ fn tcp_connections_for_pid(pid: u32) -> Result<Vec<GameNetwork>, String> {
             0,
         );
         if first != ERROR_INSUFFICIENT_BUFFER {
-            return Err(format!("读取 TCP 连接表大小失败，错误码 {first}"));
+            return Err(tf(
+                "Failed to read TCP table size, error code {}",
+                &[&first.to_string()],
+            ));
         }
         let mut buffer = vec![0_u8; size as usize];
         let result = GetExtendedTcpTable(
@@ -118,7 +125,10 @@ fn tcp_connections_for_pid(pid: u32) -> Result<Vec<GameNetwork>, String> {
             0,
         );
         if result != 0 {
-            return Err(format!("读取 TCP 连接表失败，错误码 {result}"));
+            return Err(tf(
+                "Failed to read TCP table, error code {}",
+                &[&result.to_string()],
+            ));
         }
         if buffer.len() < size_of::<u32>() {
             return Ok(Vec::new());
