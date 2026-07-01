@@ -73,7 +73,7 @@ pub(crate) fn draw_history_abyss_half(
                 ui.painter().circle_filled(dot_rect.center(), 5.0, accent);
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(&half.half)
+                    RichText::new(localized_abyss_half_label(&half.half))
                         .size(18.0)
                         .strong()
                         .color(shadcn_foreground(dark_mode)),
@@ -99,6 +99,32 @@ pub(crate) fn draw_history_abyss_half(
             );
         });
     ui.add_space(2.0);
+}
+
+/// Localized DPS-time-mode label for a stored history record. New records persist the
+/// English key (`DpsTimeMode::label`); older records persisted the localized Chinese
+/// label, so those two are mapped back to their key first. Everything is then run
+/// through [`t`], so an English key localizes and an unknown value passes through.
+pub(crate) fn localized_dps_time_mode(mode: &str) -> String {
+    match mode {
+        "扣除时停" => t("Exclude Time Stop"),
+        "实时" => t("Real Time"),
+        other => t(other),
+    }
+}
+
+/// Localized abyss line label for a stored history record. Records persist the
+/// Chinese line name ("上行线"/"下行线"); map it to the same key the live abyss
+/// selector uses so English mode reads "Ascending/Descending Line". Unknown values
+/// pass through unchanged.
+pub(crate) fn localized_abyss_half_label(half: &str) -> String {
+    if half.contains('上') {
+        t("Ascending Line")
+    } else if half.contains('下') {
+        t("Descending Line")
+    } else {
+        half.to_owned()
+    }
 }
 
 pub(crate) fn history_half_accent(half: &str, dark_mode: bool) -> Color32 {
@@ -159,7 +185,10 @@ pub(crate) fn draw_history_avatar(
     } else {
         ui.painter()
             .rect_filled(rect, 8.0, color.gamma_multiply(0.85));
-        let initial = row.name.chars().next().unwrap_or('?');
+        let initial = character_display_name(characters, row.char_id, &row.name)
+            .chars()
+            .next()
+            .unwrap_or('?');
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -274,9 +303,13 @@ pub(crate) fn draw_history_character_rows(
                 ui.add_space(36.0);
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new(&row.name)
-                            .strong()
-                            .color(shadcn_foreground(dark_mode)),
+                        RichText::new(character_display_name(
+                            visual.characters,
+                            row.char_id,
+                            &row.name,
+                        ))
+                        .strong()
+                        .color(shadcn_foreground(dark_mode)),
                     );
                     ui.label(
                         RichText::new(format!("{} DPS", format_number(row.dps)))

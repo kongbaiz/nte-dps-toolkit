@@ -5,32 +5,18 @@ impl DpsApp {
         let viewport_id = console_viewport_id();
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
-            egui::ViewportBuilder::default()
-                .with_title(t("NTE Console"))
-                .with_inner_size(self.console_window_size)
-                .with_min_inner_size(egui::Vec2::from(config::CONSOLE_WINDOW_MIN_SIZE))
-                .with_window_level(egui::WindowLevel::AlwaysOnTop)
-                .with_decorations(false)
-                // Borderless but freely resizable via the edge grips (window_resize_grips);
-                // not transparent so the console reads clearly over the game.
-                .with_resizable(true),
+            secondary_viewport_builder(
+                t("NTE Console"),
+                self.console_window_size,
+                config::CONSOLE_WINDOW_MIN_SIZE,
+                self.console_corner_applied,
+            ),
             |ctx, _class| {
                 if !self.console_corner_applied {
                     apply_rounding_to_process_windows();
                     self.console_corner_applied = true;
                 }
-                let mut close_clicked = false;
-                egui::Panel::top("console_title_bar")
-                    .exact_size(34.0)
-                    .frame(
-                        egui::Frame::new()
-                            .fill(ctx.style().visuals.panel_fill)
-                            .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
-                            .inner_margin(egui::Margin::symmetric(10, 3)),
-                    )
-                    .show_inside(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, &t("NTE Console"));
-                    });
+                let close_clicked = secondary_title_panel(ctx, &t("NTE Console"));
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
@@ -338,7 +324,11 @@ impl DpsApp {
                                         self.selected_skill_breakdown_char == Some(row.char_id);
                                     let label = format!(
                                         "{}  {} · {:.1}%",
-                                        row.name,
+                                        character_display_name(
+                                            &self.characters,
+                                            row.char_id,
+                                            &row.name,
+                                        ),
                                         format_number(row.damage),
                                         if breakdown.total_damage > 0.0 {
                                             row.damage / breakdown.total_damage * 100.0
@@ -490,7 +480,7 @@ impl DpsApp {
                 (
                     record.id.clone(),
                     record.display_time(),
-                    record.short_party_label(),
+                    self.localized_party_label(record, 2),
                     record.summary.total_dps,
                     record.summary.total_damage,
                 )
@@ -555,6 +545,40 @@ impl DpsApp {
         );
     }
 
+    /// Localized compact party preview for a history record — mirrors
+    /// [`HistoryRecord::short_party_label`] but resolves member names to the active
+    /// language and localizes the abyss up/down prefixes. `limit` caps names per side.
+    pub(crate) fn localized_party_label(&self, record: &HistoryRecord, limit: usize) -> String {
+        let names = |chars: &[CombatSessionCharacterSummary]| -> String {
+            let list: Vec<String> = chars
+                .iter()
+                .take(limit)
+                .map(|row| character_display_name(&self.characters, row.char_id, &row.name))
+                .collect();
+            if list.is_empty() {
+                t("No recorded characters")
+            } else {
+                list.join(" / ")
+            }
+        };
+        let abyss = &record.summary.abyss;
+        let first = abyss
+            .first_half
+            .as_ref()
+            .filter(|half| !half.characters.is_empty())
+            .map(|half| format!("{}: {}", t("Upper"), names(&half.characters)));
+        let second = abyss
+            .second_half
+            .as_ref()
+            .filter(|half| !half.characters.is_empty())
+            .map(|half| format!("{}: {}", t("Lower"), names(&half.characters)));
+        let halves: Vec<String> = [first, second].into_iter().flatten().collect();
+        if !halves.is_empty() {
+            return halves.join(" | ");
+        }
+        names(&record.summary.characters)
+    }
+
     pub(crate) fn history_detail_contents(&mut self, ui: &mut egui::Ui, record: &HistoryRecord) {
         ui.horizontal(|ui| {
             ui.label(
@@ -563,8 +587,11 @@ impl DpsApp {
                     .color(shadcn_foreground(self.dark_mode)),
             );
             ui.label(
-                RichText::new(format!("· {}", record.summary.dps_time_mode))
-                    .color(ui.visuals().weak_text_color()),
+                RichText::new(format!(
+                    "· {}",
+                    localized_dps_time_mode(&record.summary.dps_time_mode)
+                ))
+                .color(ui.visuals().weak_text_color()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -685,7 +712,11 @@ impl DpsApp {
             .map(|record| {
                 (
                     record.id.clone(),
-                    format!("{} · {}", record.display_time(), record.party_label()),
+                    format!(
+                        "{} · {}",
+                        record.display_time(),
+                        self.localized_party_label(record, 4)
+                    ),
                 )
             })
             .collect::<Vec<_>>();
@@ -1143,22 +1174,38 @@ impl DpsApp {
     /// First-class settings promoted out of the old debug "环境" tab: parse
     /// options, team DPS import/export, and an entry to the abyss value tables.
     /// Always available (not gated behind the debug feature).
+    /// Below this content width the settings page drops from two columns to one.
+    /// Two ~300px columns can't hold a verbose-language row (e.g. English "Calibrate
+    /// with server-side HP deltas"), so a narrow or high-DPI console reflows to a
+    /// single full-width column instead of clipping.
+    const SETTINGS_TWO_COLUMN_MIN_WIDTH: f32 = 900.0;
+
     pub(crate) fn settings_contents(&mut self, ui: &mut egui::Ui) {
         let previous_hud_config = self.hud_config.clone();
-        // Two-column, scrollable layout: the tall 解析设置 fills the left column while
-        // HUD and the lighter sections stack on the right, so neither side is empty and
-        // the page scrolls when it overflows the console window.
+        // Two-column when wide, single-column when narrow, always scrollable: the
+        // tall parse section fills the left column while HUD and the lighter sections
+        // stack on the right, so neither side is empty; when the console is too narrow
+        // to split without clipping a localized row, everything stacks full-width.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.columns(2, |columns| {
-                    self.settings_interface_section(&mut columns[0]);
-                    self.settings_parse_section(&mut columns[0]);
-                    self.settings_hud_section(&mut columns[1]);
-                    self.settings_team_section(&mut columns[1]);
-                    self.settings_capture_logs_section(&mut columns[1]);
-                    self.settings_abyss_section(&mut columns[1]);
-                });
+                if ui.available_width() >= Self::SETTINGS_TWO_COLUMN_MIN_WIDTH {
+                    ui.columns(2, |columns| {
+                        self.settings_interface_section(&mut columns[0]);
+                        self.settings_parse_section(&mut columns[0]);
+                        self.settings_hud_section(&mut columns[1]);
+                        self.settings_team_section(&mut columns[1]);
+                        self.settings_capture_logs_section(&mut columns[1]);
+                        self.settings_abyss_section(&mut columns[1]);
+                    });
+                } else {
+                    self.settings_interface_section(ui);
+                    self.settings_parse_section(ui);
+                    self.settings_hud_section(ui);
+                    self.settings_team_section(ui);
+                    self.settings_capture_logs_section(ui);
+                    self.settings_abyss_section(ui);
+                }
             });
         self.hud_config = self.hud_config.clone().sanitized();
         if self.hud_config != previous_hud_config {
@@ -1278,47 +1325,42 @@ impl DpsApp {
         egui::CollapsingHeader::new("HUD")
             .default_open(true)
             .show(ui, |ui| {
-                egui::Grid::new("settings_hud")
-                    .num_columns(2)
-                    .spacing([14.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(t("Top"));
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut self.hud_config.show_title, t("Title"));
-                            ui.checkbox(&mut self.hud_config.show_team_dps, "DPS");
-                            ui.checkbox(&mut self.hud_config.show_duration, t("Time"));
-                            ui.checkbox(&mut self.hud_config.show_total_damage, t("Total Damage"));
-                            ui.checkbox(&mut self.hud_config.show_damage_taken, t("Damage Taken"));
-                        });
-                        ui.end_row();
-                        ui.label(t("Modules"));
-                        ui.horizontal(|ui| {
-                            ui.checkbox(
-                                &mut self.hud_config.show_character_rows,
-                                t("Character Ranking"),
-                            );
-                            ui.checkbox(&mut self.hud_config.show_abyss_half, t("Abyss"));
-                            ui.checkbox(
-                                &mut self.hud_config.show_passthrough_state,
-                                t("Passthrough"),
-                            );
-                            ui.checkbox(&mut self.hud_config.show_mini_timeline, t("Curve"));
-                        });
-                        ui.end_row();
-                        ui.label(t("Presets"));
-                        ui.horizontal(|ui| {
-                            if ui.button(t("Minimal")).clicked() {
-                                self.hud_config = HudConfig::minimal();
-                            }
-                            if ui.button(t("Standard")).clicked() {
-                                self.hud_config = HudConfig::default();
-                            }
-                            if ui.button(t("Detailed")).clicked() {
-                                self.hud_config = HudConfig::detailed();
-                            }
-                        });
-                        ui.end_row();
-                    });
+                // Wrapped rows rather than a fixed grid: a verbose language's checkbox
+                // labels reflow onto the next line instead of clipping when the column
+                // is narrow. The leading label acts as the row heading.
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(t("Top"));
+                    ui.checkbox(&mut self.hud_config.show_title, t("Title"));
+                    ui.checkbox(&mut self.hud_config.show_team_dps, "DPS");
+                    ui.checkbox(&mut self.hud_config.show_duration, t("Time"));
+                    ui.checkbox(&mut self.hud_config.show_total_damage, t("Total Damage"));
+                    ui.checkbox(&mut self.hud_config.show_damage_taken, t("Damage Taken"));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(t("Modules"));
+                    ui.checkbox(
+                        &mut self.hud_config.show_character_rows,
+                        t("Character Ranking"),
+                    );
+                    ui.checkbox(&mut self.hud_config.show_abyss_half, t("Abyss"));
+                    ui.checkbox(
+                        &mut self.hud_config.show_passthrough_state,
+                        t("Passthrough"),
+                    );
+                    ui.checkbox(&mut self.hud_config.show_mini_timeline, t("Curve"));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(t("Presets"));
+                    if ui.button(t("Minimal")).clicked() {
+                        self.hud_config = HudConfig::minimal();
+                    }
+                    if ui.button(t("Standard")).clicked() {
+                        self.hud_config = HudConfig::default();
+                    }
+                    if ui.button(t("Detailed")).clicked() {
+                        self.hud_config = HudConfig::detailed();
+                    }
+                });
             });
     }
 

@@ -594,6 +594,8 @@ pub(crate) struct TeamHitLayout {
 }
 
 pub(crate) struct TeamHitRowAssets<'a> {
+    /// Character display name in the active UI language (resolved by the caller).
+    pub(crate) char_name: &'a str,
     pub(crate) avatar_texture: Option<&'a egui::TextureHandle>,
     pub(crate) damage_digits: Option<&'a [egui::TextureHandle]>,
     pub(crate) follow_up_damage_digits: Option<&'a [egui::TextureHandle]>,
@@ -1236,7 +1238,7 @@ pub(crate) fn draw_team_hit_row(
         painter.text(
             avatar_rect.center(),
             egui::Align2::CENTER_CENTER,
-            hit.char_name.chars().next().unwrap_or('?').to_string(),
+            assets.char_name.chars().next().unwrap_or('?').to_string(),
             egui::FontId::proportional(14.0),
             Color32::WHITE,
         );
@@ -1250,7 +1252,7 @@ pub(crate) fn draw_team_hit_row(
     painter.text(
         egui::pos2(avatar_rect.right() + 7.0, y),
         egui::Align2::LEFT_CENTER,
-        &hit.char_name,
+        assets.char_name,
         egui::FontId::proportional(12.0),
         text_color,
     );

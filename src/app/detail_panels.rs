@@ -189,6 +189,7 @@ impl DpsApp {
                     );
                     let follow_up_digits =
                         follow_up_damage_digit_textures_for_hit(hit, &self.damage_digit_textures);
+                    let char_name = self.localized_character_name(hit.char_id, &hit.char_name);
                     draw_team_hit_row(
                         ui,
                         layout,
@@ -196,6 +197,7 @@ impl DpsApp {
                         max_damage,
                         color,
                         TeamHitRowAssets {
+                            char_name: &char_name,
                             avatar_texture,
                             damage_digits,
                             follow_up_damage_digits: follow_up_digits,
@@ -270,31 +272,18 @@ impl DpsApp {
         };
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
-            egui::ViewportBuilder::default()
-                .with_title(&title)
-                .with_inner_size(self.team_hit_detail_window_size)
-                .with_min_inner_size(egui::Vec2::from(config::TEAM_HIT_DETAIL_WINDOW_MIN_SIZE))
-                .with_window_level(egui::WindowLevel::AlwaysOnTop)
-                .with_decorations(false)
-                // Borderless but freely resizable via the edge grips (window_resize_grips).
-                .with_resizable(true),
+            secondary_viewport_builder(
+                &title,
+                self.team_hit_detail_window_size,
+                config::TEAM_HIT_DETAIL_WINDOW_MIN_SIZE,
+                self.team_hit_detail_corner_applied,
+            ),
             |ctx, _class| {
                 if !self.team_hit_detail_corner_applied {
                     apply_rounding_to_process_windows();
                     self.team_hit_detail_corner_applied = true;
                 }
-                let mut close_clicked = false;
-                egui::Panel::top("team_hit_detail_title_bar")
-                    .exact_size(34.0)
-                    .frame(
-                        egui::Frame::new()
-                            .fill(ctx.style().visuals.panel_fill)
-                            .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
-                            .inner_margin(egui::Margin::symmetric(10, 3)),
-                    )
-                    .show_inside(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, &title);
-                    });
+                let close_clicked = secondary_title_panel(ctx, &title);
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
@@ -402,31 +391,18 @@ impl DpsApp {
         let viewport_id = abyss_overview_viewport_id();
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
-            egui::ViewportBuilder::default()
-                .with_title(t("Abyss Monster Stats"))
-                .with_inner_size(self.abyss_window_size)
-                .with_min_inner_size(egui::Vec2::from(config::ABYSS_WINDOW_MIN_SIZE))
-                .with_window_level(egui::WindowLevel::AlwaysOnTop)
-                .with_decorations(false)
-                // Borderless but freely resizable via the edge grips (window_resize_grips).
-                .with_resizable(true),
+            secondary_viewport_builder(
+                t("Abyss Monster Stats"),
+                self.abyss_window_size,
+                config::ABYSS_WINDOW_MIN_SIZE,
+                self.abyss_overview_corner_applied,
+            ),
             |ctx, _class| {
                 if !self.abyss_overview_corner_applied {
                     apply_rounding_to_process_windows();
                     self.abyss_overview_corner_applied = true;
                 }
-                let mut close_clicked = false;
-                egui::Panel::top("abyss_overview_title_bar")
-                    .exact_size(34.0)
-                    .frame(
-                        egui::Frame::new()
-                            .fill(ctx.style().visuals.panel_fill)
-                            .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
-                            .inner_margin(egui::Margin::symmetric(10, 3)),
-                    )
-                    .show_inside(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, &t("Abyss Monster Stats"));
-                    });
+                let close_clicked = secondary_title_panel(ctx, &t("Abyss Monster Stats"));
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
@@ -994,11 +970,13 @@ impl DpsApp {
         } else {
             self.state.stats.get(&char_id).cloned()
         };
-        let Some(stats) = stats else {
+        let Some(mut stats) = stats else {
             self.hit_detail_char_id = None;
             self.hit_detail_corner_applied = false;
             return;
         };
+        // Display the character's name in the active UI language (window title + header).
+        stats.name = self.localized_character_name(char_id, &stats.name);
         let stats_duration = self.character_duration_for_current_source(&stats);
         let stats_dps = self.character_dps_for_current_source(&stats);
         let outgoing_count = stats.hits as usize;
@@ -1037,31 +1015,18 @@ impl DpsApp {
         let title = tf("{} - Combat Details", &[&stats.name]);
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
-            egui::ViewportBuilder::default()
-                .with_title(&title)
-                .with_inner_size(self.hit_detail_window_size)
-                .with_min_inner_size(egui::Vec2::from(config::HIT_DETAIL_WINDOW_MIN_SIZE))
-                .with_window_level(egui::WindowLevel::AlwaysOnTop)
-                .with_decorations(false)
-                // Borderless but freely resizable via the edge grips (window_resize_grips).
-                .with_resizable(true),
+            secondary_viewport_builder(
+                &title,
+                self.hit_detail_window_size,
+                config::HIT_DETAIL_WINDOW_MIN_SIZE,
+                self.hit_detail_corner_applied,
+            ),
             |ctx, _class| {
                 if !self.hit_detail_corner_applied {
                     apply_rounding_to_process_windows();
                     self.hit_detail_corner_applied = true;
                 }
-                let mut close_clicked = false;
-                egui::Panel::top("hit_detail_title_bar")
-                    .exact_size(34.0)
-                    .frame(
-                        egui::Frame::new()
-                            .fill(ctx.style().visuals.panel_fill)
-                            .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
-                            .inner_margin(egui::Margin::symmetric(10, 3)),
-                    )
-                    .show_inside(ctx, |ui| {
-                        close_clicked = secondary_title_bar(ui, &title);
-                    });
+                let close_clicked = secondary_title_panel(ctx, &title);
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()

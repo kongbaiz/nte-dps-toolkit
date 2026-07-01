@@ -1,5 +1,29 @@
 use super::*;
 
+/// Character display name for the active UI language (`name_en` for English and any
+/// non-Chinese language, `name_zh` for Simplified Chinese), falling back to
+/// `fallback` when the character table has no usable entry for `char_id`. A free
+/// function so the timeline, skills and history views — which render from a
+/// `&HashMap<u32, CharacterInfo>` without a `DpsApp` handle — resolve names the same
+/// way. Reads the active language from the shared i18n store.
+pub(crate) fn character_display_name(
+    characters: &HashMap<u32, CharacterInfo>,
+    char_id: u32,
+    fallback: &str,
+) -> String {
+    if let Some(info) = characters.get(&char_id) {
+        let candidate = if i18n::current_language() == Language::SimplifiedChinese {
+            info.name_zh.trim()
+        } else {
+            info.name_en.trim()
+        };
+        if !candidate.is_empty() {
+            return candidate.to_owned();
+        }
+    }
+    fallback.to_owned()
+}
+
 pub(crate) fn compact_metric(
     ui: &mut egui::Ui,
     label: &str,
@@ -49,13 +73,18 @@ pub(crate) fn compact_metric(
         });
 }
 
+/// Height of each party row so the list fills the available vertical space (the
+/// window is freely resizable, so the rows grow with it rather than leaving a large
+/// empty gap under the last member). Only a lower bound is enforced — 38px keeps a
+/// full roster readable when the window is short; there is no upper cap, so a few
+/// members in a tall window stretch to fill it.
 pub(crate) fn party_row_height(available_height: f32, row_count: usize) -> f32 {
     if row_count == 0 {
         return 52.0;
     }
 
     let spacing = 5.0 * row_count.saturating_sub(1) as f32;
-    ((available_height - spacing - 2.0) / row_count as f32).clamp(38.0, 52.0)
+    ((available_height - spacing - 2.0) / row_count as f32).max(38.0)
 }
 
 pub(crate) fn primary_button(label: impl Into<String>, dark_mode: bool) -> egui::Button<'static> {

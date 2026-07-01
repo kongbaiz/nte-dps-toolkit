@@ -118,6 +118,57 @@ impl DpsApp {
     }
 
     pub(crate) fn control_buttons(&mut self, ui: &mut egui::Ui) {
+        // Measure both groups at the current language in an invisible sizing pass so
+        // the enforced window minimum (see `enforce_main_min_size`) can grow to fit
+        // them. Without this, a longer translation would let the right-aligned
+        // toggles overflow back over the lifecycle buttons when the window is dragged
+        // narrow — the overlap this guards against.
+        let lifecycle_width =
+            self.measure_toolbar_group("toolbar_lifecycle", ui, Self::lifecycle_buttons);
+        let toggles_width =
+            self.measure_toolbar_group("toolbar_toggles", ui, Self::overlay_toggle_buttons);
+        // Raw widths plus a comfortable gap between the two groups.
+        self.toolbar_min_content_width = lifecycle_width + toggles_width + 24.0;
+
+        self.lifecycle_buttons(ui);
+        // Overlay toggles that used to live on the title bar, right-aligned so the
+        // capture-lifecycle buttons keep the left edge. The measured minimum above
+        // guarantees room for both groups, so this right-to-left group never overflows
+        // back over the lifecycle buttons.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            self.overlay_toggle_buttons(ui)
+        });
+    }
+
+    /// Natural width of a toolbar button group at the current language, measured in an
+    /// invisible sizing pass (left-to-right, unbounded) so it reflects the real
+    /// localized labels without disturbing the visible layout or reserving space.
+    fn measure_toolbar_group(
+        &mut self,
+        salt: &str,
+        ui: &mut egui::Ui,
+        build: impl FnOnce(&mut Self, &mut egui::Ui),
+    ) -> f32 {
+        let mut sizing = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(salt)
+                .sizing_pass()
+                .invisible()
+                .max_rect(egui::Rect::from_min_size(
+                    ui.max_rect().min,
+                    egui::vec2(10_000.0, ui.available_height().max(1.0)),
+                ))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        sizing.spacing_mut().item_spacing = ui.spacing().item_spacing;
+        sizing.spacing_mut().button_padding = ui.spacing().button_padding;
+        build(self, &mut sizing);
+        sizing.min_rect().width()
+    }
+
+    /// Capture-lifecycle buttons on the left of the toolbar: start/stop, reset,
+    /// pause/resume, the abyss collapse toggle, HUD and console.
+    pub(crate) fn lifecycle_buttons(&mut self, ui: &mut egui::Ui) {
         if self.capture.is_none() && self.replay_thread.is_none() {
             if ui
                 .add(primary_button(t("Start"), self.dark_mode))
@@ -192,6 +243,84 @@ impl DpsApp {
             self.console_open = true;
             self.console_corner_applied = false;
         }
+    }
+
+    /// Overlay toggles on the right of the toolbar: appearance menu, passthrough, pin.
+    /// Added appearance→passthrough→pin so a right-to-left layout renders them
+    /// pin · passthrough · appearance (a left-to-right sizing pass measures the same
+    /// total width regardless of order).
+    pub(crate) fn overlay_toggle_buttons(&mut self, ui: &mut egui::Ui) {
+        self.appearance_menu(ui);
+        let passthrough_label = if self.mouse_passthrough {
+            t("Passthrough on")
+        } else {
+            t("Passthrough")
+        };
+        if ui
+            .add(
+                egui::Button::selectable(self.mouse_passthrough, passthrough_label)
+                    .frame_when_inactive(true),
+            )
+            .on_hover_text(tf(
+                "{} toggles mouse passthrough anytime",
+                &[self.passthrough_hotkey.label()],
+            ))
+            .clicked()
+        {
+            self.toggle_mouse_passthrough(ui.ctx());
+        }
+        if ui
+            .add(egui::Button::selectable(self.always_on_top, t("Pin")).frame_when_inactive(true))
+            .on_hover_text(t("Keep the main window above the game"))
+            .clicked()
+        {
+            self.toggle_always_on_top(ui.ctx());
+        }
+    }
+
+    /// Appearance dropdown (opacity · theme · Combat HUD), shared by the live
+    /// toolbar. Moved off the title bar; see [`Self::control_buttons`].
+    pub(crate) fn appearance_menu(&mut self, ui: &mut egui::Ui) {
+        let (appearance_response, _) = egui::containers::menu::MenuButton::from_button(
+            egui::Button::new(t("Appearance")),
+        )
+        .ui(ui, |ui| {
+            ui.set_min_width(190.0);
+            ui.horizontal(|ui| {
+                ui.label(t("Opacity"));
+                ui.add(
+                    egui::Slider::new(&mut self.opacity, 0.35..=1.0)
+                        .show_value(true)
+                        .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
+                );
+            });
+            if ui
+                .button(if self.dark_mode {
+                    t("Switch to light")
+                } else {
+                    t("Switch to dark")
+                })
+                .clicked()
+            {
+                self.theme_transition_from = Some(shadcn_background(self.dark_mode));
+                self.theme_transition_started_at = Some(ui.input(|input| input.time));
+                self.dark_mode = !self.dark_mode;
+                ui.close();
+            }
+            ui.separator();
+            if ui
+                .add(
+                    egui::Button::selectable(self.hud_mode, t("Combat HUD"))
+                        .frame_when_inactive(true),
+                )
+                .on_hover_text(t("Backing-less HUD, overlaid directly on the game"))
+                .clicked()
+            {
+                self.set_hud_mode(ui.ctx(), !self.hud_mode);
+                ui.close();
+            }
+        });
+        appearance_response.on_hover_text(t("Adjust opacity, theme and HUD mode"));
     }
 
     pub(crate) fn animated_controls(&mut self, ui: &mut egui::Ui) {
@@ -371,6 +500,13 @@ impl DpsApp {
     /// Party-member rows (damage desc) plus the team totals shared by the party
     /// panel and the HUD. Returns owned rows so callers can paint without holding
     /// a borrow on `state`. Tuple: `(rows, total_damage, team_dps, duration)`.
+    /// Character display name for the active UI language, falling back to `fallback`
+    /// (the name baked at parse time) when the character table has no usable entry.
+    /// Thin wrapper over [`character_display_name`] for `DpsApp` call sites.
+    pub(crate) fn localized_character_name(&self, char_id: u32, fallback: &str) -> String {
+        character_display_name(&self.characters, char_id, fallback)
+    }
+
     pub(crate) fn party_readout(&self) -> (Vec<CharacterStats>, f64, f64, f64) {
         let prep = |stats: &HashMap<u32, CharacterStats>,
                     hits: &VecDeque<crate::engine::model::Hit>,
@@ -385,7 +521,7 @@ impl DpsApp {
             rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
             (rows, total, dps, duration)
         };
-        if let Some(party) = self.selected_party_state() {
+        let (mut rows, total, dps, duration) = if let Some(party) = self.selected_party_state() {
             prep(
                 &party.stats,
                 &party.hits,
@@ -401,7 +537,13 @@ impl DpsApp {
                 self.state_dps_for_current_mode(),
                 self.state_duration_for_current_mode(),
             )
+        };
+        // Resolve each row's display name to the active language; the baked name
+        // (Chinese, from parse time) is the fallback for unknown characters.
+        for row in &mut rows {
+            row.name = self.localized_character_name(row.char_id, &row.name);
         }
+        (rows, total, dps, duration)
     }
 
     /// Cheap count of party-member rows (no clone), for HUD window sizing.
@@ -1031,7 +1173,9 @@ impl DpsApp {
                 color,
             );
         }
-        let avatar_size = (row_height - 8.0).clamp(32.0, 40.0);
+        // Grows with the (now height-adaptive) row so tall cards don't leave the
+        // avatar marooned in empty space; normal-height rows keep the 40px avatar.
+        let avatar_size = (row_height - 8.0).clamp(32.0, 56.0);
         let avatar_rect = pixel_aligned_rect(
             egui::pos2(rect.left() + 24.0, rect.center().y - avatar_size * 0.5),
             avatar_size,

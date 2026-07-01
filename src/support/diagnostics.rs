@@ -1,5 +1,6 @@
 use crate::engine::capture::list_devices;
 use crate::platform::network::detect_game_device;
+use crate::storage::i18n::{t, tf};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DiagnosticStatus {
@@ -10,11 +11,12 @@ pub enum DiagnosticStatus {
 }
 
 impl DiagnosticStatus {
-    pub fn label(self) -> &'static str {
+    /// Localized status word for the active UI language.
+    pub fn label(self) -> String {
         match self {
-            Self::Passed => "通过",
-            Self::Warning => "警告",
-            Self::Failed => "失败",
+            Self::Passed => t("Passed"),
+            Self::Warning => t("Warning"),
+            Self::Failed => t("Failed"),
         }
     }
 
@@ -57,12 +59,16 @@ impl DiagnosticReport {
 
     pub fn redacted_text(&self) -> String {
         let mut text = String::new();
-        text.push_str("NTE DPS TOOL 自动诊断报告\n");
-        text.push_str(&format!(
-            "失败 {}，警告 {}\n",
-            self.failed_count(),
-            self.warning_count()
+        text.push_str(&t("NTE DPS TOOL auto-diagnostics report"));
+        text.push('\n');
+        text.push_str(&tf(
+            "Failed {}, warnings {}",
+            &[
+                &self.failed_count().to_string(),
+                &self.warning_count().to_string(),
+            ],
         ));
+        text.push('\n');
         for check in &self.checks {
             text.push_str(&format!(
                 "[{}] {} - {}\n",
@@ -94,51 +100,51 @@ pub fn run_capture_diagnostics(snapshot: DiagnosticSnapshot) -> DiagnosticReport
         Ok(devices) if devices.is_empty() => {
             checks.push(check(
                 DiagnosticStatus::Failed,
-                "Npcap 设备",
-                "Npcap 已加载，但没有返回可用抓包设备",
-                "确认 Npcap 安装完整，并尝试以管理员身份运行",
+                t("Npcap Device"),
+                t("Npcap is loaded but returned no usable capture devices"),
+                t("Confirm Npcap is fully installed, and try running as administrator"),
             ));
             checks.push(check(
                 DiagnosticStatus::Failed,
-                "游戏连接",
-                "没有可匹配的抓包设备，无法定位游戏连接",
-                "先修复 Npcap 设备枚举，再进入游戏场景后重新诊断",
+                t("Game Connection"),
+                t("No matching capture device, cannot locate the game connection"),
+                t("Fix Npcap device enumeration first, then enter a game scene and re-run diagnostics"),
             ));
         }
         Ok(devices) => {
             checks.push(check(
                 DiagnosticStatus::Passed,
-                "Npcap 设备",
-                format!("检测到 {} 个可用设备", devices.len()),
-                "设备枚举正常",
+                t("Npcap Device"),
+                tf("Detected {} usable devices", &[&devices.len().to_string()]),
+                t("Device enumeration is working"),
             ));
             match detect_game_device(&devices) {
                 Ok((_, network)) => checks.push(check(
                     DiagnosticStatus::Passed,
-                    "游戏连接",
-                    format!("已定位 HTGame.exe PID {}", network.pid),
-                    "已检测到 HTGame.exe 活动连接和匹配网卡",
+                    t("Game Connection"),
+                    tf("Located HTGame.exe PID {}", &[&network.pid.to_string()]),
+                    t("Detected an active HTGame.exe connection and matching NIC"),
                 )),
                 Err(error) => checks.push(check(
                     DiagnosticStatus::Failed,
-                    "游戏连接",
+                    t("Game Connection"),
                     error,
-                    "未检测到 HTGame.exe 活动连接，请先进入游戏场景后再开始抓包",
+                    t("No active HTGame.exe connection detected; enter a game scene before starting capture"),
                 )),
             }
         }
         Err(error) => {
             checks.push(check(
                 DiagnosticStatus::Failed,
-                "Npcap 设备",
+                t("Npcap Device"),
                 error,
-                "请安装 Npcap，并确认 WinPcap API-compatible Mode 可用",
+                t("Install Npcap and confirm WinPcap API-compatible Mode is available"),
             ));
             checks.push(check(
                 DiagnosticStatus::Failed,
-                "游戏连接",
-                "Npcap 不可用，跳过游戏连接定位",
-                "先修复 Npcap 加载问题，再重新运行诊断",
+                t("Game Connection"),
+                t("Npcap unavailable, skipping game-connection lookup"),
+                t("Fix the Npcap loading issue first, then re-run diagnostics"),
             ));
         }
     }
@@ -146,75 +152,81 @@ pub fn run_capture_diagnostics(snapshot: DiagnosticSnapshot) -> DiagnosticReport
     if snapshot.capture_running {
         checks.push(check(
             DiagnosticStatus::Passed,
-            "抓包状态",
+            t("Capture Status"),
             snapshot.active_capture_filter.as_deref().map_or_else(
-                || "实时抓包已启动，BPF 正在确定".to_owned(),
-                |filter| format!("实时抓包已启动，BPF={filter}"),
+                || t("Live capture started, BPF is being determined"),
+                |filter| tf("Live capture started, BPF={}", &[filter]),
             ),
-            "实时抓包任务正在运行",
+            t("A live capture task is running"),
         ));
     } else if snapshot.replay_running {
         checks.push(check(
             DiagnosticStatus::Passed,
-            "抓包状态",
-            "正在导入回放",
-            "回放导入中，实时抓包检查不适用",
+            t("Capture Status"),
+            t("Importing a replay"),
+            t("Replay import in progress; live-capture checks do not apply"),
         ));
     } else {
         checks.push(check(
             DiagnosticStatus::Warning,
-            "抓包状态",
-            "当前没有实时抓包任务",
-            "点击开始后再运行诊断，可以看到 BPF 和原始抓包写入状态",
+            t("Capture Status"),
+            t("No live capture task right now"),
+            t("Run diagnostics after clicking Start to see BPF and raw-capture write status"),
         ));
     }
 
     if snapshot.raw_packet_count > 0 {
         checks.push(check(
             DiagnosticStatus::Passed,
-            "原始抓包",
-            format!("已写入 {} 个原始包", snapshot.raw_packet_count),
-            "原始 PCAPNG 写入正常",
+            t("Raw Capture"),
+            tf(
+                "Wrote {} raw packets",
+                &[&snapshot.raw_packet_count.to_string()],
+            ),
+            t("Raw PCAPNG writing is working"),
         ));
     } else if snapshot.capture_running {
         checks.push(check(
             DiagnosticStatus::Warning,
-            "原始抓包",
-            "抓包运行中，但尚未写入原始包",
-            "确认游戏处于联网场景，必要时收窄或恢复默认 BPF",
+            t("Raw Capture"),
+            t("Capture is running but no raw packets written yet"),
+            t("Confirm the game is in an online scene; narrow or reset the BPF if needed"),
         ));
     } else {
         checks.push(check(
             DiagnosticStatus::Warning,
-            "原始抓包",
-            "当前没有可用原始包",
-            "开始抓包并等待游戏产生网络流量后再检查",
+            t("Raw Capture"),
+            t("No raw packets available right now"),
+            t("Start capture and wait for the game to produce network traffic, then re-check"),
         ));
     }
 
     if snapshot.hit_count > 0 {
         checks.push(check(
             DiagnosticStatus::Passed,
-            "伤害解析",
-            format!("已解析 {} 条伤害", snapshot.hit_count),
-            "伤害解析已有结果",
+            t("Damage Parsing"),
+            tf(
+                "Parsed {} damage records",
+                &[&snapshot.hit_count.to_string()],
+            ),
+            t("Damage parsing already has results"),
         ));
     } else if snapshot.parsed_packet_count > 0 || snapshot.raw_packet_count > 0 {
         checks.push(check(
             DiagnosticStatus::Warning,
-            "伤害解析",
-            format!(
-                "已有 {} 个解析封包，但暂无伤害",
-                snapshot.parsed_packet_count
+            t("Damage Parsing"),
+            tf(
+                "{} parsed packets but no damage yet",
+                &[&snapshot.parsed_packet_count.to_string()],
             ),
-            "进入战斗并造成伤害；若仍为 0，请导入 PCAPNG 到诊断页复核",
+            t("Enter combat and deal damage; if still 0, import a PCAPNG to the diagnostics page to review"),
         ));
     } else {
         checks.push(check(
             DiagnosticStatus::Warning,
-            "伤害解析",
-            "尚无封包和伤害数据",
-            "先进入游戏场景并开始抓包，确认状态栏不再提示采集错误",
+            t("Damage Parsing"),
+            t("No packet or damage data yet"),
+            t("Enter a game scene and start capture first, and confirm the status bar no longer reports capture errors"),
         ));
     }
 
@@ -224,31 +236,31 @@ pub fn run_capture_diagnostics(snapshot: DiagnosticSnapshot) -> DiagnosticReport
         } else {
             DiagnosticStatus::Warning
         },
-        "受击记录",
+        t("Incoming Records"),
         if snapshot.include_incoming {
-            "受击解析已启用"
+            t("Incoming parsing is enabled")
         } else {
-            "受击解析未启用"
+            t("Incoming parsing is disabled")
         },
         if snapshot.include_incoming {
-            "受击统计会进入解析质量报告"
+            t("Incoming stats will be included in the parse-quality report")
         } else {
-            "如需排查方向判定，请启用受击记录后重新抓包"
+            t("To investigate direction detection, enable incoming records and re-capture")
         },
     ));
 
     checks.push(check(
         DiagnosticStatus::Passed,
-        "服务端校准",
+        t("Server Calibration"),
         if snapshot.server_damage_calibration {
-            "服务端 HP 差值校准已启用"
+            t("Server-side HP delta calibration is enabled")
         } else {
-            "服务端 HP 差值校准未启用"
+            t("Server-side HP delta calibration is disabled")
         },
         if snapshot.server_damage_calibration {
-            "伤害值会在能明确配对时使用服务端 HP 差值"
+            t("Damage values use server-side HP deltas when they can be unambiguously paired")
         } else {
-            "如需排查伤害数值偏差，可启用校准后重新抓包或导入"
+            t("To investigate damage-value deviation, enable calibration and re-capture or re-import")
         },
     ));
 
@@ -258,9 +270,9 @@ pub fn run_capture_diagnostics(snapshot: DiagnosticSnapshot) -> DiagnosticReport
     {
         checks.push(check(
             DiagnosticStatus::Warning,
-            "最近诊断",
+            t("Recent Diagnostic"),
             diagnostic,
-            "按上方失败项处理后重新检测",
+            t("Address the failed items above, then re-detect"),
         ));
     }
 
@@ -296,15 +308,15 @@ mod tests {
         let report = DiagnosticReport {
             checks: vec![DiagnosticCheck {
                 status: DiagnosticStatus::Failed,
-                title: "游戏连接".to_owned(),
+                title: t("Game Connection"),
                 detail: r#"IP 192.168.1.2 GUID \Device\NPF_{abc} path C:\Users\me"#.to_owned(),
-                suggestion: "进入游戏场景后重新诊断".to_owned(),
+                suggestion: t("Address the failed items above, then re-detect"),
             }],
         };
 
         let text = report.redacted_text();
 
-        assert!(text.contains("进入游戏场景后重新诊断"));
+        assert!(text.contains(&t("Address the failed items above, then re-detect")));
         assert!(!text.contains("192.168.1.2"));
         assert!(!text.contains("NPF_"));
         assert!(!text.contains("C:\\Users"));
