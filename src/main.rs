@@ -41,6 +41,14 @@ fn main() -> Result<()> {
             } else {
                 egui::WindowLevel::Normal
             }),
+        // Render through wgpu (D3D12/Vulkan), not glow/OpenGL. On this transparent,
+        // borderless window the NVIDIA OpenGL driver loses the GL context ("GPU has
+        // been disconnected", error 10) during the native corner-resize modal loop,
+        // killing the process with no Rust panic — the diagonal-resize flash-crash
+        // (egui #4061 / #5460). wgpu avoids that driver path entirely. Default::default
+        // already resolves to Wgpu once glow is off, but pin it so a re-added glow
+        // feature can't silently switch the backend back.
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 

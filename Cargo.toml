@@ -17,7 +17,7 @@ aes = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 crossbeam-channel = "0.5"
-eframe = { version = "0.34.3", features = ["accesskit", "default_fonts", "glow"], default-features = false }
+eframe = { version = "0.34.3", features = ["accesskit", "default_fonts", "wgpu"], default-features = false }
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 libloading = "0.8"

@@ -240,8 +240,10 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
 /// This paints eight thin, frameless [`egui::Area`]s (four edges + four corners) along the
 /// viewport's edges; dragging one hands off to the OS resize loop via
 /// [`egui::ViewportCommand::BeginResize`] (winit `drag_resize_window`). Unlike the retired
-/// `−／＋` stepper this never streams `InnerSize`, so the wgpu resize crash (egui #4061 / #4091)
-/// does not apply — and this app renders with glow regardless.
+/// `−／＋` stepper this never streams `InnerSize`, but the handoff to the OS resize loop is
+/// exactly what egui #4061 / #5460 crash on: a fast corner drag on a transparent borderless
+/// window. Under the glow backend that killed the process via an NVIDIA OpenGL context loss
+/// with no Rust panic, so the app renders with wgpu (see `main`) to dodge that driver path.
 ///
 /// Each grip is its own `Area`, so its interaction rect is just the strip: the window center
 /// still routes pointer events to the panels underneath. Works for the root viewport and any

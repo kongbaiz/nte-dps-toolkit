@@ -238,8 +238,12 @@ pub(crate) fn load_image_texture(
     // minification. Plain bilinear sampling has no mip chain, so it only reads a
     // 2x2 texel neighborhood and aliases hard edges into the jagged look seen on
     // screen. Trilinear filtering with generated mipmaps samples a pre-averaged
-    // level, keeping shrunken images crisp and smooth. The glow backend (enabled
-    // here) honors `mipmap_mode`.
+    // level, keeping shrunken images crisp and smooth. NOTE: only egui_glow honors this
+    // (it calls `generate_mipmap`); egui-wgpu 0.34 uploads with `mip_level_count: 1` and
+    // ignores `mipmap_mode`, so under the wgpu backend heavy minification falls back to
+    // plain bilinear and aliases a little more. Pre-downscaling the source art would
+    // restore smoothness if that ever looks bad. `mipmap_mode` is kept set so the glow
+    // path (or a future wgpu mip chain) still benefits.
     let texture_options = egui::TextureOptions {
         magnification: egui::TextureFilter::Linear,
         minification: egui::TextureFilter::Linear,
