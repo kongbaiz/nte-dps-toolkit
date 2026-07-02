@@ -6,8 +6,7 @@ use windows_sys::Win32::Graphics::Dwm::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    HWND_NOTOPMOST, HWND_TOPMOST, IsWindowVisible, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WS_EX_LAYERED,
+    IsWindowVisible, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW, WS_EX_LAYERED,
     WS_EX_TRANSPARENT,
 };
 
@@ -189,94 +188,44 @@ fn is_visible_content_window(hwnd: HWND) -> bool {
     }
 }
 
-pub(crate) fn clear_process_windows_topmost(visible_only: bool) {
-    // SAFETY: EnumWindows invokes this callback synchronously. The LPARAM points
-    // to a stack request that remains valid for the duration of EnumWindows.
-    unsafe extern "system" fn clear_topmost(hwnd: HWND, request: LPARAM) -> i32 {
-        let request = unsafe { &*(request as *const TopmostWindowRequest) };
-        let mut window_process_id = 0;
-        // SAFETY: EnumWindows provides a valid top-level hwnd for this callback.
-        unsafe {
-            GetWindowThreadProcessId(hwnd, &mut window_process_id);
-        }
-        if window_process_id != request.process_id
-            || (request.visible_only && unsafe { IsWindowVisible(hwnd) } == 0)
-        {
-            return 1;
-        }
-        set_window_topmost_raw(hwnd, false);
-        1
-    }
+/// Owner handle for a native dialog (e.g. `rfd::FileDialog::set_parent`), built
+/// from a cached root-window HWND so a background thread can parent the dialog
+/// without touching Win32 window state itself. Owned windows always render above
+/// their owner regardless of topmost/z-order, which is what keeps a dialog from
+/// being hidden behind an always-on-top window — without needing the
+/// `EnumWindows`/`SetWindowPos` dance that `clear_process_windows_topmost` and
+/// friends use elsewhere (and which deadlocks on this app's wgpu backend if run
+/// from the UI thread's own frame callback, or blocks the caller if run
+/// cross-thread against a UI thread that never drains that message).
+#[derive(Clone, Copy)]
+pub(crate) struct DialogOwner(std::num::NonZeroIsize);
 
-    let request = TopmostWindowRequest {
-        process_id: std::process::id(),
-        visible_only,
-    };
-    // SAFETY: The callback does not outlive request; EnumWindows is synchronous.
-    unsafe {
-        EnumWindows(
-            Some(clear_topmost),
-            std::ptr::from_ref(&request).addr() as LPARAM,
-        );
+impl DialogOwner {
+    pub(crate) fn from_hwnd(hwnd: Option<isize>) -> Option<Self> {
+        std::num::NonZeroIsize::new(hwnd?).map(Self)
     }
 }
 
-pub(crate) fn restore_visible_process_windows_topmost() {
-    // SAFETY: EnumWindows invokes this callback synchronously. The LPARAM points
-    // to a stack request that remains valid for the duration of EnumWindows.
-    unsafe extern "system" fn restore_topmost(hwnd: HWND, request: LPARAM) -> i32 {
-        let request = unsafe { &*(request as *const TopmostWindowRequest) };
-        let mut window_process_id = 0;
-        // SAFETY: EnumWindows provides a valid top-level hwnd for this callback.
-        unsafe {
-            GetWindowThreadProcessId(hwnd, &mut window_process_id);
-        }
-        if window_process_id != request.process_id || unsafe { IsWindowVisible(hwnd) } == 0 {
-            return 1;
-        }
-        set_window_topmost_raw(hwnd, true);
-        1
-    }
-
-    let request = TopmostWindowRequest {
-        process_id: std::process::id(),
-        visible_only: true,
-    };
-    // SAFETY: The callback does not outlive request; EnumWindows is synchronous.
-    unsafe {
-        EnumWindows(
-            Some(restore_topmost),
-            std::ptr::from_ref(&request).addr() as LPARAM,
-        );
+impl raw_window_handle::HasWindowHandle for DialogOwner {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        let handle = raw_window_handle::Win32WindowHandle::new(self.0);
+        // SAFETY: the wrapped HWND is only read (never dereferenced as a Rust
+        // pointer) by rfd, which forwards it to `IFileOpenDialog::Show` as the
+        // dialog's owner. No lifetime is actually borrowed here.
+        Ok(unsafe {
+            raw_window_handle::WindowHandle::borrow_raw(raw_window_handle::RawWindowHandle::Win32(
+                handle,
+            ))
+        })
     }
 }
 
-pub(crate) fn set_window_topmost(hwnd: isize, topmost: bool) {
-    set_window_topmost_raw(hwnd as HWND, topmost);
-}
-
-fn set_window_topmost_raw(hwnd: HWND, topmost: bool) {
-    let insert_after = if topmost {
-        HWND_TOPMOST
-    } else {
-        HWND_NOTOPMOST
-    };
-    // SAFETY: hwnd is either provided by eframe/raw-window-handle or by EnumWindows.
-    // The call only changes Z-order and does not move, resize, or activate windows.
-    unsafe {
-        SetWindowPos(
-            hwnd,
-            insert_after,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
+impl raw_window_handle::HasDisplayHandle for DialogOwner {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        Ok(raw_window_handle::DisplayHandle::windows())
     }
-}
-
-struct TopmostWindowRequest {
-    process_id: u32,
-    visible_only: bool,
 }

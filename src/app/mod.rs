@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
 use crate::engine::abyss_data::{
@@ -36,8 +36,8 @@ use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{HotkeyEvent, HotkeyHandle};
 use crate::platform::network::{GameNetwork, detect_game_device, detect_game_network};
 use crate::platform::window_attributes::{
-    WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
-    clear_process_windows_topmost, restore_visible_process_windows_topmost, set_window_topmost,
+    DialogOwner, WindowAttributeConfig, apply_rounding_to_process_windows,
+    apply_window_attributes,
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
@@ -126,11 +126,36 @@ struct ActiveImport {
     viewport: egui::ViewportId,
 }
 
-#[derive(Clone, Copy)]
-struct PendingDebugImport {
-    kind: DebugImportKind,
-    delay: u8,
+/// What to do with the path once a native file dialog comes back. The blocking
+/// `rfd` dialogs pump a Win32 modal message loop, which re-enters the winit
+/// event loop and deadlocks the wgpu presenter when run on the UI thread, so
+/// every dialog runs on a worker thread and reports back through this.
+pub(crate) enum FileDialogPurpose {
+    DebugImport { kind: DebugImportKind },
+    TeamDpsImportAll,
+    TeamDpsImportLine { upper: bool },
+    TeamDpsExport { json: String },
+    CaptureInfoExport,
+    RawCaptureExport,
+}
+
+/// Parent a native dialog to our root window when we have its handle, so it
+/// can't end up hidden behind an always-on-top window. An owned window always
+/// renders above its owner regardless of topmost/z-order — see [`DialogOwner`]
+/// for why that beats clearing topmost with `SetWindowPos`.
+fn with_owner(dialog: rfd::FileDialog, owner: Option<DialogOwner>) -> rfd::FileDialog {
+    match owner {
+        Some(owner) => dialog.set_parent(&owner),
+        None => dialog,
+    }
+}
+
+struct PendingFileDialog {
+    purpose: FileDialogPurpose,
+    /// Viewport that opened the dialog; errors from the completion handler are
+    /// routed back to it.
     viewport: egui::ViewportId,
+    receiver: Receiver<Option<PathBuf>>,
 }
 
 pub(crate) enum ConfirmationAction {
@@ -877,7 +902,7 @@ pub struct DpsApp {
     opacity_reapply_frames: u8,
     theme_transition_from: Option<Color32>,
     theme_transition_started_at: Option<f64>,
-    pending_debug_import: Option<PendingDebugImport>,
+    pending_file_dialog: Option<PendingFileDialog>,
     active_import: Option<ActiveImport>,
     pending_confirmation: Option<ConfirmationAction>,
     pending_confirmation_viewport: egui::ViewportId,
@@ -941,7 +966,7 @@ impl eframe::App for DpsApp {
         self.drain_device_detection();
         self.drain_hotkeys(ctx);
         self.process_file_drops(ctx, frame);
-        self.process_debug_import_dialog(ctx);
+        self.poll_file_dialog(ctx);
         let force_opacity = self.opacity_reapply_frames > 0;
         apply_window_attributes(
             frame,

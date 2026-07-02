@@ -607,24 +607,12 @@ impl DpsApp {
             LinePredictionAction::None => return,
             LinePredictionAction::ImportCurrent => self.snapshot_current_team(upper),
             LinePredictionAction::Clear => None,
-            LinePredictionAction::ImportFile => match self.pick_and_load_team_dps(ctx, None) {
-                // For one line, prefer that line's team from the file, then the
-                // matching upper/lower, then the single team.
-                Some(export) => {
-                    let preferred = if upper { export.upper } else { export.lower };
-                    let team = preferred.or(export.single);
-                    if team.is_none() {
-                        self.set_last_error_in(
-                            ctx,
-                            t("The DPS data file has no team usable for this line"),
-                            Some(ErrorAction::OpenTeamDpsImport),
-                        );
-                        return;
-                    }
-                    team
-                }
-                None => return,
-            },
+            LinePredictionAction::ImportFile => {
+                // The dialog runs on a worker thread; the file is applied in
+                // finish_team_dps_line_import once it comes back.
+                self.request_team_dps_file(ctx, FileDialogPurpose::TeamDpsImportLine { upper });
+                return;
+            }
         };
         if upper {
             self.abyss_overview.upper_team = team;
@@ -633,47 +621,81 @@ impl DpsApp {
         }
     }
 
-    /// Open a file dialog and parse a team DPS data file. Returns `None` when the
-    /// user cancels; sets `last_error` on a read/parse failure.
-    pub(crate) fn pick_and_load_team_dps(
-        &mut self,
-        ctx: &egui::Context,
-        retry_action: Option<ErrorAction>,
-    ) -> Option<TeamDpsExport> {
-        let path = self.open_native_file_dialog(ctx, || {
-            rfd::FileDialog::new()
-                .add_filter(t("NTE team data"), &["json"])
-                .pick_file()
-        })?;
-        match std::fs::read_to_string(&path)
+    /// Ask for a team DPS data file; the parse/apply happens in
+    /// [`Self::poll_file_dialog`] once the worker-thread dialog returns.
+    fn request_team_dps_file(&mut self, ctx: &egui::Context, purpose: FileDialogPurpose) {
+        let filter = t("NTE team data");
+        self.spawn_file_dialog(ctx, purpose, move |owner| {
+            with_owner(rfd::FileDialog::new().add_filter(filter, &["json"]), owner).pick_file()
+        });
+    }
+
+    fn load_team_dps_file(path: &Path) -> Result<TeamDpsExport, String> {
+        std::fs::read_to_string(path)
             .map_err(|error| error.to_string())
             .and_then(|text| {
                 serde_json::from_str::<TeamDpsExport>(&text).map_err(|error| error.to_string())
-            }) {
-            Ok(export) => Some(export),
+            })
+    }
+
+    /// Completion of the per-line 预测导入: prefer that line's team from the
+    /// file, then the matching upper/lower, then the single team.
+    pub(crate) fn finish_team_dps_line_import(
+        &mut self,
+        viewport: egui::ViewportId,
+        upper: bool,
+        path: &Path,
+    ) {
+        let export = match Self::load_team_dps_file(path) {
+            Ok(export) => export,
             Err(error) => {
-                self.set_last_error_in(
-                    ctx,
+                self.set_last_error_for(
+                    viewport,
                     tf("Failed to import DPS data: {}", &[&error]),
-                    retry_action,
+                    None,
                 );
-                None
+                return;
             }
+        };
+        let preferred = if upper { export.upper } else { export.lower };
+        let Some(team) = preferred.or(export.single) else {
+            self.set_last_error_for(
+                viewport,
+                t("The DPS data file has no team usable for this line"),
+                Some(ErrorAction::OpenTeamDpsImport),
+            );
+            return;
+        };
+        if upper {
+            self.abyss_overview.upper_team = Some(team);
+        } else {
+            self.abyss_overview.lower_team = Some(team);
         }
     }
 
     /// Main-window "导入 DPS 数据": load a team DPS file into the abyss prediction.
     /// A dual file fills 上行线/下行线 separately; a single-team file fills both.
     pub(crate) fn import_team_dps(&mut self, ctx: &egui::Context) {
-        let Some(export) = self.pick_and_load_team_dps(ctx, Some(ErrorAction::OpenTeamDpsImport))
-        else {
-            return;
+        self.request_team_dps_file(ctx, FileDialogPurpose::TeamDpsImportAll);
+    }
+
+    pub(crate) fn finish_team_dps_import(&mut self, viewport: egui::ViewportId, path: &Path) {
+        let export = match Self::load_team_dps_file(path) {
+            Ok(export) => export,
+            Err(error) => {
+                self.set_last_error_for(
+                    viewport,
+                    tf("Failed to import DPS data: {}", &[&error]),
+                    Some(ErrorAction::OpenTeamDpsImport),
+                );
+                return;
+            }
         };
         let upper = export.upper.clone().or_else(|| export.single.clone());
         let lower = export.lower.clone().or_else(|| export.single.clone());
         if upper.is_none() && lower.is_none() {
-            self.set_last_error_in(
-                ctx,
+            self.set_last_error_for(
+                viewport,
                 t("The DPS data file has no team data"),
                 Some(ErrorAction::OpenTeamDpsImport),
             );
@@ -711,21 +733,31 @@ impl DpsApp {
             return;
         };
         let default_name = format!("nte_team_dps_{}.json", Local::now().format("%Y%m%d_%H%M%S"));
-        let Some(path) = self.open_native_file_dialog(ctx, || {
-            rfd::FileDialog::new()
-                .add_filter(t("NTE team data"), &["json"])
-                .set_file_name(&default_name)
-                .save_file()
-        }) else {
-            return;
-        };
-        match atomic_write_text(&path, &json) {
+        let filter = t("NTE team data");
+        self.spawn_file_dialog(ctx, FileDialogPurpose::TeamDpsExport { json }, move |owner| {
+            with_owner(
+                rfd::FileDialog::new()
+                    .add_filter(filter, &["json"])
+                    .set_file_name(default_name),
+                owner,
+            )
+            .save_file()
+        });
+    }
+
+    pub(crate) fn finish_team_dps_export(
+        &mut self,
+        viewport: egui::ViewportId,
+        path: &Path,
+        json: &str,
+    ) {
+        match atomic_write_text(path, json) {
             Ok(()) => {
                 self.status = t("Team data exported");
                 self.clear_last_error();
             }
-            Err(error) => self.set_last_error_in(
-                ctx,
+            Err(error) => self.set_last_error_for(
+                viewport,
                 tf("Failed to export team data: {}", &[&error.to_string()]),
                 None,
             ),
