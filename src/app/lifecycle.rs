@@ -1097,8 +1097,11 @@ impl DpsApp {
             DebugImportKind::Pcapng => {
                 let filter = t("Wireshark capture");
                 self.spawn_file_dialog(ctx, purpose, move |owner| {
-                    with_owner(rfd::FileDialog::new().add_filter(filter, &["pcapng"]), owner)
-                        .pick_file()
+                    with_owner(
+                        rfd::FileDialog::new().add_filter(filter, &["pcapng"]),
+                        owner,
+                    )
+                    .pick_file()
                 });
             }
             DebugImportKind::CaptureJson => {

@@ -37,8 +37,7 @@ use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{HotkeyEvent, HotkeyHandle};
 use crate::platform::network::{GameNetwork, detect_game_device, detect_game_network};
 use crate::platform::window_attributes::{
-    DialogOwner, WindowAttributeConfig, apply_rounding_to_process_windows,
-    apply_window_attributes,
+    DialogOwner, WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{

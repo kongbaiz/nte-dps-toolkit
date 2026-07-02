@@ -75,8 +75,11 @@ fn wgpu_options_with_transparent_dx12() -> eframe::egui_wgpu::WgpuConfiguration 
     let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(create_new) = &mut options.wgpu_setup {
         create_new.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
-        create_new.instance_descriptor.backend_options.dx12.presentation_system =
-            eframe::wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        create_new
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .presentation_system = eframe::wgpu::Dx12SwapchainKind::DxgiFromVisual;
     }
     options
 }
