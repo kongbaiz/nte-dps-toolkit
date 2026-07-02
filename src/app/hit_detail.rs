@@ -109,6 +109,14 @@ pub(crate) fn aggregate_character_skill_damage(
     rows
 }
 
+/// Attack types shown as their own filterable chip in the "Reaction Damage"
+/// summary strip instead of being folded into whoever triggered them: the
+/// QTE-chain reactions plus "倾陷伤害" (Unbalance/Tenacity burst, issue #15 —
+/// also excluded from personal ranking in [`is_unbalance_damage_hit`]).
+fn is_shared_attribution_attack_type(attack_type: &str) -> bool {
+    is_qte_follow_up_damage_type(attack_type) || attack_type == UNBALANCE_ATTACK_TYPE
+}
+
 pub(crate) fn summarize_qte_type_filters(
     hits: &VecDeque<crate::engine::model::Hit>,
     char_id: Option<u32>,
@@ -118,7 +126,7 @@ pub(crate) fn summarize_qte_type_filters(
         hit.direction != "incoming" && char_id.is_none_or(|char_id| hit.char_id == char_id)
     }) {
         if let Some(attack_type) = hit.attack_type.as_deref()
-            && is_qte_follow_up_damage_type(attack_type)
+            && is_shared_attribution_attack_type(attack_type)
         {
             let row =
                 summaries
@@ -133,7 +141,7 @@ pub(crate) fn summarize_qte_type_filters(
         }
         if hit.follow_up_damage > 0.0
             && let Some(attack_type) = hit.follow_up_attack_type.as_deref()
-            && is_qte_follow_up_damage_type(attack_type)
+            && is_shared_attribution_attack_type(attack_type)
         {
             let row =
                 summaries
