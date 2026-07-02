@@ -775,7 +775,15 @@ impl DpsApp {
             // heavier, out-of-place control on the compact rail.
             if ui
                 .small_button(t("Passthrough"))
-                .on_hover_text(passthrough_hint)
+                .on_hover_ui(|ui| {
+                    // The HUD is its own small OS window (HUD_WINDOW_WIDTH), not
+                    // a panel inside a larger one — a tooltip can't spill past
+                    // its edges the way it could in the normal window, so wrap
+                    // well short of that width instead of relying on the
+                    // default single-line-then-clip tooltip sizing.
+                    ui.set_max_width(HUD_WINDOW_WIDTH - 100.0);
+                    ui.label(passthrough_hint);
+                })
                 .clicked()
             {
                 self.toggle_mouse_passthrough(ui.ctx());
@@ -1421,7 +1429,15 @@ impl DpsApp {
                     .corner_radius(8)
                     .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
-                        ui.set_max_width(420.0);
+                        // The HUD is its own small OS window (HUD_WINDOW_WIDTH), not a
+                        // panel inside the larger normal window — content wider than
+                        // that clips at the window edge instead of just looking cramped.
+                        let max_width = if self.hud_mode {
+                            HUD_WINDOW_WIDTH - 40.0
+                        } else {
+                            420.0
+                        };
+                        ui.set_max_width(max_width);
                         ui.horizontal(|ui| {
                             let (dot_rect, _) =
                                 ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
