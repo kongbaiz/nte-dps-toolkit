@@ -734,15 +734,19 @@ impl DpsApp {
         };
         let default_name = format!("nte_team_dps_{}.json", Local::now().format("%Y%m%d_%H%M%S"));
         let filter = t("NTE team data");
-        self.spawn_file_dialog(ctx, FileDialogPurpose::TeamDpsExport { json }, move |owner| {
-            with_owner(
-                rfd::FileDialog::new()
-                    .add_filter(filter, &["json"])
-                    .set_file_name(default_name),
-                owner,
-            )
-            .save_file()
-        });
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::TeamDpsExport { json },
+            move |owner| {
+                with_owner(
+                    rfd::FileDialog::new()
+                        .add_filter(filter, &["json"])
+                        .set_file_name(default_name),
+                    owner,
+                )
+                .save_file()
+            },
+        );
     }
 
     pub(crate) fn finish_team_dps_export(
