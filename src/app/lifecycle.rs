@@ -234,7 +234,7 @@ impl DpsApp {
             opacity_reapply_frames: 4,
             theme_transition_from: None,
             theme_transition_started_at: None,
-            pending_debug_import: None,
+            pending_file_dialog: None,
             active_import: None,
             pending_confirmation: None,
             pending_confirmation_viewport: egui::ViewportId::ROOT,
@@ -1084,72 +1084,121 @@ impl DpsApp {
     }
 
     pub(crate) fn request_debug_import(&mut self, ctx: &egui::Context, kind: DebugImportKind) {
-        clear_process_windows_topmost(false);
-        ctx.request_repaint();
-        self.pending_debug_import = Some(PendingDebugImport {
-            kind,
-            delay: 1,
-            viewport: ctx.viewport_id(),
-        });
+        let purpose = FileDialogPurpose::DebugImport { kind };
+        match kind {
+            DebugImportKind::Pcapng => {
+                let filter = t("Wireshark capture");
+                self.spawn_file_dialog(ctx, purpose, move |owner| {
+                    with_owner(rfd::FileDialog::new().add_filter(filter, &["pcapng"]), owner)
+                        .pick_file()
+                });
+            }
+            DebugImportKind::CaptureJson => {
+                let filter = t("NTE exported capture");
+                self.spawn_file_dialog(ctx, purpose, move |owner| {
+                    with_owner(rfd::FileDialog::new().add_filter(filter, &["json"]), owner)
+                        .pick_file()
+                });
+            }
+            DebugImportKind::EncryptedIni => {
+                let ini_filter = t("NTE encrypted INI");
+                let all_filter = t("All files");
+                self.spawn_file_dialog(ctx, purpose, move |owner| {
+                    with_owner(
+                        rfd::FileDialog::new()
+                            .add_filter(ini_filter, &["ini"])
+                            .add_filter(all_filter, &["*"]),
+                        owner,
+                    )
+                    .pick_file()
+                });
+            }
+        }
     }
 
-    pub(crate) fn open_native_file_dialog<T>(
+    /// Run a native file dialog on a worker thread and remember what to do with
+    /// the picked path (see [`FileDialogPurpose`]); [`Self::poll_file_dialog`]
+    /// picks up the result. Only one dialog may be open at a time — further
+    /// requests are ignored until it closes.
+    ///
+    /// `dialog` receives the root window as a [`DialogOwner`] so it can call
+    /// `.set_parent(owner)`: an owned window always renders above its owner
+    /// regardless of topmost/z-order, which is what keeps the dialog from
+    /// appearing hidden behind an always-on-top window. This deliberately avoids
+    /// `clear_process_windows_topmost`/`SetWindowPos`-based approaches — those
+    /// deadlock on this app's wgpu backend when run on the UI thread (a same-
+    /// thread `SetWindowPos` synchronously re-enters `logic()` via WndProc) and
+    /// still block forever when moved to a worker thread (the cross-thread call
+    /// waits on a UI-thread message that never gets drained).
+    pub(crate) fn spawn_file_dialog(
         &mut self,
         ctx: &egui::Context,
-        dialog: impl FnOnce() -> Option<T>,
-    ) -> Option<T> {
-        clear_process_windows_topmost(false);
-
-        let result = dialog();
-
-        self.restore_window_levels_after_file_dialog();
-        ctx.request_repaint();
-        result
-    }
-
-    pub(crate) fn restore_window_levels_after_file_dialog(&mut self) {
-        restore_visible_process_windows_topmost();
-        if !self.always_on_top
-            && let Some(hwnd) = self.corner_applied_hwnd
-        {
-            set_window_topmost(hwnd, false);
+        purpose: FileDialogPurpose,
+        dialog: impl FnOnce(Option<DialogOwner>) -> Option<PathBuf> + Send + 'static,
+    ) {
+        if self.pending_file_dialog.is_some() {
+            return;
         }
-        self.opacity_reapply_frames = 2;
+        let owner = DialogOwner::from_hwnd(self.corner_applied_hwnd);
+        let (sender, receiver) = unbounded();
+        let waker = ctx.clone();
+        thread::spawn(move || {
+            let picked = dialog(owner);
+            let _ = sender.send(picked);
+            // Wake an idle UI so poll_file_dialog sees the result promptly.
+            waker.request_repaint();
+        });
+        self.pending_file_dialog = Some(PendingFileDialog {
+            purpose,
+            viewport: ctx.viewport_id(),
+            receiver,
+        });
+        ctx.request_repaint();
     }
 
-    pub(crate) fn process_debug_import_dialog(&mut self, ctx: &egui::Context) {
-        let Some(pending) = self.pending_debug_import else {
+    pub(crate) fn poll_file_dialog(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.pending_file_dialog else {
             return;
         };
-        if pending.delay > 0 {
-            self.pending_debug_import = Some(PendingDebugImport {
-                delay: pending.delay - 1,
-                ..pending
-            });
-            return;
-        }
-        self.pending_debug_import = None;
-        let path = self.open_native_file_dialog(ctx, || match pending.kind {
-            DebugImportKind::Pcapng => rfd::FileDialog::new()
-                .add_filter(t("Wireshark capture"), &["pcapng"])
-                .pick_file(),
-            DebugImportKind::CaptureJson => rfd::FileDialog::new()
-                .add_filter(t("NTE exported capture"), &["json"])
-                .pick_file(),
-            DebugImportKind::EncryptedIni => rfd::FileDialog::new()
-                .add_filter(t("NTE encrypted INI"), &["ini"])
-                .add_filter(t("All files"), &["*"])
-                .pick_file(),
-        });
-        if let Some(path) = path {
-            match pending.kind {
-                DebugImportKind::Pcapng | DebugImportKind::CaptureJson => {
-                    self.request_import_file_for(pending.kind, path, pending.viewport);
-                }
-                DebugImportKind::EncryptedIni => {
-                    self.load_encrypted_ini_for(path, pending.viewport);
-                }
+        let result = match pending.receiver.try_recv() {
+            Ok(result) => result,
+            // Fallback wake in case the worker's repaint races this frame.
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(200));
+                return;
             }
+            Err(TryRecvError::Disconnected) => None,
+        };
+        let Some(PendingFileDialog {
+            purpose, viewport, ..
+        }) = self.pending_file_dialog.take()
+        else {
+            return;
+        };
+        // Nudge opacity to reapply in case focus moved while the dialog was open.
+        self.opacity_reapply_frames = 2;
+        ctx.request_repaint();
+        let Some(path) = result else {
+            return;
+        };
+        match purpose {
+            FileDialogPurpose::DebugImport { kind } => match kind {
+                DebugImportKind::Pcapng | DebugImportKind::CaptureJson => {
+                    self.request_import_file_for(kind, path, viewport);
+                }
+                DebugImportKind::EncryptedIni => self.load_encrypted_ini_for(path, viewport),
+            },
+            FileDialogPurpose::TeamDpsImportAll => self.finish_team_dps_import(viewport, &path),
+            FileDialogPurpose::TeamDpsImportLine { upper } => {
+                self.finish_team_dps_line_import(viewport, upper, &path);
+            }
+            FileDialogPurpose::TeamDpsExport { json } => {
+                self.finish_team_dps_export(viewport, &path, &json);
+            }
+            FileDialogPurpose::CaptureInfoExport => {
+                self.finish_capture_info_export(viewport, &path);
+            }
+            FileDialogPurpose::RawCaptureExport => self.finish_raw_capture_export(viewport, &path),
         }
     }
 
@@ -1409,16 +1458,30 @@ impl DpsApp {
             return;
         }
 
-        let Some(path) = self.open_native_file_dialog(ctx, || {
-            rfd::FileDialog::new()
-                .add_filter(t("Capture info JSON"), &["json"])
-                .set_file_name(default_export_filename())
-                .save_file()
-        }) else {
-            return;
-        };
+        let filter = t("Capture info JSON");
+        self.spawn_file_dialog(ctx, FileDialogPurpose::CaptureInfoExport, move |owner| {
+            with_owner(
+                rfd::FileDialog::new()
+                    .add_filter(filter, &["json"])
+                    .set_file_name(default_export_filename()),
+                owner,
+            )
+            .save_file()
+        });
+    }
 
-        match atomic_write_file(&path, |writer| {
+    fn finish_capture_info_export(&mut self, viewport: egui::ViewportId, path: &Path) {
+        // The UI stayed live while the dialog was open, so re-check that no
+        // capture or replay started in the meantime.
+        if self.capture.is_some() || self.replay_thread.is_some() {
+            self.set_last_error_for(
+                viewport,
+                t("Stop capture or replay first, then export this capture info"),
+                None,
+            );
+            return;
+        }
+        match atomic_write_file(path, |writer| {
             let mut out = IoFmtWriter::new(writer);
             self.write_capture_export_json(&mut out);
             out.finish()
@@ -1428,8 +1491,8 @@ impl DpsApp {
                 self.clear_last_error();
             }
             Err(error) => {
-                self.set_last_error_in(
-                    ctx,
+                self.set_last_error_for(
+                    viewport,
                     tf("Failed to export capture info: {}", &[&error.to_string()]),
                     None,
                 );
@@ -1451,19 +1514,34 @@ impl DpsApp {
             return;
         }
         let default_file_name = format!("nte_raw_{}.pcapng", Local::now().format("%Y%m%d_%H%M%S"));
-        let Some(destination) = self.open_native_file_dialog(ctx, || {
-            rfd::FileDialog::new()
-                .add_filter(t("Full raw capture"), &["pcapng"])
-                .set_file_name(default_file_name)
-                .save_file()
-        }) else {
+        let filter = t("Full raw capture");
+        self.spawn_file_dialog(ctx, FileDialogPurpose::RawCaptureExport, move |owner| {
+            with_owner(
+                rfd::FileDialog::new()
+                    .add_filter(filter, &["pcapng"])
+                    .set_file_name(default_file_name),
+                owner,
+            )
+            .save_file()
+        });
+    }
+
+    fn finish_raw_capture_export(&mut self, viewport: egui::ViewportId, destination: &Path) {
+        // The UI stayed live while the dialog was open; the buffer may have been
+        // cleared (or a capture restarted) in the meantime.
+        if self.capture.is_some() {
+            self.set_last_error_for(
+                viewport,
+                t("Stop capture first, then save the full PCAPNG"),
+                None,
+            );
             return;
-        };
+        }
         let Some(raw_capture) = self.raw_capture.as_ref() else {
-            self.set_last_error_in(ctx, t("No full PCAPNG to save"), None);
+            self.set_last_error_for(viewport, t("No full PCAPNG to save"), None);
             return;
         };
-        match raw_capture.save(&destination) {
+        match raw_capture.save(destination) {
             Ok((packet_count, captured_bytes)) => {
                 let file_name = destination
                     .file_name()
@@ -1481,8 +1559,8 @@ impl DpsApp {
                 self.clear_last_error();
             }
             Err(error) => {
-                self.set_last_error_in(
-                    ctx,
+                self.set_last_error_for(
+                    viewport,
                     tf("Failed to save the full capture: {}", &[&error.to_string()]),
                     None,
                 );
