@@ -791,6 +791,24 @@ impl CharacterStats {
     }
 }
 
+/// The `attack_type` classification used for "倾陷伤害" (Unbalance/Tenacity
+/// burst) ticks — see [`is_unbalance_damage_hit`].
+pub const UNBALANCE_ATTACK_TYPE: &str = "倾陷伤害";
+
+/// Whether `hit` is a "倾陷伤害" (Unbalance/Tenacity burst) tick. The game
+/// attributes the whole burst to whichever character happens to be on-field
+/// when the team's shared stagger gauge pops, not to whoever actually filled
+/// it — see issue #15. Kept in the team `total_damage` (it did reduce the
+/// target's HP) but excluded from any single character's personal totals so
+/// it can't inflate one character's ranking/DPS share.
+pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
+    hit.attack_type.as_deref() == Some(UNBALANCE_ATTACK_TYPE)
+        || hit
+            .damage_name
+            .as_deref()
+            .is_some_and(|damage_name| damage_name.contains("倾陷"))
+}
+
 fn update_combat_totals(
     stats: &mut HashMap<u32, CharacterStats>,
     started_at: &mut Option<f64>,
@@ -818,6 +836,9 @@ fn update_combat_totals(
     *started_at = Some(started_at.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
     *ended_at = Some(ended_at.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
     *total_damage += damage;
+    if is_unbalance_damage_hit(hit) {
+        return;
+    }
     if row.hits == 0 {
         row.first_hit = hit.timestamp;
         row.last_hit = hit.timestamp;
@@ -2526,6 +2547,21 @@ mod tests {
             state.duration_with_time_stop(true),
         );
         assert!(!state.stats.contains_key(&99));
+    }
+
+    #[test]
+    fn unbalance_damage_counts_toward_team_total_but_not_personal_ranking() {
+        let mut state = PartyCombatState::default();
+        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+
+        let mut unbalance_hit = test_hit(11.0, 1021, "outgoing", 5_000.0);
+        unbalance_hit.attack_type = Some("倾陷伤害".to_owned());
+        state.push_hit(unbalance_hit);
+
+        assert_eq!(state.total_damage, 5_100.0);
+        let stats = state.stats.get(&1021).unwrap();
+        assert_eq!(stats.damage, 100.0);
+        assert_eq!(stats.hits, 1);
     }
 
     #[test]

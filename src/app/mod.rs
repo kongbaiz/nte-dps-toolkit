@@ -29,7 +29,8 @@ use crate::engine::model::{
     CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState, EngineEvent,
     HitDirectionSummary, PartyCombatState, SkillBreakdown, SkillBreakdownRow,
     TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember,
-    TimelineMarkerKind, TimelineSeries, summarize_combat_segments, summarize_hit_directions,
+    TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE, summarize_combat_segments,
+    summarize_hit_directions,
 };
 use crate::engine::parser::{CHARACTER_DATA_PATH, find_data_file, load_characters};
 use crate::platform::file_drop::NativeFileDrop;
@@ -1182,7 +1183,7 @@ mod tests {
     };
     use crate::engine::model::{
         CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
-        TeamDpsMember,
+        TeamDpsMember, UNBALANCE_ATTACK_TYPE,
     };
     use crate::storage::config::UiConfig;
     use crate::support::encrypted_ini::{
@@ -1384,6 +1385,28 @@ mod tests {
             &HitDetailFilter::QteType("黯星".to_owned()),
             &summaries
         ));
+    }
+
+    #[test]
+    fn qte_type_filters_include_unbalance_damage() {
+        let mut unbalance = hit_with_direction("outgoing");
+        unbalance.attack_type = Some(UNBALANCE_ATTACK_TYPE.to_owned());
+        unbalance.damage = 62_966.0;
+        let mut non_qte = hit_with_direction("outgoing");
+        non_qte.attack_type = Some("普攻".to_owned());
+
+        let hits = VecDeque::from([unbalance, non_qte]);
+        let summaries = summarize_qte_type_filters(&hits, None);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].attack_type, UNBALANCE_ATTACK_TYPE);
+        assert_eq!(summaries[0].hits, 1);
+        assert_eq!(summaries[0].damage, 62_966.0);
+        assert!(hit_detail_filter_available(
+            &HitDetailFilter::QteType(UNBALANCE_ATTACK_TYPE.to_owned()),
+            &summaries
+        ));
+        assert!(HitDetailFilter::QteType(UNBALANCE_ATTACK_TYPE.to_owned()).matches(&hits[0]));
     }
 
     #[test]
