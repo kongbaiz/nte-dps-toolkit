@@ -1177,14 +1177,16 @@ mod tests {
         damage_number_digits_text, fill_missing_character_colors_from_avatars,
         follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_label,
         is_party_member_row, mixed_damage_digit_key, parse_hex_color, qte_type_filter_label,
-        reaction_text_key_for_hit, reaction_text_key_from_trigger_attack_type, resolve_cached_hit,
-        skill_display_name, snapshot_team_from_stats, summarize_qte_type_filters,
+        reaction_text_key_for_hit, reaction_text_key_from_trigger_attack_type,
+        reaction_text_resource_path, resolve_cached_hit, skill_display_name,
+        snapshot_team_from_stats, summarize_qte_type_filters,
     };
     use crate::engine::model::{
         CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
         TeamDpsMember, UNBALANCE_ATTACK_TYPE,
     };
     use crate::storage::config::UiConfig;
+    use crate::storage::i18n::Language;
     use crate::support::encrypted_ini::{
         EncryptedIniKey, decrypt_encrypted_ini_text, encrypt_aes256_ecb,
         encrypt_encrypted_ini_records, encrypt_encrypted_ini_text, encrypted_ini_search_matches,
@@ -1462,6 +1464,18 @@ mod tests {
         assert_eq!(
             damage_digit_resource_path("guang", 7),
             "res/images/font/tiaozi1/guang_7.png"
+        );
+        assert_eq!(
+            reaction_text_resource_path(Language::SimplifiedChinese, 1, 1),
+            "res/images/font/tiaozi1/zh/fanying01_01.png"
+        );
+        assert_eq!(
+            reaction_text_resource_path(Language::English, 1, 1),
+            "res/images/font/tiaozi1/en/fanying01_01.png"
+        );
+        assert_eq!(
+            reaction_text_resource_path(Language::Japanese, 1, 1),
+            "res/images/font/tiaozi1/ja/fanying01_01.png"
         );
     }
 

@@ -63,18 +63,83 @@ pub(crate) fn load_reaction_text_textures(
     root: &std::path::Path,
 ) -> HashMap<u8, Vec<egui::TextureHandle>> {
     let mut textures = HashMap::new();
+    let language = i18n::current_language();
     for reaction in 1..=REACTION_TEXT_IMAGE_COUNT {
         let glyphs = (1..=2)
             .filter_map(|part| {
-                let path = format!("{DAMAGE_DIGIT_IMAGE_DIR}/fanying{reaction:02}_{part:02}.png");
-                load_image_texture(ctx, root, &path, "reaction-text")
+                for path in reaction_text_resource_path_candidates(language, reaction, part) {
+                    match load_reaction_text_texture(ctx, root, &path) {
+                        ReactionTextTextureLoad::Loaded(texture) => return Some(texture),
+                        ReactionTextTextureLoad::Blank => return None,
+                        ReactionTextTextureLoad::Missing => {}
+                    }
+                }
+                None
             })
             .collect::<Vec<_>>();
-        if glyphs.len() == 2 {
+        if !glyphs.is_empty() {
             textures.insert(reaction, glyphs);
         }
     }
     textures
+}
+
+pub(crate) fn reaction_text_resource_path(language: Language, reaction: u8, part: u8) -> String {
+    format!(
+        "{DAMAGE_DIGIT_IMAGE_DIR}/{}/fanying{reaction:02}_{part:02}.png",
+        language.reaction_text_folder()
+    )
+}
+
+fn reaction_text_resource_path_candidates(
+    language: Language,
+    reaction: u8,
+    part: u8,
+) -> Vec<String> {
+    let mut paths = vec![reaction_text_resource_path(language, reaction, part)];
+    if language != Language::SimplifiedChinese {
+        paths.push(reaction_text_resource_path(
+            Language::SimplifiedChinese,
+            reaction,
+            part,
+        ));
+    }
+    paths.push(format!(
+        "{DAMAGE_DIGIT_IMAGE_DIR}/fanying{reaction:02}_{part:02}.png"
+    ));
+    paths
+}
+
+enum ReactionTextTextureLoad {
+    Loaded(egui::TextureHandle),
+    Blank,
+    Missing,
+}
+
+fn load_reaction_text_texture(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+    resource_path: &str,
+) -> ReactionTextTextureLoad {
+    let path = root.join(resource_path);
+    let Ok(bytes) = std::fs::read(&path)
+        .map(std::borrow::Cow::Owned)
+        .or_else(|_| read_resource_bytes(Path::new(resource_path)))
+    else {
+        return ReactionTextTextureLoad::Missing;
+    };
+    let Ok(image) = image::load_from_memory(bytes.as_ref()).map(|image| image.to_rgba8()) else {
+        return ReactionTextTextureLoad::Missing;
+    };
+    if rgba_image_is_blank(&image) {
+        return ReactionTextTextureLoad::Blank;
+    }
+    ReactionTextTextureLoad::Loaded(load_rgba_texture(
+        ctx,
+        resource_path,
+        "reaction-text",
+        image,
+    ))
 }
 
 pub(crate) fn damage_digit_resource_path(prefix: &str, digit: usize) -> String {
@@ -232,6 +297,24 @@ pub(crate) fn load_image_texture(
         .or_else(|_| read_resource_bytes(Path::new(resource_path)))
         .ok()?;
     let image = image::load_from_memory(bytes.as_ref()).ok()?.to_rgba8();
+    Some(load_rgba_texture(
+        ctx,
+        resource_path,
+        texture_namespace,
+        image,
+    ))
+}
+
+fn rgba_image_is_blank(image: &image::RgbaImage) -> bool {
+    image.as_raw().chunks_exact(4).all(|pixel| pixel[3] == 0)
+}
+
+fn load_rgba_texture(
+    ctx: &egui::Context,
+    resource_path: &str,
+    texture_namespace: &str,
+    image: image::RgbaImage,
+) -> egui::TextureHandle {
     let size = [image.width() as usize, image.height() as usize];
     let color_image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
     // Source art (e.g. 256px avatars) is drawn much smaller (~32px), an 8x
@@ -250,11 +333,25 @@ pub(crate) fn load_image_texture(
         wrap_mode: egui::TextureWrapMode::ClampToEdge,
         mipmap_mode: Some(egui::TextureFilter::Linear),
     };
-    Some(ctx.load_texture(
+    ctx.load_texture(
         format!("{texture_namespace}:{resource_path}"),
         color_image,
         texture_options,
-    ))
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transparent_reaction_texture_is_blank() {
+        let transparent = image::RgbaImage::from_pixel(3, 2, image::Rgba([255, 255, 255, 0]));
+        assert!(rgba_image_is_blank(&transparent));
+
+        let visible = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 1]));
+        assert!(!rgba_image_is_blank(&visible));
+    }
 }
 
 pub(crate) fn pixel_aligned_rect(

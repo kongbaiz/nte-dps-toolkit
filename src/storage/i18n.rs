@@ -28,6 +28,8 @@ use crate::storage::resource::read_resource_text;
 pub enum Language {
     #[serde(rename = "en")]
     English,
+    #[serde(rename = "ja")]
+    Japanese,
     /// Default so existing (Chinese-only) installs keep their current UI; English
     /// is opt-in via the settings dropdown.
     #[default]
@@ -35,7 +37,11 @@ pub enum Language {
     SimplifiedChinese,
 }
 
-const LANGUAGES: [Language; 2] = [Language::English, Language::SimplifiedChinese];
+const LANGUAGES: [Language; 3] = [
+    Language::English,
+    Language::Japanese,
+    Language::SimplifiedChinese,
+];
 
 impl Language {
     pub fn all() -> &'static [Self] {
@@ -46,6 +52,7 @@ impl Language {
     pub fn code(self) -> &'static str {
         match self {
             Self::English => "en",
+            Self::Japanese => "ja",
             Self::SimplifiedChinese => "zh-CN",
         }
     }
@@ -55,7 +62,18 @@ impl Language {
     pub fn native_name(self) -> &'static str {
         match self {
             Self::English => "English",
+            Self::Japanese => "日本語",
             Self::SimplifiedChinese => "简体中文",
+        }
+    }
+
+    /// Folder name used by localized reaction-text images under
+    /// `res/images/font/tiaozi1/<folder>/`.
+    pub fn reaction_text_folder(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Japanese => "ja",
+            Self::SimplifiedChinese => "zh",
         }
     }
 
@@ -148,9 +166,12 @@ mod tests {
     #[test]
     fn language_codes_and_names_are_stable() {
         assert_eq!(Language::English.code(), "en");
+        assert_eq!(Language::Japanese.code(), "ja");
         assert_eq!(Language::SimplifiedChinese.code(), "zh-CN");
         assert_eq!(Language::English.native_name(), "English");
+        assert_eq!(Language::Japanese.native_name(), "日本語");
         assert_eq!(Language::SimplifiedChinese.native_name(), "简体中文");
+        assert_eq!(Language::SimplifiedChinese.reaction_text_folder(), "zh");
         assert_eq!(Language::default(), Language::SimplifiedChinese);
     }
 
@@ -170,6 +191,10 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Language>("\"en\"").unwrap(),
             Language::English
+        );
+        assert_eq!(
+            serde_json::from_str::<Language>("\"ja\"").unwrap(),
+            Language::Japanese
         );
     }
 

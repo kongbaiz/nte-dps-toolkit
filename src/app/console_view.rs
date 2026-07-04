@@ -1215,7 +1215,7 @@ impl DpsApp {
 
     /// Interface preferences shown at the top of settings. Currently the UI
     /// language picker; the dropdown lists each language written in its own script
-    /// (English / 简体中文) and persists the choice to the config file.
+    /// and persists the choice to the config file.
     fn settings_interface_section(&mut self, ui: &mut egui::Ui) {
         egui::CollapsingHeader::new(t("Interface"))
             .default_open(true)
@@ -1241,7 +1241,7 @@ impl DpsApp {
                                 }
                             });
                         if language != self.language {
-                            self.set_language(language);
+                            self.set_language(ui.ctx(), language);
                         }
                         ui.end_row();
                     });
