@@ -986,12 +986,14 @@ impl DpsApp {
         }
     }
 
-    /// Switch the live UI language and reload its locale map. The change is picked up
-    /// by the next frame; `current_ui_config` includes it so the debounced save
-    /// persists the choice to the config file.
-    pub(crate) fn set_language(&mut self, language: Language) {
+    /// Switch the live UI language, reload its locale map, and refresh localized
+    /// reaction glyph textures. `current_ui_config` includes the language so the
+    /// debounced save persists the choice to the config file.
+    pub(crate) fn set_language(&mut self, ctx: &egui::Context, language: Language) {
         self.language = language;
         i18n::set_language(language);
+        self.reaction_textures = load_reaction_text_textures(ctx, &data_root());
+        ctx.request_repaint();
     }
 
     pub(crate) fn current_ui_config(&self) -> UiConfig {

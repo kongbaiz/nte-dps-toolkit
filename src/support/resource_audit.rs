@@ -9,6 +9,7 @@ use crate::engine::parser::{
     CHARACTER_DATA_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, SKILL_DAMAGE_DATA_PATH,
     WOODEN_DAMAGE_DESCRIPTIONS_PATH,
 };
+use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists};
 
 const ABYSS_MONSTERS_PATH: &str = "res/data/abyss/abyss_monsters.json";
@@ -445,21 +446,30 @@ fn audit_reactions(reader: &dyn ResourceReader, audit: &mut ResourceAuditSummary
             );
             continue;
         }
-        for part in 1..=2 {
-            let path = format!("{DAMAGE_DIGIT_IMAGE_DIR}/fanying{reaction:02}_{part:02}.png");
-            if !reader.exists(&path) {
-                push_item(
-                    audit,
-                    ResourceAuditSeverity::Warning,
-                    ResourceAuditCategory::Reaction,
-                    reaction.to_string(),
-                    "反应文字",
-                    "反应文字素材缺失",
-                    &path,
-                );
+        for language in Language::all() {
+            for part in 1..=2 {
+                let path = reaction_text_resource_path(*language, reaction, part);
+                if !reader.exists(&path) {
+                    push_item(
+                        audit,
+                        ResourceAuditSeverity::Warning,
+                        ResourceAuditCategory::Reaction,
+                        format!("{}:{}", language.code(), reaction),
+                        "反应文字",
+                        "反应文字素材缺失",
+                        &path,
+                    );
+                }
             }
         }
     }
+}
+
+fn reaction_text_resource_path(language: Language, reaction: u8, part: u8) -> String {
+    format!(
+        "{DAMAGE_DIGIT_IMAGE_DIR}/{}/fanying{reaction:02}_{part:02}.png",
+        language.reaction_text_folder()
+    )
 }
 
 fn load_mapped_effect_names(

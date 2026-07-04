@@ -1113,7 +1113,7 @@ pub(crate) fn draw_hit_type_badge_content(
     if hit.direction == "outgoing"
         && let Some(textures) =
             reaction_text_key_for_hit(hit).and_then(|key| reaction_textures.get(&key))
-        && textures.len() == 2
+        && !textures.is_empty()
     {
         draw_reaction_text_images(ui, badge_rect.shrink2(egui::vec2(8.0, 3.0)), textures);
         return;
