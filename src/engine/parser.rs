@@ -24,6 +24,7 @@ pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_
 pub const SKILL_DAMAGE_DATA_PATH: &str = "res/data/skills/skill_damage.json";
 pub const ULTRA_TIME_STOP_DATA_PATH: &str = "res/data/skills/ultra_time_stop.json";
 pub const WOODEN_DAMAGE_DESCRIPTIONS_PATH: &str = "res/data/skills/wooden_damage_descriptions.json";
+pub const ABILITY_TIPS_PATH: &str = "res/data/skills/ability_tips.json";
 
 #[derive(Deserialize)]
 struct CharacterDocument {
@@ -284,6 +285,36 @@ pub fn load_wooden_damage_names(path: &Path) -> Result<HashMap<String, String>> 
                 .and_then(serde_json::Value::as_str)
                 .filter(|description| !description.trim().is_empty())
                 .map(|description| (effect_name.clone(), normalize_damage_name(description)))
+        })
+        .collect())
+}
+
+/// Maps GA_ ability names to their official in-game skill name, sourced from
+/// `DT_GameplayAbilityTipsData`. Unlike the wooden dummy descriptions this table is
+/// kept current with new characters, but it is keyed by ability rather than by
+/// GameplayEffect, so callers join it through [`GameplayEffectSkill::ability_name`].
+pub fn load_ability_tip_names(path: &Path) -> Result<HashMap<String, String>> {
+    let text = read_resource_text(path)
+        .with_context(|| format!("无法读取技能说明表 {}", path.display()))?;
+    let document: serde_json::Value =
+        serde_json::from_str(&text).context("技能说明表 JSON 无效")?;
+    let abilities = document
+        .get("abilities")
+        .and_then(serde_json::Value::as_object)
+        .context("技能说明表缺少 abilities")?;
+    Ok(abilities
+        .iter()
+        .filter_map(|(ability_name, row)| {
+            let name = row
+                .get("name_zh")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    row.get("name_en")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                })?;
+            Some((ability_name.clone(), name.trim().to_owned()))
         })
         .collect())
 }

@@ -1175,11 +1175,12 @@ mod tests {
         adjusted_cached_index, build_team_dps_export, cached_hit_row, character_color,
         compare_cached_team_hits, damage_digit_key_for_hit, damage_digit_resource_path,
         damage_number_digits_text, fill_missing_character_colors_from_avatars,
-        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_label,
-        is_party_member_row, mixed_damage_digit_key, parse_hex_color, qte_type_filter_label,
-        reaction_text_key_for_hit, reaction_text_key_from_trigger_attack_type,
-        reaction_text_resource_path, resolve_cached_hit, skill_display_name,
-        snapshot_team_from_stats, summarize_qte_type_filters,
+        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
+        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
+        qte_type_filter_label, reaction_text_key_for_hit,
+        reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
+        resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
+        summarize_qte_type_filters,
     };
     use crate::engine::model::{
         CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
@@ -1309,6 +1310,37 @@ mod tests {
         assert!(!incoming.is_empty());
         assert!(!unknown.is_empty());
         assert_ne!(unknown, incoming);
+    }
+
+    #[test]
+    fn hit_type_display_text_joins_attack_type_and_skill_name() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.attack_type = Some("普攻".to_owned());
+        hit.damage_name = Some("酸甜口味的制裁".to_owned());
+
+        assert_eq!(hit_type_display_text(&hit), "普攻·酸甜口味的制裁");
+    }
+
+    #[test]
+    fn hit_type_display_text_falls_back_to_whichever_half_is_present() {
+        let mut attack_type_only = hit_with_direction("outgoing");
+        attack_type_only.attack_type = Some("E技能".to_owned());
+        attack_type_only.damage_name = None;
+        assert_eq!(hit_type_display_text(&attack_type_only), "E技能");
+
+        let mut name_only = hit_with_direction("outgoing");
+        name_only.attack_type = None;
+        name_only.damage_name = Some("判予秋".to_owned());
+        assert_eq!(hit_type_display_text(&name_only), "判予秋");
+    }
+
+    #[test]
+    fn hit_type_display_text_does_not_repeat_identical_halves() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.attack_type = Some("倾陷伤害".to_owned());
+        hit.damage_name = Some("倾陷伤害".to_owned());
+
+        assert_eq!(hit_type_display_text(&hit), "倾陷伤害");
     }
 
     #[test]
