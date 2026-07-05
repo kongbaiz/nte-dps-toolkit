@@ -1118,10 +1118,14 @@ pub(crate) fn draw_hit_type_badge_content(
         draw_reaction_text_images(ui, badge_rect.shrink2(egui::vec2(8.0, 3.0)), textures);
         return;
     }
+    let text = match hit.direction.as_str() {
+        "incoming" | "unknown" => hit_type_label(hit).to_owned(),
+        _ => hit_type_display_text(hit),
+    };
     draw_clipped_label(
         ui,
         badge_rect.shrink2(egui::vec2(8.0, 0.0)),
-        hit_type_label(hit),
+        &text,
         egui::FontId::proportional(12.0),
         contrast_text(type_color),
         egui::Align::Center,

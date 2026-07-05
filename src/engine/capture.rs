@@ -29,14 +29,13 @@ use crate::engine::model::{
     PacketDebug, TimeStopEvent,
 };
 use crate::engine::parser::{
-    GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
-    SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry,
-    WOODEN_DAMAGE_DESCRIPTIONS_PATH, classify_attack_type, classify_attack_type_from_description,
-    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    find_final_tower_character_evidence, load_gameplay_effect_mapping, load_gameplay_effect_skills,
-    load_ultra_time_stops, load_wooden_damage_names, matches_shifted_bytes_at,
-    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
-    parse_gameplay_effects, qte_reaction_type,
+    ABILITY_TIPS_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
+    SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry, classify_attack_type,
+    classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
+    find_declared_character_evidence, find_final_tower_character_evidence, load_ability_tip_names,
+    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_ultra_time_stops,
+    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, qte_reaction_type,
 };
 
 use crate::engine::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
@@ -1477,7 +1476,7 @@ struct PacketDecoder {
     gameplay_effect_names: HashMap<u32, String>,
     gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
     ultra_time_stops: HashMap<u32, UltraTimeStopEntry>,
-    wooden_damage_names: HashMap<String, String>,
+    ability_tip_names: HashMap<String, String>,
     follow_up_damage: FollowUpDamageTracker,
     server_damage_calibration: ServerDamageCalibrationTracker,
     use_server_damage_calibration: bool,
@@ -1514,10 +1513,10 @@ impl Default for PacketDecoder {
             &mut resource_warnings,
             load_ultra_time_stops,
         );
-        let wooden_damage_names = load_resource(
-            WOODEN_DAMAGE_DESCRIPTIONS_PATH,
+        let ability_tip_names = load_resource(
+            ABILITY_TIPS_PATH,
             &mut resource_warnings,
-            load_wooden_damage_names,
+            load_ability_tip_names,
         );
 
         Self {
@@ -1526,7 +1525,7 @@ impl Default for PacketDecoder {
             gameplay_effect_names,
             gameplay_effect_skills,
             ultra_time_stops,
-            wooden_damage_names,
+            ability_tip_names,
             follow_up_damage: FollowUpDamageTracker::default(),
             server_damage_calibration: ServerDamageCalibrationTracker::default(),
             use_server_damage_calibration: false,
@@ -1870,7 +1869,7 @@ fn enrich_hit_with_gameplay_effect(
     effects: &[ParsedGameplayEffect],
     names: &HashMap<u32, String>,
     skills: &HashMap<String, GameplayEffectSkill>,
-    wooden_names: &HashMap<String, String>,
+    ability_tip_names: &HashMap<String, String>,
 ) {
     let Some(effect) = matching_gameplay_effect(hit, effects) else {
         return;
@@ -1880,7 +1879,7 @@ fn enrich_hit_with_gameplay_effect(
         return;
     };
     hit.gameplay_effect_name = Some(effect_name.clone());
-    hit.damage_name = resolve_damage_name(effect_name, skills, wooden_names);
+    hit.damage_name = resolve_damage_name(effect_name, skills, ability_tip_names);
     let skill = skills.get(effect_name);
     if let Some(skill) = skill {
         hit.ability_name = skill.ability_name.clone();
@@ -2004,28 +2003,10 @@ fn is_vehicle_physical_damage_effect(effect_name: &str) -> bool {
 fn resolve_damage_name(
     effect_name: &str,
     skills: &HashMap<String, GameplayEffectSkill>,
-    wooden_names: &HashMap<String, String>,
+    ability_tip_names: &HashMap<String, String>,
 ) -> Option<String> {
-    if let Some(name) = wooden_names.get(effect_name) {
-        return Some(name.clone());
-    }
-    if let Some(base_effect_name) = effect_name
-        .strip_suffix("_Explode_Damage")
-        .map(|prefix| format!("{prefix}_Damage"))
-        && let Some(name) = wooden_names.get(&base_effect_name)
-    {
-        return Some(name.clone());
-    }
     let ability_name = skills.get(effect_name)?.ability_name.as_deref()?;
-    let mut names = skills
-        .iter()
-        .filter(|(_, skill)| skill.ability_name.as_deref() == Some(ability_name))
-        .filter_map(|(candidate_effect, _)| wooden_names.get(candidate_effect))
-        .cloned()
-        .collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
-    (names.len() == 1).then(|| names.remove(0))
+    ability_tip_names.get(ability_name).cloned()
 }
 
 fn set_hit_character(hit: &mut Hit, new_char_id: u32, characters: &HashMap<u32, CharacterInfo>) {
@@ -2166,7 +2147,7 @@ impl PacketDecoder {
                 &gameplay_effects,
                 &self.gameplay_effect_names,
                 &self.gameplay_effect_skills,
-                &self.wooden_damage_names,
+                &self.ability_tip_names,
             );
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
             if hit
@@ -4479,10 +4460,10 @@ mod tests {
         );
         assert_eq!(
             decoder
-                .wooden_damage_names
-                .get("GE_Player_Nanally_Melee1_Damage")
+                .ability_tip_names
+                .get("GA_Cang_Melee")
                 .map(String::as_str),
-            Some("娜娜莉普攻")
+            Some("言行合一")
         );
     }
 
@@ -4679,38 +4660,25 @@ mod tests {
     }
 
     #[test]
-    fn resolves_missing_damage_name_from_unique_name_in_same_ability() {
-        let skills = HashMap::from([
-            (
-                "GE_Player_Daffodill_Skill2_Damage".to_owned(),
-                GameplayEffectSkill {
-                    damage_source_category: Some("E".to_owned()),
-                    ability_name: Some("GA_Daffodill_Skill".to_owned()),
-                    attack_type: "E技能".to_owned(),
-                },
-            ),
-            (
-                "GE_Player_Daffodill_Skill6_Damage".to_owned(),
-                GameplayEffectSkill {
-                    damage_source_category: Some("E".to_owned()),
-                    ability_name: Some("GA_Daffodill_Skill".to_owned()),
-                    attack_type: "E技能".to_owned(),
-                },
-            ),
-        ]);
-        let names = HashMap::from([(
-            "GE_Player_Daffodill_Skill2_Damage".to_owned(),
-            "达芙蒂尔技能".to_owned(),
+    fn resolves_damage_name_from_ability_tips() {
+        let skills = HashMap::from([(
+            "GE_Player_Cang_Melee1_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("A".to_owned()),
+                ability_name: Some("GA_Cang_Melee".to_owned()),
+                attack_type: "普攻".to_owned(),
+            },
         )]);
+        let ability_tips = HashMap::from([("GA_Cang_Melee".to_owned(), "言行合一".to_owned())]);
 
         assert_eq!(
-            resolve_damage_name("GE_Player_Daffodill_Skill6_Damage", &skills, &names).as_deref(),
-            Some("达芙蒂尔技能")
+            resolve_damage_name("GE_Player_Cang_Melee1_Damage", &skills, &ability_tips).as_deref(),
+            Some("言行合一")
         );
     }
 
     #[test]
-    fn resolves_explode_damage_name_from_base_effect() {
+    fn resolves_explode_damage_name_from_its_own_ability_name() {
         let skills = HashMap::from([(
             "GE_Player_Lacrimosa_B_Melee3_Explode_Damage".to_owned(),
             GameplayEffectSkill {
@@ -4719,57 +4687,33 @@ mod tests {
                 attack_type: "普攻".to_owned(),
             },
         )]);
-        let names = HashMap::from([(
-            "GE_Player_Lacrimosa_B_Melee3_Damage".to_owned(),
-            "安魂曲普攻B".to_owned(),
-        )]);
+        let ability_tips =
+            HashMap::from([("GA_Lacrimosa_Melee".to_owned(), "酸甜口味的制裁".to_owned())]);
 
         assert_eq!(
             resolve_damage_name(
                 "GE_Player_Lacrimosa_B_Melee3_Explode_Damage",
                 &skills,
-                &names
+                &ability_tips
             )
             .as_deref(),
-            Some("安魂曲普攻B")
+            Some("酸甜口味的制裁")
         );
     }
 
     #[test]
-    fn does_not_merge_ambiguous_names_from_same_ability() {
-        let skills = HashMap::from([
-            (
-                "GE_Test_Skill1_Damage".to_owned(),
-                GameplayEffectSkill {
-                    damage_source_category: Some("E".to_owned()),
-                    ability_name: Some("GA_Test_Skill".to_owned()),
-                    attack_type: "E技能".to_owned(),
-                },
-            ),
-            (
-                "GE_Test_Skill2_Damage".to_owned(),
-                GameplayEffectSkill {
-                    damage_source_category: Some("E".to_owned()),
-                    ability_name: Some("GA_Test_Skill".to_owned()),
-                    attack_type: "E技能".to_owned(),
-                },
-            ),
-            (
-                "GE_Test_Skill3_Damage".to_owned(),
-                GameplayEffectSkill {
-                    damage_source_category: Some("E".to_owned()),
-                    ability_name: Some("GA_Test_Skill".to_owned()),
-                    attack_type: "E技能".to_owned(),
-                },
-            ),
-        ]);
-        let names = HashMap::from([
-            ("GE_Test_Skill1_Damage".to_owned(), "测试技能一".to_owned()),
-            ("GE_Test_Skill2_Damage".to_owned(), "测试技能二".to_owned()),
-        ]);
+    fn returns_none_when_ability_has_no_tip() {
+        let skills = HashMap::from([(
+            "GE_Test_Skill1_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("E".to_owned()),
+                ability_name: Some("GA_Test_Skill".to_owned()),
+                attack_type: "E技能".to_owned(),
+            },
+        )]);
 
         assert_eq!(
-            resolve_damage_name("GE_Test_Skill3_Damage", &skills, &names),
+            resolve_damage_name("GE_Test_Skill1_Damage", &skills, &HashMap::new()),
             None
         );
     }
@@ -4856,6 +4800,531 @@ mod tests {
                 "packet t={:.6} dir={} ids={:?} hits={} text={}",
                 packet.timestamp, packet.direction, packet.declared_ids, packet.parsed_hits, text
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE_JSON to a local nte_capture_*.json export for target-handle diagnostics"]
+    fn diagnose_target_handle_stability_across_encounters() {
+        let path =
+            std::env::var("NTE_TEST_CAPTURE_JSON").expect("NTE_TEST_CAPTURE_JSON must be set");
+        let (sender, receiver) = unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop);
+        handle.join().expect("json import thread should finish");
+
+        // `import_capture_json` drops packets through `should_keep_debug_packet`,
+        // which only looks at the *originally recorded* parsed_hits/declared_ids —
+        // a packet that carries nothing but a boss-HP sync can get filtered out
+        // there even though `parse_boss_hp_updates` would still find something in
+        // it. Sweep every packet's raw payload directly so this diagnostic doesn't
+        // silently miss encounters late in the file.
+        let raw_text = std::fs::read_to_string(&path).expect("capture json should be readable");
+        let raw_document: serde_json::Value =
+            serde_json::from_str(&raw_text).expect("capture json should parse");
+        let mut raw_boss_hp = Vec::new();
+        if let Some(packets) = raw_document.get("packets").and_then(|v| v.as_array()) {
+            for packet in packets {
+                let Some(timestamp) = packet.get("timestamp_unix").and_then(|v| v.as_f64()) else {
+                    continue;
+                };
+                let Some(payload_hex) = packet.get("payload_hex").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Ok(payload) = hex::decode(payload_hex) else {
+                    continue;
+                };
+                for update in parse_boss_hp_updates(&payload) {
+                    raw_boss_hp.push((timestamp, update.target_handle, update.current_hp));
+                }
+            }
+        }
+        println!(
+            "raw sweep (unfiltered): {} boss-hp updates across {} distinct handles",
+            raw_boss_hp.len(),
+            raw_boss_hp
+                .iter()
+                .map(|(_, handle, _)| *handle)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        );
+        let mut last_raw_handle: Option<[u8; 16]> = None;
+        for (timestamp, handle, hp) in &raw_boss_hp {
+            let changed = last_raw_handle != Some(*handle);
+            last_raw_handle = Some(*handle);
+            if changed {
+                println!(
+                    "t={:.3} RAW_BOSS_HP handle={} hp={:.1}  <- handle changed",
+                    timestamp,
+                    hex::encode(handle),
+                    hp
+                );
+            }
+        }
+
+        #[derive(Debug)]
+        enum Event {
+            Abyss(String, f64),
+            BossHp {
+                timestamp: f64,
+                handle: [u8; 16],
+                hp: f32,
+            },
+            Hit {
+                timestamp: f64,
+                char_id: u32,
+                char_name: String,
+                damage: f64,
+                target_hp_after: f64,
+                target_max_hp: f64,
+            },
+        }
+
+        let mut events = Vec::new();
+        for event in receiver.try_iter() {
+            match event {
+                EngineEvent::Abyss(abyss_event) => {
+                    let (label, timestamp) = match abyss_event {
+                        crate::engine::model::AbyssEvent::RestartDetected { timestamp } => {
+                            ("RestartDetected".to_owned(), timestamp)
+                        }
+                        crate::engine::model::AbyssEvent::Stage {
+                            timestamp,
+                            floor,
+                            half,
+                            ..
+                        } => (format!("Stage floor={floor:?} half={half:?}"), timestamp),
+                        crate::engine::model::AbyssEvent::Success { timestamp } => {
+                            ("Success".to_owned(), timestamp)
+                        }
+                        crate::engine::model::AbyssEvent::Exit { timestamp } => {
+                            ("Exit".to_owned(), timestamp)
+                        }
+                    };
+                    events.push(Event::Abyss(label, timestamp));
+                }
+                EngineEvent::Packet(packet) => {
+                    if let Ok(payload) = hex::decode(&packet.payload_hex) {
+                        for update in parse_boss_hp_updates(&payload) {
+                            events.push(Event::BossHp {
+                                timestamp: packet.timestamp,
+                                handle: update.target_handle,
+                                hp: update.current_hp,
+                            });
+                        }
+                    }
+                }
+                EngineEvent::Hit(hit) if hit.direction == "outgoing" => {
+                    events.push(Event::Hit {
+                        timestamp: hit.timestamp,
+                        char_id: hit.char_id,
+                        char_name: hit.char_name.clone(),
+                        damage: hit.damage,
+                        target_hp_after: hit.target_hp_after,
+                        target_max_hp: hit.target_max_hp,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        events.sort_by(|left, right| {
+            let left_ts = match left {
+                Event::Abyss(_, ts)
+                | Event::BossHp { timestamp: ts, .. }
+                | Event::Hit { timestamp: ts, .. } => *ts,
+            };
+            let right_ts = match right {
+                Event::Abyss(_, ts)
+                | Event::BossHp { timestamp: ts, .. }
+                | Event::Hit { timestamp: ts, .. } => *ts,
+            };
+            left_ts.total_cmp(&right_ts)
+        });
+
+        println!("total events: {}", events.len());
+        let mut last_handle: Option<[u8; 16]> = None;
+        let mut last_timestamp: Option<f64> = None;
+        let mut last_target_max_hp: Option<f64> = None;
+        let mut seen_char_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for event in &events {
+            let timestamp = match event {
+                Event::Abyss(_, ts)
+                | Event::BossHp { timestamp: ts, .. }
+                | Event::Hit { timestamp: ts, .. } => *ts,
+            };
+            if let Some(previous) = last_timestamp
+                && timestamp - previous > 3.0
+            {
+                println!("   ...gap of {:.1}s...", timestamp - previous);
+            }
+            last_timestamp = Some(timestamp);
+            match event {
+                Event::Abyss(label, timestamp) => {
+                    println!("t={timestamp:.3} ABYSS {label}");
+                }
+                Event::BossHp {
+                    timestamp,
+                    handle,
+                    hp,
+                } => {
+                    let changed = last_handle != Some(*handle);
+                    last_handle = Some(*handle);
+                    println!(
+                        "t={:.3} BOSS_HP handle={} hp={:.1}{}",
+                        timestamp,
+                        hex::encode(handle),
+                        hp,
+                        if changed { "  <- handle changed" } else { "" }
+                    );
+                }
+                Event::Hit {
+                    timestamp,
+                    char_id,
+                    char_name,
+                    damage,
+                    target_hp_after,
+                    target_max_hp,
+                } => {
+                    let new_char = seen_char_ids.insert(*char_id);
+                    let hp_reset = last_target_max_hp
+                        .is_some_and(|previous| (*target_max_hp - previous).abs() > 0.5);
+                    last_target_max_hp = Some(*target_max_hp);
+                    println!(
+                        "t={:.3} HIT char={}({}) damage={:.1} target_hp_after={:.1} target_max_hp={:.1}{}{}",
+                        timestamp,
+                        char_id,
+                        char_name,
+                        damage,
+                        target_hp_after,
+                        target_max_hp,
+                        if new_char { "  <- new char_id" } else { "" },
+                        if hp_reset {
+                            "  <- target_max_hp changed"
+                        } else {
+                            ""
+                        },
+                    );
+                }
+            }
+        }
+        println!("distinct char_ids: {seen_char_ids:?}");
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE_JSON to a local nte_capture_*.json export for spawn-identity diagnostics"]
+    fn diagnose_monster_spawn_identity_evidence() {
+        // Experiment A of the target-handle investigation: sweep every raw packet
+        // (bypassing `should_keep_debug_packet`, same rationale as the raw sweep
+        // in `diagnose_target_handle_stability_across_encounters`) for
+        //   1. printable monster/stage identifiers (mon_/boss_/Abyss_/...),
+        //   2. every 16-byte boss-HP target handle seen in this capture,
+        //      looking for occurrences *outside* the boss-HP anchor,
+        // then print a merged timeline so spawn evidence can be correlated with
+        // handle changes.
+        const BOSS_HP_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00];
+        const NAME_NEEDLES: [&str; 10] = [
+            "mon_", "Mon_", "boss_", "Boss_", "Abyss_", "abyss_", "Weekly", "weekly", "Wave",
+            "Monster",
+        ];
+
+        fn shift_stream(data: &[u8], bit_shift: u8) -> Vec<u8> {
+            if bit_shift == 0 {
+                return data.to_vec();
+            }
+            if data.len() < 2 {
+                return Vec::new();
+            }
+            (0..data.len() - 1)
+                .map(|index| (data[index] >> bit_shift) | (data[index + 1] << (8 - bit_shift)))
+                .collect()
+        }
+
+        fn hex_context(stream: &[u8], start: usize, end: usize) -> String {
+            let from = start.saturating_sub(64);
+            let to = (end + 64).min(stream.len());
+            let end = end.min(stream.len());
+            format!(
+                "[-{}] {} |{}| {} [+{}]",
+                start - from,
+                hex::encode(&stream[from..start]),
+                hex::encode(&stream[start..end]),
+                hex::encode(&stream[end..to]),
+                to - end,
+            )
+        }
+
+        fn is_identifier_byte(byte: u8) -> bool {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'/' | b'-')
+        }
+
+        let path =
+            std::env::var("NTE_TEST_CAPTURE_JSON").expect("NTE_TEST_CAPTURE_JSON must be set");
+        let raw_text = std::fs::read_to_string(&path).expect("capture json should be readable");
+        let raw_document: serde_json::Value =
+            serde_json::from_str(&raw_text).expect("capture json should parse");
+        let mut packets = Vec::new();
+        if let Some(entries) = raw_document
+            .get("packets")
+            .and_then(|value| value.as_array())
+        {
+            for entry in entries {
+                let Some(timestamp) = entry.get("timestamp_unix").and_then(|value| value.as_f64())
+                else {
+                    continue;
+                };
+                let direction = entry
+                    .get("direction")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("?")
+                    .to_owned();
+                let Some(payload) = entry
+                    .get("payload_hex")
+                    .and_then(|value| value.as_str())
+                    .and_then(|value| hex::decode(value).ok())
+                else {
+                    continue;
+                };
+                packets.push((timestamp, direction, payload));
+            }
+        }
+        packets.sort_by(|left, right| left.0.total_cmp(&right.0));
+        println!("packets: {}", packets.len());
+
+        // Pass 1: collect every target handle this capture ever reports through
+        // the known boss-HP anchor, so pass 2 can hunt for the same bytes
+        // anywhere else.
+        let mut handle_first_seen: Vec<([u8; 16], f64)> = Vec::new();
+        let mut boss_hp_events = Vec::new();
+        for (timestamp, _, payload) in &packets {
+            for update in parse_boss_hp_updates(payload) {
+                if !handle_first_seen
+                    .iter()
+                    .any(|(handle, _)| *handle == update.target_handle)
+                {
+                    handle_first_seen.push((update.target_handle, *timestamp));
+                }
+                boss_hp_events.push((*timestamp, update.target_handle));
+            }
+        }
+        println!("--- handles seen through boss-HP anchor ---");
+        for (handle, first_seen) in &handle_first_seen {
+            println!(
+                "handle {} first seen t={first_seen:.3}",
+                hex::encode(handle)
+            );
+        }
+
+        // Pass 2: single sweep over every packet at every bit shift, extracting
+        // identifier strings and off-anchor handle occurrences.
+        struct NameHit {
+            timestamp: f64,
+            direction: String,
+            bit_shift: u8,
+            offset: usize,
+            handles_in_same_packet: Vec<String>,
+            context: String,
+        }
+        let mut names: std::collections::BTreeMap<String, Vec<NameHit>> =
+            std::collections::BTreeMap::new();
+        let mut outside_handle_hits = Vec::new();
+        let mut anchor_handle_hits = 0_usize;
+        for (timestamp, direction, payload) in &packets {
+            let mut packet_names: Vec<(String, u8, usize, String)> = Vec::new();
+            let mut packet_handles: Vec<String> = Vec::new();
+            for bit_shift in 0..8_u8 {
+                let stream = shift_stream(payload, bit_shift);
+
+                // Printable identifier runs containing one of the needles.
+                let mut run_start = None;
+                for index in 0..=stream.len() {
+                    let printable = index < stream.len() && (0x20..=0x7e).contains(&stream[index]);
+                    match (printable, run_start) {
+                        (true, None) => run_start = Some(index),
+                        (false, Some(start)) => {
+                            run_start = None;
+                            if index - start < 6 {
+                                continue;
+                            }
+                            let run = &stream[start..index];
+                            let text = String::from_utf8_lossy(run).into_owned();
+                            for needle in NAME_NEEDLES {
+                                for (needle_at, _) in text.match_indices(needle) {
+                                    // Expand the needle match to the full
+                                    // identifier around it so occurrences
+                                    // dedup on the identifier, not on the
+                                    // whole (noisy) printable run.
+                                    let mut ident_start = needle_at;
+                                    while ident_start > 0
+                                        && is_identifier_byte(run[ident_start - 1])
+                                    {
+                                        ident_start -= 1;
+                                    }
+                                    let mut ident_end = needle_at + needle.len();
+                                    while ident_end < run.len()
+                                        && is_identifier_byte(run[ident_end])
+                                    {
+                                        ident_end += 1;
+                                    }
+                                    let identifier =
+                                        String::from_utf8_lossy(&run[ident_start..ident_end])
+                                            .into_owned();
+                                    let already_seen =
+                                        packet_names.iter().any(|(existing, shift, offset, _)| {
+                                            *existing == identifier
+                                                && (*shift != bit_shift
+                                                    || *offset == start + ident_start)
+                                        });
+                                    if !already_seen {
+                                        packet_names.push((
+                                            identifier,
+                                            bit_shift,
+                                            start + ident_start,
+                                            hex_context(
+                                                &stream,
+                                                start + ident_start,
+                                                start + ident_end,
+                                            ),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Handle bytes anywhere in the stream, raw and byte-reversed.
+                for (handle, _) in &handle_first_seen {
+                    let reversed: Vec<u8> = handle.iter().rev().copied().collect();
+                    for (variant, needle) in
+                        [("raw", handle.as_slice()), ("rev", reversed.as_slice())]
+                    {
+                        if stream.len() < needle.len() {
+                            continue;
+                        }
+                        for offset in 0..=stream.len() - needle.len() {
+                            if &stream[offset..offset + needle.len()] != needle {
+                                continue;
+                            }
+                            let in_anchor = variant == "raw"
+                                && offset >= 8
+                                && stream[offset - 8..offset] == BOSS_HP_HEAD;
+                            let label = hex::encode(handle);
+                            if !packet_handles.contains(&label) {
+                                packet_handles.push(label.clone());
+                            }
+                            if in_anchor {
+                                anchor_handle_hits += 1;
+                            } else {
+                                outside_handle_hits.push((
+                                    *timestamp,
+                                    direction.clone(),
+                                    bit_shift,
+                                    offset,
+                                    variant,
+                                    label,
+                                    hex_context(&stream, offset, offset + needle.len()),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            for (identifier, bit_shift, offset, context) in packet_names {
+                names.entry(identifier).or_default().push(NameHit {
+                    timestamp: *timestamp,
+                    direction: direction.clone(),
+                    bit_shift,
+                    offset,
+                    handles_in_same_packet: packet_handles.clone(),
+                    context,
+                });
+            }
+        }
+
+        println!("--- identifier summary ({} unique) ---", names.len());
+        for (identifier, hits) in &names {
+            let c2s = hits.iter().filter(|hit| hit.direction == "C2S").count();
+            let with_handle = hits
+                .iter()
+                .filter(|hit| !hit.handles_in_same_packet.is_empty())
+                .count();
+            println!(
+                "{identifier:?}: {} hits ({} C2S / {} other), {} in a packet that also carries a known handle, first t={:.3}",
+                hits.len(),
+                c2s,
+                hits.len() - c2s,
+                with_handle,
+                hits[0].timestamp,
+            );
+            for hit in hits.iter().take(2) {
+                println!(
+                    "    t={:.3} dir={} shift={} off={} handles_in_pkt={:?}",
+                    hit.timestamp,
+                    hit.direction,
+                    hit.bit_shift,
+                    hit.offset,
+                    hit.handles_in_same_packet,
+                );
+                println!("      ctx {}", hit.context);
+            }
+        }
+
+        println!(
+            "--- handle occurrences: {} inside boss-HP anchor, {} OUTSIDE ---",
+            anchor_handle_hits,
+            outside_handle_hits.len()
+        );
+        for (timestamp, direction, bit_shift, offset, variant, label, context) in
+            outside_handle_hits.iter().take(40)
+        {
+            println!(
+                "t={timestamp:.3} dir={direction} shift={bit_shift} off={offset} variant={variant} handle={label}"
+            );
+            println!("      ctx {context}");
+        }
+        if outside_handle_hits.len() > 40 {
+            println!("...({} more outside hits)", outside_handle_hits.len() - 40);
+        }
+
+        // Pass 3: merged timeline of handle changes and identifier sightings
+        // (per-identifier sightings collapsed when closer than 2s).
+        let mut timeline: Vec<(f64, String)> = Vec::new();
+        let mut last_handle: Option<[u8; 16]> = None;
+        for (timestamp, handle) in &boss_hp_events {
+            if last_handle != Some(*handle) {
+                last_handle = Some(*handle);
+                timeline.push((
+                    *timestamp,
+                    format!("BOSS_HP handle -> {}", hex::encode(handle)),
+                ));
+            }
+        }
+        for (identifier, hits) in &names {
+            let mut last = f64::NEG_INFINITY;
+            for hit in hits {
+                if hit.timestamp - last >= 2.0 {
+                    timeline.push((
+                        hit.timestamp,
+                        format!(
+                            "NAME {identifier} dir={}{}",
+                            hit.direction,
+                            if hit.handles_in_same_packet.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  <- same packet as {:?}", hit.handles_in_same_packet)
+                            }
+                        ),
+                    ));
+                }
+                last = hit.timestamp;
+            }
+        }
+        timeline.sort_by(|left, right| left.0.total_cmp(&right.0));
+        println!("--- timeline ({} events) ---", timeline.len());
+        for (timestamp, line) in &timeline {
+            println!("t={timestamp:.3} {line}");
         }
     }
 }

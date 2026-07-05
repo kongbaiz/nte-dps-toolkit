@@ -72,3 +72,20 @@ pub(crate) fn hit_type_label(hit: &crate::engine::model::Hit) -> &str {
         _ => hit_specific_type(hit),
     }
 }
+
+/// "类型·名称": the broad attack-type category joined with the resolved skill
+/// name, e.g. "普攻·酸甜口味的制裁". Since [`crate::engine::parser::load_ability_tip_names`]
+/// resolves one name per ability rather than per combo hit, several hits under
+/// the same skill can share an identical name; the leading attack type keeps
+/// them distinguishable from other categories using the same name. Falls back
+/// to whichever half is available, and drops the join when both halves match.
+pub(crate) fn hit_type_display_text(hit: &crate::engine::model::Hit) -> String {
+    let attack_type = hit.attack_type.as_deref().filter(|value| !value.is_empty());
+    let name = hit.damage_name.as_deref().filter(|value| !value.is_empty());
+    match (attack_type, name) {
+        (Some(attack_type), Some(name)) if attack_type != name => format!("{attack_type}·{name}"),
+        (Some(attack_type), _) => attack_type.to_owned(),
+        (None, Some(name)) => name.to_owned(),
+        (None, None) => "未知招式".to_owned(),
+    }
+}
