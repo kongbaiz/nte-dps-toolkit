@@ -180,6 +180,10 @@ mod tests {
         set_language(Language::English);
         assert_eq!(t("Settings"), "Settings");
         assert_eq!(tf("Loaded {} rows", &["12"]), "Loaded 12 rows");
+        // `language` is a process-wide store; other tests (and code under
+        // test, e.g. PacketDecoder::default() reading current_language())
+        // assume the default unless they explicitly set it themselves.
+        set_language(Language::default());
     }
 
     #[test]
@@ -202,5 +206,23 @@ mod tests {
     fn tf_leaves_extra_placeholders_literal() {
         set_language(Language::English);
         assert_eq!(tf("{} of {}", &["3"]), "3 of {}");
+        set_language(Language::default());
+    }
+
+    #[test]
+    fn japanese_locale_covers_every_simplified_chinese_key() {
+        // zh-CN.json is the most complete locale map today; ja.json should
+        // have a translation for every key it defines so switching to
+        // Japanese doesn't silently fall back to raw English key text.
+        let zh_map = load_map(Language::SimplifiedChinese);
+        let ja_map = load_map(Language::Japanese);
+        assert!(!zh_map.is_empty());
+        assert!(!ja_map.is_empty());
+
+        let missing: Vec<&String> = zh_map
+            .keys()
+            .filter(|key| !ja_map.contains_key(*key))
+            .collect();
+        assert!(missing.is_empty(), "ja.json is missing keys: {missing:?}");
     }
 }

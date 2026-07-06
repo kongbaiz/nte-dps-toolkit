@@ -13,6 +13,8 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+/UnrealExporter/
+target_handle_investigation_notes.md
 
 # C# / MSBuild build artifacts (contain local user paths)
 **/bin/

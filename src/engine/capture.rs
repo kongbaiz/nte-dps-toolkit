@@ -37,6 +37,7 @@ use crate::engine::parser::{
     matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
     parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, qte_reaction_type,
 };
+use crate::storage::i18n;
 
 use crate::engine::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
 
@@ -1513,11 +1514,10 @@ impl Default for PacketDecoder {
             &mut resource_warnings,
             load_ultra_time_stops,
         );
-        let ability_tip_names = load_resource(
-            ABILITY_TIPS_PATH,
-            &mut resource_warnings,
-            load_ability_tip_names,
-        );
+        let ui_language = i18n::current_language();
+        let ability_tip_names = load_resource(ABILITY_TIPS_PATH, &mut resource_warnings, |path| {
+            load_ability_tip_names(path, ui_language)
+        });
 
         Self {
             session_characters: HashMap::new(),

@@ -927,7 +927,10 @@ impl DpsApp {
                         can_import,
                         avatar_textures: &self.avatar_textures,
                         characters: &self.characters,
+                        star_thresholds: &floor.star_thresholds,
+                        max_seconds: floor.max_seconds,
                     }),
+                    &floor.recommended_elements.first_half,
                 );
                 upper_action = upper_result.action;
                 upper_target_seconds = upper_result.target_seconds;
@@ -947,7 +950,10 @@ impl DpsApp {
                         can_import,
                         avatar_textures: &self.avatar_textures,
                         characters: &self.characters,
+                        star_thresholds: &floor.star_thresholds,
+                        max_seconds: floor.max_seconds,
                     }),
+                    &floor.recommended_elements.second_half,
                 );
                 lower_action = lower_result.action;
                 lower_target_seconds = lower_result.target_seconds;
@@ -967,6 +973,7 @@ impl DpsApp {
                     &self.monster_textures,
                     self.dark_mode,
                     None,
+                    &[],
                 );
             }
             let ctx = ui.ctx().clone();
