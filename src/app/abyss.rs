@@ -258,6 +258,14 @@ pub(crate) struct LinePredictionView<'a> {
     pub(crate) can_import: bool,
     pub(crate) avatar_textures: &'a HashMap<String, egui::TextureHandle>,
     pub(crate) characters: &'a HashMap<u32, CharacterInfo>,
+    /// Real clear-time cutoffs for this floor (from `AbyssCloneLevelDataTable`),
+    /// shown as quick-select chips next to the manual Target field. Empty when
+    /// the dataset didn't come from the floor-summary source.
+    pub(crate) star_thresholds: &'a [AbyssStarThreshold],
+    /// This floor's real time budget (`MaximumTime`), used to size the Target
+    /// field's range instead of an assumed constant. `None` falls back to the
+    /// same 600s ceiling `sanitize_prediction_target_seconds` already clamps to.
+    pub(crate) max_seconds: Option<f64>,
 }
 
 pub(crate) fn abyss_monster_count(monsters: &[&AbyssMonsterEntry]) -> u32 {
@@ -397,10 +405,14 @@ pub(crate) fn draw_line_prediction_header(
     }
     ui.add_space(4.0);
     ui.label(inline_text(t("Target"), weak_color));
+    let target_range_max = view
+        .max_seconds
+        .filter(|seconds| *seconds > 0.0)
+        .unwrap_or(600.0);
     ui.add_sized(
         egui::vec2(72.0, INLINE_CONTROL_HEIGHT),
         egui::DragValue::new(&mut target_seconds)
-            .range(1.0..=600.0)
+            .range(1.0..=target_range_max)
             .speed(1.0)
             .suffix("s"),
     )
@@ -410,6 +422,24 @@ pub(crate) fn draw_line_prediction_header(
             tf("Need {} DPS", &[&format_number(required_dps)]),
             weak_color,
         ));
+    }
+    for threshold in view.star_thresholds {
+        if ui
+            .small_button(tf(
+                "★{} {}",
+                &[
+                    &threshold.stars.to_string(),
+                    &format_clear_seconds(threshold.seconds),
+                ],
+            ))
+            .on_hover_text(tf(
+                "Use this floor's real {}-star clear time as the target",
+                &[&threshold.stars.to_string()],
+            ))
+            .clicked()
+        {
+            target_seconds = threshold.seconds;
+        }
     }
     // Per-line file import is always available (the "Import Separately" button): load a
     // DPS data file into just this line. Auto-sized — see the Clear/Predict buttons above.
@@ -495,6 +525,7 @@ pub(crate) fn draw_abyss_line_section(
     monster_textures: &HashMap<String, egui::TextureHandle>,
     dark_mode: bool,
     prediction: Option<LinePredictionView>,
+    recommended_elements: &[String],
 ) -> LinePredictionResult {
     const SLOT_COUNT: usize = 6;
     const GAP: f32 = 6.0;
@@ -529,6 +560,13 @@ pub(crate) fn draw_abyss_line_section(
                     .size(INLINE_CONTROL_TEXT_SIZE)
                     .color(ui.visuals().weak_text_color()),
                 );
+                if !recommended_elements.is_empty() {
+                    ui.label(
+                        RichText::new(tf("Recommended {}", &[&recommended_elements.join("/")]))
+                            .size(INLINE_CONTROL_TEXT_SIZE)
+                            .color(theme_accent(dark_mode)),
+                    );
+                }
                 if let Some(view) = prediction.as_ref() {
                     result = draw_line_prediction_header(ui, view, dark_mode);
                 }

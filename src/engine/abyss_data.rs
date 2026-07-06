@@ -38,6 +38,23 @@ pub struct AbyssFloor {
     pub floor: u32,
     pub name: Option<String>,
     pub monsters: Vec<AbyssMonsterEntry>,
+    pub max_seconds: Option<f64>,
+    pub star_thresholds: Vec<AbyssStarThreshold>,
+    pub recommended_elements: AbyssRecommendedElements,
+}
+
+/// A clear-time cutoff sourced from `AbyssCloneLevelDataTable`'s
+/// `PassConditions`: clearing the floor within `seconds` earns `stars`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AbyssStarThreshold {
+    pub stars: u32,
+    pub seconds: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AbyssRecommendedElements {
+    pub first_half: Vec<String>,
+    pub second_half: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +100,43 @@ struct StaticMonsterInfo {
 
 impl AbyssMonsterDataset {
     pub fn load() -> Result<Self> {
+        // The floor/monster-pool summary (built from the authoritative
+        // AbyssCloneLevelDataTable + DT_AbyssMonsterPool tables) is preferred
+        // whenever it and the static/pack tables it depends on for names and
+        // stats are all present: it carries real wave/route/boss/star-time
+        // data instead of the pack_id string-guessing below. Both lookups
+        // stay optional here (not `.with_context`-required) so a packaged
+        // build shipping only the compact `abyss_monsters.json` keeps working.
+        let static_path = find_data_file(ABYSS_MONSTER_STATIC_PATH.as_ref())
+            .or_else(|| find_data_file(LEGACY_ABYSS_MONSTER_STATIC_PATH.as_ref()));
+        let pack_path = find_data_file(MONSTER_PACK_DATA_PATH.as_ref())
+            .or_else(|| find_data_file(LEGACY_MONSTER_PACK_DATA_PATH.as_ref()));
+        let summary_path = find_data_file(ABYSS_FLOOR_MONSTER_SUMMARY_PATH.as_ref());
+
+        if let (Some(static_path), Some(pack_path), Some(summary_path)) =
+            (&static_path, &pack_path, &summary_path)
+        {
+            let summary_rows = load_summary_rows(summary_path)
+                .with_context(|| format!("无法读取 {}", summary_path.display()))?;
+            if !summary_rows.is_empty() {
+                let static_rows = load_rows(static_path)
+                    .with_context(|| format!("无法读取 {}", static_path.display()))?;
+                let pack_rows = load_rows(pack_path)
+                    .with_context(|| format!("无法读取 {}", pack_path.display()))?;
+                let static_index = build_static_index(&static_rows);
+                let season_names = load_abyss_season_names();
+                let dataset = build_dataset_from_summary(
+                    &summary_rows,
+                    &pack_rows,
+                    &static_index,
+                    &season_names,
+                );
+                if !dataset.seasons.is_empty() {
+                    return Ok(dataset);
+                }
+            }
+        }
+
         if let Some(compact_path) = find_data_file(ABYSS_MONSTER_DATASET_PATH.as_ref()) {
             let dataset = load_compact_dataset(&compact_path)
                 .with_context(|| format!("无法读取 {}", compact_path.display()))?;
@@ -91,30 +145,16 @@ impl AbyssMonsterDataset {
             }
         }
 
-        let static_path = find_data_file(ABYSS_MONSTER_STATIC_PATH.as_ref())
-            .or_else(|| find_data_file(LEGACY_ABYSS_MONSTER_STATIC_PATH.as_ref()))
+        let static_path = static_path
             .with_context(|| format!("找不到深渊怪物静态表 {ABYSS_MONSTER_STATIC_PATH}"))?;
-        let pack_path = find_data_file(MONSTER_PACK_DATA_PATH.as_ref())
-            .or_else(|| find_data_file(LEGACY_MONSTER_PACK_DATA_PATH.as_ref()))
-            .with_context(|| format!("找不到怪物数值表 {MONSTER_PACK_DATA_PATH}"))?;
+        let pack_path =
+            pack_path.with_context(|| format!("找不到怪物数值表 {MONSTER_PACK_DATA_PATH}"))?;
         let static_rows = load_rows(&static_path)
             .with_context(|| format!("无法读取 {}", static_path.display()))?;
         let pack_rows =
             load_rows(&pack_path).with_context(|| format!("无法读取 {}", pack_path.display()))?;
         let static_index = build_static_index(&static_rows);
         let season_names = load_abyss_season_names();
-        if let Some(summary_path) = find_data_file(ABYSS_FLOOR_MONSTER_SUMMARY_PATH.as_ref()) {
-            let summary_rows = load_summary_rows(&summary_path)
-                .with_context(|| format!("无法读取 {}", summary_path.display()))?;
-            if !summary_rows.is_empty() {
-                return Ok(build_dataset_from_summary(
-                    &summary_rows,
-                    &pack_rows,
-                    &static_index,
-                    &season_names,
-                ));
-            }
-        }
 
         Ok(build_dataset_from_pack_rows(
             &pack_rows,
@@ -256,6 +296,17 @@ fn build_dataset_from_pack_rows(
     build_dataset(floors, HashMap::new(), season_names)
 }
 
+/// Per-floor metadata that is repeated across every wave/route row of a
+/// summary floor (level name, clear-time budget, star thresholds, recommended
+/// element types) and only needs to be captured once per (season, floor).
+#[derive(Clone, Debug, Default)]
+struct FloorMeta {
+    name: Option<String>,
+    max_seconds: Option<f64>,
+    star_thresholds: Vec<AbyssStarThreshold>,
+    recommended_elements: AbyssRecommendedElements,
+}
+
 fn build_dataset_from_summary(
     summary_rows: &[Value],
     pack_rows: &HashMap<String, Value>,
@@ -263,7 +314,7 @@ fn build_dataset_from_summary(
     season_names: &HashMap<u32, String>,
 ) -> AbyssMonsterDataset {
     let mut floors = HashMap::<(u32, u32), Vec<AbyssMonsterEntry>>::new();
-    let mut floor_names = HashMap::<(u32, u32), String>::new();
+    let mut floor_meta = HashMap::<(u32, u32), FloorMeta>::new();
 
     for row in summary_rows {
         let Some(abyss_key) = string(row, "abyss") else {
@@ -275,12 +326,9 @@ fn build_dataset_from_summary(
         let Some(floor) = u32_value(row, "level_id") else {
             continue;
         };
-        if let Some(level_name) = string(row, "level_name").filter(|value| !value.trim().is_empty())
-        {
-            floor_names
-                .entry((season, floor))
-                .or_insert_with(|| level_name.to_owned());
-        }
+        floor_meta
+            .entry((season, floor))
+            .or_insert_with(|| floor_meta_from_row(row));
         let half = string(row, "route").and_then(parse_abyss_route_half);
         let wave = u32_value(row, "wave");
         let monster_pool_id = string(row, "monster_pool_id").map(str::to_owned);
@@ -335,12 +383,47 @@ fn build_dataset_from_summary(
         }
     }
 
-    build_dataset(floors, floor_names, season_names)
+    build_dataset(floors, floor_meta, season_names)
+}
+
+fn floor_meta_from_row(row: &Value) -> FloorMeta {
+    let name = string(row, "level_name")
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_owned);
+    let max_seconds = f64_value(row, "max_seconds");
+    let star_thresholds = row
+        .get("star_thresholds")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    Some(AbyssStarThreshold {
+                        stars: u32_value(entry, "stars")?,
+                        seconds: f64_value(entry, "seconds")?,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let recommended_elements = row
+        .get("recommended_elements")
+        .map(|value| AbyssRecommendedElements {
+            first_half: string_array(value, "first_half"),
+            second_half: string_array(value, "second_half"),
+        })
+        .unwrap_or_default();
+    FloorMeta {
+        name,
+        max_seconds,
+        star_thresholds,
+        recommended_elements,
+    }
 }
 
 fn build_dataset(
     floors: HashMap<(u32, u32), Vec<AbyssMonsterEntry>>,
-    floor_names: HashMap<(u32, u32), String>,
+    floor_meta: HashMap<(u32, u32), FloorMeta>,
     season_names: &HashMap<u32, String>,
 ) -> AbyssMonsterDataset {
     let mut grouped = HashMap::<u32, Vec<AbyssFloor>>::new();
@@ -360,13 +443,19 @@ fn build_dataset(
             .get(&season)
             .cloned()
             .or_else(|| (season == 0).then(|| "通用配置".to_owned()));
-        let name = floor_names.get(&(season, floor)).cloned();
+        let meta = floor_meta
+            .get(&(season, floor))
+            .cloned()
+            .unwrap_or_default();
         grouped.entry(season).or_default().push(AbyssFloor {
             season,
             season_name,
             floor,
-            name,
+            name: meta.name,
             monsters,
+            max_seconds: meta.max_seconds,
+            star_thresholds: meta.star_thresholds,
+            recommended_elements: meta.recommended_elements,
         });
     }
 
@@ -489,6 +578,9 @@ fn load_compact_dataset(path: &Path) -> Result<AbyssMonsterDataset> {
                 floor,
                 name: string(floor_row, "name").map(str::to_owned),
                 monsters,
+                max_seconds: None,
+                star_thresholds: Vec::new(),
+                recommended_elements: AbyssRecommendedElements::default(),
             });
         }
         floors.sort_by_key(|floor| floor.floor);
@@ -740,6 +832,23 @@ fn bool_value(row: &Value, key: &str) -> bool {
     row.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+fn f64_value(row: &Value, key: &str) -> Option<f64> {
+    row.get(key).and_then(Value::as_f64)
+}
+
+fn string_array(row: &Value, key: &str) -> Vec<String> {
+    row.get(key)
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn monster_stats(row: &Value) -> AbyssMonsterStats {
     let mut raw_props = row
         .as_object()
@@ -818,6 +927,16 @@ mod tests {
             "route": "EAbyssFightStage::FirstHalf",
             "wave": 1,
             "monster_pool_id": "Abyss_4_2_0_1",
+            "max_seconds": 600.0,
+            "star_thresholds": [
+                {"stars": 1, "seconds": 600.0},
+                {"stars": 2, "seconds": 420.0},
+                {"stars": 3, "seconds": 300.0}
+            ],
+            "recommended_elements": {
+                "first_half": ["光", "咒"],
+                "second_half": []
+            },
             "monsters": [
                 {
                     "name": "罐头锡兵",
@@ -863,6 +982,32 @@ mod tests {
         assert_eq!(monster.wave, Some(1));
         assert_eq!(monster.monster_id, "mon_35_Blue_BP");
         assert_eq!(monster.stats.hp_max_base, 1000.0);
+
+        assert_eq!(floor.max_seconds, Some(600.0));
+        assert_eq!(
+            floor.star_thresholds,
+            vec![
+                super::AbyssStarThreshold {
+                    stars: 1,
+                    seconds: 600.0
+                },
+                super::AbyssStarThreshold {
+                    stars: 2,
+                    seconds: 420.0
+                },
+                super::AbyssStarThreshold {
+                    stars: 3,
+                    seconds: 300.0
+                },
+            ]
+        );
+        assert_eq!(
+            floor.recommended_elements,
+            super::AbyssRecommendedElements {
+                first_half: vec!["光".to_owned(), "咒".to_owned()],
+                second_half: Vec::new(),
+            }
+        );
     }
 
     #[test]
@@ -891,7 +1036,34 @@ mod tests {
             .floor(7, 1)
             .expect("latest abyss floor should exist");
         assert_eq!(latest_floor.wave_count(), 2);
-        assert_eq!(latest_floor.monster_count(), 4);
+        assert_eq!(latest_floor.monster_count(), 16);
+        // Season 7's real name ("月恒环线") comes from AbyssCloneSeasonDataTable,
+        // not the localization-file/quest-name scan alone — that scan lagged
+        // behind for this season and left it falling back to "第 7 期".
+        assert_eq!(latest_floor.season_name.as_deref(), Some("月恒环线"));
+
+        // These come from the authoritative AbyssCloneLevelDataTable summary
+        // (not the pack_id-guessing fallback), so every supported floor
+        // should carry real clear-time star thresholds.
+        assert_eq!(floor.max_seconds, Some(600.0));
+        assert_eq!(
+            floor.star_thresholds,
+            vec![
+                super::AbyssStarThreshold {
+                    stars: 1,
+                    seconds: 600.0
+                },
+                super::AbyssStarThreshold {
+                    stars: 2,
+                    seconds: 420.0
+                },
+                super::AbyssStarThreshold {
+                    stars: 3,
+                    seconds: 300.0
+                },
+            ]
+        );
+        assert!(!floor.recommended_elements.first_half.is_empty());
     }
 
     #[test]

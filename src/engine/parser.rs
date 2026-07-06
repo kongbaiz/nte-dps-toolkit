@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::engine::model::{CharacterInfo, Hit};
+use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
 
 const RECORD_FIELD_TYPES: [u8; 10] = [12, 12, 12, 13, 12, 12, 6, 6, 6, 12];
@@ -255,7 +256,12 @@ pub fn load_ultra_time_stops(path: &Path) -> Result<HashMap<u32, UltraTimeStopEn
         .collect())
 }
 
-pub fn load_wooden_damage_names(path: &Path) -> Result<HashMap<String, String>> {
+// Superseded by ability_tips-based name resolution (load_ability_tip_names);
+// kept only as a regression test for the legacy wooden-dummy description
+// parsing below via loads_chinese_damage_names_from_wooden_assets /
+// loads_compact_wooden_damage_names.
+#[cfg(test)]
+fn load_wooden_damage_names(path: &Path) -> Result<HashMap<String, String>> {
     let text = read_resource_text(path)
         .with_context(|| format!("无法读取木桩伤害描述表 {}", path.display()))?;
     let document: serde_json::Value =
@@ -293,7 +299,15 @@ pub fn load_wooden_damage_names(path: &Path) -> Result<HashMap<String, String>> 
 /// `DT_GameplayAbilityTipsData`. Unlike the wooden dummy descriptions this table is
 /// kept current with new characters, but it is keyed by ability rather than by
 /// GameplayEffect, so callers join it through [`GameplayEffectSkill::ability_name`].
-pub fn load_ability_tip_names(path: &Path) -> Result<HashMap<String, String>> {
+///
+/// Picks the field matching `language`, falling back through the other fields
+/// when the active one is empty (the Global asset export doesn't localize
+/// every ability into every language, e.g. brand-new or CN-exclusive skills)
+/// so a skill name is shown whenever any language has one, rather than
+/// disappearing. Takes `language` explicitly (rather than reading
+/// `i18n::current_language()` internally) so it stays a pure function of its
+/// arguments — callers pass the live language, tests pass a fixed one.
+pub fn load_ability_tip_names(path: &Path, language: Language) -> Result<HashMap<String, String>> {
     let text = read_resource_text(path)
         .with_context(|| format!("无法读取技能说明表 {}", path.display()))?;
     let document: serde_json::Value =
@@ -302,21 +316,26 @@ pub fn load_ability_tip_names(path: &Path) -> Result<HashMap<String, String>> {
         .get("abilities")
         .and_then(serde_json::Value::as_object)
         .context("技能说明表缺少 abilities")?;
+    let field_priority = ability_name_field_priority(language);
     Ok(abilities
         .iter()
         .filter_map(|(ability_name, row)| {
-            let name = row
-                .get("name_zh")
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .or_else(|| {
-                    row.get("name_en")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|value| !value.trim().is_empty())
-                })?;
+            let name = field_priority.iter().find_map(|field| {
+                row.get(*field)
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+            })?;
             Some((ability_name.clone(), name.trim().to_owned()))
         })
         .collect())
+}
+
+fn ability_name_field_priority(language: Language) -> [&'static str; 3] {
+    match language {
+        Language::Japanese => ["name_ja", "name_zh", "name_en"],
+        Language::English => ["name_en", "name_zh", "name_ja"],
+        Language::SimplifiedChinese => ["name_zh", "name_en", "name_ja"],
+    }
 }
 
 pub fn normalize_damage_name(description: &str) -> String {
@@ -1090,6 +1109,41 @@ mod character_tests {
         assert_eq!(
             mapping.get(&1012).map(String::as_str),
             Some("GE_Player_Sagiri_QTE1_Damage")
+        );
+    }
+
+    #[test]
+    fn ability_tip_names_pick_field_by_active_language() {
+        let path = write_temp_json(
+            "compact_ability_tips.json",
+            r#"{"abilities":{
+                "GA_Mint019_Melee": {"name_zh": "满分收容术", "name_en": "Perfect Containment", "name_ja": "満点収容術"},
+                "GA_NoGlobalName": {"name_zh": "仅中文技能"}
+            }}"#,
+        );
+
+        let names = load_ability_tip_names(&path, Language::Japanese).unwrap();
+        assert_eq!(
+            names.get("GA_Mint019_Melee").map(String::as_str),
+            Some("満点収容術")
+        );
+        // No Japanese (or English) translation for this ability — falls back
+        // to whichever field is non-empty instead of dropping the name.
+        assert_eq!(
+            names.get("GA_NoGlobalName").map(String::as_str),
+            Some("仅中文技能")
+        );
+
+        let names = load_ability_tip_names(&path, Language::English).unwrap();
+        assert_eq!(
+            names.get("GA_Mint019_Melee").map(String::as_str),
+            Some("Perfect Containment")
+        );
+
+        let names = load_ability_tip_names(&path, Language::SimplifiedChinese).unwrap();
+        assert_eq!(
+            names.get("GA_Mint019_Melee").map(String::as_str),
+            Some("满分收容术")
         );
     }
 

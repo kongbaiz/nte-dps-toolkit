@@ -15,7 +15,7 @@ use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
 use crate::engine::abyss_data::{
-    AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry, abyss_line_hp_total,
+    AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry, AbyssStarThreshold, abyss_line_hp_total,
     abyss_monster_total_hp, line_hp_by_wave, predict_wave_clear_times,
     required_dps_for_target_time,
 };
@@ -514,6 +514,19 @@ impl AbyssOverviewState {
         match AbyssMonsterDataset::load() {
             Ok(dataset) => {
                 let first = dataset.first_floor_key();
+                // Seed the Target field with the first floor's real top-star
+                // clear time instead of a flat guess, when the summary
+                // dataset provides one; otherwise keep the historical default.
+                let initial_target_seconds = first
+                    .and_then(|(season, floor)| dataset.floor(season, floor))
+                    .and_then(|floor| {
+                        floor
+                            .star_thresholds
+                            .iter()
+                            .max_by_key(|threshold| threshold.stars)
+                    })
+                    .map(|threshold| threshold.seconds)
+                    .unwrap_or(90.0);
                 Self {
                     dataset: Some(dataset),
                     stat_display_names,
@@ -525,8 +538,8 @@ impl AbyssOverviewState {
                     search: String::new(),
                     upper_team: None,
                     lower_team: None,
-                    upper_target_seconds: 90.0,
-                    lower_target_seconds: 90.0,
+                    upper_target_seconds: initial_target_seconds,
+                    lower_target_seconds: initial_target_seconds,
                 }
             }
             Err(error) => Self {

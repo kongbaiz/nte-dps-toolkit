@@ -134,12 +134,41 @@ fn load_reaction_text_texture(
     if rgba_image_is_blank(&image) {
         return ReactionTextTextureLoad::Blank;
     }
+    // draw_reaction_text_images() sizes each glyph purely from its texture's
+    // aspect ratio, scaled to a fixed height. The `en` art sits on a wider,
+    // shorter canvas with much more transparent margin than `zh`'s (e.g. a
+    // 144x58 canvas ~55% filled vs. 120x116 ~70% filled), so at the same
+    // render height the actual English glyph pixels come out visibly
+    // smaller. Cropping to the opaque bounding box first removes each
+    // locale's baked-in padding from the aspect-ratio math, so glyph height
+    // ends up consistent across languages instead of matching canvas size.
+    let image = crop_to_opaque_bounds(image);
     ReactionTextTextureLoad::Loaded(load_rgba_texture(
         ctx,
         resource_path,
         "reaction-text",
         image,
     ))
+}
+
+fn crop_to_opaque_bounds(image: image::RgbaImage) -> image::RgbaImage {
+    let (width, height) = image.dimensions();
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    for (x, y, pixel) in image.enumerate_pixels() {
+        if pixel[3] != 0 {
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+    }
+    if min_x > max_x || min_y > max_y {
+        return image;
+    }
+    image::imageops::crop_imm(&image, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image()
 }
 
 pub(crate) fn damage_digit_resource_path(prefix: &str, digit: usize) -> String {
@@ -340,20 +369,6 @@ fn load_rgba_texture(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transparent_reaction_texture_is_blank() {
-        let transparent = image::RgbaImage::from_pixel(3, 2, image::Rgba([255, 255, 255, 0]));
-        assert!(rgba_image_is_blank(&transparent));
-
-        let visible = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 1]));
-        assert!(!rgba_image_is_blank(&visible));
-    }
-}
-
 pub(crate) fn pixel_aligned_rect(
     origin: egui::Pos2,
     logical_size: f32,
@@ -457,4 +472,40 @@ pub(crate) fn configure_style(ctx: &egui::Context, dark_mode: bool) {
     style.visuals.widgets.active.expansion = 0.0;
     style.visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
     ctx.set_global_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transparent_reaction_texture_is_blank() {
+        let transparent = image::RgbaImage::from_pixel(3, 2, image::Rgba([255, 255, 255, 0]));
+        assert!(rgba_image_is_blank(&transparent));
+
+        let visible = image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 1]));
+        assert!(!rgba_image_is_blank(&visible));
+    }
+
+    #[test]
+    fn crop_to_opaque_bounds_trims_transparent_margin() {
+        // A 10x10 canvas with a 4x2 opaque glyph off-center, mimicking the
+        // padded `en` reaction-text art versus the tightly-cropped `zh` art.
+        let mut image = image::RgbaImage::from_pixel(10, 10, image::Rgba([0, 0, 0, 0]));
+        for y in 3..5 {
+            for x in 2..6 {
+                image.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+            }
+        }
+        let cropped = crop_to_opaque_bounds(image);
+        assert_eq!(cropped.dimensions(), (4, 2));
+        assert_eq!(*cropped.get_pixel(0, 0), image::Rgba([255, 255, 255, 255]));
+    }
+
+    #[test]
+    fn crop_to_opaque_bounds_is_noop_for_fully_opaque_image() {
+        let image = image::RgbaImage::from_pixel(5, 3, image::Rgba([1, 2, 3, 255]));
+        let cropped = crop_to_opaque_bounds(image.clone());
+        assert_eq!(cropped.dimensions(), image.dimensions());
+    }
 }

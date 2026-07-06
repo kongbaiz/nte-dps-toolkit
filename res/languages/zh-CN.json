@@ -444,6 +444,9 @@
   "Left": "离开",
   "Line {}": "线路 {}",
   "Full floor config": "整层配置",
+  "★{} {}": "★{} {}",
+  "Use this floor's real {}-star clear time as the target": "使用该层真实的 {} 星通关时间作为目标",
+  "Recommended {}": "推荐 {}",
 
   "Team Combat Details - {}": "队伍战斗明细 - {}",
   "Total Output": "总输出",

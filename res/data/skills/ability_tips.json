@@ -3,11 +3,12 @@
     "GA_Adler_Evade": {
       "name_zh": " ",
       "name_en": " ",
-      "descriptions": []
+      "descriptions": [],
+      "name_ja": " "
     },
     "GA_Adler_Melee": {
       "name_zh": "度恶",
-      "name_en": "度恶",
+      "name_en": "Deliverance",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -63,11 +64,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "渡悪"
     },
     "GA_Adler_Passive_1": {
       "name_zh": "克己",
-      "name_en": "克己",
+      "name_en": "Temperance",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -87,11 +89,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "克己"
     },
     "GA_Adler_Passive_2": {
       "name_zh": "正心",
-      "name_en": "正心",
+      "name_en": "Righteous Heart",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -111,11 +114,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "正心"
     },
     "GA_Adler_QTE": {
       "name_zh": "明镜本无尘",
-      "name_en": "明镜本无尘",
+      "name_en": "Pristine Reflection",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -126,11 +130,12 @@
           "short_description_zh": "造成<Zhou>咒属性异能伤害</>。",
           "short_description_en": "造成<Zhou>咒属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "真心に汚れなし"
     },
     "GA_Adler_Skill": {
       "name_zh": "诛恶护持",
-      "name_en": "诛恶护持",
+      "name_en": "Evil's Bane",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -150,11 +155,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "諸悪加持"
     },
     "GA_Adler_UltraSkill": {
       "name_zh": "万象澄寂",
-      "name_en": "万象澄寂",
+      "name_en": "Tranquility",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -174,7 +180,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "万象静寂"
     },
     "GA_Bat_UltraSkill": {
       "name_zh": "",
@@ -194,16 +201,18 @@
     "GA_Cang_Evade": {
       "name_zh": " ",
       "name_en": " ",
-      "descriptions": []
+      "descriptions": [],
+      "name_ja": " "
     },
     "GA_Cang_JumpAttack": {
       "name_zh": "言行合一",
-      "name_en": "言行合一",
-      "descriptions": []
+      "name_en": "Walk the Talk",
+      "descriptions": [],
+      "name_ja": "形名参同"
     },
     "GA_Cang_Melee": {
       "name_zh": "言行合一",
-      "name_en": "言行合一",
+      "name_en": "Walk the Talk",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -268,11 +277,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "形名参同"
     },
     "GA_Cang_Passive_1": {
       "name_zh": "适度恶趣味",
-      "name_en": "适度恶趣味",
+      "name_en": "Moderate Mischief",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -292,11 +302,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "適度な悪趣味"
     },
     "GA_Cang_Passive_2": {
       "name_zh": "适度上工",
-      "name_en": "适度上工",
+      "name_en": "Moderate Working",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -316,11 +327,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "適度出勤"
     },
     "GA_Cang_QTE": {
       "name_zh": "摸鱼结束",
-      "name_en": "摸鱼结束",
+      "name_en": "Break Time Over",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -331,11 +343,12 @@
           "short_description_zh": "造成<Zhou>咒属性异能伤害</>。\r\n生成<NumGreen>1</>个言灵字<hot textstyle=\"TextEXPL\" param=\"nouns&CangJin\">「噤」</>。",
           "short_description_en": "造成<Zhou>咒属性异能伤害</>。\r\n生成<NumGreen>1</>个言灵字<hot textstyle=\"TextEXPL\" param=\"nouns&CangJin\">「噤」</>。"
         }
-      ]
+      ],
+      "name_ja": "サボり終了"
     },
     "GA_Cang_Skill": {
       "name_zh": "不吝赐教",
-      "name_en": "不吝赐教",
+      "name_en": "Generous Guidance",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -373,11 +386,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ご教示いただこう"
     },
     "GA_Cang_UltraSkill": {
       "name_zh": "判予秋",
-      "name_en": "判予秋",
+      "name_en": "Judgment of Autumn",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -397,11 +411,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "判決と秋"
     },
     "GA_Chaos071_Melee": {
       "name_zh": "追猎",
-      "name_en": "追猎",
+      "name_en": "Pursuit",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -448,18 +463,19 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "追猟"
     },
     "GA_Chaos071_Passive_3": {
       "name_zh": "尘中影",
-      "name_en": "尘中影",
+      "name_en": "Ashen Shade",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "在大世界中，卡厄斯能够留下猎犬作为传送锚点。长按瞄准键在当前位置留下猎犬；需要传送时，猎犬将撕咬出连通空间的门扉，卡厄斯由此回到锚点所在之处。短按瞄准键时，卡厄斯可以选择戴上或摘下面罩。",
-          "description_en": "在大世界中，卡厄斯能够留下猎犬作为传送锚点。长按瞄准键在当前位置留下猎犬；需要传送时，猎犬将撕咬出连通空间的门扉，卡厄斯由此回到锚点所在之处。短按瞄准键时，卡厄斯可以选择戴上或摘下面罩。",
+          "description_zh": "在大世界中，卡厄斯能通过长按瞄准键的方式留下猎犬作为传送锚点。需要传送时，通过地图交互，猎犬将撕咬出连通空间的门扉，卡厄斯由此回到锚点所在之处。",
+          "description_en": "在大世界中，卡厄斯能通过长按瞄准键的方式留下猎犬作为传送锚点。需要传送时，通过地图交互，猎犬将撕咬出连通空间的门扉，卡厄斯由此回到锚点所在之处。",
           "short_description_zh": "",
           "short_description_en": ""
         },
@@ -472,11 +488,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "塵中の影"
     },
     "GA_Chaos071_QTE": {
       "name_zh": "强袭",
-      "name_en": "强袭",
+      "name_en": "Onslaught",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -496,11 +513,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "強襲"
     },
     "GA_Chaos071_Skill": {
       "name_zh": "疑点锁定",
-      "name_en": "疑点锁定",
+      "name_en": "Doubtmark",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -520,11 +538,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "疑惑の照準"
     },
     "GA_Chaos071_UltraSkill": {
       "name_zh": "罪业清偿",
-      "name_en": "罪业清偿",
+      "name_en": "Retribution",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -544,7 +563,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "カルマ・パージ"
     },
     "GA_Chaos071_WorldTransport": {
       "name_zh": "",
@@ -553,7 +573,7 @@
     },
     "GA_Chaos_Passive_1": {
       "name_zh": "未迟到的正义",
-      "name_en": "未迟到的正义",
+      "name_en": "Justice in Time",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -573,11 +593,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "逃れられぬ正義"
     },
     "GA_Chaos_Passive_2": {
       "name_zh": "重点关注！",
-      "name_en": "重点关注！",
+      "name_en": "Prime Target",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -597,11 +618,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "特別警戒！"
     },
     "GA_Chiichan073_Melee": {
       "name_zh": "失乡剑术",
-      "name_en": "失乡剑术",
+      "name_en": "Exiled Swordplay",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -648,11 +670,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "失郷剣術"
     },
     "GA_Chiichan073_Passive_1": {
       "name_zh": "飞鸟症候群",
-      "name_en": "飞鸟症候群",
+      "name_en": "Hanahaki Disease",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -672,11 +695,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "飛鳥症候群"
     },
     "GA_Chiichan073_Passive_2": {
       "name_zh": "囤积癖",
-      "name_en": "囤积癖",
+      "name_en": "Hoarding",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -696,11 +720,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "収集癖"
     },
     "GA_Chiichan073_QTE": {
       "name_zh": "临时入场",
-      "name_en": "临时入场",
+      "name_en": "Temporary Entry",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -711,11 +736,12 @@
           "short_description_zh": "造成<Guang>光属性异能伤害</>。",
           "short_description_en": "造成<Guang>光属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "臨時入場"
     },
     "GA_Chiichan073_Skill": {
       "name_zh": "粉爪在上原则",
-      "name_en": "粉爪在上原则",
+      "name_en": "Pink Paws Priority Principle",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -735,11 +761,12 @@
           "short_description_zh": "1",
           "short_description_en": "1"
         }
-      ]
+      ],
+      "name_ja": "にくきゅうの原則"
     },
     "GA_Chiichan073_UltraSkill": {
       "name_zh": "零和博弈",
-      "name_en": "零和博弈",
+      "name_en": "Zero-Sum Game",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -759,11 +786,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ゼロサムゲーム"
     },
     "GA_Daffodill_Melee": {
       "name_zh": "止水",
-      "name_en": "止水",
+      "name_en": "Still Waters",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -828,11 +856,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "止水"
     },
     "GA_Daffodill_Passive_1": {
       "name_zh": "破鞘",
-      "name_en": "破鞘",
+      "name_en": "Blade Draw",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -852,11 +881,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "破鞘"
     },
     "GA_Daffodill_Passive_2": {
       "name_zh": "空蝉",
-      "name_en": "空蝉",
+      "name_en": "Cicada Shell",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -876,11 +906,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "空蝉"
     },
     "GA_Daffodill_QTE": {
       "name_zh": "交仞",
-      "name_en": "交仞",
+      "name_en": "Crossed Blades",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -900,11 +931,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "交刃"
     },
     "GA_Daffodill_Skill": {
       "name_zh": "同振",
-      "name_en": "同振",
+      "name_en": "Resonance",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -933,11 +965,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "共振"
     },
     "GA_Daffodill_UltraSkill": {
       "name_zh": "见此终幕",
-      "name_en": "见此终幕",
+      "name_en": "Finale",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -957,11 +990,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "終幕の刻"
     },
     "GA_Edgar_Melee": {
       "name_zh": "体术实战",
-      "name_en": "体术实战",
+      "name_en": "Combat Practice",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -999,11 +1033,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "実戦体術"
     },
     "GA_Edgar_Passive_1": {
       "name_zh": "温和的锋芒",
-      "name_en": "温和的锋芒",
+      "name_en": "Gentle Edge",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1023,11 +1058,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "優しい刃先"
     },
     "GA_Edgar_Passive_2": {
       "name_zh": "不变的暖意",
-      "name_en": "不变的暖意",
+      "name_en": "Unchanging Warmth",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1047,11 +1083,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "不変の温もり"
     },
     "GA_Edgar_QTE": {
       "name_zh": "知识的重量",
-      "name_en": "知识的重量",
+      "name_en": "Weight of Knowledge",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1062,11 +1099,12 @@
           "short_description_zh": "造成<Guang>光属性异能伤害</>。",
           "short_description_en": "造成<Guang>光属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "知識の重み"
     },
     "GA_Edgar_Skill": {
       "name_zh": "狂流",
-      "name_en": "狂流",
+      "name_en": "Wild Current",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1086,11 +1124,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "狂流"
     },
     "GA_Edgar_UltraSkill": {
       "name_zh": "芬尼根守灵夜",
-      "name_en": "芬尼根守灵夜",
+      "name_en": "Finnegan's Wake",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1110,7 +1149,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "フィネガンの通夜"
     },
     "GA_Fadia_Evade": {
       "name_zh": "",
@@ -1119,7 +1159,7 @@
     },
     "GA_Fadia_Melee": {
       "name_zh": "话语中断的否定",
-      "name_en": "话语中断的否定",
+      "name_en": "Wordless Rejection",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1166,11 +1206,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "会話中断の否定"
     },
     "GA_Fadia_Passive_1": {
       "name_zh": "罪感熔炉",
-      "name_en": "罪感熔炉",
+      "name_en": "Furnace of Guilt",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1190,11 +1231,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "罪悪感のるつぼ"
     },
     "GA_Fadia_Passive_2": {
       "name_zh": "拒斥与豪掠",
-      "name_en": "拒斥与豪掠",
+      "name_en": "Denial and Plunder",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1214,11 +1256,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "拒絶と強奪"
     },
     "GA_Fadia_Passive_3": {
       "name_zh": "投身损耗的迷狂",
-      "name_en": "投身损耗的迷狂",
+      "name_en": "Queen Charming",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1238,11 +1281,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "消耗献身の狂気"
     },
     "GA_Fadia_QTE": {
       "name_zh": "脱格者的嘲弄",
-      "name_en": "脱格者的嘲弄",
+      "name_en": "Outsider",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1262,11 +1306,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "脱落者の嘲笑"
     },
     "GA_Fadia_Skill": {
       "name_zh": "存在证明的体验",
-      "name_en": "存在证明的体验",
+      "name_en": "Existence",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1286,11 +1331,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "存在証明の体験"
     },
     "GA_Fadia_UltraSkill": {
       "name_zh": "痛苦让位于狂喜",
-      "name_en": "痛苦让位于狂喜",
+      "name_en": "Agony to Euphoria",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1310,7 +1356,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "痛みを狂喜に"
     },
     "GA_Fadia_UltraSkill_Melee": {
       "name_zh": "",
@@ -1319,7 +1366,7 @@
     },
     "GA_Female046_Melee": {
       "name_zh": "鉴痕",
-      "name_en": "鉴痕",
+      "name_en": "Appraisal",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1357,7 +1404,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鑑痕"
     },
     "GA_Female046_Melee_UnArmed": {
       "name_zh": "",
@@ -1366,7 +1414,7 @@
     },
     "GA_Female046_QTE": {
       "name_zh": "绽裂",
-      "name_en": "绽裂",
+      "name_en": "Rift Blossom",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1377,11 +1425,12 @@
           "short_description_zh": "造成<Guang>光属性异能伤害</>。",
           "short_description_en": "造成<Guang>光属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "裂断"
     },
     "GA_Female046_Skill": {
       "name_zh": "铭隙鉴刻",
-      "name_en": "铭隙鉴刻",
+      "name_en": "Appraise and Engrave",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1401,7 +1450,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鑑痕の極み"
     },
     "GA_Female046_Skill_UnArmed": {
       "name_zh": "",
@@ -1410,7 +1460,7 @@
     },
     "GA_Female046_UltraSkill": {
       "name_zh": "奇零除尽",
-      "name_en": "奇零除尽",
+      "name_en": "Divide by Zero",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1430,7 +1480,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "奇零退散"
     },
     "GA_Female046_UltraSkill_UnArmed": {
       "name_zh": "",
@@ -1454,7 +1505,7 @@
     },
     "GA_Female051_Melee": {
       "name_zh": "鉴痕",
-      "name_en": "鉴痕",
+      "name_en": "Appraisal",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1492,7 +1543,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鑑痕"
     },
     "GA_Female051_Melee_UnArmed": {
       "name_zh": "",
@@ -1501,7 +1553,7 @@
     },
     "GA_Female051_QTE": {
       "name_zh": "绽裂",
-      "name_en": "绽裂",
+      "name_en": "Rift Blossom",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1512,11 +1564,12 @@
           "short_description_zh": "造成<Guang>光属性异能伤害</>。",
           "short_description_en": "造成<Guang>光属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "裂断"
     },
     "GA_Female051_Skill": {
       "name_zh": "铭隙鉴刻",
-      "name_en": "铭隙鉴刻",
+      "name_en": "Appraise and Engrave",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1536,7 +1589,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鑑痕の極み"
     },
     "GA_Female051_Skill_UnArmed": {
       "name_zh": "",
@@ -1545,7 +1599,7 @@
     },
     "GA_Female051_UltraSkill": {
       "name_zh": "奇零除尽",
-      "name_en": "奇零除尽",
+      "name_en": "Divide by Zero",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1565,7 +1619,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "奇零退散"
     },
     "GA_Female051_UltraSkill_UnArmed": {
       "name_zh": "",
@@ -1584,7 +1639,7 @@
     },
     "GA_Female_Passive_1": {
       "name_zh": "鉴定师",
-      "name_en": "鉴定师",
+      "name_en": "Appraiser",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1604,11 +1659,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鑑定士"
     },
     "GA_Female_Passive_2": {
       "name_zh": "异象感知力",
-      "name_en": "异象感知力",
+      "name_en": "Anomaly Perception",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1628,7 +1684,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "異象感知能力"
     },
     "GA_ForkTrigger_BlackBook": {
       "name_zh": "",
@@ -1787,7 +1844,7 @@
     },
     "GA_Haniel_Melee": {
       "name_zh": "盖罗塞克特术法",
-      "name_en": "盖罗塞克特术法",
+      "name_en": "Genesse Technique",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1834,11 +1891,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ガイロセクト術法"
     },
     "GA_Haniel_Passive_1": {
       "name_zh": "是友情啊",
-      "name_en": "是友情啊",
+      "name_en": "It's Friendship!",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1858,11 +1916,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "友情だね"
     },
     "GA_Haniel_Passive_2": {
       "name_zh": "是羁绊啊",
-      "name_en": "是羁绊啊",
+      "name_en": "It's Bond!",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1882,11 +1941,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "絆だね"
     },
     "GA_Haniel_QTE": {
       "name_zh": "彩蛋时间",
-      "name_en": "彩蛋时间",
+      "name_en": "Easter Egg Time",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1897,11 +1957,12 @@
           "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
           "short_description_en": "造成<Hun>魂属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "イースターエッグ"
     },
     "GA_Haniel_Skill": {
       "name_zh": "静默月林的守护者",
-      "name_en": "静默月林的守护者",
+      "name_en": "Silent Moonlit Forest Guardian",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1921,11 +1982,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "静かなる月森の守護者"
     },
     "GA_Haniel_UltraSkill": {
       "name_zh": "名为「哈尼娅」的旋律",
-      "name_en": "名为「哈尼娅」的旋律",
+      "name_en": "A Melody Named Haniel",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -1945,16 +2007,18 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "『ハニア』という名の旋律"
     },
     "GA_Hathor_Evade": {
       "name_zh": " ",
       "name_en": " ",
-      "descriptions": []
+      "descriptions": [],
+      "name_ja": " "
     },
     "GA_Hathor_Melee": {
       "name_zh": "高频送达",
-      "name_en": "高频送达",
+      "name_en": "Rapid Delivery",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2001,11 +2065,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ハイスピ配達"
     },
     "GA_Hathor_Passive_1": {
       "name_zh": "延时预警",
-      "name_en": "延时预警",
+      "name_en": "Delay Warning",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2025,11 +2090,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "時間延長警報"
     },
     "GA_Hathor_Passive_2": {
       "name_zh": "效率推进",
-      "name_en": "效率推进",
+      "name_en": "Efficiency Boost",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2049,11 +2115,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "効率化遂行"
     },
     "GA_Hathor_Passive_3": {
       "name_zh": "优评锁定",
-      "name_en": "优评锁定",
+      "name_en": "Excellent Rating Lock",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2073,11 +2140,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "高評価ロックオン"
     },
     "GA_Hathor_QTE": {
       "name_zh": "坠点标定",
-      "name_en": "坠点标定",
+      "name_en": "Impact Point Designation",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2097,11 +2165,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "配送指示"
     },
     "GA_Hathor_Skill": {
       "name_zh": "空中指令",
-      "name_en": "空中指令",
+      "name_en": "Aerial Command",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2130,11 +2199,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "空中指令"
     },
     "GA_Hathor_Skill2": {
       "name_zh": "<Title>变轨技能：轮转打击</>",
-      "name_en": "<Title>变轨技能：轮转打击</>",
+      "name_en": "<Title>Redirect Skill: Cyclone Strike</>",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2163,11 +2233,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "<Title>バイレールスキル：フル回転配達</>"
     },
     "GA_Hathor_UltraSkill": {
       "name_zh": "铁骑速递",
-      "name_en": "铁骑速递",
+      "name_en": "Rider Express",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2187,7 +2258,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鉄騎速達"
     },
     "GA_Jin_Evade": {
       "name_zh": "",
@@ -2196,7 +2268,7 @@
     },
     "GA_Jin_Melee": {
       "name_zh": "胧月流",
-      "name_en": "胧月流",
+      "name_en": "Misty Moon Style",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2252,11 +2324,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "朧月流"
     },
     "GA_Jin_Passive_1": {
       "name_zh": "鬼兰家纹",
-      "name_en": "鬼兰家纹",
+      "name_en": "Ghost Orchid Crest",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2276,11 +2349,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "蘭の家紋"
     },
     "GA_Jin_Passive_2": {
       "name_zh": "天下万宝",
-      "name_en": "天下万宝",
+      "name_en": "All Treasures Under Heaven",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2300,11 +2374,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "万物須らくお宝"
     },
     "GA_Jin_Passive_3": {
       "name_zh": "凝雪之仪",
-      "name_en": "凝雪之仪",
+      "name_en": "Frozen Snow Ritual",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2324,11 +2399,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "凝雪の儀"
     },
     "GA_Jin_QTE": {
       "name_zh": "店主威势",
-      "name_en": "店主威势",
+      "name_en": "Shopkeeper's Authority",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2348,11 +2424,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "店長の威勢"
     },
     "GA_Jin_Skill": {
       "name_zh": "今景复映",
-      "name_en": "今景复映",
+      "name_en": "Present Replay",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2372,11 +2449,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "今景再映"
     },
     "GA_Jin_UltraSkill": {
       "name_zh": "浮世来潮",
-      "name_en": "浮世来潮",
+      "name_en": "World's Tide",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2396,7 +2474,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "浮世の波"
     },
     "GA_Jin_UltraSkill_Melee": {
       "name_zh": "",
@@ -2406,11 +2485,12 @@
     "GA_Kuhara_Evade": {
       "name_zh": " ",
       "name_en": " ",
-      "descriptions": []
+      "descriptions": [],
+      "name_ja": " "
     },
     "GA_Kuhara_Melee": {
       "name_zh": "秘密成型时",
-      "name_en": "秘密成型时",
+      "name_en": "When Secrets Take Shape",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2466,11 +2546,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "秘密形成の時"
     },
     "GA_Kuhara_Passive_1": {
       "name_zh": "顺势而获",
-      "name_en": "顺势而获",
+      "name_en": "Seize the Moment",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2490,11 +2571,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "虎視眈々"
     },
     "GA_Kuhara_Passive_2": {
       "name_zh": "风声为我所用",
-      "name_en": "风声为我所用",
+      "name_en": "Whispers at My Command",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2514,11 +2596,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "噂話の利用価値"
     },
     "GA_Kuhara_QTE": {
       "name_zh": "秘闻锁定",
-      "name_en": "秘闻锁定",
+      "name_en": "Intel Lock-On",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2538,11 +2621,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "機密捕捉"
     },
     "GA_Kuhara_Skill": {
       "name_zh": "情报猎手",
-      "name_en": "情报猎手",
+      "name_en": "Intel Hunter",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2562,11 +2646,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "情報ハンター"
     },
     "GA_Kuhara_UltraSkill": {
       "name_zh": "终局清账",
-      "name_en": "终局清账",
+      "name_en": "Final Reckoning",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2586,7 +2671,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "終局の清算"
     },
     "GA_Lacrimosa_ChangeAvatar": {
       "name_zh": "",
@@ -2596,11 +2682,12 @@
     "GA_Lacrimosa_Evade": {
       "name_zh": "1",
       "name_en": "1",
-      "descriptions": []
+      "descriptions": [],
+      "name_ja": "1"
     },
     "GA_Lacrimosa_Melee": {
       "name_zh": "酸甜口味的制裁",
-      "name_en": "酸甜口味的制裁",
+      "name_en": "Sweet and Sour",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2674,7 +2761,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "甘酸っぱい制裁"
     },
     "GA_Lacrimosa_MeleeModA": {
       "name_zh": "",
@@ -2683,7 +2771,7 @@
     },
     "GA_Lacrimosa_Passive_1": {
       "name_zh": "番茄酱盛宴",
-      "name_en": "番茄酱盛宴",
+      "name_en": "Tomato Banquet",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2703,11 +2791,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "トマトパーティ"
     },
     "GA_Lacrimosa_Passive_2": {
       "name_zh": "就要自然醒",
-      "name_en": "就要自然醒",
+      "name_en": "Sleep In",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2727,11 +2816,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "自然に目覚めたい"
     },
     "GA_Lacrimosa_Passive_3": {
       "name_zh": "高难度梦游",
-      "name_en": "高难度梦游",
+      "name_en": "Sleepwalk",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2751,11 +2841,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "高難度の夢遊病"
     },
     "GA_Lacrimosa_QTE": {
       "name_zh": "紧急唤醒",
-      "name_en": "紧急唤醒",
+      "name_en": "Microwake",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2775,11 +2866,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "緊急覚醒"
     },
     "GA_Lacrimosa_Skill": {
       "name_zh": "起床气加载中",
-      "name_en": "起床气加载中",
+      "name_en": "Morning Tomato",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2808,7 +2900,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "寝覚めロード中"
     },
     "GA_Lacrimosa_SwitchSkill": {
       "name_zh": "",
@@ -2822,7 +2915,7 @@
     },
     "GA_Lacrimosa_UltraSkill": {
       "name_zh": "工作日最终审判",
-      "name_en": "工作日最终审判",
+      "name_en": "Working Day Judgement",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2842,7 +2935,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "平日最終裁判"
     },
     "GA_Lacrimosa_UltraSkillModA": {
       "name_zh": "",
@@ -2856,7 +2950,7 @@
     },
     "GA_Mint019_Melee": {
       "name_zh": "满分收容术",
-      "name_en": "满分收容术",
+      "name_en": "Perfect Containment",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2903,11 +2997,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "満点収容術"
     },
     "GA_Mint019_QTE": {
       "name_zh": "奥义·无敌飓风刃",
-      "name_en": "奥义·无敌飓风刃",
+      "name_en": "Ultimate: Invincible Tornado Slash",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2927,11 +3022,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "奥義・無敵タイフーン"
     },
     "GA_Mint019_Skill": {
       "name_zh": "奥义·超级连风爪",
-      "name_en": "奥义·超级连风爪",
+      "name_en": "Ultimate: Super Claws",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2951,11 +3047,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "奥義・スーパー連風爪"
     },
     "GA_Mint019_UltraSkill": {
       "name_zh": "奥义·霹雳疾风斩",
-      "name_en": "奥义·霹雳疾风斩",
+      "name_en": "Ultimate: Thunderous Whirlwind Slash",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2975,11 +3072,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "奥義・疾風斬"
     },
     "GA_Mint_Passive_1": {
       "name_zh": "变身！超级薄荷！",
-      "name_en": "变身！超级薄荷！",
+      "name_en": "Transform! Super Mint!",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -2999,11 +3097,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "変身！スーパーミント！"
     },
     "GA_Mint_Passive_2": {
       "name_zh": "收工！宾果时间！",
-      "name_en": "收工！宾果时间！",
+      "name_en": "Bingo! We're Done Here!",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3023,11 +3122,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "これで終わりっ！"
     },
     "GA_Mint_Passive_3": {
       "name_zh": "<Title>普通攻击：薄荷味旋风</>",
-      "name_en": "<Title>普通攻击：薄荷味旋风</>",
+      "name_en": "<Title>Basic Attack: Minty Whirlwind</>",
       "descriptions": [
         {
           "type": "ADT_AFFIX",
@@ -3038,11 +3138,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "<Title>通常攻撃：ミント大旋風</>"
     },
     "GA_Mitsuki_Melee": {
       "name_zh": "清唱",
-      "name_en": "清唱",
+      "name_en": "Cappella",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3089,11 +3190,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "アカペラ"
     },
     "GA_Mitsuki_Passive1": {
       "name_zh": "泛音",
-      "name_en": "泛音",
+      "name_en": "Harmonics",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3113,11 +3215,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ハーモニクス"
     },
     "GA_Mitsuki_Passive2": {
       "name_zh": "渐强",
-      "name_en": "渐强",
+      "name_en": "Crescendo",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3137,11 +3240,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "クレッシェンド"
     },
     "GA_Mitsuki_Passive3": {
       "name_zh": "海阔天空",
-      "name_en": "海阔天空",
+      "name_en": "Boundless Sound",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3161,11 +3265,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "エンドレス・ブルー"
     },
     "GA_Mitsuki_QTE": {
       "name_zh": "不协和音",
-      "name_en": "不协和音",
+      "name_en": "Dissonance",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3176,11 +3281,12 @@
           "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
           "short_description_en": "造成<Hun>魂属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "不協和音"
     },
     "GA_Mitsuki_Skill": {
       "name_zh": "华彩唱段",
-      "name_en": "华彩唱段",
+      "name_en": "Cadenza Aria",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3200,11 +3306,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "華麗なるカデンツァ"
     },
     "GA_Mitsuki_UltraSkill": {
       "name_zh": "众声轮唱",
-      "name_en": "众声轮唱",
+      "name_en": "Canon Chorus",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3224,16 +3331,18 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "カノン"
     },
     "GA_Nanally_Evade": {
       "name_zh": "娜娜莉闪避名字",
-      "name_en": "娜娜莉闪避名字",
-      "descriptions": []
+      "name_en": "Nanally Dodge Name",
+      "descriptions": [],
+      "name_ja": "ナナリ回避のスキル名"
     },
     "GA_Nanally_Melee": {
       "name_zh": "柯林斯秘传技法",
-      "name_en": "柯林斯秘传技法",
+      "name_en": "Colucci Secret Skill",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3289,11 +3398,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "コリンスの秘伝技"
     },
     "GA_Nanally_Passive_1": {
       "name_zh": "不止「一腔」的热血",
-      "name_en": "不止「一腔」的热血",
+      "name_en": "More Than Passionate",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3313,11 +3423,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "「満ちる」ことのない熱血"
     },
     "GA_Nanally_Passive_2": {
       "name_zh": "绝对「公正」的决斗",
-      "name_en": "绝对「公正」的决斗",
+      "name_en": "Fair Duel",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3337,11 +3448,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "絶対「公正」な決闘"
     },
     "GA_Nanally_QTE": {
       "name_zh": "天降正义",
-      "name_en": "天降正义",
+      "name_en": "Justice from Above",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3361,7 +3473,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "正義の降臨"
     },
     "GA_Nanally_RemoveSkill": {
       "name_zh": "",
@@ -3370,7 +3483,7 @@
     },
     "GA_Nanally_Skill": {
       "name_zh": "柯林斯·嗷呜术",
-      "name_en": "柯林斯·嗷呜术",
+      "name_en": "Colucci Howling Technique",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3390,11 +3503,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "コリンス・アウー術"
     },
     "GA_Nanally_UltraSkill": {
       "name_zh": "柯林斯·终极术",
-      "name_en": "柯林斯·终极术",
+      "name_en": "Colucci Ultimate Technique",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3414,11 +3528,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "コリンス・アルティメット"
     },
     "GA_Oneiroi_Melee": {
       "name_zh": "分工合作",
-      "name_en": "分工合作",
+      "name_en": "1",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3451,8 +3566,8 @@
           "type": "ADT_DES",
           "title_zh": "普通攻击：起床时间",
           "title_en": "普通攻击：起床时间",
-          "description_zh": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。。攻击命中时积攒「臆想」。",
-          "description_en": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。。攻击命中时积攒「臆想」。",
+          "description_zh": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。攻击命中时积攒「臆想」。",
+          "description_en": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。攻击命中时积攒「臆想」。",
           "short_description_zh": "造成灵属性异能伤害，命中积攒「臆想」。",
           "short_description_en": "造成灵属性异能伤害，命中积攒「臆想」。"
         },
@@ -3474,11 +3589,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "1"
     },
     "GA_Oneiroi_Passive_1": {
       "name_zh": "镜象",
-      "name_en": "镜象",
+      "name_en": "1",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3498,18 +3614,19 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "1"
     },
     "GA_Oneiroi_Passive_2": {
       "name_zh": "交感性神经系统",
-      "name_en": "交感性神经系统",
+      "name_en": "1",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "伊洛伊在提供治疗时，额外提供群体无视防御效果，持续10秒。",
-          "description_en": "伊洛伊在提供治疗时，额外提供群体无视防御效果，持续10秒。",
+          "description_zh": "伊洛伊在提供治疗时，额外提供群体无视防御效果，持续一段时间。",
+          "description_en": "伊洛伊在提供治疗时，额外提供群体无视防御效果，持续一段时间。",
           "short_description_zh": "",
           "short_description_en": ""
         },
@@ -3522,7 +3639,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "1"
     },
     "GA_Oneiroi_Passive_3": {
       "name_zh": "九千五百万年前的分歧",
@@ -3550,7 +3668,7 @@
     },
     "GA_Oneiroi_QTE": {
       "name_zh": "砰！",
-      "name_en": "砰！",
+      "name_en": "1",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3570,20 +3688,21 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "1"
     },
     "GA_Oneiroi_Skill": {
       "name_zh": "未来自我连续性假设",
-      "name_en": "未来自我连续性假设",
+      "name_en": "1",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下斗伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
-          "description_en": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下斗伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
-          "short_description_zh": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战状态下使3名队友进入「退行」状态协助战斗。",
-          "short_description_en": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战状态下使3名队友进入「退行」状态协助战斗。"
+          "description_zh": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下的伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
+          "description_en": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战状态下的伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
+          "short_description_zh": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战状态下使3名队友进入「退行」状态协助战斗。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
+          "short_description_en": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战状态下使3名队友进入「退行」状态协助战斗。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。"
         },
         {
           "type": "ADT_AFFIX",
@@ -3594,20 +3713,21 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "1"
     },
     "GA_Oneiroi_UltraSkill": {
       "name_zh": "三十八亿年的海市蜃楼",
-      "name_en": "三十八亿年的海市蜃楼",
+      "name_en": "1",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "description_en": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "short_description_zh": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "short_description_en": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态，积攒「臆想」。\r\n\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。"
+          "description_zh": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "description_en": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "short_description_zh": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "short_description_en": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。"
         },
         {
           "type": "ADT_AFFIX",
@@ -3618,7 +3738,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "1"
     },
     "GA_Sagiri_Evade": {
       "name_zh": "",
@@ -3627,7 +3748,7 @@
     },
     "GA_Sagiri_Melee": {
       "name_zh": "鬼郎丸头锤",
-      "name_en": "鬼郎丸头锤",
+      "name_en": "Kiroumaru Headbutt",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3674,11 +3795,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "鬼郎丸の頭突き"
     },
     "GA_Sagiri_Passive_1": {
       "name_zh": "可以吃吗？",
-      "name_en": "可以吃吗？",
+      "name_en": "Can I Eat This?",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3698,11 +3820,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "食べていい？"
     },
     "GA_Sagiri_Passive_2": {
       "name_zh": "鬼把戏",
-      "name_en": "鬼把戏",
+      "name_en": "Impish Trick",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3722,11 +3845,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "悪だくみ"
     },
     "GA_Sagiri_QTE": {
       "name_zh": "砸扁你！",
-      "name_en": "砸扁你！",
+      "name_en": "Squash!",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3746,11 +3870,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "潰れちゃえ！"
     },
     "GA_Sagiri_Skill": {
       "name_zh": "一口吞食",
-      "name_en": "一口吞食",
+      "name_en": "Devour Whole",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3779,11 +3904,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "丸吞み"
     },
     "GA_Sagiri_UltraSkill": {
       "name_zh": "千钧隆重的饕餮宴",
-      "name_en": "千钧隆重的饕餮宴",
+      "name_en": "Feast of Gluttony",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -3803,7 +3929,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "暴食の饗宴"
     },
     "GA_Shinku_Melee": {
       "name_zh": "普通攻击：特种格斗术",
@@ -3867,8 +3994,8 @@
           "type": "ADT_DES",
           "title_zh": "<Title>普通攻击：惊骇急袭—轻蔑</>",
           "title_en": "<Title>普通攻击：惊骇急袭—轻蔑</>",
-          "description_zh": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
-          "description_en": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "description_zh": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
+          "description_en": "「普通攻击：惊骇急袭」第3/4/5段中，长按普通攻击触发「普通攻击：惊骇急袭—轻蔑」，将对目标造成<NumGreen>1</>次<Guang>光属性异能伤害</>。命中目标可获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
           "short_description_zh": "普攻第3/4/5段中长按普攻，造成<NumGreen>1</>次<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
           "short_description_en": "普攻第3/4/5段中长按普攻，造成<NumGreen>1</>次<Guang>光属性异能伤害</>。获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。"
         },
@@ -3876,8 +4003,8 @@
           "type": "ADT_DES",
           "title_zh": "极限反击：不容喘息",
           "title_en": "极限反击：不容喘息",
-          "description_zh": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪，并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
-          "description_en": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪，并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
+          "description_zh": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪（对Boss不生效），并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
+          "description_en": "触发极限闪避后使用「普通攻击：惊骇急袭」触发。真红对目标回敬以凌厉的踢击，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除一定倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>状态下释放「承轨反击」或「极限反击」命中可强制击退目标并使其短暂瘫痪（对Boss不生效），并对目标再造成一次相当于<NumGreen>20%</>「即瞬猛袭」的伤害。",
           "short_description_zh": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。",
           "short_description_en": "触发极限闪避后使用普攻触发，造成<NumGreen>1</>次<Guang>光属性异能伤害</>，额外扣除倾陷值并获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>。"
         },
@@ -3951,8 +4078,8 @@
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "<TextHLT>「盈蓄」强化</>：当场上角色获得充能时，后台角色获得等量充能。",
-          "description_en": "<TextHLT>「盈蓄」强化</>：当场上角色获得充能时，后台角色获得等量充能。",
+          "description_zh": "<TextHLT>「盈蓄」强化</>：当场上角色获得终结能量时，后台角色将获得等量充能。真红位于前台且处于盈蓄期间时，每次触发都会造成 400%*攻击力 的范围伤害，并使自身攻击力提升 5%，持续 30 秒，最多叠加 10 层。此效果有1秒冷却。",
+          "description_en": "<TextHLT>「盈蓄」强化</>：当场上角色获得终结能量时，后台角色将获得等量充能。真红位于前台且处于盈蓄期间时，每次触发都会造成 400%*攻击力 的范围伤害，并使自身攻击力提升 5%，持续 30 秒，最多叠加 10 层。此效果有1秒冷却。",
           "short_description_zh": "",
           "short_description_en": ""
         },
@@ -3999,8 +4126,8 @@
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
-          "description_zh": "当真红在场上且进入战斗状态下超过5秒未主动发动攻击时进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，每秒叠加层数。状态期间，真红每次成功发动极限闪避额外获得<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>层数上限为<NumGreen>8</>，切换角色移除状态和层数。\r\n真红主动发动攻击时解除<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>，额外伤害提升<NumGreen>100%</>。",
-          "description_en": "当真红在场上且进入战斗状态下超过5秒未主动发动攻击时进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，每秒叠加层数。状态期间，真红每次成功发动极限闪避额外获得<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>层数上限为<NumGreen>8</>，切换角色移除状态和层数。\r\n真红主动发动攻击时解除<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「威慑凝视」</>，额外伤害提升<NumGreen>100%</>。",
+          "description_zh": "当真红在场上超过2秒未主动发动攻击时进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>状态，每秒叠加层数。状态期间，真红每次成功发动极限闪避额外获得<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>层数上限为<NumGreen>8</>，切换角色移除状态和层数。\r\n真红主动发动攻击命中时解除<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>，额外伤害增加<NumGreen>100%</>，伴随获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>、<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>及环合值。",
+          "description_en": "当真红在场上超过2秒未主动发动攻击时进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>状态，每秒叠加层数。状态期间，真红每次成功发动极限闪避额外获得<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>层数上限为<NumGreen>8</>，切换角色移除状态和层数。\r\n真红主动发动攻击命中时解除<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>状态，进行「即瞬猛袭」，在原本的攻击之外附带额外伤害。每有一层<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuWatch\">「威慑凝视」</>，额外伤害增加<NumGreen>100%</>，伴随获得<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>、<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>及环合值。",
           "short_description_zh": "",
           "short_description_en": ""
         },
@@ -4056,10 +4183,10 @@
           "type": "ADT_DES",
           "title_zh": "<Title>变轨技能：天降赤锋</>",
           "title_en": "<Title>变轨技能：天降赤锋</>",
-          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。"
+          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "short_description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4089,10 +4216,10 @@
           "type": "ADT_DES",
           "title_zh": "<Title>变轨技能：天降赤锋</>",
           "title_en": "<Title>变轨技能：天降赤锋</>",
-          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。",
-          "short_description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。"
+          "description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃向目标上方的视野盲区，向下释放威力强大的爪击，对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "short_description_zh": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。",
+          "short_description_en": "消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRageEEnergy\">「清醒边缘」</>，真红跃释放爪击对目标造成高额<Guang>光属性异能伤害</>。每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>5</>次。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4113,19 +4240,19 @@
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：沸血赤红</>",
           "title_en": "<Title>极轨终结：沸血赤红</>",
-          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。"
+          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：赤红的处决</>",
           "title_en": "<Title>极轨终结：赤红的处决</>",
-          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。"
         },
         {
           "type": "ADT_DES",
@@ -4155,19 +4282,19 @@
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：沸血赤红</>",
           "title_en": "<Title>极轨终结：沸血赤红</>",
-          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。"
+          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：赤红的处决</>",
           "title_en": "<Title>极轨终结：赤红的处决</>",
-          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4188,19 +4315,19 @@
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：沸血赤红</>",
           "title_en": "<Title>极轨终结：沸血赤红</>",
-          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。",
-          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。"
+          "description_zh": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "description_en": "别以为做了这种事之后还能全身而退……真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态，随后发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力大幅提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "short_description_zh": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。",
+          "short_description_en": "真红消耗所有<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuQEnergy\">「桀骜斗志」</>进入<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>状态并发起多段攻击，对目标造成高额<Guang>光属性异能伤害</>。\r\n「升腾之赤」：「普通攻击：特种格斗术」替换为「普通攻击：惊骇急袭」，「变轨技能：高速突破」替换为「变轨技能：天降赤锋」，造成的伤害和抗打断能力提升，移动能力提升，持续<NumGreen>13</>秒，切换角色后退出<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>。\r\n真红在移动中长按闪避可部分解放异能，大幅提高移动能力。"
         },
         {
           "type": "ADT_DES",
           "title_zh": "<Title>极轨终结：赤红的处决</>",
           "title_en": "<Title>极轨终结：赤红的处决</>",
-          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。",
-          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」。"
+          "description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时，真红可释放「极轨终结：赤红的处决」，连续点按「极轨终结」以在目标之间高速位移穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，真红每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "short_description_zh": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。",
+          "short_description_en": "<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>即将结束时可释放「极轨终结：赤红的处决」，连续点按「极轨终结」高速穿梭，造成高额<Guang>光属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间，每释放过<NumGreen>1</>次「变轨技能：天降赤锋」，即可额外释放<NumGreen>1</>段「极轨终结：赤红的处决」，每次<hot textstyle=\"TextEXPL\" param=\"nouns&ShinkuRage\">「升腾之赤」</>持续期间最多释放<NumGreen>3</>次。"
         },
         {
           "type": "ADT_AFFIX",
@@ -4220,7 +4347,7 @@
     },
     "GA_Skia_Melee": {
       "name_zh": "拘管格斗术",
-      "name_en": "拘管格斗术",
+      "name_en": "Arresting Art",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4267,11 +4394,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "拘束格闘術"
     },
     "GA_Skia_Passive_1": {
       "name_zh": "现场控制",
-      "name_en": "现场控制",
+      "name_en": "Suppression",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4291,11 +4419,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "現場制御"
     },
     "GA_Skia_Passive_2": {
       "name_zh": "捉拿归案",
-      "name_en": "捉拿归案",
+      "name_en": "Apprehension",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4315,11 +4444,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "捕獲落着"
     },
     "GA_Skia_Passive_3": {
       "name_zh": "潜影",
-      "name_en": "潜影",
+      "name_en": "Shadow Hound",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4339,11 +4469,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "潜影"
     },
     "GA_Skia_QTE": {
       "name_zh": "缉令",
-      "name_en": "缉令",
+      "name_en": "Arrest Warrant",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4354,11 +4485,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "逮捕令"
     },
     "GA_Skia_Skill": {
       "name_zh": "潜影追击",
-      "name_en": "潜影追击",
+      "name_en": "Shadow Hound Chase",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4378,11 +4510,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "潜影追撃"
     },
     "GA_Skia_UltraSkill": {
       "name_zh": "群犬吠形",
-      "name_en": "群犬吠形",
+      "name_en": "The Pack",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4402,11 +4535,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "犬群の遠吠え"
     },
     "GA_Zankou_InvisibleSkill": {
       "name_zh": "柯林斯·嗷呜术",
-      "name_en": "柯林斯·嗷呜术",
+      "name_en": "Colucci Howling Technique",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4426,11 +4560,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "コリンス・アウー術"
     },
     "GA_Zankou_Melee": {
       "name_zh": "清唱",
-      "name_en": "清唱",
+      "name_en": "Cappella",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4477,7 +4612,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "アカペラ"
     },
     "GA_Zankou_MeleeMagic": {
       "name_zh": "",
@@ -4486,7 +4622,7 @@
     },
     "GA_Zankou_Passive1": {
       "name_zh": "泛音",
-      "name_en": "泛音",
+      "name_en": "Harmonics",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4506,11 +4642,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ハーモニクス"
     },
     "GA_Zankou_Passive2": {
       "name_zh": "泛音",
-      "name_en": "泛音",
+      "name_en": "Harmonics",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4530,11 +4667,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "ハーモニクス"
     },
     "GA_Zankou_QTE": {
       "name_zh": "不协和音",
-      "name_en": "不协和音",
+      "name_en": "Dissonance",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4545,7 +4683,8 @@
           "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
           "short_description_en": "造成<Hun>魂属性异能伤害</>。"
         }
-      ]
+      ],
+      "name_ja": "不協和音"
     },
     "GA_Zankou_RemoveGSkill": {
       "name_zh": "",
@@ -4554,7 +4693,7 @@
     },
     "GA_Zankou_Skill": {
       "name_zh": "华彩唱段",
-      "name_en": "华彩唱段",
+      "name_en": "Cadenza Aria",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4574,11 +4713,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "華麗なるカデンツァ"
     },
     "GA_Zankou_UltraSkill": {
       "name_zh": "众声轮唱",
-      "name_en": "众声轮唱",
+      "name_en": "Canon Chorus",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4598,11 +4738,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "カノン"
     },
     "GA_Zankou_UltraSkillForce": {
       "name_zh": "众声轮唱",
-      "name_en": "众声轮唱",
+      "name_en": "Canon Chorus",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4622,11 +4763,12 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "カノン"
     },
     "GA_Zankou_UltraSkillMagic": {
       "name_zh": "众声轮唱",
-      "name_en": "众声轮唱",
+      "name_en": "Canon Chorus",
       "descriptions": [
         {
           "type": "ADT_DES",
@@ -4646,7 +4788,8 @@
           "short_description_zh": "",
           "short_description_en": ""
         }
-      ]
+      ],
+      "name_ja": "カノン"
     }
   }
 }
