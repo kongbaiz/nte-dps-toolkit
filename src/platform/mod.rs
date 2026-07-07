@@ -4,5 +4,6 @@
 
 pub mod file_drop;
 pub mod hotkey;
+pub mod locale;
 pub mod network;
 pub mod window_attributes;
