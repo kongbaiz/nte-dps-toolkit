@@ -1949,24 +1949,77 @@ fn apply_damage_correction_to_hits(
     true
 }
 
+/// Identifies the `Hit` a follow-up or damage correction was derived from.
+///
+/// `gameplay_effect_index` is a network-assigned identifier for a specific
+/// ability application, so when both sides have one it's a reliable identity
+/// check on its own. Falling back to requiring every damage/HP field to still
+/// match verbatim would break as soon as *any* prior correction or follow-up
+/// mutated the hit — exactly the case where a second, independent mechanism
+/// (e.g. server-damage-calibration alongside a reaction follow-up) needs to
+/// still find its hit.
+struct HitSourceIdentity {
+    char_id: u32,
+    timestamp: f64,
+    gameplay_effect_index: Option<u32>,
+    damage: f64,
+    target_hp_before: f64,
+    target_hp_after: f64,
+    target_max_hp: f64,
+}
+
+impl HitSourceIdentity {
+    fn matches(&self, hit: &Hit) -> bool {
+        if hit.char_id != self.char_id || (hit.timestamp - self.timestamp).abs() > 0.001 {
+            return false;
+        }
+        if let (Some(hit_index), Some(source_index)) =
+            (hit.gameplay_effect_index, self.gameplay_effect_index)
+        {
+            return hit_index == source_index;
+        }
+        hit.gameplay_effect_index == self.gameplay_effect_index
+            && (hit.damage - self.damage).abs() <= 0.5
+            && (hit.target_hp_before - self.target_hp_before).abs() <= 0.5
+            && (hit.target_hp_after - self.target_hp_after).abs() <= 0.5
+            && (hit.target_max_hp - self.target_max_hp).abs() <= 0.5
+    }
+}
+
+impl From<&HitFollowUp> for HitSourceIdentity {
+    fn from(follow_up: &HitFollowUp) -> Self {
+        Self {
+            char_id: follow_up.source_char_id,
+            timestamp: follow_up.source_timestamp,
+            gameplay_effect_index: follow_up.source_gameplay_effect_index,
+            damage: follow_up.source_damage,
+            target_hp_before: follow_up.source_target_hp_before,
+            target_hp_after: follow_up.source_target_hp_after,
+            target_max_hp: follow_up.source_target_max_hp,
+        }
+    }
+}
+
+impl From<&HitDamageCorrection> for HitSourceIdentity {
+    fn from(correction: &HitDamageCorrection) -> Self {
+        Self {
+            char_id: correction.source_char_id,
+            timestamp: correction.source_timestamp,
+            gameplay_effect_index: correction.source_gameplay_effect_index,
+            damage: correction.source_damage,
+            target_hp_before: correction.source_target_hp_before,
+            target_hp_after: correction.source_target_hp_after,
+            target_max_hp: correction.source_target_max_hp,
+        }
+    }
+}
+
 fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
-    hit.char_id == follow_up.source_char_id
-        && (hit.timestamp - follow_up.source_timestamp).abs() <= 0.001
-        && (hit.damage - follow_up.source_damage).abs() <= 0.5
-        && (hit.target_hp_before - follow_up.source_target_hp_before).abs() <= 0.5
-        && (hit.target_hp_after - follow_up.source_target_hp_after).abs() <= 0.5
-        && (hit.target_max_hp - follow_up.source_target_max_hp).abs() <= 0.5
-        && hit.gameplay_effect_index == follow_up.source_gameplay_effect_index
+    HitSourceIdentity::from(follow_up).matches(hit)
 }
 
 fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrection) -> bool {
-    hit.char_id == correction.source_char_id
-        && (hit.timestamp - correction.source_timestamp).abs() <= 0.001
-        && (hit.damage - correction.source_damage).abs() <= 0.5
-        && (hit.target_hp_before - correction.source_target_hp_before).abs() <= 0.5
-        && (hit.target_hp_after - correction.source_target_hp_after).abs() <= 0.5
-        && (hit.target_max_hp - correction.source_target_max_hp).abs() <= 0.5
-        && hit.gameplay_effect_index == correction.source_gameplay_effect_index
+    HitSourceIdentity::from(correction).matches(hit)
 }
 
 #[cfg(test)]
@@ -2501,6 +2554,57 @@ mod tests {
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.damage, 1_250.0);
         assert_eq!(state.damage_correction_count, 1);
+    }
+
+    #[test]
+    fn follow_up_still_matches_hit_after_a_prior_damage_correction_changed_its_damage() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
+        hit.target_hp_before = 10_000.0;
+        hit.target_hp_after = 9_000.0;
+        hit.target_max_hp = 10_000.0;
+        hit.gameplay_effect_index = Some(42);
+        state.push_hit(hit);
+
+        // A prior correction already replaced this hit's damage with 1_250.0.
+        state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 1_250.0,
+            target_hp_before: 10_250.0,
+            target_hp_after: 9_000.0,
+            target_hp_percent: 90.0,
+        });
+        assert_eq!(state.hits.front().unwrap().damage, 1_250.0);
+
+        // A follow-up keyed off the ORIGINAL (pre-correction) source values must
+        // still find this hit via its gameplay_effect_index, even though
+        // hit.damage no longer equals source_damage.
+        state.apply_follow_up(HitFollowUp {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            timestamp: 1.2,
+            damage: 250.0,
+            target_hp_after: 8_750.0,
+            target_hp_percent: 87.5,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
+            damage_attribute: Some("灵".to_owned()),
+        });
+
+        let merged = state.hits.front().unwrap();
+        assert_eq!(merged.damage, 1_250.0);
+        assert_eq!(merged.follow_up_damage, 250.0);
     }
 
     #[test]
