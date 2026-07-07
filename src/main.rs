@@ -19,6 +19,7 @@ fn main() -> Result<()> {
     let (ui_config, config_warning) = storage::config::load();
     // Load the active locale before the first frame so the UI never flashes English keys.
     storage::i18n::set_language(ui_config.language);
+    storage::ability_names::init(ui_config.language);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("NTE DPS TOOL")

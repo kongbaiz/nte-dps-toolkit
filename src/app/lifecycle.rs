@@ -986,12 +986,15 @@ impl DpsApp {
         }
     }
 
-    /// Switch the live UI language, reload its locale map, and refresh localized
-    /// reaction glyph textures. `current_ui_config` includes the language so the
-    /// debounced save persists the choice to the config file.
+    /// Switch the live UI language, reload its locale map, refresh localized
+    /// reaction glyph textures, and reload the localized ability/skill name
+    /// table so already-captured hits display the new language too (see
+    /// [`crate::storage::ability_names`]). `current_ui_config` includes the
+    /// language so the debounced save persists the choice to the config file.
     pub(crate) fn set_language(&mut self, ctx: &egui::Context, language: Language) {
         self.language = language;
         i18n::set_language(language);
+        crate::storage::ability_names::reload(language);
         self.reaction_textures = load_reaction_text_textures(ctx, &data_root());
         ctx.request_repaint();
     }
