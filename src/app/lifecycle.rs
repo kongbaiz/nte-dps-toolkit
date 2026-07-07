@@ -806,7 +806,18 @@ impl DpsApp {
             return;
         };
         let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
-        let capture_filter = self.filter.clone();
+        // The base filter (`self.filter`, "udp") keeps all UDP, which covers the game-world
+        // server that carries combat/GAS replication and equipment (e.g. :30196). The game's
+        // account / life-sim service talks TCP :30031 to a *different* server IP, so a UDP-only
+        // BPF drops it before it can even reach the raw pcapng. Widen the filter to also keep
+        // everything to/from that detected host. The live parser only decodes UDP
+        // (`parse_udp_ipv4` rejects non-UDP), so the extra TCP frames are retained for offline
+        // analysis without affecting live parsing. Falls back to UDP-only if the game endpoint
+        // was not detected.
+        let capture_filter = match self.game_network.as_ref() {
+            Some(network) => format!("{} or host {}", self.filter, network.remote_ip),
+            None => self.filter.clone(),
+        };
         self.reset_combat_session();
         self.capture_quality_source = CaptureQualitySource::Live;
         let capture = start_capture(
