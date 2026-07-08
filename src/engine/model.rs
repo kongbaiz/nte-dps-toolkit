@@ -1951,13 +1951,15 @@ fn apply_damage_correction_to_hits(
 
 /// Identifies the `Hit` a follow-up or damage correction was derived from.
 ///
-/// `gameplay_effect_index` is a network-assigned identifier for a specific
-/// ability application, so when both sides have one it's a reliable identity
-/// check on its own. Falling back to requiring every damage/HP field to still
-/// match verbatim would break as soon as *any* prior correction or follow-up
-/// mutated the hit — exactly the case where a second, independent mechanism
-/// (e.g. server-damage-calibration alongside a reaction follow-up) needs to
-/// still find its hit.
+/// Requires every field to still match, including `gameplay_effect_index`
+/// when both sides have one: that index is a per-application identifier, not
+/// a per-hit one, so an AoE or multi-tick effect can hand out the same index
+/// to several hits with different targets/HP in the same packet. Matching on
+/// the index alone (without the HP/damage identity) risked picking whichever
+/// same-index hit happened to be found first instead of the right one — the
+/// damage/HP reconciliation mechanisms are now mutually exclusive per boss-HP
+/// update (see `PacketDecoder::reconcile_boss_hp_updates`) specifically so a
+/// hit's fields never get mutated out from under a still-pending match.
 struct HitSourceIdentity {
     char_id: u32,
     timestamp: f64,
@@ -1970,15 +1972,9 @@ struct HitSourceIdentity {
 
 impl HitSourceIdentity {
     fn matches(&self, hit: &Hit) -> bool {
-        if hit.char_id != self.char_id || (hit.timestamp - self.timestamp).abs() > 0.001 {
-            return false;
-        }
-        if let (Some(hit_index), Some(source_index)) =
-            (hit.gameplay_effect_index, self.gameplay_effect_index)
-        {
-            return hit_index == source_index;
-        }
-        hit.gameplay_effect_index == self.gameplay_effect_index
+        hit.char_id == self.char_id
+            && (hit.timestamp - self.timestamp).abs() <= 0.001
+            && hit.gameplay_effect_index == self.gameplay_effect_index
             && (hit.damage - self.damage).abs() <= 0.5
             && (hit.target_hp_before - self.target_hp_before).abs() <= 0.5
             && (hit.target_hp_after - self.target_hp_after).abs() <= 0.5
@@ -2557,16 +2553,28 @@ mod tests {
     }
 
     #[test]
-    fn follow_up_still_matches_hit_after_a_prior_damage_correction_changed_its_damage() {
+    fn damage_correction_requires_hp_identity_even_when_gameplay_effect_index_matches() {
+        // Two hits from the same AoE application (identical char_id, timestamp,
+        // and gameplay_effect_index — that index identifies the ability
+        // application, not a single target) landing on two different targets.
         let mut state = CombatState::default();
-        let mut hit = test_hit(1.0, 7, "outgoing", 1_000.0);
-        hit.target_hp_before = 10_000.0;
-        hit.target_hp_after = 9_000.0;
-        hit.target_max_hp = 10_000.0;
-        hit.gameplay_effect_index = Some(42);
-        state.push_hit(hit);
+        let mut first = test_hit(1.0, 7, "outgoing", 1_000.0);
+        first.target_hp_before = 10_000.0;
+        first.target_hp_after = 9_000.0;
+        first.target_max_hp = 10_000.0;
+        first.gameplay_effect_index = Some(42);
+        state.push_hit(first);
 
-        // A prior correction already replaced this hit's damage with 1_250.0.
+        let mut second = test_hit(1.0, 7, "outgoing", 2_000.0);
+        second.target_hp_before = 50_000.0;
+        second.target_hp_after = 48_000.0;
+        second.target_max_hp = 50_000.0;
+        second.gameplay_effect_index = Some(42);
+        state.push_hit(second);
+
+        // A correction keyed off the FIRST hit's own HP fields must land on
+        // that hit specifically, not on the second (more recently pushed, so
+        // checked first by the reverse search) one sharing the same index.
         state.apply_damage_correction(HitDamageCorrection {
             source_timestamp: 1.0,
             source_char_id: 7,
@@ -2576,35 +2584,26 @@ mod tests {
             source_target_max_hp: 10_000.0,
             source_gameplay_effect_index: Some(42),
             damage: 1_250.0,
-            target_hp_before: 10_250.0,
-            target_hp_after: 9_000.0,
-            target_hp_percent: 90.0,
-        });
-        assert_eq!(state.hits.front().unwrap().damage, 1_250.0);
-
-        // A follow-up keyed off the ORIGINAL (pre-correction) source values must
-        // still find this hit via its gameplay_effect_index, even though
-        // hit.damage no longer equals source_damage.
-        state.apply_follow_up(HitFollowUp {
-            source_timestamp: 1.0,
-            source_char_id: 7,
-            source_damage: 1_000.0,
-            source_target_hp_before: 10_000.0,
-            source_target_hp_after: 9_000.0,
-            source_target_max_hp: 10_000.0,
-            source_gameplay_effect_index: Some(42),
-            timestamp: 1.2,
-            damage: 250.0,
+            target_hp_before: 10_000.0,
             target_hp_after: 8_750.0,
             target_hp_percent: 87.5,
-            damage_name: Some("覆纹追加攻击".to_owned()),
-            attack_type: Some("覆纹".to_owned()),
-            damage_attribute: Some("灵".to_owned()),
         });
 
-        let merged = state.hits.front().unwrap();
-        assert_eq!(merged.damage, 1_250.0);
-        assert_eq!(merged.follow_up_damage, 250.0);
+        let first_stored = state
+            .hits
+            .iter()
+            .find(|hit| hit.target_max_hp == 10_000.0)
+            .unwrap();
+        let second_stored = state
+            .hits
+            .iter()
+            .find(|hit| hit.target_max_hp == 50_000.0)
+            .unwrap();
+        assert_eq!(first_stored.damage, 1_250.0, "targeted hit gets corrected");
+        assert_eq!(
+            second_stored.damage, 2_000.0,
+            "untouched hit must not change"
+        );
     }
 
     #[test]

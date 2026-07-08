@@ -1715,9 +1715,13 @@ impl PacketDecoder {
     /// server-damage-calibration pass as well would make them treat the whole
     /// delta as an undiscovered correction to the base hit, silently
     /// overwriting a damage value that was already correct and erasing the
-    /// follow-up attribution in the process. So each update is claimed by at
+    /// follow-up attribution in the process. So each update is *claimed* by at
     /// most one of these mechanisms, with the reaction follow-up given first
-    /// refusal.
+    /// refusal — but the calibration tracker still gets to *observe* every
+    /// update regardless, since it keeps its own HP snapshot/pending-hit state
+    /// (`ServerDamageCalibrationTracker::hp_by_handle`); skipping the call
+    /// entirely on a claimed update would leave that state stale and make its
+    /// *next* correction compare against the wrong baseline.
     fn reconcile_boss_hp_updates(
         &mut self,
         timestamp: f64,
@@ -1728,26 +1732,30 @@ impl PacketDecoder {
         let mut hp_sync_follow_ups = Vec::new();
         let mut server_damage_corrections = Vec::new();
         for update in boss_hp_updates {
-            if let Some(follow_up) = self
+            let follow_up = self
                 .follow_up_damage
-                .observe_server_hp(timestamp, update.current_hp as f64)
-            {
-                inferred_follow_ups.push(follow_up);
-                continue;
-            }
+                .observe_server_hp(timestamp, update.current_hp as f64);
+            let claimed = follow_up.is_some();
+            inferred_follow_ups.extend(follow_up);
             if self.use_server_damage_calibration {
-                if let Some(correction) =
-                    self.server_damage_calibration.observe_boss_hp(timestamp, update)
-                {
-                    server_damage_corrections.push(correction);
+                let correction = self
+                    .server_damage_calibration
+                    .observe_boss_hp(timestamp, update);
+                if !claimed {
+                    server_damage_corrections.extend(correction);
                 }
-            } else if let Some(follow_up) =
-                self.infer_boss_hp_sync_damage(timestamp, update.current_hp as f64, characters)
+            } else if !claimed
+                && let Some(follow_up) =
+                    self.infer_boss_hp_sync_damage(timestamp, update.current_hp as f64, characters)
             {
                 hp_sync_follow_ups.push(follow_up);
             }
         }
-        (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections)
+        (
+            inferred_follow_ups,
+            hp_sync_follow_ups,
+            server_damage_corrections,
+        )
     }
 
     fn suppress_matching_ambiguous_hits(&mut self, confirmed_hit: &Hit) -> usize {
@@ -4564,7 +4572,9 @@ mod tests {
         hit.target_hp_before = 1_000_000.0;
         hit.damage = 1_000.0;
         hit.attack_type = Some("普攻".to_owned());
-        decoder.follow_up_damage.observe_hit(&hit, None, &characters);
+        decoder
+            .follow_up_damage
+            .observe_hit(&hit, None, &characters);
         decoder.server_damage_calibration.observe_hit(&hit);
 
         let update = boss_hp_update(998_750.0);
@@ -4581,6 +4591,67 @@ mod tests {
     }
 
     #[test]
+    fn reconcile_boss_hp_updates_keeps_calibration_baseline_fresh_after_a_claimed_update() {
+        let characters = follow_up_test_characters();
+        let mut decoder = PacketDecoder::with_server_damage_calibration(true);
+        decoder
+            .follow_up_damage
+            .observe_fuwen_start_candidate(0.0, 1, 2, &characters);
+        observe_visible_fuwen_trigger(&mut decoder.follow_up_damage, 1, 0.0);
+
+        let warm_up = boss_hp_update(1_000_000.0);
+        let _ = decoder.reconcile_boss_hp_updates(0.0, std::slice::from_ref(&warm_up), &characters);
+
+        // This hit is claimed by the reaction follow-up below.
+        let mut hit = targetless_hit();
+        hit.char_id = 1;
+        hit.timestamp = 0.1;
+        hit.target_max_hp = 1_000_000.0;
+        hit.target_hp_before = 1_000_000.0;
+        hit.damage = 1_000.0;
+        hit.attack_type = Some("普攻".to_owned());
+        decoder
+            .follow_up_damage
+            .observe_hit(&hit, None, &characters);
+        decoder.server_damage_calibration.observe_hit(&hit);
+
+        let claimed_update = boss_hp_update(998_750.0);
+        let (inferred_follow_ups, _, server_damage_corrections) = decoder
+            .reconcile_boss_hp_updates(0.2, std::slice::from_ref(&claimed_update), &characters);
+        assert_eq!(inferred_follow_ups.len(), 1);
+        assert!(server_damage_corrections.is_empty());
+
+        // A later, fuwen-ineligible hit (its own attack_type is itself an
+        // excluded reaction label) that calibration alone should evaluate.
+        let mut second_hit = targetless_hit();
+        second_hit.char_id = 2;
+        second_hit.timestamp = 0.3;
+        second_hit.target_max_hp = 1_000_000.0;
+        second_hit.target_hp_before = 998_750.0;
+        second_hit.damage = 700.0;
+        second_hit.attack_type = Some("创生花".to_owned());
+        decoder
+            .follow_up_damage
+            .observe_hit(&second_hit, None, &characters);
+        decoder.server_damage_calibration.observe_hit(&second_hit);
+
+        let next_update = boss_hp_update(998_000.0);
+        let (_, _, server_damage_corrections) =
+            decoder.reconcile_boss_hp_updates(0.4, std::slice::from_ref(&next_update), &characters);
+
+        // If the claimed update above hadn't also advanced calibration's own
+        // HP snapshot and pending queue, this would compare against the stale
+        // pre-claim baseline (1,000,000) with the first hit still queued
+        // alongside this one, so `candidates.len() != 1` and no correction
+        // would come out at all.
+        let correction = server_damage_corrections
+            .first()
+            .expect("calibration's baseline must have advanced past the claimed update");
+        assert_eq!(correction.damage, 750.0);
+        assert_eq!(correction.source_damage, 700.0);
+    }
+
+    #[test]
     fn reconcile_boss_hp_updates_still_calibrates_when_no_follow_up_applies() {
         let characters = duplicate_test_characters();
         let mut decoder = PacketDecoder::with_server_damage_calibration(true);
@@ -4593,7 +4664,9 @@ mod tests {
         hit.target_hp_before = 10_000.0;
         hit.target_hp_after = 9_000.0;
         hit.target_max_hp = 10_000.0;
-        decoder.follow_up_damage.observe_hit(&hit, None, &characters);
+        decoder
+            .follow_up_damage
+            .observe_hit(&hit, None, &characters);
         decoder.server_damage_calibration.observe_hit(&hit);
 
         let update = boss_hp_update(8_750.0);
