@@ -1191,10 +1191,10 @@ mod tests {
         damage_number_digits_text, fill_missing_character_colors_from_avatars,
         follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
         hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
-        qte_type_filter_label, reaction_text_key_for_hit, translate_reaction_label,
+        qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
-        summarize_qte_type_filters,
+        summarize_qte_type_filters, translate_reaction_label,
     };
     use crate::engine::model::{
         CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
@@ -1360,10 +1360,7 @@ mod tests {
         hit.damage_name = Some("Feast of Gluttony".to_owned());
         hit.gameplay_effect_name = Some("GE_Player_Sagiri_UltraSkill1_Damage".to_owned());
 
-        assert_eq!(
-            hit_type_display_text(&hit),
-            "Ultimate·現在の言語での技名"
-        );
+        assert_eq!(hit_type_display_text(&hit), "Ultimate·現在の言語での技名");
     }
 
     #[test]
@@ -1395,7 +1392,10 @@ mod tests {
     fn translate_reaction_label_covers_conditions_and_qte_prefix() {
         assert_eq!(translate_reaction_label("创生花"), "Blossom Damage");
         assert_eq!(translate_reaction_label("覆纹"), "Hexed");
-        assert_eq!(translate_reaction_label("环合·创生"), "Esper Cycle · Blossom");
+        assert_eq!(
+            translate_reaction_label("环合·创生"),
+            "Esper Cycle · Blossom"
+        );
         assert_eq!(translate_reaction_label("环合·黯星"), "Esper Cycle · Nova");
         assert_eq!(translate_reaction_label("普攻"), "Basic Attack");
         assert_eq!(translate_reaction_label("Q技能"), "Ultimate");
