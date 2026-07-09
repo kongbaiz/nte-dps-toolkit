@@ -1949,24 +1949,73 @@ fn apply_damage_correction_to_hits(
     true
 }
 
+/// Identifies the `Hit` a follow-up or damage correction was derived from.
+///
+/// Requires every field to still match, including `gameplay_effect_index`
+/// when both sides have one: that index is a per-application identifier, not
+/// a per-hit one, so an AoE or multi-tick effect can hand out the same index
+/// to several hits with different targets/HP in the same packet. Matching on
+/// the index alone (without the HP/damage identity) risked picking whichever
+/// same-index hit happened to be found first instead of the right one — the
+/// damage/HP reconciliation mechanisms are now mutually exclusive per boss-HP
+/// update (see `PacketDecoder::reconcile_boss_hp_updates`) specifically so a
+/// hit's fields never get mutated out from under a still-pending match.
+struct HitSourceIdentity {
+    char_id: u32,
+    timestamp: f64,
+    gameplay_effect_index: Option<u32>,
+    damage: f64,
+    target_hp_before: f64,
+    target_hp_after: f64,
+    target_max_hp: f64,
+}
+
+impl HitSourceIdentity {
+    fn matches(&self, hit: &Hit) -> bool {
+        hit.char_id == self.char_id
+            && (hit.timestamp - self.timestamp).abs() <= 0.001
+            && hit.gameplay_effect_index == self.gameplay_effect_index
+            && (hit.damage - self.damage).abs() <= 0.5
+            && (hit.target_hp_before - self.target_hp_before).abs() <= 0.5
+            && (hit.target_hp_after - self.target_hp_after).abs() <= 0.5
+            && (hit.target_max_hp - self.target_max_hp).abs() <= 0.5
+    }
+}
+
+impl From<&HitFollowUp> for HitSourceIdentity {
+    fn from(follow_up: &HitFollowUp) -> Self {
+        Self {
+            char_id: follow_up.source_char_id,
+            timestamp: follow_up.source_timestamp,
+            gameplay_effect_index: follow_up.source_gameplay_effect_index,
+            damage: follow_up.source_damage,
+            target_hp_before: follow_up.source_target_hp_before,
+            target_hp_after: follow_up.source_target_hp_after,
+            target_max_hp: follow_up.source_target_max_hp,
+        }
+    }
+}
+
+impl From<&HitDamageCorrection> for HitSourceIdentity {
+    fn from(correction: &HitDamageCorrection) -> Self {
+        Self {
+            char_id: correction.source_char_id,
+            timestamp: correction.source_timestamp,
+            gameplay_effect_index: correction.source_gameplay_effect_index,
+            damage: correction.source_damage,
+            target_hp_before: correction.source_target_hp_before,
+            target_hp_after: correction.source_target_hp_after,
+            target_max_hp: correction.source_target_max_hp,
+        }
+    }
+}
+
 fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
-    hit.char_id == follow_up.source_char_id
-        && (hit.timestamp - follow_up.source_timestamp).abs() <= 0.001
-        && (hit.damage - follow_up.source_damage).abs() <= 0.5
-        && (hit.target_hp_before - follow_up.source_target_hp_before).abs() <= 0.5
-        && (hit.target_hp_after - follow_up.source_target_hp_after).abs() <= 0.5
-        && (hit.target_max_hp - follow_up.source_target_max_hp).abs() <= 0.5
-        && hit.gameplay_effect_index == follow_up.source_gameplay_effect_index
+    HitSourceIdentity::from(follow_up).matches(hit)
 }
 
 fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrection) -> bool {
-    hit.char_id == correction.source_char_id
-        && (hit.timestamp - correction.source_timestamp).abs() <= 0.001
-        && (hit.damage - correction.source_damage).abs() <= 0.5
-        && (hit.target_hp_before - correction.source_target_hp_before).abs() <= 0.5
-        && (hit.target_hp_after - correction.source_target_hp_after).abs() <= 0.5
-        && (hit.target_max_hp - correction.source_target_max_hp).abs() <= 0.5
-        && hit.gameplay_effect_index == correction.source_gameplay_effect_index
+    HitSourceIdentity::from(correction).matches(hit)
 }
 
 #[cfg(test)]
@@ -2501,6 +2550,60 @@ mod tests {
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.damage, 1_250.0);
         assert_eq!(state.damage_correction_count, 1);
+    }
+
+    #[test]
+    fn damage_correction_requires_hp_identity_even_when_gameplay_effect_index_matches() {
+        // Two hits from the same AoE application (identical char_id, timestamp,
+        // and gameplay_effect_index — that index identifies the ability
+        // application, not a single target) landing on two different targets.
+        let mut state = CombatState::default();
+        let mut first = test_hit(1.0, 7, "outgoing", 1_000.0);
+        first.target_hp_before = 10_000.0;
+        first.target_hp_after = 9_000.0;
+        first.target_max_hp = 10_000.0;
+        first.gameplay_effect_index = Some(42);
+        state.push_hit(first);
+
+        let mut second = test_hit(1.0, 7, "outgoing", 2_000.0);
+        second.target_hp_before = 50_000.0;
+        second.target_hp_after = 48_000.0;
+        second.target_max_hp = 50_000.0;
+        second.gameplay_effect_index = Some(42);
+        state.push_hit(second);
+
+        // A correction keyed off the FIRST hit's own HP fields must land on
+        // that hit specifically, not on the second (more recently pushed, so
+        // checked first by the reverse search) one sharing the same index.
+        state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 1.0,
+            source_char_id: 7,
+            source_damage: 1_000.0,
+            source_target_hp_before: 10_000.0,
+            source_target_hp_after: 9_000.0,
+            source_target_max_hp: 10_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 1_250.0,
+            target_hp_before: 10_000.0,
+            target_hp_after: 8_750.0,
+            target_hp_percent: 87.5,
+        });
+
+        let first_stored = state
+            .hits
+            .iter()
+            .find(|hit| hit.target_max_hp == 10_000.0)
+            .unwrap();
+        let second_stored = state
+            .hits
+            .iter()
+            .find(|hit| hit.target_max_hp == 50_000.0)
+            .unwrap();
+        assert_eq!(first_stored.damage, 1_250.0, "targeted hit gets corrected");
+        assert_eq!(
+            second_stored.damage, 2_000.0,
+            "untouched hit must not change"
+        );
     }
 
     #[test]

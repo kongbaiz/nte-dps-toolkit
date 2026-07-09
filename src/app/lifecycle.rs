@@ -806,7 +806,18 @@ impl DpsApp {
             return;
         };
         let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
-        let capture_filter = self.filter.clone();
+        // The base filter (`self.filter`, "udp") keeps all UDP, which covers the game-world
+        // server that carries combat/GAS replication and equipment (e.g. :30196). The game's
+        // account / life-sim service talks TCP :30031 to a *different* server IP, so a UDP-only
+        // BPF drops it before it can even reach the raw pcapng. Widen the filter to also keep
+        // everything to/from that detected host. The live parser only decodes UDP
+        // (`parse_udp_ipv4` rejects non-UDP), so the extra TCP frames are retained for offline
+        // analysis without affecting live parsing. Falls back to UDP-only if the game endpoint
+        // was not detected.
+        let capture_filter = match self.game_network.as_ref() {
+            Some(network) => format!("{} or host {}", self.filter, network.remote_ip),
+            None => self.filter.clone(),
+        };
         self.reset_combat_session();
         self.capture_quality_source = CaptureQualitySource::Live;
         let capture = start_capture(
@@ -986,12 +997,15 @@ impl DpsApp {
         }
     }
 
-    /// Switch the live UI language, reload its locale map, and refresh localized
-    /// reaction glyph textures. `current_ui_config` includes the language so the
-    /// debounced save persists the choice to the config file.
+    /// Switch the live UI language, reload its locale map, refresh localized
+    /// reaction glyph textures, and reload the localized ability/skill name
+    /// table so already-captured hits display the new language too (see
+    /// [`crate::storage::ability_names`]). `current_ui_config` includes the
+    /// language so the debounced save persists the choice to the config file.
     pub(crate) fn set_language(&mut self, ctx: &egui::Context, language: Language) {
         self.language = language;
         i18n::set_language(language);
+        crate::storage::ability_names::reload(language);
         self.reaction_textures = load_reaction_text_textures(ctx, &data_root());
         ctx.request_repaint();
     }
