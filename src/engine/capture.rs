@@ -29,13 +29,14 @@ use crate::engine::model::{
     PacketDebug, TimeStopEvent,
 };
 use crate::engine::parser::{
-    ABILITY_TIPS_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedGameplayEffect,
-    SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry, classify_attack_type,
-    classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
-    find_declared_character_evidence, find_final_tower_character_evidence, load_ability_tip_names,
-    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_ultra_time_stops,
-    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_gameplay_effects, qte_reaction_type,
+    ABILITY_TIPS_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedEquipmentSlot,
+    ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry,
+    classify_attack_type, classify_attack_type_from_description,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    find_final_tower_character_evidence, load_ability_tip_names, load_gameplay_effect_mapping,
+    load_gameplay_effect_skills, load_ultra_time_stops, matches_shifted_bytes_at,
+    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
+    parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
 };
 use crate::storage::i18n;
 
@@ -745,9 +746,14 @@ fn should_keep_debug_packet(
     payload: &[u8],
     declared_ids: &[u32],
     parsed_hits: usize,
+    parsed_equipment_slots: usize,
     decoded_text: &str,
 ) -> bool {
-    if parsed_hits > 0 || !declared_ids.is_empty() || decoded_text != UNREADABLE_PROTOCOL_TEXT {
+    if parsed_hits > 0
+        || parsed_equipment_slots > 0
+        || !declared_ids.is_empty()
+        || decoded_text != UNREADABLE_PROTOCOL_TEXT
+    {
         return true;
     }
     !is_padding_payload(payload) && payload.len() > MAX_IGNORABLE_BINARY_PACKET_LEN
@@ -827,6 +833,70 @@ fn append_packet_note(note: &mut String, diagnostic: Option<String>) {
         note.push_str("; ");
     }
     note.push_str(&diagnostic);
+}
+
+fn same_equipment_slot(left: &ParsedEquipmentSlot, right: &ParsedEquipmentSlot) -> bool {
+    left.state == right.state
+        && left.equipment_id == right.equipment_id
+        && left.equip_net_id == right.equip_net_id
+        && left.first_step == right.first_step
+        && left.row == right.row
+        && left.column == right.column
+        && left.new_flag == right.new_flag
+}
+
+fn append_unique_equipment_slots(
+    slots: &mut Vec<ParsedEquipmentSlot>,
+    new_slots: impl IntoIterator<Item = ParsedEquipmentSlot>,
+) {
+    for slot in new_slots {
+        if !slots
+            .iter()
+            .any(|existing| same_equipment_slot(existing, &slot))
+        {
+            slots.push(slot);
+        }
+    }
+}
+
+fn equipment_slots_note(slots: &[ParsedEquipmentSlot]) -> Option<String> {
+    if slots.is_empty() {
+        return None;
+    }
+    let occupied = slots
+        .iter()
+        .filter(|slot| slot.state >= 0 && slot.equipment_id != "None")
+        .collect::<Vec<_>>();
+    let mut note = format!(
+        "EquipmentSlotInfo: {} tagged slots, {} occupied",
+        slots.len(),
+        occupied.len()
+    );
+    if !occupied.is_empty() {
+        let details = occupied
+            .iter()
+            .take(8)
+            .map(|slot| {
+                format!(
+                    "{}#{}:{} r{}c{}@{}:{}",
+                    slot.equipment_id,
+                    slot.equip_net_id.solt,
+                    slot.equip_net_id.serial,
+                    slot.row,
+                    slot.column,
+                    slot.byte_offset,
+                    slot.bit_shift
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        note.push_str(": ");
+        note.push_str(&details);
+        if occupied.len() > 8 {
+            note.push_str(&format!(", +{} more", occupied.len() - 8));
+        }
+    }
+    Some(note)
 }
 
 fn parse_abyss_stage_id(value: &str) -> Option<(u32, u32, AbyssHalf)> {
@@ -2263,10 +2333,26 @@ impl PacketDecoder {
         } else {
             parse_boss_hp_updates(payload)
         };
+        let transport_packet = parse_transport_packet(payload);
+        let single_bunch = match &transport_packet {
+            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
+            _ => None,
+        };
+        let mut equipment_slots = Vec::new();
+        if !outgoing {
+            append_unique_equipment_slots(&mut equipment_slots, parse_equipment_slots(payload));
+            if let Some(bunch) = &single_bunch {
+                append_unique_equipment_slots(
+                    &mut equipment_slots,
+                    parse_equipment_slots(&bunch.data),
+                );
+            }
+        }
         let fuwen_start = if !outgoing
             && gameplay_effects.is_empty()
             && current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
+            && equipment_slots.is_empty()
         {
             fuwen_start_pair(payload, &evidence, characters)
         } else {
@@ -2287,7 +2373,14 @@ impl PacketDecoder {
             && boss_hp_updates.is_empty()
             && prepared_hits.deferred_ambiguous == 0
             && fuwen_start.is_none()
-            && !should_keep_debug_packet(payload, &ids, accepted, &decoded_text)
+            && equipment_slots.is_empty()
+            && !should_keep_debug_packet(
+                payload,
+                &ids,
+                accepted,
+                equipment_slots.len(),
+                &decoded_text,
+            )
         {
             return;
         }
@@ -2389,9 +2482,10 @@ impl PacketDecoder {
                 )),
             );
         }
+        append_packet_note(&mut note, equipment_slots_note(&equipment_slots));
         let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections) =
             self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates, characters);
-        if let Some(TransportPacket::Sequenced(packet)) = parse_transport_packet(payload) {
+        if let Some(TransportPacket::Sequenced(packet)) = &transport_packet {
             if packet.mode != 0 {
                 append_packet_note(
                     &mut note,
@@ -2403,7 +2497,7 @@ impl PacketDecoder {
                         packet.payload_bit_len
                     )),
                 );
-            } else if let Some(bunch) = parse_single_bunch(&packet) {
+            } else if let Some(bunch) = &single_bunch {
                 append_packet_note(
                     &mut note,
                     Some(format!(
@@ -2925,7 +3019,14 @@ fn send_export_packet(
             .send(EngineEvent::TimeStop(event))
             .map_err(|error| error.to_string())?;
     }
-    if !should_keep_debug_packet(&payload, &declared_ids, packet.parsed_hits, &decoded_text) {
+    let equipment_slots = parse_equipment_slots(&payload);
+    if !should_keep_debug_packet(
+        &payload,
+        &declared_ids,
+        packet.parsed_hits,
+        equipment_slots.len(),
+        &decoded_text,
+    ) {
         return Ok(false);
     }
     let mut note = packet.note;
@@ -2938,6 +3039,7 @@ fn send_export_packet(
             &character_evidence,
         ),
     );
+    append_packet_note(&mut note, equipment_slots_note(&equipment_slots));
     let packet = PacketDebug {
         timestamp: packet.timestamp_unix,
         source: packet.source,

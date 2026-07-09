@@ -19,6 +19,8 @@ const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 
 const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
+const EQUIPMENT_SLOT_STATE_ANCHOR: &[u8] = b"\x06\0\0\0State\0";
+const MAX_TAGGED_PROPERTY_STRING_LENGTH: i32 = 256;
 
 pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
@@ -70,6 +72,25 @@ pub struct ParsedBossHpUpdate {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedGameplayEffect {
     pub unique_index: u32,
+    pub byte_offset: usize,
+    pub bit_shift: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ParsedHtItemNetId {
+    pub solt: u32,
+    pub serial: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ParsedEquipmentSlot {
+    pub state: i32,
+    pub equipment_id: String,
+    pub equip_net_id: ParsedHtItemNetId,
+    pub first_step: bool,
+    pub row: i32,
+    pub column: i32,
+    pub new_flag: i32,
     pub byte_offset: usize,
     pub bit_shift: u8,
 }
@@ -549,6 +570,215 @@ fn i32_field(field: &Field) -> Option<i32> {
     Some(i32::from_le_bytes(field.raw[..field.len].try_into().ok()?))
 }
 
+fn read_i32_le(data: &[u8], offset: usize) -> Option<(i32, usize)> {
+    Some((
+        i32::from_le_bytes(data.get(offset..offset + 4)?.try_into().ok()?),
+        offset + 4,
+    ))
+}
+
+fn read_u32_le(data: &[u8], offset: usize) -> Option<(u32, usize)> {
+    Some((
+        u32::from_le_bytes(data.get(offset..offset + 4)?.try_into().ok()?),
+        offset + 4,
+    ))
+}
+
+fn read_u8(data: &[u8], offset: usize) -> Option<(u8, usize)> {
+    Some((*data.get(offset)?, offset + 1))
+}
+
+fn read_fstring(data: &[u8], offset: usize) -> Option<(&str, usize)> {
+    let (length, cursor) = read_i32_le(data, offset)?;
+    if !(1..=MAX_TAGGED_PROPERTY_STRING_LENGTH).contains(&length) {
+        return None;
+    }
+    let length = usize::try_from(length).ok()?;
+    let raw = data.get(cursor..cursor + length)?;
+    if raw.last() != Some(&0) {
+        return None;
+    }
+    let value = std::str::from_utf8(&raw[..length - 1]).ok()?;
+    if value.as_bytes().contains(&0) {
+        return None;
+    }
+    Some((value, cursor + length))
+}
+
+fn read_property_header<'a>(
+    data: &'a [u8],
+    offset: usize,
+    expected_name: &str,
+    expected_type: &str,
+) -> Option<(usize, i32, i32)> {
+    let (name, cursor) = read_fstring(data, offset)?;
+    if name != expected_name {
+        return None;
+    }
+    let (property_type, cursor) = read_fstring(data, cursor)?;
+    if property_type != expected_type {
+        return None;
+    }
+    let (array_index, cursor) = read_i32_le(data, cursor)?;
+    let (size, cursor) = read_i32_le(data, cursor)?;
+    Some((cursor, array_index, size))
+}
+
+fn skip_property_guid(data: &[u8], offset: usize) -> Option<usize> {
+    let (has_guid, cursor) = read_u8(data, offset)?;
+    if has_guid == 0 {
+        Some(cursor)
+    } else {
+        data.get(cursor..cursor + 16)?;
+        Some(cursor + 16)
+    }
+}
+
+fn parse_i32_property(data: &[u8], offset: usize, expected_name: &str) -> Option<(i32, usize)> {
+    let (cursor, array_index, size) =
+        read_property_header(data, offset, expected_name, "IntProperty")?;
+    if array_index != 0 || size != 4 {
+        return None;
+    }
+    let cursor = skip_property_guid(data, cursor)?;
+    read_i32_le(data, cursor)
+}
+
+fn parse_u32_property(data: &[u8], offset: usize, expected_name: &str) -> Option<(u32, usize)> {
+    let (cursor, array_index, size) =
+        read_property_header(data, offset, expected_name, "UInt32Property")?;
+    if array_index != 0 || size != 4 {
+        return None;
+    }
+    let cursor = skip_property_guid(data, cursor)?;
+    read_u32_le(data, cursor)
+}
+
+fn parse_name_property(data: &[u8], offset: usize, expected_name: &str) -> Option<(String, usize)> {
+    let (cursor, array_index, size) =
+        read_property_header(data, offset, expected_name, "NameProperty")?;
+    if array_index != 0 || size <= 0 {
+        return None;
+    }
+    let cursor = skip_property_guid(data, cursor)?;
+    let (value, cursor) = read_fstring(data, cursor)?;
+    Some((value.to_owned(), cursor))
+}
+
+fn parse_bool_property(data: &[u8], offset: usize, expected_name: &str) -> Option<(bool, usize)> {
+    let (cursor, array_index, size) =
+        read_property_header(data, offset, expected_name, "BoolProperty")?;
+    if array_index != 0 || size != 0 {
+        return None;
+    }
+    let (value, cursor) = read_u8(data, cursor)?;
+    Some((value != 0, cursor))
+}
+
+fn parse_none_property(data: &[u8], offset: usize) -> Option<usize> {
+    let (name, cursor) = read_fstring(data, offset)?;
+    (name == "None").then_some(cursor)
+}
+
+fn parse_ht_item_net_id_property(
+    data: &[u8],
+    offset: usize,
+    expected_name: &str,
+) -> Option<(ParsedHtItemNetId, usize)> {
+    let (name, cursor) = read_fstring(data, offset)?;
+    if name != expected_name {
+        return None;
+    }
+    let (property_type, cursor) = read_fstring(data, cursor)?;
+    if property_type != "StructProperty" {
+        return None;
+    }
+    let (_array_index, cursor) = read_i32_le(data, cursor)?;
+    let (struct_name, cursor) = read_fstring(data, cursor)?;
+    if struct_name != "HTItemNetID" {
+        return None;
+    }
+    let (_struct_index, cursor) = read_i32_le(data, cursor)?;
+    let (struct_path, cursor) = read_fstring(data, cursor)?;
+    if struct_path != "/Script/HTGame" {
+        return None;
+    }
+    let (_reserved, cursor) = read_i32_le(data, cursor)?;
+    let (_nested_size, cursor) = read_i32_le(data, cursor)?;
+    let cursor = skip_property_guid(data, cursor)?;
+    let (solt, cursor) = parse_u32_property(data, cursor, "solt")?;
+    let (serial, cursor) = parse_u32_property(data, cursor, "serial")?;
+    let cursor = parse_none_property(data, cursor)?;
+    Some((ParsedHtItemNetId { solt, serial }, cursor))
+}
+
+fn parse_equipment_slot_at(
+    data: &[u8],
+    offset: usize,
+    bit_shift: u8,
+) -> Option<(ParsedEquipmentSlot, usize)> {
+    let (state, cursor) = parse_i32_property(data, offset, "State")?;
+    let (equipment_id, cursor) = parse_name_property(data, cursor, "EquipmentID")?;
+    let (equip_net_id, cursor) = parse_ht_item_net_id_property(data, cursor, "EquipNetID")?;
+    let (first_step, cursor) = parse_bool_property(data, cursor, "bFirstStep")?;
+    let (row, cursor) = parse_i32_property(data, cursor, "Row")?;
+    let (column, cursor) = parse_i32_property(data, cursor, "Column")?;
+    let (new_flag, cursor) = parse_i32_property(data, cursor, "New")?;
+    let cursor = parse_none_property(data, cursor)?;
+    Some((
+        ParsedEquipmentSlot {
+            state,
+            equipment_id,
+            equip_net_id,
+            first_step,
+            row,
+            column,
+            new_flag,
+            byte_offset: offset,
+            bit_shift,
+        },
+        cursor,
+    ))
+}
+
+fn find_bytes(data: &[u8], needle: &[u8]) -> Option<usize> {
+    data.windows(needle.len())
+        .position(|window| window == needle)
+}
+
+pub fn parse_equipment_slots(data: &[u8]) -> Vec<ParsedEquipmentSlot> {
+    let mut slots = Vec::new();
+    for bit_shift in 0..8_u8 {
+        let shifted_storage;
+        let shifted = if bit_shift == 0 {
+            data
+        } else {
+            shifted_storage =
+                match decode_shifted_bytes(data, 0, bit_shift, 0, data.len().saturating_sub(1)) {
+                    Some(value) => value,
+                    None => continue,
+                };
+            shifted_storage.as_slice()
+        };
+        let mut search_offset = 0;
+        while let Some(relative_offset) =
+            find_bytes(&shifted[search_offset..], EQUIPMENT_SLOT_STATE_ANCHOR)
+        {
+            let slot_offset = search_offset + relative_offset;
+            match parse_equipment_slot_at(shifted, slot_offset, bit_shift) {
+                Some((slot, next_offset)) => {
+                    slots.push(slot);
+                    search_offset = next_offset.max(slot_offset + 1);
+                }
+                None => {
+                    search_offset = slot_offset + 1;
+                }
+            }
+        }
+    }
+    slots
+}
+
 fn parse_damage_record_at(
     data: &[u8],
     byte_offset: usize,
@@ -1023,6 +1253,83 @@ mod character_tests {
         }
     }
 
+    fn push_fstring(buffer: &mut Vec<u8>, value: &str) {
+        buffer.extend_from_slice(&((value.len() + 1) as i32).to_le_bytes());
+        buffer.extend_from_slice(value.as_bytes());
+        buffer.push(0);
+    }
+
+    fn push_property_header(buffer: &mut Vec<u8>, name: &str, property_type: &str, size: i32) {
+        push_fstring(buffer, name);
+        push_fstring(buffer, property_type);
+        buffer.extend_from_slice(&0_i32.to_le_bytes());
+        buffer.extend_from_slice(&size.to_le_bytes());
+    }
+
+    fn push_i32_property(buffer: &mut Vec<u8>, name: &str, value: i32) {
+        push_property_header(buffer, name, "IntProperty", 4);
+        buffer.push(0);
+        buffer.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_u32_property(buffer: &mut Vec<u8>, name: &str, value: u32) {
+        push_property_header(buffer, name, "UInt32Property", 4);
+        buffer.push(0);
+        buffer.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_name_property(buffer: &mut Vec<u8>, name: &str, value: &str) {
+        push_property_header(buffer, name, "NameProperty", (value.len() + 5) as i32);
+        buffer.push(0);
+        push_fstring(buffer, value);
+    }
+
+    fn push_bool_property(buffer: &mut Vec<u8>, name: &str, value: u8) {
+        push_property_header(buffer, name, "BoolProperty", 0);
+        buffer.push(value);
+    }
+
+    fn push_none_property(buffer: &mut Vec<u8>) {
+        push_fstring(buffer, "None");
+    }
+
+    fn push_ht_item_net_id_property(buffer: &mut Vec<u8>, solt: u32, serial: u32) {
+        let mut nested = Vec::new();
+        push_u32_property(&mut nested, "solt", solt);
+        push_u32_property(&mut nested, "serial", serial);
+        push_none_property(&mut nested);
+
+        push_fstring(buffer, "EquipNetID");
+        push_fstring(buffer, "StructProperty");
+        buffer.extend_from_slice(&1_i32.to_le_bytes());
+        push_fstring(buffer, "HTItemNetID");
+        buffer.extend_from_slice(&1_i32.to_le_bytes());
+        push_fstring(buffer, "/Script/HTGame");
+        buffer.extend_from_slice(&0_i32.to_le_bytes());
+        buffer.extend_from_slice(&(nested.len() as i32).to_le_bytes());
+        buffer.push(0);
+        buffer.extend_from_slice(&nested);
+    }
+
+    fn encoded_equipment_slot(
+        equipment_id: &str,
+        solt: u32,
+        serial: u32,
+        row: i32,
+        column: i32,
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        push_i32_property(&mut payload, "State", 1);
+        push_name_property(&mut payload, "EquipmentID", equipment_id);
+        push_ht_item_net_id_property(&mut payload, solt, serial);
+        push_bool_property(&mut payload, "bFirstStep", 0x10);
+        push_i32_property(&mut payload, "Row", row);
+        push_i32_property(&mut payload, "Column", column);
+        push_i32_property(&mut payload, "New", 0);
+        push_none_property(&mut payload);
+        payload
+    }
+
     fn write_temp_json(name: &str, content: &str) -> PathBuf {
         let unique = TEMP_JSON_COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
@@ -1033,6 +1340,41 @@ mod character_tests {
         ));
         fs::write(&path, content).expect("temp json should be writable");
         path
+    }
+
+    #[test]
+    fn parses_shifted_equipment_slot_info() {
+        let encoded =
+            encoded_equipment_slot("cell3_style5_1_Orange", 1_018_562_417, 1_290_515_095, 2, 3);
+        let mut payload = vec![0; encoded.len() + 2];
+        write_shifted_bytes(&mut payload, 5, 0, &encoded);
+
+        assert_eq!(
+            parse_equipment_slots(&payload),
+            vec![ParsedEquipmentSlot {
+                state: 1,
+                equipment_id: "cell3_style5_1_Orange".to_owned(),
+                equip_net_id: ParsedHtItemNetId {
+                    solt: 1_018_562_417,
+                    serial: 1_290_515_095,
+                },
+                first_step: true,
+                row: 2,
+                column: 3,
+                new_flag: 0,
+                byte_offset: 0,
+                bit_shift: 5,
+            }]
+        );
+    }
+
+    #[test]
+    fn ignores_incomplete_equipment_slot_tags() {
+        let mut payload = Vec::new();
+        push_i32_property(&mut payload, "State", 1);
+        push_name_property(&mut payload, "EquipmentID", "cell2_style1_1_Orange");
+
+        assert!(parse_equipment_slots(&payload).is_empty());
     }
 
     #[test]
