@@ -27,7 +27,7 @@
   },
   "reactions": {
     "1": {
-      "reaction_type": "REACTION_RESULT_TYPE_1",
+      "reaction_type": "REACTION_RESULT_TYPE_6",
       "name_zh": "延滞",
       "name_en": "延滞",
       "description_zh": "触发异能环合后的<NumGreen>5</>秒内，目标进入延滞状态，移动及攻击速度降低，并随时间逐渐复原。如频繁进入延滞状态，目标恢复至常态的速度将会加快。",
@@ -35,6 +35,33 @@
       "elements": [
         "CHARACTER_ELEMENT_TYPE_LAKSHANA",
         "CHARACTER_ELEMENT_TYPE_COSMOS"
+      ],
+      "default_damage_effect": "None",
+      "damage_effects": [],
+      "character_abilities": [
+        {
+          "CharacterID": "1008",
+          "ReactionAbilityID": "GA_Skia_Passive_1"
+        },
+        {
+          "CharacterID": "1025",
+          "ReactionAbilityID": "GA_hathor_Passive_1"
+        },
+        {
+          "CharacterID": "1071",
+          "ReactionAbilityID": "GA_Chaos_Passive_1"
+        }
+      ]
+    },
+    "2": {
+      "reaction_type": "REACTION_RESULT_TYPE_1",
+      "name_zh": "创生",
+      "name_en": "创生",
+      "description_zh": "触发异能环合后，目标附近将诞生<NumGreen>1</>株<bule>「创生株」</>，并绽放<NumGreen>5</>朵<bule>「创生花」</>。\r\n每隔<NumGreen>2</>秒，<bule>「创生花」</>会陆续飞向射程内的目标并爆炸，造成一定范围伤害。\r\n场上最多同时存在<NumGreen>3</>株<bule>「创生株」</>。",
+      "description_en": "触发异能环合后，目标附近将诞生<NumGreen>1</>株<bule>「创生株」</>，并绽放<NumGreen>5</>朵<bule>「创生花」</>。\r\n每隔<NumGreen>2</>秒，<bule>「创生花」</>会陆续飞向射程内的目标并爆炸，造成一定范围伤害。\r\n场上最多同时存在<NumGreen>3</>株<bule>「创生株」</>。",
+      "elements": [
+        "CHARACTER_ELEMENT_TYPE_COSMOS",
+        "CHARACTER_ELEMENT_TYPE_NATURE"
       ],
       "default_damage_effect": "GE_ActorReaction_1_Damage",
       "damage_effects": [
@@ -83,33 +110,6 @@
       ],
       "character_abilities": [
         {
-          "CharacterID": "1008",
-          "ReactionAbilityID": "GA_Skia_Passive_1"
-        },
-        {
-          "CharacterID": "1025",
-          "ReactionAbilityID": "GA_hathor_Passive_1"
-        },
-        {
-          "CharacterID": "1071",
-          "ReactionAbilityID": "GA_Chaos_Passive_1"
-        }
-      ]
-    },
-    "2": {
-      "reaction_type": "REACTION_RESULT_TYPE_2",
-      "name_zh": "创生",
-      "name_en": "创生",
-      "description_zh": "触发异能环合后，目标附近将诞生<NumGreen>1</>株<bule>「创生株」</>，并绽放<NumGreen>5</>朵<bule>「创生花」</>。\r\n每隔<NumGreen>2</>秒，<bule>「创生花」</>会陆续飞向射程内的目标并爆炸，造成一定范围伤害。\r\n场上最多同时存在<NumGreen>3</>株<bule>「创生株」</>。",
-      "description_en": "触发异能环合后，目标附近将诞生<NumGreen>1</>株<bule>「创生株」</>，并绽放<NumGreen>5</>朵<bule>「创生花」</>。\r\n每隔<NumGreen>2</>秒，<bule>「创生花」</>会陆续飞向射程内的目标并爆炸，造成一定范围伤害。\r\n场上最多同时存在<NumGreen>3</>株<bule>「创生株」</>。",
-      "elements": [
-        "CHARACTER_ELEMENT_TYPE_COSMOS",
-        "CHARACTER_ELEMENT_TYPE_NATURE"
-      ],
-      "default_damage_effect": "None",
-      "damage_effects": [],
-      "character_abilities": [
-        {
           "CharacterID": "1010",
           "ReactionAbilityID": "GA_Nanally_Passive_1"
         },
@@ -132,7 +132,7 @@
       ]
     },
     "3": {
-      "reaction_type": "REACTION_RESULT_TYPE_3",
+      "reaction_type": "REACTION_RESULT_TYPE_2",
       "name_zh": "覆纹",
       "name_en": "覆纹",
       "description_zh": "触发异能环合后的<NumGreen>12</>秒内，目标受到<bule>灵属性或咒属性异能伤害</>时，将额外受到一次原伤害<NumGreen>20%</>的<bule>追加攻击伤害</>。",
@@ -141,51 +141,8 @@
         "CHARACTER_ELEMENT_TYPE_NATURE",
         "CHARACTER_ELEMENT_TYPE_INCANTATION"
       ],
-      "default_damage_effect": "Buff_Reaction_5_new",
-      "damage_effects": [
-        {
-          "gameplay_effect": "Buff_Reaction_5_new",
-          "base_damage": [
-            20.0,
-            35.0,
-            60.0,
-            90.0,
-            120.0,
-            180.0,
-            240.0,
-            300.0,
-            510.0,
-            660.0,
-            1080.0,
-            1500.0,
-            1800.0,
-            2100.0,
-            2400.0,
-            2700.0
-          ]
-        },
-        {
-          "gameplay_effect": "Buff_Reaction_5_new_1003",
-          "base_damage": [
-            20.0,
-            35.0,
-            60.0,
-            90.0,
-            120.0,
-            180.0,
-            240.0,
-            300.0,
-            510.0,
-            660.0,
-            1080.0,
-            1500.0,
-            1800.0,
-            2100.0,
-            2400.0,
-            2700.0
-          ]
-        }
-      ],
+      "default_damage_effect": "None",
+      "damage_effects": [],
       "character_abilities": []
     },
     "4": {
@@ -238,7 +195,7 @@
       ]
     },
     "5": {
-      "reaction_type": "REACTION_RESULT_TYPE_5",
+      "reaction_type": "REACTION_RESULT_TYPE_3",
       "name_zh": "浊燃",
       "name_en": "浊燃",
       "description_zh": "触发异能环合后的<NumGreen>15</>秒内，目标进入浊燃状态，期间受到持续伤害。",
@@ -247,8 +204,51 @@
         "CHARACTER_ELEMENT_TYPE_INCANTATION",
         "CHARACTER_ELEMENT_TYPE_CHAOS"
       ],
-      "default_damage_effect": "None",
-      "damage_effects": [],
+      "default_damage_effect": "Buff_Reaction_5_new",
+      "damage_effects": [
+        {
+          "gameplay_effect": "Buff_Reaction_5_new",
+          "base_damage": [
+            20.0,
+            35.0,
+            60.0,
+            90.0,
+            120.0,
+            180.0,
+            240.0,
+            300.0,
+            510.0,
+            660.0,
+            1080.0,
+            1500.0,
+            1800.0,
+            2100.0,
+            2400.0,
+            2700.0
+          ]
+        },
+        {
+          "gameplay_effect": "Buff_Reaction_5_new_1003",
+          "base_damage": [
+            20.0,
+            35.0,
+            60.0,
+            90.0,
+            120.0,
+            180.0,
+            240.0,
+            300.0,
+            510.0,
+            660.0,
+            1080.0,
+            1500.0,
+            1800.0,
+            2100.0,
+            2400.0,
+            2700.0
+          ]
+        }
+      ],
       "character_abilities": [
         {
           "CharacterID": "1023",
@@ -265,7 +265,7 @@
       ]
     },
     "6": {
-      "reaction_type": "REACTION_RESULT_TYPE_6",
+      "reaction_type": "REACTION_RESULT_TYPE_5",
       "name_zh": "浸染",
       "name_en": "浸染",
       "description_zh": "触发异能环合后的<NumGreen>12</>秒内，目标受到<bule>魂属性或相属性异能伤害</>时，所受伤害量提升<NumGreen>20%</>。",
@@ -279,7 +279,7 @@
       "character_abilities": []
     },
     "7": {
-      "reaction_type": "REACTION_RESULT_TYPE_7",
+      "reaction_type": null,
       "name_zh": "盈蓄",
       "name_en": "盈蓄",
       "description_zh": "<bule>「创生花」</>命中处于延滞状态的目标时，当前驻场角色额外获得<NumGreen>10</>点<bule>终结能量</>。",
@@ -311,7 +311,7 @@
       ]
     },
     "8": {
-      "reaction_type": "REACTION_RESULT_TYPE_8",
+      "reaction_type": null,
       "name_zh": "失谐",
       "name_en": "失谐",
       "description_zh": "当目标同时处于黯星与浊燃状态时，扣除其一定比例的<bule>倾陷值</>。",
@@ -863,6 +863,11 @@
       "ReactionDataArray": [
         {
           "BackChargeMul": 1.0,
+          "RangeDamageGE": {
+            "ObjectName": "BlueprintGeneratedClass'Buff_Shinku_ReactionAOE_C'",
+            "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_076_Shinku/Buff/Buff_Shinku_ReactionAOE.0"
+          },
+          "PlayerCharacterID": "1076",
           "ReactionAbilityID": "GA_Shinku_Passive_1",
           "ConditionArray": [
             {

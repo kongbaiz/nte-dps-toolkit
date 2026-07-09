@@ -73,18 +73,86 @@ pub(crate) fn hit_type_label(hit: &crate::engine::model::Hit) -> &str {
     }
 }
 
+/// English key for an attack-type/category label (the ones
+/// [`crate::engine::parser::classify_attack_type`] and the fuwen follow-up
+/// tracker produce as literal Chinese text, e.g. "创生花", "普攻"). These
+/// aren't sourced from a character's per-ability kit, so unlike move names
+/// they have no locale-aware resource of their own — wrap with
+/// [`crate::storage::i18n::t`] at the display site. Names for the 8 reaction
+/// conditions, `Esper Cycle`/`Break Damage`/`Parry Attack`/`Basic Attack`/
+/// `Ultimate`/`Block` match the official `ST_ReactionDes`/glossary
+/// localization in `NTE_Assets`; the rest (`Skill`, `Vehicle Damage`, `Abyss
+/// Field Buff`, `HP Sync Damage`) are this tool's own labels with no official
+/// game term, so they're translated by hand instead.
+fn attack_type_translation_key(label: &str) -> Option<&'static str> {
+    match label {
+        "创生" => Some("Blossom"),
+        "创生花" => Some("Blossom Damage"),
+        "覆纹" => Some("Hexed"),
+        "覆纹追加攻击" => Some("Hexed Follow-up Attack"),
+        "延滞" => Some("Remora"),
+        "黯星" => Some("Nova"),
+        "浊燃" => Some("Scorch"),
+        "浸染" => Some("Stain"),
+        "盈蓄" => Some("Charge"),
+        "失谐" => Some("Discord"),
+        "环合" => Some("Esper Cycle"),
+        "环合伤害" => Some("Reaction Damage"),
+        "倾陷伤害" => Some("Break Damage"),
+        "普攻" => Some("Basic Attack"),
+        "E技能" => Some("Skill"),
+        "Q技能" => Some("Ultimate"),
+        "闪避反击" => Some("Parry Attack"),
+        "格挡反击" => Some("Block Counter"),
+        "载具伤害" => Some("Vehicle Damage"),
+        "深渊场地Buff" => Some("Abyss Field Buff"),
+        "HP同步伤害" => Some("HP Sync Damage"),
+        _ => None,
+    }
+}
+
+/// Translates an attack-type/reaction label for display, including the
+/// "环合·X" QTE-trigger form (e.g. "环合·创生" -> "Esper Cycle · Blossom").
+/// Leaves anything else (move names) unchanged.
+pub(crate) fn translate_reaction_label(label: &str) -> String {
+    if let Some(key) = attack_type_translation_key(label) {
+        return t(key);
+    }
+    if let Some(reaction) = label.strip_prefix("环合·")
+        && let Some(key) = attack_type_translation_key(reaction)
+    {
+        return format!("{} · {}", t("Esper Cycle"), t(key));
+    }
+    label.to_owned()
+}
+
 /// "类型·名称": the broad attack-type category joined with the resolved skill
 /// name, e.g. "普攻·酸甜口味的制裁". Since [`crate::engine::parser::load_ability_tip_names`]
 /// resolves one name per ability rather than per combo hit, several hits under
 /// the same skill can share an identical name; the leading attack type keeps
 /// them distinguishable from other categories using the same name. Falls back
 /// to whichever half is available, and drops the join when both halves match.
+///
+/// The skill name is re-resolved from `gameplay_effect_name` through
+/// [`crate::storage::ability_names`] rather than read straight off
+/// `hit.damage_name`, which was baked in at capture time in whatever language
+/// was active then; falls back to that stored value when live resolution
+/// misses (e.g. reaction-only effects have no ability-tip entry).
 pub(crate) fn hit_type_display_text(hit: &crate::engine::model::Hit) -> String {
     let attack_type = hit.attack_type.as_deref().filter(|value| !value.is_empty());
-    let name = hit.damage_name.as_deref().filter(|value| !value.is_empty());
+    let live_name = hit
+        .gameplay_effect_name
+        .as_deref()
+        .and_then(crate::storage::ability_names::resolve_damage_name);
+    let name = live_name
+        .as_deref()
+        .or(hit.damage_name.as_deref())
+        .filter(|value| !value.is_empty());
     match (attack_type, name) {
-        (Some(attack_type), Some(name)) if attack_type != name => format!("{attack_type}·{name}"),
-        (Some(attack_type), _) => attack_type.to_owned(),
+        (Some(attack_type), Some(name)) if attack_type != name => {
+            format!("{}·{name}", translate_reaction_label(attack_type))
+        }
+        (Some(attack_type), _) => translate_reaction_label(attack_type),
         (None, Some(name)) => name.to_owned(),
         (None, None) => "未知招式".to_owned(),
     }

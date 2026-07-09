@@ -84,6 +84,33 @@ impl Language {
             other => Some(format!("res/languages/{}.json", other.code())),
         }
     }
+
+    /// Match a Windows locale name (e.g. `"zh-CN"`, `"ja-JP"`) to a supported UI
+    /// language by primary subtag, falling back to English when nothing matches.
+    fn from_locale_name(locale: &str) -> Self {
+        let primary = locale
+            .split(['-', '_'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        Self::all()
+            .iter()
+            .copied()
+            .find(|lang| lang.code().split(['-', '_']).next() == Some(primary.as_str()))
+            .unwrap_or(Self::English)
+    }
+
+    /// Best-effort default UI language for a brand-new install (no `config.json`
+    /// yet): the system locale if a matching localization file exists, else
+    /// English. Only consulted the first time the config is created — later
+    /// launches always use the persisted `language` value, so this never
+    /// overrides a user's own choice or an existing (pre-i18n) install's
+    /// historical Simplified Chinese default.
+    pub fn system_default() -> Self {
+        crate::platform::locale::system_locale_name()
+            .map(|locale| Self::from_locale_name(&locale))
+            .unwrap_or(Self::English)
+    }
 }
 
 #[derive(Default)]
@@ -207,6 +234,23 @@ mod tests {
         set_language(Language::English);
         assert_eq!(tf("{} of {}", &["3"]), "3 of {}");
         set_language(Language::default());
+    }
+
+    #[test]
+    fn system_default_matches_locale_by_primary_subtag() {
+        assert_eq!(
+            Language::from_locale_name("zh-CN"),
+            Language::SimplifiedChinese
+        );
+        // Traditional-Chinese locales fall back to the only Chinese file shipped.
+        assert_eq!(
+            Language::from_locale_name("zh-TW"),
+            Language::SimplifiedChinese
+        );
+        assert_eq!(Language::from_locale_name("ja-JP"), Language::Japanese);
+        assert_eq!(Language::from_locale_name("en-US"), Language::English);
+        assert_eq!(Language::from_locale_name("fr-FR"), Language::English);
+        assert_eq!(Language::from_locale_name(""), Language::English);
     }
 
     #[test]

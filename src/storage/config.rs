@@ -300,7 +300,14 @@ pub fn config_path() -> PathBuf {
 pub fn load() -> (UiConfig, Option<String>) {
     let path = config_path();
     if !path.is_file() {
-        let config = UiConfig::default();
+        // Brand-new install: pick the UI language from the system locale (if a
+        // localization file matches it) instead of the historical
+        // Simplified-Chinese default, which only exists to keep upgrades from
+        // older (pre-i18n) configs stable — see `Language::system_default`.
+        let config = UiConfig {
+            language: Language::system_default(),
+            ..UiConfig::default()
+        };
         let warning = save(&path, &config).err().map(|error| {
             crate::storage::i18n::tf(
                 "Failed to create default UI config ({}): {}",

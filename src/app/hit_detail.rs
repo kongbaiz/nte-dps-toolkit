@@ -230,7 +230,8 @@ pub(crate) fn qte_damage_summary_chip(
     } else {
         0.0
     };
-    let width = 156.0_f32.max(96.0 + summary.attack_type.chars().count() as f32 * 12.0);
+    let label = translate_reaction_label(&summary.attack_type);
+    let width = 156.0_f32.max(96.0 + label.chars().count() as f32 * 12.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 42.0), egui::Sense::click());
     let dark_mode = ui.visuals().dark_mode;
     let accent = theme_accent(dark_mode);
@@ -280,7 +281,7 @@ pub(crate) fn qte_damage_summary_chip(
     ui.painter().text(
         egui::pos2(text_rect.left(), text_rect.top() + 9.0),
         egui::Align2::LEFT_CENTER,
-        &summary.attack_type,
+        label,
         egui::FontId::proportional(12.5),
         text_color,
     );
@@ -739,7 +740,7 @@ pub(crate) fn damage_digit_key_for_hit<'a>(
     characters: &'a HashMap<u32, CharacterInfo>,
 ) -> Option<&'a str> {
     if hit.direction == "incoming" {
-        return Some("物理");
+        return Some("HP");
     }
     let source_attribute = hit.damage_attribute.as_deref().or_else(|| {
         characters
@@ -1119,7 +1120,7 @@ pub(crate) fn draw_hit_type_badge_content(
         return;
     }
     let text = match hit.direction.as_str() {
-        "incoming" | "unknown" => hit_type_label(hit).to_owned(),
+        "incoming" | "unknown" => t(hit_type_label(hit)),
         _ => hit_type_display_text(hit),
     };
     draw_clipped_label(

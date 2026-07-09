@@ -325,7 +325,7 @@ const REACTION_TEXT_IMAGE_COUNT: u8 = 8;
 // Anhun_H, Zhouan_Z, lingzhou_Z) were removed along with their PNGs: reactions
 // now always render the trigger-side series (see mixed_damage_digit_key), so
 // those sets had no remaining users.
-const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 16] = [
+const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 17] = [
     ("灵", "ling"),
     ("咒", "zhou"),
     ("光", "guang"),
@@ -333,6 +333,7 @@ const DAMAGE_DIGIT_TEXTURE_SETS: [(&str, &str); 16] = [
     ("暗", "an"),
     ("相", "xiang"),
     ("物理", "wuli"),
+    ("HP", "HP"),
     ("真实", "zhenshi"),
     ("Guangling_G", "Guangling_G"),
     ("Guangxiang_G", "Guangxiang_G"),
@@ -1193,7 +1194,7 @@ mod tests {
         qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
-        summarize_qte_type_filters,
+        summarize_qte_type_filters, translate_reaction_label,
     };
     use crate::engine::model::{
         CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
@@ -1331,7 +1332,35 @@ mod tests {
         hit.attack_type = Some("普攻".to_owned());
         hit.damage_name = Some("酸甜口味的制裁".to_owned());
 
-        assert_eq!(hit_type_display_text(&hit), "普攻·酸甜口味的制裁");
+        assert_eq!(hit_type_display_text(&hit), "Basic Attack·酸甜口味的制裁");
+    }
+
+    #[test]
+    fn hit_type_display_text_prefers_live_resolved_name_over_stale_stored_one() {
+        crate::storage::ability_names::set_for_test(
+            std::collections::HashMap::from([(
+                "GE_Player_Sagiri_UltraSkill1_Damage".to_owned(),
+                crate::engine::parser::GameplayEffectSkill {
+                    damage_source_category: Some("Q".to_owned()),
+                    ability_name: Some("GA_Sagiri_UltraSkill".to_owned()),
+                    attack_type: "Q技能".to_owned(),
+                },
+            )]),
+            std::collections::HashMap::from([(
+                "GA_Sagiri_UltraSkill".to_owned(),
+                "現在の言語での技名".to_owned(),
+            )]),
+        );
+
+        let mut hit = hit_with_direction("outgoing");
+        hit.attack_type = Some("Q技能".to_owned());
+        // damage_name still holds whatever language was active when this hit was
+        // originally captured; the live lookup (keyed by gameplay_effect_name)
+        // must win instead of this stale value.
+        hit.damage_name = Some("Feast of Gluttony".to_owned());
+        hit.gameplay_effect_name = Some("GE_Player_Sagiri_UltraSkill1_Damage".to_owned());
+
+        assert_eq!(hit_type_display_text(&hit), "Ultimate·現在の言語での技名");
     }
 
     #[test]
@@ -1339,7 +1368,7 @@ mod tests {
         let mut attack_type_only = hit_with_direction("outgoing");
         attack_type_only.attack_type = Some("E技能".to_owned());
         attack_type_only.damage_name = None;
-        assert_eq!(hit_type_display_text(&attack_type_only), "E技能");
+        assert_eq!(hit_type_display_text(&attack_type_only), "Skill");
 
         let mut name_only = hit_with_direction("outgoing");
         name_only.attack_type = None;
@@ -1353,7 +1382,25 @@ mod tests {
         hit.attack_type = Some("倾陷伤害".to_owned());
         hit.damage_name = Some("倾陷伤害".to_owned());
 
-        assert_eq!(hit_type_display_text(&hit), "倾陷伤害");
+        // "Break Damage" is the untranslated English key: reaction/category labels
+        // route through `t()`, which returns the key as-is when no locale overlay
+        // is loaded (as in this test's environment).
+        assert_eq!(hit_type_display_text(&hit), "Break Damage");
+    }
+
+    #[test]
+    fn translate_reaction_label_covers_conditions_and_qte_prefix() {
+        assert_eq!(translate_reaction_label("创生花"), "Blossom Damage");
+        assert_eq!(translate_reaction_label("覆纹"), "Hexed");
+        assert_eq!(
+            translate_reaction_label("环合·创生"),
+            "Esper Cycle · Blossom"
+        );
+        assert_eq!(translate_reaction_label("环合·黯星"), "Esper Cycle · Nova");
+        assert_eq!(translate_reaction_label("普攻"), "Basic Attack");
+        assert_eq!(translate_reaction_label("Q技能"), "Ultimate");
+        // Move names have no category match, so they pass through unchanged.
+        assert_eq!(translate_reaction_label("酸甜口味的制裁"), "酸甜口味的制裁");
     }
 
     #[test]
@@ -1563,7 +1610,7 @@ mod tests {
         hit.direction = "incoming".to_owned();
         hit.attack_type = Some("覆纹".to_owned());
         hit.damage_attribute = Some("咒".to_owned());
-        assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("物理"));
+        assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("HP"));
 
         hit.direction = "outgoing".to_owned();
         hit.follow_up_attack_type = Some("覆纹".to_owned());
