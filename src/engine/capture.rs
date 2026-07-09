@@ -2501,8 +2501,8 @@ impl PacketDecoder {
                 append_packet_note(
                     &mut note,
                     Some(format!(
-                        "SingleBunch seq {}，descriptor 0x{:02x}，数据 {} bit",
-                        bunch.sequence, bunch.descriptor, bunch.data_bit_len
+                        "SingleBunch seq {}，descriptor 0x{:02x}，partial 0x{:x}，数据 {} bit",
+                        bunch.sequence, bunch.descriptor, bunch.partial_flags, bunch.data_bit_len
                     )),
                 );
             }
