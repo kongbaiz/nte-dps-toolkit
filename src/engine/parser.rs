@@ -605,8 +605,8 @@ fn read_fstring(data: &[u8], offset: usize) -> Option<(&str, usize)> {
     Some((value, cursor + length))
 }
 
-fn read_property_header<'a>(
-    data: &'a [u8],
+fn read_property_header(
+    data: &[u8],
     offset: usize,
     expected_name: &str,
     expected_type: &str,
