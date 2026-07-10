@@ -57,6 +57,12 @@ impl DpsApp {
                 t("Timeline"),
             );
             stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::Skills, t("Skills"));
+            stable_selectable_value(
+                ui,
+                &mut self.console_tab,
+                ConsoleTab::EmptyCurtain,
+                t("Console Loadout"),
+            );
             stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::History, t("History"));
             stable_selectable_value(
                 ui,
@@ -99,6 +105,7 @@ impl DpsApp {
             ConsoleTab::Settings => self.settings_contents(ui),
             ConsoleTab::Timeline => self.timeline_contents(ui),
             ConsoleTab::Skills => self.skills_contents(ui),
+            ConsoleTab::EmptyCurtain => self.empty_curtain_contents(ui),
             ConsoleTab::History => self.history_contents(ui),
             ConsoleTab::Characters => self.debug_characters_contents(ui),
             ConsoleTab::EncryptedIni => self.debug_encrypted_ini_contents(ui),
@@ -1700,7 +1707,9 @@ impl DpsApp {
                     ui.label(t("Damage-taken logging enabled"));
                     let can_export_json = self.capture.is_none()
                         && self.replay_thread.is_none()
-                        && (!self.state.hits.is_empty() || !self.state.packets.is_empty());
+                        && (!self.state.hits.is_empty()
+                            || !self.state.packets.is_empty()
+                            || !self.state.empty_curtain.is_empty());
                     if ui
                         .add_enabled(can_export_json, egui::Button::new(t("Export Parsed JSON")))
                         .clicked()

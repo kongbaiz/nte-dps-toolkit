@@ -1,0 +1,1601 @@
+use std::collections::{BTreeMap, HashSet};
+
+use crate::engine::model::{EmptyCurtainItem, EquipmentStat};
+use crate::engine::parser::{EMPTY_CURTAIN_MAX_STAT_ROWS, EquipmentCatalog, EquipmentKind};
+
+use super::*;
+
+// Cards flex between these bounds: the min drives how many columns fit, then
+// each card stretches to fill its share of the row so neither side is left with
+// redundant margin. The max keeps a lone card from ballooning on a narrow window.
+const EQUIPMENT_CARD_MIN_WIDTH: f32 = 210.0;
+const EQUIPMENT_CARD_MAX_WIDTH: f32 = 280.0;
+const EQUIPMENT_CARD_HEIGHT: f32 = 210.0;
+const EQUIPMENT_CARD_GAP: f32 = 8.0;
+const EQUIPMENT_CARD_ROW_HEIGHT: f32 = EQUIPMENT_CARD_HEIGHT + EQUIPMENT_CARD_GAP;
+const EQUIPMENT_CARD_HEADER_HEIGHT: f32 = 62.0;
+const EQUIPMENT_STAT_ROW_HEIGHT: f32 = 22.0;
+const EQUIPMENT_ICON_SIZE: f32 = 42.0;
+const FILTER_TILE_WIDTH: f32 = 104.0;
+const FILTER_TILE_HEIGHT: f32 = 88.0;
+const FILTER_ICON_SIZE: f32 = 48.0;
+
+// Modules and cassettes share the same closed set of rarity tiers, ordered from
+// lowest to highest. The parser rejects any other value, so this list is total.
+const EQUIPMENT_QUALITIES: [&str; 3] = ["blue", "purple", "orange"];
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum EquipmentFilterKey {
+    Module(String),
+    Core(String),
+}
+
+#[derive(Clone)]
+struct EquipmentFilterOption {
+    key: EquipmentFilterKey,
+    name_zh: String,
+    name_en: String,
+    name_ja: String,
+    icon: String,
+}
+
+#[derive(Default)]
+struct EmptyCurtainFilterCache {
+    valid: bool,
+    inventory_generation: u64,
+    filter_revision: u64,
+    source_len: usize,
+    indices: Vec<usize>,
+}
+
+pub(crate) struct KongmuUiState {
+    filter_open: bool,
+    selected_equipment: HashSet<EquipmentFilterKey>,
+    selected_qualities: HashSet<String>,
+    selected_substats: HashSet<String>,
+    filter_revision: u64,
+    filter_cache: EmptyCurtainFilterCache,
+}
+
+impl Default for KongmuUiState {
+    fn default() -> Self {
+        Self {
+            filter_open: false,
+            selected_equipment: HashSet::new(),
+            selected_qualities: HashSet::new(),
+            selected_substats: HashSet::new(),
+            filter_revision: 0,
+            filter_cache: EmptyCurtainFilterCache::default(),
+        }
+    }
+}
+
+impl KongmuUiState {
+    pub(crate) fn invalidate_inventory(&mut self) {
+        self.filter_cache.valid = false;
+    }
+
+    fn active_filter_count(&self) -> usize {
+        self.selected_equipment.len() + self.selected_qualities.len() + self.selected_substats.len()
+    }
+
+    fn toggle_equipment(&mut self, key: EquipmentFilterKey) {
+        if !self.selected_equipment.remove(&key) {
+            self.selected_equipment.insert(key);
+        }
+        self.filter_revision = self.filter_revision.wrapping_add(1);
+    }
+
+    fn toggle_quality(&mut self, quality: String) {
+        if !self.selected_qualities.remove(&quality) {
+            self.selected_qualities.insert(quality);
+        }
+        self.filter_revision = self.filter_revision.wrapping_add(1);
+    }
+
+    fn toggle_substat(&mut self, property: String) {
+        if !self.selected_substats.remove(&property) {
+            self.selected_substats.insert(property);
+        }
+        self.filter_revision = self.filter_revision.wrapping_add(1);
+    }
+
+    fn clear_filters(&mut self) {
+        if self.selected_equipment.is_empty()
+            && self.selected_qualities.is_empty()
+            && self.selected_substats.is_empty()
+        {
+            return;
+        }
+        self.selected_equipment.clear();
+        self.selected_qualities.clear();
+        self.selected_substats.clear();
+        self.filter_revision = self.filter_revision.wrapping_add(1);
+    }
+
+    fn refresh_filter_cache(
+        &mut self,
+        items: &[EmptyCurtainItem],
+        inventory_generation: u64,
+        catalog: &EquipmentCatalog,
+    ) {
+        if self.filter_cache.valid
+            && self.filter_cache.inventory_generation == inventory_generation
+            && self.filter_cache.filter_revision == self.filter_revision
+            && self.filter_cache.source_len == items.len()
+        {
+            return;
+        }
+
+        self.filter_cache.indices.clear();
+        for (index, item) in items.iter().enumerate() {
+            let definition = catalog.items.get(&item.item_id);
+            let item_key = equipment_filter_key(item, catalog);
+            let item_quality = definition.map(|definition| definition.quality.as_str());
+            if empty_curtain_filter_matches(
+                &self.selected_equipment,
+                &self.selected_qualities,
+                &self.selected_substats,
+                item_key.as_ref(),
+                item_quality,
+                &item.sub_stats,
+            ) {
+                self.filter_cache.indices.push(index);
+            }
+        }
+        self.filter_cache.valid = true;
+        self.filter_cache.inventory_generation = inventory_generation;
+        self.filter_cache.filter_revision = self.filter_revision;
+        self.filter_cache.source_len = items.len();
+    }
+}
+
+impl DpsApp {
+    pub(crate) fn empty_curtain_contents(&mut self, ui: &mut egui::Ui) {
+        self.kongmu_ui.refresh_filter_cache(
+            &self.state.empty_curtain,
+            self.state.empty_curtain_generation,
+            &self.equipment_catalog,
+        );
+
+        let active_filter_count = self.kongmu_ui.active_filter_count();
+        let mut open_filter = false;
+        let mut clear_filters = false;
+        let mut export = false;
+        inline_controls(ui, |ui| {
+            let filter_label = if active_filter_count == 0 {
+                t("Filter")
+            } else {
+                tf("Filter ({})", &[&active_filter_count.to_string()])
+            };
+            if ui.button(filter_label).clicked() {
+                open_filter = true;
+            }
+            if active_filter_count > 0 && ui.button(t("Clear Filters")).clicked() {
+                clear_filters = true;
+            }
+            let visible = self.kongmu_ui.filter_cache.indices.len().to_string();
+            let total = self.state.empty_curtain.len().to_string();
+            ui.label(inline_text(
+                tf("{} of {} items", &[&visible, &total]),
+                ui.visuals().weak_text_color(),
+            ));
+            if !self.state.empty_curtain.is_empty() {
+                ui.separator();
+                if ui
+                    .button(t("Export for Drive Calculator"))
+                    .on_hover_text(t(
+                        "Save the full inventory as a real_inventory.json for NTE Drive Calculator",
+                    ))
+                    .clicked()
+                {
+                    export = true;
+                }
+            }
+        });
+        if open_filter {
+            self.kongmu_ui.filter_open = true;
+        }
+        if export {
+            let ctx = ui.ctx().clone();
+            self.export_empty_curtain(&ctx);
+        }
+        if clear_filters {
+            self.kongmu_ui.clear_filters();
+            self.kongmu_ui.refresh_filter_cache(
+                &self.state.empty_curtain,
+                self.state.empty_curtain_generation,
+                &self.equipment_catalog,
+            );
+        }
+        ui.add_space(6.0);
+
+        if self.state.empty_curtain.is_empty() {
+            empty_curtain_empty_state(ui, "Waiting for Console equipment data");
+        } else if self.kongmu_ui.filter_cache.indices.is_empty() {
+            empty_curtain_empty_state(ui, "No equipment matches the current filters");
+        } else {
+            draw_empty_curtain_grid(
+                ui,
+                &self.state.empty_curtain,
+                &self.kongmu_ui.filter_cache.indices,
+                &self.equipment_catalog,
+                &self.equipment_textures,
+                self.dark_mode,
+            );
+        }
+
+        if self.kongmu_ui.filter_open {
+            let ctx = ui.ctx().clone();
+            show_empty_curtain_filter_window(
+                &ctx,
+                &self.state.empty_curtain,
+                &self.equipment_catalog,
+                &self.equipment_textures,
+                &mut self.kongmu_ui,
+                self.dark_mode,
+            );
+        }
+    }
+
+    /// Serialize the whole inventory into the `real_inventory.json` schema that
+    /// the third-party NTE Drive Calculator imports, then prompt for a save path.
+    pub(crate) fn export_empty_curtain(&mut self, ctx: &egui::Context) {
+        if self.state.empty_curtain.is_empty() {
+            self.set_last_error_in(ctx, t("No Console equipment to export"), None);
+            return;
+        }
+        let export =
+            build_drive_calculator_inventory(&self.state.empty_curtain, &self.equipment_catalog);
+        let Ok(json) = serde_json::to_string_pretty(&export) else {
+            self.set_last_error_in(ctx, t("Failed to serialize Console equipment"), None);
+            return;
+        };
+        let filter = t("Drive Calculator inventory");
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::EmptyCurtainExport { json },
+            move |owner| {
+                with_owner(
+                    rfd::FileDialog::new()
+                        .add_filter(filter, &["json"])
+                        .set_file_name("real_inventory.json"),
+                    owner,
+                )
+                .save_file()
+            },
+        );
+    }
+
+    pub(crate) fn finish_empty_curtain_export(
+        &mut self,
+        viewport: egui::ViewportId,
+        path: &std::path::Path,
+        json: &str,
+    ) {
+        match atomic_write_text(path, json) {
+            Ok(()) => {
+                self.status = t("Console equipment exported");
+                self.clear_last_error();
+            }
+            Err(error) => self.set_last_error_for(
+                viewport,
+                tf(
+                    "Failed to export Console equipment: {}",
+                    &[&error.to_string()],
+                ),
+                None,
+            ),
+        }
+    }
+}
+
+fn empty_curtain_empty_state(ui: &mut egui::Ui, key: &str) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 120.0),
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+        |ui| {
+            ui.label(RichText::new(t(key)).color(ui.visuals().weak_text_color()));
+        },
+    );
+}
+
+fn draw_empty_curtain_grid(
+    ui: &mut egui::Ui,
+    items: &[EmptyCurtainItem],
+    filtered_indices: &[usize],
+    catalog: &EquipmentCatalog,
+    textures: &HashMap<String, egui::TextureHandle>,
+    dark_mode: bool,
+) {
+    let available_width = ui.available_width();
+    let column_count = |width: f32| {
+        (((width + EQUIPMENT_CARD_GAP) / (EQUIPMENT_CARD_MIN_WIDTH + EQUIPMENT_CARD_GAP)).floor()
+            as usize)
+            .max(1)
+    };
+    // The scroll area reserves this gutter on the right for its bar; fold it out
+    // of the layout width when the grid overflows so the last column never slips
+    // underneath the bar. A short list that doesn't scroll keeps the full width.
+    let scroll = ui.spacing().scroll;
+    let scrollbar_gutter = scroll.bar_width + scroll.bar_inner_margin + scroll.bar_outer_margin;
+    let unscrolled_rows = filtered_indices
+        .len()
+        .div_ceil(column_count(available_width));
+    let content_width =
+        if unscrolled_rows as f32 * EQUIPMENT_CARD_ROW_HEIGHT > ui.available_height() {
+            (available_width - scrollbar_gutter).max(EQUIPMENT_CARD_MIN_WIDTH)
+        } else {
+            available_width
+        };
+    let columns = column_count(content_width);
+    // Stretch each card to fill its share of the row so the grid spans the full
+    // width instead of centering a fixed-width block with wasted side margins.
+    let card_width = ((content_width - EQUIPMENT_CARD_GAP * (columns - 1) as f32) / columns as f32)
+        .min(EQUIPMENT_CARD_MAX_WIDTH);
+    let row_count = filtered_indices.len().div_ceil(columns);
+
+    egui::ScrollArea::vertical()
+        .id_salt("empty_curtain_cards")
+        .max_height(ui.available_height())
+        .show_rows(
+            ui,
+            EQUIPMENT_CARD_ROW_HEIGHT,
+            row_count,
+            |ui, visible_rows| {
+                for row_index in visible_rows {
+                    let first = row_index * columns;
+                    let count = (filtered_indices.len() - first).min(columns);
+                    let (row_rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), EQUIPMENT_CARD_ROW_HEIGHT),
+                        egui::Sense::hover(),
+                    );
+                    let cards_rect = egui::Rect::from_min_size(
+                        row_rect.min,
+                        egui::vec2(row_rect.width(), EQUIPMENT_CARD_HEIGHT),
+                    );
+                    let mut cards = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(cards_rect)
+                            .layout(egui::Layout::left_to_right(egui::Align::Min)),
+                    );
+                    cards.spacing_mut().item_spacing.x = EQUIPMENT_CARD_GAP;
+                    for item_index in filtered_indices[first..first + count].iter().copied() {
+                        draw_empty_curtain_card(
+                            &mut cards,
+                            &items[item_index],
+                            card_width,
+                            catalog,
+                            textures,
+                            dark_mode,
+                        );
+                    }
+                }
+            },
+        );
+}
+
+fn draw_empty_curtain_card(
+    ui: &mut egui::Ui,
+    item: &EmptyCurtainItem,
+    card_width: f32,
+    catalog: &EquipmentCatalog,
+    textures: &HashMap<String, egui::TextureHandle>,
+    dark_mode: bool,
+) -> egui::Response {
+    assert!(
+        item.main_stats.len() + item.sub_stats.len() <= EMPTY_CURTAIN_MAX_STAT_ROWS,
+        "validated Console equipment must fit the shared card layout"
+    );
+    let definition = catalog.items.get(&item.item_id);
+    let language = i18n::current_language();
+    let name = definition.map_or(item.item_id.as_str(), |definition| {
+        definition.name(language)
+    });
+    let texture = definition.and_then(|definition| textures.get(&definition.icon));
+
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(card_width, EQUIPMENT_CARD_HEIGHT),
+        egui::Sense::hover(),
+    );
+    let fill = if response.hovered() {
+        shadcn_card_hover(dark_mode)
+    } else {
+        shadcn_card(dark_mode)
+    };
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(8),
+        fill,
+        Stroke::new(1.0, shadcn_border(dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+    let header_rect = egui::Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.right(), rect.top() + EQUIPMENT_CARD_HEADER_HEIGHT),
+    );
+    ui.painter().rect_filled(
+        header_rect,
+        egui::CornerRadius {
+            nw: 8,
+            ne: 8,
+            sw: 0,
+            se: 0,
+        },
+        if response.hovered() {
+            shadcn_muted(dark_mode)
+        } else {
+            shadcn_card_hover(dark_mode)
+        },
+    );
+    ui.painter().hline(
+        rect.left() + 1.0..=rect.right() - 1.0,
+        header_rect.bottom(),
+        Stroke::new(1.0, shadcn_border(dark_mode)),
+    );
+
+    let icon_rect = egui::Rect::from_min_size(
+        rect.left_top() + egui::vec2(10.0, 10.0),
+        egui::vec2(EQUIPMENT_ICON_SIZE, EQUIPMENT_ICON_SIZE),
+    );
+    draw_equipment_icon(ui, icon_rect, texture, name, dark_mode);
+    paint_equipment_status(ui, rect, item.is_equipped(), item.locked, dark_mode);
+
+    let text_left = icon_rect.right() + 10.0;
+    let text_width = rect.right() - 10.0 - text_left;
+    let name_font = fitted_font(
+        ui,
+        name,
+        egui::FontFamily::Proportional,
+        15.0,
+        10.0,
+        text_width,
+        shadcn_foreground(dark_mode),
+    );
+    let name_rect = egui::Rect::from_min_max(
+        egui::pos2(text_left, rect.top() + 24.0),
+        egui::pos2(rect.right() - 10.0, rect.top() + 42.0),
+    );
+    ui.painter().with_clip_rect(name_rect).text(
+        name_rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        name,
+        name_font,
+        shadcn_foreground(dark_mode),
+    );
+    let level = tf("Lv.{}", &[&item.level.to_string()]);
+    ui.painter().text(
+        egui::pos2(text_left, rect.top() + 49.0),
+        egui::Align2::LEFT_CENTER,
+        level,
+        egui::FontId::proportional(11.5),
+        ui.visuals().weak_text_color(),
+    );
+
+    let stats_top = header_rect.bottom() + 4.0;
+    for (row_index, (stat, main_stat)) in item
+        .main_stats
+        .iter()
+        .map(|stat| (stat, true))
+        .chain(item.sub_stats.iter().map(|stat| (stat, false)))
+        .enumerate()
+    {
+        let row_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                rect.left() + 10.0,
+                stats_top + row_index as f32 * EQUIPMENT_STAT_ROW_HEIGHT,
+            ),
+            egui::pos2(
+                rect.right() - 10.0,
+                stats_top + (row_index + 1) as f32 * EQUIPMENT_STAT_ROW_HEIGHT,
+            ),
+        );
+        if row_index > 0 {
+            ui.painter().hline(
+                row_rect.left()..=row_rect.right(),
+                row_rect.top(),
+                Stroke::new(1.0, shadcn_border(dark_mode).gamma_multiply(0.7)),
+            );
+        }
+        draw_equipment_stat_row(ui, row_rect, stat, main_stat, catalog, dark_mode);
+    }
+
+    let suit = definition
+        .filter(|definition| matches!(definition.kind, EquipmentKind::Core))
+        .and_then(|definition| definition.suit.as_deref())
+        .and_then(|suit_id| catalog.suits.get(suit_id));
+    if let Some(suit) = suit {
+        response.on_hover_ui(|ui| {
+            ui.set_max_width(400.0);
+            ui.spacing_mut().item_spacing.y = 5.0;
+            ui.label(
+                RichText::new(suit.name(i18n::current_language()))
+                    .size(14.0)
+                    .strong(),
+            );
+            ui.separator();
+            for effect in &suit.effects {
+                ui.label(
+                    RichText::new(tf("{}-Piece Set", &[&effect.count.to_string()]))
+                        .size(11.5)
+                        .strong()
+                        .color(theme_accent(ui.visuals().dark_mode)),
+                );
+                ui.label(effect.text(i18n::current_language()));
+            }
+        })
+    } else {
+        response
+    }
+}
+
+fn draw_equipment_stat_row(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    stat: &EquipmentStat,
+    main_stat: bool,
+    catalog: &EquipmentCatalog,
+    dark_mode: bool,
+) {
+    let attribute = catalog.attributes.get(&stat.property);
+    let label = attribute.map_or(stat.property.as_str(), |attribute| {
+        attribute.name(i18n::current_language())
+    });
+    let value = format_equipment_stat_value(
+        stat.value,
+        attribute.is_some_and(|attribute| attribute.percent),
+    );
+    let value_color = shadcn_foreground(dark_mode);
+    let value_font = fitted_font(
+        ui,
+        &value,
+        egui::FontFamily::Monospace,
+        13.0,
+        10.0,
+        rect.width() * 0.4,
+        value_color,
+    );
+    let value_width = ui
+        .painter()
+        .layout_no_wrap(value.clone(), value_font.clone(), value_color)
+        .size()
+        .x;
+    let label_indent = if main_stat { 6.0 } else { 0.0 };
+    let label_width = (rect.width() - value_width - 10.0 - label_indent).max(1.0);
+    let label_color = if main_stat {
+        shadcn_foreground(dark_mode)
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let label_font = fitted_font(
+        ui,
+        label,
+        egui::FontFamily::Proportional,
+        if main_stat { 13.0 } else { 12.5 },
+        9.0,
+        label_width,
+        label_color,
+    );
+    if main_stat {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), rect.center().y - 6.0),
+                egui::pos2(rect.left() + 2.0, rect.center().y + 6.0),
+            ),
+            1.0,
+            theme_accent(dark_mode),
+        );
+    }
+    ui.painter().text(
+        rect.left_center() + egui::vec2(label_indent, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        label_font,
+        label_color,
+    );
+    ui.painter().text(
+        rect.right_center(),
+        egui::Align2::RIGHT_CENTER,
+        value,
+        value_font,
+        value_color,
+    );
+}
+
+fn draw_equipment_icon(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    texture: Option<&egui::TextureHandle>,
+    fallback_name: &str,
+    dark_mode: bool,
+) {
+    ui.painter().rect_filled(rect, 8.0, shadcn_muted(dark_mode));
+    if let Some(texture) = texture {
+        egui::Image::new((texture.id(), rect.size()))
+            .corner_radius(8)
+            .paint_at(ui, rect);
+    } else {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            fallback_name.chars().next().unwrap_or('?'),
+            egui::FontId::proportional(18.0),
+            ui.visuals().weak_text_color(),
+        );
+    }
+    ui.painter().rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(1.0, shadcn_border(dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+}
+
+fn paint_equipment_status(
+    ui: &egui::Ui,
+    card_rect: egui::Rect,
+    equipped: bool,
+    locked: bool,
+    dark_mode: bool,
+) {
+    let mut right = card_rect.right() - 8.0;
+    if locked {
+        let lock_rect = egui::Rect::from_min_size(
+            egui::pos2(right - 15.0, card_rect.top() + 7.0),
+            egui::vec2(15.0, 15.0),
+        );
+        paint_lock_icon(ui.painter(), lock_rect, shadcn_foreground(dark_mode));
+        right = lock_rect.left() - 4.0;
+    }
+    if equipped {
+        let text = t("Equipped");
+        let font = egui::FontId::proportional(10.0);
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(text.clone(), font.clone(), shadcn_foreground(dark_mode))
+            .size()
+            .x;
+        let badge_rect = egui::Rect::from_min_size(
+            egui::pos2(right - text_width - 10.0, card_rect.top() + 6.0),
+            egui::vec2(text_width + 10.0, 17.0),
+        );
+        ui.painter()
+            .rect_filled(badge_rect, 5.0, shadcn_muted(dark_mode));
+        ui.painter().rect_stroke(
+            badge_rect,
+            5.0,
+            Stroke::new(1.0, shadcn_border(dark_mode)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            badge_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            font,
+            shadcn_foreground(dark_mode),
+        );
+    }
+}
+
+fn paint_lock_icon(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 2.0, rect.top() + 7.0),
+        egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
+    );
+    painter.rect_filled(body, 2.0, color.gamma_multiply(0.18));
+    painter.rect_stroke(body, 2.0, Stroke::new(1.2, color), egui::StrokeKind::Inside);
+    let shackle_left = rect.left() + 4.0;
+    let shackle_right = rect.right() - 4.0;
+    let shackle_top = rect.top() + 2.0;
+    let shackle_bottom = body.top() + 1.0;
+    painter.line_segment(
+        [
+            egui::pos2(shackle_left, shackle_bottom),
+            egui::pos2(shackle_left, shackle_top + 2.0),
+        ],
+        Stroke::new(1.2, color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(shackle_left, shackle_top + 2.0),
+            egui::pos2(shackle_left + 2.0, shackle_top),
+        ],
+        Stroke::new(1.2, color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(shackle_left + 2.0, shackle_top),
+            egui::pos2(shackle_right - 2.0, shackle_top),
+        ],
+        Stroke::new(1.2, color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(shackle_right - 2.0, shackle_top),
+            egui::pos2(shackle_right, shackle_top + 2.0),
+        ],
+        Stroke::new(1.2, color),
+    );
+    painter.line_segment(
+        [
+            egui::pos2(shackle_right, shackle_top + 2.0),
+            egui::pos2(shackle_right, shackle_bottom),
+        ],
+        Stroke::new(1.2, color),
+    );
+}
+
+fn fitted_font(
+    ui: &egui::Ui,
+    text: &str,
+    family: egui::FontFamily,
+    preferred_size: f32,
+    minimum_size: f32,
+    max_width: f32,
+    color: Color32,
+) -> egui::FontId {
+    let preferred = egui::FontId::new(preferred_size, family.clone());
+    let width = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), preferred.clone(), color)
+        .size()
+        .x;
+    if width <= max_width || width <= f32::EPSILON {
+        return preferred;
+    }
+    egui::FontId::new(
+        (preferred_size * max_width / width).max(minimum_size),
+        family,
+    )
+}
+
+fn format_equipment_stat_value(value: f32, percent: bool) -> String {
+    let scaled = f64::from(value) * if percent { 100.0 } else { 1.0 };
+    let mut text = format!("{scaled:.2}");
+    while text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if percent {
+        format!("+{text}%")
+    } else {
+        format!("+{text}")
+    }
+}
+
+fn equipment_filter_key(
+    item: &EmptyCurtainItem,
+    catalog: &EquipmentCatalog,
+) -> Option<EquipmentFilterKey> {
+    let definition = catalog.items.get(&item.item_id)?;
+    Some(match definition.kind {
+        EquipmentKind::Module => EquipmentFilterKey::Module(definition.geometry.clone()),
+        EquipmentKind::Core => EquipmentFilterKey::Core(
+            definition
+                .suit
+                .clone()
+                .expect("validated cassette definition must reference a suit"),
+        ),
+    })
+}
+
+fn empty_curtain_filter_matches(
+    selected_equipment: &HashSet<EquipmentFilterKey>,
+    selected_qualities: &HashSet<String>,
+    selected_substats: &HashSet<String>,
+    item_key: Option<&EquipmentFilterKey>,
+    item_quality: Option<&str>,
+    sub_stats: &[EquipmentStat],
+) -> bool {
+    (selected_equipment.is_empty() || item_key.is_some_and(|key| selected_equipment.contains(key)))
+        && (selected_qualities.is_empty()
+            || item_quality.is_some_and(|quality| selected_qualities.contains(quality)))
+        && selected_substats.iter().all(|property| {
+            sub_stats
+                .iter()
+                .any(|stat| stat.property.as_str() == property)
+        })
+}
+
+fn equipment_filter_options(catalog: &EquipmentCatalog) -> Vec<EquipmentFilterOption> {
+    let mut definitions = catalog.items.iter().collect::<Vec<_>>();
+    definitions.sort_by(|left, right| left.0.cmp(right.0));
+    let mut options = BTreeMap::new();
+    for (_, definition) in definitions {
+        let (rank, order, group_id, key, names) = match definition.kind {
+            EquipmentKind::Module => {
+                let grid = definition
+                    .grid
+                    .expect("validated module definition must declare a grid size");
+                (
+                    0_u8,
+                    grid,
+                    definition.geometry.clone(),
+                    EquipmentFilterKey::Module(definition.geometry.clone()),
+                    (
+                        definition.name_zh.clone(),
+                        definition.name_en.clone(),
+                        definition.name_ja.clone(),
+                    ),
+                )
+            }
+            EquipmentKind::Core => {
+                let suit_id = definition
+                    .suit
+                    .as_deref()
+                    .expect("validated cassette definition must reference a suit");
+                let suit = catalog
+                    .suits
+                    .get(suit_id)
+                    .expect("validated cassette suit must exist in the catalog");
+                (
+                    1_u8,
+                    trailing_number(suit_id),
+                    suit_id.to_owned(),
+                    EquipmentFilterKey::Core(suit_id.to_owned()),
+                    (
+                        suit.name_zh.clone(),
+                        suit.name_en.clone(),
+                        suit.name_ja.clone(),
+                    ),
+                )
+            }
+        };
+        options
+            .entry((rank, order, group_id))
+            .or_insert_with(|| EquipmentFilterOption {
+                key,
+                name_zh: names.0,
+                name_en: names.1,
+                name_ja: names.2,
+                icon: definition.icon.clone(),
+            });
+    }
+    options.into_values().collect()
+}
+
+fn trailing_number(value: &str) -> u32 {
+    let digits = value
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    digits
+        .parse()
+        .expect("validated equipment group id must end in a number")
+}
+
+fn show_empty_curtain_filter_window(
+    ctx: &egui::Context,
+    items: &[EmptyCurtainItem],
+    catalog: &EquipmentCatalog,
+    textures: &HashMap<String, egui::TextureHandle>,
+    state: &mut KongmuUiState,
+    dark_mode: bool,
+) {
+    let options = equipment_filter_options(catalog);
+    let mut substat_properties = items
+        .iter()
+        .flat_map(|item| item.sub_stats.iter().map(|stat| stat.property.clone()))
+        .chain(state.selected_substats.iter().cloned())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let language = i18n::current_language();
+    substat_properties.sort_by(|left, right| {
+        catalog.attributes[left]
+            .name(language)
+            .cmp(catalog.attributes[right].name(language))
+            .then_with(|| left.cmp(right))
+    });
+
+    let mut open = state.filter_open;
+    let mut done = false;
+    egui::Window::new(t("Filter Console Equipment"))
+        .id(egui::Id::new("empty_curtain_filter_window"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .show(ctx, |ui| {
+            ui.set_min_width(600.0);
+            egui::ScrollArea::vertical()
+                .id_salt("empty_curtain_filter_options")
+                .max_height((ctx.content_rect().height() - 180.0).max(260.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(t("Drive Modules"))
+                            .size(14.0)
+                            .strong()
+                            .color(shadcn_foreground(dark_mode)),
+                    );
+                    ui.add_space(4.0);
+                    draw_filter_option_group(
+                        ui,
+                        options
+                            .iter()
+                            .filter(|option| matches!(&option.key, EquipmentFilterKey::Module(_))),
+                        textures,
+                        state,
+                        dark_mode,
+                    );
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(t("Cassettes"))
+                            .size(14.0)
+                            .strong()
+                            .color(shadcn_foreground(dark_mode)),
+                    );
+                    ui.add_space(4.0);
+                    draw_filter_option_group(
+                        ui,
+                        options
+                            .iter()
+                            .filter(|option| matches!(&option.key, EquipmentFilterKey::Core(_))),
+                        textures,
+                        state,
+                        dark_mode,
+                    );
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(t("Quality"))
+                            .size(14.0)
+                            .strong()
+                            .color(shadcn_foreground(dark_mode)),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for quality in EQUIPMENT_QUALITIES {
+                            let selected = state.selected_qualities.contains(quality);
+                            let label = t(quality_label_key(quality));
+                            if draw_quality_chip(ui, quality, &label, selected, dark_mode).clicked()
+                            {
+                                state.toggle_quality(quality.to_owned());
+                            }
+                        }
+                    });
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(t("Substats (all selected properties must be present)"))
+                            .size(14.0)
+                            .strong()
+                            .color(shadcn_foreground(dark_mode)),
+                    );
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for property in substat_properties.iter().cloned() {
+                            let selected = state.selected_substats.contains(&property);
+                            let name = catalog.attributes[&property].name(language);
+                            if ui
+                                .add(
+                                    egui::Button::selectable(selected, name)
+                                        .frame_when_inactive(true),
+                                )
+                                .clicked()
+                            {
+                                state.toggle_substat(property);
+                            }
+                        }
+                    });
+                });
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button(t("Clear Filters")).clicked() {
+                    state.clear_filters();
+                }
+                if ui.add(primary_button(t("Done"), dark_mode)).clicked() {
+                    done = true;
+                }
+            });
+        });
+    if done {
+        open = false;
+    }
+    state.filter_open = open;
+}
+
+fn draw_filter_option_group<'a>(
+    ui: &mut egui::Ui,
+    options: impl Iterator<Item = &'a EquipmentFilterOption>,
+    textures: &HashMap<String, egui::TextureHandle>,
+    state: &mut KongmuUiState,
+    dark_mode: bool,
+) {
+    ui.horizontal_wrapped(|ui| {
+        for option in options {
+            let selected = state.selected_equipment.contains(&option.key);
+            if draw_filter_option(ui, option, textures, selected, dark_mode).clicked() {
+                state.toggle_equipment(option.key.clone());
+            }
+        }
+    });
+}
+
+fn draw_filter_option(
+    ui: &mut egui::Ui,
+    option: &EquipmentFilterOption,
+    textures: &HashMap<String, egui::TextureHandle>,
+    selected: bool,
+    dark_mode: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(FILTER_TILE_WIDTH, FILTER_TILE_HEIGHT),
+        egui::Sense::click(),
+    );
+    let fill = if selected {
+        shadcn_muted(dark_mode)
+    } else if response.hovered() {
+        shadcn_card_hover(dark_mode)
+    } else {
+        shadcn_card(dark_mode)
+    };
+    ui.painter().rect(
+        rect,
+        7.0,
+        fill,
+        Stroke::new(
+            if selected { 1.5 } else { 1.0 },
+            if selected {
+                theme_accent(dark_mode)
+            } else {
+                shadcn_border(dark_mode)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let name = match i18n::current_language() {
+        Language::English => &option.name_en,
+        Language::Japanese => &option.name_ja,
+        Language::SimplifiedChinese => &option.name_zh,
+    };
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.top() + 8.0 + FILTER_ICON_SIZE * 0.5),
+        egui::vec2(FILTER_ICON_SIZE, FILTER_ICON_SIZE),
+    );
+    draw_equipment_icon(ui, icon_rect, textures.get(&option.icon), name, dark_mode);
+    let label_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 5.0, icon_rect.bottom() + 5.0),
+        egui::pos2(rect.right() - 5.0, rect.bottom() - 5.0),
+    );
+    let mut label_ui = ui.new_child(egui::UiBuilder::new().max_rect(label_rect).layout(
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+    ));
+    label_ui.add_sized(
+        label_rect.size(),
+        egui::Label::new(
+            RichText::new(name)
+                .size(10.0)
+                .color(shadcn_foreground(dark_mode)),
+        )
+        .wrap()
+        .halign(egui::Align::Center),
+    );
+    response
+}
+
+fn quality_label_key(quality: &str) -> &'static str {
+    match quality {
+        "blue" => "Blue",
+        "purple" => "Purple",
+        "orange" => "Orange",
+        _ => "Unknown",
+    }
+}
+
+fn quality_swatch_color(quality: &str) -> Color32 {
+    match quality {
+        "blue" => Color32::from_rgb(0x3b, 0x82, 0xf6),
+        "purple" => Color32::from_rgb(0xa8, 0x55, 0xf7),
+        "orange" => Color32::from_rgb(0xf5, 0x9e, 0x0b),
+        _ => Color32::GRAY,
+    }
+}
+
+fn draw_quality_chip(
+    ui: &mut egui::Ui,
+    quality: &str,
+    label: &str,
+    selected: bool,
+    dark_mode: bool,
+) -> egui::Response {
+    const DOT: f32 = 11.0;
+    const HEIGHT: f32 = 30.0;
+    let font = egui::FontId::proportional(12.5);
+    let text_color = shadcn_foreground(dark_mode);
+    let text_width = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), text_color)
+        .size()
+        .x;
+    let width = 10.0 + DOT + 7.0 + text_width + 10.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, HEIGHT), egui::Sense::click());
+    let fill = if selected {
+        shadcn_muted(dark_mode)
+    } else if response.hovered() {
+        shadcn_card_hover(dark_mode)
+    } else {
+        shadcn_card(dark_mode)
+    };
+    ui.painter().rect(
+        rect,
+        7.0,
+        fill,
+        Stroke::new(
+            if selected { 1.5 } else { 1.0 },
+            if selected {
+                theme_accent(dark_mode)
+            } else {
+                shadcn_border(dark_mode)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let dot_center = egui::pos2(rect.left() + 10.0 + DOT * 0.5, rect.center().y);
+    ui.painter()
+        .circle_filled(dot_center, DOT * 0.5, quality_swatch_color(quality));
+    ui.painter().circle_stroke(
+        dot_center,
+        DOT * 0.5,
+        Stroke::new(1.0, shadcn_border(dark_mode)),
+    );
+    ui.painter().text(
+        egui::pos2(dot_center.x + DOT * 0.5 + 7.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        font,
+        text_color,
+    );
+    response
+}
+
+/// Build the list of drive/tape records for the Drive Calculator's
+/// `real_inventory.json`. Modules become `drive` pieces (area = grid), cassettes
+/// become `tape` pieces (fixed 15-area). Percent stats are scaled to the display
+/// magnitude that project stores (e.g. 0.30 -> 30.0), and stat/set/shape names are
+/// translated to the exact keys it expects.
+fn build_drive_calculator_inventory(
+    items: &[EmptyCurtainItem],
+    catalog: &EquipmentCatalog,
+) -> Vec<serde_json::Value> {
+    let mut records = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(definition) = catalog.items.get(&item.item_id) else {
+            continue;
+        };
+        let uid = format!("{}_{}", item.id.solt, item.id.serial);
+        let quality = calculator_quality(&definition.quality);
+        let sub_stats = calculator_stat_map(&item.sub_stats, catalog);
+        let record = match definition.kind {
+            EquipmentKind::Module => {
+                let area = definition.grid.unwrap_or(1);
+                serde_json::json!({
+                    "uid": uid,
+                    "item_type": "drive",
+                    "quality": quality,
+                    "area": area,
+                    "shape_id": module_shape_id(&definition.geometry, area),
+                    "set_name": "未知套装",
+                    "main_stats": calculator_stat_map(&item.main_stats, catalog),
+                    "sub_stats": sub_stats,
+                })
+            }
+            EquipmentKind::Core => {
+                let set_name = definition
+                    .suit
+                    .as_deref()
+                    .and_then(|suit| catalog.suits.get(suit))
+                    .map(|suit| calculator_set_name(&suit.name_zh))
+                    .unwrap_or_else(|| "未知套装".to_owned());
+                let main_stat = item
+                    .main_stats
+                    .first()
+                    .and_then(|stat| calculator_stat_key(&stat.property, catalog))
+                    .unwrap_or_else(|| "未知主词条".to_owned());
+                serde_json::json!({
+                    "uid": uid,
+                    "item_type": "tape",
+                    "quality": quality,
+                    "area": 15,
+                    "shape_id": "TAPE_15",
+                    "set_name": set_name,
+                    "main_stats": main_stat,
+                    "sub_stats": sub_stats,
+                })
+            }
+        };
+        records.push(record);
+    }
+    records
+}
+
+fn calculator_quality(quality: &str) -> &'static str {
+    match quality {
+        "blue" => "Blue",
+        "purple" => "Purple",
+        // The calculator labels the top rarity "Gold" where this app uses "orange".
+        _ => "Gold",
+    }
+}
+
+/// Map this app's geometry id to the Drive Calculator's fixed shape id. Bars map
+/// exactly; the four right-angle (`ZhiJiao`) and two Z (`Z3`/`Z4`) variants map to
+/// its L/Trap orientations 1:1. An unknown id falls back to the horizontal bar of
+/// the matching area so the piece still occupies the right number of cells.
+fn module_shape_id(geometry: &str, area: u32) -> String {
+    let mapped = match geometry {
+        "Hen2" => "H_2",
+        "Hen3" => "H_3",
+        "Hen4" => "H_4",
+        "Shu2" => "V_2",
+        "Shu3" => "V_3",
+        "Shu4" => "V_4",
+        "Z3" => "Trap_4_H",
+        "Z4" => "Trap_4_V",
+        "ZhiJiao1" => "L_3_TL",
+        "ZhiJiao2" => "L_3_TR",
+        "ZhiJiao3" => "L_3_BL",
+        "ZhiJiao4" => "L_3_BR",
+        _ => match area {
+            4 => "H_4",
+            3 => "H_3",
+            _ => "H_2",
+        },
+    };
+    mapped.to_owned()
+}
+
+/// Strip the decorative 「」 brackets to match the calculator's set-name keys, and
+/// correct the one set this app spells differently.
+fn calculator_set_name(name_zh: &str) -> String {
+    let stripped = name_zh.trim_start_matches('「').trim_end_matches('」');
+    match stripped {
+        "缇娅的夜间酒馆" => "缇娜的夜间酒馆".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
+fn calculator_stat_map(
+    stats: &[EquipmentStat],
+    catalog: &EquipmentCatalog,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut map = serde_json::Map::new();
+    for stat in stats {
+        let Some(key) = calculator_stat_key(&stat.property, catalog) else {
+            continue;
+        };
+        let percent = catalog
+            .attributes
+            .get(&stat.property)
+            .is_some_and(|attribute| attribute.percent);
+        map.insert(
+            key,
+            serde_json::json!(calculator_stat_value(stat.value, percent)),
+        );
+    }
+    map
+}
+
+/// Scale to the calculator's stored magnitude (percent stats as whole numbers,
+/// e.g. 0.125 -> 12.5) and round off f32 noise to two decimals.
+fn calculator_stat_value(value: f32, percent: bool) -> f64 {
+    let scaled = f64::from(value) * if percent { 100.0 } else { 1.0 };
+    (scaled * 100.0).round() / 100.0
+}
+
+/// Translate this app's internal attribute id to the exact Chinese stat key the
+/// Drive Calculator scores on. An unmapped attribute falls back to its localized
+/// name so nothing is silently dropped.
+fn calculator_stat_key(property: &str, catalog: &EquipmentCatalog) -> Option<String> {
+    let mapped = match property {
+        "AtkBase" | "AtkAdd" => "攻击力",
+        "AtkUp" => "攻击力%",
+        "HPMaxBase" | "HPMaxAdd" => "生命值",
+        "HPMaxUp" => "生命值%",
+        "DefBase" | "DefAdd" => "防御力",
+        "DefUp" => "防御力%",
+        "CritBase" | "CritAdd" => "暴击率%",
+        "CritDamageBase" | "CritDamageAdd" => "暴击伤害%",
+        "DamageUpGeneralBase" | "DamageUpGeneralAdd" => "伤害增加%",
+        "Mag" | "MagBase" | "MagAdd" | "MagUp" => "环合强度",
+        "UnbalIntensity" | "UnbalIntensityBase" | "UnbalIntensityAdd" | "UnbalIntensityUp" => {
+            "倾陷强度"
+        }
+        "HealUp" => "治疗加成",
+        "DamageUpCosmosBase" => "光属性异能伤害增强%",
+        "DamageUpNatureBase" => "灵属性异能伤害增强%",
+        "DamageUpIncantationBase" => "咒属性异能伤害增强%",
+        "DamageUpChaosBase" => "暗属性异能伤害增强%",
+        "DamageUpPsycheBase" => "魂属性异能伤害增强%",
+        "DamageUpLakshanaBase" => "相属性异能伤害增强%",
+        "DamageUpPsychicallyBase" => "心灵伤害增强%",
+        // Drive main-stat reaction bonuses the calculator keeps but doesn't score.
+        "ReactionGeneralDamageUp" => "环合伤害增强",
+        "ReactionGuangLingDamageUp" => "创生伤害增强",
+        "ReactionZhouAnDamageUp" => "浊燃伤害增强",
+        "ReactionAnHunDamageUp" => "黯星伤害增强",
+        _ => {
+            return catalog
+                .attributes
+                .get(property)
+                .map(|attribute| attribute.name(Language::SimplifiedChinese).to_owned());
+        }
+    };
+    Some(mapped.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stat(property: &str) -> EquipmentStat {
+        EquipmentStat {
+            property: property.to_owned(),
+            value: 1.0,
+        }
+    }
+
+    fn stat_v(property: &str, value: f32) -> EquipmentStat {
+        EquipmentStat {
+            property: property.to_owned(),
+            value,
+        }
+    }
+
+    #[test]
+    fn quality_maps_orange_to_gold() {
+        assert_eq!(calculator_quality("blue"), "Blue");
+        assert_eq!(calculator_quality("purple"), "Purple");
+        assert_eq!(calculator_quality("orange"), "Gold");
+    }
+
+    #[test]
+    fn module_shape_ids_map_by_geometry() {
+        assert_eq!(module_shape_id("Hen4", 4), "H_4");
+        assert_eq!(module_shape_id("Shu2", 2), "V_2");
+        assert_eq!(module_shape_id("Z3", 4), "Trap_4_H");
+        assert_eq!(module_shape_id("ZhiJiao1", 3), "L_3_TL");
+        // Unknown geometry falls back to the horizontal bar of its area.
+        assert_eq!(module_shape_id("Mystery", 3), "H_3");
+    }
+
+    #[test]
+    fn set_name_strips_brackets_and_corrects_thea() {
+        assert_eq!(calculator_set_name("「迪亚波罗斯」"), "迪亚波罗斯");
+        assert_eq!(calculator_set_name("「缇娅的夜间酒馆」"), "缇娜的夜间酒馆");
+    }
+
+    #[test]
+    fn stat_value_scales_percent_to_display_magnitude() {
+        assert_eq!(calculator_stat_value(0.125, true), 12.5);
+        assert_eq!(calculator_stat_value(0.30, true), 30.0);
+        assert_eq!(calculator_stat_value(80.0, false), 80.0);
+    }
+
+    fn attr(name_zh: &str, percent: bool) -> crate::engine::parser::EquipmentAttributeDefinition {
+        crate::engine::parser::EquipmentAttributeDefinition {
+            name_zh: name_zh.to_owned(),
+            name_en: String::new(),
+            name_ja: String::new(),
+            percent,
+        }
+    }
+
+    fn item_def(
+        kind: EquipmentKind,
+        quality: &str,
+        geometry: &str,
+        grid: Option<u32>,
+        suit: Option<&str>,
+    ) -> crate::engine::parser::EquipmentItemDefinition {
+        crate::engine::parser::EquipmentItemDefinition {
+            kind,
+            name_zh: String::new(),
+            name_en: String::new(),
+            name_ja: String::new(),
+            quality: quality.to_owned(),
+            geometry: geometry.to_owned(),
+            grid,
+            suit: suit.map(str::to_owned),
+            icon: String::new(),
+            max_level: 20,
+            main_count: 2,
+            sub_count: 4,
+        }
+    }
+
+    fn item(
+        id: u32,
+        item_id: &str,
+        main: Vec<EquipmentStat>,
+        sub: Vec<EquipmentStat>,
+    ) -> EmptyCurtainItem {
+        EmptyCurtainItem {
+            id: crate::engine::model::HtItemNetId {
+                solt: id,
+                serial: id + 1,
+            },
+            item_id: item_id.to_owned(),
+            level: 20,
+            main_stats: main,
+            sub_stats: sub,
+            locked: false,
+            character_net_id: None,
+        }
+    }
+
+    #[test]
+    fn inventory_export_maps_drive_and_tape_records() {
+        let mut catalog = EquipmentCatalog::default();
+        catalog
+            .attributes
+            .insert("AtkAdd".to_owned(), attr("攻击力", false));
+        catalog
+            .attributes
+            .insert("HPMaxAdd".to_owned(), attr("生命值", false));
+        catalog
+            .attributes
+            .insert("CritBase".to_owned(), attr("暴击率", true));
+        catalog.attributes.insert(
+            "DamageUpIncantationBase".to_owned(),
+            attr("咒属性异能伤害增强", true),
+        );
+        catalog.items.insert(
+            "mod1".to_owned(),
+            item_def(EquipmentKind::Module, "orange", "ZhiJiao1", Some(3), None),
+        );
+        catalog.items.insert(
+            "core1".to_owned(),
+            item_def(EquipmentKind::Core, "purple", "Core", None, Some("Suit1")),
+        );
+        catalog.suits.insert(
+            "Suit1".to_owned(),
+            crate::engine::parser::EquipmentSuitDefinition {
+                name_zh: "「迪亚波罗斯」".to_owned(),
+                name_en: String::new(),
+                name_ja: String::new(),
+                effects: Vec::new(),
+            },
+        );
+
+        let items = vec![
+            item(
+                10,
+                "mod1",
+                vec![stat_v("AtkAdd", 84.0), stat_v("HPMaxAdd", 1120.0)],
+                vec![stat_v("CritBase", 0.1)],
+            ),
+            item(
+                20,
+                "core1",
+                vec![stat_v("DamageUpIncantationBase", 0.075)],
+                vec![stat_v("AtkAdd", 80.0)],
+            ),
+        ];
+        let out = build_drive_calculator_inventory(&items, &catalog);
+        assert_eq!(out.len(), 2);
+
+        let drive = &out[0];
+        assert_eq!(drive["item_type"], "drive");
+        assert_eq!(drive["quality"], "Gold");
+        assert_eq!(drive["area"].as_u64(), Some(3));
+        assert_eq!(drive["shape_id"], "L_3_TL");
+        assert_eq!(drive["set_name"], "未知套装");
+        assert_eq!(drive["uid"], "10_11");
+        assert_eq!(drive["main_stats"]["攻击力"].as_f64(), Some(84.0));
+        assert_eq!(drive["main_stats"]["生命值"].as_f64(), Some(1120.0));
+        assert_eq!(drive["sub_stats"]["暴击率%"].as_f64(), Some(10.0));
+
+        let tape = &out[1];
+        assert_eq!(tape["item_type"], "tape");
+        assert_eq!(tape["quality"], "Purple");
+        assert_eq!(tape["area"].as_u64(), Some(15));
+        assert_eq!(tape["shape_id"], "TAPE_15");
+        assert_eq!(tape["set_name"], "迪亚波罗斯");
+        assert_eq!(tape["main_stats"], "咒属性异能伤害增强%");
+        assert_eq!(tape["sub_stats"]["攻击力"].as_f64(), Some(80.0));
+    }
+
+    #[test]
+    fn substat_filter_requires_every_selected_property() {
+        let selected = HashSet::from(["CritRate".to_owned(), "CritDamage".to_owned()]);
+        assert!(empty_curtain_filter_matches(
+            &HashSet::new(),
+            &HashSet::new(),
+            &selected,
+            None,
+            None,
+            &[stat("CritRate"), stat("CritDamage"), stat("Attack")],
+        ));
+        assert!(!empty_curtain_filter_matches(
+            &HashSet::new(),
+            &HashSet::new(),
+            &selected,
+            None,
+            None,
+            &[stat("CritRate"), stat("Attack")],
+        ));
+    }
+
+    #[test]
+    fn equipment_options_are_or_and_cross_dimension_is_and() {
+        let module = EquipmentFilterKey::Module("Hen2".to_owned());
+        let selected_equipment =
+            HashSet::from([module.clone(), EquipmentFilterKey::Core("Suit1".to_owned())]);
+        let selected_substats = HashSet::from(["CritRate".to_owned()]);
+        assert!(empty_curtain_filter_matches(
+            &selected_equipment,
+            &HashSet::new(),
+            &selected_substats,
+            Some(&module),
+            None,
+            &[stat("CritRate")],
+        ));
+        assert!(!empty_curtain_filter_matches(
+            &selected_equipment,
+            &HashSet::new(),
+            &selected_substats,
+            Some(&module),
+            None,
+            &[stat("Attack")],
+        ));
+        assert!(!empty_curtain_filter_matches(
+            &selected_equipment,
+            &HashSet::new(),
+            &selected_substats,
+            Some(&EquipmentFilterKey::Module("Shu2".to_owned())),
+            None,
+            &[stat("CritRate")],
+        ));
+    }
+
+    #[test]
+    fn quality_filter_is_or_within_and_across_dimensions() {
+        let qualities = HashSet::from(["orange".to_owned(), "purple".to_owned()]);
+        // OR within the quality dimension: either selected color matches.
+        assert!(empty_curtain_filter_matches(
+            &HashSet::new(),
+            &qualities,
+            &HashSet::new(),
+            None,
+            Some("orange"),
+            &[],
+        ));
+        // A color outside the selected set is filtered out.
+        assert!(!empty_curtain_filter_matches(
+            &HashSet::new(),
+            &qualities,
+            &HashSet::new(),
+            None,
+            Some("blue"),
+            &[],
+        ));
+        // AND across dimensions: color matches but a required substat is absent.
+        assert!(!empty_curtain_filter_matches(
+            &HashSet::new(),
+            &qualities,
+            &HashSet::from(["CritRate".to_owned()]),
+            None,
+            Some("orange"),
+            &[stat("Attack")],
+        ));
+    }
+
+    #[test]
+    fn stat_value_format_scales_percent_and_trims_zeroes() {
+        assert_eq!(format_equipment_stat_value(0.038, true), "+3.8%");
+        assert_eq!(format_equipment_stat_value(840.0, false), "+840");
+        assert_eq!(format_equipment_stat_value(24.5, false), "+24.5");
+    }
+}

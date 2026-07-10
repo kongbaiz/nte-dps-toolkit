@@ -32,7 +32,10 @@ use crate::engine::model::{
     TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE, summarize_combat_segments,
     summarize_hit_directions,
 };
-use crate::engine::parser::{CHARACTER_DATA_PATH, find_data_file, load_characters};
+use crate::engine::parser::{
+    CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file, load_characters,
+    load_equipment_catalog,
+};
 use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{HotkeyEvent, HotkeyHandle};
 use crate::platform::network::{GameNetwork, detect_game_device, detect_game_network};
@@ -135,6 +138,7 @@ pub(crate) enum FileDialogPurpose {
     TeamDpsImportAll,
     TeamDpsImportLine { upper: bool },
     TeamDpsExport { json: String },
+    EmptyCurtainExport { json: String },
     CaptureInfoExport,
     RawCaptureExport,
 }
@@ -188,6 +192,7 @@ enum ConsoleTab {
     Settings,
     Timeline,
     Skills,
+    EmptyCurtain,
     History,
     Characters,
     EncryptedIni,
@@ -779,6 +784,7 @@ enum TextureLoad {
     DamageDigits(HashMap<String, Vec<egui::TextureHandle>>),
     Reactions(HashMap<u8, Vec<egui::TextureHandle>>),
     Monsters(HashMap<String, egui::TextureHandle>),
+    Equipment(HashMap<String, egui::TextureHandle>),
 }
 
 /// Result of the startup capture-environment probe (Npcap device list + the
@@ -801,6 +807,9 @@ pub struct DpsApp {
     monster_textures: HashMap<String, egui::TextureHandle>,
     damage_digit_textures: HashMap<String, Vec<egui::TextureHandle>>,
     reaction_textures: HashMap<u8, Vec<egui::TextureHandle>>,
+    equipment_catalog: Arc<EquipmentCatalog>,
+    equipment_textures: HashMap<String, egui::TextureHandle>,
+    kongmu_ui: KongmuUiState,
     state: CombatState,
     selected_abyss_half: AbyssHalf,
     abyss_compact_mode: bool,
@@ -942,6 +951,7 @@ mod editor;
 mod history_ui;
 mod hit_detail;
 mod hud;
+mod kongmu;
 mod lifecycle;
 mod main_view;
 mod resources;
@@ -955,6 +965,7 @@ pub(crate) use editor::*;
 pub(crate) use history_ui::*;
 pub(crate) use hit_detail::*;
 pub(crate) use hud::*;
+pub(crate) use kongmu::*;
 pub(crate) use resources::*;
 pub(crate) use theme::*;
 pub(crate) use timeline::*;

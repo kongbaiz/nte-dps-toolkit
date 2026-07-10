@@ -25,22 +25,27 @@ use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, EngineEvent, Hit, HitDamageCorrection, HitFollowUp,
-    PacketDebug, TimeStopEvent,
+    AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainItem, EngineEvent, Hit, HitDamageCorrection,
+    HitFollowUp, HtItemNetId, PacketDebug, TimeStopEvent,
 };
 use crate::engine::parser::{
-    ABILITY_TIPS_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedEquipmentSlot,
-    ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry,
-    classify_attack_type, classify_attack_type_from_description,
-    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    find_final_tower_character_evidence, load_ability_tip_names, load_gameplay_effect_mapping,
-    load_gameplay_effect_skills, load_ultra_time_stops, matches_shifted_bytes_at,
-    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
+    ABILITY_TIPS_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, GAMEPLAY_EFFECT_MAPPING_PATH,
+    GameplayEffectSkill, ParsedEquipmentSlot, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH,
+    ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry, classify_attack_type,
+    classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
+    find_declared_character_evidence, find_final_tower_character_evidence, load_ability_tip_names,
+    load_equipment_catalog, load_gameplay_effect_mapping, load_gameplay_effect_skills,
+    load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_items,
     parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
+    validate_empty_curtain_snapshot,
 };
 use crate::storage::i18n;
 
-use crate::engine::protocol::{TransportPacket, parse_single_bunch, parse_transport_packet};
+use crate::engine::protocol::{
+    SequencedPacket, SingleBunch, TransportPacket, parse_inventory_bunches, parse_single_bunch,
+    parse_transport_packet,
+};
 
 const PCAP_ERRBUF_SIZE: usize = 256;
 const MIN_READABLE_TEXT_LEN: usize = 4;
@@ -747,10 +752,12 @@ fn should_keep_debug_packet(
     declared_ids: &[u32],
     parsed_hits: usize,
     parsed_equipment_slots: usize,
+    inventory_bunch: bool,
     decoded_text: &str,
 ) -> bool {
     if parsed_hits > 0
         || parsed_equipment_slots > 0
+        || inventory_bunch
         || !declared_ids.is_empty()
         || decoded_text != UNREADABLE_PROTOCOL_TEXT
     {
@@ -1541,6 +1548,252 @@ impl ServerDamageCalibrationTracker {
     }
 }
 
+const MAX_INVENTORY_CONNECTIONS: usize = 16;
+const MAX_INVENTORY_FRAGMENTS_PER_CONNECTION: usize = 4096;
+const MAX_INVENTORY_STREAM_BITS: usize = 16 * 1024 * 1024;
+const MAX_INVENTORY_ITEMS: usize = 4096;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct InventoryConnectionKey {
+    source: String,
+    destination: String,
+}
+
+impl InventoryConnectionKey {
+    fn new(source: String, destination: String) -> Self {
+        Self {
+            source,
+            destination,
+        }
+    }
+}
+
+struct InventoryBitPayload {
+    data: Vec<u8>,
+    bit_len: usize,
+}
+
+#[derive(Default)]
+struct InventoryConnectionState {
+    known_channels: HashSet<u16>,
+    fragments: HashMap<(u16, u16), SingleBunch>,
+    fragment_order: VecDeque<(u16, u16)>,
+}
+
+impl InventoryConnectionState {
+    fn push_bunches(&mut self, bunches: Vec<SingleBunch>) -> Vec<InventoryBitPayload> {
+        let mut added = false;
+        for bunch in bunches {
+            self.known_channels.insert(bunch.prefix);
+            let key = (bunch.prefix, bunch.sequence);
+            if let Some(existing) = self.fragments.get(&key) {
+                if existing == &bunch {
+                    continue;
+                }
+                self.fragment_order.retain(|stored| *stored != key);
+            }
+            while self.fragments.len() >= MAX_INVENTORY_FRAGMENTS_PER_CONNECTION {
+                let Some(oldest) = self.fragment_order.pop_front() else {
+                    break;
+                };
+                self.fragments.remove(&oldest);
+            }
+            self.fragment_order.push_back(key);
+            self.fragments.insert(key, bunch);
+            added = true;
+        }
+        if !added {
+            return Vec::new();
+        }
+        self.take_completed_streams()
+    }
+
+    fn take_completed_streams(&mut self) -> Vec<InventoryBitPayload> {
+        let mut starts = self
+            .fragments
+            .iter()
+            .filter_map(|(key, bunch)| matches!(bunch.partial_flags, 0x09 | 0x0d).then_some(*key))
+            .collect::<Vec<_>>();
+        starts.sort_unstable();
+
+        let mut completed = Vec::new();
+        let mut consumed = HashSet::new();
+        for start @ (channel, initial_sequence) in starts {
+            let Some(initial) = self.fragments.get(&start) else {
+                continue;
+            };
+            if initial.partial_flags == 0x0d {
+                completed.push(InventoryBitPayload {
+                    data: initial.data.clone(),
+                    bit_len: initial.data_bit_len,
+                });
+                consumed.insert(start);
+                continue;
+            }
+
+            let mut data = Vec::new();
+            let mut bit_len = 0;
+            let mut sequence = initial_sequence;
+            let mut is_complete = false;
+            let mut chain_keys = Vec::new();
+            for index in 0..1024 {
+                let key = (channel, sequence);
+                let Some(fragment) = self.fragments.get(&key) else {
+                    break;
+                };
+                let valid_flag = if index == 0 {
+                    fragment.partial_flags == 0x09
+                } else {
+                    matches!(fragment.partial_flags, 0x08 | 0x0c)
+                };
+                if !valid_flag
+                    || append_inventory_bits(
+                        &mut data,
+                        &mut bit_len,
+                        &fragment.data,
+                        fragment.data_bit_len,
+                    )
+                    .is_none()
+                {
+                    break;
+                }
+                chain_keys.push(key);
+                if fragment.partial_flags == 0x0c {
+                    is_complete = true;
+                    break;
+                }
+                sequence = (sequence + 1) & 0x03ff;
+            }
+            if is_complete {
+                completed.push(InventoryBitPayload { data, bit_len });
+                consumed.extend(chain_keys);
+            }
+        }
+        for key in &consumed {
+            self.fragments.remove(key);
+        }
+        self.fragment_order.retain(|key| !consumed.contains(key));
+        completed
+    }
+}
+
+fn append_inventory_bits(
+    destination: &mut Vec<u8>,
+    destination_bit_len: &mut usize,
+    source: &[u8],
+    source_bit_len: usize,
+) -> Option<()> {
+    if source_bit_len > source.len().checked_mul(8)? {
+        return None;
+    }
+    let new_bit_len = destination_bit_len.checked_add(source_bit_len)?;
+    if new_bit_len > MAX_INVENTORY_STREAM_BITS {
+        return None;
+    }
+    destination.resize(new_bit_len.div_ceil(8), 0);
+    for index in 0..source_bit_len {
+        let bit = (source[index / 8] >> (index % 8)) & 1;
+        let target = *destination_bit_len + index;
+        destination[target / 8] |= bit << (target % 8);
+    }
+    *destination_bit_len = new_bit_len;
+    Some(())
+}
+
+#[derive(Default)]
+struct InventoryPacketResult {
+    recognized: bool,
+    snapshot: Option<Vec<EmptyCurtainItem>>,
+}
+
+struct EmptyCurtainDecoder {
+    catalog: EquipmentCatalog,
+    connections: HashMap<InventoryConnectionKey, InventoryConnectionState>,
+    connection_order: VecDeque<InventoryConnectionKey>,
+    active_connection: Option<InventoryConnectionKey>,
+    items: HashMap<HtItemNetId, EmptyCurtainItem>,
+}
+
+impl EmptyCurtainDecoder {
+    fn new(catalog: EquipmentCatalog) -> Self {
+        Self {
+            catalog,
+            connections: HashMap::new(),
+            connection_order: VecDeque::new(),
+            active_connection: None,
+            items: HashMap::new(),
+        }
+    }
+
+    fn process_packet(
+        &mut self,
+        connection: InventoryConnectionKey,
+        packet: &SequencedPacket,
+    ) -> InventoryPacketResult {
+        if !self.connections.contains_key(&connection) {
+            while self.connections.len() >= MAX_INVENTORY_CONNECTIONS {
+                let Some(oldest) = self.connection_order.pop_front() else {
+                    break;
+                };
+                self.connections.remove(&oldest);
+            }
+            self.connection_order.push_back(connection.clone());
+            self.connections
+                .insert(connection.clone(), InventoryConnectionState::default());
+        }
+
+        let streams = {
+            let state = self
+                .connections
+                .get_mut(&connection)
+                .expect("new or existing inventory connection must be present");
+            let known_channels = state.known_channels.iter().copied().collect::<Vec<_>>();
+            let bunches = parse_inventory_bunches(packet, &known_channels);
+            if bunches.is_empty() {
+                return InventoryPacketResult::default();
+            }
+            state.push_bunches(bunches)
+        };
+
+        let mut changed = false;
+        for stream in streams {
+            let parsed = parse_empty_curtain_items(&stream.data, stream.bit_len, &self.catalog);
+            if parsed.is_empty() {
+                continue;
+            }
+            if self.active_connection.as_ref() != Some(&connection) {
+                self.active_connection = Some(connection.clone());
+                self.items.clear();
+                changed = true;
+            }
+            for item in parsed {
+                if self.items.get(&item.id) != Some(&item) {
+                    if !self.items.contains_key(&item.id) && self.items.len() >= MAX_INVENTORY_ITEMS
+                    {
+                        continue;
+                    }
+                    self.items.insert(item.id, item);
+                    changed = true;
+                }
+            }
+        }
+        let snapshot = changed.then(|| {
+            let mut items = self.items.values().cloned().collect::<Vec<_>>();
+            items.sort_by(|left, right| {
+                left.item_id
+                    .cmp(&right.item_id)
+                    .then_with(|| left.id.solt.cmp(&right.id.solt))
+                    .then_with(|| left.id.serial.cmp(&right.id.serial))
+            });
+            items
+        });
+        InventoryPacketResult {
+            recognized: true,
+            snapshot,
+        }
+    }
+}
+
 struct PacketDecoder {
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
@@ -1555,6 +1808,7 @@ struct PacketDecoder {
     ultra_time_stop: UltraTimeStopTracker,
     pending_ambiguous_hits: Vec<Hit>,
     recent_confirmed_hits: Vec<Hit>,
+    empty_curtain: EmptyCurtainDecoder,
     resource_warnings: Vec<String>,
 }
 
@@ -1588,6 +1842,11 @@ impl Default for PacketDecoder {
         let ability_tip_names = load_resource(ABILITY_TIPS_PATH, &mut resource_warnings, |path| {
             load_ability_tip_names(path, ui_language)
         });
+        let equipment_catalog = load_resource(
+            EQUIPMENT_CATALOG_PATH,
+            &mut resource_warnings,
+            load_equipment_catalog,
+        );
 
         Self {
             session_characters: HashMap::new(),
@@ -1603,6 +1862,7 @@ impl Default for PacketDecoder {
             ultra_time_stop: UltraTimeStopTracker::default(),
             pending_ambiguous_hits: Vec::new(),
             recent_confirmed_hits: Vec::new(),
+            empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
             resource_warnings,
         }
     }
@@ -2338,6 +2598,23 @@ impl PacketDecoder {
             Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
             _ => None,
         };
+        let inventory_result = if !outgoing {
+            match &transport_packet {
+                Some(TransportPacket::Sequenced(packet)) => self.empty_curtain.process_packet(
+                    InventoryConnectionKey::new(
+                        format!("{src}:{src_port}"),
+                        format!("{dst}:{dst_port}"),
+                    ),
+                    packet,
+                ),
+                _ => InventoryPacketResult::default(),
+            }
+        } else {
+            InventoryPacketResult::default()
+        };
+        if let Some(snapshot) = inventory_result.snapshot {
+            let _ = sender.send(EngineEvent::EmptyCurtain(Box::new(snapshot)));
+        }
         let mut equipment_slots = Vec::new();
         if !outgoing {
             append_unique_equipment_slots(&mut equipment_slots, parse_equipment_slots(payload));
@@ -2379,6 +2656,7 @@ impl PacketDecoder {
                 &ids,
                 accepted,
                 equipment_slots.len(),
+                inventory_result.recognized,
                 &decoded_text,
             )
         {
@@ -2837,6 +3115,8 @@ struct CaptureExport {
     hits: Vec<ExportHit>,
     #[serde(default)]
     packets: Vec<ExportPacket>,
+    #[serde(default)]
+    empty_curtain: Vec<EmptyCurtainItem>,
 }
 
 #[derive(Deserialize)]
@@ -2922,10 +3202,34 @@ pub fn import_capture_json(
             let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
             let mut document = parse_capture_export(&text)?;
             drop(text);
+            let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
             let ultra_time_stops = find_data_file(Path::new(ULTRA_TIME_STOP_DATA_PATH))
                 .and_then(|path| load_ultra_time_stops(&path).ok())
                 .unwrap_or_default();
             let mut ultra_time_stop = UltraTimeStopTracker::default();
+            let equipment_catalog = match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
+                Some(path) => match load_equipment_catalog(&path) {
+                    Ok(catalog) => catalog,
+                    Err(error) if saved_empty_curtain.is_empty() => {
+                        eprintln!(
+                            "Failed to load Console equipment data for JSON replay: {error:#}"
+                        );
+                        EquipmentCatalog::default()
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "Failed to load Console equipment data for JSON replay: {error:#}"
+                        );
+                        return Err("Console equipment data is unavailable".to_owned());
+                    }
+                },
+                None if saved_empty_curtain.is_empty() => EquipmentCatalog::default(),
+                None => return Err("Console equipment data is unavailable".to_owned()),
+            };
+            if !validate_empty_curtain_snapshot(&saved_empty_curtain, &equipment_catalog) {
+                return Err("invalid Console equipment snapshot".to_owned());
+            }
+            let mut empty_curtain = EmptyCurtainDecoder::new(equipment_catalog);
             let hit_count = document.hits.len();
             let mut packet_count = 0;
             document
@@ -2949,8 +3253,13 @@ pub fn import_capture_json(
                 };
                 if take_packet {
                     let packet = packets.next().expect("peeked packet must exist");
-                    if send_export_packet(packet, &sender, &ultra_time_stops, &mut ultra_time_stop)?
-                    {
+                    if send_export_packet(
+                        packet,
+                        &sender,
+                        &ultra_time_stops,
+                        &mut ultra_time_stop,
+                        &mut empty_curtain,
+                    )? {
                         packet_count += 1;
                     }
                 } else {
@@ -2967,6 +3276,11 @@ pub fn import_capture_json(
                     }
                     sender.send(event).map_err(|error| error.to_string())?;
                 }
+            }
+            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
+                sender
+                    .send(EngineEvent::EmptyCurtain(Box::new(saved_empty_curtain)))
+                    .map_err(|error| error.to_string())?;
             }
             Ok((hit_count, packet_count))
         })();
@@ -2990,6 +3304,7 @@ fn send_export_packet(
     sender: &Sender<EngineEvent>,
     ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     ultra_time_stop: &mut UltraTimeStopTracker,
+    empty_curtain: &mut EmptyCurtainDecoder,
 ) -> Result<bool, String> {
     let mut declared_ids = parse_export_ids(&packet.declared_ids);
     let payload = if packet.payload_hex.trim().is_empty() {
@@ -3020,11 +3335,28 @@ fn send_export_packet(
             .map_err(|error| error.to_string())?;
     }
     let equipment_slots = parse_equipment_slots(&payload);
+    let inventory_result = if !packet.direction.eq_ignore_ascii_case("C2S") {
+        match parse_transport_packet(&payload) {
+            Some(TransportPacket::Sequenced(transport)) => empty_curtain.process_packet(
+                InventoryConnectionKey::new(packet.source.clone(), packet.destination.clone()),
+                &transport,
+            ),
+            _ => InventoryPacketResult::default(),
+        }
+    } else {
+        InventoryPacketResult::default()
+    };
+    if let Some(snapshot) = inventory_result.snapshot {
+        sender
+            .send(EngineEvent::EmptyCurtain(Box::new(snapshot)))
+            .map_err(|error| error.to_string())?;
+    }
     if !should_keep_debug_packet(
         &payload,
         &declared_ids,
         packet.parsed_hits,
         equipment_slots.len(),
+        inventory_result.recognized,
         &decoded_text,
     ) {
         return Ok(false);
@@ -3145,6 +3477,55 @@ mod tests {
     use crossbeam_channel::unbounded;
 
     use crate::engine::parser::{CHARACTER_DATA_PATH, UltraTimeStopCooldown, load_characters};
+
+    fn inventory_bunch(sequence: u16, partial_flags: u8, data: u8) -> SingleBunch {
+        SingleBunch {
+            prefix: 7,
+            sequence,
+            descriptor: 0xcc,
+            partial_flags,
+            data_bit_len: 8,
+            data: vec![data],
+        }
+    }
+
+    #[test]
+    fn inventory_reassembly_replaces_stale_fragments_after_sequence_wrap() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(vec![
+                    inventory_bunch(1023, 0x09, 0xa1),
+                    inventory_bunch(1, 0x0c, 0xa3),
+                ])
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(vec![
+            inventory_bunch(1023, 0x09, 0xb1),
+            inventory_bunch(0, 0x08, 0xb2),
+            inventory_bunch(1, 0x0c, 0xb3),
+        ]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3]);
+        assert_eq!(completed[0].bit_len, 24);
+    }
+
+    #[test]
+    fn capture_export_defaults_and_preserves_empty_curtain_snapshot() {
+        let legacy = parse_capture_export(r#"{"hits":[],"packets":[]}"#)
+            .expect("legacy capture export should remain compatible");
+        assert!(legacy.empty_curtain.is_empty());
+
+        let current = parse_capture_export(
+            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true}]}"#,
+        )
+        .expect("current capture export should preserve Console equipment");
+        assert_eq!(current.empty_curtain.len(), 1);
+        assert_eq!(current.empty_curtain[0].id.solt, 1);
+        assert!(current.empty_curtain[0].locked);
+    }
 
     #[test]
     fn follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve() {
@@ -3508,6 +3889,7 @@ mod tests {
     #[test]
     fn send_export_packet_rejects_invalid_hex_payload() {
         let (sender, receiver) = unbounded();
+        let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let packet = ExportPacket {
             timestamp_unix: 1.0,
             source: "127.0.0.1:1234".to_owned(),
@@ -3526,7 +3908,8 @@ mod tests {
                 packet,
                 &sender,
                 &HashMap::new(),
-                &mut UltraTimeStopTracker::default()
+                &mut UltraTimeStopTracker::default(),
+                &mut empty_curtain,
             )
             .unwrap_err()
             .contains("payload_hex 无效")
@@ -3537,6 +3920,7 @@ mod tests {
     #[test]
     fn send_export_packet_adds_final_tower_ids_from_payload() {
         let (sender, receiver) = unbounded();
+        let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let payload = b"FCharacterForNet....ft_character_1076".to_vec();
         let packet = ExportPacket {
             timestamp_unix: 1.0,
@@ -3557,7 +3941,8 @@ mod tests {
                 packet,
                 &sender,
                 &HashMap::new(),
-                &mut UltraTimeStopTracker::default()
+                &mut UltraTimeStopTracker::default(),
+                &mut empty_curtain,
             )
             .is_ok()
         );
@@ -3574,6 +3959,7 @@ mod tests {
     #[test]
     fn send_export_packet_accepts_empty_payload_hex() {
         let (sender, receiver) = unbounded();
+        let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let packet = ExportPacket {
             timestamp_unix: 1.0,
             source: "127.0.0.1:1234".to_owned(),
@@ -3592,7 +3978,8 @@ mod tests {
                 packet,
                 &sender,
                 &HashMap::new(),
-                &mut UltraTimeStopTracker::default()
+                &mut UltraTimeStopTracker::default(),
+                &mut empty_curtain,
             )
             .is_ok()
         );
@@ -3609,6 +3996,7 @@ mod tests {
     #[test]
     fn send_export_packet_preserves_exported_decoded_text() {
         let (sender, receiver) = unbounded();
+        let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let packet = ExportPacket {
             timestamp_unix: 1.0,
             source: "127.0.0.1:1234".to_owned(),
@@ -3628,7 +4016,8 @@ mod tests {
                 packet,
                 &sender,
                 &HashMap::new(),
-                &mut UltraTimeStopTracker::default()
+                &mut UltraTimeStopTracker::default(),
+                &mut empty_curtain,
             )
             .is_ok()
         );
@@ -3656,6 +4045,7 @@ mod tests {
             },
         )]);
         let mut tracker = UltraTimeStopTracker::default();
+        let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let start_packet = ExportPacket {
             timestamp_unix: 10.0,
             source: "127.0.0.1:1234".to_owned(),
@@ -3669,7 +4059,16 @@ mod tests {
             payload_hex: String::new(),
             decoded_text: "CoolDown.Player.UltraSkill.F".to_owned(),
         };
-        assert!(send_export_packet(start_packet, &sender, &table, &mut tracker).unwrap());
+        assert!(
+            send_export_packet(
+                start_packet,
+                &sender,
+                &table,
+                &mut tracker,
+                &mut empty_curtain,
+            )
+            .unwrap()
+        );
         assert!(matches!(
             receiver
                 .try_recv()
@@ -3697,7 +4096,16 @@ mod tests {
             payload_hex: "00000000".to_owned(),
             decoded_text: String::new(),
         };
-        assert!(!send_export_packet(ignored_packet, &sender, &table, &mut tracker).unwrap());
+        assert!(
+            !send_export_packet(
+                ignored_packet,
+                &sender,
+                &table,
+                &mut tracker,
+                &mut empty_curtain,
+            )
+            .unwrap()
+        );
         assert!(matches!(
             receiver.try_recv().expect("pending end should be emitted"),
             EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
@@ -4969,6 +5377,55 @@ mod tests {
         assert_eq!(
             resolve_damage_name("GE_Test_Skill1_Damage", &skills, &HashMap::new()),
             None
+        );
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE to a local pcapng path for capture diagnostics"]
+    fn diagnose_empty_curtain_inventory() {
+        let path = std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set");
+        let expected = std::env::var("NTE_EXPECT_EQUIPMENT").ok().map(|value| {
+            value
+                .parse::<usize>()
+                .expect("NTE_EXPECT_EQUIPMENT must be a number")
+        });
+        let characters = Arc::new(
+            load_characters(Path::new(CHARACTER_DATA_PATH))
+                .expect("character resource table should load"),
+        );
+        let (sender, receiver) = unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = import_pcapng(
+            PathBuf::from(&path),
+            characters,
+            None,
+            true,
+            true,
+            sender,
+            stop,
+        );
+        handle.join().expect("pcapng import thread should finish");
+
+        let mut latest = Vec::new();
+        let mut errors = Vec::new();
+        for event in receiver.try_iter() {
+            match event {
+                EngineEvent::EmptyCurtain(items) => latest = *items,
+                EngineEvent::Error(error) => errors.push(error),
+                _ => {}
+            }
+        }
+        assert!(errors.is_empty(), "capture import errors: {errors:?}");
+        assert!(
+            !latest.is_empty(),
+            "no Console equipment parsed from {path}"
+        );
+        if let Some(expected) = expected {
+            assert_eq!(latest.len(), expected);
+        }
+        println!(
+            "parsed {} Console equipment items from {path}",
+            latest.len()
         );
     }
 

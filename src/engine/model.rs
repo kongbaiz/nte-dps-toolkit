@@ -170,6 +170,44 @@ pub struct PacketDebug {
     pub decoded_text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HtItemNetId {
+    pub solt: u32,
+    pub serial: u32,
+}
+
+impl HtItemNetId {
+    pub fn is_zero(self) -> bool {
+        self.solt == 0 && self.serial == 0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EquipmentStat {
+    pub property: String,
+    pub value: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EmptyCurtainItem {
+    pub id: HtItemNetId,
+    pub item_id: String,
+    pub level: u32,
+    #[serde(default)]
+    pub main_stats: Vec<EquipmentStat>,
+    #[serde(default)]
+    pub sub_stats: Vec<EquipmentStat>,
+    pub locked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_net_id: Option<HtItemNetId>,
+}
+
+impl EmptyCurtainItem {
+    pub fn is_equipped(&self) -> bool {
+        self.character_net_id.is_some()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CharacterStats {
     pub char_id: u32,
@@ -1398,6 +1436,8 @@ pub struct CombatState {
     pub total_damage_taken: f64,
     pub abyss: AbyssRunState,
     pub damage_correction_count: u64,
+    pub empty_curtain: Vec<EmptyCurtainItem>,
+    pub empty_curtain_generation: u64,
     time_stop: TimeStopTracker,
 }
 
@@ -1469,6 +1509,11 @@ impl CombatState {
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
         }
+    }
+
+    pub fn replace_empty_curtain(&mut self, items: Vec<EmptyCurtainItem>) {
+        self.empty_curtain = items;
+        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
     }
 
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
@@ -1907,6 +1952,7 @@ pub enum EngineEvent {
     Packet(Box<PacketDebug>),
     Abyss(AbyssEvent),
     TimeStop(TimeStopEvent),
+    EmptyCurtain(Box<Vec<EmptyCurtainItem>>),
     Status(String),
     Warning(String),
     Error(String),

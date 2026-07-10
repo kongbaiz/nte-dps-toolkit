@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::engine::model::{CharacterInfo, Hit};
+use crate::engine::model::{CharacterInfo, EmptyCurtainItem, EquipmentStat, Hit, HtItemNetId};
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
 
@@ -21,6 +21,12 @@ const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
 const EQUIPMENT_SLOT_STATE_ANCHOR: &[u8] = b"\x06\0\0\0State\0";
 const MAX_TAGGED_PROPERTY_STRING_LENGTH: i32 = 256;
+const MAX_INVENTORY_NAME_LENGTH: usize = 128;
+const MAX_INVENTORY_EXTRA_JSON_LENGTH: usize = 16 * 1024;
+const MAX_INVENTORY_STAT_VALUE: f32 = 1_000_000.0;
+const MAX_EMPTY_CURTAIN_ITEMS: usize = 4096;
+
+pub const EMPTY_CURTAIN_MAX_STAT_ROWS: usize = 6;
 
 pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
@@ -28,6 +34,131 @@ pub const SKILL_DAMAGE_DATA_PATH: &str = "res/data/skills/skill_damage.json";
 pub const ULTRA_TIME_STOP_DATA_PATH: &str = "res/data/skills/ultra_time_stop.json";
 pub const WOODEN_DAMAGE_DESCRIPTIONS_PATH: &str = "res/data/skills/wooden_damage_descriptions.json";
 pub const ABILITY_TIPS_PATH: &str = "res/data/skills/ability_tips.json";
+pub const EQUIPMENT_CATALOG_PATH: &str = "res/data/equipment/equipment.json";
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EquipmentKind {
+    Module,
+    Core,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentItemDefinition {
+    pub kind: EquipmentKind,
+    pub name_zh: String,
+    pub name_en: String,
+    pub name_ja: String,
+    pub quality: String,
+    pub geometry: String,
+    pub grid: Option<u32>,
+    pub suit: Option<String>,
+    pub icon: String,
+    pub max_level: u32,
+    pub main_count: usize,
+    pub sub_count: usize,
+}
+
+impl EquipmentItemDefinition {
+    pub fn name(&self, language: Language) -> &str {
+        match language {
+            Language::English => &self.name_en,
+            Language::Japanese => &self.name_ja,
+            Language::SimplifiedChinese => &self.name_zh,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentAttributeDefinition {
+    pub name_zh: String,
+    pub name_en: String,
+    pub name_ja: String,
+    pub percent: bool,
+}
+
+impl EquipmentAttributeDefinition {
+    pub fn name(&self, language: Language) -> &str {
+        match language {
+            Language::English => &self.name_en,
+            Language::Japanese => &self.name_ja,
+            Language::SimplifiedChinese => &self.name_zh,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentSuitEffect {
+    pub count: u32,
+    pub text_zh: String,
+    pub text_en: String,
+    pub text_ja: String,
+}
+
+impl EquipmentSuitEffect {
+    pub fn text(&self, language: Language) -> &str {
+        match language {
+            Language::English => &self.text_en,
+            Language::Japanese => &self.text_ja,
+            Language::SimplifiedChinese => &self.text_zh,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentSuitDefinition {
+    pub name_zh: String,
+    pub name_en: String,
+    pub name_ja: String,
+    pub effects: Vec<EquipmentSuitEffect>,
+}
+
+impl EquipmentSuitDefinition {
+    pub fn name(&self, language: Language) -> &str {
+        match language {
+            Language::English => &self.name_en,
+            Language::Japanese => &self.name_ja,
+            Language::SimplifiedChinese => &self.name_zh,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct EquipmentCatalog {
+    version: u32,
+    #[serde(default, rename = "sources")]
+    _sources: serde_json::Value,
+    pub items: HashMap<String, EquipmentItemDefinition>,
+    pub attributes: HashMap<String, EquipmentAttributeDefinition>,
+    pub curves: HashMap<String, Vec<[f32; 2]>>,
+    pub suits: HashMap<String, EquipmentSuitDefinition>,
+}
+
+impl EquipmentCatalog {
+    pub fn main_stat_value(
+        &self,
+        item: &EquipmentItemDefinition,
+        property: &str,
+        level: u32,
+    ) -> Option<f32> {
+        if level > item.max_level {
+            return None;
+        }
+        let quality = match item.quality.as_str() {
+            "blue" => "ITEM_QUALITY_BLUE",
+            "purple" => "ITEM_QUALITY_PURPLE",
+            "orange" => "ITEM_QUALITY_ORANGE",
+            _ => return None,
+        };
+        let curve_key = match item.kind {
+            EquipmentKind::Module => {
+                format!("{property}_{}_{quality}", item.grid?)
+            }
+            EquipmentKind::Core => format!("{property}_Core_{quality}"),
+        };
+        interpolate_curve(self.curves.get(&curve_key)?, level as f32)
+    }
+}
 
 #[derive(Deserialize)]
 struct CharacterDocument {
@@ -142,6 +273,195 @@ pub fn load_characters(path: &Path) -> Result<HashMap<u32, CharacterInfo>> {
         .into_iter()
         .filter_map(|(key, value)| key.parse::<u32>().ok().map(|id| (id, value)))
         .collect())
+}
+
+pub fn load_equipment_catalog(path: &Path) -> Result<EquipmentCatalog> {
+    let text = read_resource_text(path)
+        .with_context(|| format!("Failed to read Console equipment data {}", path.display()))?;
+    let catalog: EquipmentCatalog =
+        serde_json::from_str(&text).context("Invalid Console equipment JSON")?;
+    validate_equipment_catalog(&catalog)?;
+    Ok(catalog)
+}
+
+fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
+    ensure!(
+        catalog.version == 1,
+        "Unsupported Console equipment data version"
+    );
+    ensure!(
+        !catalog.items.is_empty(),
+        "Console equipment data has no items"
+    );
+    ensure!(
+        !catalog.attributes.is_empty(),
+        "Console equipment data has no attributes"
+    );
+    ensure!(
+        !catalog.curves.is_empty(),
+        "Console equipment data has no main-stat curves"
+    );
+    let max_level = catalog
+        .items
+        .values()
+        .map(|item| item.max_level)
+        .max()
+        .unwrap_or(0) as f32;
+
+    for (item_id, item) in &catalog.items {
+        ensure!(
+            !item_id.is_empty(),
+            "Console equipment data has an empty item_id"
+        );
+        ensure!(
+            !item.name_zh.is_empty() && !item.name_en.is_empty() && !item.name_ja.is_empty(),
+            "Console equipment item {item_id} is missing localized names"
+        );
+        ensure!(
+            matches!(item.quality.as_str(), "blue" | "purple" | "orange"),
+            "Console equipment item {item_id} has an invalid quality"
+        );
+        ensure!(
+            !item.geometry.is_empty(),
+            "Console equipment item {item_id} is missing geometry"
+        );
+        ensure!(
+            item.icon.starts_with("res/images/") && item.icon.ends_with(".png"),
+            "Console equipment item {item_id} has an invalid icon path"
+        );
+        ensure!(
+            item.max_level <= 100,
+            "Console equipment item {item_id} has an invalid level cap"
+        );
+        ensure!(
+            (1..=8).contains(&item.main_count),
+            "Console equipment item {item_id} has an invalid main-stat count"
+        );
+        ensure!(
+            item.sub_count <= 16,
+            "Console equipment item {item_id} has an invalid substat count"
+        );
+        ensure!(
+            item.main_count + item.sub_count <= EMPTY_CURTAIN_MAX_STAT_ROWS,
+            "Console equipment item {item_id} has too many stat rows"
+        );
+        match item.kind {
+            EquipmentKind::Module => ensure!(
+                item.grid.is_some_and(|grid| grid > 0),
+                "Console module {item_id} is missing its grid size"
+            ),
+            EquipmentKind::Core => {
+                ensure!(
+                    item.grid.is_none(),
+                    "Console cassette {item_id} has a grid size"
+                );
+                ensure!(
+                    item.suit.is_some(),
+                    "Console cassette {item_id} is missing a suit"
+                );
+            }
+        }
+        if let Some(suit) = &item.suit {
+            ensure!(
+                catalog.suits.contains_key(suit),
+                "Console equipment item {item_id} references unknown suit {suit}"
+            );
+        }
+    }
+
+    for (property, attribute) in &catalog.attributes {
+        ensure!(
+            !property.is_empty(),
+            "Console equipment data has an empty property ID"
+        );
+        ensure!(
+            !attribute.name_zh.is_empty()
+                && !attribute.name_en.is_empty()
+                && !attribute.name_ja.is_empty(),
+            "Console equipment property {property} is missing localized names"
+        );
+    }
+
+    for (curve_id, points) in &catalog.curves {
+        ensure!(
+            !points.is_empty(),
+            "Console equipment curve {curve_id} has no points"
+        );
+        let mut previous_time = None;
+        for [time, value] in points {
+            ensure!(
+                time.is_finite() && value.is_finite(),
+                "Console equipment curve {curve_id} contains a non-finite value"
+            );
+            ensure!(
+                *time >= 0.0,
+                "Console equipment curve {curve_id} contains a negative level"
+            );
+            if let Some(previous) = previous_time {
+                ensure!(
+                    *time > previous,
+                    "Console equipment curve {curve_id} levels are not strictly increasing"
+                );
+            }
+            previous_time = Some(*time);
+        }
+        ensure!(
+            points.first().is_some_and(|point| point[0] == 0.0)
+                && points.last().is_some_and(|point| point[0] >= max_level),
+            "Console equipment curve {curve_id} does not cover the supported level range"
+        );
+    }
+
+    for (suit_id, suit) in &catalog.suits {
+        let suffix_len = suit_id
+            .as_bytes()
+            .iter()
+            .rev()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        ensure!(
+            suffix_len > 0 && suit_id[suit_id.len() - suffix_len..].parse::<u32>().is_ok(),
+            "Console equipment suit {suit_id} has an invalid numeric suffix"
+        );
+        ensure!(
+            !suit.name_zh.is_empty() && !suit.name_en.is_empty() && !suit.name_ja.is_empty(),
+            "Console equipment suit {suit_id} is missing localized names"
+        );
+        ensure!(
+            !suit.effects.is_empty(),
+            "Console equipment suit {suit_id} has no effects"
+        );
+        for effect in &suit.effects {
+            ensure!(
+                effect.count > 0,
+                "Console equipment suit {suit_id} has an invalid piece count"
+            );
+            ensure!(
+                !effect.text_zh.is_empty()
+                    && !effect.text_en.is_empty()
+                    && !effect.text_ja.is_empty(),
+                "Console equipment suit {suit_id} is missing effect text"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn interpolate_curve(points: &[[f32; 2]], time: f32) -> Option<f32> {
+    let first = *points.first()?;
+    if time <= first[0] {
+        return Some(first[1]);
+    }
+    for pair in points.windows(2) {
+        let [left, right] = pair else {
+            continue;
+        };
+        if time <= right[0] {
+            let progress = (time - left[0]) / (right[0] - left[0]);
+            return Some(left[1] + (right[1] - left[1]) * progress);
+        }
+    }
+    points.last().map(|point| point[1])
 }
 
 pub fn load_gameplay_effect_mapping(path: &Path) -> Result<HashMap<u32, String>> {
@@ -777,6 +1097,296 @@ pub fn parse_equipment_slots(data: &[u8]) -> Vec<ParsedEquipmentSlot> {
         }
     }
     slots
+}
+
+#[derive(Clone, Copy)]
+struct InventoryBitReader<'a> {
+    data: &'a [u8],
+    bit_len: usize,
+    cursor: usize,
+}
+
+impl<'a> InventoryBitReader<'a> {
+    fn at(data: &'a [u8], bit_len: usize, cursor: usize) -> Option<Self> {
+        if bit_len > data.len().checked_mul(8)? || cursor > bit_len {
+            return None;
+        }
+        Some(Self {
+            data,
+            bit_len,
+            cursor,
+        })
+    }
+
+    fn read_bits(&mut self, count: usize) -> Option<u64> {
+        if count > 64 || self.cursor.checked_add(count)? > self.bit_len {
+            return None;
+        }
+        let mut value = 0_u64;
+        for index in 0..count {
+            let source = self.cursor + index;
+            value |= u64::from((self.data[source / 8] >> (source % 8)) & 1) << index;
+        }
+        self.cursor += count;
+        Some(value)
+    }
+
+    fn read_bool(&mut self) -> Option<bool> {
+        Some(self.read_bits(1)? != 0)
+    }
+
+    fn read_u8(&mut self) -> Option<u8> {
+        Some(self.read_bits(8)? as u8)
+    }
+
+    fn read_u16(&mut self) -> Option<u16> {
+        Some(self.read_bits(16)? as u16)
+    }
+
+    fn read_u32(&mut self) -> Option<u32> {
+        Some(self.read_bits(32)? as u32)
+    }
+
+    fn read_i32(&mut self) -> Option<i32> {
+        Some(self.read_u32()? as i32)
+    }
+
+    fn read_i64(&mut self) -> Option<i64> {
+        Some(self.read_bits(64)? as i64)
+    }
+
+    fn read_f32(&mut self) -> Option<f32> {
+        Some(f32::from_bits(self.read_u32()?))
+    }
+
+    fn read_bytes(&mut self, length: usize) -> Option<Vec<u8>> {
+        let bit_count = length.checked_mul(8)?;
+        self.cursor.checked_add(bit_count)?;
+        if self.cursor + bit_count > self.bit_len {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(length);
+        for _ in 0..length {
+            bytes.push(self.read_u8()?);
+        }
+        Some(bytes)
+    }
+
+    fn read_fstring(&mut self, max_units: usize) -> Option<String> {
+        let length = self.read_i32()?;
+        if length == 0 {
+            return Some(String::new());
+        }
+        if length > 0 {
+            let length = usize::try_from(length).ok()?;
+            if length > max_units {
+                return None;
+            }
+            let bytes = self.read_bytes(length)?;
+            if bytes.last() != Some(&0) || bytes[..length - 1].contains(&0) {
+                return None;
+            }
+            return String::from_utf8(bytes[..length - 1].to_vec()).ok();
+        }
+
+        let unit_count = usize::try_from(length.checked_neg()?).ok()?;
+        if unit_count > max_units {
+            return None;
+        }
+        let bytes = self.read_bytes(unit_count.checked_mul(2)?)?;
+        let mut units = Vec::with_capacity(unit_count);
+        for pair in bytes.chunks_exact(2) {
+            units.push(u16::from_le_bytes([pair[0], pair[1]]));
+        }
+        if units.last() != Some(&0) || units[..unit_count - 1].contains(&0) {
+            return None;
+        }
+        String::from_utf16(&units[..unit_count - 1]).ok()
+    }
+
+    fn read_dynamic_name(&mut self) -> Option<String> {
+        if self.read_bool()? {
+            return None;
+        }
+        let value = self.read_fstring(MAX_INVENTORY_NAME_LENGTH)?;
+        if value.is_empty() || self.read_u32()? != 0 {
+            return None;
+        }
+        Some(value)
+    }
+
+    fn read_item_net_id(&mut self) -> Option<HtItemNetId> {
+        Some(HtItemNetId {
+            solt: self.read_u32()?,
+            serial: self.read_u32()?,
+        })
+    }
+}
+
+fn valid_item_net_id(id: HtItemNetId) -> bool {
+    id.solt != 0 && id.serial != 0 && id.solt != u32::MAX && id.serial != u32::MAX
+}
+
+fn parse_empty_curtain_item_at(
+    mut reader: InventoryBitReader<'_>,
+    catalog: &EquipmentCatalog,
+) -> Option<(EmptyCurtainItem, usize)> {
+    let item_id = reader.read_dynamic_name()?;
+    let definition = catalog.items.get(&item_id)?;
+    let id = reader.read_item_net_id()?;
+    if !valid_item_net_id(id) || reader.read_i64()? != 1 {
+        return None;
+    }
+
+    let _durable = reader.read_i32()?;
+    let create_time = reader.read_i64()?;
+    if create_time < 0
+        || reader.read_u16()? != 0
+        || reader.read_u16()? != 0
+        || reader.read_u16()? != 1
+    {
+        return None;
+    }
+
+    let level = reader.read_i32()?;
+    let level = u32::try_from(level).ok()?;
+    if level > definition.max_level {
+        return None;
+    }
+
+    let character_id = reader.read_item_net_id()?;
+    let character_net_id = if character_id.is_zero() {
+        None
+    } else if valid_item_net_id(character_id) {
+        Some(character_id)
+    } else {
+        return None;
+    };
+    if reader.read_i32()? < 0 {
+        return None;
+    }
+    let locked = reader.read_bool()?;
+    let _discarded = reader.read_bool()?;
+    if reader.read_u16()? != 0 || usize::from(reader.read_u16()?) != definition.main_count {
+        return None;
+    }
+
+    let mut main_stats = Vec::with_capacity(definition.main_count);
+    for _ in 0..definition.main_count {
+        let property = reader.read_dynamic_name()?;
+        if !catalog.attributes.contains_key(&property) {
+            return None;
+        }
+        let value = catalog.main_stat_value(definition, &property, level)?;
+        if !value.is_finite() {
+            return None;
+        }
+        main_stats.push(EquipmentStat { property, value });
+    }
+
+    if usize::from(reader.read_u16()?) != definition.sub_count {
+        return None;
+    }
+    let mut sub_stats = Vec::with_capacity(definition.sub_count);
+    for _ in 0..definition.sub_count {
+        let property = reader.read_dynamic_name()?;
+        if !catalog.attributes.contains_key(&property) {
+            return None;
+        }
+        let value = reader.read_f32()?;
+        if !value.is_finite() || value <= 0.0 || value > MAX_INVENTORY_STAT_VALUE {
+            return None;
+        }
+        sub_stats.push(EquipmentStat { property, value });
+    }
+
+    let shortcut_timer = reader.read_f32()?;
+    let _temporary = reader.read_bool()?;
+    let equipped_tail = reader.read_i32()?;
+    if !shortcut_timer.is_finite() || shortcut_timer < 0.0 || !matches!(equipped_tail, 0 | 1) {
+        return None;
+    }
+    reader.read_fstring(MAX_INVENTORY_EXTRA_JSON_LENGTH)?;
+
+    Some((
+        EmptyCurtainItem {
+            id,
+            item_id,
+            level,
+            main_stats,
+            sub_stats,
+            locked,
+            character_net_id,
+        },
+        reader.cursor,
+    ))
+}
+
+pub fn parse_empty_curtain_items(
+    data: &[u8],
+    data_bit_len: usize,
+    catalog: &EquipmentCatalog,
+) -> Vec<EmptyCurtainItem> {
+    if data_bit_len > data.len().saturating_mul(8) {
+        return Vec::new();
+    }
+    let mut items = HashMap::new();
+    let mut bit_offset = 0;
+    while bit_offset < data_bit_len {
+        let Some(reader) = InventoryBitReader::at(data, data_bit_len, bit_offset) else {
+            break;
+        };
+        if let Some((item, next_offset)) = parse_empty_curtain_item_at(reader, catalog) {
+            if !items.contains_key(&item.id) && items.len() >= MAX_EMPTY_CURTAIN_ITEMS {
+                break;
+            }
+            items.insert(item.id, item);
+            bit_offset = next_offset.max(bit_offset + 1);
+        } else {
+            bit_offset += 1;
+        }
+    }
+    let mut items: Vec<_> = items.into_values().collect();
+    items.sort_by_key(|item| (item.id.solt, item.id.serial));
+    items
+}
+
+pub fn validate_empty_curtain_snapshot(
+    items: &[EmptyCurtainItem],
+    catalog: &EquipmentCatalog,
+) -> bool {
+    if items.len() > MAX_EMPTY_CURTAIN_ITEMS {
+        return false;
+    }
+    let mut ids = HashSet::with_capacity(items.len());
+    items.iter().all(|item| {
+        let Some(definition) = catalog.items.get(&item.item_id) else {
+            return false;
+        };
+        if !valid_item_net_id(item.id)
+            || !ids.insert(item.id)
+            || item.level > definition.max_level
+            || item.main_stats.len() != definition.main_count
+            || item.sub_stats.len() != definition.sub_count
+            || item.main_stats.len() + item.sub_stats.len() > EMPTY_CURTAIN_MAX_STAT_ROWS
+            || item
+                .character_net_id
+                .is_some_and(|character_id| !valid_item_net_id(character_id))
+        {
+            return false;
+        }
+
+        item.main_stats.iter().all(|stat| {
+            catalog.attributes.contains_key(&stat.property)
+                && catalog.main_stat_value(definition, &stat.property, item.level)
+                    == Some(stat.value)
+        }) && item.sub_stats.iter().all(|stat| {
+            catalog.attributes.contains_key(&stat.property)
+                && stat.value.is_finite()
+                && stat.value > 0.0
+                && stat.value <= MAX_INVENTORY_STAT_VALUE
+        })
+    })
 }
 
 fn parse_damage_record_at(
@@ -1846,5 +2456,244 @@ mod character_tests {
         let payload = b"FCharacterForNet....ft_character_10760".to_vec();
 
         assert!(find_final_tower_character_evidence(&payload).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod empty_curtain_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct BitWriter {
+        data: Vec<u8>,
+        bit_len: usize,
+    }
+
+    impl BitWriter {
+        fn push_bits(&mut self, value: u64, count: usize) {
+            let new_bit_len = self.bit_len + count;
+            self.data.resize(new_bit_len.div_ceil(8), 0);
+            for index in 0..count {
+                let target = self.bit_len + index;
+                self.data[target / 8] |= (((value >> index) & 1) as u8) << (target % 8);
+            }
+            self.bit_len = new_bit_len;
+        }
+
+        fn push_bool(&mut self, value: bool) {
+            self.push_bits(u64::from(value), 1);
+        }
+
+        fn push_u16(&mut self, value: u16) {
+            self.push_bits(u64::from(value), 16);
+        }
+
+        fn push_u32(&mut self, value: u32) {
+            self.push_bits(u64::from(value), 32);
+        }
+
+        fn push_i32(&mut self, value: i32) {
+            self.push_u32(value as u32);
+        }
+
+        fn push_i64(&mut self, value: i64) {
+            self.push_bits(value as u64, 64);
+        }
+
+        fn push_f32(&mut self, value: f32) {
+            self.push_u32(value.to_bits());
+        }
+
+        fn push_fstring(&mut self, value: &str) {
+            self.push_i32((value.len() + 1) as i32);
+            for byte in value.bytes() {
+                self.push_bits(u64::from(byte), 8);
+            }
+            self.push_bits(0, 8);
+        }
+
+        fn push_dynamic_name(&mut self, value: &str) {
+            self.push_bool(false);
+            self.push_fstring(value);
+            self.push_u32(0);
+        }
+    }
+
+    fn push_module_record(
+        writer: &mut BitWriter,
+        id: HtItemNetId,
+        character_id: HtItemNetId,
+        locked: bool,
+        equipped_tail: i32,
+        equipment_count: u16,
+    ) {
+        writer.push_dynamic_name("cell3_style1_1_Orange");
+        writer.push_u32(id.solt);
+        writer.push_u32(id.serial);
+        writer.push_i64(1);
+        writer.push_i32(0);
+        writer.push_i64(1);
+        writer.push_u16(0);
+        writer.push_u16(0);
+        writer.push_u16(equipment_count);
+        writer.push_i32(20);
+        writer.push_u32(character_id.solt);
+        writer.push_u32(character_id.serial);
+        writer.push_i32(0);
+        writer.push_bool(locked);
+        writer.push_bool(false);
+        writer.push_u16(0);
+        writer.push_u16(2);
+        writer.push_dynamic_name("AtkAdd");
+        writer.push_dynamic_name("HPMaxAdd");
+        writer.push_u16(4);
+        for (property, value) in [
+            ("DefUp", 0.0525),
+            ("AtkAdd", 24.0),
+            ("CritDamageBase", 0.06),
+            ("CritBase", 0.03),
+        ] {
+            writer.push_dynamic_name(property);
+            writer.push_f32(value);
+        }
+        writer.push_f32(0.0);
+        writer.push_bool(false);
+        writer.push_i32(equipped_tail);
+        writer.push_i32(0);
+    }
+
+    fn catalog() -> EquipmentCatalog {
+        load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load")
+    }
+
+    #[test]
+    fn loads_equipment_catalog_and_interpolates_main_stats() {
+        let catalog = catalog();
+        let item = &catalog.items["cell3_style1_1_Orange"];
+
+        assert_eq!(catalog.items.len(), 74);
+        assert_eq!(catalog.attributes.len(), 53);
+        assert_eq!(catalog.curves.len(), 74);
+        assert_eq!(catalog.suits.len(), 12);
+        assert_eq!(catalog.main_stat_value(item, "AtkAdd", 20), Some(63.0));
+        assert_eq!(catalog.main_stat_value(item, "HPMaxAdd", 20), Some(840.0));
+    }
+
+    #[test]
+    fn equipment_catalog_rejects_card_overflow_and_non_numeric_suit_ids() {
+        let mut too_many_rows = catalog();
+        let item = too_many_rows
+            .items
+            .values_mut()
+            .next()
+            .expect("bundled equipment catalog must contain items");
+        item.main_count = EMPTY_CURTAIN_MAX_STAT_ROWS;
+        item.sub_count = 1;
+        assert!(validate_equipment_catalog(&too_many_rows).is_err());
+
+        let mut non_numeric_suit = catalog();
+        let suit = non_numeric_suit
+            .suits
+            .remove("Suit1")
+            .expect("bundled equipment catalog must contain Suit1");
+        non_numeric_suit.suits.insert("DamageSet".to_owned(), suit);
+        for item in non_numeric_suit.items.values_mut() {
+            if item.suit.as_deref() == Some("Suit1") {
+                item.suit = Some("DamageSet".to_owned());
+            }
+        }
+        assert!(validate_equipment_catalog(&non_numeric_suit).is_err());
+    }
+
+    #[test]
+    fn parses_locked_and_equipped_item_from_character_net_id() {
+        let mut writer = BitWriter::default();
+        push_module_record(
+            &mut writer,
+            HtItemNetId {
+                solt: 1_117_099_843,
+                serial: 211_541_362,
+            },
+            HtItemNetId {
+                solt: 1_135_129_303,
+                serial: 1_041_749_587,
+            },
+            true,
+            0,
+            1,
+        );
+
+        let items = parse_empty_curtain_items(&writer.data, writer.bit_len, &catalog());
+
+        assert_eq!(items.len(), 1);
+        assert!(items[0].locked);
+        assert!(items[0].is_equipped());
+        assert_eq!(items[0].main_stats[0].value, 63.0);
+        assert_eq!(items[0].main_stats[1].value, 840.0);
+        assert_eq!(items[0].sub_stats.len(), 4);
+    }
+
+    #[test]
+    fn rejects_truncated_or_wrong_array_shape() {
+        let catalog = catalog();
+        let mut valid = BitWriter::default();
+        push_module_record(
+            &mut valid,
+            HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            HtItemNetId { solt: 0, serial: 0 },
+            false,
+            0,
+            1,
+        );
+        assert!(parse_empty_curtain_items(&valid.data, valid.bit_len - 1, &catalog).is_empty());
+
+        let mut wrong_shape = BitWriter::default();
+        push_module_record(
+            &mut wrong_shape,
+            HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            HtItemNetId { solt: 0, serial: 0 },
+            false,
+            0,
+            0,
+        );
+        assert!(
+            parse_empty_curtain_items(&wrong_shape.data, wrong_shape.bit_len, &catalog).is_empty()
+        );
+    }
+
+    #[test]
+    fn ignores_equipped_tail_and_keeps_distinct_instance_ids() {
+        let mut writer = BitWriter::default();
+        for id in [
+            HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            HtItemNetId {
+                solt: 11,
+                serial: 21,
+            },
+        ] {
+            push_module_record(
+                &mut writer,
+                id,
+                HtItemNetId { solt: 0, serial: 0 },
+                false,
+                1,
+                1,
+            );
+        }
+
+        let items = parse_empty_curtain_items(&writer.data, writer.bit_len, &catalog());
+
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().all(|item| !item.is_equipped()));
     }
 }
