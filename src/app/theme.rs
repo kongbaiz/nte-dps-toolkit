@@ -46,7 +46,7 @@ pub(crate) fn compact_metric(
         .fill(fill)
         .corner_radius(6)
         .stroke(Stroke::new(
-            1.0,
+            1.0_f32,
             mix_color(
                 shadcn_border(ui.visuals().dark_mode),
                 theme_accent(ui.visuals().dark_mode).gamma_multiply(0.55),
@@ -95,7 +95,7 @@ pub(crate) fn primary_button(label: impl Into<String>, dark_mode: bool) -> egui:
             .color(contrast_text(fill)),
     )
     .fill(fill)
-    .stroke(Stroke::new(1.0, fill))
+    .stroke(Stroke::new(1.0_f32, fill))
 }
 
 /// Severity color for the live status text. The status string can be in either

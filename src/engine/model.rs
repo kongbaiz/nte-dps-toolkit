@@ -1952,7 +1952,7 @@ pub enum EngineEvent {
     Packet(Box<PacketDebug>),
     Abyss(AbyssEvent),
     TimeStop(TimeStopEvent),
-    EmptyCurtain(Box<Vec<EmptyCurtainItem>>),
+    EmptyCurtain(Vec<EmptyCurtainItem>),
     Status(String),
     Warning(String),
     Error(String),

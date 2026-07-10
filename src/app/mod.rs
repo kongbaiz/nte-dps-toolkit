@@ -1161,7 +1161,7 @@ impl eframe::App for DpsApp {
                 .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style())
                         .fill(shadcn_card(self.dark_mode))
-                        .stroke(Stroke::new(2.0, theme_accent(self.dark_mode)))
+                        .stroke(Stroke::new(2.0_f32, theme_accent(self.dark_mode)))
                         .inner_margin(egui::Margin::symmetric(28, 20))
                         .show(ui, |ui| {
                             ui.label(

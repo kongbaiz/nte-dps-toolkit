@@ -293,7 +293,7 @@ impl DpsApp {
                     .show_inside(ctx, |ui| {
                         egui::Frame::new()
                             .fill(shadcn_card(self.dark_mode))
-                            .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
+                            .stroke(Stroke::new(1.0_f32, shadcn_border(self.dark_mode)))
                             .corner_radius(10)
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {
@@ -529,7 +529,7 @@ impl DpsApp {
         ui.painter().vline(
             separator_x,
             main_rect.y_range(),
-            Stroke::new(1.0, shadcn_border(self.dark_mode)),
+            Stroke::new(1.0_f32, shadcn_border(self.dark_mode)),
         );
         let content_rect = egui::Rect::from_min_max(
             egui::pos2(nav_rect.right() + gap, main_rect.top()),
@@ -1079,7 +1079,7 @@ impl DpsApp {
                     .show_inside(ctx, |ui| {
                         egui::Frame::new()
                             .fill(shadcn_card(self.dark_mode))
-                            .stroke(Stroke::new(1.0, shadcn_border(self.dark_mode)))
+                            .stroke(Stroke::new(1.0_f32, shadcn_border(self.dark_mode)))
                             .corner_radius(10)
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {

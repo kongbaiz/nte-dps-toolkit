@@ -2295,7 +2295,7 @@ fn draw_combat_segment_chip(
 ) {
     egui::Frame::popup(ui.style())
         .fill(shadcn_card(dark_mode))
-        .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
+        .stroke(Stroke::new(1.0_f32, shadcn_border(dark_mode)))
         .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.label(

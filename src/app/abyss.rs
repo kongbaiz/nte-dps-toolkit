@@ -537,7 +537,7 @@ pub(crate) fn draw_abyss_line_section(
     };
     egui::Frame::new()
         .fill(shadcn_card(dark_mode))
-        .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
+        .stroke(Stroke::new(1.0_f32, shadcn_border(dark_mode)))
         .corner_radius(7)
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
@@ -707,7 +707,7 @@ pub(crate) fn draw_monster_portrait(
         painter.rect_stroke(
             rect,
             corner_radius,
-            Stroke::new(1.0, shadcn_border(dark_mode)),
+            Stroke::new(1.0_f32, shadcn_border(dark_mode)),
             egui::StrokeKind::Inside,
         );
         return;
@@ -748,7 +748,7 @@ pub(crate) fn draw_abyss_chip_frame(
         rect,
         7.0,
         Stroke::new(
-            if selected { 1.5 } else { 1.0 },
+            if selected { 1.5_f32 } else { 1.0_f32 },
             if selected {
                 theme_accent(dark_mode)
             } else {
@@ -770,7 +770,7 @@ pub(crate) fn draw_abyss_monster_detail(
     let inner_height = (height - 24.0).max(180.0);
     egui::Frame::new()
         .fill(shadcn_card(dark_mode))
-        .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
+        .stroke(Stroke::new(1.0_f32, shadcn_border(dark_mode)))
         .corner_radius(8)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {

@@ -20,7 +20,7 @@ pub(crate) fn draw_resource_audit_row(
     ui.painter().rect_stroke(
         rect,
         6.0,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
         egui::StrokeKind::Inside,
     );
     ui.painter().rect_filled(
@@ -129,7 +129,7 @@ pub(crate) fn draw_diagnostic_report(
         ui.painter().rect_stroke(
             rect,
             6.0,
-            Stroke::new(1.0, shadcn_border(dark_mode)),
+            Stroke::new(1.0_f32, shadcn_border(dark_mode)),
             egui::StrokeKind::Inside,
         );
         ui.painter().rect_filled(

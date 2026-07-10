@@ -186,7 +186,7 @@ impl DpsApp {
                         .strong()
                         .color(semantic_danger(self.dark_mode)),
                 )
-                .stroke(Stroke::new(1.0, semantic_danger(self.dark_mode))),
+                .stroke(Stroke::new(1.0_f32, semantic_danger(self.dark_mode))),
             )
             .on_hover_text(t("Stop the current live capture or import replay"))
             .clicked()
@@ -418,7 +418,7 @@ impl DpsApp {
             card_rect,
             egui::CornerRadius::same(10),
             shadcn_card(self.dark_mode),
-            Stroke::new(1.0, shadcn_border(self.dark_mode)),
+            Stroke::new(1.0_f32, shadcn_border(self.dark_mode)),
             egui::StrokeKind::Inside,
         );
         let content_rect = card_rect.shrink(18.0);
@@ -986,7 +986,7 @@ impl DpsApp {
         painter.hline(
             rect.x_range(),
             baseline_y,
-            Stroke::new(1.0, Color32::from_black_alpha(110)),
+            Stroke::new(1.0_f32, Color32::from_black_alpha(110)),
         );
         let timeline = self.cached_timeline_series();
         let peak = timeline
@@ -1006,7 +1006,7 @@ impl DpsApp {
                 let y = baseline_y - (rect.height() - 8.0) * (bucket.dps / peak) as f32;
                 let point = egui::pos2(x, y);
                 if let Some(previous) = previous {
-                    painter.line_segment([previous, point], Stroke::new(1.4, accent));
+                    painter.line_segment([previous, point], Stroke::new(1.4_f32, accent));
                 }
                 previous = Some(point);
             }
@@ -1064,7 +1064,7 @@ impl DpsApp {
         ui.painter().rect_stroke(
             rect,
             radius_f,
-            Stroke::new(1.0, Color32::from_black_alpha(150)),
+            Stroke::new(1.0_f32, Color32::from_black_alpha(150)),
             egui::StrokeKind::Inside,
         );
     }
@@ -1115,7 +1115,7 @@ impl DpsApp {
             rect,
             6.0,
             Stroke::new(
-                1.0,
+                1.0_f32,
                 mix_color(
                     shadcn_border(self.dark_mode),
                     color.gamma_multiply(0.72),
@@ -1195,7 +1195,7 @@ impl DpsApp {
             ui.painter().rect_stroke(
                 avatar_rect,
                 8.0,
-                Stroke::new(1.0, avatar_border),
+                Stroke::new(1.0_f32, avatar_border),
                 egui::StrokeKind::Inside,
             );
         } else {

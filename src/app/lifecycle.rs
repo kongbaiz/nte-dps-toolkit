@@ -765,7 +765,7 @@ impl DpsApp {
         painter.hline(
             full_rect.x_range(),
             full_rect.bottom() - 0.5,
-            Stroke::new(1.0, Color32::from_rgb(39, 201, 146)),
+            Stroke::new(1.0_f32, Color32::from_rgb(39, 201, 146)),
         );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -1392,7 +1392,7 @@ impl DpsApp {
                 self.timeline_cache = TimelineCache::default();
                 self.state.apply_time_stop_event(event);
             }
-            EngineEvent::EmptyCurtain(items) => self.state.replace_empty_curtain(*items),
+            EngineEvent::EmptyCurtain(items) => self.state.replace_empty_curtain(items),
             EngineEvent::Status(status) => self.status = status,
             EngineEvent::Warning(warning) => {
                 self.diagnostic = Some(tf(
@@ -1473,7 +1473,7 @@ impl DpsApp {
             .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(fill)
-                    .stroke(Stroke::new(1.0, color.gamma_multiply(0.85)))
+                    .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.85)))
                     .corner_radius(8)
                     .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
