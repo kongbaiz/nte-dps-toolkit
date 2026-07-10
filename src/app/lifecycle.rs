@@ -29,6 +29,21 @@ impl DpsApp {
             };
         fill_missing_character_colors_from_avatars(&mut characters, &data_root);
         let characters = Arc::new(characters);
+        let equipment_catalog_path = data_root.join(EQUIPMENT_CATALOG_PATH);
+        let (equipment_catalog, equipment_load_error) =
+            match load_equipment_catalog(&equipment_catalog_path) {
+                Ok(catalog) => (catalog, None),
+                Err(error) => {
+                    eprintln!("Failed to load Console equipment data: {error:#}");
+                    (
+                        EquipmentCatalog::default(),
+                        Some(t(
+                            "Failed to load Console equipment data; cards will use placeholders",
+                        )),
+                    )
+                }
+            };
+        let equipment_catalog = Arc::new(equipment_catalog);
         let abyss_overview = AbyssOverviewState::load();
         let history = HistoryState::load();
         // Decode the texture sets (avatars, attribute icons, damage digits,
@@ -43,6 +58,7 @@ impl DpsApp {
             let ctx = cc.egui_ctx.clone();
             let root = data_root.clone();
             let avatar_characters = Arc::clone(&characters);
+            let equipment_catalog = Arc::clone(&equipment_catalog);
             let monster_ids = abyss_overview.monster_ids();
             thread::spawn(move || {
                 let send = |load: TextureLoad| {
@@ -66,6 +82,11 @@ impl DpsApp {
                     &ctx,
                     &root,
                     &monster_ids,
+                )));
+                send(TextureLoad::Equipment(load_equipment_textures(
+                    &ctx,
+                    &root,
+                    &equipment_catalog,
                 )));
             });
         }
@@ -109,13 +130,11 @@ impl DpsApp {
                 }
             });
         }
-        let startup_error = match (config_warning, character_load_error) {
-            (Some(config_error), Some(character_error)) => {
-                Some(format!("{config_error}\n{character_error}"))
-            }
-            (Some(error), None) | (None, Some(error)) => Some(error),
-            (None, None) => None,
-        };
+        let startup_errors = [config_warning, character_load_error, equipment_load_error]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        let startup_error = (!startup_errors.is_empty()).then(|| startup_errors.join("\n"));
         let last_status_toast = status.clone();
         Self {
             characters,
@@ -124,6 +143,9 @@ impl DpsApp {
             monster_textures: HashMap::new(),
             damage_digit_textures: HashMap::new(),
             reaction_textures: HashMap::new(),
+            equipment_catalog,
+            equipment_textures: HashMap::new(),
+            kongmu_ui: KongmuUiState::default(),
             state: CombatState::default(),
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
@@ -266,6 +288,7 @@ impl DpsApp {
 
     pub(crate) fn reset_combat_session(&mut self) {
         self.state.clear();
+        self.kongmu_ui.invalidate_inventory();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
         self.hit_detail_char_id = None;
@@ -293,6 +316,7 @@ impl DpsApp {
         !self.state.hits.is_empty()
             || !self.state.packets.is_empty()
             || !self.state.stats.is_empty()
+            || !self.state.empty_curtain.is_empty()
             || self.state.abyss.is_active()
     }
 
@@ -1222,6 +1246,9 @@ impl DpsApp {
             FileDialogPurpose::TeamDpsExport { json } => {
                 self.finish_team_dps_export(viewport, &path, &json);
             }
+            FileDialogPurpose::EmptyCurtainExport { json } => {
+                self.finish_empty_curtain_export(viewport, &path, &json);
+            }
             FileDialogPurpose::CaptureInfoExport => {
                 self.finish_capture_info_export(viewport, &path);
             }
@@ -1286,7 +1313,8 @@ impl DpsApp {
             | EngineEvent::HitFollowUp(_)
             | EngineEvent::HitDamageCorrection(_)
             | EngineEvent::Abyss(_)
-            | EngineEvent::TimeStop(_) => {
+            | EngineEvent::TimeStop(_)
+            | EngineEvent::EmptyCurtain(_) => {
                 if self.paused_events.len() == MAX_PAUSED_EVENTS {
                     self.paused_events.pop_front();
                 }
@@ -1364,6 +1392,7 @@ impl DpsApp {
                 self.timeline_cache = TimelineCache::default();
                 self.state.apply_time_stop_event(event);
             }
+            EngineEvent::EmptyCurtain(items) => self.state.replace_empty_curtain(*items),
             EngineEvent::Status(status) => self.status = status,
             EngineEvent::Warning(warning) => {
                 self.diagnostic = Some(tf(
@@ -1476,7 +1505,10 @@ impl DpsApp {
 
     pub(crate) fn export_capture_info(&mut self, ctx: &egui::Context) {
         self.drain_pending_events();
-        if self.state.hits.is_empty() && self.state.packets.is_empty() {
+        if self.state.hits.is_empty()
+            && self.state.packets.is_empty()
+            && self.state.empty_curtain.is_empty()
+        {
             self.set_last_error_in(
                 ctx,
                 t("No capture info to export"),
@@ -1807,6 +1839,10 @@ impl DpsApp {
             false,
         );
         writeln!(&mut out, "  }},").ok();
+
+        let empty_curtain = serde_json::to_string(&self.state.empty_curtain)
+            .expect("validated Console equipment snapshot must serialize");
+        writeln!(&mut out, "  \"empty_curtain\": {empty_curtain},").ok();
 
         writeln!(&mut out, "  \"hits\": [").ok();
         for (index, hit) in self.state.hits.iter().enumerate() {
@@ -2283,6 +2319,7 @@ impl DpsApp {
                 TextureLoad::DamageDigits(map) => self.damage_digit_textures = map,
                 TextureLoad::Reactions(map) => self.reaction_textures = map,
                 TextureLoad::Monsters(map) => self.monster_textures = map,
+                TextureLoad::Equipment(map) => self.equipment_textures = map,
             }
         }
     }

@@ -190,6 +190,12 @@ pub(crate) fn humanize_engine_error(error: &str) -> String {
     }
     if lower.starts_with(JSON_PREFIX) {
         let reason = error[JSON_PREFIX.len()..].trim();
+        if reason.eq_ignore_ascii_case("invalid Console equipment snapshot") {
+            return t("Capture JSON contains invalid Console equipment data");
+        }
+        if reason.eq_ignore_ascii_case("Console equipment data is unavailable") {
+            return t("Console equipment data is required to restore this capture JSON");
+        }
         return tf("Capture JSON import failed: {}", &[reason.trim()]);
     }
     error.to_owned()

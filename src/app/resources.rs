@@ -1,5 +1,26 @@
 use super::*;
 
+pub(crate) fn load_equipment_textures(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+    catalog: &EquipmentCatalog,
+) -> HashMap<String, egui::TextureHandle> {
+    let mut resource_paths = catalog
+        .items
+        .values()
+        .map(|item| item.icon.clone())
+        .collect::<Vec<_>>();
+    resource_paths.sort();
+    resource_paths.dedup();
+    resource_paths
+        .into_iter()
+        .filter_map(|resource_path| {
+            load_image_texture(ctx, root, &resource_path, "equipment")
+                .map(|texture| (resource_path, texture))
+        })
+        .collect()
+}
+
 pub(crate) fn load_attribute_icons(
     ctx: &egui::Context,
     root: &std::path::Path,
