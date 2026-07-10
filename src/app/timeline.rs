@@ -59,7 +59,7 @@ pub(crate) fn draw_timeline_chart(
     painter.rect_stroke(
         rect,
         8.0,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
         egui::StrokeKind::Inside,
     );
     let duration = series
@@ -104,7 +104,7 @@ pub(crate) fn draw_timeline_chart(
         let x = plot.left() + plot.width() * step as f32 / 4.0;
         painter.line_segment(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
-            Stroke::new(1.0, grid_color),
+            Stroke::new(1.0_f32, grid_color),
         );
         let seconds = duration * step as f64 / 4.0;
         painter.text(
@@ -119,7 +119,7 @@ pub(crate) fn draw_timeline_chart(
         let y = plot.bottom() - plot.height() * step as f32 / 3.0;
         painter.line_segment(
             [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
-            Stroke::new(1.0, grid_color),
+            Stroke::new(1.0_f32, grid_color),
         );
         let dps_value = max_dps * step as f64 / 3.0;
         painter.text(
@@ -150,7 +150,7 @@ pub(crate) fn draw_timeline_chart(
         };
         painter.line_segment(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
-            Stroke::new(1.5, color),
+            Stroke::new(1.5_f32, color),
         );
         painter.text(
             egui::pos2(x + 4.0, plot.top() + 10.0),
@@ -175,7 +175,7 @@ pub(crate) fn draw_timeline_chart(
                 })
                 .collect::<Vec<_>>();
             if dps_points.len() >= 2 {
-                painter.line(dps_points, Stroke::new(2.0, theme_accent(dark_mode)));
+                painter.line(dps_points, Stroke::new(2.0_f32, theme_accent(dark_mode)));
             }
 
             let cumulative_points = series
@@ -193,7 +193,7 @@ pub(crate) fn draw_timeline_chart(
             if cumulative_points.len() >= 2 {
                 painter.line(
                     cumulative_points,
-                    Stroke::new(1.5, ui.visuals().weak_text_color()),
+                    Stroke::new(1.5_f32, ui.visuals().weak_text_color()),
                 );
             }
         }
@@ -222,7 +222,7 @@ pub(crate) fn draw_timeline_chart(
                     painter.line(
                         points,
                         Stroke::new(
-                            if selected { 3.0 } else { 1.5 },
+                            if selected { 3.0_f32 } else { 1.5_f32 },
                             color.gamma_multiply(if dimmed { 0.25 } else { 0.95 }),
                         ),
                     );
@@ -252,7 +252,7 @@ pub(crate) fn draw_timeline_chart(
                     })
                     .collect::<Vec<_>>();
                 if points.len() >= 2 {
-                    painter.line(points, Stroke::new(3.4, color));
+                    painter.line(points, Stroke::new(3.4_f32, color));
                 }
             }
         }
@@ -323,7 +323,7 @@ pub(crate) fn draw_timeline_chart(
                 painter.rect_stroke(
                     item_rect,
                     6.0,
-                    Stroke::new(1.0, color.gamma_multiply(0.8)),
+                    Stroke::new(1.0_f32, color.gamma_multiply(0.8)),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -380,12 +380,12 @@ pub(crate) fn draw_timeline_chart(
             let y = plot.bottom() - (hovered_dps / max_dps) as f32 * plot.height();
             painter.line_segment(
                 [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
-                Stroke::new(1.0, theme_accent(dark_mode).gamma_multiply(0.8)),
+                Stroke::new(1.0_f32, theme_accent(dark_mode).gamma_multiply(0.8)),
             );
             if hovered_dps > 0.0 {
                 painter.line_segment(
                     [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
-                    Stroke::new(1.0, theme_accent(dark_mode).gamma_multiply(0.45)),
+                    Stroke::new(1.0_f32, theme_accent(dark_mode).gamma_multiply(0.45)),
                 );
             }
             match dps_view_mode {
@@ -455,7 +455,7 @@ pub(crate) fn draw_timeline_chart(
                 painter.rect_stroke(
                     interval_rect,
                     0.0,
-                    Stroke::new(1.0, semantic_warning(dark_mode).gamma_multiply(0.8)),
+                    Stroke::new(1.0_f32, semantic_warning(dark_mode).gamma_multiply(0.8)),
                     egui::StrokeKind::Inside,
                 );
                 painter.text(

@@ -122,7 +122,7 @@ pub(crate) fn draw_character_editor_card(
         rect,
         corner_radius,
         fill,
-        Stroke::new(if card.selected { 1.5 } else { 1.0 }, border_color),
+        Stroke::new(if card.selected { 1.5_f32 } else { 1.0_f32 }, border_color),
         egui::StrokeKind::Inside,
     );
 
@@ -199,7 +199,7 @@ pub(crate) fn draw_character_editor_avatar(
     ui.painter().rect_stroke(
         rect,
         8.0,
-        Stroke::new(1.0, shadcn_border(ui.visuals().dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(ui.visuals().dark_mode)),
         egui::StrokeKind::Inside,
     );
 }

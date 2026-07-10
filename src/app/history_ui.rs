@@ -63,7 +63,7 @@ pub(crate) fn draw_history_abyss_half(
     let accent = history_half_accent(&half.half, dark_mode);
     egui::Frame::new()
         .fill(shadcn_card(dark_mode))
-        .stroke(Stroke::new(1.0, accent.gamma_multiply(0.55)))
+        .stroke(Stroke::new(1.0_f32, accent.gamma_multiply(0.55)))
         .corner_radius(8)
         .inner_margin(egui::Margin::same(12))
         .show(ui, |ui| {
@@ -150,7 +150,7 @@ pub(crate) fn history_metric_chip(
 ) {
     egui::Frame::new()
         .fill(shadcn_card_hover(dark_mode))
-        .stroke(Stroke::new(1.0, shadcn_border(dark_mode)))
+        .stroke(Stroke::new(1.0_f32, shadcn_border(dark_mode)))
         .corner_radius(6)
         .inner_margin(egui::Margin::symmetric(9, 4))
         .show(ui, |ui| {
@@ -200,7 +200,7 @@ pub(crate) fn draw_history_avatar(
     ui.painter().rect_stroke(
         rect,
         8.0,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
         egui::StrokeKind::Inside,
     );
 }
@@ -229,7 +229,7 @@ pub(crate) fn draw_history_progress_row(
     ui.painter().rect_stroke(
         rect,
         7.0,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
         egui::StrokeKind::Inside,
     );
     let content_rect = rect.shrink2(egui::vec2(8.0, 5.0));

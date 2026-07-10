@@ -40,7 +40,7 @@ pub(crate) fn stable_popup_selectable_value<'a, Value: PartialEq>(
 ) -> egui::Response {
     let mut style = (**ui.style()).clone();
     style.visuals.widgets.inactive.bg_stroke =
-        Stroke::new(0.0, style.visuals.widgets.inactive.bg_stroke.color);
+        Stroke::new(0.0_f32, style.visuals.widgets.inactive.bg_stroke.color);
     ui.scope(|ui| {
         ui.set_style(style);
         ui.selectable_value(current_value, selected_value, text)
@@ -410,7 +410,7 @@ fn paint_window_control_icon(
     bg: Color32,
 ) {
     let center = rect.center().round();
-    let stroke = Stroke::new(1.2, color);
+    let stroke = Stroke::new(1.2_f32, color);
     match icon {
         WindowControlIcon::Minimize => {
             painter.hline(center.x - 5.0..=center.x + 5.0, center.y, stroke);

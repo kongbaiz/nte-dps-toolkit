@@ -252,7 +252,7 @@ pub(crate) fn qte_damage_summary_chip(
         egui::CornerRadius::same(6),
         bg,
         Stroke::new(
-            1.0,
+            1.0_f32,
             if is_selected {
                 accent
             } else {
@@ -535,7 +535,7 @@ pub(crate) fn draw_skill_damage_summary(
                         ui.painter().rect_stroke(
                             rect,
                             corner_radius,
-                            Stroke::new(1.0, theme_accent(dark_mode)),
+                            Stroke::new(1.0_f32, theme_accent(dark_mode)),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -1259,7 +1259,7 @@ pub(crate) fn draw_team_hit_row(
     painter.rect_stroke(
         avatar_rect,
         7.0,
-        Stroke::new(1.5, character_color),
+        Stroke::new(1.5_f32, character_color),
         egui::StrokeKind::Inside,
     );
     painter.text(
@@ -1354,7 +1354,7 @@ pub(crate) fn hit_metric_card_sized(
         rect,
         6.0,
         shadcn_card_hover(ui.visuals().dark_mode),
-        Stroke::new(1.0, shadcn_border(ui.visuals().dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(ui.visuals().dark_mode)),
         egui::StrokeKind::Inside,
     );
     let content_rect = rect.shrink2(egui::vec2(8.0, 5.0));
@@ -1539,7 +1539,7 @@ pub(crate) fn draw_hit_column_separators(
         let x = rect.left() + separator;
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            Stroke::new(1.0, color),
+            Stroke::new(1.0_f32, color),
         );
     }
 }
@@ -1558,7 +1558,7 @@ pub(crate) fn draw_team_hit_column_separators(
         let x = rect.left() + separator;
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-            Stroke::new(1.0, color),
+            Stroke::new(1.0_f32, color),
         );
     }
 }

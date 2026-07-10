@@ -429,9 +429,9 @@ pub(crate) fn configure_style(ctx: &egui::Context, dark_mode: bool) {
     let hover = shadcn_card_hover(dark_mode);
     visuals.widgets.noninteractive.bg_fill = Color32::TRANSPARENT;
     visuals.widgets.noninteractive.weak_bg_fill = Color32::TRANSPARENT;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, border);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(
-        1.0,
+        1.0_f32,
         if dark_mode {
             Color32::from_rgb(250, 250, 250)
         } else {
@@ -440,13 +440,13 @@ pub(crate) fn configure_style(ctx: &egui::Context, dark_mode: bool) {
     );
     visuals.widgets.inactive.bg_fill = card;
     visuals.widgets.inactive.weak_bg_fill = card;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, border);
     visuals.widgets.inactive.fg_stroke = visuals.widgets.noninteractive.fg_stroke;
     visuals.widgets.hovered.bg_fill = hover;
     visuals.widgets.hovered.weak_bg_fill = hover;
     visuals.widgets.hovered.fg_stroke = visuals.widgets.noninteractive.fg_stroke;
     visuals.widgets.hovered.bg_stroke = Stroke::new(
-        1.0,
+        1.0_f32,
         if dark_mode {
             Color32::from_rgb(63, 63, 70)
         } else {
@@ -460,17 +460,17 @@ pub(crate) fn configure_style(ctx: &egui::Context, dark_mode: bool) {
     };
     visuals.widgets.active.weak_bg_fill = visuals.widgets.active.bg_fill;
     visuals.widgets.active.fg_stroke = Stroke::new(
-        1.0,
+        1.0_f32,
         if dark_mode {
             Color32::from_rgb(250, 250, 250)
         } else {
             Color32::from_rgb(24, 24, 27)
         },
     );
-    visuals.window_stroke = Stroke::new(1.0, border);
+    visuals.window_stroke = Stroke::new(1.0_f32, border);
     let accent = theme_accent(dark_mode);
     visuals.selection.bg_fill = accent;
-    visuals.selection.stroke = Stroke::new(1.0, contrast_text(accent));
+    visuals.selection.stroke = Stroke::new(1.0_f32, contrast_text(accent));
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.global_style()).clone();

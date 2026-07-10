@@ -48,6 +48,7 @@ struct EmptyCurtainFilterCache {
     indices: Vec<usize>,
 }
 
+#[derive(Default)]
 pub(crate) struct KongmuUiState {
     filter_open: bool,
     selected_equipment: HashSet<EquipmentFilterKey>,
@@ -55,19 +56,6 @@ pub(crate) struct KongmuUiState {
     selected_substats: HashSet<String>,
     filter_revision: u64,
     filter_cache: EmptyCurtainFilterCache,
-}
-
-impl Default for KongmuUiState {
-    fn default() -> Self {
-        Self {
-            filter_open: false,
-            selected_equipment: HashSet::new(),
-            selected_qualities: HashSet::new(),
-            selected_substats: HashSet::new(),
-            filter_revision: 0,
-            filter_cache: EmptyCurtainFilterCache::default(),
-        }
-    }
 }
 
 impl KongmuUiState {
@@ -407,7 +395,7 @@ fn draw_empty_curtain_card(
         rect,
         egui::CornerRadius::same(8),
         fill,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
         egui::StrokeKind::Inside,
     );
     let header_rect = egui::Rect::from_min_max(
@@ -431,7 +419,7 @@ fn draw_empty_curtain_card(
     ui.painter().hline(
         rect.left() + 1.0..=rect.right() - 1.0,
         header_rect.bottom(),
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
     );
 
     let icon_rect = egui::Rect::from_min_size(
@@ -494,7 +482,7 @@ fn draw_empty_curtain_card(
             ui.painter().hline(
                 row_rect.left()..=row_rect.right(),
                 row_rect.top(),
-                Stroke::new(1.0, shadcn_border(dark_mode).gamma_multiply(0.7)),
+                Stroke::new(1.0_f32, shadcn_border(dark_mode).gamma_multiply(0.7)),
             );
         }
         draw_equipment_stat_row(ui, row_rect, stat, main_stat, catalog, dark_mode);
@@ -626,7 +614,7 @@ fn draw_equipment_icon(
     ui.painter().rect_stroke(
         rect,
         8.0,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
         egui::StrokeKind::Inside,
     );
 }
@@ -664,7 +652,7 @@ fn paint_equipment_status(
         ui.painter().rect_stroke(
             badge_rect,
             5.0,
-            Stroke::new(1.0, shadcn_border(dark_mode)),
+            Stroke::new(1.0_f32, shadcn_border(dark_mode)),
             egui::StrokeKind::Inside,
         );
         ui.painter().text(
@@ -683,7 +671,12 @@ fn paint_lock_icon(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
         egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
     );
     painter.rect_filled(body, 2.0, color.gamma_multiply(0.18));
-    painter.rect_stroke(body, 2.0, Stroke::new(1.2, color), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        body,
+        2.0,
+        Stroke::new(1.2_f32, color),
+        egui::StrokeKind::Inside,
+    );
     let shackle_left = rect.left() + 4.0;
     let shackle_right = rect.right() - 4.0;
     let shackle_top = rect.top() + 2.0;
@@ -693,35 +686,35 @@ fn paint_lock_icon(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
             egui::pos2(shackle_left, shackle_bottom),
             egui::pos2(shackle_left, shackle_top + 2.0),
         ],
-        Stroke::new(1.2, color),
+        Stroke::new(1.2_f32, color),
     );
     painter.line_segment(
         [
             egui::pos2(shackle_left, shackle_top + 2.0),
             egui::pos2(shackle_left + 2.0, shackle_top),
         ],
-        Stroke::new(1.2, color),
+        Stroke::new(1.2_f32, color),
     );
     painter.line_segment(
         [
             egui::pos2(shackle_left + 2.0, shackle_top),
             egui::pos2(shackle_right - 2.0, shackle_top),
         ],
-        Stroke::new(1.2, color),
+        Stroke::new(1.2_f32, color),
     );
     painter.line_segment(
         [
             egui::pos2(shackle_right - 2.0, shackle_top),
             egui::pos2(shackle_right, shackle_top + 2.0),
         ],
-        Stroke::new(1.2, color),
+        Stroke::new(1.2_f32, color),
     );
     painter.line_segment(
         [
             egui::pos2(shackle_right, shackle_top + 2.0),
             egui::pos2(shackle_right, shackle_bottom),
         ],
-        Stroke::new(1.2, color),
+        Stroke::new(1.2_f32, color),
     );
 }
 
@@ -1046,7 +1039,7 @@ fn draw_filter_option(
         7.0,
         fill,
         Stroke::new(
-            if selected { 1.5 } else { 1.0 },
+            if selected { 1.5_f32 } else { 1.0_f32 },
             if selected {
                 theme_accent(dark_mode)
             } else {
@@ -1133,7 +1126,7 @@ fn draw_quality_chip(
         7.0,
         fill,
         Stroke::new(
-            if selected { 1.5 } else { 1.0 },
+            if selected { 1.5_f32 } else { 1.0_f32 },
             if selected {
                 theme_accent(dark_mode)
             } else {
@@ -1148,7 +1141,7 @@ fn draw_quality_chip(
     ui.painter().circle_stroke(
         dot_center,
         DOT * 0.5,
-        Stroke::new(1.0, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
     );
     ui.painter().text(
         egui::pos2(dot_center.x + DOT * 0.5 + 7.0, rect.center().y),

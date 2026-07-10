@@ -286,13 +286,11 @@ mod tests {
     fn write_bunch(
         payload: &mut [u8],
         bit_offset: usize,
-        prefix: u16,
-        sequence: u16,
-        descriptor: u8,
-        partial_flags: u8,
+        header: (u16, u16, u8, u8),
         data: &[u8],
         data_bit_len: usize,
     ) -> usize {
+        let (prefix, sequence, descriptor, partial_flags) = header;
         assert!(data_bit_len <= data.len() * 8);
         write_bits(payload, bit_offset, 13, u64::from(prefix));
         write_bits(payload, bit_offset + 13, 10, u64::from(sequence));
@@ -399,10 +397,7 @@ mod tests {
         let data_end = write_bunch(
             &mut payload,
             bunch_offset,
-            4122,
-            550,
-            INVENTORY_BUNCH_DESCRIPTOR,
-            0x09,
+            (4122, 550, INVENTORY_BUNCH_DESCRIPTOR, 0x09),
             &data,
             data_bit_len,
         );
@@ -434,20 +429,14 @@ mod tests {
         write_bunch(
             &mut payload,
             first_offset,
-            4122,
-            100,
-            INVENTORY_BUNCH_DESCRIPTOR,
-            0x09,
+            (4122, 100, INVENTORY_BUNCH_DESCRIPTOR, 0x09),
             &first_data,
             16,
         );
         let data_end = write_bunch(
             &mut payload,
             second_offset,
-            4122,
-            101,
-            INVENTORY_BUNCH_DESCRIPTOR,
-            0x0c,
+            (4122, 101, INVENTORY_BUNCH_DESCRIPTOR, 0x0c),
             &second_data,
             11,
         );
@@ -472,10 +461,7 @@ mod tests {
         write_bunch(
             &mut payload,
             bunch_offset,
-            4122,
-            87,
-            INVENTORY_BUNCH_DESCRIPTOR,
-            0x08,
+            (4122, 87, INVENTORY_BUNCH_DESCRIPTOR, 0x08),
             &[0x5a],
             8,
         );
@@ -493,10 +479,7 @@ mod tests {
             let data_end = write_bunch(
                 &mut payload,
                 0,
-                4122,
-                87,
-                descriptor,
-                partial_flags,
+                (4122, 87, descriptor, partial_flags),
                 &[0x5a],
                 8,
             );

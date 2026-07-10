@@ -2613,7 +2613,7 @@ impl PacketDecoder {
             InventoryPacketResult::default()
         };
         if let Some(snapshot) = inventory_result.snapshot {
-            let _ = sender.send(EngineEvent::EmptyCurtain(Box::new(snapshot)));
+            let _ = sender.send(EngineEvent::EmptyCurtain(snapshot));
         }
         let mut equipment_slots = Vec::new();
         if !outgoing {
@@ -3279,7 +3279,7 @@ pub fn import_capture_json(
             }
             if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
                 sender
-                    .send(EngineEvent::EmptyCurtain(Box::new(saved_empty_curtain)))
+                    .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
                     .map_err(|error| error.to_string())?;
             }
             Ok((hit_count, packet_count))
@@ -3348,7 +3348,7 @@ fn send_export_packet(
     };
     if let Some(snapshot) = inventory_result.snapshot {
         sender
-            .send(EngineEvent::EmptyCurtain(Box::new(snapshot)))
+            .send(EngineEvent::EmptyCurtain(snapshot))
             .map_err(|error| error.to_string())?;
     }
     if !should_keep_debug_packet(
@@ -5410,7 +5410,7 @@ mod tests {
         let mut errors = Vec::new();
         for event in receiver.try_iter() {
             match event {
-                EngineEvent::EmptyCurtain(items) => latest = *items,
+                EngineEvent::EmptyCurtain(items) => latest = items,
                 EngineEvent::Error(error) => errors.push(error),
                 _ => {}
             }
