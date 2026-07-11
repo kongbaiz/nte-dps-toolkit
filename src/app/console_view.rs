@@ -256,8 +256,8 @@ impl DpsApp {
     /// cross-fade instead of snapping: hover fades a muted fill in, selection
     /// fades the accent pill in over it. Expanded mode shows icon + label;
     /// collapsed mode shows the icon only, with the full label as a tooltip.
-    /// Icon glyphs are guarded by the `painted_glyphs_exist_in_font_stack`
-    /// test so they never render as tofu boxes.
+    /// Icon glyphs are guarded by the Material Icons font-coverage test so
+    /// they never render as tofu boxes.
     fn console_sidebar_item(
         &mut self,
         ui: &mut egui::Ui,
@@ -300,11 +300,15 @@ impl DpsApp {
                 (rect.left() + 16.0)..=rect.center().x,
                 collapse_progress.clamp(0.0, 1.0),
             );
+            let icon = tab.icon();
             ui.painter().text(
                 egui::pos2(icon_x, rect.center().y),
                 egui::Align2::CENTER_CENTER,
-                tab.icon(),
-                density_proportional_font(ui, 13.0 + collapse_progress),
+                icon.codepoint,
+                egui::FontId::new(
+                    (17.0 + collapse_progress) * ui_density_scale(ui),
+                    icon.font_family(),
+                ),
                 text_color,
             );
             ui.painter().text(

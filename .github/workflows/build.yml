@@ -10,6 +10,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
+      - "THIRD_PARTY_LICENSES.md"
+      - "licenses/**"
       - ".github/workflows/build.yml"
   pull_request:
     branches:
@@ -20,6 +22,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
+      - "THIRD_PARTY_LICENSES.md"
+      - "licenses/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -97,6 +101,8 @@ jobs:
           }
 
           foreach ($variant in $variantNotes.Keys) {
+            Copy-Item THIRD_PARTY_LICENSES.md "dist/$variant/"
+            Copy-Item licenses "dist/$variant/licenses" -Recurse
             $variantNotes[$variant] | Set-Content -Encoding UTF8 "dist/$variant/BUILD_VARIANT.md"
             Compress-Archive -Path "dist/$variant/*" -DestinationPath "$variant.zip" -Force
           }

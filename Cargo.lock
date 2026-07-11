@@ -112,6 +112,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "adler32"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234"
+
+[[package]]
 name = "aes"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -881,6 +887,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
+name = "dary_heap"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b1e3a325bc115f096c8b77bbf027a7c2592230e70be2d985be950d3d5e60ebe"
+
+[[package]]
 name = "defmt"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1081,6 +1093,16 @@ dependencies = [
  "web-time",
  "webbrowser",
  "winit",
+]
+
+[[package]]
+name = "egui_material_icons"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1179e4fcbb018c90a6af6fce53db025536f9a2961f1bbb13b442580dd8382ebc"
+dependencies = [
+ "egui",
+ "include-flate",
 ]
 
 [[package]]
@@ -1725,6 +1747,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "include-flate"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48f173716febb1ad596c16ea5637b5f1790ea32de8e627493ff82bc73b0876ce"
+dependencies = [
+ "include-flate-codegen",
+ "include-flate-compress",
+]
+
+[[package]]
+name = "include-flate-codegen"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a7875b62a72ad3f3203cdd8950d4cf9947db036030b974b8b37ceae90c8d8c0"
+dependencies = [
+ "include-flate-compress",
+ "proc-macro-error3",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "include-flate-compress"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44fbb9c5ccb9a5b67b4afa2974c27e5507ea1bf6d22828cef418e4dfaeca51dd"
+dependencies = [
+ "libflate",
+ "zstd",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1903,6 +1958,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
+name = "libflate"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd96e993e5f3368b0cb8497dae6c860c22af8ff18388c61c6c0b86c58d86b5df"
+dependencies = [
+ "adler32",
+ "crc32fast",
+ "dary_heap",
+ "libflate_lz77",
+ "no_std_io2",
+]
+
+[[package]]
+name = "libflate_lz77"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff7a10e427698aef6eef269482776debfef63384d30f13aad39a1a95e0e098fd"
+dependencies = [
+ "hashbrown 0.16.1",
+ "no_std_io2",
+ "rle-decode-fast",
+]
+
+[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2076,6 +2155,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "no_std_io2"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "418abd1b6d34fbf6cae440dc874771b0525a604428704c76e48b29a5e67b8003"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "nohash-hasher"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2091,6 +2179,7 @@ dependencies = [
  "chrono",
  "crossbeam-channel",
  "eframe",
+ "egui_material_icons",
  "env_logger",
  "hex",
  "image",
@@ -2748,12 +2837,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-error-attr3"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34e4dd828515431dd6c4a030d26f7eaed7dd4778226e9d2bb968d65ca4ec3d4d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "proc-macro-error2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
 dependencies = [
  "proc-macro-error-attr2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "proc-macro-error3"
+version = "3.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ee475e440453418ff1335189eddf7101ba502cd818ab7ae04209bc83aa925aa"
+dependencies = [
+ "proc-macro-error-attr3",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -2965,6 +3076,12 @@ dependencies = [
  "web-sys",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "rle-decode-fast"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3582f63211428f83597b51b2ddb88e2a91a9d52d12831f9d08f5e624e8977422"
 
 [[package]]
 name = "rustc-hash"
@@ -4797,6 +4914,34 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zstd"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+dependencies = [
+ "zstd-safe",
+]
+
+[[package]]
+name = "zstd-safe"
+version = "7.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+dependencies = [
+ "zstd-sys",
+]
+
+[[package]]
+name = "zstd-sys"
+version = "2.0.16+zstd.1.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
 
 [[package]]
 name = "zune-core"
