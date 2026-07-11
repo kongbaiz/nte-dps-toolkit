@@ -28,7 +28,7 @@
 
 ## 项目简介
 
-**NTE DPS Toolkit** 是一个使用 **Rust + egui** 实现的 NTE 本地 **DPS（每秒伤害）分析与诊断工具**。它完全在用户本机运行，通过 [Npcap](https://npcap.com/) 读取本机相关 UDP 流量，提取伤害、深渊事件和部分 GameplayEffect 统计，并在本地以图形界面展示总览、角色、技能、命中明细和深渊上下行线统计。
+**NTE DPS Toolkit** 是一个使用 **Rust + egui** 实现的 NTE 本地 **DPS（每秒伤害）分析与诊断工具**。它完全在用户本机运行，通过 [Npcap](https://npcap.com/) 读取本机相关 UDP 流量，提取伤害、深渊事件和部分 GameplayEffect 统计，并在本地以图形界面展示总览、角色、技能、命中明细和深渊上下行线统计。仓库同时提供无 GUI 的 `nte-core.exe`，供第三方本机工具通过 stdio 集成同一套抓包和解析核心。
 
 作为一款 **DPS Analyzer（伤害分析器）**，它面向希望复盘战斗数据、优化输出循环和分析配队表现的玩家与研究者，提供实时统计、历史对比和深渊预测等工作流。
 
@@ -51,7 +51,7 @@
 - **Debug 工具**：查看封包端点、角色声明、解析结果和载荷预览；可编辑角色数据 `res/data/characters/characters.json`，打开/搜索/编辑并保存 NTE 加密 INI；提供资源覆盖率检查、自动诊断向导、网卡列表、服务端伤害校准开关等。
 - **可定制 HUD**：自定义显示模块、最大角色数和小型 DPS 曲线，默认保持总 DPS、时间、总伤害和角色排行。
 - **自动持久化**：透明度、深浅色主题、窗口置顶和服务端伤害校准设置保存到 `%LOCALAPPDATA%\NTE DPS Tool\config.json`。
-- **快捷键**：`Home` 切换鼠标穿透；Debug 构建支持 `F12` 打开/关闭 Debug 面板。
+- **快捷键**：`Home` 切换鼠标穿透；`F12` 打开/关闭包含 Packets、Resources 和 Diagnostics 的 Console。
 - **自动选网卡**：根据 `HTGame.exe` 的活动连接自动选择网卡和本机 IP。
 
 > 具体敌方目标识别与场景识别仍在研究中。
@@ -74,7 +74,7 @@
 - **抓包驱动**：[Npcap](https://npcap.com/)，建议启用 *WinPcap API-compatible Mode*
 - **权限**：实时抓包可能需要以管理员身份运行
 
-普通使用只需要 Rust、Npcap 和仓库内的 `res` 资源。**不需要**客户端导出树、CUE4Parse、FModel、Python、Npcap SDK、资源导出 AES key 或 usmap。Debug 面板的加密 INI 编辑器使用代码内置的稳定 INI 协议 key，不需要用户提供资源导出密钥。
+普通 GUI 使用只需要 Rust、Npcap 和仓库内的 `res` 资源。**不需要**客户端导出树、CUE4Parse、FModel、Python、Npcap SDK、资源导出 AES key 或 usmap。Console 的加密 INI 编辑器使用代码内置的稳定 INI 协议 key，不需要用户提供资源导出密钥。CLI 发行包只内嵌解析所需的核心 JSON，不包含 GUI 图片、字体或图标。
 
 ---
 
@@ -84,7 +84,27 @@
 git clone https://github.com/kongbaiz/nte-dps-toolkit.git
 cd nte-dps-toolkit
 cargo test
-cargo run --release
+cargo run --release --bin nte-dps-tool --features gui
+```
+
+---
+
+## GUI 与本地 CLI Sidecar
+
+正式 Windows 产物分为：
+
+- `nte-dps-tool-windows-x64.zip`：标准 GUI，资源内嵌，始终包含 F12 和完整诊断工具；
+- `nte-core-windows-x64.zip`：无 GUI 的本地 Sidecar，供第三方本机工具集成；
+- `nte-dps-tool-windows-external-resources.zip`：完整 GUI，`res/` 资源外置。
+
+`master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 GUI／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.0`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的“本次改动”会按时间顺序累计当前版本相对上一个版本构建标签的全部非合并提交，而不是只显示最后一次 push。
+
+`nte-core.exe` 使用 JSON-RPC 2.0 over NDJSON，通过 stdin 接收请求、stdout 返回响应和事件。它不监听或开放任何网络端口；stdout 仅用于协议，日志写入 stderr。CLI 包不包含 GUI 图片、字体、图标或 GUI 依赖。协议、生命周期和调用方式见[中文协议文档](docs/CLI_PROTOCOL_ZH.md)、[英文协议文档](docs/CLI_PROTOCOL.md)及[无第三方依赖的 Python 示例](docs/examples/nte_core_client.py)。CLI 与 GUI 发行和再分发均遵守本仓库的 AGPL／商业双授权。
+
+构建 CLI：
+
+```powershell
+cargo build --release --bin nte-core --no-default-features --features cli
 ```
 
 ---
@@ -97,7 +117,7 @@ cargo run --release
 4. 在主界面开始实时抓包，程序会把通过当前 BPF 过滤器的原始帧写入 `logs/nte_raw_*.pcapng`。
 5. 在总览 / 角色 / 深渊等页签查看实时统计；在 Console 历史页保存或对比脱敏战斗摘要。
 
-开始抓包后，Debug 面板可导入完整 PCAPNG 或解析 JSON，并使用与实时抓包相同的稳定解析流程；停止抓包后可另存当前完整 PCAPNG。
+开始抓包后，Console 可导入完整 PCAPNG 或解析 JSON，并使用与实时抓包相同的稳定解析流程；停止抓包后可另存当前完整 PCAPNG。
 
 ---
 
@@ -153,6 +173,8 @@ res/
 cargo fmt --check
 cargo check
 cargo test
+cargo check --bin nte-core --no-default-features --features cli
+cargo test --no-default-features --features cli
 ```
 
 依赖真实抓包的诊断测试默认忽略。需要运行时设置 `NTE_TEST_CAPTURE=<pcapng-path>`，再执行：
@@ -166,7 +188,7 @@ cargo test -- --ignored
 ## 常见问题（FAQ）
 
 **Q：抓不到任何流量 / 没有数据？**
-A：确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行，并已启动 `HTGame.exe`。Debug 构建的诊断页可运行自动诊断向导，逐项检查 Npcap 设备、活动连接、抓包状态、原始包写入和伤害解析状态。
+A：确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行，并已启动 `HTGame.exe`。GUI 的 Diagnostics 页可运行自动诊断向导，逐项检查 Npcap 设备、活动连接、抓包状态、原始包写入和伤害解析状态。
 
 **Q：需要游戏资源导出 key、usmap 或 Python 吗？**
 A：不需要。普通运行只依赖仓库内 `res/` 与代码内置的稳定协议 key。

@@ -3,20 +3,19 @@
 /data/
 /NTE_Assets/
 /res/data/direct_export_report.json
-/Dumper-7/
 /nte-resource-exporter/
 /SDK/
-*.usmap
-.env
 __pycache__/
 *.py[cod]
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
 /UnrealExporter/
-target_handle_investigation_notes.md
-NTE_装备封包调查笔记.md
+/NTE-Drive-Calculator/
+/tests/
 
 # C# / MSBuild build artifacts (contain local user paths)
 **/bin/
+!src/bin/
+!src/bin/nte-core.rs
 **/obj/
