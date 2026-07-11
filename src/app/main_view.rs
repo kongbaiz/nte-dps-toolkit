@@ -1,5 +1,59 @@
 use super::*;
 
+const TOOLBAR_FLEX_GAP: f32 = 24.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainToolbarLayout {
+    SingleRow,
+    TwoRows,
+    ThreeRows,
+}
+
+impl MainToolbarLayout {
+    fn height(self) -> f32 {
+        match self {
+            Self::SingleRow => MAIN_CONTROLS_SINGLE_ROW_HEIGHT,
+            Self::TwoRows => MAIN_CONTROLS_SINGLE_ROW_HEIGHT * 2.0,
+            Self::ThreeRows => MAIN_CONTROLS_SINGLE_ROW_HEIGHT * 3.0,
+        }
+    }
+}
+
+fn main_toolbar_layout(
+    available_width: f32,
+    lifecycle_width: f32,
+    primary_width: f32,
+    context_width: f32,
+    overlay_width: f32,
+) -> MainToolbarLayout {
+    if lifecycle_width + overlay_width + TOOLBAR_FLEX_GAP <= available_width {
+        MainToolbarLayout::SingleRow
+    } else if primary_width <= available_width
+        && context_width + overlay_width + TOOLBAR_FLEX_GAP <= available_width
+    {
+        MainToolbarLayout::TwoRows
+    } else {
+        MainToolbarLayout::ThreeRows
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MainWidthClass {
+    Compact,
+    Standard,
+    Wide,
+}
+
+fn main_width_class(width: f32) -> MainWidthClass {
+    if width < 420.0 {
+        MainWidthClass::Compact
+    } else if width <= 560.0 {
+        MainWidthClass::Standard
+    } else {
+        MainWidthClass::Wide
+    }
+}
+
 impl DpsApp {
     pub(crate) fn abyss_selector(&mut self, ui: &mut egui::Ui) {
         if !self.state.abyss.is_active() {
@@ -72,15 +126,82 @@ impl DpsApp {
                     self.state.total_damage_taken,
                 )
             };
+        let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
+        let abyss_active = self.state.abyss.is_active();
+        let dps_trend = motion::trend_indicator(
+            ui.ctx(),
+            (
+                "main_summary_dps_trend",
+                self.session_epoch,
+                abyss_active,
+                second_half,
+            ),
+            dps,
+            self.reduce_motion,
+        );
+        let dps = motion::rolling_value(
+            ui.ctx(),
+            (
+                "main_summary_dps",
+                self.session_epoch,
+                abyss_active,
+                second_half,
+            ),
+            dps,
+            motion::dur::BASE,
+            self.reduce_motion,
+        );
+        let total_damage = motion::rolling_value(
+            ui.ctx(),
+            (
+                "main_summary_total_damage",
+                self.session_epoch,
+                abyss_active,
+                second_half,
+            ),
+            total_damage,
+            motion::dur::BASE,
+            self.reduce_motion,
+        );
+        let start_pulse = motion::bounce_envelope(motion::animate_generation(
+            ui.ctx(),
+            "combat_start_pulse",
+            self.combat_start_generation,
+            motion::dur::SLOW,
+            self.reduce_motion,
+        ));
+        let end_bounce = motion::bounce_envelope(motion::animate_generation(
+            ui.ctx(),
+            "combat_end_bounce",
+            self.combat_end_generation,
+            motion::dur::SLOW,
+            self.reduce_motion,
+        ));
+        let width_class = main_width_class(ui.available_width());
+        let summary_height = 38.0 * density_tokens(self.density).font_scale;
+        let summary_rect = egui::Rect::from_min_size(
+            ui.cursor().min,
+            egui::vec2(ui.available_width(), summary_height),
+        );
+        if start_pulse > 0.0 {
+            ui.painter().rect_filled(
+                summary_rect,
+                6.0,
+                self.theme().accent.gamma_multiply(start_pulse * 0.16),
+            );
+        }
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.columns(4, |columns| {
+        let accent = self.theme().accent;
+        let paint_primary_metrics = |columns: &mut [egui::Ui]| {
+            let dps_metric_bounds = columns[0].available_rect_before_wrap();
             compact_metric(
                 &mut columns[0],
                 &t("Team DPS"),
                 format_number(dps),
-                theme_accent(self.dark_mode),
+                accent,
                 true,
             );
+            paint_metric_trend(&columns[0], dps_metric_bounds, dps_trend, accent);
             let total_color = columns[1].visuals().text_color();
             compact_metric(
                 &mut columns[1],
@@ -89,95 +210,204 @@ impl DpsApp {
                 total_color,
                 true,
             );
-            compact_metric(
-                &mut columns[2],
-                &t("Total Damage Taken"),
-                format_number(total_damage_taken),
-                semantic_danger(self.dark_mode),
-                false,
+        };
+        match width_class {
+            MainWidthClass::Compact => ui.columns(2, paint_primary_metrics),
+            MainWidthClass::Standard | MainWidthClass::Wide => ui.columns(4, |columns| {
+                paint_primary_metrics(&mut columns[..2]);
+                compact_metric(
+                    &mut columns[2],
+                    &t("Total Damage Taken"),
+                    format_number(total_damage_taken),
+                    semantic_danger(self.dark_mode),
+                    false,
+                );
+                let time_color = columns[3].visuals().text_color();
+                compact_metric_scaled(
+                    &mut columns[3],
+                    &t("Time"),
+                    tf("{}s", &[&format!("{duration:.1}")]),
+                    time_color,
+                    false,
+                    1.0 + end_bounce * 0.06,
+                );
+            }),
+        }
+        if end_bounce > 0.0 {
+            ui.painter().rect_stroke(
+                summary_rect.expand(end_bounce * 2.0),
+                7.0,
+                Stroke::new(
+                    1.0_f32 + end_bounce,
+                    self.theme().accent.gamma_multiply(end_bounce * 0.8),
+                ),
+                egui::StrokeKind::Outside,
             );
-            let time_color = columns[3].visuals().text_color();
-            compact_metric(
-                &mut columns[3],
-                &t("Time"),
-                format!("{duration:.1}s"),
-                time_color,
-                false,
-            );
-        });
+        }
     }
 
     /// Live-combat toolbar: capture lifecycle plus the overlay-shrink toggle.
     /// Everything else (settings, team data, abyss tables, debug) moved into the
     /// console window — see [`Self::console_panel`] — to keep this bar uncrowded.
-    pub(crate) fn controls(&mut self, ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing.x = 8.0;
+    fn controls(&mut self, ui: &mut egui::Ui, layout: MainToolbarLayout) {
+        let density = density_tokens(self.density);
+        ui.spacing_mut().item_spacing.x = density.item_spacing.x;
         ui.spacing_mut().item_spacing.y = 0.0;
-        ui.spacing_mut().button_padding = egui::vec2(14.0, 4.0);
-        ui.horizontal_centered(|ui| self.control_buttons(ui));
+        ui.spacing_mut().button_padding = density.button_padding;
+        match layout {
+            MainToolbarLayout::SingleRow => {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), MAIN_CONTROLS_SINGLE_ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| self.control_buttons(ui),
+                );
+            }
+            MainToolbarLayout::TwoRows => {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), MAIN_CONTROLS_SINGLE_ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        self.capture_lifecycle_button(ui);
+                        self.reset_session_button(ui);
+                        self.processing_button(ui);
+                        self.console_button(ui);
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), MAIN_CONTROLS_SINGLE_ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        self.context_buttons(ui);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            self.overlay_toggle_buttons(ui)
+                        });
+                    },
+                );
+            }
+            MainToolbarLayout::ThreeRows => {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), MAIN_CONTROLS_SINGLE_ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        self.capture_lifecycle_button(ui);
+                        self.reset_session_button(ui);
+                        self.processing_button(ui);
+                        self.console_button(ui);
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), MAIN_CONTROLS_SINGLE_ROW_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| self.context_buttons(ui),
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), MAIN_CONTROLS_SINGLE_ROW_HEIGHT),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| self.overlay_toggle_buttons(ui),
+                );
+            }
+        }
     }
 
-    pub(crate) fn control_buttons(&mut self, ui: &mut egui::Ui) {
-        // Measure both groups at the current language in an invisible sizing pass so
-        // the enforced window minimum (see `enforce_main_min_size`) can grow to fit
-        // them. Without this, a longer translation would let the right-aligned
-        // toggles overflow back over the lifecycle buttons when the window is dragged
-        // narrow — the overlap this guards against.
-        let lifecycle_width =
-            self.measure_toolbar_group("toolbar_lifecycle", ui, Self::lifecycle_buttons);
-        let toggles_width =
-            self.measure_toolbar_group("toolbar_toggles", ui, Self::overlay_toggle_buttons);
-        // Raw widths plus a comfortable gap between the two groups.
-        self.toolbar_min_content_width = lifecycle_width + toggles_width + 24.0;
-
+    fn control_buttons(&mut self, ui: &mut egui::Ui) {
         self.lifecycle_buttons(ui);
-        // Overlay toggles that used to live on the title bar, right-aligned so the
-        // capture-lifecycle buttons keep the left edge. The measured minimum above
-        // guarantees room for both groups, so this right-to-left group never overflows
-        // back over the lifecycle buttons.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             self.overlay_toggle_buttons(ui)
         });
     }
 
-    /// Natural width of a toolbar button group at the current language, measured in an
-    /// invisible sizing pass (left-to-right, unbounded) so it reflects the real
-    /// localized labels without disturbing the visible layout or reserving space.
-    fn measure_toolbar_group(
-        &mut self,
-        salt: &str,
-        ui: &mut egui::Ui,
-        build: impl FnOnce(&mut Self, &mut egui::Ui),
-    ) -> f32 {
-        let mut sizing = ui.new_child(
-            egui::UiBuilder::new()
-                .id_salt(salt)
-                .sizing_pass()
-                .invisible()
-                .max_rect(egui::Rect::from_min_size(
-                    ui.max_rect().min,
-                    egui::vec2(10_000.0, ui.available_height().max(1.0)),
-                ))
-                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-        );
-        sizing.spacing_mut().item_spacing = ui.spacing().item_spacing;
-        sizing.spacing_mut().button_padding = ui.spacing().button_padding;
-        build(self, &mut sizing);
-        sizing.min_rect().width()
-    }
-
     /// Capture-lifecycle buttons on the left of the toolbar: start/stop, reset,
     /// pause/resume, the abyss collapse toggle, HUD and console.
-    pub(crate) fn lifecycle_buttons(&mut self, ui: &mut egui::Ui) {
+    fn lifecycle_buttons(&mut self, ui: &mut egui::Ui) {
+        self.capture_lifecycle_button(ui);
+        self.reset_session_button(ui);
+        self.processing_button(ui);
+        self.context_buttons(ui);
+        self.console_button(ui);
+    }
+
+    fn context_buttons(&mut self, ui: &mut egui::Ui) {
+        if self.state.abyss.is_active()
+            && ui
+                .button(t("Collapse"))
+                .on_hover_text(t("Collapse the abyss line selector and toolbar"))
+                .clicked()
+        {
+            self.abyss_compact_mode = true;
+        }
+        if ui
+                .button(t("HUD"))
+            .on_hover_text(t("Switch to the backing-less combat HUD (overlays the game · exit from the appearance menu)"))
+            .clicked()
+        {
+            self.set_hud_mode(ui.ctx(), true);
+        }
+    }
+
+    fn toolbar_layout(&self, ui: &egui::Ui) -> MainToolbarLayout {
+        let density = density_tokens(self.density);
+        let primary_labels = [
+            if self.capture.is_none() && self.replay_thread.is_none() {
+                t("Start")
+            } else {
+                t("Stop")
+            },
+            t("Reset"),
+            if self.paused { t("Resume") } else { t("Pause") },
+            t("Console"),
+        ];
+        let collapse_label = self.state.abyss.is_active().then(|| t("Collapse"));
+        let hud_label = t("HUD");
+        let overlay_labels = [
+            t("Appearance"),
+            if self.mouse_passthrough {
+                t("Passthrough on")
+            } else {
+                t("Passthrough")
+            },
+            t("Pin"),
+        ];
+        let primary_width = toolbar_button_group_width(
+            ui,
+            primary_labels.iter().map(String::as_str),
+            density.button_padding.x,
+            density.item_spacing.x,
+        );
+        let context_width = toolbar_button_group_width(
+            ui,
+            collapse_label
+                .as_deref()
+                .into_iter()
+                .chain(std::iter::once(hud_label.as_str())),
+            density.button_padding.x,
+            density.item_spacing.x,
+        );
+        let lifecycle_width = primary_width + density.item_spacing.x + context_width;
+        let overlay_width = toolbar_button_group_width(
+            ui,
+            overlay_labels.iter().map(String::as_str),
+            density.button_padding.x,
+            density.item_spacing.x,
+        );
+        main_toolbar_layout(
+            ui.available_width(),
+            lifecycle_width,
+            primary_width,
+            context_width,
+            overlay_width,
+        )
+    }
+
+    fn capture_lifecycle_button(&mut self, ui: &mut egui::Ui) {
         if self.capture.is_none() && self.replay_thread.is_none() {
             if ui
-                .add(primary_button(t("Start"), self.dark_mode))
+                .add(primary_button(t("Start"), self.theme().accent))
                 .on_hover_text(t(
                     "Auto-detect the HTGame.exe connection and NIC, then start live capture",
                 ))
                 .clicked()
             {
-                self.request_start_live();
+                self.request_start_live(ui.ctx());
             }
         } else if ui
             .add(
@@ -194,16 +424,22 @@ impl DpsApp {
             self.stop_engine();
             self.drain_pending_events();
         }
+    }
+
+    fn reset_session_button(&mut self, ui: &mut egui::Ui) {
         if ui
             .button(t("Reset"))
             .on_hover_text(t(
-                "Clear the current stats; you will be asked to confirm first",
+                "Clear the current stats; undo remains available for 5 seconds",
             ))
             .clicked()
         {
-            self.request_reset_combat_session();
+            self.request_reset_combat_session(ui.ctx());
         }
-        if ui
+    }
+
+    fn processing_button(&mut self, ui: &mut egui::Ui) -> bool {
+        let clicked = ui
             .add(
                 egui::Button::selectable(
                     self.paused,
@@ -214,25 +450,14 @@ impl DpsApp {
             .on_hover_text(t(
                 "Pause UI processing; resuming catches up on buffered hit events",
             ))
-            .clicked()
-        {
+            .clicked();
+        if clicked {
             self.paused = !self.paused;
         }
-        if self.state.abyss.is_active()
-            && ui
-                .button(t("Collapse"))
-                .on_hover_text(t("Collapse the abyss line selector and toolbar"))
-                .clicked()
-        {
-            self.abyss_compact_mode = true;
-        }
-        if ui
-            .button("HUD")
-            .on_hover_text(t("Switch to the backing-less combat HUD (overlays the game · exit from the appearance menu)"))
-            .clicked()
-        {
-            self.set_hud_mode(ui.ctx(), true);
-        }
+        clicked
+    }
+
+    fn console_button(&mut self, ui: &mut egui::Ui) {
         if ui
             .button(t("Console"))
             .on_hover_text(t(
@@ -251,12 +476,17 @@ impl DpsApp {
     /// total width regardless of order).
     pub(crate) fn overlay_toggle_buttons(&mut self, ui: &mut egui::Ui) {
         self.appearance_menu(ui);
+        self.passthrough_button(ui);
+        self.pin_button(ui);
+    }
+
+    fn passthrough_button(&mut self, ui: &mut egui::Ui) -> bool {
         let passthrough_label = if self.mouse_passthrough {
             t("Passthrough on")
         } else {
             t("Passthrough")
         };
-        if ui
+        let clicked = ui
             .add(
                 egui::Button::selectable(self.mouse_passthrough, passthrough_label)
                     .frame_when_inactive(true),
@@ -265,17 +495,22 @@ impl DpsApp {
                 "{} toggles mouse passthrough anytime",
                 &[self.passthrough_hotkey.label()],
             ))
-            .clicked()
-        {
+            .clicked();
+        if clicked {
             self.toggle_mouse_passthrough(ui.ctx());
         }
-        if ui
+        clicked
+    }
+
+    fn pin_button(&mut self, ui: &mut egui::Ui) -> bool {
+        let clicked = ui
             .add(egui::Button::selectable(self.always_on_top, t("Pin")).frame_when_inactive(true))
             .on_hover_text(t("Keep the main window above the game"))
-            .clicked()
-        {
+            .clicked();
+        if clicked {
             self.toggle_always_on_top(ui.ctx());
         }
+        clicked
     }
 
     /// Appearance dropdown (opacity · theme · Combat HUD), shared by the live
@@ -302,12 +537,22 @@ impl DpsApp {
                 })
                 .clicked()
             {
-                self.theme_transition_from = Some(shadcn_background(self.dark_mode));
-                self.theme_transition_started_at = Some(ui.input(|input| input.time));
-                self.dark_mode = !self.dark_mode;
+                self.toggle_theme(ui.ctx());
                 ui.close();
             }
             ui.separator();
+            if self.processing_button(ui) {
+                ui.close();
+            }
+            if self.state.abyss.is_active()
+                && ui
+                    .button(t("Collapse"))
+                    .on_hover_text(t("Collapse the abyss line selector and toolbar"))
+                    .clicked()
+            {
+                self.abyss_compact_mode = true;
+                ui.close();
+            }
             if ui
                 .add(
                     egui::Button::selectable(self.hud_mode, t("Combat HUD"))
@@ -319,24 +564,45 @@ impl DpsApp {
                 self.set_hud_mode(ui.ctx(), !self.hud_mode);
                 ui.close();
             }
+            if self.passthrough_button(ui) {
+                ui.close();
+            }
+            if self.pin_button(ui) {
+                ui.close();
+            }
+            if !self.hidden_character_ids.is_empty()
+                && ui
+                    .button(tf(
+                        "Show hidden characters ({})",
+                        &[&self.hidden_character_ids.len().to_string()],
+                    ))
+                    .clicked()
+            {
+                self.hidden_character_ids.clear();
+                ui.close();
+            }
         });
         appearance_response.on_hover_text(t("Adjust opacity, theme and HUD mode"));
     }
 
     pub(crate) fn animated_controls(&mut self, ui: &mut egui::Ui) {
         let expanded = !self.abyss_compact_mode || !self.state.abyss.is_active();
-        let progress = ui.ctx().animate_bool_with_time(
-            egui::Id::new("main_controls_expanded"),
+        let progress = motion::animate_bool(
+            ui.ctx(),
+            "main_controls_expanded",
             expanded,
-            0.22,
+            motion::dur::BASE,
+            self.reduce_motion,
+            motion::ease::entrance,
         );
         if progress <= 0.001 {
             return;
         }
 
-        let full_height = MAIN_CONTROLS_SINGLE_ROW_HEIGHT;
+        let toolbar_layout = self.toolbar_layout(ui);
+        let full_height = toolbar_layout.height();
         let content_top_offset = 2.5;
-        let visible_height = full_height * ease_out_cubic(progress);
+        let visible_height = full_height * progress;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), visible_height),
             egui::Sense::hover(),
@@ -353,15 +619,17 @@ impl DpsApp {
         );
         child.set_clip_rect(rect);
         child.set_opacity(progress);
-        self.controls(&mut child);
+        self.controls(&mut child, toolbar_layout);
     }
 
     pub(crate) fn animated_party_content(&mut self, ui: &mut egui::Ui) {
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
-        let phase = ui.ctx().animate_value_with_time(
-            egui::Id::new("abyss_half_transition"),
+        let phase = motion::animate_value(
+            ui.ctx(),
+            "abyss_half_transition",
             if second_half { 1.0 } else { 0.0 },
-            0.22,
+            motion::dur::SLOW,
+            self.reduce_motion,
         );
         let visibility = if second_half { phase } else { 1.0 - phase };
         let direction = if second_half { 1.0 } else { -1.0 };
@@ -429,11 +697,7 @@ impl DpsApp {
                 .layout(egui::Layout::top_down(egui::Align::Center)),
         );
         content.add_space((content_rect.height() - 126.0).max(0.0) * 0.5);
-        content.add(
-            egui::Spinner::new()
-                .size(28.0)
-                .color(theme_accent(self.dark_mode)),
-        );
+        content.add(egui::Spinner::new().size(28.0).color(self.theme().accent));
         content.add_space(8.0);
         content.label(
             RichText::new(t("Importing and parsing capture"))
@@ -474,27 +738,40 @@ impl DpsApp {
     }
 
     pub(crate) fn paint_theme_transition(&mut self, ctx: &egui::Context) {
-        let (Some(color), Some(started_at)) =
-            (self.theme_transition_from, self.theme_transition_started_at)
-        else {
+        let Some(color) = self.theme_transition_from else {
             return;
         };
-        let elapsed = (ctx.input(|input| input.time) - started_at).max(0.0) as f32;
-        let progress = (elapsed / 0.24).clamp(0.0, 1.0);
+        let progress = motion::animate_bool(
+            ctx,
+            "theme_transition_overlay",
+            true,
+            motion::dur::BASE,
+            self.reduce_motion,
+            motion::ease::entrance,
+        );
         if progress >= 1.0 {
             self.theme_transition_from = None;
-            self.theme_transition_started_at = None;
             return;
         }
 
-        let alpha = ((1.0 - ease_out_cubic(progress)) * 96.0).round() as u8;
+        let alpha = ((1.0 - progress) * 96.0).round() as u8;
         let overlay = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha);
         ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("theme_transition_overlay"),
         ))
         .rect_filled(ctx.content_rect(), 0.0, overlay);
-        ctx.request_repaint();
+    }
+
+    pub(crate) fn toggle_theme(&mut self, ctx: &egui::Context) {
+        self.theme_transition_from = Some(shadcn_background(self.dark_mode));
+        motion::seed_bool_for_viewport(
+            ctx,
+            egui::ViewportId::ROOT,
+            "theme_transition_overlay",
+            false,
+        );
+        self.dark_mode = !self.dark_mode;
     }
 
     /// Party-member rows (damage desc) plus the team totals shared by the party
@@ -515,7 +792,10 @@ impl DpsApp {
                     duration: f64| {
             let mut rows: Vec<CharacterStats> = stats
                 .values()
-                .filter(|row| is_party_member_row(row, hits))
+                .filter(|row| {
+                    is_party_member_row(row, hits)
+                        && !self.hidden_character_ids.contains(&row.char_id)
+                })
                 .cloned()
                 .collect();
             rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
@@ -552,13 +832,19 @@ impl DpsApp {
             party
                 .stats
                 .values()
-                .filter(|row| is_party_member_row(row, &party.hits))
+                .filter(|row| {
+                    is_party_member_row(row, &party.hits)
+                        && !self.hidden_character_ids.contains(&row.char_id)
+                })
                 .count()
         } else {
             self.state
                 .stats
                 .values()
-                .filter(|row| is_party_member_row(row, &self.state.hits))
+                .filter(|row| {
+                    is_party_member_row(row, &self.state.hits)
+                        && !self.hidden_character_ids.contains(&row.char_id)
+                })
                 .count()
         }
     }
@@ -578,57 +864,193 @@ impl DpsApp {
 
     pub(crate) fn party_panel(&mut self, ui: &mut egui::Ui) {
         let (rows, total_damage, _, _) = self.party_readout();
-        let row_height = party_row_height(ui.available_height(), rows.len());
+        let density_scale = density_tokens(self.density).font_scale;
+        let available_height = ui.available_height();
+        let row_height = (party_row_height(available_height, rows.len()) * density_scale)
+            .min(available_height.max(38.0 * density_scale));
         if rows.is_empty() {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 40.0),
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
+            if self.hidden_character_ids.is_empty() {
+                self.main_empty_state(ui);
+            } else {
+                ui.vertical_centered(|ui| {
                     ui.label(
-                        RichText::new(t("Waiting for damage data"))
+                        RichText::new(t("All ranking rows are hidden"))
                             .color(ui.visuals().weak_text_color()),
                     );
-                },
-            );
+                    if ui.button(t("Show all characters")).clicked() {
+                        self.hidden_character_ids.clear();
+                    }
+                });
+            }
             return;
         }
 
-        let row_spacing = 5.0;
+        let row_spacing = 5.0 * density_scale;
         let total_height =
             row_height * rows.len() as f32 + row_spacing * rows.len().saturating_sub(1) as f32;
-        let (container, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), total_height),
-            egui::Sense::hover(),
-        );
-        let stride = row_height + row_spacing;
-        for (index, row) in rows.iter().enumerate().rev() {
-            let target_y = index as f32 * stride;
-            let animated_y = ui.ctx().animate_value_with_time(
-                egui::Id::new(("party_rank_y", row.char_id)),
-                target_y,
-                0.24,
+        let ranking_rect = ui.available_rect_before_wrap();
+        let ranking_scrolling = ui.input(|input| {
+            input
+                .pointer
+                .hover_pos()
+                .is_some_and(|position| ranking_rect.contains(position))
+                && (input.is_scrolling()
+                    || input.smooth_scroll_delta() != egui::Vec2::ZERO
+                    || input.pointer.primary_down())
+        });
+        egui::ScrollArea::vertical()
+            .id_salt("party_ranking")
+            .max_height(available_height.max(38.0))
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let (container, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), total_height),
+                    egui::Sense::hover(),
+                );
+                let stride = row_height + row_spacing;
+                let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
+                let abyss_active = self.state.abyss.is_active();
+                let visible_rect = ui.clip_rect().intersect(container).expand(stride);
+                for (index, row) in rows.iter().enumerate().rev() {
+                    let target_y = index as f32 * stride;
+                    let animation_id = (
+                        "party_rank_y",
+                        self.session_epoch,
+                        abyss_active,
+                        second_half,
+                        row.char_id,
+                    );
+                    let target_rect = egui::Rect::from_min_size(
+                        egui::pos2(container.left(), container.top() + target_y),
+                        egui::vec2(container.width(), row_height),
+                    );
+                    if !visible_rect.intersects(target_rect) || ranking_scrolling {
+                        motion::snap_value(ui.ctx(), animation_id, target_y);
+                    }
+                    if !visible_rect.intersects(target_rect) {
+                        continue;
+                    }
+                    let animated_y = if ranking_scrolling {
+                        target_y
+                    } else {
+                        motion::animate_value(
+                            ui.ctx(),
+                            animation_id,
+                            target_y,
+                            motion::dur::BASE,
+                            self.reduce_motion,
+                        )
+                    };
+                    let row_rect = egui::Rect::from_min_size(
+                        egui::pos2(container.left(), container.top() + animated_y),
+                        egui::vec2(container.width(), row_height),
+                    );
+                    let mut row_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt(("party_row", row.char_id))
+                            .max_rect(row_rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    row_ui.set_clip_rect(ui.clip_rect().intersect(container));
+                    self.draw_party_row(&mut row_ui, row, index, total_damage, row_height);
+                }
+            });
+    }
+
+    fn main_empty_state(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme();
+        let game_detected = self.game_process_detected;
+        let game_process_error = self.game_process_monitor_error.clone();
+        let capture_active = self.capture.is_some() || self.replay_thread.is_some();
+        let has_damage = !self.state.hits.is_empty();
+        let mut action = None;
+        // Centered card, sized by hand: the card gets its own fixed-width
+        // top-down child region because `centered_and_justified` only centers
+        // a single widget, and a `Frame` child inherits the parent layout —
+        // multi-widget content inside it would flow left-to-right.
+        let card_height = ui.available_height().clamp(150.0, 220.0);
+        let card_width = (ui.available_width() - 12.0).clamp(0.0, 420.0);
+        ui.add_space(((ui.available_height() - card_height) / 2.0).max(0.0));
+        ui.horizontal(|ui| {
+            ui.add_space(((ui.available_width() - card_width) / 2.0).max(0.0));
+            ui.allocate_ui_with_layout(
+                egui::vec2(card_width, card_height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    egui::Frame::new()
+                        .fill(theme.card)
+                        .stroke(Stroke::new(1.0, theme.border))
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(18, 14))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(
+                                RichText::new(t("Ready for your next combat"))
+                                    .size(14.0)
+                                    .strong()
+                                    .color(theme.fg),
+                            );
+                            ui.add_space(8.0);
+                            main_empty_step(ui, 1, t("Start HTGame.exe"), game_detected, theme);
+                            main_empty_step(ui, 2, t("Start live capture"), capture_active, theme);
+                            main_empty_step(
+                                ui,
+                                3,
+                                t("Enter combat and deal damage"),
+                                has_damage,
+                                theme,
+                            );
+                            if let Some(error) = &game_process_error {
+                                ui.small(
+                                    RichText::new(tf("Game process check failed: {}", &[error]))
+                                        .color(theme.danger),
+                                );
+                            }
+                            ui.add_space(10.0);
+                            ui.horizontal_wrapped(|ui| {
+                                if !game_detected
+                                    && !self.awaiting_device_detection
+                                    && ui.button(t("Re-detect")).clicked()
+                                {
+                                    action = Some(MainEmptyAction::Detect);
+                                }
+                                if !capture_active
+                                    && ui
+                                        .add(primary_button(t("Start Capture"), theme.accent))
+                                        .clicked()
+                                {
+                                    action = Some(MainEmptyAction::Capture);
+                                }
+                                if !capture_active && ui.button(t("Import Replay")).clicked() {
+                                    action = Some(MainEmptyAction::Import);
+                                }
+                                if capture_active {
+                                    ui.weak(t("Waiting for the first damage event..."));
+                                }
+                            });
+                        });
+                },
             );
-            let row_rect = egui::Rect::from_min_size(
-                egui::pos2(container.left(), container.top() + animated_y),
-                egui::vec2(container.width(), row_height),
-            );
-            let mut row_ui = ui.new_child(
-                egui::UiBuilder::new()
-                    .id_salt(("party_row", row.char_id))
-                    .max_rect(row_rect)
-                    .layout(egui::Layout::top_down(egui::Align::Min)),
-            );
-            self.draw_party_row(&mut row_ui, row, index, total_damage, row_height);
+        });
+
+        match action {
+            Some(MainEmptyAction::Detect) => {
+                if let Err(error) = self.refresh_game_network() {
+                    self.set_last_error_in(ui.ctx(), error, Some(ErrorAction::RefreshNetwork));
+                }
+            }
+            Some(MainEmptyAction::Capture) => self.request_start_live(ui.ctx()),
+            Some(MainEmptyAction::Import) => {
+                self.request_debug_import(ui.ctx(), DebugImportKind::Pcapng)
+            }
+            None => {}
         }
     }
 
     /// Combat HUD optimized for quick scanning: one team DPS header and a compact
     /// horizontal damage-share board. Details stay in the normal window.
     pub(crate) fn hud_panel(&mut self, ui: &mut egui::Ui) {
-        const ACCENT: Color32 = Color32::from_rgb(44, 214, 150);
-        const TEXT: Color32 = Color32::from_rgb(242, 246, 248);
-        const MUTED: Color32 = Color32::from_rgb(176, 187, 194);
-
+        let hud_theme = self.theme().hud;
         let (mut rows, total_damage, team_dps, duration) = self.party_readout();
         if self.hud_config.show_character_rows {
             rows.truncate(TEAM_DPS_MAX_MEMBERS);
@@ -641,9 +1063,9 @@ impl DpsApp {
         let right = left + width;
         let painter = ui.painter().clone();
         let colors = HudPaintColors {
-            accent: ACCENT,
-            text: TEXT,
-            muted: MUTED,
+            accent: hud_theme.accent,
+            text: hud_theme.text,
+            muted: hud_theme.muted,
         };
 
         if rows.is_empty() && total_damage <= 0.0 && team_dps <= 0.0 {
@@ -651,13 +1073,14 @@ impl DpsApp {
                 egui::pos2(left, area.top()),
                 egui::vec2(width.min(210.0), 38.0),
             );
-            paint_haloed(
+            paint_haloed_with_halo(
                 &painter,
                 egui::pos2(empty.left(), empty.center().y),
                 egui::Align2::LEFT_CENTER,
                 t("Waiting for damage data"),
                 egui::FontId::proportional(13.0),
-                MUTED,
+                hud_theme.muted,
+                hud_theme.halo,
             );
             ui.allocate_rect(empty, egui::Sense::hover());
             return;
@@ -665,7 +1088,14 @@ impl DpsApp {
 
         let mut top = area.top();
         if self.hud_config.show_title {
-            top += self.hud_title_readout_row(&painter, left, top, width, TEXT, MUTED);
+            top += self.hud_title_readout_row(
+                &painter,
+                left,
+                top,
+                width,
+                hud_theme.text,
+                hud_theme.muted,
+            );
         }
         if self.hud_config.has_summary_row() {
             top += self.hud_summary_row(
@@ -682,7 +1112,7 @@ impl DpsApp {
             );
         }
         if self.hud_status_row_visible() {
-            top += self.hud_status_row(&painter, left, top, width, TEXT, MUTED);
+            top += self.hud_status_row(&painter, left, top, width, hud_theme.text, hud_theme.muted);
         }
         if !rows.is_empty() {
             top += self.hud_character_rows(
@@ -699,7 +1129,14 @@ impl DpsApp {
             );
         }
         if self.hud_config.show_mini_timeline {
-            top += self.hud_mini_timeline(&painter, left, top, width, ACCENT, MUTED);
+            top += self.hud_mini_timeline(
+                &painter,
+                left,
+                top,
+                width,
+                hud_theme.accent,
+                hud_theme.muted,
+            );
         }
 
         ui.allocate_rect(
@@ -745,8 +1182,61 @@ impl DpsApp {
         rows: &[CharacterStats],
         colors: HudPaintColors,
     ) -> f32 {
-        let track_color = Color32::from_black_alpha(96);
+        let track_color = self.theme().hud.track;
+        let start_pulse = motion::bounce_envelope(motion::animate_generation(
+            painter.ctx(),
+            "combat_start_pulse",
+            self.combat_start_generation,
+            motion::dur::SLOW,
+            self.reduce_motion,
+        ));
+        let end_bounce = motion::bounce_envelope(motion::animate_generation(
+            painter.ctx(),
+            "combat_end_bounce",
+            self.combat_end_generation,
+            motion::dur::SLOW,
+            self.reduce_motion,
+        ));
+        if start_pulse > 0.0 || end_bounce > 0.0 {
+            painter.rect_stroke(
+                header.expand(2.0 * end_bounce),
+                6.0,
+                Stroke::new(
+                    1.0 + end_bounce,
+                    colors
+                        .accent
+                        .gamma_multiply((start_pulse * 0.8 + end_bounce * 0.65).min(1.0)),
+                ),
+                egui::StrokeKind::Outside,
+            );
+        }
+        let duration_scale = 1.0 + end_bounce * 0.06;
+        let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
+        let abyss_active = self.state.abyss.is_active();
         if self.hud_config.show_team_dps {
+            let dps_trend = motion::trend_indicator(
+                painter.ctx(),
+                (
+                    "hud_summary_dps_trend",
+                    self.session_epoch,
+                    abyss_active,
+                    second_half,
+                ),
+                values.team_dps,
+                self.reduce_motion,
+            );
+            let animated_dps = motion::rolling_value(
+                painter.ctx(),
+                (
+                    "hud_summary_dps",
+                    self.session_epoch,
+                    abyss_active,
+                    second_half,
+                ),
+                values.team_dps,
+                motion::dur::BASE,
+                self.reduce_motion,
+            );
             let label = if self.hud_config.show_duration {
                 format!("{} · {:.1}s", t("Team DPS"), values.duration)
             } else {
@@ -757,15 +1247,28 @@ impl DpsApp {
                 egui::pos2(header.left(), header.top() + 12.0),
                 egui::Align2::LEFT_CENTER,
                 label,
-                egui::FontId::proportional(10.5),
+                egui::FontId::proportional(10.5 * duration_scale),
                 colors.muted,
             );
+            let dps_text = format_number(animated_dps);
+            let dps_font = egui::FontId::proportional(26.0);
+            let dps_width = painter
+                .layout_no_wrap(dps_text.clone(), dps_font.clone(), colors.accent)
+                .size()
+                .x;
+            let dps_pos = egui::pos2(header.left(), header.bottom() - 17.0);
             paint_haloed(
                 painter,
-                egui::pos2(header.left(), header.bottom() - 17.0),
+                dps_pos,
                 egui::Align2::LEFT_CENTER,
-                format_number(values.team_dps),
-                egui::FontId::proportional(26.0),
+                dps_text,
+                dps_font,
+                colors.accent,
+            );
+            paint_hud_trend(
+                painter,
+                egui::pos2(dps_pos.x + dps_width + 5.0, dps_pos.y),
+                dps_trend,
                 colors.accent,
             );
         } else if self.hud_config.show_duration {
@@ -774,11 +1277,27 @@ impl DpsApp {
                 egui::pos2(header.left(), header.center().y),
                 egui::Align2::LEFT_CENTER,
                 format!("{} {:.1}s", t("Time"), values.duration),
-                egui::FontId::monospace(14.0),
+                egui::FontId::monospace(14.0 * duration_scale),
                 colors.text,
             );
         }
 
+        let animated_total_damage = if self.hud_config.show_total_damage {
+            motion::rolling_value(
+                painter.ctx(),
+                (
+                    "hud_summary_total_damage",
+                    self.session_epoch,
+                    abyss_active,
+                    second_half,
+                ),
+                values.total_damage,
+                motion::dur::BASE,
+                self.reduce_motion,
+            )
+        } else {
+            values.total_damage
+        };
         let right_label = match (
             self.hud_config.show_total_damage,
             self.hud_config.show_damage_taken,
@@ -787,11 +1306,11 @@ impl DpsApp {
                 t("Total Damage / Taken"),
                 format!(
                     "{} / {}",
-                    format_number(values.total_damage),
+                    format_number(animated_total_damage),
                     format_number(values.damage_taken)
                 ),
             )),
-            (true, false) => Some((t("Total Damage"), format_number(values.total_damage))),
+            (true, false) => Some((t("Total Damage"), format_number(animated_total_damage))),
             (false, true) => Some((t("Total Damage Taken"), format_number(values.damage_taken))),
             (false, false) => None,
         };
@@ -822,19 +1341,37 @@ impl DpsApp {
         if self.hud_config.show_character_rows && values.total_damage > 0.0 {
             let mut seg_left = share_strip.left();
             for (index, row) in rows.iter().enumerate() {
-                let frac = (row.damage / values.total_damage) as f32;
-                let seg_width = share_strip.width() * frac;
+                let target = (row.damage / values.total_damage) as f32;
+                let share = motion::animate_share(
+                    painter.ctx(),
+                    (
+                        "hud_summary_share",
+                        self.session_epoch,
+                        abyss_active,
+                        second_half,
+                        row.char_id,
+                    ),
+                    target.clamp(0.0, 1.0),
+                    self.reduce_motion,
+                );
+                let seg_width = (share_strip.width() * share.value)
+                    .min((share_strip.right() - seg_left).max(0.0));
                 if seg_width <= 0.5 {
+                    seg_left += seg_width;
                     continue;
                 }
+                let color = character_color(row.char_id, &self.characters, index, self.dark_mode);
                 let seg = egui::Rect::from_min_size(
                     egui::pos2(seg_left, share_strip.top()),
                     egui::vec2(seg_width, share_strip.height()),
                 );
-                painter.rect_filled(
-                    seg,
-                    1.0,
-                    character_color(row.char_id, &self.characters, index),
+                painter.rect_filled(seg, 1.0, color);
+                paint_share_tail(
+                    painter,
+                    share_strip,
+                    seg.right(),
+                    color,
+                    share.highlight_opacity,
                 );
                 seg_left += seg_width;
             }
@@ -888,16 +1425,41 @@ impl DpsApp {
         rows: &[CharacterStats],
         total_damage: f64,
     ) -> f32 {
-        const TEXT: Color32 = Color32::from_rgb(242, 246, 248);
-        let track_color = Color32::from_black_alpha(96);
+        let hud_theme = self.theme().hud;
+        let track_color = hud_theme.track;
         let row_h = 24.0;
         let row_gap = 4.0;
-        let mut row_top = layout.top;
-        for (index, row) in rows.iter().enumerate() {
-            let color = character_color(row.char_id, &self.characters, index);
+        let stride = row_h + row_gap;
+        let total_height = stride * rows.len() as f32;
+        let container = egui::Rect::from_min_size(
+            egui::pos2(layout.left, layout.top),
+            egui::vec2(layout.width, total_height),
+        );
+        let previous_clip = ui.clip_rect();
+        ui.set_clip_rect(previous_clip.intersect(container));
+        let clipped_painter = painter.with_clip_rect(container);
+        let painter = &clipped_painter;
+        let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
+        let abyss_active = self.state.abyss.is_active();
+        for (index, row) in rows.iter().enumerate().rev() {
+            let color = character_color(row.char_id, &self.characters, index, self.dark_mode);
             let row_dps = self.character_dps_for_current_source(row);
+            let target_y = index as f32 * stride;
+            let animated_y = motion::animate_value(
+                ui.ctx(),
+                (
+                    "hud_rank_y",
+                    self.session_epoch,
+                    abyss_active,
+                    second_half,
+                    row.char_id,
+                ),
+                target_y,
+                motion::dur::BASE,
+                self.reduce_motion,
+            );
             let row_rect = egui::Rect::from_min_size(
-                egui::pos2(layout.left, row_top),
+                egui::pos2(layout.left, layout.top + animated_y),
                 egui::vec2(layout.width, row_h),
             );
             let center_y = row_rect.center().y;
@@ -926,7 +1488,7 @@ impl DpsApp {
                 egui::Align2::LEFT_CENTER,
                 &row.name,
                 egui::FontId::proportional(12.0),
-                TEXT,
+                hud_theme.text,
             );
 
             let share = if total_damage > 0.0 {
@@ -939,16 +1501,31 @@ impl DpsApp {
                 egui::pos2(bar_right.max(bar_left + 8.0), center_y + 3.5),
             );
             painter.rect_filled(track, 3.5, track_color);
-            let fill_width = if total_damage > 0.0 {
-                track.width() * (share as f32 / 100.0)
-            } else {
-                0.0
-            };
+            let share_animation = motion::animate_share(
+                ui.ctx(),
+                (
+                    "hud_character_share",
+                    self.session_epoch,
+                    abyss_active,
+                    second_half,
+                    row.char_id,
+                ),
+                (share as f32 / 100.0).clamp(0.0, 1.0),
+                self.reduce_motion,
+            );
+            let fill_width = track.width() * share_animation.value;
             if fill_width > 0.5 {
                 painter.rect_filled(
                     egui::Rect::from_min_size(track.min, egui::vec2(fill_width, track.height())),
                     3.5,
                     color,
+                );
+                paint_share_tail(
+                    painter,
+                    track,
+                    track.left() + fill_width,
+                    color,
+                    share_animation.highlight_opacity,
                 );
             }
             paint_haloed(
@@ -965,11 +1542,11 @@ impl DpsApp {
                 egui::Align2::RIGHT_CENTER,
                 format_number(row_dps),
                 egui::FontId::monospace(12.0),
-                TEXT,
+                hud_theme.text,
             );
-            row_top += row_h + row_gap;
         }
-        row_top - layout.top
+        ui.set_clip_rect(previous_clip);
+        total_height
     }
 
     pub(crate) fn hud_mini_timeline(
@@ -986,7 +1563,7 @@ impl DpsApp {
         painter.hline(
             rect.x_range(),
             baseline_y,
-            Stroke::new(1.0_f32, Color32::from_black_alpha(110)),
+            Stroke::new(1.0_f32, self.theme().hud.halo.gamma_multiply(0.6)),
         );
         let timeline = self.cached_timeline_series();
         let peak = timeline
@@ -1015,7 +1592,7 @@ impl DpsApp {
             painter,
             egui::pos2(rect.left(), rect.top() + 6.0),
             egui::Align2::LEFT_CENTER,
-            "DPS",
+            t("DPS"),
             egui::FontId::proportional(9.5),
             muted,
         );
@@ -1064,7 +1641,7 @@ impl DpsApp {
         ui.painter().rect_stroke(
             rect,
             radius_f,
-            Stroke::new(1.0_f32, Color32::from_black_alpha(150)),
+            Stroke::new(1.0_f32, self.theme().hud.halo),
             egui::StrokeKind::Inside,
         );
     }
@@ -1077,8 +1654,9 @@ impl DpsApp {
         total_damage: f64,
         row_height: f32,
     ) {
+        let density_scale = density_tokens(self.density).font_scale;
         let color = readable_accent(
-            character_color(row.char_id, &self.characters, index),
+            character_color(row.char_id, &self.characters, index, self.dark_mode),
             self.dark_mode,
         );
         let avatar_texture = self
@@ -1102,9 +1680,14 @@ impl DpsApp {
             egui::vec2(ui.available_width(), row_height),
             egui::Sense::click(),
         );
-        let hover =
-            ui.ctx()
-                .animate_bool_with_time(response.id.with("hover"), response.hovered(), 0.12);
+        let hover = motion::animate_bool(
+            ui.ctx(),
+            ("party_row_hover", response.id),
+            response.hovered(),
+            motion::dur::FAST,
+            self.reduce_motion,
+            motion::ease::standard,
+        );
         let card_fill = mix_color(
             shadcn_card(self.dark_mode),
             shadcn_card_hover(self.dark_mode),
@@ -1128,10 +1711,19 @@ impl DpsApp {
             egui::pos2(rect.left() + 7.0, rect.bottom() - 4.0),
             egui::pos2(rect.right() - 7.0, rect.bottom() - 2.0),
         );
-        let animated_share = ui.ctx().animate_value_with_time(
-            response.id.with("share"),
+        let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
+        let abyss_active = self.state.abyss.is_active();
+        let animated_share = motion::animate_share(
+            ui.ctx(),
+            (
+                "party_row_share",
+                self.session_epoch,
+                abyss_active,
+                second_half,
+                row.char_id,
+            ),
             (share as f32 / 100.0).clamp(0.0, 1.0),
-            0.25,
+            self.reduce_motion,
         );
         ui.painter()
             .rect_filled(contribution_track, 1.0, shadcn_muted(self.dark_mode));
@@ -1139,12 +1731,19 @@ impl DpsApp {
             egui::Rect::from_min_size(
                 contribution_track.min,
                 egui::vec2(
-                    contribution_track.width() * animated_share,
+                    contribution_track.width() * animated_share.value,
                     contribution_track.height(),
                 ),
             ),
             1.0,
             color,
+        );
+        paint_share_tail(
+            ui.painter(),
+            contribution_track,
+            contribution_track.left() + contribution_track.width() * animated_share.value,
+            color,
+            animated_share.highlight_opacity,
         );
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
@@ -1169,7 +1768,7 @@ impl DpsApp {
                 egui::pos2(rect.left() + 10.0, rect.center().y),
                 egui::Align2::CENTER_CENTER,
                 format!("#{}", index + 1),
-                egui::FontId::monospace(9.5),
+                egui::FontId::monospace(9.5 * density_scale),
                 color,
             );
         }
@@ -1181,11 +1780,7 @@ impl DpsApp {
             avatar_size,
             ui.ctx().pixels_per_point(),
         );
-        let avatar_border = if self.dark_mode {
-            Color32::from_rgb(78, 82, 92)
-        } else {
-            Color32::from_rgb(210, 213, 220)
-        };
+        let avatar_border = self.theme().border_strong;
         ui.painter().rect_filled(avatar_rect, 8.0, avatar_border);
         if let Some(texture) = avatar_texture {
             ui.put(
@@ -1205,57 +1800,240 @@ impl DpsApp {
                 avatar_rect.center(),
                 egui::Align2::CENTER_CENTER,
                 row.name.chars().next().unwrap_or('?').to_string(),
-                egui::FontId::proportional(14.0),
+                egui::FontId::proportional(14.0 * density_scale),
                 contrast_text(color),
             );
         }
+        let compact = main_width_class(rect.width()) == MainWidthClass::Compact;
+        let primary_text_y = if compact {
+            rect.center().y
+        } else {
+            rect.center().y - 8.0
+        };
         let text_left = avatar_rect.right() + 8.0;
         ui.painter().text(
-            egui::pos2(text_left, rect.center().y - 8.0),
+            egui::pos2(text_left, primary_text_y),
             egui::Align2::LEFT_CENTER,
             &row.name,
-            egui::FontId::proportional(14.0),
+            egui::FontId::proportional(14.0 * density_scale),
             ui.visuals().text_color(),
         );
         ui.painter().text(
-            egui::pos2(text_left, rect.center().y + 9.0),
-            egui::Align2::LEFT_CENTER,
-            tf(
-                "{} hits · {}",
-                &[&row.hits.to_string(), &format!("{duration:.1}s")],
-            ),
-            egui::FontId::monospace(10.5),
-            ui.visuals().weak_text_color(),
-        );
-        ui.painter().text(
-            egui::pos2(rect.right() - 10.0, rect.center().y - 8.0),
+            egui::pos2(rect.right() - 10.0, primary_text_y),
             egui::Align2::RIGHT_CENTER,
             format!("{} DPS", format_number(dps)),
-            egui::FontId::monospace(12.0),
-            theme_accent(self.dark_mode),
+            egui::FontId::monospace(12.0 * density_scale),
+            self.theme().accent,
         );
-        ui.painter().text(
-            egui::pos2(rect.right() - 10.0, rect.center().y + 9.0),
-            egui::Align2::RIGHT_CENTER,
-            tf(
-                "Damage {} · Share {}% · Taken {}",
-                &[
-                    &format_number(row.damage),
-                    &format!("{share:.1}"),
-                    &format_number(row.damage_taken),
-                ],
-            ),
-            egui::FontId::monospace(10.5),
-            ui.visuals().weak_text_color(),
-        );
-        if response
-            .on_hover_text(t("View combat details in a separate window"))
-            .clicked()
-        {
+        if !compact {
+            ui.painter().text(
+                egui::pos2(text_left, rect.center().y + 9.0),
+                egui::Align2::LEFT_CENTER,
+                tf(
+                    "{} hits · {}",
+                    &[
+                        &row.hits.to_string(),
+                        &tf("{}s", &[&format!("{duration:.1}")]),
+                    ],
+                ),
+                egui::FontId::monospace(10.5 * density_scale),
+                ui.visuals().weak_text_color(),
+            );
+            ui.painter().text(
+                egui::pos2(rect.right() - 10.0, rect.center().y + 9.0),
+                egui::Align2::RIGHT_CENTER,
+                tf(
+                    "Damage {} · Share {}% · Taken {}",
+                    &[
+                        &format_number(row.damage),
+                        &format!("{share:.1}"),
+                        &format_number(row.damage_taken),
+                    ],
+                ),
+                egui::FontId::monospace(10.5 * density_scale),
+                ui.visuals().weak_text_color(),
+            );
+        }
+        let response = response.on_hover_text(t("View combat details in a separate window"));
+        let mut open_details = false;
+        response.context_menu(|ui| {
+            if ui.button(t("View combat details")).clicked() {
+                open_details = true;
+                ui.close();
+            }
+            if ui.button(t("Copy values")).clicked() {
+                ui.ctx().copy_text(tf(
+                    "Character: {}\nDPS: {}\nDamage: {}\nShare: {}%\nTaken: {}",
+                    &[
+                        &row.name,
+                        &format_number(dps),
+                        &format_number(row.damage),
+                        &format!("{share:.1}"),
+                        &format_number(row.damage_taken),
+                    ],
+                ));
+                ui.close();
+            }
+            if ui.button(t("Hide from ranking")).clicked() {
+                self.hidden_character_ids.insert(row.char_id);
+                ui.close();
+            }
+        });
+        if response.clicked() || open_details {
             self.hit_detail_char_id = Some(row.char_id);
             self.hit_detail_filter = HitDetailFilter::All;
             self.hit_detail_skill_filter.clear();
             self.hit_detail_corner_applied = false;
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MainEmptyAction {
+    Detect,
+    Capture,
+    Import,
+}
+
+fn main_empty_step(
+    ui: &mut egui::Ui,
+    number: usize,
+    label: String,
+    complete: bool,
+    theme: ThemeTokens,
+) {
+    ui.horizontal(|ui| {
+        // U+2714 — U+2713 "✓" is missing from the app font stack and renders
+        // as a tofu box (see `painted_glyphs_exist_in_font_stack`).
+        let marker = if complete {
+            "✔".to_owned()
+        } else {
+            number.to_string()
+        };
+        let color = if complete {
+            theme.success
+        } else {
+            theme.fg_faint
+        };
+        ui.label(RichText::new(marker).strong().color(color));
+        ui.label(RichText::new(label).color(if complete { theme.fg_muted } else { theme.fg }));
+    });
+}
+
+fn trend_glyph(direction: motion::TrendDirection) -> &'static str {
+    match direction {
+        motion::TrendDirection::Up => "▲",
+        motion::TrendDirection::Down => "▼",
+    }
+}
+
+fn paint_metric_trend(
+    ui: &egui::Ui,
+    bounds: egui::Rect,
+    trend: Option<motion::TrendIndicator>,
+    color: Color32,
+) {
+    let Some(trend) = trend else {
+        return;
+    };
+    ui.painter().text(
+        egui::pos2(bounds.right() - 7.0, bounds.top() + 7.0),
+        egui::Align2::RIGHT_TOP,
+        trend_glyph(trend.direction),
+        egui::FontId::proportional(9.0),
+        color.gamma_multiply(trend.opacity),
+    );
+}
+
+fn paint_hud_trend(
+    painter: &egui::Painter,
+    position: egui::Pos2,
+    trend: Option<motion::TrendIndicator>,
+    color: Color32,
+) {
+    let Some(trend) = trend else {
+        return;
+    };
+    painter.text(
+        position,
+        egui::Align2::LEFT_CENTER,
+        trend_glyph(trend.direction),
+        egui::FontId::proportional(10.0),
+        color.gamma_multiply(trend.opacity),
+    );
+}
+
+fn paint_share_tail(
+    painter: &egui::Painter,
+    track: egui::Rect,
+    end_x: f32,
+    color: Color32,
+    opacity: f32,
+) {
+    if opacity <= 0.0 {
+        return;
+    }
+    let left = (end_x - 1.0).clamp(track.left(), track.right());
+    let right = (left + 2.0).min(track.right());
+    if right <= left {
+        return;
+    }
+    painter.rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(left, track.top()),
+            egui::pos2(right, track.bottom()),
+        ),
+        1.0,
+        mix_color(color, contrast_text(color), 0.72).gamma_multiply(opacity),
+    );
+}
+
+fn toolbar_button_group_width<'a>(
+    ui: &egui::Ui,
+    labels: impl IntoIterator<Item = &'a str>,
+    horizontal_padding: f32,
+    item_spacing: f32,
+) -> f32 {
+    let font_id = egui::TextStyle::Button.resolve(ui.style());
+    let mut width = 0.0;
+    let mut count: usize = 0;
+    for label in labels {
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), font_id.clone(), Color32::WHITE)
+            .size()
+            .x;
+        width += (text_width + horizontal_padding * 2.0).max(ui.spacing().interact_size.x);
+        count += 1;
+    }
+    width + item_spacing * count.saturating_sub(1) as f32
+}
+
+#[cfg(test)]
+mod responsive_tests {
+    use super::*;
+
+    #[test]
+    fn main_width_class_uses_exact_breakpoints() {
+        assert_eq!(main_width_class(419.9), MainWidthClass::Compact);
+        assert_eq!(main_width_class(420.0), MainWidthClass::Standard);
+        assert_eq!(main_width_class(560.0), MainWidthClass::Standard);
+        assert_eq!(main_width_class(560.1), MainWidthClass::Wide);
+    }
+
+    #[test]
+    fn toolbar_reflows_instead_of_hiding_actions() {
+        assert_eq!(
+            main_toolbar_layout(540.0, 320.0, 220.0, 90.0, 196.0),
+            MainToolbarLayout::SingleRow
+        );
+        assert_eq!(
+            main_toolbar_layout(539.9, 320.0, 220.0, 90.0, 196.0),
+            MainToolbarLayout::TwoRows
+        );
+        assert_eq!(
+            main_toolbar_layout(300.0, 320.0, 220.0, 90.0, 196.0),
+            MainToolbarLayout::ThreeRows
+        );
     }
 }

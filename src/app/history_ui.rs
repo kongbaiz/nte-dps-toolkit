@@ -79,7 +79,13 @@ pub(crate) fn draw_history_abyss_half(
                         .color(shadcn_foreground(dark_mode)),
                 );
                 ui.add_space(8.0);
-                history_metric_chip(ui, "DPS", format_number(half.total_dps), accent, dark_mode);
+                history_metric_chip(
+                    ui,
+                    &t("DPS"),
+                    format_number(half.total_dps),
+                    accent,
+                    dark_mode,
+                );
                 history_metric_chip(
                     ui,
                     &t("Damage"),
@@ -129,15 +135,9 @@ pub(crate) fn localized_abyss_half_label(half: &str) -> String {
 
 pub(crate) fn history_half_accent(half: &str, dark_mode: bool) -> Color32 {
     if half.contains('上') {
-        if dark_mode {
-            Color32::from_rgb(96, 165, 250)
-        } else {
-            Color32::from_rgb(37, 99, 235)
-        }
-    } else if dark_mode {
-        Color32::from_rgb(52, 211, 153)
+        theme_tokens(dark_mode, AccentColor::Zinc).info
     } else {
-        Color32::from_rgb(5, 150, 105)
+        theme_tokens(dark_mode, AccentColor::Zinc).success
     }
 }
 
@@ -274,11 +274,11 @@ pub(crate) fn draw_history_character_rows(
     visual: HistoryVisualContext<'_>,
 ) {
     let dark_mode = visual.dark_mode;
-    history_section_heading(ui, title, theme_accent(dark_mode));
+    history_section_heading(ui, title, ui.visuals().selection.bg_fill);
     ui.add_space(4.0);
     for (index, row) in rows.iter().take(6).enumerate() {
         let color = readable_accent(
-            character_color(row.char_id, visual.characters, index),
+            character_color(row.char_id, visual.characters, index, visual.dark_mode),
             dark_mode,
         );
         draw_history_progress_row(
@@ -343,6 +343,7 @@ pub(crate) fn skill_row_color(
         readable_accent(
             deterministic_character_fallback_color(
                 format!("skill:{index}:{}", row.name).as_bytes(),
+                dark_mode,
             ),
             dark_mode,
         )

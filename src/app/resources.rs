@@ -236,8 +236,9 @@ pub(crate) fn fill_missing_character_colors_from_avatars(
         let color = avatar_colors
             .entry(avatar.to_owned())
             .or_insert_with(|| {
-                avatar_accent_color(root, avatar)
-                    .unwrap_or_else(|| deterministic_character_fallback_color(avatar.as_bytes()))
+                avatar_accent_color(root, avatar).unwrap_or_else(|| {
+                    deterministic_character_fallback_color(avatar.as_bytes(), false)
+                })
             })
             .to_owned();
         character.color = Some(format!(
@@ -314,25 +315,12 @@ pub(crate) fn avatar_accent_color(root: &std::path::Path, resource_path: &str) -
     ))
 }
 
-pub(crate) fn deterministic_character_fallback_color(seed: &[u8]) -> Color32 {
-    const PALETTE: [Color32; 12] = [
-        Color32::from_rgb(193, 74, 105),
-        Color32::from_rgb(112, 91, 179),
-        Color32::from_rgb(70, 164, 126),
-        Color32::from_rgb(210, 145, 62),
-        Color32::from_rgb(72, 137, 195),
-        Color32::from_rgb(171, 89, 178),
-        Color32::from_rgb(92, 159, 220),
-        Color32::from_rgb(219, 112, 85),
-        Color32::from_rgb(128, 174, 73),
-        Color32::from_rgb(210, 92, 145),
-        Color32::from_rgb(87, 177, 166),
-        Color32::from_rgb(154, 125, 218),
-    ];
+pub(crate) fn deterministic_character_fallback_color(seed: &[u8], dark_mode: bool) -> Color32 {
     let hash = seed.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     });
-    PALETTE[hash as usize % PALETTE.len()]
+    let palette = theme_tokens(dark_mode, AccentColor::Zinc).dataviz;
+    palette[hash as usize % palette.len()]
 }
 
 pub(crate) fn load_image_texture(
@@ -405,80 +393,68 @@ pub(crate) fn pixel_aligned_rect(
     egui::Rect::from_min_size(min, egui::vec2(size, size))
 }
 
-pub(crate) fn configure_style(ctx: &egui::Context, dark_mode: bool) {
+pub(crate) fn configure_style(
+    ctx: &egui::Context,
+    dark_mode: bool,
+    accent: AccentColor,
+    density: UiDensity,
+    reduce_motion: bool,
+) {
+    let tokens = theme_tokens(dark_mode, accent);
+    let density = density_tokens(density);
     let mut visuals = if dark_mode {
         egui::Visuals::dark()
     } else {
         egui::Visuals::light()
     };
-    if dark_mode {
-        visuals.panel_fill = Color32::from_rgb(9, 9, 11);
-        visuals.window_fill = Color32::from_rgb(9, 9, 11);
-        visuals.extreme_bg_color = Color32::from_rgb(9, 9, 11);
-        visuals.faint_bg_color = Color32::from_rgb(24, 24, 27);
-        visuals.code_bg_color = Color32::from_rgb(24, 24, 27);
-    } else {
-        visuals.panel_fill = Color32::from_rgb(255, 255, 255);
-        visuals.window_fill = Color32::from_rgb(255, 255, 255);
-        visuals.extreme_bg_color = Color32::from_rgb(250, 250, 250);
-        visuals.faint_bg_color = Color32::from_rgb(244, 244, 245);
-        visuals.code_bg_color = Color32::from_rgb(244, 244, 245);
-    }
-    let border = shadcn_border(dark_mode);
-    let card = shadcn_card(dark_mode);
-    let hover = shadcn_card_hover(dark_mode);
+    visuals.panel_fill = tokens.bg;
+    visuals.window_fill = tokens.bg_elevated;
+    visuals.extreme_bg_color = tokens.bg;
+    visuals.faint_bg_color = tokens.card;
+    visuals.code_bg_color = tokens.card;
     visuals.widgets.noninteractive.bg_fill = Color32::TRANSPARENT;
     visuals.widgets.noninteractive.weak_bg_fill = Color32::TRANSPARENT;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, border);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(
-        1.0_f32,
-        if dark_mode {
-            Color32::from_rgb(250, 250, 250)
-        } else {
-            Color32::from_rgb(9, 9, 11)
-        },
-    );
-    visuals.widgets.inactive.bg_fill = card;
-    visuals.widgets.inactive.weak_bg_fill = card;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, border);
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, tokens.border);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, tokens.fg);
+    visuals.widgets.inactive.bg_fill = tokens.card;
+    visuals.widgets.inactive.weak_bg_fill = tokens.card;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, tokens.border);
     visuals.widgets.inactive.fg_stroke = visuals.widgets.noninteractive.fg_stroke;
-    visuals.widgets.hovered.bg_fill = hover;
-    visuals.widgets.hovered.weak_bg_fill = hover;
+    visuals.widgets.hovered.bg_fill = tokens.card_hover;
+    visuals.widgets.hovered.weak_bg_fill = tokens.card_hover;
     visuals.widgets.hovered.fg_stroke = visuals.widgets.noninteractive.fg_stroke;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(
-        1.0_f32,
-        if dark_mode {
-            Color32::from_rgb(63, 63, 70)
-        } else {
-            Color32::from_rgb(212, 212, 216)
-        },
-    );
-    visuals.widgets.active.bg_fill = if dark_mode {
-        Color32::from_rgb(82, 82, 91)
-    } else {
-        Color32::from_rgb(212, 212, 216)
-    };
-    visuals.widgets.active.weak_bg_fill = visuals.widgets.active.bg_fill;
-    visuals.widgets.active.fg_stroke = Stroke::new(
-        1.0_f32,
-        if dark_mode {
-            Color32::from_rgb(250, 250, 250)
-        } else {
-            Color32::from_rgb(24, 24, 27)
-        },
-    );
-    visuals.window_stroke = Stroke::new(1.0_f32, border);
-    let accent = theme_accent(dark_mode);
-    visuals.selection.bg_fill = accent;
-    visuals.selection.stroke = Stroke::new(1.0_f32, contrast_text(accent));
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, tokens.border_strong);
+    // `active` is the pressed state of ordinary (card-colored) widgets, and
+    // egui's `Visuals::strong_text_color()` reads `active.fg_stroke` — so this
+    // pair must stay readable on the window background, or every default
+    // `.strong()` text and hand-painted "strong" glyph goes invisible.
+    // Accent-on-accent belongs in `selection.*` (used by selected buttons).
+    visuals.widgets.active.bg_fill = tokens.muted;
+    visuals.widgets.active.weak_bg_fill = tokens.muted;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, tokens.border_strong);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, tokens.fg);
+    visuals.window_stroke = Stroke::new(1.0_f32, tokens.border);
+    visuals.selection.bg_fill = tokens.accent;
+    visuals.selection.stroke = Stroke::new(1.0_f32, tokens.accent_fg);
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.global_style()).clone();
-    style.animation_time = 0.14;
+    style.animation_time = motion::duration(reduce_motion, motion::dur::FAST);
     style.interaction.selectable_labels = false;
-    style.spacing.item_spacing = egui::vec2(8.0, 5.0);
-    style.spacing.interact_size.y = INLINE_CONTROL_HEIGHT;
-    style.spacing.button_padding = egui::vec2(11.0, 4.0);
+    style.spacing.item_spacing = density.item_spacing;
+    style.spacing.interact_size.y = density.interact_height;
+    style.spacing.button_padding = density.button_padding;
+    for (text_style, base_size) in [
+        (egui::TextStyle::Small, 10.0),
+        (egui::TextStyle::Body, 14.0),
+        (egui::TextStyle::Button, 14.0),
+        (egui::TextStyle::Heading, 20.0),
+        (egui::TextStyle::Monospace, 13.0),
+    ] {
+        if let Some(font) = style.text_styles.get_mut(&text_style) {
+            font.size = base_size * density.font_scale;
+        }
+    }
     let mut scroll = egui::style::ScrollStyle::solid();
     scroll.bar_width = 8.0;
     scroll.handle_min_length = 32.0;

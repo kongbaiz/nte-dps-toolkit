@@ -199,9 +199,29 @@ impl DpsApp {
         ui.add_space(6.0);
 
         if self.state.empty_curtain.is_empty() {
-            empty_curtain_empty_state(ui, "Waiting for Console equipment data");
+            self.capture_data_empty_state(
+                ui,
+                t("Waiting for Console equipment data"),
+                t("Start capture or import a replay to collect equipment data."),
+            );
         } else if self.kongmu_ui.filter_cache.indices.is_empty() {
-            empty_curtain_empty_state(ui, "No equipment matches the current filters");
+            let theme = self.theme();
+            empty_state_card(
+                ui,
+                theme,
+                t("No equipment matches the current filters"),
+                t("Clear the filters to show all recorded equipment."),
+                |ui| {
+                    if ui.button(t("Clear Filters")).clicked() {
+                        self.kongmu_ui.clear_filters();
+                        self.kongmu_ui.refresh_filter_cache(
+                            &self.state.empty_curtain,
+                            self.state.empty_curtain_generation,
+                            &self.equipment_catalog,
+                        );
+                    }
+                },
+            );
         } else {
             draw_empty_curtain_grid(
                 ui,
@@ -276,16 +296,6 @@ impl DpsApp {
             ),
         }
     }
-}
-
-fn empty_curtain_empty_state(ui: &mut egui::Ui, key: &str) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), 120.0),
-        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-        |ui| {
-            ui.label(RichText::new(t(key)).color(ui.visuals().weak_text_color()));
-        },
-    );
 }
 
 fn draw_empty_curtain_grid(
@@ -507,7 +517,7 @@ fn draw_empty_curtain_card(
                     RichText::new(tf("{}-Piece Set", &[&effect.count.to_string()]))
                         .size(11.5)
                         .strong()
-                        .color(theme_accent(ui.visuals().dark_mode)),
+                        .color(ui.visuals().selection.bg_fill),
                 );
                 ui.label(effect.text(i18n::current_language()));
             }
@@ -571,7 +581,7 @@ fn draw_equipment_stat_row(
                 egui::pos2(rect.left() + 2.0, rect.center().y + 6.0),
             ),
             1.0,
-            theme_accent(dark_mode),
+            ui.visuals().selection.bg_fill,
         );
     }
     ui.painter().text(
@@ -988,7 +998,10 @@ fn show_empty_curtain_filter_window(
                 if ui.button(t("Clear Filters")).clicked() {
                     state.clear_filters();
                 }
-                if ui.add(primary_button(t("Done"), dark_mode)).clicked() {
+                if ui
+                    .add(primary_button(t("Done"), ui.visuals().selection.bg_fill))
+                    .clicked()
+                {
                     done = true;
                 }
             });
@@ -1041,7 +1054,7 @@ fn draw_filter_option(
         Stroke::new(
             if selected { 1.5_f32 } else { 1.0_f32 },
             if selected {
-                theme_accent(dark_mode)
+                ui.visuals().selection.bg_fill
             } else {
                 shadcn_border(dark_mode)
             },
@@ -1087,12 +1100,13 @@ fn quality_label_key(quality: &str) -> &'static str {
     }
 }
 
-fn quality_swatch_color(quality: &str) -> Color32 {
+fn quality_swatch_color(quality: &str, dark_mode: bool) -> Color32 {
+    let theme = theme_tokens(dark_mode, AccentColor::Zinc);
     match quality {
-        "blue" => Color32::from_rgb(0x3b, 0x82, 0xf6),
-        "purple" => Color32::from_rgb(0xa8, 0x55, 0xf7),
-        "orange" => Color32::from_rgb(0xf5, 0x9e, 0x0b),
-        _ => Color32::GRAY,
+        "blue" => theme.dataviz[0],
+        "purple" => theme.dataviz[1],
+        "orange" => theme.dataviz[3],
+        _ => theme.fg_faint,
     }
 }
 
@@ -1128,7 +1142,7 @@ fn draw_quality_chip(
         Stroke::new(
             if selected { 1.5_f32 } else { 1.0_f32 },
             if selected {
-                theme_accent(dark_mode)
+                ui.visuals().selection.bg_fill
             } else {
                 shadcn_border(dark_mode)
             },
@@ -1136,8 +1150,11 @@ fn draw_quality_chip(
         egui::StrokeKind::Inside,
     );
     let dot_center = egui::pos2(rect.left() + 10.0 + DOT * 0.5, rect.center().y);
-    ui.painter()
-        .circle_filled(dot_center, DOT * 0.5, quality_swatch_color(quality));
+    ui.painter().circle_filled(
+        dot_center,
+        DOT * 0.5,
+        quality_swatch_color(quality, dark_mode),
+    );
     ui.painter().circle_stroke(
         dot_center,
         DOT * 0.5,

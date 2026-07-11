@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::i18n::Language;
+use eframe::egui;
 
 const CONFIG_DIRECTORY: &str = "NTE DPS Tool";
 const CONFIG_FILENAME: &str = "config.json";
@@ -31,6 +32,33 @@ const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
 const DPS_TIME_MODES: [DpsTimeMode; 2] = [DpsTimeMode::TimeStopAdjusted, DpsTimeMode::RealTime];
 const TIMELINE_DPS_VIEW_MODES: [TimelineDpsViewMode; 2] =
     [TimelineDpsViewMode::Team, TimelineDpsViewMode::Characters];
+const ACCENT_COLORS: [AccentColor; 5] = [
+    AccentColor::Zinc,
+    AccentColor::Blue,
+    AccentColor::Violet,
+    AccentColor::Orange,
+    AccentColor::Green,
+];
+const UI_DENSITIES: [UiDensity; 3] = [UiDensity::Compact, UiDensity::Cozy, UiDensity::Comfortable];
+const GLOBAL_HOTKEY_ACTIONS: [GlobalHotkeyAction; 3] = [
+    GlobalHotkeyAction::ToggleCapture,
+    GlobalHotkeyAction::ResetSession,
+    GlobalHotkeyAction::ToggleHud,
+];
+const HOTKEY_KEYS: [HotkeyKey; 12] = [
+    HotkeyKey::F1,
+    HotkeyKey::F2,
+    HotkeyKey::F3,
+    HotkeyKey::F4,
+    HotkeyKey::F5,
+    HotkeyKey::F6,
+    HotkeyKey::F7,
+    HotkeyKey::F8,
+    HotkeyKey::F9,
+    HotkeyKey::F10,
+    HotkeyKey::F11,
+    HotkeyKey::F12,
+];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,6 +82,28 @@ impl PassthroughHotkey {
             Self::F8 => "F8",
             Self::F9 => "F9",
         }
+    }
+
+    pub fn egui_key(self) -> egui::Key {
+        match self {
+            Self::Home => egui::Key::Home,
+            Self::Insert => egui::Key::Insert,
+            Self::F8 => egui::Key::F8,
+            Self::F9 => egui::Key::F9,
+        }
+    }
+
+    pub fn matches_egui(self, modifiers: egui::Modifiers, key: egui::Key) -> bool {
+        self.egui_key() == key && !modifiers.ctrl && !modifiers.alt && !modifiers.shift
+    }
+
+    fn global_binding(self) -> Option<HotkeyBinding> {
+        let key = match self {
+            Self::F8 => HotkeyKey::F8,
+            Self::F9 => HotkeyKey::F9,
+            Self::Home | Self::Insert => return None,
+        };
+        Some(HotkeyBinding::new(false, false, false, key))
     }
 }
 
@@ -105,6 +155,259 @@ impl TimelineDpsViewMode {
         match self {
             Self::Team => "Whole Team",
             Self::Characters => "By Character",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GlobalHotkeyAction {
+    ToggleCapture,
+    ResetSession,
+    ToggleHud,
+}
+
+impl GlobalHotkeyAction {
+    pub fn all() -> &'static [Self] {
+        &GLOBAL_HOTKEY_ACTIONS
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ToggleCapture => "Start / Stop Capture",
+            Self::ResetSession => "Reset Session",
+            Self::ToggleHud => "Toggle Combat HUD",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HotkeyKey {
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+}
+
+impl HotkeyKey {
+    pub fn all() -> &'static [Self] {
+        &HOTKEY_KEYS
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::F1 => "F1",
+            Self::F2 => "F2",
+            Self::F3 => "F3",
+            Self::F4 => "F4",
+            Self::F5 => "F5",
+            Self::F6 => "F6",
+            Self::F7 => "F7",
+            Self::F8 => "F8",
+            Self::F9 => "F9",
+            Self::F10 => "F10",
+            Self::F11 => "F11",
+            Self::F12 => "F12",
+        }
+    }
+
+    pub fn egui_key(self) -> egui::Key {
+        match self {
+            Self::F1 => egui::Key::F1,
+            Self::F2 => egui::Key::F2,
+            Self::F3 => egui::Key::F3,
+            Self::F4 => egui::Key::F4,
+            Self::F5 => egui::Key::F5,
+            Self::F6 => egui::Key::F6,
+            Self::F7 => egui::Key::F7,
+            Self::F8 => egui::Key::F8,
+            Self::F9 => egui::Key::F9,
+            Self::F10 => egui::Key::F10,
+            Self::F11 => egui::Key::F11,
+            Self::F12 => egui::Key::F12,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HotkeyBinding {
+    pub ctrl: bool,
+    pub alt: bool,
+    pub shift: bool,
+    pub key: HotkeyKey,
+}
+
+impl HotkeyBinding {
+    pub const fn new(ctrl: bool, alt: bool, shift: bool, key: HotkeyKey) -> Self {
+        Self {
+            ctrl,
+            alt,
+            shift,
+            key,
+        }
+    }
+
+    pub fn label(self) -> String {
+        let mut parts = Vec::with_capacity(4);
+        if self.ctrl {
+            parts.push("Ctrl");
+        }
+        if self.alt {
+            parts.push("Alt");
+        }
+        if self.shift {
+            parts.push("Shift");
+        }
+        parts.push(self.key.label());
+        parts.join("+")
+    }
+
+    pub fn matches_egui(self, modifiers: egui::Modifiers, key: egui::Key) -> bool {
+        self.key.egui_key() == key
+            && self.ctrl == modifiers.ctrl
+            && self.alt == modifiers.alt
+            && self.shift == modifiers.shift
+    }
+
+    pub fn is_reserved(self) -> bool {
+        self.alt && self.key == HotkeyKey::F4
+    }
+
+    const fn has_modifier(self) -> bool {
+        self.ctrl || self.alt || self.shift
+    }
+}
+
+impl Default for HotkeyBinding {
+    fn default() -> Self {
+        Self::new(false, false, false, HotkeyKey::F1)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GlobalHotkeys {
+    pub enabled: bool,
+    pub capture: Option<HotkeyBinding>,
+    pub reset: Option<HotkeyBinding>,
+    pub hud: Option<HotkeyBinding>,
+}
+
+impl GlobalHotkeys {
+    pub fn binding(self, action: GlobalHotkeyAction) -> Option<HotkeyBinding> {
+        match action {
+            GlobalHotkeyAction::ToggleCapture => self.capture,
+            GlobalHotkeyAction::ResetSession => self.reset,
+            GlobalHotkeyAction::ToggleHud => self.hud,
+        }
+    }
+
+    pub fn set_binding(&mut self, action: GlobalHotkeyAction, binding: Option<HotkeyBinding>) {
+        match action {
+            GlobalHotkeyAction::ToggleCapture => self.capture = binding,
+            GlobalHotkeyAction::ResetSession => self.reset = binding,
+            GlobalHotkeyAction::ToggleHud => self.hud = binding,
+        }
+    }
+
+    pub fn sanitized(mut self) -> Self {
+        for action in GlobalHotkeyAction::all() {
+            if self
+                .binding(*action)
+                .is_some_and(|binding| !binding.has_modifier() || binding.is_reserved())
+            {
+                self.set_binding(*action, None);
+            }
+        }
+        if self.reset.is_some() && self.reset == self.capture {
+            self.reset = None;
+        }
+        if self.hud.is_some() && (self.hud == self.capture || self.hud == self.reset) {
+            self.hud = None;
+        }
+        self
+    }
+
+    fn without_binding(mut self, binding: HotkeyBinding) -> Self {
+        for action in GlobalHotkeyAction::all() {
+            if self.binding(*action) == Some(binding) {
+                self.set_binding(*action, None);
+            }
+        }
+        self
+    }
+}
+
+impl Default for GlobalHotkeys {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            capture: Some(HotkeyBinding::new(true, false, false, HotkeyKey::F9)),
+            reset: Some(HotkeyBinding::new(true, false, false, HotkeyKey::F10)),
+            hud: Some(HotkeyBinding::new(true, false, false, HotkeyKey::F11)),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccentColor {
+    #[default]
+    Zinc,
+    Blue,
+    Violet,
+    Orange,
+    Green,
+}
+
+impl AccentColor {
+    pub fn all() -> &'static [Self] {
+        &ACCENT_COLORS
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Zinc => "Zinc",
+            Self::Blue => "Blue",
+            Self::Violet => "Violet",
+            Self::Orange => "Orange",
+            Self::Green => "Green",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiDensity {
+    Compact,
+    #[default]
+    Cozy,
+    Comfortable,
+}
+
+impl UiDensity {
+    pub fn all() -> &'static [Self] {
+        &UI_DENSITIES
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Compact => "Compact",
+            Self::Cozy => "Cozy",
+            Self::Comfortable => "Comfortable",
         }
     }
 }
@@ -191,6 +494,12 @@ pub struct UiConfig {
     pub language: Language,
     pub opacity: f32,
     pub dark_mode: bool,
+    #[serde(default)]
+    pub accent: AccentColor,
+    #[serde(default)]
+    pub density: UiDensity,
+    #[serde(default)]
+    pub reduce_motion: bool,
     pub always_on_top: bool,
     pub server_damage_calibration: bool,
     /// Manual capture-NIC override (the Npcap device `name`, e.g. `\Device\NPF_{GUID}`). `None`
@@ -201,6 +510,12 @@ pub struct UiConfig {
     pub timeline_dps_view_mode: TimelineDpsViewMode,
     pub hud: HudConfig,
     pub passthrough_hotkey: PassthroughHotkey,
+    #[serde(default)]
+    pub global_hotkeys: GlobalHotkeys,
+    #[serde(default = "default_onboarding_done")]
+    pub onboarding_done: bool,
+    #[serde(default)]
+    pub console_sidebar_migration_seen: bool,
     /// Last inner size (logical points) each window was dragged to, restored on the next launch.
     /// Absent (older configs, or the retired `*_window_scale` keys) → the window opens at its base
     /// size. Replaces the removed fixed-ratio `−／＋` scale.
@@ -222,6 +537,9 @@ impl Default for UiConfig {
             language: Language::default(),
             opacity: 0.92,
             dark_mode: false,
+            accent: AccentColor::default(),
+            density: UiDensity::default(),
+            reduce_motion: false,
             always_on_top: true,
             server_damage_calibration: false,
             manual_capture_device: None,
@@ -230,6 +548,9 @@ impl Default for UiConfig {
             timeline_dps_view_mode: TimelineDpsViewMode::default(),
             hud: HudConfig::default(),
             passthrough_hotkey: PassthroughHotkey::default(),
+            global_hotkeys: GlobalHotkeys::default(),
+            onboarding_done: true,
+            console_sidebar_migration_seen: false,
             main_window_size: None,
             abyss_window_size: None,
             hit_detail_window_size: None,
@@ -264,7 +585,24 @@ impl UiConfig {
             .take()
             .filter(|name| !name.trim().is_empty());
         self.hud = self.hud.sanitized();
+        self.global_hotkeys = self.global_hotkeys.sanitized();
+        if let Some(binding) = self.passthrough_hotkey.global_binding() {
+            self.global_hotkeys = self.global_hotkeys.without_binding(binding);
+        }
         self
+    }
+}
+
+const fn default_onboarding_done() -> bool {
+    true
+}
+
+fn new_install_config() -> UiConfig {
+    UiConfig {
+        language: Language::system_default(),
+        onboarding_done: false,
+        console_sidebar_migration_seen: true,
+        ..UiConfig::default()
     }
 }
 
@@ -304,10 +642,7 @@ pub fn load() -> (UiConfig, Option<String>) {
         // localization file matches it) instead of the historical
         // Simplified-Chinese default, which only exists to keep upgrades from
         // older (pre-i18n) configs stable — see `Language::system_default`.
-        let config = UiConfig {
-            language: Language::system_default(),
-            ..UiConfig::default()
-        };
+        let config = new_install_config();
         let warning = save(&path, &config).err().map(|error| {
             crate::storage::i18n::tf(
                 "Failed to create default UI config ({}): {}",
@@ -457,5 +792,169 @@ mod tests {
         assert_ne!(HudConfig::detailed(), HudConfig::default());
         assert!(HudConfig::detailed().show_mini_timeline);
         assert!(!HudConfig::minimal().show_total_damage);
+    }
+
+    #[test]
+    fn interaction_preferences_use_stable_serialized_codes() {
+        assert_eq!(
+            AccentColor::all()
+                .iter()
+                .map(|value| serde_json::to_string(value).unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "\"zinc\"",
+                "\"blue\"",
+                "\"violet\"",
+                "\"orange\"",
+                "\"green\"",
+            ]
+        );
+        assert_eq!(
+            AccentColor::all()
+                .iter()
+                .map(|value| value.label())
+                .collect::<Vec<_>>(),
+            ["Zinc", "Blue", "Violet", "Orange", "Green"]
+        );
+        assert_eq!(
+            UiDensity::all()
+                .iter()
+                .map(|value| serde_json::to_string(value).unwrap())
+                .collect::<Vec<_>>(),
+            ["\"compact\"", "\"cozy\"", "\"comfortable\""]
+        );
+        assert_eq!(
+            UiDensity::all()
+                .iter()
+                .map(|value| value.label())
+                .collect::<Vec<_>>(),
+            ["Compact", "Cozy", "Comfortable"]
+        );
+    }
+
+    #[test]
+    fn older_config_defaults_interaction_preferences() {
+        let config: UiConfig = serde_json::from_str(r#"{"opacity":0.75,"dark_mode":true}"#)
+            .expect("older config should deserialize");
+
+        assert_eq!(config.opacity, 0.75);
+        assert!(config.dark_mode);
+        assert_eq!(config.accent, AccentColor::Zinc);
+        assert_eq!(config.density, UiDensity::Cozy);
+        assert!(!config.reduce_motion);
+        assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
+        assert!(config.onboarding_done);
+        assert!(!config.console_sidebar_migration_seen);
+
+        let f9_config: UiConfig = serde_json::from_str(r#"{"passthrough_hotkey":"f9"}"#)
+            .expect("legacy F9 config should deserialize");
+        assert_eq!(f9_config.passthrough_hotkey, PassthroughHotkey::F9);
+        assert_eq!(
+            f9_config.sanitized().global_hotkeys.capture,
+            GlobalHotkeys::default().capture
+        );
+    }
+
+    #[test]
+    fn global_hotkeys_round_trip_with_stable_codes() {
+        let hotkeys = GlobalHotkeys {
+            enabled: false,
+            capture: Some(HotkeyBinding::new(true, true, false, HotkeyKey::F12)),
+            reset: None,
+            hud: Some(HotkeyBinding::new(false, false, true, HotkeyKey::F7)),
+        };
+
+        let json = serde_json::to_string(&hotkeys).expect("hotkeys should serialize");
+        let decoded: GlobalHotkeys =
+            serde_json::from_str(&json).expect("hotkeys should deserialize");
+
+        assert_eq!(decoded, hotkeys);
+        assert!(json.contains("\"f12\""));
+        assert!(json.contains("\"f7\""));
+        assert_eq!(hotkeys.capture.unwrap().label(), "Ctrl+Alt+F12");
+        assert_eq!(
+            GlobalHotkeyAction::ToggleCapture.label(),
+            "Start / Stop Capture"
+        );
+    }
+
+    #[test]
+    fn hotkey_binding_matches_exact_egui_modifiers() {
+        let binding = HotkeyBinding::new(true, false, false, HotkeyKey::F9);
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let ctrl_shift = egui::Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+
+        assert!(binding.matches_egui(ctrl, egui::Key::F9));
+        assert!(!binding.matches_egui(ctrl_shift, egui::Key::F9));
+        assert!(!binding.matches_egui(ctrl, egui::Key::F10));
+        assert!(
+            !HotkeyBinding::new(false, false, false, HotkeyKey::F9)
+                .matches_egui(ctrl, egui::Key::F9)
+        );
+        assert!(PassthroughHotkey::F9.matches_egui(egui::Modifiers::default(), egui::Key::F9));
+        assert!(!PassthroughHotkey::F9.matches_egui(ctrl, egui::Key::F9));
+    }
+
+    #[test]
+    fn sanitizes_duplicate_and_passthrough_conflicting_hotkeys() {
+        let duplicate = HotkeyBinding::new(true, false, false, HotkeyKey::F9);
+        let hotkeys = GlobalHotkeys {
+            capture: Some(duplicate),
+            reset: Some(duplicate),
+            hud: Some(duplicate),
+            ..GlobalHotkeys::default()
+        }
+        .sanitized();
+        assert_eq!(hotkeys.capture, Some(duplicate));
+        assert_eq!(hotkeys.reset, None);
+        assert_eq!(hotkeys.hud, None);
+
+        let plain_f9 = HotkeyBinding::new(false, false, false, HotkeyKey::F9);
+        let config = UiConfig {
+            passthrough_hotkey: PassthroughHotkey::F9,
+            global_hotkeys: GlobalHotkeys {
+                capture: Some(plain_f9),
+                ..GlobalHotkeys::default()
+            },
+            ..UiConfig::default()
+        }
+        .sanitized();
+        assert_eq!(config.global_hotkeys.capture, None);
+    }
+
+    #[test]
+    fn sanitizes_unmodified_global_hotkeys() {
+        let hotkeys = GlobalHotkeys {
+            capture: Some(HotkeyBinding::new(false, false, false, HotkeyKey::F9)),
+            ..GlobalHotkeys::default()
+        }
+        .sanitized();
+
+        assert_eq!(hotkeys.capture, None);
+        assert!(hotkeys.reset.is_some());
+        assert!(hotkeys.hud.is_some());
+    }
+
+    #[test]
+    fn sanitizes_windows_reserved_global_hotkeys() {
+        let hotkeys = GlobalHotkeys {
+            capture: Some(HotkeyBinding::new(false, true, false, HotkeyKey::F4)),
+            ..GlobalHotkeys::default()
+        };
+        assert_eq!(hotkeys.sanitized().capture, None);
+    }
+
+    #[test]
+    fn onboarding_only_opens_for_a_new_install() {
+        assert!(UiConfig::default().onboarding_done);
+        assert!(!new_install_config().onboarding_done);
+        assert!(new_install_config().console_sidebar_migration_seen);
     }
 }

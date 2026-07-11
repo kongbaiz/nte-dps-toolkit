@@ -1,5 +1,19 @@
 use super::*;
 
+fn key_pressed_without_repeat(events: &[egui::Event], key: egui::Key) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            egui::Event::Key {
+                key: event_key,
+                pressed: true,
+                repeat: false,
+                ..
+            } if *event_key == key
+        )
+    })
+}
+
 impl DpsApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -7,10 +21,19 @@ impl DpsApp {
         config_warning: Option<String>,
     ) -> Self {
         install_fonts(&cc.egui_ctx);
-        configure_style(&cc.egui_ctx, ui_config.dark_mode);
+        configure_style(
+            &cc.egui_ctx,
+            ui_config.dark_mode,
+            ui_config.accent,
+            ui_config.density,
+            ui_config.reduce_motion,
+        );
         let ui_config = ui_config.sanitized();
-        let (hotkey, hotkey_receiver) =
-            HotkeyHandle::start(cc.egui_ctx.clone(), ui_config.passthrough_hotkey);
+        let (hotkey, hotkey_receiver) = HotkeyHandle::start(
+            cc.egui_ctx.clone(),
+            ui_config.passthrough_hotkey,
+            ui_config.global_hotkeys,
+        );
         let (sender, receiver) = unbounded();
         let (resource_audit_sender, resource_audit_receiver) = unbounded();
         let (diagnostics_sender, diagnostics_receiver) = unbounded();
@@ -114,6 +137,7 @@ impl DpsApp {
         let devices: Vec<CaptureDevice> = Vec::new();
         let selected_device: usize = 0;
         let game_network: Option<GameNetwork> = None;
+        let game_process_detected = false;
         let local_ip = String::new();
         let status = t("Detecting the capture environment...");
         let diagnostic: Option<String> = None;
@@ -130,6 +154,27 @@ impl DpsApp {
                 }
             });
         }
+        let (game_process_monitor_sender, game_process_monitor_receiver) = unbounded();
+        let (game_process_monitor_stop, game_process_monitor_stop_receiver) = unbounded();
+        let game_process_monitor_thread = {
+            let ctx = cc.egui_ctx.clone();
+            thread::spawn(move || {
+                let mut previous = None;
+                loop {
+                    let result = game_process_is_running();
+                    if previous.as_ref() != Some(&result) {
+                        previous = Some(result.clone());
+                        if game_process_monitor_sender.send(result).is_ok() {
+                            ctx.request_repaint();
+                        }
+                    }
+                    match game_process_monitor_stop_receiver.recv_timeout(Duration::from_secs(2)) {
+                        Ok(()) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                    }
+                }
+            })
+        };
         let startup_errors = [config_warning, character_load_error, equipment_load_error]
             .into_iter()
             .flatten()
@@ -147,6 +192,12 @@ impl DpsApp {
             equipment_textures: HashMap::new(),
             kongmu_ui: KongmuUiState::default(),
             state: CombatState::default(),
+            combat_active: false,
+            last_combat_timestamp: None,
+            last_combat_activity: None,
+            combat_start_generation: 0,
+            combat_end_generation: 0,
+            hidden_character_ids: HashSet::new(),
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
             hud_mode: false,
@@ -168,6 +219,7 @@ impl DpsApp {
             team_hit_cache: HitDetailCache::default(),
             skill_summary_cache: SkillSummaryCache::default(),
             timeline_cache: TimelineCache::default(),
+            timeline_view: TimelineViewState::default(),
             skill_breakdown_cache: SkillBreakdownCache::default(),
             selected_timeline_char: None,
             selected_skill_breakdown_char: None,
@@ -176,6 +228,7 @@ impl DpsApp {
             selected_device,
             manual_capture_device,
             local_ip,
+            game_process_detected,
             game_network,
             filter: "udp".to_owned(),
             active_capture_filter: None,
@@ -202,19 +255,27 @@ impl DpsApp {
             texture_load_receiver,
             device_detection_receiver,
             awaiting_device_detection: true,
+            game_process_monitor_receiver,
+            game_process_monitor_stop,
+            game_process_monitor_thread: Some(game_process_monitor_thread),
+            game_process_monitor_error: None,
             capture_log_stats: None,
             paused_events: VecDeque::new(),
             dropped_debug_packets: 0,
             status,
             last_status_toast,
-            status_toast: None,
+            status_toasts: VecDeque::new(),
+            undo_states: HashMap::new(),
+            next_toast_id: 1,
             diagnostic,
             last_error: startup_error,
             last_error_action: None,
             last_error_viewport: egui::ViewportId::ROOT,
             console_open: false,
             console_corner_applied: false,
+            console_sidebar_manually_collapsed: false,
             console_tab: ConsoleTab::default(),
+            command_palette: CommandPaletteState::default(),
             debug_only_hits: false,
             debug_search: String::new(),
             character_editor,
@@ -222,9 +283,20 @@ impl DpsApp {
             paused: false,
             language: ui_config.language,
             dark_mode: ui_config.dark_mode,
+            accent: ui_config.accent,
+            density: ui_config.density,
+            reduce_motion: ui_config.reduce_motion,
             always_on_top: ui_config.always_on_top,
             mouse_passthrough: false,
+            passthrough_notice: None,
             passthrough_hotkey: ui_config.passthrough_hotkey,
+            global_hotkeys: ui_config.global_hotkeys,
+            recording_hotkey: None,
+            hotkey_hook_available: false,
+            onboarding_done: ui_config.onboarding_done,
+            onboarding_step: 0,
+            onboarding_hotkey_preview_generation: 0,
+            console_sidebar_migration_seen: ui_config.console_sidebar_migration_seen,
             opacity: ui_config.opacity,
             applied_opacity: None,
             corner_applied_hwnd: None,
@@ -249,15 +321,15 @@ impl DpsApp {
                 .map(egui::Vec2::from)
                 .unwrap_or(CONSOLE_WINDOW_BASE_SIZE),
             main_size_restore_frames: 0,
-            toolbar_min_content_width: 0.0,
             applied_main_min_size: egui::Vec2::ZERO,
             // eframe may replace the context style after app construction.
-            style_dark_mode_applied: None,
+            style_key_applied: None,
+            session_epoch: 0,
             opacity_reapply_frames: 4,
             theme_transition_from: None,
-            theme_transition_started_at: None,
             pending_file_dialog: None,
             active_import: None,
+            engine_task_viewport: None,
             pending_confirmation: None,
             pending_confirmation_viewport: egui::ViewportId::ROOT,
             saved_ui_config: ui_config,
@@ -284,10 +356,20 @@ impl DpsApp {
         // Apply them now to prevent a delayed CaptureStopped from affecting the next task.
         self.drain_pending_events();
         self.active_import = None;
+        self.engine_task_viewport = None;
     }
 
     pub(crate) fn reset_combat_session(&mut self) {
         self.state.clear();
+        self.session_epoch = self.session_epoch.wrapping_add(1);
+        self.reset_combat_view_state();
+    }
+
+    pub(crate) fn reset_combat_view_state(&mut self) {
+        self.combat_active = false;
+        self.last_combat_timestamp = None;
+        self.last_combat_activity = None;
+        self.hidden_character_ids.clear();
         self.kongmu_ui.invalidate_inventory();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
@@ -302,6 +384,7 @@ impl DpsApp {
         self.team_hit_cache = HitDetailCache::default();
         self.skill_summary_cache = SkillSummaryCache::default();
         self.timeline_cache = TimelineCache::default();
+        self.timeline_view = TimelineViewState::default();
         self.skill_breakdown_cache = SkillBreakdownCache::default();
         self.selected_timeline_char = None;
         self.selected_skill_breakdown_char = None;
@@ -320,19 +403,83 @@ impl DpsApp {
             || self.state.abyss.is_active()
     }
 
-    pub(crate) fn request_reset_combat_session(&mut self) {
-        if self.has_session_data() || self.capture.is_some() || self.replay_thread.is_some() {
-            self.request_confirmation_for(egui::ViewportId::ROOT, ConfirmationAction::ResetSession);
-        } else {
+    pub(crate) fn request_reset_combat_session(&mut self, ctx: &egui::Context) {
+        if self.capture.is_none()
+            && self.replay_thread.is_none()
+            && !self.has_session_data()
+            && let Some(id) = self.latest_combat_undo_id()
+        {
+            self.apply_undo(id, ctx.viewport_id());
+            return;
+        }
+        if self.capture.is_some() || self.replay_thread.is_some() {
+            self.stop_engine();
+        }
+        if !self.has_session_data() {
             self.reset_combat_session();
+            self.status = t("Stats reset");
+            return;
+        }
+        let previous = CombatUndoSnapshot {
+            state: std::mem::take(&mut self.state),
+            capture_quality_source: self.capture_quality_source,
+            timeline_view: std::mem::take(&mut self.timeline_view),
+            hidden_character_ids: std::mem::take(&mut self.hidden_character_ids),
+            selected_abyss_half: self.selected_abyss_half,
+            abyss_compact_mode: self.abyss_compact_mode,
+        };
+        self.session_epoch = self.session_epoch.wrapping_add(1);
+        self.reset_combat_view_state();
+        self.status = t("Stats reset");
+        let reset_message = if self.global_hotkeys.enabled {
+            self.global_hotkeys
+                .binding(GlobalHotkeyAction::ResetSession)
+                .map(|binding| {
+                    tf(
+                        "Session reset · press {} again or use Undo within 5 seconds",
+                        &[&binding.label()],
+                    )
+                })
+                .unwrap_or_else(|| t("Session reset · use Undo within 5 seconds"))
+        } else {
+            t("Session reset · use Undo within 5 seconds")
+        };
+        let toast_viewport = self.interactive_viewport_for(ctx);
+        self.push_undo_toast(
+            toast_viewport,
+            reset_message,
+            UndoState::CombatSession(Box::new(previous)),
+        );
+    }
+
+    pub(crate) fn preferred_interactive_viewport(&self, ctx: &egui::Context) -> egui::ViewportId {
+        if ctx.viewport_id() == egui::ViewportId::ROOT && (self.hud_mode || self.mouse_passthrough)
+        {
+            console_viewport_id()
+        } else {
+            ctx.viewport_id()
         }
     }
 
-    pub(crate) fn request_start_live(&mut self) {
+    pub(crate) fn interactive_viewport_for(&mut self, ctx: &egui::Context) -> egui::ViewportId {
+        let viewport = self.preferred_interactive_viewport(ctx);
+        if viewport == console_viewport_id() {
+            self.console_open = true;
+            self.console_corner_applied = false;
+        }
+        viewport
+    }
+
+    pub(crate) fn request_start_live(&mut self, ctx: &egui::Context) {
         if self.has_session_data() {
-            self.request_confirmation_for(egui::ViewportId::ROOT, ConfirmationAction::StartLive);
+            let viewport = self.interactive_viewport_for(ctx);
+            self.request_confirmation_for(viewport, ConfirmationAction::StartLive);
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
         } else {
-            self.start_live();
+            let viewport = self.preferred_interactive_viewport(ctx);
+            if !self.start_live_for(viewport) {
+                ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+            }
         }
     }
 
@@ -367,11 +514,8 @@ impl DpsApp {
         viewport: egui::ViewportId,
     ) {
         match action {
-            ConfirmationAction::StartLive => self.start_live(),
-            ConfirmationAction::ResetSession => {
-                self.stop_engine();
-                self.reset_combat_session();
-                self.status = t("Stats reset");
+            ConfirmationAction::StartLive => {
+                self.start_live_for(viewport);
             }
             ConfirmationAction::ImportPcapng(path) => self.start_pcapng_import_for(path, viewport),
             ConfirmationAction::ImportCaptureJson(path) => {
@@ -383,9 +527,6 @@ impl DpsApp {
             }
             ConfirmationAction::ReloadEncryptedIni(path) => {
                 self.load_encrypted_ini_for(path, viewport)
-            }
-            ConfirmationAction::DeleteHistory(record_id) => {
-                self.delete_history_record_for(record_id, viewport);
             }
             ConfirmationAction::ClearCaptureLogs => self.clear_capture_logs_now(),
         }
@@ -431,6 +572,7 @@ impl DpsApp {
         viewport: egui::ViewportId,
         action: ConfirmationAction,
     ) {
+        self.close_command_palette_for(viewport);
         self.pending_confirmation = Some(action);
         self.pending_confirmation_viewport = viewport;
     }
@@ -449,6 +591,7 @@ impl DpsApp {
         message: impl Into<String>,
         action: Option<ErrorAction>,
     ) {
+        self.close_command_palette_for(viewport);
         self.last_error = Some(message.into());
         self.last_error_action = action;
         self.last_error_viewport = viewport;
@@ -477,47 +620,140 @@ impl DpsApp {
         self.status = tf("Mouse passthrough hotkey switched to {}", &[hotkey.label()]);
     }
 
+    pub(crate) fn set_global_hotkeys(&mut self, hotkeys: GlobalHotkeys) {
+        self.global_hotkeys = hotkeys.sanitized();
+        self.hotkey.set_global_hotkeys(self.global_hotkeys);
+    }
+
+    pub(crate) fn set_recording_hotkey(&mut self, action: Option<GlobalHotkeyAction>) {
+        self.recording_hotkey = action;
+        self.hotkey.set_recording(action.is_some());
+    }
+
     pub(crate) fn drain_hotkeys(&mut self, ctx: &egui::Context) {
-        let passthrough_key = passthrough_egui_key(self.passthrough_hotkey);
-        let passthrough_pressed = ctx.input(|input| input.key_pressed(passthrough_key));
-        let import_pressed =
-            ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::O));
-        #[cfg(not(feature = "no_debug"))]
-        let f12_pressed = ctx.input(|input| input.key_pressed(egui::Key::F12));
-        if passthrough_pressed {
+        self.handle_local_hotkeys(ctx);
+        while let Ok(event) = self.hotkey_receiver.try_recv() {
+            match event {
+                HotkeyEvent::TogglePassthrough => self.toggle_mouse_passthrough(ctx),
+                HotkeyEvent::GlobalAction(action) => self.execute_global_hotkey(ctx, action),
+                HotkeyEvent::ToggleCommandPalette => self.toggle_command_palette(ctx),
+                #[cfg(not(feature = "no_debug"))]
+                HotkeyEvent::ToggleDebug => self.toggle_debug_console(),
+                HotkeyEvent::HookInstalled => self.hotkey_hook_available = true,
+                HotkeyEvent::HookInstallFailed { error } => {
+                    self.hotkey_hook_available = false;
+                    if self.mouse_passthrough {
+                        self.set_mouse_passthrough(ctx, false);
+                    }
+                    let message = tf(
+                        "Could not install the global keyboard hook (error {})",
+                        &[&error.to_string()],
+                    );
+                    self.diagnostic = Some(message.clone());
+                    self.push_status_toast(
+                        egui::ViewportId::ROOT,
+                        message,
+                        ToastTone::Danger,
+                        STATUS_TOAST_DURATION,
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
+    pub(crate) fn handle_local_hotkeys(&mut self, ctx: &egui::Context) {
+        if self.recording_hotkey.is_some() {
+            return;
+        }
+        let (modifiers, pressed_keys) = ctx.input(|input| {
+            (
+                input.modifiers,
+                HotkeyKey::all()
+                    .iter()
+                    .copied()
+                    .filter(|key| key_pressed_without_repeat(&input.events, key.egui_key()))
+                    .collect::<Vec<_>>(),
+            )
+        });
+        let passthrough_key = self.passthrough_hotkey.egui_key();
+        if self
+            .passthrough_hotkey
+            .matches_egui(modifiers, passthrough_key)
+            && ctx.input(|input| key_pressed_without_repeat(&input.events, passthrough_key))
+        {
             self.toggle_mouse_passthrough(ctx);
         }
+        if self.global_hotkeys.enabled
+            && let Some(action) = GlobalHotkeyAction::all().iter().copied().find(|action| {
+                self.global_hotkeys.binding(*action).is_some_and(|binding| {
+                    pressed_keys
+                        .iter()
+                        .any(|key| binding.matches_egui(modifiers, key.egui_key()))
+                })
+            })
+        {
+            self.execute_global_hotkey(ctx, action);
+        }
+        let command_palette_pressed = ctx.input(|input| {
+            input.modifiers.ctrl
+                && !input.modifiers.alt
+                && !input.modifiers.shift
+                && key_pressed_without_repeat(&input.events, egui::Key::K)
+        });
+        if command_palette_pressed {
+            self.toggle_command_palette(ctx);
+        }
+        let undo_pressed = ctx.input(|input| {
+            input.modifiers.ctrl
+                && !input.modifiers.alt
+                && !input.modifiers.shift
+                && key_pressed_without_repeat(&input.events, egui::Key::Z)
+        }) && !ctx.egui_wants_keyboard_input();
+        if undo_pressed {
+            self.undo_latest(ctx.viewport_id());
+        }
+        let import_pressed = ctx.input(|input| {
+            input.modifiers.command
+                && !input.modifiers.alt
+                && !input.modifiers.shift
+                && key_pressed_without_repeat(&input.events, egui::Key::O)
+        });
         if import_pressed {
             self.request_debug_import(ctx, DebugImportKind::Pcapng);
         }
         #[cfg(not(feature = "no_debug"))]
-        if f12_pressed {
-            self.console_open = !self.console_open;
-            if self.console_open {
-                self.console_corner_applied = false;
-                self.console_tab = ConsoleTab::Packets;
-            }
+        if modifiers == egui::Modifiers::NONE && pressed_keys.contains(&HotkeyKey::F12) {
+            self.toggle_debug_console();
         }
-        while let Ok(event) = self.hotkey_receiver.try_recv() {
-            match event {
-                HotkeyEvent::TogglePassthrough => {
-                    self.toggle_mouse_passthrough(ctx);
-                }
-                #[cfg(not(feature = "no_debug"))]
-                HotkeyEvent::ToggleDebug => {
-                    self.console_open = !self.console_open;
-                    if self.console_open {
-                        self.console_corner_applied = false;
-                        self.console_tab = ConsoleTab::Packets;
-                    }
-                }
-                HotkeyEvent::RegistrationFailed(shortcut) => {
-                    self.diagnostic = Some(tf(
-                        "Could not register global hotkey {}; it may be in use by another program",
-                        &[&shortcut],
-                    ));
-                }
-            }
+        if ctx.viewport_id() == egui::ViewportId::ROOT
+            && self.state.abyss.is_active()
+            && !ctx.egui_wants_keyboard_input()
+            && modifiers == egui::Modifiers::NONE
+            && ctx.input(|input| key_pressed_without_repeat(&input.events, egui::Key::Tab))
+        {
+            self.selected_abyss_half = match self.selected_abyss_half {
+                AbyssHalf::First => AbyssHalf::Second,
+                AbyssHalf::Second => AbyssHalf::First,
+            };
+        }
+    }
+
+    fn execute_global_hotkey(&mut self, ctx: &egui::Context, action: GlobalHotkeyAction) {
+        let action = match action {
+            GlobalHotkeyAction::ToggleCapture => AppAction::ToggleCapture,
+            GlobalHotkeyAction::ResetSession => AppAction::ResetSession,
+            GlobalHotkeyAction::ToggleHud => AppAction::ToggleHud,
+        };
+        self.execute_action(ctx, action);
+    }
+
+    #[cfg(not(feature = "no_debug"))]
+    fn toggle_debug_console(&mut self) {
+        self.console_open = !self.console_open;
+        if self.console_open {
+            self.console_corner_applied = false;
+            self.console_tab = ConsoleTab::Packets;
         }
     }
 
@@ -525,8 +761,28 @@ impl DpsApp {
         if self.mouse_passthrough == enabled {
             return;
         }
+        if enabled && !self.hotkey_hook_available {
+            let message = t("Global hotkeys are not ready; mouse passthrough was not enabled");
+            self.status = message.clone();
+            self.set_last_error_in(ctx, message, None);
+            return;
+        }
         self.mouse_passthrough = enabled;
-        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(enabled));
+        let now = Instant::now();
+        motion::seed_bool_for_viewport(
+            ctx,
+            egui::ViewportId::ROOT,
+            "passthrough_notice_visibility",
+            false,
+        );
+        self.passthrough_notice = Some(PassthroughNotice {
+            enabled,
+            shown_until: now + Duration::from_millis(1200),
+        });
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::MousePassthrough(enabled),
+        );
         self.opacity_reapply_frames = 2;
         let hotkey = self.passthrough_hotkey.label();
         self.status = if self.mouse_passthrough {
@@ -553,28 +809,33 @@ impl DpsApp {
         if self.hud_mode == enabled {
             return;
         }
+        motion::seed_bool_for_viewport(
+            ctx,
+            egui::ViewportId::ROOT,
+            "hud_mode_transition",
+            !enabled,
+        );
         self.hud_mode = enabled;
         if enabled {
             if !self.always_on_top {
                 self.always_on_top = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                    egui::WindowLevel::AlwaysOnTop,
-                ));
+                ctx.send_viewport_cmd_to(
+                    egui::ViewportId::ROOT,
+                    egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop),
+                );
             }
             self.set_mouse_passthrough(ctx, true);
-            self.status = tf(
-                "Combat HUD on: always-on-top with mouse passthrough by default; press {} to edit",
-                &[self.passthrough_hotkey.label()],
-            );
+            self.status = if self.mouse_passthrough {
+                tf(
+                    "Combat HUD on: always-on-top with mouse passthrough by default; press {} to edit",
+                    &[self.passthrough_hotkey.label()],
+                )
+            } else {
+                t("Combat HUD opened in edit mode because global hotkeys are unavailable")
+            };
         } else {
             self.set_mouse_passthrough(ctx, false);
             self.status = t("Exited combat HUD");
-            // The exit click lands mid-frame — after this frame's HUD size command and
-            // the HUD strip render, but before size tracking runs — so `hud_mode` is
-            // already false when tracking executes. Suppress it now, otherwise the
-            // still-HUD-sized window is written over `main_window_size` and the window
-            // then "restores" to that small size instead of its pre-HUD size.
-            self.main_size_restore_frames = 8;
         }
     }
 
@@ -585,7 +846,10 @@ impl DpsApp {
         } else {
             egui::WindowLevel::Normal
         };
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::WindowLevel(level),
+        );
         self.opacity_reapply_frames = 2;
         self.status = if self.always_on_top {
             t("Always-on-top enabled")
@@ -685,36 +949,25 @@ impl DpsApp {
             egui::Align2::CENTER_CENTER,
             "NTE DPS TOOL",
             egui::FontId::proportional(13.0),
-            theme_accent(self.dark_mode),
+            self.theme().accent,
         );
     }
 
-    /// Keeps the main window wide enough that the live toolbar's two button groups
-    /// can never overlap — even when a longer-text language widens the buttons.
-    ///
-    /// `toolbar_min_content_width` is remeasured every frame from the real localized
-    /// labels ([`Self::control_buttons`]); here it becomes the enforced `MinInnerSize`
-    /// (never below the configured floor). Height keeps the configured floor since the
-    /// vertical stack only clips, never overlaps. If the window is meaningfully
-    /// narrower than the minimum it is nudged back up — this heals a small persisted
-    /// size or the size restored after leaving HUD, not just a freshly grown minimum.
+    /// Keeps the main window at the configured floor. The live toolbar adapts before
+    /// this width, so it must not grow the minimum and make the compact layout
+    /// unreachable. If the window is meaningfully narrower than the floor it is
+    /// nudged back up — this heals a stale persisted size or a HUD restore.
     ///
     /// The caller must skip this while a programmatic resize is still settling (see
     /// `main_size_restore_frames`), otherwise it would clamp the in-flight restore to
     /// the minimum instead of the user's larger saved size.
     pub(crate) fn enforce_main_min_size(&mut self, ctx: &egui::Context, maximized: bool) {
-        // Panel side margins (10 each) + the animated_controls 2px inset each side +
-        // a little slack so the rightmost button keeps clear of the window edge.
-        const SIDE_ALLOWANCE: f32 = 28.0;
         // Deadband: after the OS rounds a requested logical size to physical pixels
         // and back, the reported width can sit a hair under the minimum. Only correct
         // a shortfall larger than this, so rounding noise can't set up a per-frame
-        // resize oscillation (edge "jitter"). The toolbar reserves a 24px inter-group
-        // gap, so being a few px under the enforced minimum still never overlaps.
+        // resize oscillation (edge "jitter").
         const UNDERSIZE_DEADBAND: f32 = 6.0;
-        let min_width =
-            (self.toolbar_min_content_width + SIDE_ALLOWANCE).max(config::MAIN_WINDOW_MIN_SIZE[0]);
-        let min_size = egui::vec2(min_width.ceil(), config::MAIN_WINDOW_MIN_SIZE[1]);
+        let min_size = egui::Vec2::from(config::MAIN_WINDOW_MIN_SIZE);
         if (min_size - self.applied_main_min_size).length() > 0.5 {
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_size));
             self.applied_main_min_size = min_size;
@@ -751,6 +1004,7 @@ impl DpsApp {
         }
         // A solid rail makes the edit strip easy to grab after the pass-through
         // hotkey disables viewport mouse pass-through.
+        let hud_theme = self.theme().hud;
         let painter = ui.painter();
         painter.rect_filled(
             full_rect,
@@ -760,12 +1014,12 @@ impl DpsApp {
                 sw: 0,
                 se: 0,
             },
-            Color32::from_rgb(14, 16, 20),
+            hud_theme.edit_bg,
         );
         painter.hline(
             full_rect.x_range(),
             full_rect.bottom() - 0.5,
-            Stroke::new(1.0_f32, Color32::from_rgb(39, 201, 146)),
+            Stroke::new(1.0_f32, hud_theme.edit_border),
         );
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -776,7 +1030,7 @@ impl DpsApp {
             RichText::new("NTE DPS")
                 .size(10.5)
                 .strong()
-                .color(Color32::from_rgb(218, 224, 228)),
+                .color(hud_theme.edit_text),
         );
         child.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let passthrough_hint = tf(
@@ -815,19 +1069,28 @@ impl DpsApp {
         });
     }
 
-    pub(crate) fn start_live(&mut self) {
+    pub(crate) fn start_live_for(&mut self, viewport: egui::ViewportId) -> bool {
         self.stop_engine();
         self.active_capture_filter = None;
         if let Err(error) = self.refresh_game_network() {
-            self.set_last_error(error, Some(ErrorAction::RefreshNetwork));
-            return;
+            if viewport == console_viewport_id() {
+                self.console_open = true;
+                self.console_corner_applied = false;
+            }
+            self.set_last_error_for(viewport, error, Some(ErrorAction::RefreshNetwork));
+            return false;
         }
         let Some(device) = self.devices.get(self.selected_device).cloned() else {
-            self.set_last_error(
+            if viewport == console_viewport_id() {
+                self.console_open = true;
+                self.console_corner_applied = false;
+            }
+            self.set_last_error_for(
+                viewport,
                 t("No usable capture device; confirm Npcap is installed"),
                 Some(ErrorAction::RefreshNetwork),
             );
-            return;
+            return false;
         };
         let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
         // The base filter (`self.filter`, "udp") keeps all UDP, which covers the game-world
@@ -856,13 +1119,21 @@ impl DpsApp {
         self.active_capture_filter = Some(capture_filter);
         self.raw_capture = Some(capture.raw_capture());
         self.capture = Some(capture);
+        self.engine_task_viewport = Some(viewport);
         self.status = t("Starting live capture...");
+        true
     }
 
     pub(crate) fn refresh_game_network(&mut self) -> Result<(), String> {
         // A user-initiated refresh owns the device state from here on; drop any
         // still-pending startup probe so it can't clobber this result.
         self.awaiting_device_detection = false;
+        self.game_process_detected = false;
+        self.game_network = None;
+        self.local_ip.clear();
+        self.game_process_detected = game_process_is_running().inspect_err(|error| {
+            self.diagnostic = Some(error.clone());
+        })?;
         self.devices = list_devices().inspect_err(|error| {
             self.diagnostic = Some(error.clone());
         })?;
@@ -931,6 +1202,7 @@ impl DpsApp {
             started_at: Instant::now(),
             viewport,
         });
+        self.engine_task_viewport = Some(viewport);
         self.replay_thread = Some(import_pcapng(
             path,
             self.characters.clone(),
@@ -969,6 +1241,7 @@ impl DpsApp {
             started_at: Instant::now(),
             viewport,
         });
+        self.engine_task_viewport = Some(viewport);
         self.replay_thread = Some(import_capture_json(path, self.sender.clone(), stop.clone()));
         self.replay_stop = Some(stop);
         self.status = t("Importing capture JSON...");
@@ -1039,6 +1312,9 @@ impl DpsApp {
             language: self.language,
             opacity: self.opacity,
             dark_mode: self.dark_mode,
+            accent: self.accent,
+            density: self.density,
+            reduce_motion: self.reduce_motion,
             always_on_top: self.always_on_top,
             server_damage_calibration: self.server_damage_calibration,
             manual_capture_device: self.manual_capture_device.clone(),
@@ -1047,6 +1323,9 @@ impl DpsApp {
             timeline_dps_view_mode: self.timeline_dps_view_mode,
             hud: self.hud_config.clone(),
             passthrough_hotkey: self.passthrough_hotkey,
+            global_hotkeys: self.global_hotkeys,
+            onboarding_done: self.onboarding_done,
+            console_sidebar_migration_seen: self.console_sidebar_migration_seen,
             main_window_size: Some([self.main_window_size.x, self.main_window_size.y]),
             abyss_window_size: Some([self.abyss_window_size.x, self.abyss_window_size.y]),
             hit_detail_window_size: Some([
@@ -1246,6 +1525,9 @@ impl DpsApp {
             FileDialogPurpose::TeamDpsExport { json } => {
                 self.finish_team_dps_export(viewport, &path, &json);
             }
+            FileDialogPurpose::HistoryExport { json } => {
+                self.finish_history_record_export(viewport, &path, &json);
+            }
             FileDialogPurpose::EmptyCurtainExport { json } => {
                 self.finish_empty_curtain_export(viewport, &path, &json);
             }
@@ -1368,7 +1650,10 @@ impl DpsApp {
 
     pub(crate) fn apply_engine_event(&mut self, event: EngineEvent) {
         match event {
-            EngineEvent::Hit(hit) => self.state.push_hit(*hit),
+            EngineEvent::Hit(hit) => {
+                self.note_combat_hit(&hit);
+                self.state.push_hit(*hit);
+            }
             EngineEvent::HitFollowUp(follow_up) => self.state.apply_follow_up(follow_up),
             EngineEvent::HitDamageCorrection(correction) => {
                 self.state.apply_damage_correction(correction)
@@ -1385,6 +1670,7 @@ impl DpsApp {
                     self.abyss_compact_mode = true;
                 } else if matches!(&event, AbyssEvent::Success { .. } | AbyssEvent::Exit { .. }) {
                     self.abyss_compact_mode = false;
+                    self.finish_combat_visual();
                 }
                 self.state.apply_abyss_event(event);
             }
@@ -1403,13 +1689,23 @@ impl DpsApp {
             EngineEvent::Error(error) => {
                 self.status = t("Run failed");
                 let action = import_error_action(&error);
-                let viewport = self
+                let mut viewport = self
                     .active_import
                     .as_ref()
-                    .map_or(egui::ViewportId::ROOT, |task| task.viewport);
+                    .map(|task| task.viewport)
+                    .or(self.engine_task_viewport)
+                    .unwrap_or(egui::ViewportId::ROOT);
+                if viewport == egui::ViewportId::ROOT && (self.hud_mode || self.mouse_passthrough) {
+                    viewport = console_viewport_id();
+                }
+                if viewport == console_viewport_id() {
+                    self.console_open = true;
+                    self.console_corner_applied = false;
+                }
                 self.set_last_error_for(viewport, humanize_engine_error(&error), action);
             }
             EngineEvent::CaptureStopped => {
+                self.finish_combat_visual();
                 let import_finished = self.replay_thread.is_some();
                 self.capture.take();
                 self.replay_stop = None;
@@ -1433,74 +1729,651 @@ impl DpsApp {
         if self.last_status_toast != self.status {
             self.last_status_toast = self.status.clone();
             if !self.status.trim().is_empty() {
-                self.status_toast = Some(StatusToast {
-                    text: self.status.clone(),
-                    shown_until: now + STATUS_TOAST_DURATION,
-                });
+                self.push_status_toast(
+                    egui::ViewportId::ROOT,
+                    self.status.clone(),
+                    ToastTone::Status,
+                    STATUS_TOAST_DURATION,
+                    None,
+                );
             }
         }
 
-        if let Some(toast) = &self.status_toast {
+        let mut expired = Vec::new();
+        for toast in &mut self.status_toasts {
+            let elapsed = now.saturating_duration_since(toast.last_tick);
+            if toast.hovered {
+                toast.shown_until += elapsed;
+            }
+            toast.last_tick = now;
+            toast.hovered = false;
             if toast.shown_until <= now {
-                self.status_toast = None;
+                expired.push(toast.id);
             } else {
                 ctx.request_repaint_after(toast.shown_until.saturating_duration_since(now));
             }
         }
+        for id in expired {
+            self.dismiss_toast(id);
+        }
+    }
+
+    fn note_combat_hit(&mut self, hit: &crate::engine::model::Hit) {
+        if hit.direction == "incoming" {
+            return;
+        }
+        if self.combat_active
+            && self
+                .last_combat_timestamp
+                .is_some_and(|last| hit.timestamp - last > COMBAT_SEGMENT_GAP_SECONDS)
+        {
+            self.finish_combat_visual();
+        }
+        if !self.combat_active {
+            self.combat_active = true;
+            self.combat_start_generation = self.combat_start_generation.wrapping_add(1);
+        }
+        self.last_combat_timestamp = Some(hit.timestamp);
+        self.last_combat_activity = Some(Instant::now());
+    }
+
+    fn finish_combat_visual(&mut self) {
+        if self.combat_active {
+            self.combat_active = false;
+            self.combat_end_generation = self.combat_end_generation.wrapping_add(1);
+        }
+    }
+
+    pub(crate) fn update_combat_visual(&mut self) {
+        if !self.paused
+            && self.combat_active
+            && self.last_combat_activity.is_some_and(|activity| {
+                activity.elapsed().as_secs_f64() >= COMBAT_SEGMENT_GAP_SECONDS
+            })
+        {
+            self.finish_combat_visual();
+        }
     }
 
     pub(crate) fn show_status_toast(&mut self, ctx: &egui::Context) {
-        let Some(toast) = &self.status_toast else {
-            return;
-        };
         let now = Instant::now();
-        if toast.shown_until <= now {
-            self.status_toast = None;
+        let viewport = ctx.viewport_id();
+        let ids = self
+            .status_toasts
+            .iter()
+            .rev()
+            .filter(|toast| toast.viewport == viewport && toast.shown_until > now)
+            .map(|toast| toast.id)
+            .collect::<Vec<_>>();
+        let mut stack_y = 0.0;
+        let mut dismiss = Vec::new();
+        let mut undo = None;
+        for id in ids {
+            let seed_entrance = self
+                .status_toasts
+                .iter_mut()
+                .find(|toast| toast.id == id)
+                .is_some_and(|toast| {
+                    let seed = !toast.animation_seeded;
+                    toast.animation_seeded = true;
+                    seed
+                });
+            if seed_entrance {
+                motion::seed_bool(ctx, ("toast_entrance", id), false);
+            }
+            let Some(toast) = self.status_toasts.iter().find(|toast| toast.id == id) else {
+                continue;
+            };
+            let text = toast.text.clone();
+            let tone = toast.tone;
+            let undo_id = toast.undo_id;
+            let color = match tone {
+                ToastTone::Status => status_color(&text, self.paused, self.dark_mode),
+                ToastTone::Success => self.theme().success,
+                ToastTone::Warning => self.theme().warning,
+                ToastTone::Danger => self.theme().danger,
+            };
+            let progress = motion::animate_bool(
+                ctx,
+                ("toast_entrance", id),
+                true,
+                motion::dur::BASE,
+                self.reduce_motion,
+                motion::ease::entrance,
+            );
+            let animated_stack = motion::animate_value(
+                ctx,
+                ("toast_stack", id),
+                stack_y,
+                motion::dur::BASE,
+                self.reduce_motion,
+            );
+            let fill = self.theme().floating;
+            let response = egui::Area::new(egui::Id::new(("status_toast", id)))
+                .order(egui::Order::Foreground)
+                .interactable(true)
+                .anchor(
+                    egui::Align2::RIGHT_BOTTOM,
+                    egui::vec2(-14.0 + (1.0 - progress) * 12.0, -14.0 - animated_stack),
+                )
+                .show(ctx, |ui| {
+                    ui.set_opacity(progress);
+                    egui::Frame::new()
+                        .fill(fill)
+                        .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.85)))
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .show(ui, |ui| {
+                            let max_width = if self.hud_mode { 330.0 } else { 420.0 };
+                            ui.set_max_width(max_width);
+                            ui.horizontal(|ui| {
+                                let (dot_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(9.0, 9.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().circle_filled(dot_rect.center(), 4.0, color);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(text).size(11.5).color(self.theme().fg),
+                                    )
+                                    .wrap(),
+                                );
+                                if let Some(undo_id) = undo_id
+                                    && ui.button(t("Undo")).clicked()
+                                {
+                                    undo = Some(undo_id);
+                                }
+                            });
+                        });
+                })
+                .response;
+            if let Some(toast) = self.status_toasts.iter_mut().find(|toast| toast.id == id) {
+                toast.hovered = response.hovered();
+            }
+            if response.clicked() && undo != undo_id {
+                dismiss.push(id);
+            }
+            stack_y += response.rect.height() + 8.0;
+        }
+        for id in dismiss {
+            self.dismiss_toast(id);
+        }
+        if let Some(id) = undo {
+            self.apply_undo(id, viewport);
+        }
+    }
+
+    pub(crate) fn show_onboarding(&mut self, ctx: &egui::Context) {
+        if self.onboarding_done || ctx.viewport_id() != egui::ViewportId::ROOT {
             return;
         }
 
-        let color = status_color(&toast.text, self.paused, self.dark_mode);
-        let text = toast.text.clone();
-        // Bottom-anchored, click-through toast: it never covers the top controls/metric cards, and
-        // `interactable(false)` means clicks always pass through to the UI beneath even while it is
-        // visible. A touch of translucency keeps any content underneath legible.
-        let card = shadcn_card(self.dark_mode);
-        let fill = Color32::from_rgba_unmultiplied(card.r(), card.g(), card.b(), 235);
-        egui::Area::new(egui::Id::new("status_toast"))
+        let step = self.onboarding_step.min(3);
+        let theme = self.theme();
+        let awaiting_detection = self.awaiting_device_detection;
+        let device_count = self.devices.len();
+        let game_connection_detected = self.game_network.is_some();
+        let game_process_error = self.game_process_monitor_error.clone();
+        let capture_active = self.capture.is_some();
+        let passthrough_hotkey = self.passthrough_hotkey.label();
+        let current_hud = self.hud_config.clone();
+        let hotkey_preview = (step == 2).then(|| {
+            motion::animate_generation(
+                ctx,
+                "onboarding_hotkey_preview",
+                self.onboarding_hotkey_preview_generation,
+                motion::dur::TREND,
+                self.reduce_motion,
+            )
+        });
+        let available_width = (ctx.content_rect().width() - 48.0).clamp(320.0, 460.0);
+        let mut go_back = false;
+        let mut go_next = false;
+        let mut finish = false;
+        let mut retry_detection = false;
+        let mut selected_hud = None;
+        let mut preview_hotkey = false;
+
+        egui::Modal::new(egui::Id::new("first_run_onboarding"))
+            .backdrop_color(theme.modal_backdrop)
+            .frame(
+                egui::Frame::popup(&ctx.global_style())
+                    .fill(theme.bg_elevated)
+                    .stroke(Stroke::new(1.0, theme.border_strong))
+                    .corner_radius(12)
+                    .inner_margin(egui::Margin::symmetric(22, 18)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(available_width);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(t("Welcome to NTE DPS Tool"))
+                            .size(20.0)
+                            .strong()
+                            .color(theme.fg),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(tf(
+                            "Step {} of 4",
+                            &[&(usize::from(step) + 1).to_string()],
+                        ));
+                    });
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    for index in 0..4_u8 {
+                        let color = if index <= step {
+                            theme.accent
+                        } else {
+                            theme.border_strong
+                        };
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2((available_width - 24.0) / 4.0, 3.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter().rect_filled(rect, 2.0, color);
+                    }
+                });
+                ui.add_space(14.0);
+
+                match step {
+                    0 => {
+                        ui.heading(t("Check the capture environment"));
+                        ui.label(t(
+                            "Npcap provides the network packets used for live damage statistics.",
+                        ));
+                        ui.add_space(12.0);
+                        egui::Frame::new()
+                            .fill(theme.card)
+                            .stroke(Stroke::new(1.0, theme.border))
+                            .corner_radius(8)
+                            .inner_margin(egui::Margin::symmetric(12, 10))
+                            .show(ui, |ui| {
+                                if awaiting_detection {
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::Spinner::new().size(16.0));
+                                        ui.label(t("Checking Npcap and available NICs..."));
+                                    });
+                                } else if device_count > 0 {
+                                    ui.colored_label(
+                                        theme.success,
+                                        tf(
+                                            "Npcap is ready · {} NICs found",
+                                            &[&device_count.to_string()],
+                                        ),
+                                    );
+                                } else {
+                                    ui.colored_label(
+                                        theme.danger,
+                                        t("Npcap is unavailable or no usable NIC was found"),
+                                    );
+                                }
+                            });
+                        if !awaiting_detection && ui.button(t("Check again")).clicked() {
+                            retry_detection = true;
+                        }
+                    }
+                    1 => {
+                        ui.heading(t("Automatic NIC selection"));
+                        ui.label(t(
+                            "The tool detects the HTGame.exe connection and selects its NIC automatically. You can pin a NIC later in Settings when using a VPN.",
+                        ));
+                        ui.add_space(12.0);
+                        let (color, label) = if game_connection_detected {
+                            (theme.success, t("Game connection detected"))
+                        } else {
+                            (theme.warning, t("Game connection not detected yet"))
+                        };
+                        ui.colored_label(color, label);
+                        if let Some(error) = &game_process_error {
+                            ui.small(
+                                RichText::new(tf("Game process check failed: {}", &[error]))
+                                    .color(theme.danger),
+                            );
+                        }
+                        if ui.button(t("Re-detect")).clicked() {
+                            retry_detection = true;
+                        }
+                    }
+                    2 => {
+                        ui.heading(t("Keep control while playing"));
+                        ui.label(t(
+                            "Mouse passthrough lets clicks reach the game while the HUD stays visible.",
+                        ));
+                        ui.add_space(12.0);
+                        egui::Frame::new()
+                            .fill(theme.card)
+                            .stroke(Stroke::new(1.0, theme.border))
+                            .corner_radius(8)
+                            .inner_margin(egui::Margin::symmetric(12, 10))
+                            .show(ui, |ui| {
+                                ui.label(t("Mouse passthrough shortcut"));
+                                ui.label(
+                                    RichText::new(passthrough_hotkey)
+                                        .size(18.0)
+                                        .strong()
+                                        .color(theme.accent),
+                                );
+                                ui.weak(t(
+                                    "The shortcut always restores edit mode, even while passthrough is active.",
+                                ));
+                                ui.add_space(10.0);
+                                let phase = if self.onboarding_hotkey_preview_generation == 0 {
+                                    None
+                                } else {
+                                    Some(
+                                        (((1.0 - hotkey_preview.expect("step 3 owns the preview"))
+                                            * 3.0)
+                                            .floor() as usize)
+                                            .min(2),
+                                    )
+                                };
+                                ui.horizontal_wrapped(|ui| {
+                                    for (index, label) in [
+                                        t("Edit mode"),
+                                        t("Passthrough mode"),
+                                        t("Edit mode restored"),
+                                    ]
+                                    .into_iter()
+                                    .enumerate()
+                                    {
+                                        if index > 0 {
+                                            ui.label(RichText::new("→").color(theme.fg_faint));
+                                        }
+                                        ui.label(
+                                            RichText::new(label).strong().color(
+                                                if phase == Some(index) {
+                                                    theme.accent
+                                                } else {
+                                                    theme.fg_muted
+                                                },
+                                            ),
+                                        );
+                                    }
+                                });
+                                if ui.button(t("Preview shortcut flow")).clicked() {
+                                    preview_hotkey = true;
+                                }
+                            });
+                    }
+                    _ => {
+                        ui.heading(t("Choose a Combat HUD preset"));
+                        ui.label(t(
+                            "Presets only choose which readouts are visible; every item remains adjustable in Settings.",
+                        ));
+                        ui.add_space(12.0);
+                        ui.columns(3, |columns| {
+                            let presets = [
+                                (t("Minimal"), HudConfig::minimal()),
+                                (t("Standard"), HudConfig::default()),
+                                (t("Detailed"), HudConfig::detailed()),
+                            ];
+                            for (column, (label, preset)) in columns.iter_mut().zip(presets) {
+                                if column
+                                    .selectable_label(current_hud == preset, label)
+                                    .clicked()
+                                {
+                                    selected_hud = Some(preset);
+                                }
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.colored_label(
+                            if capture_active {
+                                theme.success
+                            } else {
+                                theme.fg_muted
+                            },
+                            if capture_active {
+                                t("Live capture is already running")
+                            } else {
+                                t("You can start capture from the main window or press Ctrl+F9")
+                            },
+                        );
+                    }
+                }
+
+                ui.add_space(18.0);
+                ui.separator();
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t("Skip setup")).clicked() {
+                        finish = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let label = if step == 3 { t("Finish") } else { t("Next") };
+                        if ui.add(primary_button(label, theme.accent)).clicked() {
+                            if step == 3 {
+                                finish = true;
+                            } else {
+                                go_next = true;
+                            }
+                        }
+                        if step > 0 && ui.button(t("Back")).clicked() {
+                            go_back = true;
+                        }
+                    });
+                });
+            });
+
+        if retry_detection && let Err(error) = self.refresh_game_network() {
+            self.set_last_error(error, Some(ErrorAction::RefreshNetwork));
+        }
+        if let Some(preset) = selected_hud {
+            self.hud_config = preset;
+        }
+        if preview_hotkey {
+            self.onboarding_hotkey_preview_generation =
+                self.onboarding_hotkey_preview_generation.wrapping_add(1);
+        }
+        if go_back {
+            self.onboarding_step -= 1;
+        } else if go_next {
+            self.onboarding_step += 1;
+        }
+        if finish {
+            self.onboarding_done = true;
+            self.status = t("Setup complete");
+        }
+    }
+
+    pub(crate) fn show_passthrough_notice(&mut self, ctx: &egui::Context) {
+        let Some(notice) = &self.passthrough_notice else {
+            return;
+        };
+        let now = Instant::now();
+        if notice.shown_until <= now {
+            self.passthrough_notice = None;
+            return;
+        }
+        let enabled = notice.enabled;
+        let shown_until = notice.shown_until;
+        let exit_duration =
+            Duration::from_secs_f32(motion::duration(self.reduce_motion, motion::dur::BASE));
+        let fade_out_at = shown_until.checked_sub(exit_duration).unwrap_or(now);
+        let fading_out = now >= fade_out_at;
+        let opacity = if fading_out {
+            motion::animate_bool(
+                ctx,
+                "passthrough_notice_visibility",
+                false,
+                motion::dur::BASE,
+                self.reduce_motion,
+                motion::ease::exit,
+            )
+        } else {
+            motion::animate_bool(
+                ctx,
+                "passthrough_notice_visibility",
+                true,
+                motion::dur::FAST,
+                self.reduce_motion,
+                motion::ease::entrance,
+            )
+        };
+        let text = if enabled {
+            tf(
+                "Passthrough enabled · press {} to restore control",
+                &[self.passthrough_hotkey.label()],
+            )
+        } else {
+            tf(
+                "Edit mode enabled · press {} to return to passthrough",
+                &[self.passthrough_hotkey.label()],
+            )
+        };
+        egui::Area::new(egui::Id::new("passthrough_notice"))
             .order(egui::Order::Foreground)
             .interactable(false)
-            .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -14.0))
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
+                ui.set_opacity(opacity);
                 egui::Frame::new()
-                    .fill(fill)
-                    .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.85)))
-                    .corner_radius(8)
-                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .fill(self.theme().notice_bg)
+                    .stroke(Stroke::new(1.0_f32, self.theme().accent))
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(18, 12))
                     .show(ui, |ui| {
-                        // The HUD is its own small OS window (HUD_WINDOW_WIDTH), not a
-                        // panel inside the larger normal window — content wider than
-                        // that clips at the window edge instead of just looking cramped.
-                        let max_width = if self.hud_mode {
-                            HUD_WINDOW_WIDTH - 40.0
-                        } else {
-                            420.0
-                        };
-                        ui.set_max_width(max_width);
-                        ui.horizontal(|ui| {
-                            let (dot_rect, _) =
-                                ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
-                            ui.painter().circle_filled(dot_rect.center(), 4.0, color);
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(text)
-                                        .size(11.5)
-                                        .color(shadcn_foreground(self.dark_mode)),
-                                )
-                                .wrap(),
-                            );
-                        });
+                        ui.label(
+                            RichText::new(text)
+                                .size(18.0)
+                                .strong()
+                                .color(contrast_text(self.theme().notice_bg)),
+                        );
                     });
             });
+        if fading_out {
+            ctx.request_repaint_after(shown_until.saturating_duration_since(now));
+        } else {
+            ctx.request_repaint_after(fade_out_at.saturating_duration_since(now));
+        }
+    }
+
+    fn push_status_toast(
+        &mut self,
+        viewport: egui::ViewportId,
+        text: String,
+        tone: ToastTone,
+        duration: Duration,
+        undo: Option<UndoState>,
+    ) {
+        while self.status_toasts.len() >= 5 {
+            if let Some(toast) = self.status_toasts.pop_front() {
+                self.undo_states.remove(&toast.id);
+            }
+        }
+        let now = Instant::now();
+        let id = self.next_toast_id;
+        self.next_toast_id = self.next_toast_id.wrapping_add(1).max(1);
+        if let Some(undo) = undo {
+            self.undo_states.insert(id, undo);
+        }
+        self.status_toasts.push_back(StatusToast {
+            id,
+            text,
+            tone,
+            viewport,
+            shown_until: now + duration,
+            last_tick: now,
+            hovered: false,
+            animation_seeded: false,
+            undo_id: self.undo_states.contains_key(&id).then_some(id),
+        });
+    }
+
+    fn dismiss_toast(&mut self, id: u64) {
+        self.status_toasts.retain(|toast| toast.id != id);
+        self.undo_states.remove(&id);
+    }
+
+    pub(crate) fn push_undo_toast(
+        &mut self,
+        viewport: egui::ViewportId,
+        text: String,
+        undo: UndoState,
+    ) {
+        self.last_status_toast = self.status.clone();
+        self.push_status_toast(
+            viewport,
+            text,
+            ToastTone::Success,
+            UNDO_TOAST_DURATION,
+            Some(undo),
+        );
+    }
+
+    pub(crate) fn undo_latest(&mut self, viewport: egui::ViewportId) {
+        let Some(id) = self
+            .status_toasts
+            .iter()
+            .rev()
+            .find_map(|toast| toast.undo_id)
+        else {
+            self.status = t("Nothing to undo");
+            return;
+        };
+        self.apply_undo(id, viewport);
+    }
+
+    fn latest_combat_undo_id(&self) -> Option<u64> {
+        self.status_toasts
+            .iter()
+            .rev()
+            .filter_map(|toast| toast.undo_id)
+            .find(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_))))
+    }
+
+    fn apply_undo(&mut self, id: u64, viewport: egui::ViewportId) {
+        let Some(undo) = self.undo_states.remove(&id) else {
+            return;
+        };
+        match undo {
+            UndoState::CombatSession(snapshot) => {
+                self.status_toasts.retain(|toast| toast.id != id);
+                if self.has_session_data() || self.capture.is_some() || self.replay_thread.is_some()
+                {
+                    self.status = t("Cannot restore the previous session after new data arrives");
+                    self.last_status_toast = self.status.clone();
+                    self.push_status_toast(
+                        viewport,
+                        self.status.clone(),
+                        ToastTone::Warning,
+                        STATUS_TOAST_DURATION,
+                        None,
+                    );
+                    return;
+                }
+                let snapshot = *snapshot;
+                self.state = snapshot.state;
+                self.session_epoch = self.session_epoch.wrapping_add(1);
+                self.reset_combat_view_state();
+                self.capture_quality_source = snapshot.capture_quality_source;
+                self.timeline_view = snapshot.timeline_view;
+                self.hidden_character_ids = snapshot.hidden_character_ids;
+                self.selected_abyss_half = snapshot.selected_abyss_half;
+                self.abyss_compact_mode = snapshot.abyss_compact_mode;
+                self.status = t("Session reset undone");
+            }
+            UndoState::HistoryRecord(record) => match history::restore_record(&record) {
+                Ok(()) => {
+                    self.status_toasts.retain(|toast| toast.id != id);
+                    let record_id = record.id.clone();
+                    self.history.reload();
+                    self.history.selected_id = Some(record_id);
+                    self.history.ensure_selection();
+                    self.status = t("History deletion undone");
+                }
+                Err(error) => {
+                    self.undo_states
+                        .insert(id, UndoState::HistoryRecord(record));
+                    self.set_last_error_for(
+                        viewport,
+                        tf("Failed to restore history summary: {}", &[&error]),
+                        None,
+                    );
+                }
+            },
+        }
     }
 
     pub(crate) fn export_capture_info(&mut self, ctx: &egui::Context) {
@@ -2340,10 +3213,25 @@ impl DpsApp {
         }
         self.devices = detection.devices;
         self.selected_device = detection.selected_device;
+        self.game_process_detected = detection.game_process_detected;
         self.game_network = detection.game_network;
         self.local_ip = detection.local_ip;
         self.status = detection.status;
         self.diagnostic = detection.diagnostic;
+    }
+
+    pub(crate) fn drain_game_process_monitor(&mut self) {
+        while let Ok(result) = self.game_process_monitor_receiver.try_recv() {
+            match result {
+                Ok(detected) => {
+                    self.game_process_detected = detected;
+                    self.game_process_monitor_error = None;
+                }
+                Err(error) => {
+                    self.game_process_monitor_error = Some(error);
+                }
+            }
+        }
     }
 
     pub(crate) fn drain_resource_audit(&mut self) {
@@ -2418,6 +3306,7 @@ fn detect_capture_environment(
     manual_capture_device: Option<&str>,
     character_load_error: Option<&str>,
 ) -> DeviceDetection {
+    let game_process_probe = game_process_is_running();
     let (devices, device_error) = match list_devices() {
         Ok(devices) => (devices, None),
         Err(error) => (Vec::new(), Some(error)),
@@ -2464,6 +3353,16 @@ fn detect_capture_environment(
             None => error.to_owned(),
         });
     }
+    let game_process_detected = match game_process_probe {
+        Ok(detected) => detected,
+        Err(error) => {
+            diagnostic = Some(match diagnostic {
+                Some(existing) => format!("{existing}\n{error}"),
+                None => error,
+            });
+            false
+        }
+    };
     let local_ip = game_network
         .as_ref()
         .map(|network| network.local_ip.to_string())
@@ -2471,9 +3370,29 @@ fn detect_capture_environment(
     DeviceDetection {
         devices,
         selected_device,
+        game_process_detected,
         game_network,
         local_ip,
         status,
         diagnostic,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_hotkeys_ignore_repeated_key_events() {
+        let event = |repeat| egui::Event::Key {
+            key: egui::Key::F9,
+            physical_key: Some(egui::Key::F9),
+            pressed: true,
+            repeat,
+            modifiers: egui::Modifiers::CTRL,
+        };
+
+        assert!(key_pressed_without_repeat(&[event(false)], egui::Key::F9));
+        assert!(!key_pressed_without_repeat(&[event(true)], egui::Key::F9));
     }
 }
