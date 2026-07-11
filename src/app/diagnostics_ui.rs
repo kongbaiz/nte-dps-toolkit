@@ -164,15 +164,9 @@ pub(crate) fn draw_diagnostic_report(
 pub(crate) fn draw_capture_quality_summary(
     ui: &mut egui::Ui,
     summary: &CaptureQualitySummary,
-    dark_mode: bool,
+    theme: ThemeTokens,
 ) {
-    egui::CollapsingHeader::new(
-        RichText::new(t("Parse Quality"))
-            .strong()
-            .color(shadcn_foreground(dark_mode)),
-    )
-    .default_open(true)
-    .show(ui, |ui| {
+    settings_section(ui, theme, "Parse Quality", |ui| {
         ui.horizontal(|ui| {
             ui.label(
                 RichText::new(t(summary.source.label()))

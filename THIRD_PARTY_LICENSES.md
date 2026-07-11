@@ -16,6 +16,7 @@ Resolved from `Cargo.toml` and `Cargo.lock` with `cargo metadata --format-versio
 | `chrono` | 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono |
 | `crossbeam-channel` | 0.5.15 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | `eframe` | 0.34.3 | MIT OR Apache-2.0 | https://github.com/emilk/egui |
+| `egui_material_icons` | 0.6.0 | [MIT](licenses/egui_material_icons-LICENSE-MIT.txt); embedded Material Symbols font is [Apache-2.0](licenses/material_symbols-LICENSE-APACHE-2.0.txt) | https://github.com/lucasmerlin/hello_egui/tree/main/crates/egui_material_icons |
 | `hex` | 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex |
 | `image` | 0.25.10 | MIT OR Apache-2.0 | https://github.com/image-rs/image |
 | `libloading` | 0.8.9 | ISC | https://github.com/nagisa/rust_libloading |
@@ -26,6 +27,8 @@ Resolved from `Cargo.toml` and `Cargo.lock` with `cargo metadata --format-versio
 | `serde_json` | 1.0.150 | MIT OR Apache-2.0 | https://github.com/serde-rs/json |
 | `windows-sys` | 0.60.2 direct; additional transitive versions may appear | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | `winresource` | 0.1.31 | MIT | https://github.com/BenjaminRi/winresource |
+
+`egui_material_icons` embeds Google's Material Symbols Rounded font. Google publishes Material Symbols under Apache-2.0: https://github.com/google/material-design-icons. The release workflow includes both license texts in every binary archive.
 
 The current resolved Rust graph is permissively licensed. The lockfile includes transitive packages under MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BSL-1.0, ISC, Zlib, Unlicense, Unicode-3.0, OFL-1.1, Ubuntu Font License, and LLVM-exception variants. Re-run the metadata command above after dependency changes and check any new or changed license expression before release.
 

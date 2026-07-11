@@ -1,5 +1,49 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum HitEmptyAction {
+    #[default]
+    None,
+    ClearFilters,
+    StartCapture,
+    ImportReplay,
+}
+
+fn hit_empty_state(
+    ui: &mut egui::Ui,
+    theme: ThemeTokens,
+    filters_active: bool,
+    capture_idle: bool,
+) -> HitEmptyAction {
+    let mut action = HitEmptyAction::None;
+    let (title, body) = if filters_active {
+        (
+            "No hit records under the current filter",
+            "Clear the filters to show all recorded hits.",
+        )
+    } else {
+        (
+            "No hit records yet",
+            "Start capture or import a replay to collect hit records.",
+        )
+    };
+    empty_state_card(ui, theme, t(title), t(body), |ui| {
+        if filters_active {
+            if ui.button(t("Clear Filters")).clicked() {
+                action = HitEmptyAction::ClearFilters;
+            }
+        } else {
+            if capture_idle && ui.add(primary_button(t("Start"), theme.accent)).clicked() {
+                action = HitEmptyAction::StartCapture;
+            }
+            if ui.button(t("Import Capture JSON")).clicked() {
+                action = HitEmptyAction::ImportReplay;
+            }
+        }
+    });
+    action
+}
+
 impl DpsApp {
     pub(crate) fn character_hits(
         &mut self,
@@ -8,9 +52,10 @@ impl DpsApp {
         filter: HitDetailFilter,
         skill_filter: &str,
     ) {
+        let filters_active = filter != HitDetailFilter::All || !skill_filter.is_empty();
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
-        let layout = CharacterHitLayout::new(content_width);
+        let layout = character_hit_layout(content_width, self.hit_detail_columns);
         let (source, generation) = self.detail_source();
         let key = HitDetailCacheKey {
             source,
@@ -42,25 +87,28 @@ impl DpsApp {
         let filtered_count = self.character_hit_cache.filtered_count;
         let max_damage = self.character_hit_cache.max_damage;
         show_detail_limit_notice(ui, filtered_count);
-        draw_character_hit_header(ui, layout);
+        draw_character_hit_header(ui, layout, &mut self.hit_detail_columns);
         let hit_count = self.character_hit_cache.rows.len();
         if hit_count == 0 {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 72.0),
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    ui.label(
-                        RichText::new(t("No hit records under the current filter"))
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                },
-            );
+            let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
+            match hit_empty_state(ui, self.theme(), filters_active, capture_idle) {
+                HitEmptyAction::ClearFilters => {
+                    self.hit_detail_filter = HitDetailFilter::All;
+                    self.hit_detail_skill_filter.clear();
+                }
+                HitEmptyAction::StartCapture => self.request_start_live(ui.ctx()),
+                HitEmptyAction::ImportReplay => {
+                    self.request_debug_import(ui.ctx(), DebugImportKind::CaptureJson);
+                }
+                HitEmptyAction::None => {}
+            }
             return;
         }
+        let row_height = density_tokens(self.density).detail_row_height;
         let output = egui::ScrollArea::vertical()
             .id_salt(("character_hits", char_id))
             .max_height(ui.available_height())
-            .show_rows(ui, DETAIL_HIT_ROW_HEIGHT, hit_count, |ui, visible_rows| {
+            .show_rows(ui, row_height, hit_count, |ui, visible_rows| {
                 let visible_count = visible_rows.end.saturating_sub(visible_rows.start);
                 for row in self.character_hit_cache.rows[visible_rows]
                     .iter()
@@ -89,6 +137,7 @@ impl DpsApp {
                             damage_digits,
                             follow_up_digits,
                             &self.reaction_textures,
+                            row_height,
                         );
                     }
                 }
@@ -104,9 +153,10 @@ impl DpsApp {
     }
 
     pub(crate) fn team_hits(&mut self, ui: &mut egui::Ui, filter: HitDetailFilter) {
+        let filters_active = filter != HitDetailFilter::All;
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
-        let layout = TeamHitLayout::new(content_width);
+        let layout = team_hit_layout(content_width, self.hit_detail_columns);
         let (source, generation) = self.detail_source();
         let key = HitDetailCacheKey {
             source,
@@ -138,28 +188,30 @@ impl DpsApp {
         let filtered_count = self.team_hit_cache.filtered_count;
         let max_damage = self.team_hit_cache.max_damage;
         show_detail_limit_notice(ui, filtered_count);
-        draw_team_hit_header(ui, layout);
+        draw_team_hit_header(ui, layout, &mut self.hit_detail_columns);
         if self.team_hit_cache.rows.is_empty() {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 72.0),
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    ui.label(
-                        RichText::new(t("No hit records under the current filter"))
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                },
-            );
+            let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
+            match hit_empty_state(ui, self.theme(), filters_active, capture_idle) {
+                HitEmptyAction::ClearFilters => {
+                    self.team_hit_detail_filter = HitDetailFilter::All;
+                }
+                HitEmptyAction::StartCapture => self.request_start_live(ui.ctx()),
+                HitEmptyAction::ImportReplay => {
+                    self.request_debug_import(ui.ctx(), DebugImportKind::CaptureJson);
+                }
+                HitEmptyAction::None => {}
+            }
             return;
         }
         let hit_count = self.team_hit_cache.rows.len();
+        let row_height = density_tokens(self.density).detail_row_height;
         let output = egui::ScrollArea::vertical()
             .id_salt((
                 "team_hits",
                 matches!(self.selected_abyss_half, AbyssHalf::Second),
             ))
             .max_height(ui.available_height())
-            .show_rows(ui, DETAIL_HIT_ROW_HEIGHT, hit_count, |ui, visible_rows| {
+            .show_rows(ui, row_height, hit_count, |ui, visible_rows| {
                 let visible_count = visible_rows.end.saturating_sub(visible_rows.start);
                 for row in self.team_hit_cache.rows[visible_rows]
                     .iter()
@@ -174,7 +226,7 @@ impl DpsApp {
                         continue;
                     };
                     let color = readable_accent(
-                        character_color(hit.char_id, &self.characters, 0),
+                        character_color(hit.char_id, &self.characters, 0, self.dark_mode),
                         self.dark_mode,
                     );
                     let avatar_texture = self
@@ -203,6 +255,7 @@ impl DpsApp {
                             follow_up_damage_digits: follow_up_digits,
                             reaction_textures: &self.reaction_textures,
                         },
+                        row_height,
                     );
                 }
             });
@@ -279,7 +332,9 @@ impl DpsApp {
                 self.team_hit_detail_corner_applied,
             ),
             |ctx, _class| {
-                if !self.team_hit_detail_corner_applied {
+                self.handle_local_hotkeys(ctx.ctx());
+                let opening = !self.team_hit_detail_corner_applied;
+                if opening {
                     apply_rounding_to_process_windows();
                     self.team_hit_detail_corner_applied = true;
                 }
@@ -287,19 +342,26 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
+                        motion::apply_viewport_entrance(
+                            ui,
+                            "team_hit_detail",
+                            opening,
+                            self.reduce_motion,
+                        );
                         egui::Frame::new()
-                            .fill(shadcn_card(self.dark_mode))
-                            .stroke(Stroke::new(1.0_f32, shadcn_border(self.dark_mode)))
+                            .fill(self.theme().card)
+                            .stroke(Stroke::new(1.0_f32, self.theme().border))
                             .corner_radius(10)
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {
                                 let text_color = ui.visuals().text_color();
-                                let (label_out, label_count, label_taken, label_time) = (
+                                let (label_out, label_dps, label_count, label_taken, label_time) = (
                                     t("Total Output"),
+                                    t("DPS"),
                                     t("Output Count"),
                                     t("Total Damage Taken"),
                                     t("Combat Time"),
@@ -310,9 +372,13 @@ impl DpsApp {
                                         (
                                             label_out.as_str(),
                                             format_number(total_damage),
-                                            theme_accent(self.dark_mode),
+                                            self.theme().accent,
                                         ),
-                                        ("DPS", format_number(dps), theme_accent(self.dark_mode)),
+                                        (
+                                            label_dps.as_str(),
+                                            format_number(dps),
+                                            self.theme().accent,
+                                        ),
                                         (
                                             label_count.as_str(),
                                             outgoing_count.to_string(),
@@ -325,7 +391,7 @@ impl DpsApp {
                                         ),
                                         (
                                             label_time.as_str(),
-                                            format!("{duration:.1}s"),
+                                            tf("{}s", &[&format!("{duration:.1}")]),
                                             text_color,
                                         ),
                                     ],
@@ -376,6 +442,8 @@ impl DpsApp {
                     });
                 track_window_size(ctx, &mut self.team_hit_detail_window_size);
                 window_resize_grips(ctx);
+                self.show_status_toast(ctx.ctx());
+                self.show_command_palette(ctx.ctx());
                 self.show_viewport_dialogs(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
@@ -398,7 +466,9 @@ impl DpsApp {
                 self.abyss_overview_corner_applied,
             ),
             |ctx, _class| {
-                if !self.abyss_overview_corner_applied {
+                self.handle_local_hotkeys(ctx.ctx());
+                let opening = !self.abyss_overview_corner_applied;
+                if opening {
                     apply_rounding_to_process_windows();
                     self.abyss_overview_corner_applied = true;
                 }
@@ -406,14 +476,22 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
+                        motion::apply_viewport_entrance(
+                            ui,
+                            "abyss_overview",
+                            opening,
+                            self.reduce_motion,
+                        );
                         self.abyss_overview_contents(ui);
                     });
                 track_window_size(ctx, &mut self.abyss_window_size);
                 window_resize_grips(ctx);
+                self.show_status_toast(ctx.ctx());
+                self.show_command_palette(ctx.ctx());
                 self.show_viewport_dialogs(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
@@ -507,7 +585,7 @@ impl DpsApp {
                 ))
                 .size(12.0)
                 .strong()
-                .color(shadcn_foreground(self.dark_mode)),
+                .color(self.theme().fg),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t("Reload")).clicked() {
@@ -529,7 +607,7 @@ impl DpsApp {
         ui.painter().vline(
             separator_x,
             main_rect.y_range(),
-            Stroke::new(1.0_f32, shadcn_border(self.dark_mode)),
+            Stroke::new(1.0_f32, self.theme().border),
         );
         let content_rect = egui::Rect::from_min_max(
             egui::pos2(nav_rect.right() + gap, main_rect.top()),
@@ -805,12 +883,25 @@ impl DpsApp {
         record_id: String,
         viewport: egui::ViewportId,
     ) {
+        let record = self
+            .history
+            .records
+            .iter()
+            .find(|record| record.id == record_id)
+            .cloned();
         match history::delete_record(&record_id) {
             Ok(true) => {
                 self.history.reload();
                 self.history.message = t("History summary deleted");
                 self.status = t("History summary deleted");
                 self.clear_last_error();
+                if let Some(record) = record {
+                    self.push_undo_toast(
+                        viewport,
+                        t("History deleted · undo available for 5 seconds"),
+                        UndoState::HistoryRecord(Box::new(record)),
+                    );
+                }
             }
             Ok(false) => {
                 self.set_last_error_for(viewport, t("No history summary found to delete"), None);
@@ -843,7 +934,7 @@ impl DpsApp {
                 ))
                 .size(16.0)
                 .strong()
-                .color(shadcn_foreground(self.dark_mode)),
+                .color(self.theme().fg),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(
@@ -1052,7 +1143,7 @@ impl DpsApp {
             .and_then(|avatar| self.avatar_textures.get(avatar))
             .cloned();
         let character_color = readable_accent(
-            character_color(char_id, &self.characters, 0),
+            character_color(char_id, &self.characters, 0, self.dark_mode),
             self.dark_mode,
         );
         let title = tf("{} - Combat Details", &[&stats.name]);
@@ -1065,7 +1156,9 @@ impl DpsApp {
                 self.hit_detail_corner_applied,
             ),
             |ctx, _class| {
-                if !self.hit_detail_corner_applied {
+                self.handle_local_hotkeys(ctx.ctx());
+                let opening = !self.hit_detail_corner_applied;
+                if opening {
                     apply_rounding_to_process_windows();
                     self.hit_detail_corner_applied = true;
                 }
@@ -1073,13 +1166,19 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
+                        motion::apply_viewport_entrance(
+                            ui,
+                            "hit_detail",
+                            opening,
+                            self.reduce_motion,
+                        );
                         egui::Frame::new()
-                            .fill(shadcn_card(self.dark_mode))
-                            .stroke(Stroke::new(1.0_f32, shadcn_border(self.dark_mode)))
+                            .fill(self.theme().card)
+                            .stroke(Stroke::new(1.0_f32, self.theme().border))
                             .corner_radius(10)
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {
@@ -1155,11 +1254,13 @@ impl DpsApp {
                                             |ui| {
                                                 let (
                                                     label_out,
+                                                    label_dps,
                                                     label_count,
                                                     label_taken,
                                                     label_time,
                                                 ) = (
                                                     t("Total Output"),
+                                                    t("DPS"),
                                                     t("Output Count"),
                                                     t("Total Damage Taken"),
                                                     t("Combat Time"),
@@ -1170,12 +1271,12 @@ impl DpsApp {
                                                         (
                                                             label_out.as_str(),
                                                             format_number(stats.damage),
-                                                            theme_accent(self.dark_mode),
+                                                            self.theme().accent,
                                                         ),
                                                         (
-                                                            "DPS",
+                                                            label_dps.as_str(),
                                                             format_number(stats_dps),
-                                                            theme_accent(self.dark_mode),
+                                                            self.theme().accent,
                                                         ),
                                                         (
                                                             label_count.as_str(),
@@ -1189,7 +1290,10 @@ impl DpsApp {
                                                         ),
                                                         (
                                                             label_time.as_str(),
-                                                            format!("{stats_duration:.1}s"),
+                                                            tf(
+                                                                "{}s",
+                                                                &[&format!("{stats_duration:.1}")],
+                                                            ),
                                                             text_color,
                                                         ),
                                                     ],
@@ -1298,6 +1402,8 @@ impl DpsApp {
                     });
                 track_window_size(ctx, &mut self.hit_detail_window_size);
                 window_resize_grips(ctx);
+                self.show_status_toast(ctx.ctx());
+                self.show_command_palette(ctx.ctx());
                 self.show_viewport_dialogs(ctx);
                 close_clicked || ctx.input(|input| input.viewport().close_requested())
             },
