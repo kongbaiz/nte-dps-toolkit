@@ -222,6 +222,7 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
     if let Some(fonts) = font_definitions() {
         ctx.set_fonts(fonts);
     }
+    ctx.add_font(egui_material_icons::font_insert());
 }
 
 /// Invisible edge/corner drag handles that give a borderless window native OS resize.
@@ -648,28 +649,51 @@ pub(crate) fn abyss_overview_viewport_id() -> egui::ViewportId {
 mod glyph_tests {
     use super::*;
 
-    /// Guards every hand-picked glyph the UI paints as text — sidebar icons,
-    /// the empty-state step check mark, chevrons, trend arrows — against the
-    /// exact font stack the app installs. A glyph missing from the stack
-    /// renders as a tofu box (e.g. U+2713 "✓" is absent while U+2714 "✔"
-    /// exists), so additions to this set must pass here first.
+    /// Guards hand-picked symbols painted with the regular UI font stack. A
+    /// missing glyph renders as a tofu box (e.g. U+2713 "✓" is absent while
+    /// U+2714 "✔" exists), so additions to this set must pass here first.
     #[test]
     fn painted_glyphs_exist_in_font_stack() {
         let definitions = font_definitions().unwrap_or_default();
         let mut fonts =
             egui::epaint::text::Fonts::new(egui::epaint::text::TextOptions::default(), definitions);
         let font_id = egui::FontId::proportional(14.0);
-        let mut glyphs: String = ConsoleTab::visible_tabs()
-            .iter()
-            .map(|tab| tab.icon())
-            .collect();
-        glyphs.push_str("✔›‹▲▼");
-        for c in glyphs.chars() {
+        for c in "✔›‹▲▼".chars() {
             assert!(
                 fonts.has_glyph(&font_id, c),
                 "glyph {c} (U+{:04X}) is missing from the app font stack",
                 c as u32
             );
+        }
+    }
+
+    #[test]
+    fn console_sidebar_icons_exist_in_material_font() {
+        let insert = egui_material_icons::font_insert();
+        let family = ConsoleTab::Settings.icon().font_family();
+        assert!(
+            insert.families.iter().any(|entry| entry.family == family),
+            "Material Icons font insert must register the sidebar icon family"
+        );
+
+        let mut definitions = egui::FontDefinitions::empty();
+        definitions
+            .font_data
+            .insert(insert.name.clone(), insert.data.into());
+        definitions.families.insert(family, vec![insert.name]);
+        let mut fonts =
+            egui::epaint::text::Fonts::new(egui::epaint::text::TextOptions::default(), definitions);
+
+        for tab in ConsoleTab::visible_tabs() {
+            let icon = tab.icon();
+            let font_id = egui::FontId::new(14.0, icon.font_family());
+            for c in icon.codepoint.chars() {
+                assert!(
+                    fonts.has_glyph(&font_id, c),
+                    "sidebar icon glyph {c} (U+{:04X}) is missing from Material Icons",
+                    c as u32
+                );
+            }
         }
     }
 }

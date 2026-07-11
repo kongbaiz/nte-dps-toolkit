@@ -264,22 +264,24 @@ impl ConsoleTab {
         }
     }
 
-    /// Sidebar icon. Every glyph here must exist in the app's font stack
-    /// (system CJK font + egui's bundled emoji fallbacks) — enforced by the
-    /// `painted_glyphs_exist_in_font_stack` test in `chrome.rs`; a glyph
-    /// missing from the stack renders as a tofu box.
-    fn icon(self) -> &'static str {
+    /// Material icon rendered with the dedicated font installed in `chrome.rs`.
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        use egui_material_icons::icons::{
+            ICON_AUTO_AWESOME, ICON_BACKPACK, ICON_FOLDER, ICON_HISTORY, ICON_LOCK, ICON_PERSON,
+            ICON_SENSORS, ICON_SETTINGS, ICON_TIMELINE, ICON_TROUBLESHOOT,
+        };
+
         match self {
-            Self::Settings => "⚙",
-            Self::Timeline => "📈",
-            Self::Skills => "✨",
-            Self::EmptyCurtain => "🎒",
-            Self::History => "🕒",
-            Self::Characters => "👤",
-            Self::EncryptedIni => "🔒",
-            Self::Packets => "📡",
-            Self::Resources => "📁",
-            Self::Diagnostics => "🔍",
+            Self::Settings => ICON_SETTINGS,
+            Self::Timeline => ICON_TIMELINE,
+            Self::Skills => ICON_AUTO_AWESOME,
+            Self::EmptyCurtain => ICON_BACKPACK,
+            Self::History => ICON_HISTORY,
+            Self::Characters => ICON_PERSON,
+            Self::EncryptedIni => ICON_LOCK,
+            Self::Packets => ICON_SENSORS,
+            Self::Resources => ICON_FOLDER,
+            Self::Diagnostics => ICON_TROUBLESHOOT,
         }
     }
 
