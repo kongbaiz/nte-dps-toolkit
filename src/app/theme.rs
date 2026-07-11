@@ -91,51 +91,93 @@ pub(crate) fn theme_tokens_for_preset(
     match preset {
         ThemePreset::Zinc => {}
         ThemePreset::Tactical => {
-            let tactical_accent = match accent {
-                AccentColor::Violet => Color32::from_rgb(232, 121, 249),
-                AccentColor::Orange => Color32::from_rgb(251, 146, 60),
-                AccentColor::Green => Color32::from_rgb(52, 211, 153),
-                AccentColor::Zinc | AccentColor::Blue => Color32::from_rgb(34, 211, 238),
+            let tactical_accent = match (dark_mode, accent) {
+                (true, AccentColor::Violet) => Color32::from_rgb(232, 121, 249),
+                (true, AccentColor::Orange) => Color32::from_rgb(251, 146, 60),
+                (true, AccentColor::Green) => Color32::from_rgb(52, 211, 153),
+                (true, AccentColor::Zinc | AccentColor::Blue) => Color32::from_rgb(34, 211, 238),
+                (false, AccentColor::Violet) => Color32::from_rgb(147, 51, 234),
+                (false, AccentColor::Orange) => Color32::from_rgb(194, 65, 12),
+                (false, AccentColor::Green) => Color32::from_rgb(4, 120, 87),
+                (false, AccentColor::Zinc | AccentColor::Blue) => Color32::from_rgb(8, 145, 178),
             };
-            tokens.bg = Color32::from_rgb(3, 7, 12);
-            tokens.bg_elevated = Color32::from_rgb(7, 13, 22);
-            tokens.card = Color32::from_rgb(10, 19, 30);
-            tokens.card_hover = Color32::from_rgb(16, 30, 46);
-            tokens.muted = Color32::from_rgb(22, 39, 55);
-            tokens.border = Color32::from_rgb(29, 53, 70);
-            tokens.border_strong = Color32::from_rgb(56, 189, 214);
-            tokens.fg = Color32::from_rgb(232, 248, 252);
-            tokens.fg_muted = Color32::from_rgb(144, 180, 191);
-            tokens.fg_faint = Color32::from_rgb(91, 129, 143);
             tokens.accent = tactical_accent;
             tokens.accent_fg = contrast_text(tactical_accent);
-            tokens.success = Color32::from_rgb(52, 211, 153);
-            tokens.warning = Color32::from_rgb(250, 204, 21);
-            tokens.danger = Color32::from_rgb(251, 113, 133);
-            tokens.info = Color32::from_rgb(56, 189, 248);
-            tokens.dataviz = [
-                Color32::from_rgb(34, 211, 238),
-                Color32::from_rgb(232, 121, 249),
-                Color32::from_rgb(52, 211, 153),
-                Color32::from_rgb(251, 146, 60),
-                Color32::from_rgb(251, 113, 133),
-                Color32::from_rgb(96, 165, 250),
-                Color32::from_rgb(250, 204, 21),
-                Color32::from_rgb(167, 139, 250),
-            ];
-            tokens.detail_row = Color32::from_rgba_unmultiplied(34, 211, 238, 12);
-            tokens.detail_separator = Color32::from_rgba_unmultiplied(56, 189, 214, 96);
-            tokens.floating = Color32::from_rgb(9, 18, 29);
-            tokens.modal_backdrop = Color32::from_black_alpha(184);
-            tokens.notice_bg = Color32::from_rgba_unmultiplied(3, 9, 15, 238);
             tokens.hud.accent = tactical_accent;
-            tokens.hud.text = Color32::from_rgb(238, 252, 255);
-            tokens.hud.muted = Color32::from_rgb(154, 207, 218);
-            tokens.hud.track = Color32::from_black_alpha(128);
-            tokens.hud.halo = Color32::from_black_alpha(216);
-            tokens.hud.edit_bg = Color32::from_rgb(3, 10, 17);
             tokens.hud.edit_border = tactical_accent;
-            tokens.hud.edit_text = Color32::from_rgb(222, 248, 252);
+            if dark_mode {
+                tokens.bg = Color32::from_rgb(3, 7, 12);
+                tokens.bg_elevated = Color32::from_rgb(7, 13, 22);
+                tokens.card = Color32::from_rgb(10, 19, 30);
+                tokens.card_hover = Color32::from_rgb(16, 30, 46);
+                tokens.muted = Color32::from_rgb(22, 39, 55);
+                tokens.border = Color32::from_rgb(29, 53, 70);
+                tokens.border_strong = Color32::from_rgb(56, 189, 214);
+                tokens.fg = Color32::from_rgb(232, 248, 252);
+                tokens.fg_muted = Color32::from_rgb(144, 180, 191);
+                tokens.fg_faint = Color32::from_rgb(91, 129, 143);
+                tokens.success = Color32::from_rgb(52, 211, 153);
+                tokens.warning = Color32::from_rgb(250, 204, 21);
+                tokens.danger = Color32::from_rgb(251, 113, 133);
+                tokens.info = Color32::from_rgb(56, 189, 248);
+                tokens.dataviz = [
+                    Color32::from_rgb(34, 211, 238),
+                    Color32::from_rgb(232, 121, 249),
+                    Color32::from_rgb(52, 211, 153),
+                    Color32::from_rgb(251, 146, 60),
+                    Color32::from_rgb(251, 113, 133),
+                    Color32::from_rgb(96, 165, 250),
+                    Color32::from_rgb(250, 204, 21),
+                    Color32::from_rgb(167, 139, 250),
+                ];
+                tokens.detail_row = Color32::from_rgba_unmultiplied(34, 211, 238, 12);
+                tokens.detail_separator = Color32::from_rgba_unmultiplied(56, 189, 214, 96);
+                tokens.floating = Color32::from_rgb(9, 18, 29);
+                tokens.modal_backdrop = Color32::from_black_alpha(184);
+                tokens.notice_bg = Color32::from_rgba_unmultiplied(3, 9, 15, 238);
+                tokens.hud.text = Color32::from_rgb(238, 252, 255);
+                tokens.hud.muted = Color32::from_rgb(154, 207, 218);
+                tokens.hud.track = Color32::from_black_alpha(128);
+                tokens.hud.halo = Color32::from_black_alpha(216);
+                tokens.hud.edit_bg = Color32::from_rgb(3, 10, 17);
+                tokens.hud.edit_text = Color32::from_rgb(222, 248, 252);
+            } else {
+                tokens.bg = Color32::from_rgb(241, 249, 251);
+                tokens.bg_elevated = Color32::WHITE;
+                tokens.card = Color32::from_rgb(248, 252, 253);
+                tokens.card_hover = Color32::from_rgb(230, 247, 250);
+                tokens.muted = Color32::from_rgb(216, 239, 243);
+                tokens.border = Color32::from_rgb(184, 220, 227);
+                tokens.border_strong = Color32::from_rgb(8, 145, 178);
+                tokens.fg = Color32::from_rgb(15, 42, 50);
+                tokens.fg_muted = Color32::from_rgb(69, 107, 117);
+                tokens.fg_faint = Color32::from_rgb(109, 141, 149);
+                tokens.success = Color32::from_rgb(4, 120, 87);
+                tokens.warning = Color32::from_rgb(161, 98, 7);
+                tokens.danger = Color32::from_rgb(190, 24, 93);
+                tokens.info = Color32::from_rgb(3, 105, 161);
+                tokens.dataviz = [
+                    Color32::from_rgb(8, 145, 178),
+                    Color32::from_rgb(147, 51, 234),
+                    Color32::from_rgb(4, 120, 87),
+                    Color32::from_rgb(194, 65, 12),
+                    Color32::from_rgb(190, 24, 93),
+                    Color32::from_rgb(37, 99, 235),
+                    Color32::from_rgb(161, 98, 7),
+                    Color32::from_rgb(109, 40, 217),
+                ];
+                tokens.detail_row = Color32::from_rgba_unmultiplied(8, 145, 178, 10);
+                tokens.detail_separator = Color32::from_rgba_unmultiplied(8, 145, 178, 72);
+                tokens.floating = Color32::from_rgba_unmultiplied(255, 255, 255, 246);
+                tokens.modal_backdrop = Color32::from_black_alpha(104);
+                tokens.notice_bg = Color32::from_rgba_unmultiplied(244, 251, 252, 246);
+                tokens.hud.text = Color32::from_rgb(238, 252, 255);
+                tokens.hud.muted = Color32::from_rgb(166, 216, 226);
+                tokens.hud.track = Color32::from_black_alpha(108);
+                tokens.hud.halo = Color32::from_black_alpha(204);
+                tokens.hud.edit_bg = Color32::from_rgb(247, 252, 253);
+                tokens.hud.edit_text = Color32::from_rgb(15, 42, 50);
+            }
         }
         ThemePreset::HighContrast => {
             let (bg, fg, muted, faint, modal) = if dark_mode {
@@ -814,5 +856,17 @@ mod tests {
 
         assert!(light.hud.edit_bg.r() > light.hud.edit_text.r());
         assert!(dark.hud.edit_bg.r() < dark.hud.edit_text.r());
+    }
+
+    #[test]
+    fn tactical_preset_has_distinct_readable_light_tokens() {
+        let light = theme_tokens_for_preset(ThemePreset::Tactical, false, AccentColor::Blue);
+        let dark = theme_tokens_for_preset(ThemePreset::Tactical, true, AccentColor::Blue);
+
+        assert_ne!(light.bg, dark.bg);
+        assert!(light.bg.r() > light.fg.r());
+        assert!(light.card.r() > light.fg.r());
+        assert!(light.hud.edit_bg.r() > light.hud.edit_text.r());
+        assert_ne!(light.accent, dark.accent);
     }
 }

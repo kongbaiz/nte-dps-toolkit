@@ -24,6 +24,8 @@ pub const TIMELINE_BUCKET_SECONDS_MIN: f32 = 0.2;
 pub const TIMELINE_BUCKET_SECONDS_MAX: f32 = 10.0;
 pub const HUD_WIDTH_DEFAULT: u16 = 380;
 pub const HUD_WIDTH_MIN: u16 = 280;
+const HIT_DETAIL_COLUMN_WIDTH_MIN: u16 = 64;
+const HIT_DETAIL_COLUMN_WIDTH_MAX: u16 = 600;
 
 const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::Home,
@@ -486,6 +488,117 @@ impl HudModule {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitDetailColumn {
+    Time,
+    Character,
+    Type,
+    Damage,
+    TargetHp,
+}
+
+impl HitDetailColumn {
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Time => "Time",
+            Self::Character => "Character",
+            Self::Type => "Type",
+            Self::Damage => "Damage",
+            Self::TargetHp => "Target / HP",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HitDetailColumnsConfig {
+    pub show_time: bool,
+    pub show_character: bool,
+    pub show_type: bool,
+    pub show_damage: bool,
+    pub show_target_hp: bool,
+    pub time_width: u16,
+    pub character_width: u16,
+    pub type_width: u16,
+    pub damage_width: u16,
+    pub target_hp_width: u16,
+}
+
+impl Default for HitDetailColumnsConfig {
+    fn default() -> Self {
+        Self {
+            show_time: true,
+            show_character: true,
+            show_type: true,
+            show_damage: true,
+            show_target_hp: true,
+            time_width: 92,
+            character_width: 132,
+            type_width: 250,
+            damage_width: 130,
+            target_hp_width: 180,
+        }
+    }
+}
+
+impl HitDetailColumnsConfig {
+    pub fn visible(self, column: HitDetailColumn) -> bool {
+        match column {
+            HitDetailColumn::Time => self.show_time,
+            HitDetailColumn::Character => self.show_character,
+            HitDetailColumn::Type => self.show_type,
+            HitDetailColumn::Damage => self.show_damage,
+            HitDetailColumn::TargetHp => self.show_target_hp,
+        }
+    }
+
+    pub fn set_visible(&mut self, column: HitDetailColumn, visible: bool) {
+        match column {
+            HitDetailColumn::Time => self.show_time = visible,
+            HitDetailColumn::Character => self.show_character = visible,
+            HitDetailColumn::Type => self.show_type = visible,
+            HitDetailColumn::Damage => self.show_damage = visible,
+            HitDetailColumn::TargetHp => self.show_target_hp = visible,
+        }
+    }
+
+    pub fn width(self, column: HitDetailColumn) -> u16 {
+        match column {
+            HitDetailColumn::Time => self.time_width,
+            HitDetailColumn::Character => self.character_width,
+            HitDetailColumn::Type => self.type_width,
+            HitDetailColumn::Damage => self.damage_width,
+            HitDetailColumn::TargetHp => self.target_hp_width,
+        }
+    }
+
+    pub fn set_width(&mut self, column: HitDetailColumn, width: u16) {
+        let width = width.clamp(HIT_DETAIL_COLUMN_WIDTH_MIN, HIT_DETAIL_COLUMN_WIDTH_MAX);
+        match column {
+            HitDetailColumn::Time => self.time_width = width,
+            HitDetailColumn::Character => self.character_width = width,
+            HitDetailColumn::Type => self.type_width = width,
+            HitDetailColumn::Damage => self.damage_width = width,
+            HitDetailColumn::TargetHp => self.target_hp_width = width,
+        }
+    }
+
+    pub fn sanitized(mut self) -> Self {
+        for column in [
+            HitDetailColumn::Time,
+            HitDetailColumn::Character,
+            HitDetailColumn::Type,
+            HitDetailColumn::Damage,
+            HitDetailColumn::TargetHp,
+        ] {
+            self.set_width(column, self.width(column));
+        }
+        self
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HudConfig {
@@ -638,6 +751,8 @@ pub struct UiConfig {
     pub timeline_bucket_seconds: f32,
     pub timeline_dps_view_mode: TimelineDpsViewMode,
     pub hud: HudConfig,
+    #[serde(default)]
+    pub hit_detail_columns: HitDetailColumnsConfig,
     pub passthrough_hotkey: PassthroughHotkey,
     #[serde(default)]
     pub global_hotkeys: GlobalHotkeys,
@@ -677,6 +792,7 @@ impl Default for UiConfig {
             timeline_bucket_seconds: TIMELINE_BUCKET_SECONDS_DEFAULT,
             timeline_dps_view_mode: TimelineDpsViewMode::default(),
             hud: HudConfig::default(),
+            hit_detail_columns: HitDetailColumnsConfig::default(),
             passthrough_hotkey: PassthroughHotkey::default(),
             global_hotkeys: GlobalHotkeys::default(),
             onboarding_done: true,
@@ -715,6 +831,7 @@ impl UiConfig {
             .take()
             .filter(|name| !name.trim().is_empty());
         self.hud = self.hud.sanitized();
+        self.hit_detail_columns = self.hit_detail_columns.sanitized();
         self.global_hotkeys = self.global_hotkeys.sanitized();
         if let Some(binding) = self.passthrough_hotkey.global_binding() {
             self.global_hotkeys = self.global_hotkeys.without_binding(binding);
@@ -960,6 +1077,35 @@ mod tests {
     }
 
     #[test]
+    fn hit_detail_columns_are_persisted_and_sanitized() {
+        let mut columns = HitDetailColumnsConfig {
+            time_width: 0,
+            type_width: u16::MAX,
+            ..HitDetailColumnsConfig::default()
+        };
+        columns.set_visible(HitDetailColumn::TargetHp, false);
+        let config = UiConfig {
+            hit_detail_columns: columns,
+            ..UiConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(
+            config.hit_detail_columns.width(HitDetailColumn::Time),
+            HIT_DETAIL_COLUMN_WIDTH_MIN
+        );
+        assert_eq!(
+            config.hit_detail_columns.width(HitDetailColumn::Type),
+            HIT_DETAIL_COLUMN_WIDTH_MAX
+        );
+        assert!(!config.hit_detail_columns.visible(HitDetailColumn::TargetHp));
+
+        let json = serde_json::to_string(&config).expect("config should serialize");
+        let restored: UiConfig = serde_json::from_str(&json).expect("config should deserialize");
+        assert_eq!(restored.hit_detail_columns, config.hit_detail_columns);
+    }
+
+    #[test]
     fn interaction_preferences_use_stable_serialized_codes() {
         assert_eq!(
             AccentColor::all()
@@ -1023,6 +1169,7 @@ mod tests {
         assert_eq!(config.density, UiDensity::Cozy);
         assert_eq!(config.hud.width, HUD_WIDTH_DEFAULT);
         assert_eq!(config.hud.module_order, HudModule::all());
+        assert_eq!(config.hit_detail_columns, HitDetailColumnsConfig::default());
         assert!(!config.reduce_motion);
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
         assert!(config.onboarding_done);

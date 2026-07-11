@@ -48,8 +48,9 @@ use crate::platform::window_attributes::{
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
     self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MIN,
-    HotkeyBinding, HotkeyKey, HudConfig, HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX,
-    TIMELINE_BUCKET_SECONDS_MIN, ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+    HitDetailColumn, HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig, HudModule,
+    PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN, ThemePreset,
+    TimelineDpsViewMode, UiConfig, UiDensity,
 };
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
@@ -1089,6 +1090,7 @@ pub struct DpsApp {
     abyss_window_size: egui::Vec2,
     hit_detail_window_size: egui::Vec2,
     team_hit_detail_window_size: egui::Vec2,
+    hit_detail_columns: HitDetailColumnsConfig,
     console_window_size: egui::Vec2,
     /// Frames to skip main-window size tracking after a programmatic `InnerSize` (HUD exit), while
     /// Windows applies the resize asynchronously and `content_rect` still reports the old HUD size.

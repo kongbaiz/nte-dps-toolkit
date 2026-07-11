@@ -691,6 +691,13 @@ impl DpsApp {
                 }
             });
         });
+        child.label(
+            RichText::new(t(
+                "Click a character for details; right-click for copy or hide",
+            ))
+            .size(10.5)
+            .color(child.visuals().weak_text_color()),
+        );
         self.party_panel(&mut child);
         ui.allocate_rect(available, egui::Sense::hover());
     }
@@ -807,9 +814,6 @@ impl DpsApp {
             false,
         );
         self.theme_preset = preset;
-        if preset == ThemePreset::Tactical {
-            self.dark_mode = true;
-        }
     }
 
     /// Party-member rows (damage desc) plus the team totals shared by the party

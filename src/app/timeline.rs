@@ -122,6 +122,96 @@ fn timeline_time_is_visible(time: f64, view_range: (f64, f64)) -> bool {
     time >= view_range.0 && time <= view_range.1
 }
 
+#[derive(Clone, Copy)]
+enum TimelineLabelEdge {
+    Top,
+    Bottom,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimelineLabelPlacement {
+    position: egui::Pos2,
+    align: egui::Align2,
+}
+
+fn place_timeline_label(
+    marker_x: f32,
+    size: egui::Vec2,
+    plot: egui::Rect,
+    edge: TimelineLabelEdge,
+    occupied: &mut Vec<egui::Rect>,
+) -> TimelineLabelPlacement {
+    const HORIZONTAL_GAP: f32 = 4.0;
+    const LANE_GAP: f32 = 3.0;
+    const COLLISION_GAP: f32 = 2.0;
+
+    let lane_step = size.y + LANE_GAP;
+    let lane_count =
+        (((plot.height() - size.y).max(0.0) / lane_step).floor() as usize + 1).clamp(1, 8);
+    let right_side_fits = marker_x + HORIZONTAL_GAP + size.x <= plot.right();
+    let left_side_fits = marker_x - HORIZONTAL_GAP - size.x >= plot.left();
+    let prefer_right_side = right_side_fits || !left_side_fits;
+
+    for lane in 0..lane_count {
+        let center_y = match edge {
+            TimelineLabelEdge::Top => plot.top() + size.y * 0.5 + lane as f32 * lane_step,
+            TimelineLabelEdge::Bottom => plot.bottom() - size.y * 0.5 - lane as f32 * lane_step,
+        };
+        for place_on_right in [prefer_right_side, !prefer_right_side] {
+            let (position, align, rect) = if place_on_right {
+                let position = egui::pos2(marker_x + HORIZONTAL_GAP, center_y);
+                (
+                    position,
+                    egui::Align2::LEFT_CENTER,
+                    egui::Rect::from_min_size(
+                        egui::pos2(position.x, center_y - size.y * 0.5),
+                        size,
+                    ),
+                )
+            } else {
+                let position = egui::pos2(marker_x - HORIZONTAL_GAP, center_y);
+                (
+                    position,
+                    egui::Align2::RIGHT_CENTER,
+                    egui::Rect::from_min_size(
+                        egui::pos2(position.x - size.x, center_y - size.y * 0.5),
+                        size,
+                    ),
+                )
+            };
+            if rect.left() >= plot.left()
+                && rect.right() <= plot.right()
+                && rect.top() >= plot.top()
+                && rect.bottom() <= plot.bottom()
+                && occupied
+                    .iter()
+                    .all(|other| !other.intersects(rect.expand(COLLISION_GAP)))
+            {
+                occupied.push(rect);
+                return TimelineLabelPlacement { position, align };
+            }
+        }
+    }
+
+    let position = egui::pos2(
+        if size.x <= plot.width() {
+            marker_x.clamp(plot.left() + size.x * 0.5, plot.right() - size.x * 0.5)
+        } else {
+            plot.center().x
+        },
+        match edge {
+            TimelineLabelEdge::Top => plot.top() + size.y * 0.5,
+            TimelineLabelEdge::Bottom => plot.bottom() - size.y * 0.5,
+        },
+    );
+    let rect = egui::Rect::from_center_size(position, size);
+    occupied.push(rect);
+    TimelineLabelPlacement {
+        position,
+        align: egui::Align2::CENTER_CENTER,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_timeline_chart(
     ui: &mut egui::Ui,
@@ -264,6 +354,7 @@ pub(crate) fn draw_timeline_chart(
         plot_painter.rect_filled(band, 0.0, semantic_warning(dark_mode).gamma_multiply(0.16));
     }
 
+    let mut marker_label_rects = Vec::new();
     for marker in &series.markers {
         if !timeline_time_is_visible(marker.offset, view_range) {
             continue;
@@ -278,13 +369,19 @@ pub(crate) fn draw_timeline_chart(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
             Stroke::new(1.5_f32, color),
         );
-        plot_painter.text(
-            egui::pos2(x + 4.0, plot.top() + 10.0),
-            egui::Align2::LEFT_CENTER,
-            t(&marker.label),
-            egui::FontId::proportional(10.0),
-            color,
+        let label = t(&marker.label);
+        let font = egui::FontId::proportional(10.0);
+        let size = plot_painter
+            .layout_no_wrap(label.clone(), font.clone(), color)
+            .size();
+        let placement = place_timeline_label(
+            x,
+            size,
+            plot,
+            TimelineLabelEdge::Top,
+            &mut marker_label_rects,
         );
+        plot_painter.text(placement.position, placement.align, label, font, color);
     }
 
     let user_marker_color = ui.visuals().selection.bg_fill.gamma_multiply(0.82);
@@ -298,14 +395,26 @@ pub(crate) fn draw_timeline_chart(
             Stroke::new(1.0_f32, user_marker_color),
         );
         plot_painter.circle_filled(egui::pos2(x, plot.top() + 4.0), 3.0, user_marker_color);
+        let label = tf(
+            "Marker {} · {}s",
+            &[&(index + 1).to_string(), &format_timeline_seconds(marker)],
+        );
+        let font = egui::FontId::proportional(9.5);
+        let size = plot_painter
+            .layout_no_wrap(label.clone(), font.clone(), user_marker_color)
+            .size();
+        let placement = place_timeline_label(
+            x,
+            size,
+            plot,
+            TimelineLabelEdge::Bottom,
+            &mut marker_label_rects,
+        );
         plot_painter.text(
-            egui::pos2(x + 4.0, plot.bottom() - 8.0),
-            egui::Align2::LEFT_CENTER,
-            tf(
-                "Marker {} · {}s",
-                &[&(index + 1).to_string(), &format_timeline_seconds(marker)],
-            ),
-            egui::FontId::proportional(9.5),
+            placement.position,
+            placement.align,
+            label,
+            font,
             user_marker_color,
         );
     }
@@ -1189,5 +1298,45 @@ mod tests {
 
         state.remove_nearest_marker(6.0);
         assert_eq!(state.user_markers, [2.0, 8.0]);
+    }
+
+    #[test]
+    fn timeline_label_stays_inside_the_right_edge() {
+        let plot = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 80.0));
+        let mut occupied = Vec::new();
+        let placement = place_timeline_label(
+            100.0,
+            egui::vec2(30.0, 12.0),
+            plot,
+            TimelineLabelEdge::Top,
+            &mut occupied,
+        );
+
+        assert!(occupied[0].right() <= plot.right());
+        assert!(occupied[0].left() >= plot.left());
+        assert_eq!(placement.align, egui::Align2::RIGHT_CENTER);
+    }
+
+    #[test]
+    fn nearby_timeline_labels_use_non_overlapping_lanes() {
+        let plot = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(120.0, 80.0));
+        let mut occupied = Vec::new();
+        let first = place_timeline_label(
+            116.0,
+            egui::vec2(36.0, 12.0),
+            plot,
+            TimelineLabelEdge::Top,
+            &mut occupied,
+        );
+        let second = place_timeline_label(
+            112.0,
+            egui::vec2(36.0, 12.0),
+            plot,
+            TimelineLabelEdge::Top,
+            &mut occupied,
+        );
+
+        assert!(!occupied[0].expand(2.0).intersects(occupied[1]));
+        assert_ne!(first.position.y, second.position.y);
     }
 }

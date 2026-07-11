@@ -454,6 +454,14 @@ impl DpsApp {
             });
             ui.add_space(6.0);
         }
+        ui.label(
+            RichText::new(t(
+                "Click a legend to highlight; drag across the chart to select a range; right-click for markers and zoom",
+            ))
+            .size(10.5)
+            .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(4.0);
         let chart_height = (ui.available_height() - 30.0).max(260.0);
         draw_timeline_chart(
             ui,
@@ -678,6 +686,15 @@ impl DpsApp {
             );
             return;
         }
+
+        ui.label(
+            RichText::new(t(
+                "Click a record for details; right-click to compare, export or delete",
+            ))
+            .size(10.5)
+            .color(ui.visuals().weak_text_color()),
+        );
+        ui.add_space(4.0);
 
         let mut keyboard_scroll_offset = None;
         let mut open_selected_details = false;

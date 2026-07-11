@@ -794,5 +794,12 @@
   "View combat details": "戦闘詳細を表示",
   "Waiting for the first damage event...": "最初のダメージイベントを待っています...",
   "{} of {}": "{} / {}",
-  "Game process check failed: {}": "ゲームプロセスの確認に失敗しました：{}"
+  "Game process check failed: {}": "ゲームプロセスの確認に失敗しました：{}",
+  "Right-click to choose columns; drag dividers to resize": "右クリックで列を選択し、区切り線をドラッグして列幅を調整",
+  "Reset column widths": "列幅をリセット",
+  "Column settings": "列設定",
+  "Drag column dividers to resize": "区切り線をドラッグして列幅を調整",
+  "Click a character for details; right-click for copy or hide": "キャラクターをクリックして詳細を表示。右クリックでコピーまたは非表示",
+  "Click a legend to highlight; drag across the chart to select a range; right-click for markers and zoom": "凡例をクリックして強調表示。グラフをドラッグして範囲を選択。右クリックでマーカーやズームを操作",
+  "Click a record for details; right-click to compare, export or delete": "記録をクリックして詳細を表示。右クリックで比較、エクスポート、削除"
 }
