@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::i18n::Language;
-use eframe::egui;
 
 const CONFIG_DIRECTORY: &str = "NTE DPS Tool";
 const CONFIG_FILENAME: &str = "config.json";
@@ -98,19 +97,6 @@ impl PassthroughHotkey {
             Self::F8 => "F8",
             Self::F9 => "F9",
         }
-    }
-
-    pub fn egui_key(self) -> egui::Key {
-        match self {
-            Self::Home => egui::Key::Home,
-            Self::Insert => egui::Key::Insert,
-            Self::F8 => egui::Key::F8,
-            Self::F9 => egui::Key::F9,
-        }
-    }
-
-    pub fn matches_egui(self, modifiers: egui::Modifiers, key: egui::Key) -> bool {
-        self.egui_key() == key && !modifiers.ctrl && !modifiers.alt && !modifiers.shift
     }
 
     fn global_binding(self) -> Option<HotkeyBinding> {
@@ -236,23 +222,6 @@ impl HotkeyKey {
             Self::F12 => "F12",
         }
     }
-
-    pub fn egui_key(self) -> egui::Key {
-        match self {
-            Self::F1 => egui::Key::F1,
-            Self::F2 => egui::Key::F2,
-            Self::F3 => egui::Key::F3,
-            Self::F4 => egui::Key::F4,
-            Self::F5 => egui::Key::F5,
-            Self::F6 => egui::Key::F6,
-            Self::F7 => egui::Key::F7,
-            Self::F8 => egui::Key::F8,
-            Self::F9 => egui::Key::F9,
-            Self::F10 => egui::Key::F10,
-            Self::F11 => egui::Key::F11,
-            Self::F12 => egui::Key::F12,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -287,13 +256,6 @@ impl HotkeyBinding {
         }
         parts.push(self.key.label());
         parts.join("+")
-    }
-
-    pub fn matches_egui(self, modifiers: egui::Modifiers, key: egui::Key) -> bool {
-        self.key.egui_key() == key
-            && self.ctrl == modifiers.ctrl
-            && self.alt == modifiers.alt
-            && self.shift == modifiers.shift
     }
 
     pub fn is_reserved(self) -> bool {
@@ -1205,30 +1167,6 @@ mod tests {
             GlobalHotkeyAction::ToggleCapture.label(),
             "Start / Stop Capture"
         );
-    }
-
-    #[test]
-    fn hotkey_binding_matches_exact_egui_modifiers() {
-        let binding = HotkeyBinding::new(true, false, false, HotkeyKey::F9);
-        let ctrl = egui::Modifiers {
-            ctrl: true,
-            ..Default::default()
-        };
-        let ctrl_shift = egui::Modifiers {
-            ctrl: true,
-            shift: true,
-            ..Default::default()
-        };
-
-        assert!(binding.matches_egui(ctrl, egui::Key::F9));
-        assert!(!binding.matches_egui(ctrl_shift, egui::Key::F9));
-        assert!(!binding.matches_egui(ctrl, egui::Key::F10));
-        assert!(
-            !HotkeyBinding::new(false, false, false, HotkeyKey::F9)
-                .matches_egui(ctrl, egui::Key::F9)
-        );
-        assert!(PassthroughHotkey::F9.matches_egui(egui::Modifiers::default(), egui::Key::F9));
-        assert!(!PassthroughHotkey::F9.matches_egui(ctrl, egui::Key::F9));
     }
 
     #[test]

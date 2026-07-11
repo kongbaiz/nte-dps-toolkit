@@ -37,7 +37,10 @@ use crate::engine::parser::{
     load_equipment_catalog,
 };
 use crate::platform::file_drop::NativeFileDrop;
-use crate::platform::hotkey::{HotkeyEvent, HotkeyHandle};
+use crate::platform::hotkey::{
+    HotkeyEvent, HotkeyHandle, hotkey_binding_matches_egui, hotkey_key_to_egui,
+    passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
+};
 use crate::platform::network::{
     GameNetwork, detect_game_device, detect_game_network, game_process_is_running,
 };
@@ -169,6 +172,7 @@ struct PendingFileDialog {
 
 pub(crate) enum ConfirmationAction {
     StartLive,
+    ResetSession,
     ImportPcapng(PathBuf),
     ImportCaptureJson(PathBuf),
     ClearEncryptedIni,
