@@ -55,7 +55,7 @@ impl DpsApp {
         let filters_active = filter != HitDetailFilter::All || !skill_filter.is_empty();
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
-        let layout = CharacterHitLayout::new(content_width);
+        let layout = character_hit_layout(content_width, self.hit_detail_columns);
         let (source, generation) = self.detail_source();
         let key = HitDetailCacheKey {
             source,
@@ -87,7 +87,7 @@ impl DpsApp {
         let filtered_count = self.character_hit_cache.filtered_count;
         let max_damage = self.character_hit_cache.max_damage;
         show_detail_limit_notice(ui, filtered_count);
-        draw_character_hit_header(ui, layout);
+        draw_character_hit_header(ui, layout, &mut self.hit_detail_columns);
         let hit_count = self.character_hit_cache.rows.len();
         if hit_count == 0 {
             let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
@@ -156,7 +156,7 @@ impl DpsApp {
         let filters_active = filter != HitDetailFilter::All;
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
-        let layout = TeamHitLayout::new(content_width);
+        let layout = team_hit_layout(content_width, self.hit_detail_columns);
         let (source, generation) = self.detail_source();
         let key = HitDetailCacheKey {
             source,
@@ -188,7 +188,7 @@ impl DpsApp {
         let filtered_count = self.team_hit_cache.filtered_count;
         let max_damage = self.team_hit_cache.max_damage;
         show_detail_limit_notice(ui, filtered_count);
-        draw_team_hit_header(ui, layout);
+        draw_team_hit_header(ui, layout, &mut self.hit_detail_columns);
         if self.team_hit_cache.rows.is_empty() {
             let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
             match hit_empty_state(ui, self.theme(), filters_active, capture_idle) {

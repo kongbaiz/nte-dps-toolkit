@@ -318,6 +318,7 @@ impl DpsApp {
                 .team_hit_detail_window_size
                 .map(egui::Vec2::from)
                 .unwrap_or(TEAM_HIT_DETAIL_WINDOW_BASE_SIZE),
+            hit_detail_columns: ui_config.hit_detail_columns,
             console_window_size: ui_config
                 .console_window_size
                 .map(egui::Vec2::from)
@@ -1325,6 +1326,7 @@ impl DpsApp {
             timeline_bucket_seconds: self.timeline_bucket_seconds,
             timeline_dps_view_mode: self.timeline_dps_view_mode,
             hud: self.hud_config.clone(),
+            hit_detail_columns: self.hit_detail_columns,
             passthrough_hotkey: self.passthrough_hotkey,
             global_hotkeys: self.global_hotkeys,
             onboarding_done: self.onboarding_done,

@@ -794,5 +794,12 @@
   "View combat details": "查看战斗明细",
   "Waiting for the first damage event...": "正在等待第一条伤害事件...",
   "{} of {}": "{} / {}",
-  "Game process check failed: {}": "游戏进程检测失败：{}"
+  "Game process check failed: {}": "游戏进程检测失败：{}",
+  "Right-click to choose columns; drag dividers to resize": "右键选择显示列；拖动分隔线调整列宽",
+  "Reset column widths": "重置列宽",
+  "Column settings": "列设置",
+  "Drag column dividers to resize": "拖动分隔线调整列宽",
+  "Click a character for details; right-click for copy or hide": "点击角色查看明细；右键可复制数据或隐藏角色",
+  "Click a legend to highlight; drag across the chart to select a range; right-click for markers and zoom": "点击图例突出角色；在图表上拖动选择范围；右键可添加标记或缩放",
+  "Click a record for details; right-click to compare, export or delete": "点击记录查看详情；右键可比较、导出或删除"
 }

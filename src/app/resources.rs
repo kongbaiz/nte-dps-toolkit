@@ -403,8 +403,7 @@ pub(crate) fn configure_style(
 ) {
     let tokens = theme_tokens_for_preset(theme_preset, dark_mode, accent);
     let density = density_tokens(density);
-    let effective_dark = dark_mode || theme_preset == ThemePreset::Tactical;
-    let mut visuals = if effective_dark {
+    let mut visuals = if dark_mode {
         egui::Visuals::dark()
     } else {
         egui::Visuals::light()
@@ -442,7 +441,7 @@ pub(crate) fn configure_style(
             offset: [0, 8],
             blur: 18,
             spread: 0,
-            color: Color32::from_black_alpha(if effective_dark { 110 } else { 48 }),
+            color: Color32::from_black_alpha(if dark_mode { 110 } else { 48 }),
         },
     };
     visuals.popup_shadow = match theme_preset {
@@ -451,7 +450,7 @@ pub(crate) fn configure_style(
             offset: [0, 6],
             blur: 16,
             spread: 0,
-            color: Color32::from_black_alpha(if effective_dark { 140 } else { 58 }),
+            color: Color32::from_black_alpha(if dark_mode { 140 } else { 58 }),
         },
     };
     visuals.selection.bg_fill = tokens.accent;
@@ -524,5 +523,24 @@ mod tests {
         let image = image::RgbaImage::from_pixel(5, 3, image::Rgba([1, 2, 3, 255]));
         let cropped = crop_to_opaque_bounds(image.clone());
         assert_eq!(cropped.dimensions(), image.dimensions());
+    }
+
+    #[test]
+    fn tactical_style_respects_light_mode() {
+        let ctx = egui::Context::default();
+        configure_style(
+            &ctx,
+            false,
+            ThemePreset::Tactical,
+            AccentColor::Blue,
+            UiDensity::Cozy,
+            false,
+        );
+
+        assert!(!ctx.global_style().visuals.dark_mode);
+        assert_eq!(
+            ctx.global_style().visuals.panel_fill,
+            theme_tokens_for_preset(ThemePreset::Tactical, false, AccentColor::Blue).bg
+        );
     }
 }
