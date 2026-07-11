@@ -39,6 +39,12 @@ struct DropRegistration {
     sender: Box<Sender<PathBuf>>,
 }
 
+impl Default for NativeFileDrop {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NativeFileDrop {
     pub fn new() -> Self {
         let (_sender, receiver) = unbounded();

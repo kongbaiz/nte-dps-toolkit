@@ -56,12 +56,9 @@ pub enum HotkeyEvent {
     TogglePassthrough,
     GlobalAction(GlobalHotkeyAction),
     ToggleCommandPalette,
-    #[cfg(not(feature = "no_debug"))]
     ToggleDebug,
     HookInstalled,
-    HookInstallFailed {
-        error: u32,
-    },
+    HookInstallFailed { error: u32 },
 }
 
 fn send_hotkey(event: HotkeyEvent) {
@@ -366,7 +363,6 @@ unsafe extern "system" fn low_level_keyboard_proc(
         if command_palette_matches(virtual_key, modifiers) {
             send_hotkey(HotkeyEvent::ToggleCommandPalette);
         }
-        #[cfg(not(feature = "no_debug"))]
         if virtual_key == VK_F12 as u32 && modifiers == PressedModifiers::default() {
             send_hotkey(HotkeyEvent::ToggleDebug);
         }

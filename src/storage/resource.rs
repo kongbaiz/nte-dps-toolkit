@@ -91,6 +91,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    #[cfg(not(feature = "external_resources"))]
     fn bundled_resource_contains_character_data() {
         let bytes = bundled_resource("res/data/characters/characters.json")
             .expect("characters.json should be bundled");
@@ -99,6 +100,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "external_resources"))]
     fn missing_res_path_falls_back_to_bundled_resource() {
         let path = Path::new("missing-root/res/data/characters/characters.json");
         let text = read_resource_text(path).expect("bundled characters should load");
@@ -122,5 +124,37 @@ mod tests {
 
         assert_eq!(text, "disk wins");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "cli",
+        not(feature = "gui"),
+        not(feature = "external_resources")
+    ))]
+    fn cli_bundle_contains_only_core_data_resources() {
+        for path in [
+            "res/data/characters/characters.json",
+            "res/data/equipment/equipment.json",
+            "res/data/skills/ability_tips.json",
+            "res/data/skills/gameplay_effect_mapping.json",
+            "res/data/skills/skill_damage.json",
+            "res/data/skills/ultra_time_stop.json",
+        ] {
+            assert!(
+                bundled_resource(path).is_some(),
+                "missing core resource {path}"
+            );
+        }
+        assert!(bundled_resource("res/data/abyss/abyss_monsters.json").is_none());
+        assert!(bundled_resource("res/images/characters/player_003_256.png").is_none());
+        assert!(bundled_resource("res/icons/app-icon.png").is_none());
+    }
+
+    #[test]
+    #[cfg(all(feature = "gui", not(feature = "external_resources")))]
+    fn gui_bundle_keeps_full_visual_resources() {
+        assert!(bundled_resource("res/images/characters/player_003_256.png").is_some());
+        assert!(bundled_resource("res/icons/app-icon.png").is_some());
     }
 }

@@ -14,14 +14,16 @@ use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
+use crate::core::capture::{self as core_capture, CaptureStartOptions, RawCaptureMode};
+use crate::core::reducer::CoreSignal;
 use crate::engine::abyss_data::{
     AbyssFloor, AbyssMonsterDataset, AbyssMonsterEntry, AbyssStarThreshold, abyss_line_hp_total,
     abyss_monster_total_hp, line_hp_by_wave, predict_wave_clear_times,
     required_dps_for_target_time,
 };
 use crate::engine::capture::{
-    CaptureDevice, CaptureHandle, RawCaptureBuffer, import_capture_json, import_pcapng,
-    list_devices, start_capture,
+    CaptureDevice, CaptureHandle, PacketEmissionMode, RawCaptureBuffer, import_capture_json,
+    import_pcapng,
 };
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CaptureQualitySource, CaptureQualitySummary,
@@ -41,9 +43,7 @@ use crate::platform::hotkey::{
     HotkeyEvent, HotkeyHandle, hotkey_binding_matches_egui, hotkey_key_to_egui,
     passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
 };
-use crate::platform::network::{
-    GameNetwork, detect_game_device, detect_game_network, game_process_is_running,
-};
+use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
     DialogOwner, WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
     open_directory,
@@ -190,9 +190,7 @@ pub(crate) enum ErrorAction {
     OpenConsole,
 }
 
-/// Tabs of the console window. The first three are user-facing tools promoted
-/// out of the old debug panel; `Packets`/`Diagnostics` are genuine capture
-/// debugging and only get tab buttons in debug builds (`not(no_debug)`).
+/// Tabs of the console window, including capture diagnostics and resource tools.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ConsoleTab {
     #[default]
@@ -227,7 +225,6 @@ impl ConsoleGroup {
 
 impl ConsoleTab {
     fn visible_tabs() -> &'static [Self] {
-        #[cfg(not(feature = "no_debug"))]
         const TABS: &[ConsoleTab] = &[
             ConsoleTab::Settings,
             ConsoleTab::History,
@@ -239,16 +236,6 @@ impl ConsoleTab {
             ConsoleTab::Packets,
             ConsoleTab::Resources,
             ConsoleTab::Diagnostics,
-        ];
-        #[cfg(feature = "no_debug")]
-        const TABS: &[ConsoleTab] = &[
-            ConsoleTab::Settings,
-            ConsoleTab::History,
-            ConsoleTab::Timeline,
-            ConsoleTab::Skills,
-            ConsoleTab::EmptyCurtain,
-            ConsoleTab::Characters,
-            ConsoleTab::EncryptedIni,
         ];
         TABS
     }
@@ -1475,13 +1462,13 @@ impl Drop for DpsApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        AbyssOverviewState, DpsApp, HitDetailFilter, QteTypeFilterSummary, UiConfigSavePlan,
-        adjusted_cached_index, build_team_dps_export, cached_hit_row, character_color,
-        compare_cached_team_hits, damage_digit_key_for_hit, damage_digit_resource_path,
-        damage_number_digits_text, fill_missing_character_colors_from_avatars,
-        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
-        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
-        qte_type_filter_label, reaction_text_key_for_hit,
+        AbyssOverviewState, ConsoleTab, DpsApp, HitDetailFilter, QteTypeFilterSummary,
+        UiConfigSavePlan, adjusted_cached_index, build_team_dps_export, cached_hit_row,
+        character_color, compare_cached_team_hits, damage_digit_key_for_hit,
+        damage_digit_resource_path, damage_number_digits_text,
+        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
+        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
+        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
         summarize_qte_type_filters, translate_reaction_label,
@@ -1502,6 +1489,14 @@ mod tests {
     use eframe::egui;
     use std::collections::{HashMap, VecDeque};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn console_always_exposes_capture_diagnostics() {
+        let tabs = ConsoleTab::visible_tabs();
+        assert!(tabs.contains(&ConsoleTab::Packets));
+        assert!(tabs.contains(&ConsoleTab::Resources));
+        assert!(tabs.contains(&ConsoleTab::Diagnostics));
+    }
 
     fn hit_with_direction(direction: &str) -> Hit {
         Hit {

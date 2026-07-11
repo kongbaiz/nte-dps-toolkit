@@ -162,7 +162,7 @@ impl DpsApp {
             thread::spawn(move || {
                 let mut previous = None;
                 loop {
-                    let result = game_process_is_running();
+                    let result = core_capture::probe_game_process().map_err(|error| error.detail);
                     if previous.as_ref() != Some(&result) {
                         previous = Some(result.clone());
                         if game_process_monitor_sender.send(result).is_ok() {
@@ -648,7 +648,6 @@ impl DpsApp {
                 HotkeyEvent::TogglePassthrough => self.toggle_mouse_passthrough(ctx),
                 HotkeyEvent::GlobalAction(action) => self.execute_global_hotkey(ctx, action),
                 HotkeyEvent::ToggleCommandPalette => self.toggle_command_palette(ctx),
-                #[cfg(not(feature = "no_debug"))]
                 HotkeyEvent::ToggleDebug => self.toggle_debug_console(),
                 HotkeyEvent::HookInstalled => self.hotkey_hook_available = true,
                 HotkeyEvent::HookInstallFailed { error } => {
@@ -733,7 +732,6 @@ impl DpsApp {
         if import_pressed {
             self.request_debug_import(ctx, DebugImportKind::Pcapng);
         }
-        #[cfg(not(feature = "no_debug"))]
         if modifiers == egui::Modifiers::NONE && pressed_keys.contains(&HotkeyKey::F12) {
             self.toggle_debug_console();
         }
@@ -759,7 +757,6 @@ impl DpsApp {
         self.execute_action(ctx, action);
     }
 
-    #[cfg(not(feature = "no_debug"))]
     fn toggle_debug_console(&mut self) {
         self.console_open = !self.console_open;
         if self.console_open {
@@ -1104,26 +1101,20 @@ impl DpsApp {
             return false;
         };
         let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
-        // The base filter (`self.filter`, "udp") keeps all UDP, which covers the game-world
-        // server that carries combat/GAS replication and equipment (e.g. :30196). The game's
-        // account / life-sim service talks TCP :30031 to a *different* server IP, so a UDP-only
-        // BPF drops it before it can even reach the raw pcapng. Widen the filter to also keep
-        // everything to/from that detected host. The live parser only decodes UDP
-        // (`parse_udp_ipv4` rejects non-UDP), so the extra TCP frames are retained for offline
-        // analysis without affecting live parsing. Falls back to UDP-only if the game endpoint
-        // was not detected.
-        let capture_filter = match self.game_network.as_ref() {
-            Some(network) => format!("{} or host {}", self.filter, network.remote_ip),
-            None => self.filter.clone(),
-        };
+        // Why the filter widens beyond plain UDP: see `core::capture::compose_bpf`.
+        let capture_filter = core_capture::compose_bpf(&self.filter, self.game_network.as_ref());
         self.reset_combat_session();
         self.capture_quality_source = CaptureQualitySource::Live;
-        let capture = start_capture(
-            device,
-            local_ip,
-            capture_filter.clone(),
-            self.include_incoming,
-            self.server_damage_calibration,
+        let capture = core_capture::start(
+            CaptureStartOptions {
+                device,
+                local_ip,
+                filter: capture_filter.clone(),
+                include_incoming: self.include_incoming,
+                server_damage_calibration: self.server_damage_calibration,
+                raw_capture: RawCaptureMode::Enabled,
+                packet_emission: PacketEmissionMode::FullDebug,
+            },
             self.characters.clone(),
             self.sender.clone(),
         );
@@ -1142,18 +1133,22 @@ impl DpsApp {
         self.game_process_detected = false;
         self.game_network = None;
         self.local_ip.clear();
-        self.game_process_detected = game_process_is_running().inspect_err(|error| {
-            self.diagnostic = Some(error.clone());
+        self.game_process_detected = core_capture::probe_game_process().map_err(|error| {
+            self.diagnostic = Some(error.detail.clone());
+            error.detail
         })?;
-        self.devices = list_devices().inspect_err(|error| {
-            self.diagnostic = Some(error.clone());
+        self.devices = core_capture::enumerate_devices().map_err(|error| {
+            self.diagnostic = Some(error.detail.clone());
+            error.detail
         })?;
         if let Some(name) = self.manual_capture_device.clone() {
             return self.apply_manual_capture_device(&name);
         }
-        let (index, network) = detect_game_device(&self.devices).inspect_err(|error| {
-            self.diagnostic = Some(error.clone());
-        })?;
+        let (index, network) =
+            core_capture::resolve_auto_device(&self.devices).map_err(|error| {
+                self.diagnostic = Some(error.detail.clone());
+                error.detail
+            })?;
         self.selected_device = index;
         self.local_ip = network.local_ip.to_string();
         self.status = t("Game detected, ready");
@@ -1166,7 +1161,7 @@ impl DpsApp {
     /// IP for direction inference. A missing game connection is non-fatal — capture still proceeds
     /// and `infer_outgoing` falls back to its public/private heuristic. Only a vanished NIC aborts.
     pub(crate) fn apply_manual_capture_device(&mut self, name: &str) -> Result<(), String> {
-        let Some(index) = self.devices.iter().position(|device| device.name == name) else {
+        let Ok((index, network)) = core_capture::resolve_manual_device(&self.devices, name) else {
             let message = tf(
                 "The manually selected NIC ({}) is currently unavailable; reselect in settings or switch back to auto",
                 &[name],
@@ -1178,7 +1173,7 @@ impl DpsApp {
             return Err(message);
         };
         self.selected_device = index;
-        match detect_game_network() {
+        match network {
             Ok(network) => {
                 self.local_ip = network.local_ip.to_string();
                 self.game_network = Some(network);
@@ -1189,7 +1184,7 @@ impl DpsApp {
                 self.local_ip.clear();
                 self.game_network = None;
                 self.status = t("Manual NIC selected (no game connection detected)");
-                self.diagnostic = Some(error);
+                self.diagnostic = Some(error.detail);
             }
         }
         Ok(())
@@ -1618,6 +1613,7 @@ impl DpsApp {
             EngineEvent::Status(_)
             | EngineEvent::Warning(_)
             | EngineEvent::Error(_)
+            | EngineEvent::PacketObservation(_)
             | EngineEvent::CaptureStopped => self.apply_engine_event(event),
         }
     }
@@ -1662,44 +1658,41 @@ impl DpsApp {
     }
 
     pub(crate) fn apply_engine_event(&mut self, event: EngineEvent) {
-        match event {
-            EngineEvent::Hit(hit) => {
-                self.note_combat_hit(&hit);
-                self.state.push_hit(*hit);
-            }
-            EngineEvent::HitFollowUp(follow_up) => self.state.apply_follow_up(follow_up),
-            EngineEvent::HitDamageCorrection(correction) => {
-                self.state.apply_damage_correction(correction)
-            }
-            EngineEvent::Packet(packet) => self.state.push_packet(*packet),
-            EngineEvent::Abyss(event) => {
+        // UI-only side effects that must see the event before the shared
+        // reducer consumes it; every domain-state change happens inside
+        // `core::reducer::apply_engine_event`.
+        match &event {
+            EngineEvent::Hit(hit) => self.note_combat_hit(hit),
+            EngineEvent::Abyss(abyss) => {
                 self.character_hit_cache = HitDetailCache::default();
                 self.team_hit_cache = HitDetailCache::default();
                 self.skill_summary_cache = SkillSummaryCache::default();
                 self.timeline_cache = TimelineCache::default();
                 self.skill_breakdown_cache = SkillBreakdownCache::default();
-                if let AbyssEvent::Stage { half, .. } = &event {
+                if let AbyssEvent::Stage { half, .. } = abyss {
                     self.selected_abyss_half = *half;
                     self.abyss_compact_mode = true;
-                } else if matches!(&event, AbyssEvent::Success { .. } | AbyssEvent::Exit { .. }) {
+                } else if matches!(abyss, AbyssEvent::Success { .. } | AbyssEvent::Exit { .. }) {
                     self.abyss_compact_mode = false;
                     self.finish_combat_visual();
                 }
-                self.state.apply_abyss_event(event);
             }
-            EngineEvent::TimeStop(event) => {
-                self.timeline_cache = TimelineCache::default();
-                self.state.apply_time_stop_event(event);
-            }
-            EngineEvent::EmptyCurtain(items) => self.state.replace_empty_curtain(items),
-            EngineEvent::Status(status) => self.status = status,
-            EngineEvent::Warning(warning) => {
+            EngineEvent::TimeStop(_) => self.timeline_cache = TimelineCache::default(),
+            _ => {}
+        }
+        match crate::core::reducer::apply_engine_event(&mut self.state, event) {
+            CoreSignal::StateChanged
+            | CoreSignal::InventoryReplaced
+            | CoreSignal::DebugPacket
+            | CoreSignal::PacketObserved => {}
+            CoreSignal::Status(status) => self.status = status,
+            CoreSignal::Warning(warning) => {
                 self.diagnostic = Some(tf(
                     "Some resources failed to load; features degraded: {}",
                     &[&warning],
                 ));
             }
-            EngineEvent::Error(error) => {
+            CoreSignal::Error(error) => {
                 self.status = t("Run failed");
                 let action = import_error_action(&error);
                 let mut viewport = self
@@ -1717,7 +1710,7 @@ impl DpsApp {
                 }
                 self.set_last_error_for(viewport, humanize_engine_error(&error), action);
             }
-            EngineEvent::CaptureStopped => {
+            CoreSignal::CaptureStopped => {
                 self.finish_combat_visual();
                 let import_finished = self.replay_thread.is_some();
                 self.capture.take();
@@ -3319,25 +3312,25 @@ fn detect_capture_environment(
     manual_capture_device: Option<&str>,
     character_load_error: Option<&str>,
 ) -> DeviceDetection {
-    let game_process_probe = game_process_is_running();
-    let (devices, device_error) = match list_devices() {
+    let game_process_probe = core_capture::probe_game_process();
+    let (devices, device_error) = match core_capture::enumerate_devices() {
         Ok(devices) => (devices, None),
-        Err(error) => (Vec::new(), Some(error)),
+        Err(error) => (Vec::new(), Some(error.detail)),
     };
     let (mut selected_device, mut game_network, mut status, mut diagnostic) = match device_error {
         Some(error) => (0, None, t("Capture environment unavailable"), Some(error)),
-        None => match detect_game_device(&devices) {
+        None => match core_capture::resolve_auto_device(&devices) {
             Ok((index, network)) => (index, Some(network), t("Ready"), None),
-            Err(error) => (0, None, t("Game not detected"), Some(error)),
+            Err(error) => (0, None, t("Game not detected"), Some(error.detail)),
         },
     };
     // Apply the persisted manual NIC override (VPN fallback). The saved choice is kept even when
     // the interface is momentarily absent, so it re-engages once the adapter is back.
     if let Some(name) = manual_capture_device.filter(|_| !devices.is_empty()) {
-        match devices.iter().position(|device| device.name == name) {
-            Some(index) => {
+        match core_capture::resolve_manual_device(&devices, name) {
+            Ok((index, network_probe)) => {
                 selected_device = index;
-                match detect_game_network() {
+                match network_probe {
                     Ok(network) => {
                         game_network = Some(network);
                         status = t("Ready (manual NIC)");
@@ -3346,11 +3339,11 @@ fn detect_capture_environment(
                     Err(error) => {
                         game_network = None;
                         status = t("Manual NIC selected (no game connection detected)");
-                        diagnostic = Some(error);
+                        diagnostic = Some(error.detail);
                     }
                 }
             }
-            None => {
+            Err(_) => {
                 game_network = None;
                 status = t("Manual NIC unavailable");
                 diagnostic = Some(tf(
@@ -3370,8 +3363,8 @@ fn detect_capture_environment(
         Ok(detected) => detected,
         Err(error) => {
             diagnostic = Some(match diagnostic {
-                Some(existing) => format!("{existing}\n{error}"),
-                None => error,
+                Some(existing) => format!("{existing}\n{}", error.detail),
+                None => error.detail,
             });
             false
         }

@@ -170,6 +170,11 @@ pub struct PacketDebug {
     pub decoded_text: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PacketObservation {
+    pub parsed_hits: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HtItemNetId {
     pub solt: u32,
@@ -1429,6 +1434,8 @@ pub struct CombatState {
     pub hits: VecDeque<Hit>,
     pub hits_generation: u64,
     pub packets: VecDeque<PacketDebug>,
+    pub packet_count: usize,
+    pub packets_with_hits: usize,
     pub stats: HashMap<u32, CharacterStats>,
     pub started_at: Option<f64>,
     pub ended_at: Option<f64>,
@@ -1505,6 +1512,9 @@ impl CombatState {
     }
 
     pub fn push_packet(&mut self, packet: PacketDebug) {
+        self.observe_packet(PacketObservation {
+            parsed_hits: packet.parsed_hits,
+        });
         self.packets.push_back(packet);
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
@@ -1555,6 +1565,21 @@ impl CombatState {
 
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    pub fn observe_packet(&mut self, observation: PacketObservation) {
+        self.packet_count = self.packet_count.saturating_add(1);
+        if observation.parsed_hits > 0 {
+            self.packets_with_hits = self.packets_with_hits.saturating_add(1);
+        }
+    }
+
+    pub fn clear_battle_preserving_inventory(&mut self) {
+        let empty_curtain = std::mem::take(&mut self.empty_curtain);
+        let empty_curtain_generation = self.empty_curtain_generation;
+        *self = Self::default();
+        self.empty_curtain = empty_curtain;
+        self.empty_curtain_generation = empty_curtain_generation;
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
@@ -1616,12 +1641,8 @@ impl CombatState {
         let skills = self.skill_breakdown(None);
         CaptureQualitySummary {
             source,
-            packet_count: self.packets.len(),
-            packets_with_hits: self
-                .packets
-                .iter()
-                .filter(|packet| packet.parsed_hits > 0)
-                .count(),
+            packet_count: self.packet_count,
+            packets_with_hits: self.packets_with_hits,
             hit_count: self.hits.len(),
             outgoing_hits: directions.outgoing_hits,
             outgoing_damage: directions.outgoing_damage,
@@ -1950,6 +1971,7 @@ pub enum EngineEvent {
     HitFollowUp(HitFollowUp),
     HitDamageCorrection(HitDamageCorrection),
     Packet(Box<PacketDebug>),
+    PacketObservation(PacketObservation),
     Abyss(AbyssEvent),
     TimeStop(TimeStopEvent),
     EmptyCurtain(Vec<EmptyCurtainItem>),
@@ -2656,6 +2678,30 @@ mod tests {
     fn abyss_half_labels_are_utf8_chinese() {
         assert_eq!(AbyssHalf::First.label(), "Ascending Line");
         assert_eq!(AbyssHalf::Second.label(), "Descending Line");
+    }
+
+    #[test]
+    fn battle_reset_preserves_inventory_and_its_generation() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(1.0, 7, "outgoing", 100.0));
+        state.replace_empty_curtain(vec![EmptyCurtainItem {
+            id: HtItemNetId { solt: 1, serial: 2 },
+            item_id: "item".to_owned(),
+            level: 1,
+            main_stats: Vec::new(),
+            sub_stats: Vec::new(),
+            locked: false,
+            character_net_id: None,
+        }]);
+        let inventory_generation = state.empty_curtain_generation;
+
+        state.clear_battle_preserving_inventory();
+
+        assert!(state.hits.is_empty());
+        assert!(state.stats.is_empty());
+        assert_eq!(state.total_damage, 0.0);
+        assert_eq!(state.empty_curtain.len(), 1);
+        assert_eq!(state.empty_curtain_generation, inventory_generation);
     }
 
     #[test]
