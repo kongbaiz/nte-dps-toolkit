@@ -23,6 +23,9 @@ pub const TIMELINE_BUCKET_SECONDS_MIN: f32 = 0.2;
 pub const TIMELINE_BUCKET_SECONDS_MAX: f32 = 10.0;
 pub const HUD_WIDTH_DEFAULT: u16 = 380;
 pub const HUD_WIDTH_MIN: u16 = 280;
+/// Covers a full-width 4K workspace at 1x while preventing an invalid config
+/// from creating an effectively unreachable overlay.
+pub const HUD_WIDTH_MAX: u16 = 3840;
 const HIT_DETAIL_COLUMN_WIDTH_MIN: u16 = 64;
 const HIT_DETAIL_COLUMN_WIDTH_MAX: u16 = 600;
 
@@ -631,7 +634,7 @@ impl HudConfig {
     }
 
     pub fn sanitized(mut self) -> Self {
-        self.width = self.width.max(HUD_WIDTH_MIN);
+        self.width = self.width.clamp(HUD_WIDTH_MIN, HUD_WIDTH_MAX);
         let mut normalized = Vec::with_capacity(HUD_MODULES.len());
         for module in self.module_order {
             if !normalized.contains(&module) {
@@ -1012,7 +1015,7 @@ mod tests {
         }
         .sanitized();
 
-        assert_eq!(config.width, u16::MAX);
+        assert_eq!(config.width, HUD_WIDTH_MAX);
         assert_eq!(
             config.module_order,
             [
