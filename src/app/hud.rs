@@ -150,24 +150,6 @@ pub(crate) fn translate_reaction_label(label: &str) -> String {
     label.to_owned()
 }
 
-#[cfg(test)]
-mod layout_tests {
-    use super::*;
-
-    #[test]
-    fn hud_editor_size_reserves_module_headers_and_uses_configured_width() {
-        let config = HudConfig::detailed();
-        let passthrough = hud_window_size(4, false, true, &config);
-        let editor = hud_window_size(4, true, true, &config);
-
-        assert_eq!(editor.x, config.width as f32);
-        assert_eq!(
-            editor.y - passthrough.y,
-            24.0 + HUD_EDITOR_MODULE_HEADER_HEIGHT * 5.0
-        );
-    }
-}
-
 /// "类型·名称": the broad attack-type category joined with the resolved skill
 /// name, e.g. "普攻·酸甜口味的制裁". Since [`crate::engine::parser::load_ability_tip_names`]
 /// resolves one name per ability rather than per combo hit, several hits under
@@ -197,5 +179,23 @@ pub(crate) fn hit_type_display_text(hit: &crate::engine::model::Hit) -> String {
         (Some(attack_type), _) => translate_reaction_label(attack_type),
         (None, Some(name)) => name.to_owned(),
         (None, None) => "未知招式".to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn hud_editor_size_reserves_module_headers_and_uses_configured_width() {
+        let config = HudConfig::detailed();
+        let passthrough = hud_window_size(4, false, true, &config);
+        let editor = hud_window_size(4, true, true, &config);
+
+        assert_eq!(editor.x, config.width as f32);
+        assert_eq!(
+            editor.y - passthrough.y,
+            24.0 + HUD_EDITOR_MODULE_HEADER_HEIGHT * 5.0
+        );
     }
 }
