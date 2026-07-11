@@ -29,7 +29,7 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
@@ -511,7 +511,7 @@ impl DpsApp {
                         ui.label(
                             RichText::new(t("Character"))
                                 .strong()
-                                .color(shadcn_foreground(self.dark_mode)),
+                                .color(self.theme().fg),
                         );
                         ui.add_space(4.0);
                         if ui
@@ -744,11 +744,7 @@ impl DpsApp {
                     egui::vec2(300.0, content_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        ui.label(
-                            RichText::new(t("Records"))
-                                .strong()
-                                .color(shadcn_foreground(self.dark_mode)),
-                        );
+                        ui.label(RichText::new(t("Records")).strong().color(self.theme().fg));
                         ui.add_space(4.0);
                         let records_scroll = egui::ScrollArea::vertical()
                             .id_salt("history_record_list")
@@ -970,7 +966,7 @@ impl DpsApp {
             ui.label(
                 RichText::new(record.display_time())
                     .strong()
-                    .color(shadcn_foreground(self.dark_mode)),
+                    .color(self.theme().fg),
             );
             ui.label(
                 RichText::new(format!(
@@ -1083,11 +1079,7 @@ impl DpsApp {
     }
 
     pub(crate) fn history_compare_contents(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            RichText::new(t("Compare"))
-                .strong()
-                .color(shadcn_foreground(self.dark_mode)),
-        );
+        ui.label(RichText::new(t("Compare")).strong().color(self.theme().fg));
         let choices = self
             .history
             .records
@@ -1572,6 +1564,11 @@ impl DpsApp {
         // console is too narrow to split without clipping a localized row.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
+            .scroll_source(egui::containers::scroll_area::ScrollSource {
+                scroll_bar: true,
+                drag: false,
+                mouse_wheel: true,
+            })
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 if settings_uses_two_columns(ui.available_width()) {
@@ -1580,6 +1577,7 @@ impl DpsApp {
                         self.settings_parse_section(&mut columns[0]);
                         self.settings_hotkeys_section(&mut columns[0]);
                         self.settings_hud_section(&mut columns[1]);
+                        self.settings_layout_profiles_section(&mut columns[1]);
                         self.settings_team_section(&mut columns[1]);
                         self.settings_capture_logs_section(&mut columns[1]);
                         self.settings_abyss_section(&mut columns[1]);
@@ -1589,6 +1587,7 @@ impl DpsApp {
                     self.settings_parse_section(ui);
                     self.settings_hotkeys_section(ui);
                     self.settings_hud_section(ui);
+                    self.settings_layout_profiles_section(ui);
                     self.settings_team_section(ui);
                     self.settings_capture_logs_section(ui);
                     self.settings_abyss_section(ui);
@@ -1630,6 +1629,26 @@ impl DpsApp {
                     }
                     ui.end_row();
 
+                    ui.label(t("Theme Preset"));
+                    let mut theme_preset = self.theme_preset;
+                    egui::ComboBox::from_id_salt("ui_theme_preset")
+                        .width(settings_value_width(ui))
+                        .selected_text(t(theme_preset.label()))
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(220.0);
+                            for option in ThemePreset::all() {
+                                ui.selectable_value(
+                                    &mut theme_preset,
+                                    *option,
+                                    format!("{} · {}", t(option.label()), t(option.description())),
+                                );
+                            }
+                        });
+                    if theme_preset != self.theme_preset {
+                        self.set_theme_preset(ui.ctx(), theme_preset);
+                    }
+                    ui.end_row();
+
                     ui.label(t("Accent"));
                     let mut accent = self.accent;
                     egui::ComboBox::from_id_salt("ui_accent")
@@ -1638,7 +1657,12 @@ impl DpsApp {
                         .show_ui(ui, |ui| {
                             ui.set_min_width(150.0);
                             for option in AccentColor::all() {
-                                let color = theme_tokens(self.dark_mode, *option).accent;
+                                let color = theme_tokens_for_preset(
+                                    self.theme_preset,
+                                    self.dark_mode,
+                                    *option,
+                                )
+                                .accent;
                                 ui.horizontal(|ui| {
                                     let (rect, _) = ui.allocate_exact_size(
                                         egui::vec2(10.0, 10.0),
@@ -1788,15 +1812,204 @@ impl DpsApp {
             ui.horizontal_wrapped(|ui| {
                 ui.label(t("Presets"));
                 if ui.button(t("Minimal")).clicked() {
-                    self.hud_config = HudConfig::minimal();
+                    let mut preset = HudConfig::minimal();
+                    preset.width = self.hud_config.width;
+                    preset.module_order = self.hud_config.module_order.clone();
+                    self.hud_config = preset;
                 }
                 if ui.button(t("Standard")).clicked() {
-                    self.hud_config = HudConfig::default();
+                    self.hud_config = HudConfig {
+                        width: self.hud_config.width,
+                        module_order: self.hud_config.module_order.clone(),
+                        ..HudConfig::default()
+                    };
                 }
                 if ui.button(t("Detailed")).clicked() {
-                    self.hud_config = HudConfig::detailed();
+                    let mut preset = HudConfig::detailed();
+                    preset.width = self.hud_config.width;
+                    preset.module_order = self.hud_config.module_order.clone();
+                    self.hud_config = preset;
                 }
             });
+            ui.separator();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(t("HUD Width"));
+                ui.add(
+                    egui::DragValue::new(&mut self.hud_config.width)
+                        .range(HUD_WIDTH_MIN..=u16::MAX)
+                        .speed(4.0)
+                        .suffix(" px"),
+                );
+                if ui.button(t("Open HUD Editor")).clicked() {
+                    self.console_open = false;
+                    self.console_corner_applied = false;
+                    ui.ctx()
+                        .send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Close);
+                    self.set_hud_mode(ui.ctx(), true);
+                    self.set_mouse_passthrough(ui.ctx(), false);
+                    ui.ctx()
+                        .send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                }
+            });
+            ui.label(
+                RichText::new(t("Drag HUD modules to reorder; right-click to hide"))
+                    .size(11.0)
+                    .color(ui.visuals().weak_text_color()),
+            );
+            let order = self.hud_config.module_order.clone();
+            let mut reorder = None;
+            let mut move_request = None;
+            let mut hide_request = None;
+            let dragged_module =
+                egui::DragAndDrop::payload::<HudModule>(ui.ctx()).map(|item| *item);
+            let theme = self.theme();
+            for (index, module) in order.iter().copied().enumerate() {
+                let mut visible = self.hud_config.module_visible(module);
+                let target_slot = index as f32;
+                let animated_slot = motion::animate_value(
+                    ui.ctx(),
+                    ("settings_hud_module_slot", module),
+                    target_slot,
+                    motion::dur::BASE,
+                    self.reduce_motion,
+                );
+                let row_stride = ui.spacing().interact_size.y + 8.0 + ui.spacing().item_spacing.y;
+                let transformed = ui.with_visual_transform(
+                    egui::emath::TSTransform::from_translation(egui::vec2(
+                        0.0,
+                        settings_hud_module_animation_offset(index, animated_slot, row_stride),
+                    )),
+                    |ui| {
+                        ui.dnd_drop_zone::<HudModule, _>(
+                            egui::Frame::new()
+                                .fill(if dragged_module == Some(module) {
+                                    theme.muted
+                                } else {
+                                    theme.bg_elevated
+                                })
+                                .stroke(Stroke::new(1.0, theme.border))
+                                .corner_radius(6)
+                                .inner_margin(egui::Margin::symmetric(8, 4)),
+                            |ui| {
+                                if dragged_module == Some(module) {
+                                    ui.set_opacity(0.18);
+                                }
+                                ui.horizontal(|ui| {
+                                    let drag_handle = ui
+                                        .add(
+                                            egui::Label::new(
+                                                RichText::new("≡").strong().color(theme.fg_faint),
+                                            )
+                                            .sense(egui::Sense::drag()),
+                                        )
+                                        .on_hover_cursor(egui::CursorIcon::Grab);
+                                    drag_handle.dnd_set_drag_payload(module);
+                                    ui.checkbox(&mut visible, t(module.label()));
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add_enabled(
+                                                    index + 1 < order.len(),
+                                                    egui::Button::new("↓"),
+                                                )
+                                                .on_hover_text(t("Move down"))
+                                                .clicked()
+                                            {
+                                                move_request = Some((index, index + 1));
+                                            }
+                                            if ui
+                                                .add_enabled(index > 0, egui::Button::new("↑"))
+                                                .on_hover_text(t("Move up"))
+                                                .clicked()
+                                            {
+                                                move_request = Some((index, index - 1));
+                                            }
+                                        },
+                                    );
+                                })
+                            },
+                        )
+                    },
+                );
+                let (drop_zone, dropped) = transformed.inner;
+                if visible != self.hud_config.module_visible(module) {
+                    self.hud_config.set_module_visible(module, visible);
+                }
+                drop_zone.inner.response.context_menu(|ui| {
+                    if ui.button(t("Hide module")).clicked() {
+                        hide_request = Some(module);
+                        ui.close();
+                    }
+                });
+                if let Some(dragged) = drop_zone.response.dnd_hover_payload::<HudModule>()
+                    && *dragged != module
+                {
+                    ui.painter().line_segment(
+                        [
+                            drop_zone.response.rect.left_bottom(),
+                            drop_zone.response.rect.right_bottom(),
+                        ],
+                        Stroke::new(3.0, theme.accent),
+                    );
+                }
+                if let Some(dropped) = dropped
+                    && *dropped != module
+                {
+                    reorder = Some((*dropped, module));
+                }
+            }
+            if let (Some(module), Some(pointer)) = (dragged_module, ui.ctx().pointer_interact_pos())
+            {
+                paint_settings_hud_drag_ghost(
+                    ui.ctx(),
+                    pointer,
+                    module,
+                    self.hud_config.module_visible(module),
+                    theme,
+                );
+            }
+            if let Some((from, to)) = move_request {
+                self.hud_config.module_order.swap(from, to);
+            } else if let Some((dragged, target)) = reorder {
+                let from = self
+                    .hud_config
+                    .module_order
+                    .iter()
+                    .position(|module| *module == dragged)
+                    .expect("dragged HUD module belongs to module_order");
+                let target = self
+                    .hud_config
+                    .module_order
+                    .iter()
+                    .position(|module| *module == target)
+                    .expect("drop target belongs to module_order");
+                self.hud_config.module_order.swap(from, target);
+            }
+            if let Some(module) = hide_request {
+                self.hud_config.set_module_visible(module, false);
+            }
+        });
+    }
+
+    fn settings_layout_profiles_section(&mut self, ui: &mut egui::Ui) {
+        settings_section(ui, self.theme(), "Layout Profiles", |ui| {
+            for profile in [
+                LayoutProfile::Combat,
+                LayoutProfile::Review,
+                LayoutProfile::Research,
+            ] {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button(t(profile.label())).clicked() {
+                        self.apply_layout_profile(ui.ctx(), profile);
+                    }
+                    ui.label(
+                        RichText::new(t(profile.description()))
+                            .size(11.0)
+                            .color(ui.visuals().weak_text_color()),
+                    );
+                });
+            }
         });
     }
 
@@ -2750,6 +2963,89 @@ fn settings_value_width(ui: &egui::Ui) -> f32 {
     ui.available_width().max(150.0)
 }
 
+fn paint_settings_hud_drag_ghost(
+    ctx: &egui::Context,
+    pointer: egui::Pos2,
+    module: HudModule,
+    visible: bool,
+    theme: ThemeTokens,
+) {
+    let rect = settings_hud_drag_ghost_rect(ctx.content_rect(), pointer);
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("settings_hud_module_drag_ghost"),
+    ));
+    painter.rect_filled(
+        rect.translate(egui::vec2(0.0, 6.0)),
+        8.0,
+        Color32::from_black_alpha(72),
+    );
+    painter.rect_filled(rect, 8.0, theme.floating);
+    painter.rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(2.0, theme.accent),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        rect.left_center() + egui::vec2(16.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        "≡",
+        egui::FontId::proportional(14.0),
+        theme.fg_faint,
+    );
+    let check_center = rect.left_center() + egui::vec2(48.0, 0.0);
+    painter.circle_filled(check_center, 10.0, theme.card);
+    painter.circle_stroke(check_center, 10.0, Stroke::new(1.0, theme.border_strong));
+    if visible {
+        painter.line_segment(
+            [
+                check_center + egui::vec2(-4.0, 0.0),
+                check_center + egui::vec2(-1.0, 4.0),
+            ],
+            Stroke::new(1.8, theme.fg),
+        );
+        painter.line_segment(
+            [
+                check_center + egui::vec2(-1.0, 4.0),
+                check_center + egui::vec2(5.0, -5.0),
+            ],
+            Stroke::new(1.8, theme.fg),
+        );
+    }
+    painter.text(
+        rect.left_center() + egui::vec2(68.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        t(module.label()),
+        egui::FontId::proportional(13.0),
+        theme.fg,
+    );
+    ctx.request_repaint();
+}
+
+fn settings_hud_drag_ghost_rect(content_rect: egui::Rect, pointer: egui::Pos2) -> egui::Rect {
+    let size = egui::vec2(280.0, 54.0);
+    let bounds = content_rect.shrink(8.0);
+    let desired = pointer - egui::vec2(20.0, 27.0);
+    let min = egui::pos2(
+        desired
+            .x
+            .clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left())),
+        desired
+            .y
+            .clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top())),
+    );
+    egui::Rect::from_min_size(min, size)
+}
+
+fn settings_hud_module_animation_offset(
+    target_index: usize,
+    animated_slot: f32,
+    row_stride: f32,
+) -> f32 {
+    (animated_slot - target_index as f32) * row_stride
+}
+
 /// Compact chip for one detected combat segment in the timeline page.
 fn draw_combat_segment_chip(
     ui: &mut egui::Ui,
@@ -2800,6 +3096,24 @@ mod layout_tests {
     fn settings_columns_reflow_at_the_content_breakpoint() {
         assert!(!settings_uses_two_columns(899.9));
         assert!(settings_uses_two_columns(900.0));
+    }
+
+    #[test]
+    fn settings_hud_drag_preview_keeps_pointer_inside_the_row() {
+        let pointer = egui::pos2(500.0, 260.0);
+        let rect = settings_hud_drag_ghost_rect(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)),
+            pointer,
+        );
+
+        assert!(rect.contains(pointer));
+    }
+
+    #[test]
+    fn settings_hud_module_animation_is_relative_to_stable_slots() {
+        assert_eq!(settings_hud_module_animation_offset(2, 2.0, 40.0), 0.0);
+        assert_eq!(settings_hud_module_animation_offset(2, 1.5, 40.0), -20.0);
+        assert_eq!(settings_hud_module_animation_offset(1, 1.5, 40.0), 20.0);
     }
 }
 
