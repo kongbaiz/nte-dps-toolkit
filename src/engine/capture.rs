@@ -26,7 +26,7 @@ use serde::Deserialize;
 
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainItem, EngineEvent, Hit, HitDamageCorrection,
-    HitFollowUp, HtItemNetId, PacketDebug, TimeStopEvent,
+    HitFollowUp, HtItemNetId, PacketDebug, PacketObservation, TimeStopEvent,
 };
 use crate::engine::parser::{
     ABILITY_TIPS_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, GAMEPLAY_EFFECT_MAPPING_PATH,
@@ -198,6 +198,18 @@ pub struct CaptureHandle {
     raw_capture: RawCaptureBuffer,
 }
 
+pub struct CaptureOutput {
+    pub raw_capture_directory: Option<PathBuf>,
+    pub packet_emission: PacketEmissionMode,
+    pub sender: Sender<EngineEvent>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketEmissionMode {
+    FullDebug,
+    SummaryOnly,
+}
+
 impl CaptureHandle {
     pub fn raw_capture(&self) -> RawCaptureBuffer {
         self.raw_capture.clone()
@@ -223,7 +235,7 @@ pub struct RawCaptureBuffer {
 }
 
 struct RawCaptureData {
-    path: PathBuf,
+    path: Option<PathBuf>,
     writer: Option<RawCaptureWriter>,
     packet_count: u64,
     captured_bytes: u64,
@@ -231,13 +243,15 @@ struct RawCaptureData {
 }
 
 impl RawCaptureBuffer {
-    fn new(device: CaptureDevice) -> Self {
+    fn new(device: CaptureDevice, directory: Option<&std::path::Path>) -> Self {
         let timestamp = Local::now().format("%Y%m%d_%H%M%S_%3f");
-        let path = PathBuf::from(format!("logs/nte_raw_{timestamp}.pcapng"));
-        let writer = RawCaptureWriter::create(&path, &device);
-        let (writer, write_error) = match writer {
-            Ok(writer) => (Some(writer), None),
-            Err(error) => (None, Some(error)),
+        let path = directory.map(|directory| directory.join(format!("nte_raw_{timestamp}.pcapng")));
+        let (writer, write_error) = match path.as_deref() {
+            Some(path) => match RawCaptureWriter::create(path, &device) {
+                Ok(writer) => (Some(writer), None),
+                Err(error) => (None, Some(error)),
+            },
+            None => (None, None),
         };
         Self {
             inner: Arc::new(Mutex::new(RawCaptureData {
@@ -281,7 +295,7 @@ impl RawCaptureBuffer {
             .lock()
             .ok()
             .filter(|capture| capture.write_error.is_none())
-            .map(|capture| capture.path.clone())
+            .and_then(|capture| capture.path.clone())
     }
 
     fn finish(&self) {
@@ -306,11 +320,15 @@ impl RawCaptureBuffer {
         if let Some(error) = &capture.write_error {
             return Err(format!("raw capture write failed: {error}"));
         }
-        if path != capture.path {
-            std::fs::copy(&capture.path, path).map_err(|error| {
+        let source = capture
+            .path
+            .as_ref()
+            .ok_or_else(|| "raw capture is disabled".to_owned())?;
+        if path != source {
+            std::fs::copy(source, path).map_err(|error| {
                 format!(
                     "failed to copy raw capture {} to {}: {error}",
-                    capture.path.display(),
+                    source.display(),
                     path.display()
                 )
             })?;
@@ -703,14 +721,47 @@ fn extract_length_prefixed_identifiers(data: &[u8]) -> Vec<(usize, String)> {
     found
 }
 
+struct DecodedPayloadText {
+    text: String,
+    has_readable_text: bool,
+}
+
 fn decode_payload_text(data: &[u8]) -> String {
+    decode_payload_text_filtered(data, |_| true).text
+}
+
+fn decode_summary_payload_text(
+    data: &[u8],
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+) -> DecodedPayloadText {
+    decode_payload_text_filtered(data, |value| {
+        value.contains("Abyss")
+            || value.contains("ConditionState_Success")
+            || value.contains("UltraSkill")
+            || ultra_time_stops.values().any(|entry| {
+                entry
+                    .ignored_cooldown_tags
+                    .iter()
+                    .any(|tag| !tag.is_empty() && value.contains(tag))
+                    || entry.extra_cooldowns.iter().any(|cooldown| {
+                        !cooldown.cooldown_tag.is_empty() && value.contains(&cooldown.cooldown_tag)
+                    })
+            })
+    })
+}
+
+fn decode_payload_text_filtered(data: &[u8], keep: impl Fn(&str) -> bool) -> DecodedPayloadText {
     let mut found = Vec::<(usize, String)>::new();
     let mut seen = HashSet::new();
+    let mut has_readable_text = false;
     for bit_shift in 0..8 {
         let shifted = decode_shifted_payload(data, bit_shift);
         for (score, value) in extract_length_prefixed_identifiers(&shifted) {
             if seen.insert(value.clone()) {
-                found.push((score, value));
+                has_readable_text = true;
+                if keep(&value) {
+                    found.push((score, value));
+                }
             }
         }
         for bytes in shifted.split(|byte| !(0x20..=0x7e).contains(byte)) {
@@ -725,10 +776,13 @@ fn decode_payload_text(data: &[u8]) -> String {
             if score == 0 || !seen.insert(value.to_owned()) {
                 continue;
             }
-            found.push((score, value.to_owned()));
+            has_readable_text = true;
+            if keep(value) {
+                found.push((score, value.to_owned()));
+            }
         }
     }
-    if found.is_empty() {
+    let text = if found.is_empty() {
         UNREADABLE_PROTOCOL_TEXT.to_owned()
     } else {
         found.sort_by_key(|item| std::cmp::Reverse(item.0));
@@ -737,6 +791,10 @@ fn decode_payload_text(data: &[u8]) -> String {
             .map(|(_, value)| value)
             .collect::<Vec<_>>()
             .join("\n")
+    };
+    DecodedPayloadText {
+        text,
+        has_readable_text,
     }
 }
 
@@ -753,13 +811,13 @@ fn should_keep_debug_packet(
     parsed_hits: usize,
     parsed_equipment_slots: usize,
     inventory_bunch: bool,
-    decoded_text: &str,
+    has_readable_text: bool,
 ) -> bool {
     if parsed_hits > 0
         || parsed_equipment_slots > 0
         || inventory_bunch
         || !declared_ids.is_empty()
-        || decoded_text != UNREADABLE_PROTOCOL_TEXT
+        || has_readable_text
     {
         return true;
     }
@@ -1795,6 +1853,7 @@ impl EmptyCurtainDecoder {
 }
 
 struct PacketDecoder {
+    packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
     gameplay_effect_names: HashMap<u32, String>,
@@ -1849,6 +1908,7 @@ impl Default for PacketDecoder {
         );
 
         Self {
+            packet_emission: PacketEmissionMode::FullDebug,
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
             gameplay_effect_names,
@@ -2488,7 +2548,13 @@ impl PacketDecoder {
         let expired_hits = self.take_expired_ambiguous_hits(timestamp);
         self.emit_hits(expired_hits, characters, sender);
 
-        let decoded_text = decode_payload_text(payload);
+        let decoded_payload = match self.packet_emission {
+            PacketEmissionMode::FullDebug => decode_payload_text_filtered(payload, |_| true),
+            PacketEmissionMode::SummaryOnly => {
+                decode_summary_payload_text(payload, &self.ultra_time_stops)
+            }
+        };
+        let decoded_text = decoded_payload.text;
         let evidence = find_declared_character_evidence(payload);
         let final_tower_evidence = find_final_tower_character_evidence(payload);
         let character_evidence = merged_character_evidence(&evidence, &final_tower_evidence);
@@ -2580,8 +2646,6 @@ impl PacketDecoder {
         self.character_declarations
             .retain(|_, declared_at| timestamp - *declared_at <= 10.0);
         let accepted = prepared_hits.emit.len();
-        let preview_len = payload.len().min(96);
-        let payload_hex = hex::encode(payload);
         // CurrentHP 候选缺少目标 handle 校验，仅用于调试显示，不参与 follow-up 计算。
         let current_hp_updates = if outgoing {
             Vec::new()
@@ -2657,9 +2721,30 @@ impl PacketDecoder {
                 accepted,
                 equipment_slots.len(),
                 inventory_result.recognized,
-                &decoded_text,
+                decoded_payload.has_readable_text,
             )
         {
+            return;
+        }
+        if matches!(self.packet_emission, PacketEmissionMode::SummaryOnly) {
+            let (inferred_follow_ups, hp_sync_follow_ups, server_damage_corrections) =
+                self.reconcile_boss_hp_updates(timestamp, &boss_hp_updates, characters);
+            for event in abyss_events_from_text(timestamp, &decoded_text) {
+                let _ = sender.send(EngineEvent::Abyss(event));
+            }
+            let _ = sender.send(EngineEvent::PacketObservation(PacketObservation {
+                parsed_hits: accepted,
+            }));
+            self.emit_hits(prepared_hits.emit, characters, sender);
+            for follow_up in inferred_follow_ups {
+                let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
+            }
+            for follow_up in hp_sync_follow_ups {
+                let _ = sender.send(EngineEvent::HitFollowUp(follow_up));
+            }
+            for correction in server_damage_corrections {
+                let _ = sender.send(EngineEvent::HitDamageCorrection(correction));
+            }
             return;
         }
         let mut note = String::new();
@@ -2796,8 +2881,11 @@ impl PacketDecoder {
                 declared_ids: ids,
                 parsed_hits: accepted,
                 note,
-                payload_preview: payload_hex[..preview_len * 2].to_owned(),
-                payload_hex,
+                payload_preview: {
+                    let preview_len = payload.len().min(96);
+                    hex::encode(&payload[..preview_len])
+                },
+                payload_hex: hex::encode(payload),
                 decoded_text,
             },
         );
@@ -2821,11 +2909,16 @@ pub fn start_capture(
     include_incoming: bool,
     use_server_damage_calibration: bool,
     characters: Arc<HashMap<u32, CharacterInfo>>,
-    sender: Sender<EngineEvent>,
+    output: CaptureOutput,
 ) -> CaptureHandle {
+    let CaptureOutput {
+        raw_capture_directory,
+        packet_emission,
+        sender,
+    } = output;
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
-    let raw_capture = RawCaptureBuffer::new(device.clone());
+    let raw_capture = RawCaptureBuffer::new(device.clone(), raw_capture_directory.as_deref());
     let thread_raw_capture = raw_capture.clone();
     let thread = thread::spawn(move || {
         let result = run_capture(CaptureRunConfig {
@@ -2838,6 +2931,7 @@ pub fn start_capture(
             sender: &sender,
             stop: &thread_stop,
             raw_capture: &thread_raw_capture,
+            packet_emission,
         });
         thread_raw_capture.finish();
         let _ = sender.send(EngineEvent::CaptureStopped);
@@ -2862,6 +2956,7 @@ struct CaptureRunConfig<'a> {
     sender: &'a Sender<EngineEvent>,
     stop: &'a AtomicBool,
     raw_capture: &'a RawCaptureBuffer,
+    packet_emission: PacketEmissionMode,
 }
 
 /// Parser thread body: drains decoded frames off the bounded queue and runs the stable decode
@@ -2872,10 +2967,12 @@ fn run_parser(
     local_ip: Option<Ipv4Addr>,
     include_incoming: bool,
     use_server_damage_calibration: bool,
+    packet_emission: PacketEmissionMode,
     characters: Arc<HashMap<u32, CharacterInfo>>,
     sender: Sender<EngineEvent>,
 ) {
     let mut decoder = PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
+    decoder.packet_emission = packet_emission;
     if let Some(warning) = decoder.resource_warning() {
         let _ = sender.send(EngineEvent::Warning(warning));
     }
@@ -2904,6 +3001,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         sender,
         stop,
         raw_capture,
+        packet_emission,
     } = config;
     // SAFETY: Function pointers are loaded from Npcap and used per the libpcap API.
     unsafe {
@@ -2976,6 +3074,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
                     local_ip,
                     include_incoming,
                     use_server_damage_calibration,
+                    packet_emission,
                     characters,
                     sender,
                 );
@@ -3357,7 +3456,7 @@ fn send_export_packet(
         packet.parsed_hits,
         equipment_slots.len(),
         inventory_result.recognized,
-        &decoded_text,
+        decoded_text != UNREADABLE_PROTOCOL_TEXT,
     ) {
         return Ok(false);
     }
@@ -3525,6 +3624,24 @@ mod tests {
         assert_eq!(current.empty_curtain.len(), 1);
         assert_eq!(current.empty_curtain[0].id.solt, 1);
         assert!(current.empty_curtain[0].locked);
+    }
+
+    #[test]
+    fn disabled_raw_capture_has_no_path_or_writer() {
+        let buffer = RawCaptureBuffer::new(
+            CaptureDevice {
+                name: "test".to_owned(),
+                description: "test".to_owned(),
+                ipv4: Vec::new(),
+            },
+            None,
+        );
+        assert_eq!(buffer.path(), None);
+        assert_eq!(buffer.packet_count(), 0);
+        assert_eq!(
+            buffer.save(Path::new("unused.pcapng")).unwrap_err(),
+            "raw capture is disabled"
+        );
     }
 
     #[test]
@@ -4449,6 +4566,76 @@ mod tests {
             })
         ));
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn summary_payload_text_retains_only_runtime_markers() {
+        let irrelevant =
+            decode_summary_payload_text(b"Some.DebugProtocolIdentifier", &HashMap::new());
+        assert!(irrelevant.has_readable_text);
+        assert_eq!(irrelevant.text, UNREADABLE_PROTOCOL_TEXT);
+
+        let abyss = decode_summary_payload_text(
+            b"FAbyssGamePlayData ConditionState_Success",
+            &HashMap::new(),
+        );
+        assert!(abyss.has_readable_text);
+        assert!(abyss.text.contains("FAbyssGamePlayData"));
+        assert!(abyss.text.contains("ConditionState_Success"));
+    }
+
+    #[test]
+    fn summary_only_emits_observation_without_debug_payload() {
+        let payload = (0..128)
+            .map(|index| if index % 2 == 0 { 0x80 } else { 0x01 })
+            .collect::<Vec<_>>();
+        let local_ip = Ipv4Addr::new(10, 0, 0, 2);
+        let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
+        let packet = udp_ipv4_packet(&payload, local_ip, 50_000, remote_ip, 7_777);
+        let characters = HashMap::new();
+
+        let (full_sender, full_receiver) = unbounded();
+        PacketDecoder::default().process_ethernet_frame(
+            &packet,
+            10.0,
+            Some(local_ip),
+            true,
+            &characters,
+            &full_sender,
+        );
+        let full_events = full_receiver.try_iter().collect::<Vec<_>>();
+        let full_packet = full_events.iter().find_map(|event| match event {
+            EngineEvent::Packet(packet) => Some(packet),
+            _ => None,
+        });
+        let full_packet = full_packet.expect("full mode should retain debug packet fields");
+        assert_eq!(full_packet.payload_hex.len(), payload.len() * 2);
+        assert!(!full_packet.payload_preview.is_empty());
+
+        let (summary_sender, summary_receiver) = unbounded();
+        PacketDecoder {
+            packet_emission: PacketEmissionMode::SummaryOnly,
+            ..PacketDecoder::default()
+        }
+        .process_ethernet_frame(
+            &packet,
+            10.0,
+            Some(local_ip),
+            true,
+            &characters,
+            &summary_sender,
+        );
+        let summary_events = summary_receiver.try_iter().collect::<Vec<_>>();
+        assert!(
+            summary_events
+                .iter()
+                .any(|event| matches!(event, EngineEvent::PacketObservation(_)))
+        );
+        assert!(
+            !summary_events
+                .iter()
+                .any(|event| matches!(event, EngineEvent::Packet(_)))
+        );
     }
 
     #[test]
