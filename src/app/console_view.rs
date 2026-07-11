@@ -1860,7 +1860,7 @@ impl DpsApp {
                 ui.label(t("HUD Width"));
                 ui.add(
                     egui::DragValue::new(&mut self.hud_config.width)
-                        .range(HUD_WIDTH_MIN..=u16::MAX)
+                        .range(HUD_WIDTH_MIN..=HUD_WIDTH_MAX)
                         .speed(4.0)
                         .suffix(" px"),
                 );

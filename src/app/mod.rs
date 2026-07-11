@@ -50,10 +50,10 @@ use crate::platform::window_attributes::{
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
-    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MIN,
-    HitDetailColumn, HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig, HudModule,
-    PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN, ThemePreset,
-    TimelineDpsViewMode, UiConfig, UiDensity,
+    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
+    HUD_WIDTH_MIN, HitDetailColumn, HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig,
+    HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
+    ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
 };
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
@@ -1372,7 +1372,12 @@ impl eframe::App for DpsApp {
         if self.hud_mode && !self.mouse_passthrough && hud_progress >= 1.0 {
             window_width_resize_grips(&ctx);
             if ctx.input(|input| input.pointer.any_down()) {
-                let width = ctx.content_rect().width().round().max(HUD_WIDTH_MIN as f32) as u16;
+                let width = ctx
+                    .content_rect()
+                    .width()
+                    .round()
+                    .clamp(HUD_WIDTH_MIN as f32, HUD_WIDTH_MAX as f32)
+                    as u16;
                 if width != self.hud_config.width {
                     self.hud_config.width = width;
                 }
