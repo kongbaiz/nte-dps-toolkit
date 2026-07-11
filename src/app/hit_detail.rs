@@ -234,7 +234,7 @@ pub(crate) fn qte_damage_summary_chip(
     let width = 156.0_f32.max(96.0 + label.chars().count() as f32 * 12.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 42.0), egui::Sense::click());
     let dark_mode = ui.visuals().dark_mode;
-    let accent = theme_accent(dark_mode);
+    let accent = ui.visuals().selection.bg_fill;
     let bg = if is_selected {
         accent
     } else if response.hovered() {
@@ -282,14 +282,14 @@ pub(crate) fn qte_damage_summary_chip(
         egui::pos2(text_rect.left(), text_rect.top() + 9.0),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(12.5),
+        density_proportional_font(ui, 12.5),
         text_color,
     );
     ui.painter().text(
         egui::pos2(text_rect.left(), text_rect.top() + 27.0),
         egui::Align2::LEFT_CENTER,
         format!("{} · {share:.1}%", format_number(summary.damage)),
-        egui::FontId::monospace(11.0),
+        density_monospace_font(ui, 11.0),
         if is_selected {
             contrast_text(accent).gamma_multiply(0.82)
         } else {
@@ -477,7 +477,7 @@ pub(crate) fn draw_skill_damage_summary(
         let header_width = ui.available_width() - ui.style().spacing.scroll.allocated_width();
         let (header_rect, _) =
             ui.allocate_exact_size(egui::vec2(header_width, 24.0), egui::Sense::hover());
-        let header_font = egui::FontId::proportional(12.0);
+        let header_font = density_proportional_font(ui, 12.0);
         let header_color = ui.visuals().weak_text_color();
         ui.painter().text(
             header_rect.left_center() + egui::vec2(10.0, 0.0),
@@ -529,13 +529,17 @@ pub(crate) fn draw_skill_damage_summary(
                     ui.painter().rect_filled(
                         progress_rect,
                         corner_radius,
-                        theme_accent(dark_mode).gamma_multiply(if selected { 0.28 } else { 0.16 }),
+                        ui.visuals().selection.bg_fill.gamma_multiply(if selected {
+                            0.28
+                        } else {
+                            0.16
+                        }),
                     );
                     if selected {
                         ui.painter().rect_stroke(
                             rect,
                             corner_radius,
-                            Stroke::new(1.0_f32, theme_accent(dark_mode)),
+                            Stroke::new(1.0_f32, ui.visuals().selection.bg_fill),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -549,7 +553,7 @@ pub(crate) fn draw_skill_damage_summary(
                         rect.left_center() + egui::vec2(10.0, 0.0),
                         egui::Align2::LEFT_CENTER,
                         format!("{}. {}  [{}]", rank + 1, summary.name, summary.category),
-                        egui::FontId::proportional(12.0),
+                        density_proportional_font(ui, 12.0),
                         foreground,
                     );
                     let metrics_clip = egui::Rect::from_min_max(
@@ -564,7 +568,7 @@ pub(crate) fn draw_skill_damage_summary(
                             format_number(summary.damage),
                             tf("{} hits", &[&summary.hits.to_string()])
                         ),
-                        egui::FontId::monospace(11.5),
+                        density_monospace_font(ui, 11.5),
                         foreground,
                     );
                     if response.clicked() {
@@ -682,7 +686,7 @@ pub(crate) fn draw_character_hit_header(ui: &mut egui::Ui, layout: CharacterHitL
     let y = rect.center().y;
     let x = rect.left();
     let painter = ui.painter().clone();
-    let font = egui::FontId::proportional(12.0);
+    let font = density_proportional_font(ui, 12.0);
     let color = ui.visuals().weak_text_color();
     draw_hit_column_separators(&painter, rect, layout);
 
@@ -917,12 +921,12 @@ pub(crate) fn draw_damage_number_fallback(
         rect.left_center(),
         egui::Align2::LEFT_CENTER,
         text,
-        egui::FontId::monospace(15.0),
+        density_monospace_font(ui, 15.0),
         color,
     );
     let width = ui.fonts_mut(|fonts| {
         fonts
-            .layout_no_wrap(text.to_owned(), egui::FontId::monospace(15.0), color)
+            .layout_no_wrap(text.to_owned(), density_monospace_font(ui, 15.0), color)
             .size()
             .x
     });
@@ -964,6 +968,7 @@ pub(crate) fn draw_follow_up_damage_badge(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_character_hit_row(
     ui: &mut egui::Ui,
     layout: CharacterHitLayout,
@@ -972,9 +977,10 @@ pub(crate) fn draw_character_hit_row(
     damage_digits: Option<&[egui::TextureHandle]>,
     follow_up_damage_digits: Option<&[egui::TextureHandle]>,
     reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
+    row_height: f32,
 ) {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
+        egui::vec2(layout.row_width, row_height),
         egui::Sense::hover(),
     );
     let incoming = hit.direction == "incoming";
@@ -986,11 +992,7 @@ pub(crate) fn draw_character_hit_row(
     ui.painter().rect_filled(
         rect,
         5.0,
-        if ui.visuals().dark_mode {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 8)
-        } else {
-            Color32::from_rgba_unmultiplied(0, 0, 0, 5)
-        },
+        theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).detail_row,
     );
     let damage_fraction = (hit.total_damage() / max_damage).clamp(0.0, 1.0) as f32;
     ui.painter().rect_filled(
@@ -1010,7 +1012,7 @@ pub(crate) fn draw_character_hit_row(
     } else {
         hit_output_text_color(ui.visuals().dark_mode)
     };
-    let mono = egui::FontId::monospace(13.0);
+    let mono = density_monospace_font(ui, 13.0);
     draw_hit_column_separators(&painter, rect, layout);
     painter.text(
         egui::pos2(x + layout.time_x, y),
@@ -1083,7 +1085,7 @@ pub(crate) fn draw_team_hit_header(ui: &mut egui::Ui, layout: TeamHitLayout) {
     let y = rect.center().y;
     let x = rect.left();
     let painter = ui.painter();
-    let font = egui::FontId::proportional(12.0);
+    let font = density_proportional_font(ui, 12.0);
     let color = ui.visuals().weak_text_color();
     draw_team_hit_column_separators(painter, rect, layout);
 
@@ -1127,7 +1129,7 @@ pub(crate) fn draw_hit_type_badge_content(
         ui,
         badge_rect.shrink2(egui::vec2(8.0, 0.0)),
         &text,
-        egui::FontId::proportional(12.0),
+        density_proportional_font(ui, 12.0),
         contrast_text(type_color),
         egui::Align::Center,
         None,
@@ -1184,9 +1186,10 @@ pub(crate) fn draw_team_hit_row(
     max_damage: f64,
     character_color: Color32,
     assets: TeamHitRowAssets<'_>,
+    row_height: f32,
 ) {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
+        egui::vec2(layout.row_width, row_height),
         egui::Sense::hover(),
     );
     let incoming = hit.direction == "incoming";
@@ -1198,11 +1201,7 @@ pub(crate) fn draw_team_hit_row(
     ui.painter().rect_filled(
         rect,
         5.0,
-        if ui.visuals().dark_mode {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 8)
-        } else {
-            Color32::from_rgba_unmultiplied(0, 0, 0, 5)
-        },
+        theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).detail_row,
     );
     let damage_fraction = (hit.total_damage() / max_damage).clamp(0.0, 1.0) as f32;
     ui.painter().rect_filled(
@@ -1217,7 +1216,7 @@ pub(crate) fn draw_team_hit_row(
     let x = rect.left();
     let painter = ui.painter().clone();
     let text_color = ui.visuals().text_color();
-    let mono = egui::FontId::monospace(13.0);
+    let mono = density_monospace_font(ui, 13.0);
     draw_team_hit_column_separators(&painter, rect, layout);
 
     painter.text(
@@ -1235,11 +1234,7 @@ pub(crate) fn draw_team_hit_row(
     painter.rect_filled(
         avatar_rect,
         7.0,
-        if ui.visuals().dark_mode {
-            Color32::from_rgb(55, 58, 66)
-        } else {
-            Color32::from_rgb(225, 227, 232)
-        },
+        theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).border_strong,
     );
     if let Some(texture) = assets.avatar_texture {
         ui.put(
@@ -1252,8 +1247,8 @@ pub(crate) fn draw_team_hit_row(
             avatar_rect.center(),
             egui::Align2::CENTER_CENTER,
             assets.char_name.chars().next().unwrap_or('?').to_string(),
-            egui::FontId::proportional(14.0),
-            Color32::WHITE,
+            density_proportional_font(ui, 14.0),
+            contrast_text(character_color),
         );
     }
     painter.rect_stroke(
@@ -1266,7 +1261,7 @@ pub(crate) fn draw_team_hit_row(
         egui::pos2(avatar_rect.right() + 7.0, y),
         egui::Align2::LEFT_CENTER,
         assets.char_name,
-        egui::FontId::proportional(12.0),
+        density_proportional_font(ui, 12.0),
         text_color,
     );
     let badge_rect = egui::Rect::from_center_size(
@@ -1486,7 +1481,7 @@ pub(crate) fn draw_target_hp_text(
         ui,
         target_rect,
         target,
-        egui::FontId::proportional(12.0),
+        density_proportional_font(ui, 12.0),
         target_color,
         egui::Align::Min,
         None,
@@ -1530,11 +1525,11 @@ pub(crate) fn draw_hit_column_separators(
     rect: egui::Rect,
     layout: CharacterHitLayout,
 ) {
-    let color = if painter.ctx().global_style().visuals.dark_mode {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 92)
-    } else {
-        Color32::from_rgba_unmultiplied(70, 74, 82, 88)
-    };
+    let color = theme_tokens(
+        painter.ctx().global_style().visuals.dark_mode,
+        AccentColor::Zinc,
+    )
+    .detail_separator;
     for separator in layout.separators {
         let x = rect.left() + separator;
         painter.line_segment(
@@ -1549,11 +1544,11 @@ pub(crate) fn draw_team_hit_column_separators(
     rect: egui::Rect,
     layout: TeamHitLayout,
 ) {
-    let color = if painter.ctx().global_style().visuals.dark_mode {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 92)
-    } else {
-        Color32::from_rgba_unmultiplied(70, 74, 82, 88)
-    };
+    let color = theme_tokens(
+        painter.ctx().global_style().visuals.dark_mode,
+        AccentColor::Zinc,
+    )
+    .detail_separator;
     for separator in layout.separators {
         let x = rect.left() + separator;
         painter.line_segment(

@@ -10,8 +10,27 @@ pub(crate) fn paint_haloed(
     font: egui::FontId,
     color: Color32,
 ) {
+    paint_haloed_with_halo(
+        painter,
+        pos,
+        anchor,
+        text,
+        font,
+        color,
+        theme_tokens(true, AccentColor::Zinc).hud.halo,
+    );
+}
+
+pub(crate) fn paint_haloed_with_halo(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    anchor: egui::Align2,
+    text: impl Into<String>,
+    font: egui::FontId,
+    color: Color32,
+    halo: Color32,
+) {
     let text = text.into();
-    let halo = Color32::from_black_alpha(185);
     for offset in [
         egui::vec2(-0.8, 0.0),
         egui::vec2(0.8, 0.0),

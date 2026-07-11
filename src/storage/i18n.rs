@@ -121,6 +121,10 @@ struct Store {
 }
 
 static STORE: LazyLock<RwLock<Store>> = LazyLock::new(|| RwLock::new(Store::default()));
+static SIMPLIFIED_CHINESE_MAP: LazyLock<HashMap<String, String>> =
+    LazyLock::new(|| load_map(Language::SimplifiedChinese));
+static JAPANESE_MAP: LazyLock<HashMap<String, String>> =
+    LazyLock::new(|| load_map(Language::Japanese));
 
 /// Load the overlay map for `language`. Missing/invalid files degrade to an empty
 /// map (keys fall back to their English text) rather than failing startup.
@@ -162,6 +166,17 @@ pub fn t(key: &str) -> String {
     }
 }
 
+/// Translate without changing the active UI language. Command search uses this
+/// to match both the English source key and Simplified Chinese in every locale.
+pub fn t_for(language: Language, key: &str) -> String {
+    let map = match language {
+        Language::English => return key.to_owned(),
+        Language::Japanese => &*JAPANESE_MAP,
+        Language::SimplifiedChinese => &*SIMPLIFIED_CHINESE_MAP,
+    };
+    map.get(key).cloned().unwrap_or_else(|| key.to_owned())
+}
+
 /// Translate `key`, then substitute each `{}` placeholder left-to-right with `args`.
 ///
 /// Runtime substitution (rather than `format!`) is required because the template
@@ -169,6 +184,10 @@ pub fn t(key: &str) -> String {
 /// literal; unused `args` are dropped.
 pub fn tf(key: &str, args: &[&str]) -> String {
     let template = t(key);
+    format_template(&template, args)
+}
+
+fn format_template(template: &str, args: &[&str]) -> String {
     let mut out = String::with_capacity(template.len());
     let mut args = args.iter();
     let mut chars = template.chars().peekable();
@@ -204,13 +223,8 @@ mod tests {
 
     #[test]
     fn english_returns_key_unchanged() {
-        set_language(Language::English);
-        assert_eq!(t("Settings"), "Settings");
-        assert_eq!(tf("Loaded {} rows", &["12"]), "Loaded 12 rows");
-        // `language` is a process-wide store; other tests (and code under
-        // test, e.g. PacketDecoder::default() reading current_language())
-        // assume the default unless they explicitly set it themselves.
-        set_language(Language::default());
+        assert_eq!(t_for(Language::English, "Settings"), "Settings");
+        assert_eq!(format_template("Loaded {} rows", &["12"]), "Loaded 12 rows");
     }
 
     #[test]
@@ -231,9 +245,14 @@ mod tests {
 
     #[test]
     fn tf_leaves_extra_placeholders_literal() {
-        set_language(Language::English);
-        assert_eq!(tf("{} of {}", &["3"]), "3 of {}");
-        set_language(Language::default());
+        assert_eq!(format_template("{} of {}", &["3"]), "3 of {}");
+    }
+
+    #[test]
+    fn translating_for_search_does_not_change_the_active_language() {
+        let before = current_language();
+        assert_eq!(t_for(Language::SimplifiedChinese, "Settings"), "设置");
+        assert_eq!(current_language(), before);
     }
 
     #[test]

@@ -3,6 +3,7 @@ use super::*;
 impl DpsApp {
     pub(crate) fn console_panel(&mut self, ctx: &egui::Context) {
         let viewport_id = console_viewport_id();
+        let recording_hotkey = self.recording_hotkey.is_some();
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
             secondary_viewport_builder(
@@ -12,7 +13,15 @@ impl DpsApp {
                 self.console_corner_applied,
             ),
             |ctx, _class| {
-                if !self.console_corner_applied {
+                if self.recording_hotkey.is_some()
+                    && ctx.input(|input| input.viewport().focused == Some(false))
+                {
+                    self.set_recording_hotkey(None);
+                    self.status = t("Shortcut recording canceled when Console lost focus");
+                }
+                self.handle_local_hotkeys(ctx.ctx());
+                let opening = !self.console_corner_applied;
+                if opening {
                     apply_rounding_to_process_windows();
                     self.console_corner_applied = true;
                 }
@@ -24,94 +33,296 @@ impl DpsApp {
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
+                        motion::apply_viewport_entrance(ui, "console", opening, self.reduce_motion);
                         self.console_contents(ui);
                     });
                 track_window_size(ctx, &mut self.console_window_size);
                 window_resize_grips(ctx);
+                self.show_status_toast(ctx.ctx());
+                self.show_command_palette(ctx.ctx());
                 self.show_viewport_dialogs(ctx);
-                close_clicked || ctx.input(|input| input.viewport().close_requested())
+                let native_close = ctx.input(|input| input.viewport().close_requested());
+                let reserved_close = recording_hotkey
+                    && ctx.input(|input| input.modifiers.alt && input.key_pressed(egui::Key::F4));
+                if native_close && reserved_close {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    false
+                } else {
+                    close_clicked || native_close
+                }
             },
         );
         if close_requested {
             self.console_open = false;
             self.console_corner_applied = false;
+            self.set_recording_hotkey(None);
             self.retarget_dialogs(viewport_id, egui::ViewportId::ROOT);
         }
     }
 
     pub(crate) fn console_contents(&mut self, ui: &mut egui::Ui) {
-        // Wrapped: up to nine tabs, and a localized label can run longer than the
-        // Chinese original — wrap to a second line instead of spilling past the
-        // console window's edge.
-        ui.horizontal_wrapped(|ui| {
-            stable_selectable_value(
-                ui,
-                &mut self.console_tab,
-                ConsoleTab::Settings,
-                t("Settings"),
-            );
-            stable_selectable_value(
-                ui,
-                &mut self.console_tab,
-                ConsoleTab::Timeline,
-                t("Timeline"),
-            );
-            stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::Skills, t("Skills"));
-            stable_selectable_value(
-                ui,
-                &mut self.console_tab,
-                ConsoleTab::EmptyCurtain,
-                t("Console Loadout"),
-            );
-            stable_selectable_value(ui, &mut self.console_tab, ConsoleTab::History, t("History"));
-            stable_selectable_value(
-                ui,
-                &mut self.console_tab,
-                ConsoleTab::Characters,
-                t("Character Data"),
-            );
-            stable_selectable_value(
-                ui,
-                &mut self.console_tab,
-                ConsoleTab::EncryptedIni,
-                t("Encrypted INI"),
-            );
-            // Genuine capture debugging — only reachable in debug builds.
-            #[cfg(not(feature = "no_debug"))]
-            {
-                ui.separator();
-                stable_selectable_value(
-                    ui,
-                    &mut self.console_tab,
-                    ConsoleTab::Packets,
-                    t("Packets"),
-                );
-                stable_selectable_value(
-                    ui,
-                    &mut self.console_tab,
-                    ConsoleTab::Resources,
-                    t("Resources"),
-                );
-                stable_selectable_value(
-                    ui,
-                    &mut self.console_tab,
-                    ConsoleTab::Diagnostics,
-                    t("Diagnostics"),
-                );
+        if !self.console_sidebar_migration_seen {
+            let theme = self.theme();
+            egui::Frame::new()
+                .fill(theme.card)
+                .stroke(Stroke::new(1.0, theme.border))
+                .corner_radius(8)
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(t(
+                            "Console pages are now grouped in the left sidebar for faster access.",
+                        ));
+                        if ui.button(t("Got it")).clicked() {
+                            self.console_sidebar_migration_seen = true;
+                        }
+                    });
+                });
+            ui.add_space(6.0);
+        }
+        if !ui.ctx().egui_wants_keyboard_input() {
+            let (previous, next) = ui.input(|input| {
+                let modifiers = input.modifiers;
+                let ctrl_only =
+                    modifiers.ctrl && !modifiers.alt && !modifiers.shift && !modifiers.mac_cmd;
+                (
+                    ctrl_only && input.key_pressed(egui::Key::PageUp),
+                    ctrl_only && input.key_pressed(egui::Key::PageDown),
+                )
+            });
+            if previous {
+                self.console_tab = self.console_tab.adjacent(-1);
+                self.set_recording_hotkey(None);
+            } else if next {
+                self.console_tab = self.console_tab.adjacent(1);
+                self.set_recording_hotkey(None);
             }
+        }
+
+        let auto_collapsed = console_sidebar_collapsed(ui.available_width());
+        let collapsed = auto_collapsed || self.console_sidebar_manually_collapsed;
+        let collapse_progress = motion::animate_bool(
+            ui.ctx(),
+            "console_sidebar_collapse",
+            collapsed,
+            motion::dur::BASE,
+            self.reduce_motion,
+            motion::ease::standard,
+        );
+        ui.horizontal_top(|ui| {
+            self.console_sidebar(ui, collapsed, !auto_collapsed, collapse_progress);
+            ui.separator();
+            ui.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                motion::content_swap_entrance(
+                    ui,
+                    "console_tab_content",
+                    self.console_tab as u64,
+                    self.reduce_motion,
+                );
+                match self.console_tab {
+                    ConsoleTab::Settings => self.settings_contents(ui),
+                    ConsoleTab::Timeline => self.timeline_contents(ui),
+                    ConsoleTab::Skills => self.skills_contents(ui),
+                    ConsoleTab::EmptyCurtain => self.empty_curtain_contents(ui),
+                    ConsoleTab::History => self.history_contents(ui),
+                    ConsoleTab::Characters => self.debug_characters_contents(ui),
+                    ConsoleTab::EncryptedIni => self.debug_encrypted_ini_contents(ui),
+                    ConsoleTab::Packets => self.debug_packets_contents(ui),
+                    ConsoleTab::Resources => self.resource_audit_contents(ui),
+                    ConsoleTab::Diagnostics => self.diagnostics_contents(ui),
+                }
+            });
         });
-        ui.separator();
-        match self.console_tab {
-            ConsoleTab::Settings => self.settings_contents(ui),
-            ConsoleTab::Timeline => self.timeline_contents(ui),
-            ConsoleTab::Skills => self.skills_contents(ui),
-            ConsoleTab::EmptyCurtain => self.empty_curtain_contents(ui),
-            ConsoleTab::History => self.history_contents(ui),
-            ConsoleTab::Characters => self.debug_characters_contents(ui),
-            ConsoleTab::EncryptedIni => self.debug_encrypted_ini_contents(ui),
-            ConsoleTab::Packets => self.debug_packets_contents(ui),
-            ConsoleTab::Resources => self.resource_audit_contents(ui),
-            ConsoleTab::Diagnostics => self.diagnostics_contents(ui),
+    }
+
+    /// The sidebar is a dedicated column drawn inside the console's
+    /// `horizontal_top` row, so it claims its own top-down child region first;
+    /// drawing straight into the shared row `Ui` would lay the tabs out
+    /// left-to-right across the window.
+    fn console_sidebar(
+        &mut self,
+        ui: &mut egui::Ui,
+        collapsed: bool,
+        allow_toggle: bool,
+        collapse_progress: f32,
+    ) {
+        let width = console_sidebar_width(collapse_progress);
+        let theme = self.theme();
+        ui.allocate_ui_with_layout(
+            egui::vec2(width, ui.available_height()),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                if allow_toggle {
+                    let tooltip = if collapsed {
+                        t("Expand sidebar")
+                    } else {
+                        t("Collapse sidebar")
+                    };
+                    let (rect, response) =
+                        ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
+                    if ui.is_rect_visible(rect) {
+                        let hover = motion::animate_bool(
+                            ui.ctx(),
+                            "console_sidebar_toggle_hover",
+                            response.hovered(),
+                            motion::dur::FAST,
+                            self.reduce_motion,
+                            motion::ease::standard,
+                        );
+                        let button_rect = rect.shrink2(egui::vec2(4.0, 1.0));
+                        ui.painter().rect_filled(
+                            button_rect,
+                            6.0,
+                            mix_color(theme.card_hover, theme.muted, hover),
+                        );
+                        ui.painter().rect_stroke(
+                            button_rect,
+                            6.0,
+                            Stroke::new(1.0, mix_color(theme.border, theme.border_strong, hover)),
+                            egui::StrokeKind::Inside,
+                        );
+                        ui.painter().text(
+                            button_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            format!("‹  {}", t("Collapse")),
+                            density_proportional_font(ui, 12.0),
+                            theme
+                                .fg_muted
+                                .gamma_multiply((1.0 - collapse_progress).clamp(0.0, 1.0)),
+                        );
+                        ui.painter().text(
+                            button_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "›",
+                            density_proportional_font(ui, 18.0),
+                            theme
+                                .fg_muted
+                                .gamma_multiply(collapse_progress.clamp(0.0, 1.0)),
+                        );
+                    }
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip.clone())
+                    });
+                    if response.on_hover_text(tooltip).clicked() {
+                        self.console_sidebar_manually_collapsed =
+                            !self.console_sidebar_manually_collapsed;
+                    }
+                    ui.add_space(4.0);
+                }
+                let mut previous_group = None;
+                for tab in ConsoleTab::visible_tabs() {
+                    let group = tab.group();
+                    if previous_group != Some(group) {
+                        if previous_group.is_some() {
+                            ui.add_space(8.0);
+                        }
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(width, 15.0), egui::Sense::hover());
+                        if ui.is_rect_visible(rect) {
+                            ui.painter().text(
+                                egui::pos2(rect.left() + 6.0, rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                t(group.label_key()),
+                                density_proportional_font(ui, 10.0),
+                                theme
+                                    .fg_faint
+                                    .gamma_multiply((1.0 - collapse_progress).clamp(0.0, 1.0)),
+                            );
+                            let separator_y = rect.center().y;
+                            ui.painter().line_segment(
+                                [
+                                    egui::pos2(rect.left() + 8.0, separator_y),
+                                    egui::pos2(rect.right() - 8.0, separator_y),
+                                ],
+                                Stroke::new(
+                                    1.0,
+                                    theme
+                                        .border
+                                        .gamma_multiply(collapse_progress.clamp(0.0, 1.0)),
+                                ),
+                            );
+                        }
+                        previous_group = Some(group);
+                    }
+                    self.console_sidebar_item(ui, *tab, collapsed, collapse_progress, width, theme);
+                }
+            },
+        );
+    }
+
+    /// One sidebar row, painted by hand so rest, hover and selected states
+    /// cross-fade instead of snapping: hover fades a muted fill in, selection
+    /// fades the accent pill in over it. Expanded mode shows icon + label;
+    /// collapsed mode shows the icon only, with the full label as a tooltip.
+    /// Icon glyphs are guarded by the `painted_glyphs_exist_in_font_stack`
+    /// test so they never render as tofu boxes.
+    fn console_sidebar_item(
+        &mut self,
+        ui: &mut egui::Ui,
+        tab: ConsoleTab,
+        collapsed: bool,
+        collapse_progress: f32,
+        width: f32,
+        theme: ThemeTokens,
+    ) {
+        let selected = self.console_tab == tab;
+        let label = t(tab.label_key());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
+        if ui.is_rect_visible(rect) {
+            let hover = motion::animate_bool(
+                ui.ctx(),
+                ("console_sidebar_hover", tab as u64),
+                response.hovered() && !selected,
+                motion::dur::FAST,
+                self.reduce_motion,
+                motion::ease::standard,
+            );
+            let select_t = motion::animate_bool(
+                ui.ctx(),
+                ("console_sidebar_selected", tab as u64),
+                selected,
+                motion::dur::BASE,
+                self.reduce_motion,
+                motion::ease::standard,
+            );
+            let rest = theme.muted.gamma_multiply(hover * 0.9);
+            let fill = mix_color(rest, theme.accent, select_t);
+            ui.painter().rect_filled(rect, 6.0, fill);
+            let text_color = mix_color(
+                mix_color(theme.fg_muted, theme.fg, hover),
+                theme.accent_fg,
+                select_t,
+            );
+            let icon_x = egui::lerp(
+                (rect.left() + 16.0)..=rect.center().x,
+                collapse_progress.clamp(0.0, 1.0),
+            );
+            ui.painter().text(
+                egui::pos2(icon_x, rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                tab.icon(),
+                density_proportional_font(ui, 13.0 + collapse_progress),
+                text_color,
+            );
+            ui.painter().text(
+                egui::pos2(rect.left() + 32.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label.as_str(),
+                density_proportional_font(ui, 13.0),
+                text_color.gamma_multiply((1.0 - collapse_progress).clamp(0.0, 1.0)),
+            );
+        }
+        let response = if collapsed {
+            response.on_hover_text(label)
+        } else {
+            response
+        };
+        if response.clicked() && self.console_tab != tab {
+            self.console_tab = tab;
+            self.set_recording_hotkey(None);
         }
     }
 
@@ -158,15 +369,10 @@ impl DpsApp {
         ui.add_space(6.0);
         let timeline = self.cached_timeline_series();
         if timeline.buckets.is_empty() {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 120.0),
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    ui.label(
-                        RichText::new(t("Waiting for damage data"))
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                },
+            self.capture_data_empty_state(
+                ui,
+                t("Waiting for damage data"),
+                t("Start capture or import a replay to build the combat timeline."),
             );
             return;
         }
@@ -197,14 +403,14 @@ impl DpsApp {
                 &mut columns[0],
                 &t("Total Damage"),
                 format_number(timeline.total_damage),
-                theme_accent(self.dark_mode),
+                self.theme().accent,
                 true,
             );
             compact_metric(
                 &mut columns[1],
                 &t("Peak DPS"),
                 format_number(peak_dps),
-                theme_accent(self.dark_mode),
+                self.theme().accent,
                 true,
             );
             let bucket_color = columns[2].visuals().text_color();
@@ -257,6 +463,7 @@ impl DpsApp {
             &mut self.selected_timeline_char,
             self.dark_mode,
             &self.characters,
+            &mut self.timeline_view,
         );
         ui.add_space(6.0);
         ui.label(
@@ -278,15 +485,10 @@ impl DpsApp {
         self.abyss_selector(ui);
         let breakdown = self.cached_skill_breakdown(None);
         if breakdown.rows.is_empty() {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 120.0),
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    ui.label(
-                        RichText::new(t("Waiting for skill attribution data"))
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                },
+            self.capture_data_empty_state(
+                ui,
+                t("Waiting for skill attribution data"),
+                t("Start capture or import a replay to attribute damage to skills."),
             );
             return;
         }
@@ -346,8 +548,12 @@ impl DpsApp {
                                     if ui.selectable_label(selected, label).clicked() {
                                         self.selected_skill_breakdown_char = Some(row.char_id);
                                     }
-                                    row.color =
-                                        character_color(row.char_id, &self.characters, index);
+                                    row.color = character_color(
+                                        row.char_id,
+                                        &self.characters,
+                                        index,
+                                        self.dark_mode,
+                                    );
                                 }
                             });
                     },
@@ -371,7 +577,7 @@ impl DpsApp {
                                 &mut columns[0],
                                 &t("Attributed Damage"),
                                 format_number(visible_total),
-                                theme_accent(self.dark_mode),
+                                self.theme().accent,
                                 true,
                             );
                             let skill_count_color = columns[1].visuals().text_color();
@@ -465,17 +671,54 @@ impl DpsApp {
         ui.add_space(6.0);
 
         if self.history.records.is_empty() {
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), 160.0),
-                egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
-                |ui| {
-                    ui.label(
-                        RichText::new(t("No history summaries yet"))
-                            .color(ui.visuals().weak_text_color()),
-                    );
-                },
+            self.capture_data_empty_state(
+                ui,
+                t("No history summaries yet"),
+                t("Capture or import a combat, then save its summary for later comparison."),
             );
             return;
+        }
+
+        let mut keyboard_scroll_offset = None;
+        let mut open_selected_details = false;
+        if !ui.ctx().egui_wants_keyboard_input() {
+            let keyboard_action = ui.input(|input| {
+                if input.modifiers == egui::Modifiers::NONE && input.key_pressed(egui::Key::ArrowUp)
+                {
+                    Some(-1_isize)
+                } else if input.modifiers == egui::Modifiers::NONE
+                    && input.key_pressed(egui::Key::ArrowDown)
+                {
+                    Some(1_isize)
+                } else if input.modifiers == egui::Modifiers::NONE
+                    && input.key_pressed(egui::Key::Enter)
+                {
+                    Some(0_isize)
+                } else {
+                    None
+                }
+            });
+            if let Some(direction) = keyboard_action {
+                if direction == 0 {
+                    open_selected_details = true;
+                    self.history.message = t("Selected record opened in the detail pane");
+                } else {
+                    let current = self.history.selected_id.as_deref().map_or(0, |id| {
+                        self.history
+                            .records
+                            .iter()
+                            .position(|record| record.id == id)
+                            .expect("selected history id always belongs to the loaded records")
+                    });
+                    let next = (current as isize + direction)
+                        .clamp(0, self.history.records.len() as isize - 1)
+                        as usize;
+                    self.history.selected_id = Some(self.history.records[next].id.clone());
+                    let list_height = (ui.available_height().max(420.0) - 24.0).max(160.0);
+                    keyboard_scroll_offset =
+                        Some((next as f32 * 64.0 - (list_height - 64.0) * 0.5).max(0.0));
+                }
+            }
         }
 
         let content_height = ui.available_height().max(420.0);
@@ -507,24 +750,72 @@ impl DpsApp {
                                 .color(shadcn_foreground(self.dark_mode)),
                         );
                         ui.add_space(4.0);
-                        egui::ScrollArea::vertical()
+                        let records_scroll = egui::ScrollArea::vertical()
                             .id_salt("history_record_list")
                             .max_height((content_height - 24.0).max(160.0))
-                            .auto_shrink([false, false])
-                            .show_rows(ui, 64.0, record_rows.len(), |ui, row_range| {
-                                for row_index in row_range {
-                                    let (id, time, party, dps, damage) = &record_rows[row_index];
-                                    let selected = self.history.selected_id.as_deref() == Some(id);
-                                    let label = format!(
-                                        "{time}\n{party}\n{} DPS · {}",
-                                        format_number(*dps),
-                                        format_number(*damage)
-                                    );
-                                    if ui.selectable_label(selected, label).clicked() {
-                                        self.history.selected_id = Some(id.clone());
-                                    }
+                            .auto_shrink([false, false]);
+                        let records_scroll = if let Some(offset) = keyboard_scroll_offset {
+                            records_scroll.vertical_scroll_offset(offset)
+                        } else {
+                            records_scroll
+                        };
+                        records_scroll.show_rows(ui, 64.0, record_rows.len(), |ui, row_range| {
+                            for row_index in row_range {
+                                let (id, time, party, dps, damage) = &record_rows[row_index];
+                                let selected = self.history.selected_id.as_deref() == Some(id);
+                                let label = format!(
+                                    "{time}\n{party}\n{} DPS · {}",
+                                    format_number(*dps),
+                                    format_number(*damage)
+                                );
+                                let response = ui.selectable_label(selected, label);
+                                if response.clicked() {
+                                    self.history.selected_id = Some(id.clone());
                                 }
-                            });
+                                response.context_menu(|ui| {
+                                    if ui.button(t("View details")).clicked() {
+                                        self.history.selected_id = Some(id.clone());
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            record_rows.len() > 1,
+                                            egui::Button::new(t("Compare with adjacent record")),
+                                        )
+                                        .clicked()
+                                    {
+                                        let adjacent = if row_index + 1 < record_rows.len() {
+                                            row_index + 1
+                                        } else {
+                                            row_index - 1
+                                        };
+                                        self.history.selected_id = Some(id.clone());
+                                        self.history.compare_left_id = Some(id.clone());
+                                        self.history.compare_right_id =
+                                            Some(record_rows[adjacent].0.clone());
+                                        self.history.message = t("Comparison pair selected");
+                                        ui.close();
+                                    }
+                                    if ui.button(t("Export record JSON")).clicked() {
+                                        self.export_history_record(ui.ctx(), id);
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(
+                                            RichText::new(t("Delete"))
+                                                .color(semantic_danger(self.dark_mode)),
+                                        )
+                                        .clicked()
+                                    {
+                                        self.delete_history_record_for(
+                                            id.clone(),
+                                            ui.ctx().viewport_id(),
+                                        );
+                                        ui.close();
+                                    }
+                                });
+                            }
+                        });
                     },
                 );
                 ui.separator();
@@ -532,24 +823,112 @@ impl DpsApp {
                     egui::vec2(ui.available_width(), content_height),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        egui::ScrollArea::vertical()
+                        let detail_scroll = egui::ScrollArea::vertical()
                             .id_salt("history_detail_compare")
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                let selected = self.history.selected_record().cloned();
-                                if let Some(record) = selected {
-                                    self.history_detail_contents(ui, &record);
-                                    ui.add_space(8.0);
-                                    ui.separator();
-                                    ui.add_space(8.0);
-                                    self.history_compare_contents(ui);
-                                }
-                            });
+                            .auto_shrink([false, false]);
+                        let detail_scroll = if open_selected_details {
+                            detail_scroll.vertical_scroll_offset(0.0)
+                        } else {
+                            detail_scroll
+                        };
+                        detail_scroll.show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            let selected = self.history.selected_record().cloned();
+                            if let Some(record) = selected {
+                                self.history_detail_contents(ui, &record);
+                                ui.add_space(8.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+                                self.history_compare_contents(ui);
+                            }
+                        });
                     },
                 );
             },
         );
+    }
+
+    /// [`empty_state_card`] with the standard start/import actions, shared by
+    /// the timeline, skills and loadout pages.
+    pub(crate) fn capture_data_empty_state(
+        &mut self,
+        ui: &mut egui::Ui,
+        title: String,
+        body: String,
+    ) {
+        let theme = self.theme();
+        let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
+        empty_state_card(ui, theme, title, body, |ui| {
+            if capture_idle && ui.add(primary_button(t("Start"), theme.accent)).clicked() {
+                self.request_start_live(ui.ctx());
+            }
+            if ui.button(t("Import Capture JSON")).clicked() {
+                self.request_debug_import(ui.ctx(), DebugImportKind::CaptureJson);
+            }
+        });
+    }
+
+    fn export_history_record(&mut self, ctx: &egui::Context, record_id: &str) {
+        let Some(record) = self
+            .history
+            .records
+            .iter()
+            .find(|record| record.id == record_id)
+        else {
+            self.set_last_error_in(ctx, t("No history summary found to export"), None);
+            return;
+        };
+        let json = match serde_json::to_string_pretty(record) {
+            Ok(json) => format!("{json}\n"),
+            Err(error) => {
+                self.set_last_error_in(
+                    ctx,
+                    tf(
+                        "Failed to serialize history summary: {}",
+                        &[&error.to_string()],
+                    ),
+                    None,
+                );
+                return;
+            }
+        };
+        let default_name = format!("nte_history_{}.json", record.id);
+        let filter = t("NTE history summary");
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::HistoryExport { json },
+            move |owner| {
+                with_owner(
+                    rfd::FileDialog::new()
+                        .add_filter(filter, &["json"])
+                        .set_file_name(default_name),
+                    owner,
+                )
+                .save_file()
+            },
+        );
+    }
+
+    pub(crate) fn finish_history_record_export(
+        &mut self,
+        viewport: egui::ViewportId,
+        path: &Path,
+        json: &str,
+    ) {
+        match atomic_write_text(path, json) {
+            Ok(()) => {
+                self.status = t("History summary exported");
+                self.clear_last_error();
+            }
+            Err(error) => self.set_last_error_for(
+                viewport,
+                tf(
+                    "Failed to export history summary: {}",
+                    &[&error.to_string()],
+                ),
+                None,
+            ),
+        }
     }
 
     /// Localized compact party preview for a history record — mirrors
@@ -606,10 +985,7 @@ impl DpsApp {
                     .on_hover_text(t("Delete this local history summary"))
                     .clicked()
                 {
-                    self.request_confirmation_for(
-                        ui.ctx().viewport_id(),
-                        ConfirmationAction::DeleteHistory(record.id.clone()),
-                    );
+                    self.delete_history_record_for(record.id.clone(), ui.ctx().viewport_id());
                 }
                 if let Some(team) = record.lower_team_dps()
                     && ui.button(t("Set as Lower Prediction")).clicked()
@@ -634,7 +1010,7 @@ impl DpsApp {
                 &mut columns[0],
                 &t("Total DPS"),
                 format_number(record.summary.total_dps),
-                theme_accent(self.dark_mode),
+                self.theme().accent,
                 true,
             );
             compact_metric(
@@ -946,6 +1322,7 @@ impl DpsApp {
             encrypted_ini_match_cursor_range(&editor.plaintext, &editor.search, byte_index)
         });
         let dark_mode = self.dark_mode;
+        let accent = self.accent;
         let search = &editor.search;
         let layout_cache = &mut editor.layout_cache;
         let plaintext = &mut editor.plaintext;
@@ -960,6 +1337,7 @@ impl DpsApp {
                     current_match_byte,
                     wrap_width,
                     dark_mode,
+                    accent,
                 },
                 layout_cache,
             )
@@ -1189,17 +1567,18 @@ impl DpsApp {
 
     pub(crate) fn settings_contents(&mut self, ui: &mut egui::Ui) {
         let previous_hud_config = self.hud_config.clone();
-        // Two-column when wide, single-column when narrow, always scrollable: the
-        // tall parse section fills the left column while HUD and the lighter sections
-        // stack on the right, so neither side is empty; when the console is too narrow
-        // to split without clipping a localized row, everything stacks full-width.
+        // Two balanced columns when wide (interface/parse/hotkeys left, the
+        // lighter HUD/team/capture/abyss cards right), single column when the
+        // console is too narrow to split without clipping a localized row.
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                if ui.available_width() >= Self::SETTINGS_TWO_COLUMN_MIN_WIDTH {
+                ui.set_width(ui.available_width());
+                if settings_uses_two_columns(ui.available_width()) {
                     ui.columns(2, |columns| {
                         self.settings_interface_section(&mut columns[0]);
                         self.settings_parse_section(&mut columns[0]);
+                        self.settings_hotkeys_section(&mut columns[0]);
                         self.settings_hud_section(&mut columns[1]);
                         self.settings_team_section(&mut columns[1]);
                         self.settings_capture_logs_section(&mut columns[1]);
@@ -1208,6 +1587,7 @@ impl DpsApp {
                 } else {
                     self.settings_interface_section(ui);
                     self.settings_parse_section(ui);
+                    self.settings_hotkeys_section(ui);
                     self.settings_hud_section(ui);
                     self.settings_team_section(ui);
                     self.settings_capture_logs_section(ui);
@@ -1224,47 +1604,99 @@ impl DpsApp {
     /// language picker; the dropdown lists each language written in its own script
     /// and persists the choice to the config file.
     fn settings_interface_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t("Interface"))
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Grid::new("settings_interface")
-                    .num_columns(2)
-                    .spacing([14.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label(t("Language"));
-                        let mut language = self.language;
-                        egui::ComboBox::from_id_salt("ui_language")
-                            .width(150.0)
-                            .selected_text(language.native_name())
-                            .show_ui(ui, |ui| {
-                                ui.set_min_width(150.0);
-                                for option in Language::all() {
+        settings_section(ui, self.theme(), "Interface", |ui| {
+            egui::Grid::new("settings_interface")
+                .num_columns(2)
+                .spacing([14.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label(t("Language"));
+                    let mut language = self.language;
+                    egui::ComboBox::from_id_salt("ui_language")
+                        .width(settings_value_width(ui))
+                        .selected_text(language.native_name())
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(150.0);
+                            for option in Language::all() {
+                                stable_popup_selectable_value(
+                                    ui,
+                                    &mut language,
+                                    *option,
+                                    option.native_name(),
+                                );
+                            }
+                        });
+                    if language != self.language {
+                        self.set_language(ui.ctx(), language);
+                    }
+                    ui.end_row();
+
+                    ui.label(t("Accent"));
+                    let mut accent = self.accent;
+                    egui::ComboBox::from_id_salt("ui_accent")
+                        .width(settings_value_width(ui))
+                        .selected_text(t(accent.label()))
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(150.0);
+                            for option in AccentColor::all() {
+                                let color = theme_tokens(self.dark_mode, *option).accent;
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(10.0, 10.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().circle_filled(rect.center(), 4.0, color);
                                     stable_popup_selectable_value(
                                         ui,
-                                        &mut language,
+                                        &mut accent,
                                         *option,
-                                        option.native_name(),
+                                        t(option.label()),
                                     );
-                                }
-                            });
-                        if language != self.language {
-                            self.set_language(ui.ctx(), language);
-                        }
-                        ui.end_row();
-                    });
-            });
+                                });
+                            }
+                        });
+                    self.accent = accent;
+                    ui.end_row();
+
+                    ui.label(t("Density"));
+                    let mut density = self.density;
+                    egui::ComboBox::from_id_salt("ui_density")
+                        .width(settings_value_width(ui))
+                        .selected_text(t(density.label()))
+                        .show_ui(ui, |ui| {
+                            ui.set_min_width(150.0);
+                            for option in UiDensity::all() {
+                                stable_popup_selectable_value(
+                                    ui,
+                                    &mut density,
+                                    *option,
+                                    t(option.label()),
+                                );
+                            }
+                        });
+                    self.density = density;
+                    ui.end_row();
+
+                    ui.label(t("Motion"));
+                    ui.checkbox(&mut self.reduce_motion, t("Reduce motion"))
+                        .on_hover_text(t(
+                            "Complete interface transitions instantly and reduce idle redraws",
+                        ));
+                    ui.end_row();
+                });
+        });
     }
 
     fn settings_parse_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t("Parse Settings"))
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Grid::new("settings_parse")
+        settings_section(ui, self.theme(), "Parse Settings", |ui| {
+            egui::Grid::new("settings_parse")
                     .num_columns(2)
                     .spacing([14.0, 6.0])
                     .show(ui, |ui| {
                         ui.label(t("BPF Filter"));
-                        ui.add(egui::TextEdit::singleline(&mut self.filter).desired_width(260.0))
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.filter)
+                                .desired_width(settings_value_width(ui)),
+                        )
                             .on_hover_text(t("Capture filter expression; takes effect on the next capture"));
                         ui.end_row();
                         ui.label(t("Capture NIC"));
@@ -1282,7 +1714,7 @@ impl DpsApp {
                         ui.label(t("DPS Time"));
                         let mut dps_time_mode = self.dps_time_mode;
                         egui::ComboBox::from_id_salt("dps_time_mode")
-                            .width(150.0)
+                            .width(settings_value_width(ui))
                             .selected_text(t(dps_time_mode.label()))
                             .show_ui(ui, |ui| {
                                 ui.set_min_width(150.0);
@@ -1306,11 +1738,10 @@ impl DpsApp {
                         ui.label(t("Passthrough Hotkey"));
                         let mut hotkey = self.passthrough_hotkey;
                         egui::ComboBox::from_id_salt("passthrough_hotkey")
-                            .width(PASSTHROUGH_HOTKEY_COMBO_WIDTH)
+                            .width(settings_value_width(ui))
                             .selected_text(hotkey.label())
                             .show_ui(ui, |ui| {
                                 ui.set_min_width(PASSTHROUGH_HOTKEY_COMBO_WIDTH);
-                                ui.set_max_width(PASSTHROUGH_HOTKEY_COMBO_WIDTH);
                                 for option in PassthroughHotkey::all() {
                                     stable_popup_selectable_value(
                                         ui,
@@ -1325,57 +1756,53 @@ impl DpsApp {
                         }
                         ui.end_row();
                     });
-            });
+        });
     }
 
     fn settings_hud_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new("HUD")
-            .default_open(true)
-            .show(ui, |ui| {
-                // Wrapped rows rather than a fixed grid: a verbose language's checkbox
-                // labels reflow onto the next line instead of clipping when the column
-                // is narrow. The leading label acts as the row heading.
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(t("Top"));
-                    ui.checkbox(&mut self.hud_config.show_title, t("Title"));
-                    ui.checkbox(&mut self.hud_config.show_team_dps, "DPS");
-                    ui.checkbox(&mut self.hud_config.show_duration, t("Time"));
-                    ui.checkbox(&mut self.hud_config.show_total_damage, t("Total Damage"));
-                    ui.checkbox(&mut self.hud_config.show_damage_taken, t("Damage Taken"));
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(t("Modules"));
-                    ui.checkbox(
-                        &mut self.hud_config.show_character_rows,
-                        t("Character Ranking"),
-                    );
-                    ui.checkbox(&mut self.hud_config.show_abyss_half, t("Abyss"));
-                    ui.checkbox(
-                        &mut self.hud_config.show_passthrough_state,
-                        t("Passthrough"),
-                    );
-                    ui.checkbox(&mut self.hud_config.show_mini_timeline, t("Curve"));
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(t("Presets"));
-                    if ui.button(t("Minimal")).clicked() {
-                        self.hud_config = HudConfig::minimal();
-                    }
-                    if ui.button(t("Standard")).clicked() {
-                        self.hud_config = HudConfig::default();
-                    }
-                    if ui.button(t("Detailed")).clicked() {
-                        self.hud_config = HudConfig::detailed();
-                    }
-                });
+        settings_section(ui, self.theme(), "HUD", |ui| {
+            // Wrapped rows rather than a fixed grid: a verbose language's checkbox
+            // labels reflow onto the next line instead of clipping when the column
+            // is narrow. The leading label acts as the row heading.
+            ui.horizontal_wrapped(|ui| {
+                ui.label(t("Top"));
+                ui.checkbox(&mut self.hud_config.show_title, t("Title"));
+                ui.checkbox(&mut self.hud_config.show_team_dps, t("DPS"));
+                ui.checkbox(&mut self.hud_config.show_duration, t("Time"));
+                ui.checkbox(&mut self.hud_config.show_total_damage, t("Total Damage"));
+                ui.checkbox(&mut self.hud_config.show_damage_taken, t("Damage Taken"));
             });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(t("Modules"));
+                ui.checkbox(
+                    &mut self.hud_config.show_character_rows,
+                    t("Character Ranking"),
+                );
+                ui.checkbox(&mut self.hud_config.show_abyss_half, t("Abyss"));
+                ui.checkbox(
+                    &mut self.hud_config.show_passthrough_state,
+                    t("Passthrough"),
+                );
+                ui.checkbox(&mut self.hud_config.show_mini_timeline, t("Curve"));
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(t("Presets"));
+                if ui.button(t("Minimal")).clicked() {
+                    self.hud_config = HudConfig::minimal();
+                }
+                if ui.button(t("Standard")).clicked() {
+                    self.hud_config = HudConfig::default();
+                }
+                if ui.button(t("Detailed")).clicked() {
+                    self.hud_config = HudConfig::detailed();
+                }
+            });
+        });
     }
 
     fn settings_team_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t("Team Data"))
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
+        settings_section(ui, self.theme(), "Team Data", |ui| {
+            ui.horizontal(|ui| {
                     if ui
                         .button(t("Import DPS Data"))
                         .on_hover_text(t("Import team DPS data (json) for abyss clear prediction"))
@@ -1391,58 +1818,56 @@ impl DpsApp {
                         self.export_team_dps(ui.ctx());
                     }
                 });
-                ui.small(t("Import/export is scene-independent; works in both open world and abyss"));
-            });
+            ui.small(t(
+                "Import/export is scene-independent; works in both open world and abyss",
+            ));
+        });
     }
 
     fn settings_capture_logs_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t("Capture Files"))
-            .default_open(false)
-            .show(ui, |ui| {
-                if self.capture_log_stats.is_none() {
+        settings_section(ui, self.theme(), "Capture Files", |ui| {
+            if self.capture_log_stats.is_none() {
+                self.refresh_capture_log_stats();
+            }
+            let stats = self.capture_log_stats.unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label(tf(
+                    "Raw captures: {} · {}",
+                    &[
+                        &stats.count.to_string(),
+                        &capture_logs::format_bytes(stats.total_bytes),
+                    ],
+                ));
+                if ui.button(t("Refresh")).clicked() {
                     self.refresh_capture_log_stats();
                 }
-                let stats = self.capture_log_stats.unwrap_or_default();
-                ui.horizontal(|ui| {
-                    ui.label(tf(
-                        "Raw captures: {} · {}",
-                        &[
-                            &stats.count.to_string(),
-                            &capture_logs::format_bytes(stats.total_bytes),
-                        ],
-                    ));
-                    if ui.button(t("Refresh")).clicked() {
-                        self.refresh_capture_log_stats();
-                    }
-                    if ui
-                        .add_enabled(stats.count > 0, egui::Button::new(t("Clear")))
-                        .clicked()
-                    {
-                        self.request_confirmation_for(
-                            ui.ctx().viewport_id(),
-                            ConfirmationAction::ClearCaptureLogs,
-                        );
-                    }
-                });
-                ui.small(t("Live capture writes raw frames to logs/nte_raw_*.pcapng; clearing does not affect stats or history."));
+                if ui
+                    .add_enabled(stats.count > 0, egui::Button::new(t("Clear")))
+                    .clicked()
+                {
+                    self.request_confirmation_for(
+                        ui.ctx().viewport_id(),
+                        ConfirmationAction::ClearCaptureLogs,
+                    );
+                }
             });
+            ui.small(t("Live capture writes raw frames to logs/nte_raw_*.pcapng; clearing does not affect stats or history."));
+        });
     }
 
     fn settings_abyss_section(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t("Abyss Values"))
-            .default_open(true)
-            .show(ui, |ui| {
-                if ui
-                    .button(t("Open Abyss Value Tables"))
-                    .on_hover_text(t(
-                        "Opens in a separate window so you can view it side by side with live DPS",
-                    ))
-                    .clicked()
-                {
-                    self.abyss_overview_open = true;
-                    self.abyss_overview.ensure_selection();
-                }
-            });
+        settings_section(ui, self.theme(), "Abyss Values", |ui| {
+            if ui
+                .button(t("Open Abyss Value Tables"))
+                .on_hover_text(t(
+                    "Opens in a separate window so you can view it side by side with live DPS",
+                ))
+                .clicked()
+            {
+                self.abyss_overview_open = true;
+                self.abyss_overview.ensure_selection();
+            }
+        });
     }
 
     /// Runtime resource coverage for maintainers. This only checks distributable
@@ -1512,7 +1937,7 @@ impl DpsApp {
                     "{} / {}",
                     summary.counts.characters, summary.counts.skill_damage
                 ),
-                theme_accent(self.dark_mode),
+                self.theme().accent,
                 false,
             );
             let abyss_reaction_color = columns[3].visuals().text_color();
@@ -1618,117 +2043,112 @@ impl DpsApp {
     }
 
     pub(crate) fn diagnostics_contents_inner(&mut self, ui: &mut egui::Ui) {
-        egui::CollapsingHeader::new(t("Capture Environment"))
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::Grid::new("diagnostics_environment")
-                    .num_columns(2)
-                    .spacing([14.0, 5.0])
-                    .show(ui, |ui| {
-                        ui.label(t("NIC"));
-                        let device_label = self
-                            .devices
-                            .get(self.selected_device)
-                            .map(|device| {
-                                if device.description.is_empty() {
-                                    device.name.clone()
-                                } else {
-                                    device.description.clone()
-                                }
-                            })
-                            .unwrap_or_else(|| t("Not detected"));
-                        let mode_suffix = if self.manual_capture_device.is_some() {
-                            t("(manual)")
-                        } else {
-                            t("(auto)")
-                        };
-                        ui.monospace(format!("{device_label}{mode_suffix}"));
-                        ui.end_row();
-                        ui.label(t("Local IP"));
-                        ui.monospace(if self.local_ip.is_empty() {
-                            t("Not detected")
-                        } else {
-                            self.local_ip.clone()
-                        });
-                        ui.end_row();
-                        ui.label(t("Game Connection"));
-                        if let Some(network) = &self.game_network {
-                            ui.monospace(format!(
-                                "PID {}  {} -> {}:{}",
-                                network.pid,
-                                network.local_ip,
-                                network.remote_ip,
-                                network.remote_port
-                            ));
-                        } else {
-                            ui.monospace(t("Not detected"));
-                        }
-                        ui.end_row();
-                        ui.label(t("Diagnostics"));
-                        ui.monospace(self.diagnostic.clone().unwrap_or_else(|| t("Normal")));
-                        ui.end_row();
-                        ui.label(t("Actual BPF"));
-                        ui.monospace(self.active_capture_filter.clone().unwrap_or_else(|| {
-                            if self.capture.is_some() {
-                                t("Determining")
+        settings_section(ui, self.theme(), "Capture Environment", |ui| {
+            egui::Grid::new("diagnostics_environment")
+                .num_columns(2)
+                .spacing([14.0, 5.0])
+                .show(ui, |ui| {
+                    ui.label(t("NIC"));
+                    let device_label = self
+                        .devices
+                        .get(self.selected_device)
+                        .map(|device| {
+                            if device.description.is_empty() {
+                                device.name.clone()
                             } else {
-                                t("Not started")
+                                device.description.clone()
                             }
-                        }));
-                        ui.end_row();
-                        ui.label(t("Raw Capture"));
-                        let raw_capture_label = self.raw_capture.as_ref().map_or_else(
-                            || t("No raw capture"),
-                            |capture| {
-                                let file = capture.path().map_or_else(
-                                    || t("Write unavailable"),
-                                    |path| {
-                                        path.file_name()
-                                            .and_then(|name| name.to_str())
-                                            .map(|name| name.to_owned())
-                                            .unwrap_or_else(|| t("Raw capture file"))
-                                    },
-                                );
-                                tf(
-                                    "{} packets · {}",
-                                    &[&capture.packet_count().to_string(), &file],
-                                )
-                            },
-                        );
-                        ui.monospace(raw_capture_label);
-                        ui.end_row();
+                        })
+                        .unwrap_or_else(|| t("Not detected"));
+                    let mode_suffix = if self.manual_capture_device.is_some() {
+                        t("(manual)")
+                    } else {
+                        t("(auto)")
+                    };
+                    ui.monospace(format!("{device_label}{mode_suffix}"));
+                    ui.end_row();
+                    ui.label(t("Local IP"));
+                    ui.monospace(if self.local_ip.is_empty() {
+                        t("Not detected")
+                    } else {
+                        self.local_ip.clone()
                     });
-                ui.horizontal(|ui| {
-                    if ui.button(t("Re-detect")).clicked()
-                        && let Err(error) = self.refresh_game_network()
-                    {
-                        self.set_last_error_in(ui.ctx(), error, Some(ErrorAction::RefreshNetwork));
+                    ui.end_row();
+                    ui.label(t("Game Connection"));
+                    if let Some(network) = &self.game_network {
+                        ui.monospace(format!(
+                            "PID {}  {} -> {}:{}",
+                            network.pid, network.local_ip, network.remote_ip, network.remote_port
+                        ));
+                    } else {
+                        ui.monospace(t("Not detected"));
                     }
-                    ui.label(t("Damage-taken logging enabled"));
-                    let can_export_json = self.capture.is_none()
-                        && self.replay_thread.is_none()
-                        && (!self.state.hits.is_empty()
-                            || !self.state.packets.is_empty()
-                            || !self.state.empty_curtain.is_empty());
-                    if ui
-                        .add_enabled(can_export_json, egui::Button::new(t("Export Parsed JSON")))
-                        .clicked()
-                    {
-                        self.export_capture_info(ui.ctx());
-                    }
-                    let can_export_raw = self.capture.is_none()
-                        && self
-                            .raw_capture
-                            .as_ref()
-                            .is_some_and(|capture| capture.packet_count() > 0);
-                    if ui
-                        .add_enabled(can_export_raw, egui::Button::new(t("Save Full PCAPNG As")))
-                        .clicked()
-                    {
-                        self.export_raw_capture(ui.ctx());
-                    }
+                    ui.end_row();
+                    ui.label(t("Diagnostics"));
+                    ui.monospace(self.diagnostic.clone().unwrap_or_else(|| t("Normal")));
+                    ui.end_row();
+                    ui.label(t("Actual BPF"));
+                    ui.monospace(self.active_capture_filter.clone().unwrap_or_else(|| {
+                        if self.capture.is_some() {
+                            t("Determining")
+                        } else {
+                            t("Not started")
+                        }
+                    }));
+                    ui.end_row();
+                    ui.label(t("Raw Capture"));
+                    let raw_capture_label = self.raw_capture.as_ref().map_or_else(
+                        || t("No raw capture"),
+                        |capture| {
+                            let file = capture.path().map_or_else(
+                                || t("Write unavailable"),
+                                |path| {
+                                    path.file_name()
+                                        .and_then(|name| name.to_str())
+                                        .map(|name| name.to_owned())
+                                        .unwrap_or_else(|| t("Raw capture file"))
+                                },
+                            );
+                            tf(
+                                "{} packets · {}",
+                                &[&capture.packet_count().to_string(), &file],
+                            )
+                        },
+                    );
+                    ui.monospace(raw_capture_label);
+                    ui.end_row();
                 });
-                ui.horizontal(|ui| {
+            ui.horizontal(|ui| {
+                if ui.button(t("Re-detect")).clicked()
+                    && let Err(error) = self.refresh_game_network()
+                {
+                    self.set_last_error_in(ui.ctx(), error, Some(ErrorAction::RefreshNetwork));
+                }
+                ui.label(t("Damage-taken logging enabled"));
+                let can_export_json = self.capture.is_none()
+                    && self.replay_thread.is_none()
+                    && (!self.state.hits.is_empty()
+                        || !self.state.packets.is_empty()
+                        || !self.state.empty_curtain.is_empty());
+                if ui
+                    .add_enabled(can_export_json, egui::Button::new(t("Export Parsed JSON")))
+                    .clicked()
+                {
+                    self.export_capture_info(ui.ctx());
+                }
+                let can_export_raw = self.capture.is_none()
+                    && self
+                        .raw_capture
+                        .as_ref()
+                        .is_some_and(|capture| capture.packet_count() > 0);
+                if ui
+                    .add_enabled(can_export_raw, egui::Button::new(t("Save Full PCAPNG As")))
+                    .clicked()
+                {
+                    self.export_raw_capture(ui.ctx());
+                }
+            });
+            ui.horizontal(|ui| {
                     if ui.button(t("Import pcapng")).clicked() {
                         self.request_debug_import(ui.ctx(), DebugImportKind::Pcapng);
                     }
@@ -1737,41 +2157,44 @@ impl DpsApp {
                     }
                     ui.small(t("Importing clears the current stats and uses the same parse pipeline as live capture"));
                 });
-            });
+        });
         ui.add_space(8.0);
-        egui::CollapsingHeader::new(t("Auto-diagnostics Wizard"))
-            .default_open(true)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!self.diagnostics_running, egui::Button::new(t("Run Diagnostics")))
-                        .clicked()
-                    {
-                        self.request_capture_diagnostics();
-                    }
-                    if self.diagnostics_running {
-                        ui.add(egui::Spinner::new().size(16.0));
-                        ui.label(t("Checking Npcap, the game connection and the current capture state"));
-                    }
-                    if let Some(report) = &self.diagnostics_report
-                        && ui.button(t("Copy Redacted Report")).clicked()
-                    {
-                        ui.ctx().copy_text(report.redacted_text());
-                    }
-                });
-                ui.add_space(4.0);
-                if let Some(report) = &self.diagnostics_report {
-                    draw_diagnostic_report(ui, report, self.dark_mode);
-                } else {
-                    ui.label(
+        settings_section(ui, self.theme(), "Auto-diagnostics Wizard", |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        !self.diagnostics_running,
+                        egui::Button::new(t("Run Diagnostics")),
+                    )
+                    .clicked()
+                {
+                    self.request_capture_diagnostics();
+                }
+                if self.diagnostics_running {
+                    ui.add(egui::Spinner::new().size(16.0));
+                    ui.label(t(
+                        "Checking Npcap, the game connection and the current capture state",
+                    ));
+                }
+                if let Some(report) = &self.diagnostics_report
+                    && ui.button(t("Copy Redacted Report")).clicked()
+                {
+                    ui.ctx().copy_text(report.redacted_text());
+                }
+            });
+            ui.add_space(4.0);
+            if let Some(report) = &self.diagnostics_report {
+                draw_diagnostic_report(ui, report, self.dark_mode);
+            } else {
+                ui.label(
                         RichText::new(t("After you click Run Diagnostics, it checks the capture environment step by step and suggests next steps"))
                             .color(ui.visuals().weak_text_color()),
                     );
-                }
-            });
+            }
+        });
         ui.add_space(8.0);
         let quality = self.current_quality_summary();
-        draw_capture_quality_summary(ui, &quality, self.dark_mode);
+        draw_capture_quality_summary(ui, &quality, self.theme());
     }
 
     pub(crate) fn debug_packets_contents(&mut self, ui: &mut egui::Ui) {
@@ -1860,7 +2283,7 @@ impl DpsApp {
                         ui.label(
                             RichText::new(t("Auto Parse"))
                                 .strong()
-                                .color(theme_accent(self.dark_mode)),
+                                .color(self.theme().accent),
                         );
                         ui.add(
                             egui::TextEdit::multiline(&mut packet.decoded_text.clone())
@@ -1960,6 +2383,7 @@ impl DpsApp {
                                 id.parse::<u32>().unwrap_or_default(),
                                 self.characters.as_ref(),
                                 0,
+                                self.dark_mode,
                             )
                         });
                         let dark_mode = self.dark_mode;
@@ -2191,8 +2615,10 @@ impl DpsApp {
             return;
         }
         let (title, message, confirm_label) = confirmation_content(action);
-        let mut confirmed = false;
-        let mut cancelled = false;
+        let mut confirmed =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let mut cancelled =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         egui::Window::new(t(title))
             .collapsible(false)
             .resizable(false)
@@ -2283,7 +2709,45 @@ impl DpsApp {
         if self.pending_confirmation.is_some() && self.pending_confirmation_viewport == from {
             self.pending_confirmation_viewport = to;
         }
+        if let Some(pending) = &mut self.pending_file_dialog
+            && pending.viewport == from
+        {
+            pending.viewport = to;
+        }
+        if let Some(active_import) = &mut self.active_import
+            && active_import.viewport == from
+        {
+            active_import.viewport = to;
+        }
+        if self.engine_task_viewport == Some(from) {
+            self.engine_task_viewport = Some(to);
+        }
+        self.close_command_palette_for(from);
+        for toast in &mut self.status_toasts {
+            if toast.viewport == from {
+                toast.viewport = to;
+            }
+        }
     }
+}
+
+fn console_sidebar_collapsed(width: f32) -> bool {
+    width < 720.0
+}
+
+fn console_sidebar_width(collapse_progress: f32) -> f32 {
+    egui::lerp(164.0..=44.0, collapse_progress.clamp(0.0, 1.0))
+}
+
+fn settings_uses_two_columns(width: f32) -> bool {
+    width >= DpsApp::SETTINGS_TWO_COLUMN_MIN_WIDTH
+}
+
+/// Width for a value widget inside a settings grid cell: fill the card's
+/// remaining width so the form stretches with the window, with a floor so a
+/// narrow column stays usable.
+fn settings_value_width(ui: &egui::Ui) -> f32 {
+    ui.available_width().max(150.0)
 }
 
 /// Compact chip for one detected combat segment in the timeline page.
@@ -2312,4 +2776,177 @@ fn draw_combat_segment_chip(
                 .size(11.0),
             );
         });
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn console_sidebar_breakpoint_is_stable() {
+        assert!(console_sidebar_collapsed(719.9));
+        assert!(!console_sidebar_collapsed(720.0));
+    }
+
+    #[test]
+    fn console_sidebar_width_interpolates_between_layout_states() {
+        assert_eq!(console_sidebar_width(0.0), 164.0);
+        assert_eq!(console_sidebar_width(0.5), 104.0);
+        assert_eq!(console_sidebar_width(1.0), 44.0);
+        assert_eq!(console_sidebar_width(2.0), 44.0);
+    }
+
+    #[test]
+    fn settings_columns_reflow_at_the_content_breakpoint() {
+        assert!(!settings_uses_two_columns(899.9));
+        assert!(settings_uses_two_columns(900.0));
+    }
+}
+
+impl DpsApp {
+    fn settings_hotkeys_section(&mut self, ui: &mut egui::Ui) {
+        self.capture_recorded_hotkey(ui.ctx());
+        settings_section(ui, self.theme(), "Hotkeys", |ui| {
+            let mut hotkeys = self.global_hotkeys;
+            if ui
+                .checkbox(&mut hotkeys.enabled, t("Enable global hotkeys"))
+                .changed()
+            {
+                self.set_global_hotkeys(hotkeys);
+            }
+            ui.add_space(4.0);
+            egui::Grid::new("settings_global_hotkeys")
+                .num_columns(3)
+                .spacing([12.0, 6.0])
+                .show(ui, |ui| {
+                    for action in GlobalHotkeyAction::all() {
+                        ui.label(t(action.label()));
+                        let recording = self.recording_hotkey == Some(*action);
+                        let label = if recording {
+                            t("Press a shortcut...")
+                        } else {
+                            self.global_hotkeys
+                                .binding(*action)
+                                .map(HotkeyBinding::label)
+                                .unwrap_or_else(|| t("Disabled"))
+                        };
+                        if ui
+                            .add_sized(
+                                egui::vec2((ui.available_width() - 96.0).max(150.0), 28.0),
+                                egui::Button::new(label),
+                            )
+                            .on_hover_text(t(
+                                "Click, then press Ctrl/Alt/Shift plus an F1-F12 key; Esc cancels",
+                            ))
+                            .clicked()
+                        {
+                            self.set_recording_hotkey(Some(*action));
+                        }
+                        if ui
+                            .add_enabled(
+                                self.global_hotkeys.binding(*action).is_some(),
+                                egui::Button::new(t("Disable")),
+                            )
+                            .clicked()
+                        {
+                            let mut hotkeys = self.global_hotkeys;
+                            hotkeys.set_binding(*action, None);
+                            self.set_global_hotkeys(hotkeys);
+                            self.set_recording_hotkey(None);
+                        }
+                        ui.end_row();
+                    }
+                });
+            ui.small(
+                RichText::new(tf("Command palette: {}", &["Ctrl+K"]))
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+    }
+
+    fn capture_recorded_hotkey(&mut self, ctx: &egui::Context) {
+        let Some(action) = self.recording_hotkey else {
+            return;
+        };
+        let event = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers)),
+                _ => None,
+            })
+        });
+        let Some((key, modifiers)) = event else {
+            return;
+        };
+        if key == egui::Key::Escape {
+            self.set_recording_hotkey(None);
+            return;
+        }
+        if key == egui::Key::Backspace || key == egui::Key::Delete {
+            let mut hotkeys = self.global_hotkeys;
+            hotkeys.set_binding(action, None);
+            self.set_global_hotkeys(hotkeys);
+            self.set_recording_hotkey(None);
+            return;
+        }
+        let Some(key) = hotkey_key_from_egui(key) else {
+            self.status = t("Use an F1-F12 key for global shortcuts");
+            return;
+        };
+        if !modifiers.ctrl && !modifiers.alt && !modifiers.shift {
+            self.status = t("Global shortcuts require Ctrl, Alt, or Shift");
+            return;
+        }
+        let binding = HotkeyBinding::new(modifiers.ctrl, modifiers.alt, modifiers.shift, key);
+        if binding.is_reserved() {
+            self.status = t("This shortcut is reserved by Windows");
+            self.set_recording_hotkey(None);
+            return;
+        }
+        if GlobalHotkeyAction::all()
+            .iter()
+            .copied()
+            .any(|other| other != action && self.global_hotkeys.binding(other) == Some(binding))
+        {
+            self.status = t("This shortcut is already assigned");
+            return;
+        }
+        let mut hotkeys = self.global_hotkeys;
+        hotkeys.set_binding(action, Some(binding));
+        self.set_global_hotkeys(hotkeys);
+        self.set_recording_hotkey(None);
+        self.status = tf(
+            "{} shortcut switched to {}",
+            &[&t(action.label()), &binding.label()],
+        );
+    }
+}
+
+fn hotkey_key_from_egui(key: egui::Key) -> Option<HotkeyKey> {
+    HotkeyKey::all()
+        .iter()
+        .copied()
+        .find(|candidate| candidate.egui_key() == key)
+}
+
+#[cfg(test)]
+mod layout_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn console_tab_navigation_follows_sidebar_order() {
+        assert_eq!(ConsoleTab::Settings.adjacent(1), ConsoleTab::History);
+        assert_eq!(ConsoleTab::History.adjacent(1), ConsoleTab::Timeline);
+        assert_eq!(
+            ConsoleTab::Settings.adjacent(-1),
+            *ConsoleTab::visible_tabs()
+                .last()
+                .expect("visible tabs are not empty")
+        );
+    }
 }
