@@ -37,7 +37,7 @@
 
 ## 4. 架构边界
 
-源码按职责分五个目录，`src/main.rs` 只声明这五个模块。新代码先按下表定归属，再看对应文件的具体约束：
+仓库产出两个二进制：`nte-dps-tool`（完整 GUI，Feature `gui`，默认启用）与 `nte-core`（无 GUI 的 stdio sidecar，Feature `cli`）。GUI 始终包含 F12、Packets、Resources、Diagnostics 等维护能力，不再提供裁剪调试入口的构建变体。源码由 `src/lib.rs`（共享 crate 根）统一声明模块并做 Feature gating：`app`、`support` 仅在 `gui` 下编译；`api`、`cli` 仅在 `cli` 下编译；`platform` 内 `hotkey`/`file_drop`/`window_attributes` 仅 `gui`，`network`/`locale` 与 CLI 共享；`core`、`engine`、`storage` 全量共享且必须保持不依赖 GUI crate。新代码先按下表定归属，再看对应文件的具体约束：
 
 | 新代码的性质 | 归属 | 绝对禁止 |
 | --- | --- | --- |
@@ -47,14 +47,27 @@
 | 伤害/技能/GameplayEffect 语义解析 | `src/engine/parser.rs` | panic（失败返回 `Option`/`Result`） |
 | 领域模型、战斗聚合、序列化结构 | `src/engine/model.rs` | UI、Win32 API |
 | 深渊静态表与波次预测计算 | `src/engine/abyss_data.rs` | UI |
+| 引擎事件归并、抓包环境准备与控制（GUI/CLI 共享的非 UI 核心） | `src/core/` | 依赖 egui、调用 `t()`/`tf()`、读写 stdout |
+| JSON-RPC envelope、请求参数、响应与外部 DTO | `src/api/` | 启动线程、抓包、读写 stdout、修改领域状态 |
+| CLI 参数、NDJSON framing、请求分发与进程退出 | `src/cli/` | 协议解析算法、GUI 类型、用户可见非英文协议文案 |
 | Win32/系统集成（窗口、热键、网络探测、拖放） | `src/platform/` | 业务逻辑 |
 | 配置、历史库、资源读取、i18n、通用 I/O | `src/storage/` | UI |
 | Debug/维护辅助（编辑器状态、诊断、加密 INI） | `src/support/` | 依赖 egui、阻塞帧 |
 
 各文件职责：
 
-- `src/main.rs`：启动入口，只负责 panic 日志、配置加载、`eframe::NativeOptions` 和 `DpsApp` 创建。
+- `src/lib.rs`：共享 crate 根。模块声明与 Feature gating，以及 GUI 启动逻辑 `run_gui()`（panic 日志、配置加载、`eframe::NativeOptions`、透明窗口 wgpu 配置、`DpsApp` 创建）。
+- `src/main.rs`：GUI 薄启动器，仅保留 `windows_subsystem = "windows"` 并调用 `nte_dps_tool::run_gui()`。
+- `src/bin/nte-core.rs`：CLI Core 薄启动器（真实控制台，不得加 `windows_subsystem`），分发 `serve --stdio`、`version --json` 与 `devices --json`。
+- `src/api/`：CLI 对外稳定协议类型。`jsonrpc.rs` 负责 envelope 与标准错误，`request.rs` 负责 typed method/params，`response.rs` 与 `dto.rs` 负责显式外部响应结构；不得直接序列化内部领域类型。
+- `src/cli/args.rs`：无第三方依赖的严格 CLI 参数解析；未知参数与缺值必须返回退出码 2 对应的英文错误。
+- `src/cli/stdio.rs`：UTF-8 NDJSON stdin reader、单一 core loop 与独占 stdout writer；stdout 禁止任何非 JSON 文本，日志和启动错误只写 stderr。
+- `docs/CLI_PROTOCOL.md`、`docs/CLI_PROTOCOL_ZH.md`：同一 CLI 协议的英文和简体中文文档；稳定字段、错误码、方法、事件及示例必须同步更新。`docs/examples/` 只放可运行、无秘密且默认不启动抓包的集成示例。
 - `src/app/`：UI、应用状态和事件编排。`mod.rs` 持有 `DpsApp` 结构、`eframe::App`/`Drop` 实现、共享辅助类型/常量与测试模块；按窗口/页签拆分为子模块（方法子模块 `lifecycle`、`main_view`、`detail_panels`、`console_view` 以 `impl DpsApp` 续写；视图/自由函数子模块 `abyss`、`hit_detail`、`timeline`、`history_ui`、`resources`、`diagnostics_ui`、`editor`、`chrome`、`hud`、`theme`，由 `mod.rs` 以 `pub(crate) use` 再导出，子模块统一 `use super::*` 共享一个扁平 `app` 命名空间）。
+- `src/core/reducer.rs`：唯一的 `EngineEvent` → `CombatState` 归并入口 `apply_engine_event`，返回 `CoreSignal` 供前端处理各自副作用；GUI/CLI 都不得再各写一套完整事件 match。
+- `src/core/capture.rs`：非 UI 抓包准备与控制：游戏进程探测、设备枚举、自动/手动网卡解析、BPF 组合、`CaptureController` 与抓包启停。两个前端的实时抓包必须走这里，语义不得分叉。
+- `src/core/snapshot.rs`：把已验证的内部背包条目与 equipment catalog 转为 frontend-neutral 稳定快照；内部字段不得直接承诺为外部 API。
+- `src/core/mod.rs`：`CoreError`/`CoreErrorCode` 稳定错误码。core 层不做 i18n；用户可见文案由前端在展示边界生成。
 - `src/engine/capture.rs`：Npcap FFI、设备枚举、实时抓包、PCAPNG/JSON 导入、原始帧写入和 `EngineEvent` 产生。
 - `src/engine/protocol.rs`：UE 传输层位级解析。必须保持纯函数、确定性。
 - `src/engine/parser.rs`：伤害载荷、GameplayEffect、技能分类和资源表读取。
@@ -72,7 +85,8 @@
 - `src/support/character_editor.rs`：角色表 Debug 编辑器的数据状态、JSON 字段读写和表单校验。
 - `src/support/encrypted_ini.rs`：NTE 加密 INI 的解析、搜索、加解密和记录复用。不得用于资源解包。
 - `src/support/diagnostics.rs`、`src/support/resource_audit.rs`：采集诊断与运行资源覆盖率检查，只消费只读数据。
-- `build.rs`：资源内嵌和 Windows 图标。输出必须确定，新增资源路径需保持大小写和分隔符稳定。
+- `build.rs`：资源内嵌和 Windows 图标。GUI 构建递归内嵌完整 `res/` 并写入图标；CLI-only 只读取 `res/data/core_manifest.json` 白名单且不得遍历图片或写入 GUI 图标；`external_resources` 不生成内嵌映射。输出必须确定，新增资源路径需保持大小写和 `/` 分隔符稳定。
+- `res/data/core_manifest.json`：CLI-only 内嵌资源的显式白名单与 `data_version`；只加入 CLI 真实运行所需 JSON，禁止加入 GUI 图片、字体、图标或预测/审计专用数据。
 - `res/`：稳定运行资源。手工字段优先保留，批量生成必须说明来源。
 - `vendor/egui-winit-0.34.3/`：本地 fork 依赖，仅为 §10 透明背景修复而存在，见 §11。
 - 资源导出、CUE4Parse probe 和离线资源维护工具已迁出到独立私有仓库 `kongbaiz/nte-resource-exporter`。主程序仓库不得依赖这些工具运行。
@@ -166,7 +180,7 @@
 主程序渲染后端固定为 `wgpu`（非 `glow`）：借边框透明窗口在 OpenGL 下，从窗口角落斜向快速拖拽缩放时 NVIDIA 驱动会直接丢失 GL 上下文导致进程崩溃（无 panic 日志，`egui` #4061 / #5460，上游未修）。`wgpu` 完全避开这条驱动路径，代价是 Windows 下默认拿不到真正的窗口透明——见下。
 
 - **HUD 透明背景变黑问题**：`wgpu` 在 Windows 上创建的普通 HWND swapchain（D3D12、Vulkan 都一样）永远只能协商到 `CompositeAlphaMode::Opaque`，"透明"窗口会画成纯黑（`egui` #4451、wgpu #1375 / #7108，均为上游未修的已知限制；已实测切到 Vulkan 后端同样无效）。修复由两部分组成，**缺一不可**：
-  1. `src/main.rs` 的 `wgpu_options_with_transparent_dx12()`：把后端固定为 `Backends::DX12`，并设置 `Dx12BackendOptions.presentation_system = Dx12SwapchainKind::DxgiFromVisual`（wgpu 27+ 内建的 DirectComposition 支持，自动创建 `IDCompositionVisual` 承载 swapchain）。
+  1. `src/lib.rs` 的 `wgpu_options_with_transparent_dx12()`：把后端固定为 `Backends::DX12`，并设置 `Dx12BackendOptions.presentation_system = Dx12SwapchainKind::DxgiFromVisual`（wgpu 27+ 内建的 DirectComposition 支持，自动创建 `IDCompositionVisual` 承载 swapchain）。
   2. `vendor/egui-winit-0.34.3/`：`egui-winit` 0.34.3 的本地 fork，仅打了一处补丁——透明窗口额外设置 `WindowAttributesExtWindows::with_no_redirection_bitmap(true)`（补丁位置：`create_winit_window_attributes` 里的 `#[cfg(target_os = "windows")]` 分支）。没有这一步，HWND 自带的默认 GDI 重定向表面依然存在，会在 DirectComposition 可视化层周围/下方露出一块带原生标题栏的白色系统窗口。补丁说明见该目录下 `PATCH_NOTES.md`；`Cargo.toml` 用 `[patch.crates-io]` 接管这份 fork。
   - 只设置 `DxgiFromVisual` 而不打 `no_redirection_bitmap` 补丁：透明生效但会叠加一层白色系统窗口残影。只打补丁而不设 `DxgiFromVisual`：完全不透明。两处均已单独实测验证过上述失败现象。
   - 升级 `eframe`/`egui-winit` 版本前，必须先对照新版本重新核对/重打 `no_redirection_bitmap` 补丁，否则会静默回归黑屏；这也是"不无理由升级 `egui/eframe` 主版本"约束的具体原因之一。
@@ -194,6 +208,20 @@ cargo fmt --check
 cargo check
 cargo test
 ```
+
+涉及双 Binary、Feature、共享 core、资源或 CI 时，还必须运行：
+
+```powershell
+cargo check --bin nte-dps-tool --features gui
+cargo check --bin nte-core --no-default-features --features cli
+cargo clippy --bin nte-dps-tool --features gui -- -D warnings
+cargo clippy --bin nte-core --no-default-features --features cli -- -D warnings
+cargo test --features gui
+cargo test --no-default-features --features cli
+cargo tree -e normal --no-default-features --features cli
+```
+
+最后一条的正常依赖树不得出现 `eframe`、`egui`、`wgpu`、`rfd` 或 `raw-window-handle`。
 
 建议在可行时追加：
 

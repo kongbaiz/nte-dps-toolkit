@@ -28,7 +28,7 @@
 
 ## Introduction
 
-**NTE DPS Toolkit** is a local **DPS (damage-per-second) analysis and diagnostics tool** for NTE, built with **Rust + egui**. It runs entirely on the user's machine, reading relevant local UDP traffic via [Npcap](https://npcap.com/) to extract damage, abyss events, and selected GameplayEffect statistics, then displays an overview plus per-character, per-skill, hit-detail, and abyss up/down-line breakdowns in a local GUI.
+**NTE DPS Toolkit** is a local **DPS (damage-per-second) analysis and diagnostics tool** for NTE, built with **Rust + egui**. It runs entirely on the user's machine, reading relevant local UDP traffic via [Npcap](https://npcap.com/) to extract damage, abyss events, and selected GameplayEffect statistics, then displays an overview plus per-character, per-skill, hit-detail, and abyss up/down-line breakdowns in a local GUI. The repository also ships the GUI-free `nte-core.exe`, allowing third-party local tools to integrate the same capture and parsing core over stdio.
 
 As a **DPS Analyzer**, it targets players and researchers who want to review combat data, optimize rotations, and analyze team-composition performance — with real-time stats, historical comparison, and abyss prediction workflows.
 
@@ -51,7 +51,7 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 - **Debug tooling**: inspect packet endpoints, character declarations, parse results, and payload previews; edit character data `res/data/characters/characters.json`; open/search/edit and save NTE encrypted INI; resource-coverage checks, an auto-diagnostics wizard, an adapter list, a server-damage calibration toggle, and more.
 - **Customizable HUD**: choose display modules, max characters, and a mini DPS curve; defaults keep total DPS, time, total damage, and character ranking.
 - **Auto persistence**: opacity, light/dark theme, always-on-top, and server-damage calibration saved to `%LOCALAPPDATA%\NTE DPS Tool\config.json`.
-- **Hotkeys**: `Home` toggles click-through; debug builds use `F12` to toggle the Debug panel.
+- **Hotkeys**: `Home` toggles click-through; `F12` toggles the Console with Packets, Resources, and Diagnostics.
 - **Auto adapter selection**: picks the network adapter and local IP from `HTGame.exe`'s active connections.
 
 > Precise enemy-target and scene identification are still under research.
@@ -74,7 +74,7 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 - **Capture driver**: [Npcap](https://npcap.com/), preferably with *WinPcap API-compatible Mode* enabled
 - **Privileges**: live capture may require running as Administrator
 
-Normal use only needs Rust, Npcap, and the in-repo `res` assets. It does **not** need a client export tree, CUE4Parse, FModel, Python, the Npcap SDK, asset-export AES keys, or usmap. The Debug panel's encrypted-INI editor uses a stable INI-protocol key built into the code — no user-supplied export key required.
+Normal GUI use only needs Rust, Npcap, and the in-repo `res` assets. It does **not** need a client export tree, CUE4Parse, FModel, Python, the Npcap SDK, asset-export AES keys, or usmap. The Console's encrypted-INI editor uses a stable INI-protocol key built into the code — no user-supplied export key required. The CLI release embeds only the core JSON required for parsing and contains no GUI images, fonts, or icons.
 
 ---
 
@@ -84,7 +84,27 @@ Normal use only needs Rust, Npcap, and the in-repo `res` assets. It does **not**
 git clone https://github.com/kongbaiz/nte-dps-toolkit.git
 cd nte-dps-toolkit
 cargo test
-cargo run --release
+cargo run --release --bin nte-dps-tool --features gui
+```
+
+---
+
+## GUI and local CLI sidecar
+
+Official Windows artifacts are:
+
+- `nte-dps-tool-windows-x64.zip`: standard GUI with embedded resources and the full F12 diagnostics toolset;
+- `nte-core-windows-x64.zip`: GUI-free local sidecar for third-party integrations;
+- `nte-dps-tool-windows-external-resources.zip`: full GUI with an external `res/` directory.
+
+The automated `master` build runs formatting, compilation, tests, Clippy, and the GUI/CLI dependency-boundary check. After all three distribution directories are built, every `.exe` is compressed with `upx -9` from a pinned UPX release and verified with `upx -t` before the ZIP archives are created; the downloaded official UPX archive is also checked against its SHA-256 digest. GitHub Release titles come from the `Cargo.toml` version (for example, `v0.3.0`), while tags retain the build number and short commit SHA so the same version can be rebuilt. The release changelog lists every non-merge commit for the current version since the previous version's build tag, in chronological order, instead of showing only the last push.
+
+`nte-core.exe` uses JSON-RPC 2.0 over NDJSON, reading requests from stdin and writing responses and events to stdout. It never listens on or opens a network port; stdout is protocol-only and logs go to stderr. The CLI package contains no GUI images, fonts, icons, or GUI dependencies. See the [English protocol](docs/CLI_PROTOCOL.md), [Simplified Chinese protocol](docs/CLI_PROTOCOL_ZH.md), and [standard-library Python example](docs/examples/nte_core_client.py) for the lifecycle and calling contract. Both GUI and CLI distribution remain subject to this repository's AGPL/commercial dual-license terms.
+
+Build the CLI with:
+
+```powershell
+cargo build --release --bin nte-core --no-default-features --features cli
 ```
 
 ---
@@ -97,7 +117,7 @@ cargo run --release
 4. Start live capture in the main window; frames passing the current BPF filter are written to `logs/nte_raw_*.pcapng`.
 5. View real-time stats in the Overview / Character / Abyss tabs; save or compare de-identified combat summaries in the Console history page.
 
-Once capturing, the Debug panel can import a full PCAPNG or parsed JSON and run the same stable parse pipeline as live capture; after stopping, you can save the current full PCAPNG.
+Once capturing, the Console can import a full PCAPNG or parsed JSON and run the same stable parse pipeline as live capture; after stopping, you can save the current full PCAPNG.
 
 ---
 
@@ -153,6 +173,8 @@ The program looks for `res` in the current directory or the executable's parent 
 cargo fmt --check
 cargo check
 cargo test
+cargo check --bin nte-core --no-default-features --features cli
+cargo test --no-default-features --features cli
 ```
 
 Diagnostics tests that depend on real captures are ignored by default. To run them, set `NTE_TEST_CAPTURE=<pcapng-path>` and run:
@@ -166,7 +188,7 @@ cargo test -- --ignored
 ## FAQ
 
 **Q: No traffic / no data is captured.**
-A: Make sure Npcap is installed with *WinPcap API-compatible Mode* enabled, run as Administrator, and have `HTGame.exe` running. Debug builds include an auto-diagnostics wizard that checks the Npcap device, active connections, capture status, raw-packet writing, and damage-parse status step by step.
+A: Make sure Npcap is installed with *WinPcap API-compatible Mode* enabled, run as Administrator, and have `HTGame.exe` running. The GUI Diagnostics page includes an auto-diagnostics wizard that checks the Npcap device, active connections, capture status, raw-packet writing, and damage-parse status step by step.
 
 **Q: Do I need asset-export keys, usmap, or Python?**
 A: No. Normal use only depends on the in-repo `res/` and the stable protocol key built into the code.

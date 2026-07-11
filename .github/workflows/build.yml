@@ -10,6 +10,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
+      - "docs/**"
+      - "README.md"
+      - "README_EN.md"
       - "THIRD_PARTY_LICENSES.md"
       - "licenses/**"
       - ".github/workflows/build.yml"
@@ -22,6 +25,9 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
+      - "docs/**"
+      - "README.md"
+      - "README_EN.md"
       - "THIRD_PARTY_LICENSES.md"
       - "licenses/**"
       - ".github/workflows/build.yml"
@@ -30,14 +36,20 @@ on:
 permissions:
   contents: write
 
+env:
+  UPX_VERSION: 5.2.0
+  UPX_SHA256: b471ebf1b7f20f4a89150264ed9a008a2a5bfd247f3c6d1184a75bb59ca08f5d
+
 jobs:
   windows-release:
-    name: Windows release build
+    name: Windows quality gates and release build
     runs-on: windows-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -48,55 +60,125 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Lint with clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Check default GUI build
+        run: cargo check
 
-      - name: Run tests
+      - name: Test default GUI build
         run: cargo test
+
+      - name: Check GUI and CLI targets
+        shell: pwsh
+        run: |
+          cargo check --bin nte-dps-tool --features gui
+          cargo check --bin nte-core --no-default-features --features cli
+
+      - name: Lint GUI and CLI targets
+        shell: pwsh
+        run: |
+          cargo clippy --bin nte-dps-tool --features gui -- -D warnings
+          cargo clippy --bin nte-core --no-default-features --features cli -- -D warnings
+
+      - name: Test GUI and CLI targets
+        shell: pwsh
+        run: |
+          cargo test --features gui
+          cargo test --no-default-features --features cli
+
+      - name: Verify CLI dependency tree
+        shell: pwsh
+        run: |
+          $tree = cargo tree -e normal --no-default-features --features cli
+          $tree
+          $forbidden = $tree | Select-String -Pattern '(^|[ ├└─])(eframe|egui|wgpu|rfd|raw-window-handle) v'
+          if ($forbidden) {
+            Write-Error "CLI dependency tree contains GUI crates:`n$($forbidden -join "`n")"
+            exit 1
+          }
 
       - name: Build release variants
         shell: pwsh
         run: |
-          cargo build --release
-          New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-debug | Out-Null
-          Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-debug/
+          cargo build --release --bin nte-dps-tool --features gui
+          New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
+          Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
 
-          cargo build --release --features no_debug
-          New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-nodebug | Out-Null
-          Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-nodebug/
+          cargo build --release --bin nte-core --no-default-features --features cli
+          New-Item -ItemType Directory -Force dist/nte-core-windows-x64 | Out-Null
+          Copy-Item target/release/nte-core.exe dist/nte-core-windows-x64/
+          Copy-Item docs/CLI_PROTOCOL.md dist/nte-core-windows-x64/
+          Copy-Item docs/CLI_PROTOCOL_ZH.md dist/nte-core-windows-x64/
+          Copy-Item docs/examples dist/nte-core-windows-x64/examples -Recurse
 
-          cargo build --release --features "no_debug external_resources"
+          cargo build --release --bin nte-dps-tool --features "gui external_resources"
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
           Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
+
+      - name: Compress release executables with UPX
+        shell: pwsh
+        run: |
+          $archive = "$env:RUNNER_TEMP/upx-$env:UPX_VERSION-win64.zip"
+          $upxRoot = "$env:RUNNER_TEMP/upx"
+          Invoke-WebRequest `
+            -Uri "https://github.com/upx/upx/releases/download/v$env:UPX_VERSION/upx-$env:UPX_VERSION-win64.zip" `
+            -OutFile $archive
+
+          $actualHash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $env:UPX_SHA256) {
+            throw "UPX archive checksum mismatch: expected $env:UPX_SHA256, got $actualHash"
+          }
+
+          Expand-Archive -Path $archive -DestinationPath $upxRoot -Force
+          $upx = Get-ChildItem -Path $upxRoot -Filter upx.exe -Recurse | Select-Object -First 1
+          if (-not $upx) {
+            throw "upx.exe was not found in the downloaded archive"
+          }
+
+          $executables = @(Get-ChildItem -Path dist -Filter *.exe -Recurse)
+          if ($executables.Count -eq 0) {
+            throw "No release executables were found under dist"
+          }
+
+          foreach ($executable in $executables) {
+            & $upx.FullName -9 $executable.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "UPX compression failed for $($executable.FullName)"
+            }
+
+            & $upx.FullName -t $executable.FullName
+            if ($LASTEXITCODE -ne 0) {
+              throw "UPX integrity test failed for $($executable.FullName)"
+            }
+          }
 
       - name: Prepare release packages
         shell: pwsh
         run: |
           $variantNotes = @{
-            "nte-dps-tool-windows-debug" = @"
-          # NTE DPS Tool - Windows Debug Variant
+            "nte-dps-tool-windows-x64" = @"
+          # NTE DPS Tool - Windows x64
 
-          - Release optimization build with diagnostics and debug panels enabled.
+          - Standard GUI release with F12, Packets, Resources, and Diagnostics available.
           - Runtime resources are embedded in the executable.
           - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
-          - Use this build when validating capture, resource coverage, imports, and diagnostics.
+          - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
-            "nte-dps-tool-windows-nodebug" = @"
-          # NTE DPS Tool - Windows No-Debug Variant
+            "nte-core-windows-x64" = @"
+          # NTE Core - Windows x64
 
-          - Release optimization build with the no_debug feature enabled.
-          - Runtime resources are embedded in the executable.
-          - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
-          - Use this as the normal end-user standalone executable.
+          - Local JSON-RPC 2.0 over NDJSON stdio sidecar for third-party integrations.
+          - Does not open a network port and does not include GUI images or GUI dependencies.
+          - Read CLI_PROTOCOL.md or CLI_PROTOCOL_ZH.md before integrating.
+          - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
             "nte-dps-tool-windows-external-resources" = @"
           # NTE DPS Tool - Windows External Resources Variant
 
-          - Release optimization build with no_debug and external_resources enabled.
+          - Standard GUI release with F12 and all diagnostics available.
           - Runtime resources are not embedded in the executable.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
+          - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
           }
 
@@ -110,11 +192,11 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: nte-dps-tool-windows-${{ github.sha }}
+          name: nte-windows-${{ github.sha }}
           if-no-files-found: error
           path: |
-            nte-dps-tool-windows-debug.zip
-            nte-dps-tool-windows-nodebug.zip
+            nte-dps-tool-windows-x64.zip
+            nte-core-windows-x64.zip
             nte-dps-tool-windows-external-resources.zip
 
       - name: Publish GitHub Release
@@ -122,8 +204,6 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TITLE: Latest Windows build
-          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
             $PSNativeCommandUseErrorActionPreference = $false
@@ -138,15 +218,22 @@ jobs:
           git tag $releaseTag $env:GITHUB_SHA
           git push origin "refs/tags/$releaseTag"
 
-          # Derive the changelog from the commits actually pushed in this run. Fall back
-          # to the last 20 commits for manual dispatch / first push where the range is empty.
-          $emptySha = "0000000000000000000000000000000000000000"
-          $commitLines = $null
-          if ($env:EVENT_BEFORE -and $env:EVENT_BEFORE -ne $emptySha) {
-            $commitLines = git log --no-merges --pretty=format:"- %s" "$env:EVENT_BEFORE..$env:GITHUB_SHA"
+          # Accumulate every commit for the current crate version, including commits
+          # delivered by earlier pushes. A new version starts from the previous build tag.
+          $currentVersionPrefix = "v$crateVersion-build-"
+          $previousVersionTag = git tag --merged $env:GITHUB_SHA --sort=-creatordate |
+            Where-Object {
+              $_ -match '^(v.+-)?build-' -and -not $_.StartsWith($currentVersionPrefix)
+            } |
+            Select-Object -First 1
+
+          if ($previousVersionTag) {
+            $commitLines = @(git log --reverse --no-merges --pretty=format:"- %h %s" "$previousVersionTag..$env:GITHUB_SHA")
+          } else {
+            $commitLines = @()
           }
           if (-not $commitLines) {
-            $commitLines = git log --no-merges -n 20 --pretty=format:"- %s"
+            $commitLines = @(git log --reverse --no-merges -n 20 --pretty=format:"- %h %s")
           }
 
           $notes = @(
@@ -157,14 +244,14 @@ jobs:
             $commitLines
             ""
             "构建产物："
-            "- nte-dps-tool-windows-debug.zip：带诊断/调试入口，资源内嵌。"
-            "- nte-dps-tool-windows-nodebug.zip：关闭调试入口，资源内嵌，推荐普通使用。"
-            "- nte-dps-tool-windows-external-resources.zip：关闭调试入口，资源外置，需保持 res 目录与 exe 同级。"
+            "- nte-dps-tool-windows-x64.zip：完整 GUI，资源内嵌，包含 F12 与诊断工具。"
+            "- nte-core-windows-x64.zip：本地 stdio Sidecar，供第三方本机工具集成。"
+            "- nte-dps-tool-windows-external-resources.zip：完整 GUI，资源外置，需保持 res 目录与 exe 同级。"
           ) -join "`n"
           gh release create $releaseTag `
-            nte-dps-tool-windows-debug.zip `
-            nte-dps-tool-windows-nodebug.zip `
+            nte-dps-tool-windows-x64.zip `
+            nte-core-windows-x64.zip `
             nte-dps-tool-windows-external-resources.zip `
-            --title $env:RELEASE_TITLE `
+            --title "v$crateVersion" `
             --notes $notes `
             --latest
