@@ -65,7 +65,7 @@ impl DpsApp {
             let theme = self.theme();
             egui::Frame::new()
                 .fill(theme.card)
-                .stroke(Stroke::new(1.0, theme.border))
+                .stroke(Stroke::new(1.0_f32, theme.border))
                 .corner_radius(8)
                 .inner_margin(egui::Margin::symmetric(10, 8))
                 .show(ui, |ui| {
@@ -180,7 +180,10 @@ impl DpsApp {
                         ui.painter().rect_stroke(
                             button_rect,
                             6.0,
-                            Stroke::new(1.0, mix_color(theme.border, theme.border_strong, hover)),
+                            Stroke::new(
+                                1.0_f32,
+                                mix_color(theme.border, theme.border_strong, hover),
+                            ),
                             egui::StrokeKind::Inside,
                         );
                         ui.painter().text(
@@ -237,7 +240,7 @@ impl DpsApp {
                                     egui::pos2(rect.right() - 8.0, separator_y),
                                 ],
                                 Stroke::new(
-                                    1.0,
+                                    1.0_f32,
                                     theme
                                         .border
                                         .gamma_multiply(collapse_progress.clamp(0.0, 1.0)),
@@ -1908,7 +1911,7 @@ impl DpsApp {
                                 } else {
                                     theme.bg_elevated
                                 })
-                                .stroke(Stroke::new(1.0, theme.border))
+                                .stroke(Stroke::new(1.0_f32, theme.border))
                                 .corner_radius(6)
                                 .inner_margin(egui::Margin::symmetric(8, 4)),
                             |ui| {
@@ -1971,7 +1974,7 @@ impl DpsApp {
                             drop_zone.response.rect.left_bottom(),
                             drop_zone.response.rect.right_bottom(),
                         ],
-                        Stroke::new(3.0, theme.accent),
+                        Stroke::new(3.0_f32, theme.accent),
                     );
                 }
                 if let Some(dropped) = dropped
@@ -3005,7 +3008,7 @@ fn paint_settings_hud_drag_ghost(
     painter.rect_stroke(
         rect,
         8.0,
-        Stroke::new(2.0, theme.accent),
+        Stroke::new(2.0_f32, theme.accent),
         egui::StrokeKind::Inside,
     );
     painter.text(
@@ -3017,21 +3020,25 @@ fn paint_settings_hud_drag_ghost(
     );
     let check_center = rect.left_center() + egui::vec2(48.0, 0.0);
     painter.circle_filled(check_center, 10.0, theme.card);
-    painter.circle_stroke(check_center, 10.0, Stroke::new(1.0, theme.border_strong));
+    painter.circle_stroke(
+        check_center,
+        10.0,
+        Stroke::new(1.0_f32, theme.border_strong),
+    );
     if visible {
         painter.line_segment(
             [
                 check_center + egui::vec2(-4.0, 0.0),
                 check_center + egui::vec2(-1.0, 4.0),
             ],
-            Stroke::new(1.8, theme.fg),
+            Stroke::new(1.8_f32, theme.fg),
         );
         painter.line_segment(
             [
                 check_center + egui::vec2(-1.0, 4.0),
                 check_center + egui::vec2(5.0, -5.0),
             ],
-            Stroke::new(1.8, theme.fg),
+            Stroke::new(1.8_f32, theme.fg),
         );
     }
     painter.text(

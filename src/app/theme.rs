@@ -409,7 +409,7 @@ pub(crate) fn settings_section(
 ) {
     egui::Frame::new()
         .fill(theme.card)
-        .stroke(Stroke::new(1.0, theme.border))
+        .stroke(Stroke::new(1.0_f32, theme.border))
         .corner_radius(8)
         .inner_margin(egui::Margin::symmetric(14, 12))
         .show(ui, |ui| {
@@ -449,7 +449,7 @@ pub(crate) fn empty_state_card(
             |ui| {
                 egui::Frame::new()
                     .fill(theme.card)
-                    .stroke(Stroke::new(1.0, theme.border))
+                    .stroke(Stroke::new(1.0_f32, theme.border))
                     .corner_radius(8)
                     .inner_margin(egui::Margin::symmetric(18, 14))
                     .show(ui, |ui| {

@@ -1944,7 +1944,7 @@ impl DpsApp {
             .frame(
                 egui::Frame::popup(&ctx.global_style())
                     .fill(theme.bg_elevated)
-                    .stroke(Stroke::new(1.0, theme.border_strong))
+                    .stroke(Stroke::new(1.0_f32, theme.border_strong))
                     .corner_radius(12)
                     .inner_margin(egui::Margin::symmetric(22, 18)),
             )
@@ -1990,7 +1990,7 @@ impl DpsApp {
                         ui.add_space(12.0);
                         egui::Frame::new()
                             .fill(theme.card)
-                            .stroke(Stroke::new(1.0, theme.border))
+                            .stroke(Stroke::new(1.0_f32, theme.border))
                             .corner_radius(8)
                             .inner_margin(egui::Margin::symmetric(12, 10))
                             .show(ui, |ui| {
@@ -2048,7 +2048,7 @@ impl DpsApp {
                         ui.add_space(12.0);
                         egui::Frame::new()
                             .fill(theme.card)
-                            .stroke(Stroke::new(1.0, theme.border))
+                            .stroke(Stroke::new(1.0_f32, theme.border))
                             .corner_radius(8)
                             .inner_margin(egui::Margin::symmetric(12, 10))
                             .show(ui, |ui| {

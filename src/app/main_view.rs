@@ -1028,7 +1028,7 @@ impl DpsApp {
                 |ui| {
                     egui::Frame::new()
                         .fill(theme.card)
-                        .stroke(Stroke::new(1.0, theme.border))
+                        .stroke(Stroke::new(1.0_f32, theme.border))
                         .corner_radius(8)
                         .inner_margin(egui::Margin::symmetric(18, 14))
                         .show(ui, |ui| {
@@ -1286,7 +1286,7 @@ impl DpsApp {
                             egui::pos2(module_rect.left(), indicator_y),
                             egui::pos2(module_rect.right(), indicator_y),
                         ],
-                        Stroke::new(3.0, hud_theme.accent),
+                        Stroke::new(3.0_f32, hud_theme.accent),
                     );
                 }
                 if let Some(dropped) = response.dnd_release_payload::<HudModule>()
@@ -1704,7 +1704,7 @@ impl DpsApp {
             painter.rect_stroke(
                 track,
                 3.5,
-                Stroke::new(1.0, hud_theme.halo),
+                Stroke::new(1.0_f32, hud_theme.halo),
                 egui::StrokeKind::Inside,
             );
             let share_animation = motion::animate_share(
@@ -1772,7 +1772,7 @@ impl DpsApp {
         painter.hline(
             rect.x_range(),
             baseline_y,
-            Stroke::new(1.0, colors.muted.gamma_multiply(0.6)),
+            Stroke::new(1.0_f32, colors.muted.gamma_multiply(0.6)),
         );
         if preview {
             let points = [0.16, 0.42, 0.28, 0.7, 0.48, 0.82, 0.36, 0.58, 0.24];
@@ -1782,7 +1782,7 @@ impl DpsApp {
                 let y = baseline_y - (rect.height() - 8.0) * value;
                 let point = egui::pos2(x, y);
                 if let Some(previous) = previous {
-                    painter.line_segment([previous, point], Stroke::new(1.4, accent));
+                    painter.line_segment([previous, point], Stroke::new(1.4_f32, accent));
                 }
                 previous = Some(point);
             }
@@ -1805,7 +1805,7 @@ impl DpsApp {
                     let y = baseline_y - (rect.height() - 8.0) * (bucket.dps / peak) as f32;
                     let point = egui::pos2(x, y);
                     if let Some(previous) = previous {
-                        painter.line_segment([previous, point], Stroke::new(1.4, accent));
+                        painter.line_segment([previous, point], Stroke::new(1.4_f32, accent));
                     }
                     previous = Some(point);
                 }
@@ -2228,7 +2228,7 @@ fn paint_hud_module_editor_outline(
     ];
     painter.extend(egui::Shape::dashed_line(
         &path,
-        Stroke::new(1.0, color.gamma_multiply(0.8)),
+        Stroke::new(1.0_f32, color.gamma_multiply(0.8)),
         5.0,
         3.0,
     ));
@@ -2264,7 +2264,7 @@ fn paint_hud_drag_ghost(
     painter.rect_stroke(
         rect,
         8.0,
-        Stroke::new(2.0, theme.accent),
+        Stroke::new(2.0_f32, theme.accent),
         egui::StrokeKind::Inside,
     );
     painter.rect_filled(

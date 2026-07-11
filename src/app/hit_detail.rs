@@ -776,7 +776,7 @@ fn draw_hit_table_header(
                         egui::pos2(divider_x, rect.top()),
                         egui::pos2(divider_x, rect.bottom()),
                     ],
-                    Stroke::new(2.0, highlight),
+                    Stroke::new(2.0_f32, highlight),
                 );
                 painter.rect_filled(
                     egui::Rect::from_center_size(
@@ -1364,7 +1364,7 @@ pub(crate) fn draw_team_hit_row(
         painter.rect_stroke(
             avatar_rect,
             7.0,
-            Stroke::new(1.5, character_color),
+            Stroke::new(1.5_f32, character_color),
             egui::StrokeKind::Inside,
         );
         let name_clip = egui::Rect::from_min_max(
