@@ -234,7 +234,7 @@ pub(crate) fn qte_damage_summary_chip(
     let width = 156.0_f32.max(96.0 + label.chars().count() as f32 * 12.0);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 42.0), egui::Sense::click());
     let dark_mode = ui.visuals().dark_mode;
-    let accent = theme_accent(dark_mode);
+    let accent = ui.visuals().selection.bg_fill;
     let bg = if is_selected {
         accent
     } else if response.hovered() {
@@ -282,14 +282,14 @@ pub(crate) fn qte_damage_summary_chip(
         egui::pos2(text_rect.left(), text_rect.top() + 9.0),
         egui::Align2::LEFT_CENTER,
         label,
-        egui::FontId::proportional(12.5),
+        density_proportional_font(ui, 12.5),
         text_color,
     );
     ui.painter().text(
         egui::pos2(text_rect.left(), text_rect.top() + 27.0),
         egui::Align2::LEFT_CENTER,
         format!("{} · {share:.1}%", format_number(summary.damage)),
-        egui::FontId::monospace(11.0),
+        density_monospace_font(ui, 11.0),
         if is_selected {
             contrast_text(accent).gamma_multiply(0.82)
         } else {
@@ -477,7 +477,7 @@ pub(crate) fn draw_skill_damage_summary(
         let header_width = ui.available_width() - ui.style().spacing.scroll.allocated_width();
         let (header_rect, _) =
             ui.allocate_exact_size(egui::vec2(header_width, 24.0), egui::Sense::hover());
-        let header_font = egui::FontId::proportional(12.0);
+        let header_font = density_proportional_font(ui, 12.0);
         let header_color = ui.visuals().weak_text_color();
         ui.painter().text(
             header_rect.left_center() + egui::vec2(10.0, 0.0),
@@ -529,13 +529,17 @@ pub(crate) fn draw_skill_damage_summary(
                     ui.painter().rect_filled(
                         progress_rect,
                         corner_radius,
-                        theme_accent(dark_mode).gamma_multiply(if selected { 0.28 } else { 0.16 }),
+                        ui.visuals().selection.bg_fill.gamma_multiply(if selected {
+                            0.28
+                        } else {
+                            0.16
+                        }),
                     );
                     if selected {
                         ui.painter().rect_stroke(
                             rect,
                             corner_radius,
-                            Stroke::new(1.0_f32, theme_accent(dark_mode)),
+                            Stroke::new(1.0_f32, ui.visuals().selection.bg_fill),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -549,7 +553,7 @@ pub(crate) fn draw_skill_damage_summary(
                         rect.left_center() + egui::vec2(10.0, 0.0),
                         egui::Align2::LEFT_CENTER,
                         format!("{}. {}  [{}]", rank + 1, summary.name, summary.category),
-                        egui::FontId::proportional(12.0),
+                        density_proportional_font(ui, 12.0),
                         foreground,
                     );
                     let metrics_clip = egui::Rect::from_min_max(
@@ -564,7 +568,7 @@ pub(crate) fn draw_skill_damage_summary(
                             format_number(summary.damage),
                             tf("{} hits", &[&summary.hits.to_string()])
                         ),
-                        egui::FontId::monospace(11.5),
+                        density_monospace_font(ui, 11.5),
                         foreground,
                     );
                     if response.clicked() {
@@ -579,28 +583,34 @@ pub(crate) fn draw_skill_damage_summary(
     });
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct CharacterHitLayout {
-    row_width: f32,
-    time_x: f32,
-    type_x: f32,
-    type_width: f32,
-    damage_x: f32,
-    hp_x: f32,
-    separators: [f32; 3],
+#[derive(Clone, Copy, Debug)]
+struct HitColumnGeometry {
+    left: f32,
+    width: f32,
+}
+
+impl HitColumnGeometry {
+    fn content_x(self) -> f32 {
+        self.left + 10.0
+    }
+
+    fn content_rect(self, row: egui::Rect) -> egui::Rect {
+        egui::Rect::from_min_max(
+            egui::pos2(row.left() + self.left + 6.0, row.top()),
+            egui::pos2(row.left() + self.left + self.width - 6.0, row.bottom()),
+        )
+    }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct TeamHitLayout {
+pub(crate) struct HitTableLayout {
     row_width: f32,
-    time_x: f32,
-    character_x: f32,
-    type_x: f32,
-    type_width: f32,
-    damage_x: f32,
-    hp_x: f32,
-    separators: [f32; 4],
+    columns: [Option<HitColumnGeometry>; 5],
+    separators: [Option<f32>; 4],
 }
+
+pub(crate) type CharacterHitLayout = HitTableLayout;
+pub(crate) type TeamHitLayout = HitTableLayout;
 
 pub(crate) struct TeamHitRowAssets<'a> {
     /// Character display name in the active UI language (resolved by the caller).
@@ -611,108 +621,226 @@ pub(crate) struct TeamHitRowAssets<'a> {
     pub(crate) reaction_textures: &'a HashMap<u8, Vec<egui::TextureHandle>>,
 }
 
-impl TeamHitLayout {
-    pub(crate) fn new(available_width: f32) -> Self {
-        const LEFT_INSET: f32 = 4.0;
-        const TIME_WIDTH: f32 = 92.0;
-        const CHARACTER_WIDTH: f32 = 132.0;
-        const TYPE_WIDTH: f32 = 210.0;
-        const DAMAGE_WIDTH: f32 = 120.0;
-        const CELL_PADDING: f32 = 10.0;
-
-        let time_x = LEFT_INSET + CELL_PADDING;
-        let character_separator = LEFT_INSET + TIME_WIDTH;
-        let character_x = character_separator + CELL_PADDING;
-        let type_separator = character_separator + CHARACTER_WIDTH;
-        let type_x = type_separator + CELL_PADDING;
-        let damage_separator = type_separator + TYPE_WIDTH;
-        let damage_x = damage_separator + CELL_PADDING;
-        let hp_separator = damage_separator + DAMAGE_WIDTH;
-        let hp_x = hp_separator + CELL_PADDING;
-
-        Self {
-            row_width: available_width,
-            time_x,
-            character_x,
-            type_x,
-            type_width: TYPE_WIDTH,
-            damage_x,
-            hp_x,
-            separators: [
-                character_separator,
-                type_separator,
-                damage_separator,
-                hp_separator,
-            ],
-        }
+fn hit_column_index(column: HitDetailColumn) -> usize {
+    match column {
+        HitDetailColumn::Time => 0,
+        HitDetailColumn::Character => 1,
+        HitDetailColumn::Type => 2,
+        HitDetailColumn::Damage => 3,
+        HitDetailColumn::TargetHp => 4,
     }
 }
 
-impl CharacterHitLayout {
-    pub(crate) fn new(available_width: f32) -> Self {
+impl HitTableLayout {
+    fn new(
+        available_width: f32,
+        config: HitDetailColumnsConfig,
+        order: &[HitDetailColumn],
+    ) -> Self {
         const LEFT_INSET: f32 = 4.0;
-        const TIME_WIDTH: f32 = 92.0;
-        const TYPE_WIDTH: f32 = 250.0;
-        const DAMAGE_WIDTH: f32 = 130.0;
-        const CELL_PADDING: f32 = 10.0;
+        const MIN_COLUMN_WIDTH: f32 = 64.0;
 
-        let time_x = LEFT_INSET + CELL_PADDING;
-        let type_separator = LEFT_INSET + TIME_WIDTH;
-        let type_x = type_separator + CELL_PADDING;
-        let damage_separator = type_separator + TYPE_WIDTH;
-        let damage_x = damage_separator + CELL_PADDING;
-        let hp_separator = damage_separator + DAMAGE_WIDTH;
-        let hp_x = hp_separator + CELL_PADDING;
-
+        let visible = order
+            .iter()
+            .copied()
+            .filter(|column| config.visible(*column))
+            .collect::<Vec<_>>();
+        let mut columns = [None; 5];
+        let mut separators = [None; 4];
+        let mut left = LEFT_INSET;
+        let mut remaining = (available_width - LEFT_INSET).max(0.0);
+        for (index, column) in visible.iter().copied().enumerate() {
+            let remaining_columns = visible.len() - index;
+            let width = if remaining_columns == 1 {
+                remaining
+            } else {
+                let reserved = MIN_COLUMN_WIDTH * (remaining_columns - 1) as f32;
+                f32::from(config.width(column)).clamp(
+                    MIN_COLUMN_WIDTH,
+                    (remaining - reserved).max(MIN_COLUMN_WIDTH),
+                )
+            };
+            if index > 0 {
+                separators[index - 1] = Some(left);
+            }
+            columns[hit_column_index(column)] = Some(HitColumnGeometry { left, width });
+            left += width;
+            remaining = (remaining - width).max(0.0);
+        }
         Self {
             row_width: available_width,
-            time_x,
-            type_x,
-            type_width: TYPE_WIDTH,
-            damage_x,
-            hp_x,
-            separators: [type_separator, damage_separator, hp_separator],
+            columns,
+            separators,
         }
+    }
+
+    fn column(self, column: HitDetailColumn) -> Option<HitColumnGeometry> {
+        self.columns[hit_column_index(column)]
     }
 }
 
-pub(crate) fn draw_character_hit_header(ui: &mut egui::Ui, layout: CharacterHitLayout) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(layout.row_width, 24.0), egui::Sense::hover());
-    let y = rect.center().y;
-    let x = rect.left();
+pub(crate) fn character_hit_layout(
+    available_width: f32,
+    config: HitDetailColumnsConfig,
+) -> CharacterHitLayout {
+    HitTableLayout::new(
+        available_width,
+        config,
+        &[
+            HitDetailColumn::Time,
+            HitDetailColumn::Type,
+            HitDetailColumn::Damage,
+            HitDetailColumn::TargetHp,
+        ],
+    )
+}
+
+pub(crate) fn team_hit_layout(
+    available_width: f32,
+    config: HitDetailColumnsConfig,
+) -> TeamHitLayout {
+    HitTableLayout::new(
+        available_width,
+        config,
+        &[
+            HitDetailColumn::Time,
+            HitDetailColumn::Character,
+            HitDetailColumn::Type,
+            HitDetailColumn::Damage,
+            HitDetailColumn::TargetHp,
+        ],
+    )
+}
+
+fn draw_hit_table_header(
+    ui: &mut egui::Ui,
+    layout: HitTableLayout,
+    config: &mut HitDetailColumnsConfig,
+    order: &[HitDetailColumn],
+) {
+    ui.horizontal(|ui| {
+        ui.add(
+            egui::Label::new(
+                RichText::new(t("Drag column dividers to resize"))
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            )
+            .selectable(false),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.menu_button(t("Column settings"), |ui| {
+                draw_hit_column_menu(ui, config, order);
+            });
+        });
+    });
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(layout.row_width, 24.0), egui::Sense::click());
     let painter = ui.painter().clone();
-    let font = egui::FontId::proportional(12.0);
+    let font = density_proportional_font(ui, 12.0);
     let color = ui.visuals().weak_text_color();
     draw_hit_column_separators(&painter, rect, layout);
 
-    painter.text(
-        egui::pos2(x + layout.time_x, y),
-        egui::Align2::LEFT_CENTER,
-        t("Time"),
-        font.clone(),
-        color,
-    );
-    painter.text(
-        egui::pos2(x + layout.type_x, y),
-        egui::Align2::LEFT_CENTER,
-        t("Type"),
-        font.clone(),
-        color,
-    );
-    painter.text(
-        egui::pos2(x + layout.damage_x, y),
-        egui::Align2::LEFT_CENTER,
-        t("Damage"),
-        font.clone(),
-        color,
-    );
-    painter.text(
-        egui::pos2(x + layout.hp_x, y),
-        egui::Align2::LEFT_CENTER,
-        t("Target / HP"),
-        font,
-        color,
+    let visible = order
+        .iter()
+        .copied()
+        .filter(|column| layout.column(*column).is_some())
+        .collect::<Vec<_>>();
+    for (index, column) in visible.iter().copied().enumerate() {
+        let geometry = layout
+            .column(column)
+            .expect("visible hit-detail column has geometry");
+        painter.text(
+            egui::pos2(rect.left() + geometry.content_x(), rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            t(column.label()),
+            font.clone(),
+            color,
+        );
+        if index + 1 < visible.len() {
+            let divider_x = rect.left() + geometry.left + geometry.width;
+            let divider = egui::Rect::from_center_size(
+                egui::pos2(divider_x, rect.center().y),
+                egui::vec2(8.0, rect.height()),
+            );
+            let resize = ui
+                .interact(
+                    divider,
+                    ui.make_persistent_id(("hit_detail_column_resize", column)),
+                    egui::Sense::drag(),
+                )
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            if resize.hovered() || resize.dragged() {
+                let highlight = ui.visuals().selection.stroke.color;
+                painter.line_segment(
+                    [
+                        egui::pos2(divider_x, rect.top()),
+                        egui::pos2(divider_x, rect.bottom()),
+                    ],
+                    Stroke::new(2.0_f32, highlight),
+                );
+                painter.rect_filled(
+                    egui::Rect::from_center_size(
+                        egui::pos2(divider_x, rect.center().y),
+                        egui::vec2(4.0, 12.0),
+                    ),
+                    2.0,
+                    highlight,
+                );
+            }
+            if resize.dragged() {
+                let width = (f32::from(config.width(column)) + resize.drag_motion().x)
+                    .round()
+                    .max(0.0) as u16;
+                config.set_width(column, width);
+            }
+            if resize.double_clicked() {
+                config.set_width(column, HitDetailColumnsConfig::default().width(column));
+            }
+        }
+    }
+    response
+        .on_hover_text(t("Right-click to choose columns; drag dividers to resize"))
+        .context_menu(|ui| {
+            draw_hit_column_menu(ui, config, order);
+        });
+}
+
+fn draw_hit_column_menu(
+    ui: &mut egui::Ui,
+    config: &mut HitDetailColumnsConfig,
+    order: &[HitDetailColumn],
+) {
+    for column in order {
+        let mut visible = config.visible(*column);
+        if ui.checkbox(&mut visible, t(column.label())).changed() {
+            config.set_visible(*column, visible);
+        }
+    }
+    ui.separator();
+    if ui.button(t("Reset column widths")).clicked() {
+        let defaults = HitDetailColumnsConfig::default();
+        for column in order {
+            config.set_width(*column, defaults.width(*column));
+        }
+        ui.close();
+    }
+}
+
+pub(crate) fn draw_character_hit_header(
+    ui: &mut egui::Ui,
+    layout: CharacterHitLayout,
+    config: &mut HitDetailColumnsConfig,
+) {
+    draw_hit_table_header(
+        ui,
+        layout,
+        config,
+        &[
+            HitDetailColumn::Time,
+            HitDetailColumn::Type,
+            HitDetailColumn::Damage,
+            HitDetailColumn::TargetHp,
+        ],
     );
 }
 
@@ -917,12 +1045,12 @@ pub(crate) fn draw_damage_number_fallback(
         rect.left_center(),
         egui::Align2::LEFT_CENTER,
         text,
-        egui::FontId::monospace(15.0),
+        density_monospace_font(ui, 15.0),
         color,
     );
     let width = ui.fonts_mut(|fonts| {
         fonts
-            .layout_no_wrap(text.to_owned(), egui::FontId::monospace(15.0), color)
+            .layout_no_wrap(text.to_owned(), density_monospace_font(ui, 15.0), color)
             .size()
             .x
     });
@@ -964,6 +1092,7 @@ pub(crate) fn draw_follow_up_damage_badge(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_character_hit_row(
     ui: &mut egui::Ui,
     layout: CharacterHitLayout,
@@ -972,9 +1101,10 @@ pub(crate) fn draw_character_hit_row(
     damage_digits: Option<&[egui::TextureHandle]>,
     follow_up_damage_digits: Option<&[egui::TextureHandle]>,
     reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
+    row_height: f32,
 ) {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
+        egui::vec2(layout.row_width, row_height),
         egui::Sense::hover(),
     );
     let incoming = hit.direction == "incoming";
@@ -986,11 +1116,7 @@ pub(crate) fn draw_character_hit_row(
     ui.painter().rect_filled(
         rect,
         5.0,
-        if ui.visuals().dark_mode {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 8)
-        } else {
-            Color32::from_rgba_unmultiplied(0, 0, 0, 5)
-        },
+        theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).detail_row,
     );
     let damage_fraction = (hit.total_damage() / max_damage).clamp(0.0, 1.0) as f32;
     ui.painter().rect_filled(
@@ -1010,98 +1136,80 @@ pub(crate) fn draw_character_hit_row(
     } else {
         hit_output_text_color(ui.visuals().dark_mode)
     };
-    let mono = egui::FontId::monospace(13.0);
+    let mono = density_monospace_font(ui, 13.0);
     draw_hit_column_separators(&painter, rect, layout);
-    painter.text(
-        egui::pos2(x + layout.time_x, y),
-        egui::Align2::LEFT_CENTER,
-        format_short_time(hit.timestamp),
-        mono.clone(),
-        text_color,
-    );
-    painter.rect_filled(
-        egui::Rect::from_center_size(
-            egui::pos2(x + layout.type_x + (layout.type_width - 20.0) * 0.5, y),
-            egui::vec2(layout.type_width - 20.0, 24.0),
-        ),
-        10.0,
-        type_color,
-    );
-    let badge_rect = egui::Rect::from_center_size(
-        egui::pos2(x + layout.type_x + (layout.type_width - 20.0) * 0.5, y),
-        egui::vec2(layout.type_width - 20.0, 24.0),
-    );
-    draw_hit_type_badge_content(ui, badge_rect, hit, type_color, reaction_textures);
-    let damage_cell_rect = egui::Rect::from_min_max(
-        egui::pos2(x + layout.damage_x, rect.top()),
-        egui::pos2(x + layout.hp_x - 8.0, rect.bottom()),
-    );
-    let base_damage_rect = draw_damage_number(
-        ui,
-        damage_cell_rect,
-        hit.damage,
-        damage_digits,
-        damage_color,
-    );
-    draw_follow_up_damage_badge(
-        ui,
-        damage_cell_rect,
-        base_damage_rect,
-        hit,
-        follow_up_damage_digits,
-        damage_color,
-    );
-    let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
-    let hp_cell_left = x + layout.hp_x - 6.0;
-    let hp_cell_right = (rect.right() - 4.0).min(ui.clip_rect().right() - 4.0);
-    let hp_cell_rect = egui::Rect::from_min_max(
-        egui::pos2(hp_cell_left, rect.top() + 2.0),
-        egui::pos2(hp_cell_right.max(hp_cell_left), rect.bottom() - 2.0),
-    );
-    painter.rect_filled(hp_cell_rect, 4.0, ui.visuals().faint_bg_color);
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            hp_cell_rect.min,
-            egui::vec2(hp_cell_rect.width() * hp_fraction, hp_cell_rect.height()),
-        ),
-        4.0,
-        if hp_fraction > 0.5 {
-            semantic_success(ui.visuals().dark_mode).gamma_multiply(0.16)
-        } else if hp_fraction > 0.2 {
-            semantic_warning(ui.visuals().dark_mode).gamma_multiply(0.16)
-        } else {
-            semantic_danger(ui.visuals().dark_mode).gamma_multiply(0.16)
-        },
-    );
-    draw_target_hp_text(ui, hp_cell_rect, hit, text_color, mono.clone());
+    if let Some(column) = layout.column(HitDetailColumn::Time) {
+        painter.text(
+            egui::pos2(x + column.content_x(), y),
+            egui::Align2::LEFT_CENTER,
+            format_short_time(hit.timestamp),
+            mono.clone(),
+            text_color,
+        );
+    }
+    if let Some(column) = layout.column(HitDetailColumn::Type) {
+        let badge_rect = column.content_rect(rect).shrink2(egui::vec2(4.0, 2.0));
+        painter.rect_filled(badge_rect, 10.0, type_color);
+        draw_hit_type_badge_content(ui, badge_rect, hit, type_color, reaction_textures);
+    }
+    if let Some(column) = layout.column(HitDetailColumn::Damage) {
+        let damage_cell_rect = column.content_rect(rect);
+        let base_damage_rect = draw_damage_number(
+            ui,
+            damage_cell_rect,
+            hit.damage,
+            damage_digits,
+            damage_color,
+        );
+        draw_follow_up_damage_badge(
+            ui,
+            damage_cell_rect,
+            base_damage_rect,
+            hit,
+            follow_up_damage_digits,
+            damage_color,
+        );
+    }
+    if let Some(column) = layout.column(HitDetailColumn::TargetHp) {
+        let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
+        let hp_cell_rect = column.content_rect(rect).shrink2(egui::vec2(0.0, 2.0));
+        painter.rect_filled(hp_cell_rect, 4.0, ui.visuals().faint_bg_color);
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                hp_cell_rect.min,
+                egui::vec2(hp_cell_rect.width() * hp_fraction, hp_cell_rect.height()),
+            ),
+            4.0,
+            if hp_fraction > 0.5 {
+                semantic_success(ui.visuals().dark_mode).gamma_multiply(0.16)
+            } else if hp_fraction > 0.2 {
+                semantic_warning(ui.visuals().dark_mode).gamma_multiply(0.16)
+            } else {
+                semantic_danger(ui.visuals().dark_mode).gamma_multiply(0.16)
+            },
+        );
+        draw_target_hp_text(ui, hp_cell_rect, hit, text_color, mono.clone());
+    }
     response.on_hover_text(hit_detail_hover_text(hit, false));
 }
 
-pub(crate) fn draw_team_hit_header(ui: &mut egui::Ui, layout: TeamHitLayout) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(layout.row_width, 24.0), egui::Sense::hover());
-    let y = rect.center().y;
-    let x = rect.left();
-    let painter = ui.painter();
-    let font = egui::FontId::proportional(12.0);
-    let color = ui.visuals().weak_text_color();
-    draw_team_hit_column_separators(painter, rect, layout);
-
-    for (offset, label) in [
-        (layout.time_x, t("Time")),
-        (layout.character_x, t("Character")),
-        (layout.type_x, t("Type")),
-        (layout.damage_x, t("Damage")),
-        (layout.hp_x, t("Target / HP")),
-    ] {
-        painter.text(
-            egui::pos2(x + offset, y),
-            egui::Align2::LEFT_CENTER,
-            label,
-            font.clone(),
-            color,
-        );
-    }
+pub(crate) fn draw_team_hit_header(
+    ui: &mut egui::Ui,
+    layout: TeamHitLayout,
+    config: &mut HitDetailColumnsConfig,
+) {
+    draw_hit_table_header(
+        ui,
+        layout,
+        config,
+        &[
+            HitDetailColumn::Time,
+            HitDetailColumn::Character,
+            HitDetailColumn::Type,
+            HitDetailColumn::Damage,
+            HitDetailColumn::TargetHp,
+        ],
+    );
 }
 
 pub(crate) fn draw_hit_type_badge_content(
@@ -1127,7 +1235,7 @@ pub(crate) fn draw_hit_type_badge_content(
         ui,
         badge_rect.shrink2(egui::vec2(8.0, 0.0)),
         &text,
-        egui::FontId::proportional(12.0),
+        density_proportional_font(ui, 12.0),
         contrast_text(type_color),
         egui::Align::Center,
         None,
@@ -1184,9 +1292,10 @@ pub(crate) fn draw_team_hit_row(
     max_damage: f64,
     character_color: Color32,
     assets: TeamHitRowAssets<'_>,
+    row_height: f32,
 ) {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(layout.row_width, DETAIL_HIT_ROW_HEIGHT),
+        egui::vec2(layout.row_width, row_height),
         egui::Sense::hover(),
     );
     let incoming = hit.direction == "incoming";
@@ -1198,11 +1307,7 @@ pub(crate) fn draw_team_hit_row(
     ui.painter().rect_filled(
         rect,
         5.0,
-        if ui.visuals().dark_mode {
-            Color32::from_rgba_unmultiplied(255, 255, 255, 8)
-        } else {
-            Color32::from_rgba_unmultiplied(0, 0, 0, 5)
-        },
+        theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).detail_row,
     );
     let damage_fraction = (hit.total_damage() / max_damage).clamp(0.0, 1.0) as f32;
     ui.painter().rect_filled(
@@ -1217,112 +1322,112 @@ pub(crate) fn draw_team_hit_row(
     let x = rect.left();
     let painter = ui.painter().clone();
     let text_color = ui.visuals().text_color();
-    let mono = egui::FontId::monospace(13.0);
+    let mono = density_monospace_font(ui, 13.0);
     draw_team_hit_column_separators(&painter, rect, layout);
 
-    painter.text(
-        egui::pos2(x + layout.time_x, y),
-        egui::Align2::LEFT_CENTER,
-        format_short_time(hit.timestamp),
-        mono.clone(),
-        text_color,
-    );
-    let avatar_rect = pixel_aligned_rect(
-        egui::pos2(x + layout.character_x, y - 16.0),
-        32.0,
-        ui.ctx().pixels_per_point(),
-    );
-    painter.rect_filled(
-        avatar_rect,
-        7.0,
-        if ui.visuals().dark_mode {
-            Color32::from_rgb(55, 58, 66)
-        } else {
-            Color32::from_rgb(225, 227, 232)
-        },
-    );
-    if let Some(texture) = assets.avatar_texture {
-        ui.put(
-            avatar_rect,
-            egui::Image::new((texture.id(), avatar_rect.size())).corner_radius(7),
-        );
-    } else {
-        painter.rect_filled(avatar_rect, 7.0, character_color.gamma_multiply(0.82));
+    if let Some(column) = layout.column(HitDetailColumn::Time) {
         painter.text(
-            avatar_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            assets.char_name.chars().next().unwrap_or('?').to_string(),
-            egui::FontId::proportional(14.0),
-            Color32::WHITE,
+            egui::pos2(x + column.content_x(), y),
+            egui::Align2::LEFT_CENTER,
+            format_short_time(hit.timestamp),
+            mono.clone(),
+            text_color,
         );
     }
-    painter.rect_stroke(
-        avatar_rect,
-        7.0,
-        Stroke::new(1.5_f32, character_color),
-        egui::StrokeKind::Inside,
-    );
-    painter.text(
-        egui::pos2(avatar_rect.right() + 7.0, y),
-        egui::Align2::LEFT_CENTER,
-        assets.char_name,
-        egui::FontId::proportional(12.0),
-        text_color,
-    );
-    let badge_rect = egui::Rect::from_center_size(
-        egui::pos2(x + layout.type_x + (layout.type_width - 20.0) * 0.5, y),
-        egui::vec2(layout.type_width - 20.0, 24.0),
-    );
-    painter.rect_filled(badge_rect, 10.0, type_color);
-    draw_hit_type_badge_content(ui, badge_rect, hit, type_color, assets.reaction_textures);
+    if let Some(column) = layout.column(HitDetailColumn::Character) {
+        let column_rect = column.content_rect(rect);
+        let avatar_rect = pixel_aligned_rect(
+            egui::pos2(column_rect.left(), y - 16.0),
+            32.0,
+            ui.ctx().pixels_per_point(),
+        );
+        painter.rect_filled(
+            avatar_rect,
+            7.0,
+            theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).border_strong,
+        );
+        if let Some(texture) = assets.avatar_texture {
+            ui.put(
+                avatar_rect,
+                egui::Image::new((texture.id(), avatar_rect.size())).corner_radius(7),
+            );
+        } else {
+            painter.rect_filled(avatar_rect, 7.0, character_color.gamma_multiply(0.82));
+            painter.text(
+                avatar_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                assets.char_name.chars().next().unwrap_or('?').to_string(),
+                density_proportional_font(ui, 14.0),
+                contrast_text(character_color),
+            );
+        }
+        painter.rect_stroke(
+            avatar_rect,
+            7.0,
+            Stroke::new(1.5_f32, character_color),
+            egui::StrokeKind::Inside,
+        );
+        let name_clip = egui::Rect::from_min_max(
+            egui::pos2(avatar_rect.right() + 7.0, column_rect.top()),
+            column_rect.right_bottom(),
+        );
+        painter.with_clip_rect(name_clip).text(
+            egui::pos2(name_clip.left(), y),
+            egui::Align2::LEFT_CENTER,
+            assets.char_name,
+            density_proportional_font(ui, 12.0),
+            text_color,
+        );
+    }
+    if let Some(column) = layout.column(HitDetailColumn::Type) {
+        let badge_rect = column.content_rect(rect).shrink2(egui::vec2(4.0, 2.0));
+        painter.rect_filled(badge_rect, 10.0, type_color);
+        draw_hit_type_badge_content(ui, badge_rect, hit, type_color, assets.reaction_textures);
+    }
     let follow_up_color = if incoming {
         semantic_danger(ui.visuals().dark_mode)
     } else {
         hit_output_text_color(ui.visuals().dark_mode)
     };
-    let damage_cell_rect = egui::Rect::from_min_max(
-        egui::pos2(x + layout.damage_x, rect.top()),
-        egui::pos2(x + layout.hp_x - 8.0, rect.bottom()),
-    );
-    let base_damage_rect = draw_damage_number(
-        ui,
-        damage_cell_rect,
-        hit.damage,
-        assets.damage_digits,
-        follow_up_color,
-    );
-    draw_follow_up_damage_badge(
-        ui,
-        damage_cell_rect,
-        base_damage_rect,
-        hit,
-        assets.follow_up_damage_digits,
-        follow_up_color,
-    );
+    if let Some(column) = layout.column(HitDetailColumn::Damage) {
+        let damage_cell_rect = column.content_rect(rect);
+        let base_damage_rect = draw_damage_number(
+            ui,
+            damage_cell_rect,
+            hit.damage,
+            assets.damage_digits,
+            follow_up_color,
+        );
+        draw_follow_up_damage_badge(
+            ui,
+            damage_cell_rect,
+            base_damage_rect,
+            hit,
+            assets.follow_up_damage_digits,
+            follow_up_color,
+        );
+    }
 
-    let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
-    let hp_cell_left = x + layout.hp_x - 6.0;
-    let hp_cell_right = (rect.right() - 4.0).min(ui.clip_rect().right() - 4.0);
-    let hp_cell_rect = egui::Rect::from_min_max(
-        egui::pos2(hp_cell_left, rect.top() + 2.0),
-        egui::pos2(hp_cell_right.max(hp_cell_left), rect.bottom() - 2.0),
-    );
-    painter.rect_filled(hp_cell_rect, 4.0, ui.visuals().faint_bg_color);
-    painter.rect_filled(
-        egui::Rect::from_min_size(
-            hp_cell_rect.min,
-            egui::vec2(hp_cell_rect.width() * hp_fraction, hp_cell_rect.height()),
-        ),
-        4.0,
-        if hp_fraction > 0.5 {
-            semantic_success(ui.visuals().dark_mode).gamma_multiply(0.16)
-        } else if hp_fraction > 0.2 {
-            semantic_warning(ui.visuals().dark_mode).gamma_multiply(0.16)
-        } else {
-            semantic_danger(ui.visuals().dark_mode).gamma_multiply(0.16)
-        },
-    );
-    draw_target_hp_text(ui, hp_cell_rect, hit, text_color, mono);
+    if let Some(column) = layout.column(HitDetailColumn::TargetHp) {
+        let hp_fraction = (hit.target_hp_percent / 100.0).clamp(0.0, 1.0) as f32;
+        let hp_cell_rect = column.content_rect(rect).shrink2(egui::vec2(0.0, 2.0));
+        painter.rect_filled(hp_cell_rect, 4.0, ui.visuals().faint_bg_color);
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                hp_cell_rect.min,
+                egui::vec2(hp_cell_rect.width() * hp_fraction, hp_cell_rect.height()),
+            ),
+            4.0,
+            if hp_fraction > 0.5 {
+                semantic_success(ui.visuals().dark_mode).gamma_multiply(0.16)
+            } else if hp_fraction > 0.2 {
+                semantic_warning(ui.visuals().dark_mode).gamma_multiply(0.16)
+            } else {
+                semantic_danger(ui.visuals().dark_mode).gamma_multiply(0.16)
+            },
+        );
+        draw_target_hp_text(ui, hp_cell_rect, hit, text_color, mono);
+    }
     response.on_hover_text(hit_detail_hover_text(hit, true));
 }
 
@@ -1486,7 +1591,7 @@ pub(crate) fn draw_target_hp_text(
         ui,
         target_rect,
         target,
-        egui::FontId::proportional(12.0),
+        density_proportional_font(ui, 12.0),
         target_color,
         egui::Align::Min,
         None,
@@ -1530,12 +1635,12 @@ pub(crate) fn draw_hit_column_separators(
     rect: egui::Rect,
     layout: CharacterHitLayout,
 ) {
-    let color = if painter.ctx().global_style().visuals.dark_mode {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 92)
-    } else {
-        Color32::from_rgba_unmultiplied(70, 74, 82, 88)
-    };
-    for separator in layout.separators {
+    let color = theme_tokens(
+        painter.ctx().global_style().visuals.dark_mode,
+        AccentColor::Zinc,
+    )
+    .detail_separator;
+    for separator in layout.separators.into_iter().flatten() {
         let x = rect.left() + separator;
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
@@ -1549,16 +1654,52 @@ pub(crate) fn draw_team_hit_column_separators(
     rect: egui::Rect,
     layout: TeamHitLayout,
 ) {
-    let color = if painter.ctx().global_style().visuals.dark_mode {
-        Color32::from_rgba_unmultiplied(255, 255, 255, 92)
-    } else {
-        Color32::from_rgba_unmultiplied(70, 74, 82, 88)
-    };
-    for separator in layout.separators {
+    let color = theme_tokens(
+        painter.ctx().global_style().visuals.dark_mode,
+        AccentColor::Zinc,
+    )
+    .detail_separator;
+    for separator in layout.separators.into_iter().flatten() {
         let x = rect.left() + separator;
         painter.line_segment(
             [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
             Stroke::new(1.0_f32, color),
         );
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn character_layout_omits_character_column_and_fills_available_width() {
+        let layout = character_hit_layout(720.0, HitDetailColumnsConfig::default());
+
+        assert!(layout.column(HitDetailColumn::Character).is_none());
+        let target_hp = layout
+            .column(HitDetailColumn::TargetHp)
+            .expect("target HP column should be visible");
+        assert!((target_hp.left + target_hp.width - 720.0).abs() < f32::EPSILON);
+        assert_eq!(layout.separators.into_iter().flatten().count(), 3);
+    }
+
+    #[test]
+    fn hidden_columns_are_removed_without_leaving_gaps() {
+        let mut config = HitDetailColumnsConfig::default();
+        config.set_visible(HitDetailColumn::Time, false);
+        config.set_visible(HitDetailColumn::Type, false);
+        let layout = team_hit_layout(640.0, config);
+
+        assert!(layout.column(HitDetailColumn::Time).is_none());
+        assert!(layout.column(HitDetailColumn::Type).is_none());
+        assert_eq!(
+            layout
+                .column(HitDetailColumn::Character)
+                .expect("character column should be visible")
+                .left,
+            4.0
+        );
+        assert_eq!(layout.separators.into_iter().flatten().count(), 2);
     }
 }

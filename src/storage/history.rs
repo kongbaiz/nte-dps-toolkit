@@ -186,9 +186,25 @@ pub fn delete_record(record_id: &str) -> Result<bool, String> {
     delete_record_from_dir(&history_dir(), record_id)
 }
 
+pub fn restore_record(record: &HistoryRecord) -> Result<(), String> {
+    restore_record_to_dir(&history_dir(), record)
+}
+
+pub fn restore_record_to_dir(directory: &Path, record: &HistoryRecord) -> Result<(), String> {
+    if !valid_record_id(&record.id) {
+        return Err("Invalid history record ID".to_owned());
+    }
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(record).map_err(|error| error.to_string())?;
+    // Undo must restore exactly the deleted record without evicting a different history entry.
+    // A save performed during the undo window can temporarily put the directory one over the cap;
+    // the next normal save applies the existing pruning policy.
+    atomic_write_text(&record_path(directory, record), &format!("{text}\n"))
+}
+
 pub fn delete_record_from_dir(directory: &Path, record_id: &str) -> Result<bool, String> {
-    if record_id.is_empty() {
-        return Ok(false);
+    if !valid_record_id(record_id) {
+        return Err("Invalid history record ID".to_owned());
     }
     let mut deleted = false;
     for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
@@ -196,10 +212,11 @@ pub fn delete_record_from_dir(directory: &Path, record_id: &str) -> Result<bool,
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        if stem.ends_with(record_id) {
+        let matches_id = fs::read_to_string(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| parse_history_record(&text, &path))
+            .is_ok_and(|record| record.id == record_id);
+        if matches_id {
             fs::remove_file(&path).map_err(|error| error.to_string())?;
             deleted = true;
         }
@@ -253,7 +270,18 @@ fn parse_history_record(text: &str, path: &Path) -> Result<HistoryRecord, String
             .unwrap_or("legacy")
             .to_owned();
     }
+    if !valid_record_id(&record.id) {
+        return Err("Invalid history record ID".to_owned());
+    }
     Ok(record)
+}
+
+fn valid_record_id(record_id: &str) -> bool {
+    !record_id.is_empty()
+        && record_id.len() <= 128
+        && record_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn record_path(directory: &Path, record: &HistoryRecord) -> PathBuf {
@@ -412,6 +440,68 @@ mod tests {
 
         assert_eq!(result.records.len(), 0);
         assert_eq!(result.skipped_files, 1);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn skips_history_with_unsafe_record_id() {
+        let directory = temp_history_dir("unsafe_id");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("unsafe.json"),
+            r#"{"id":"../outside","saved_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+
+        let result = load_history_from_dir(&directory);
+
+        assert!(result.records.is_empty());
+        assert_eq!(result.skipped_files, 1);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn deleted_record_can_be_restored_exactly() {
+        let directory = temp_history_dir("restore");
+        let record = HistoryRecord {
+            id: "restore-me".to_owned(),
+            summary: CombatSessionSummary {
+                total_damage: 321.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        restore_record_to_dir(&directory, &record).unwrap();
+        assert!(delete_record_from_dir(&directory, &record.id).unwrap());
+        assert!(load_history_from_dir(&directory).records.is_empty());
+
+        restore_record_to_dir(&directory, &record).unwrap();
+        let restored = load_history_from_dir(&directory).records;
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, record.id);
+        assert_eq!(restored[0].summary.total_damage, 321.0);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn deleting_record_does_not_match_an_id_suffix() {
+        let directory = temp_history_dir("delete_exact_id");
+        let selected = HistoryRecord {
+            id: "abc".to_owned(),
+            ..Default::default()
+        };
+        let other = HistoryRecord {
+            id: "x_abc".to_owned(),
+            ..Default::default()
+        };
+        restore_record_to_dir(&directory, &selected).unwrap();
+        restore_record_to_dir(&directory, &other).unwrap();
+
+        assert!(delete_record_from_dir(&directory, &selected.id).unwrap());
+        let remaining = load_history_from_dir(&directory).records;
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, other.id);
         let _ = fs::remove_dir_all(directory);
     }
 

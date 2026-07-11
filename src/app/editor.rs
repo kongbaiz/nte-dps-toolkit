@@ -114,7 +114,7 @@ pub(crate) fn draw_character_editor_card(
         shadcn_card(card.dark_mode)
     };
     let border_color = if card.selected {
-        theme_accent(card.dark_mode)
+        ui.visuals().selection.bg_fill
     } else {
         shadcn_border(card.dark_mode)
     };
@@ -324,6 +324,7 @@ pub(crate) fn encrypted_ini_layout_galley(
         query: highlight_query.to_owned(),
         current_match_byte,
         dark_mode: request.dark_mode,
+        accent: request.accent,
         text_color,
     };
     if cache.key.as_ref() == Some(&key)
@@ -334,12 +335,15 @@ pub(crate) fn encrypted_ini_layout_galley(
 
     let layout_job = encrypted_ini_layout_job(
         ui,
-        request.text,
-        highlight_query,
-        request.matches,
-        current_match_byte,
-        request.wrap_width,
-        request.dark_mode,
+        EncryptedIniLayoutRequest {
+            text: request.text,
+            query: highlight_query,
+            matches: request.matches,
+            current_match_byte,
+            wrap_width: request.wrap_width,
+            dark_mode: request.dark_mode,
+            accent: request.accent,
+        },
     );
     let galley = ui.fonts_mut(|fonts| fonts.layout_job(layout_job));
     cache.key = Some(key);
@@ -349,13 +353,17 @@ pub(crate) fn encrypted_ini_layout_galley(
 
 pub(crate) fn encrypted_ini_layout_job(
     ui: &egui::Ui,
-    text: &str,
-    query: &str,
-    matches: &[usize],
-    current_match_byte: Option<usize>,
-    _wrap_width: f32,
-    dark_mode: bool,
+    request: EncryptedIniLayoutRequest<'_>,
 ) -> egui::text::LayoutJob {
+    let EncryptedIniLayoutRequest {
+        text,
+        query,
+        matches,
+        current_match_byte,
+        wrap_width: _,
+        dark_mode,
+        accent,
+    } = request;
     let text_color = ui.visuals().widgets.inactive.text_color();
     let font_id = egui::TextStyle::Monospace.resolve(ui.style());
     let base_format = egui::text::TextFormat {
@@ -363,20 +371,15 @@ pub(crate) fn encrypted_ini_layout_job(
         color: text_color,
         ..Default::default()
     };
+    let theme = theme_tokens(dark_mode, accent);
     let mut match_format = base_format.clone();
-    match_format.background = if dark_mode {
-        Color32::from_rgb(82, 62, 12)
-    } else {
-        Color32::from_rgb(254, 240, 138)
-    };
-    match_format.color = if dark_mode {
-        Color32::from_rgb(254, 249, 195)
-    } else {
-        Color32::from_rgb(63, 63, 70)
-    };
+    match_format.background = theme
+        .warning
+        .gamma_multiply(if dark_mode { 0.34 } else { 0.72 });
+    match_format.color = theme.fg;
     let mut current_format = match_format.clone();
-    current_format.background = Color32::from_rgb(37, 99, 235);
-    current_format.color = Color32::WHITE;
+    current_format.background = theme.accent;
+    current_format.color = theme.accent_fg;
 
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = f32::INFINITY;

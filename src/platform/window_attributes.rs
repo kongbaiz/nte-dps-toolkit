@@ -1,4 +1,5 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use std::path::Path;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY,
@@ -14,6 +15,14 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 /// border for a true overlay, or restore the system default.
 const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
 const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
+
+pub(crate) fn open_directory(path: &Path) -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
 
 pub(crate) struct WindowAttributeConfig {
     pub(crate) opacity: f32,

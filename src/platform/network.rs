@@ -28,6 +28,10 @@ pub struct GameNetwork {
     pub remote_port: u16,
 }
 
+pub fn game_process_is_running() -> Result<bool, String> {
+    find_process_id(GAME_PROCESS).map(|pid| pid.is_some())
+}
+
 /// Locate the game's active IPv4 TCP connection (PID + local/remote endpoints) without requiring a
 /// matching Npcap device. Manual capture mode uses this to recover `local_ip` for direction
 /// inference even when auto device matching would fail (e.g. the game routes over a VPN adapter).

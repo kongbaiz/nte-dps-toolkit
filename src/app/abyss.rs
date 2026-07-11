@@ -323,7 +323,10 @@ pub(crate) fn draw_team_avatar(
             .corner_radius(radius)
             .paint_at(ui, rect);
     } else {
-        let color = readable_accent(character_color(char_id, characters, 0), dark_mode);
+        let color = readable_accent(
+            character_color(char_id, characters, 0, dark_mode),
+            dark_mode,
+        );
         ui.painter()
             .rect_filled(rect, radius, color.gamma_multiply(0.85));
         if let Some(initial) = display_name.as_deref().and_then(|name| name.chars().next()) {
@@ -370,7 +373,7 @@ pub(crate) fn draw_line_prediction_header(
             RichText::new(time_text)
                 .size(INLINE_CONTROL_TEXT_SIZE)
                 .strong()
-                .color(theme_accent(dark_mode)),
+                .color(ui.visuals().selection.bg_fill),
         );
         ui.label(inline_text(
             format!("· {} DPS", format_number(team.dps)),
@@ -460,7 +463,6 @@ pub(crate) fn draw_abyss_wave_prediction(
     ui: &mut egui::Ui,
     monsters: &[&AbyssMonsterEntry],
     team: Option<&TeamDps>,
-    dark_mode: bool,
 ) {
     let waves = line_hp_by_wave(monsters.iter().copied());
     if waves.is_empty() {
@@ -479,8 +481,11 @@ pub(crate) fn draw_abyss_wave_prediction(
             let segment_width = ((wave.hp / total_hp) as f32 * width).max(18.0);
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(segment_width, height), egui::Sense::hover());
-            let color =
-                theme_accent(dark_mode).gamma_multiply((0.45 + index as f32 * 0.09).min(0.92));
+            let color = ui
+                .visuals()
+                .selection
+                .bg_fill
+                .gamma_multiply((0.45 + index as f32 * 0.09).min(0.92));
             ui.painter().rect_filled(rect, 2.0, color);
             let prediction = predictions.get(index);
             let label = wave
@@ -564,7 +569,7 @@ pub(crate) fn draw_abyss_line_section(
                     ui.label(
                         RichText::new(tf("Recommended {}", &[&recommended_elements.join("/")]))
                             .size(INLINE_CONTROL_TEXT_SIZE)
-                            .color(theme_accent(dark_mode)),
+                            .color(ui.visuals().selection.bg_fill),
                     );
                 }
                 if let Some(view) = prediction.as_ref() {
@@ -572,7 +577,7 @@ pub(crate) fn draw_abyss_line_section(
                 }
             });
             if let Some(view) = prediction.as_ref() {
-                draw_abyss_wave_prediction(ui, monsters, view.team, dark_mode);
+                draw_abyss_wave_prediction(ui, monsters, view.team);
             }
             ui.add_space(5.0);
             ui.horizontal(|ui| {
@@ -750,7 +755,7 @@ pub(crate) fn draw_abyss_chip_frame(
         Stroke::new(
             if selected { 1.5_f32 } else { 1.0_f32 },
             if selected {
-                theme_accent(dark_mode)
+                ui.visuals().selection.bg_fill
             } else {
                 shadcn_border(dark_mode)
             },
@@ -820,7 +825,7 @@ pub(crate) fn draw_abyss_monster_detail(
                         "Total HP {}",
                         &[&format_stat_value(abyss_monster_total_hp(monster))],
                     ))
-                    .color(theme_accent(dark_mode)),
+                    .color(ui.visuals().selection.bg_fill),
                 );
                 if monster.is_boss {
                     ui.label(RichText::new("Boss").color(semantic_warning(dark_mode)));
@@ -1091,20 +1096,11 @@ pub(crate) fn monster_icon_text(monster: &AbyssMonsterEntry) -> String {
 }
 
 pub(crate) fn monster_color(monster_id: &str, dark_mode: bool) -> Color32 {
-    const PALETTE: [Color32; 8] = [
-        Color32::from_rgb(66, 153, 225),
-        Color32::from_rgb(236, 115, 87),
-        Color32::from_rgb(89, 184, 143),
-        Color32::from_rgb(183, 125, 220),
-        Color32::from_rgb(222, 173, 84),
-        Color32::from_rgb(75, 174, 187),
-        Color32::from_rgb(214, 98, 136),
-        Color32::from_rgb(125, 148, 226),
-    ];
+    let palette = theme_tokens(dark_mode, AccentColor::Zinc).dataviz;
     let hash = monster_id.bytes().fold(0usize, |accumulator, byte| {
         accumulator.wrapping_mul(31).wrapping_add(byte as usize)
     });
-    readable_accent(PALETTE[hash % PALETTE.len()], dark_mode)
+    readable_accent(palette[hash % palette.len()], dark_mode)
 }
 
 pub(crate) fn monster_line_label(monster: &AbyssMonsterEntry) -> String {

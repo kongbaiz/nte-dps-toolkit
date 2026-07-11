@@ -41,6 +41,178 @@ pub(crate) fn aggregate_skill_characters(rows: &[SkillBreakdownRow]) -> Vec<Skil
     rows
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct TimelineViewState {
+    pub(crate) user_markers: Vec<f64>,
+    pub(crate) drag_selection: Option<(f64, f64)>,
+    pub(crate) zoom: Option<(f64, f64)>,
+    drag_anchor: Option<f64>,
+    context_time: Option<f64>,
+}
+
+impl TimelineViewState {
+    fn view_range(&mut self, duration: f64) -> (f64, f64) {
+        self.zoom = clamp_timeline_zoom(self.zoom, duration);
+        self.zoom.unwrap_or((0.0, duration))
+    }
+
+    fn add_marker(&mut self, time: f64) {
+        self.user_markers.push(time);
+        self.user_markers.sort_by(f64::total_cmp);
+    }
+
+    fn remove_nearest_marker(&mut self, time: f64) {
+        let Some(index) = self
+            .user_markers
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                (time - **left).abs().total_cmp(&(time - **right).abs())
+            })
+            .map(|(index, _)| index)
+        else {
+            return;
+        };
+        self.user_markers.remove(index);
+    }
+}
+
+fn pointer_x_to_timeline_time(
+    pointer_x: f32,
+    plot_left: f32,
+    plot_width: f32,
+    view_range: (f64, f64),
+) -> f64 {
+    let progress = ((pointer_x - plot_left) / plot_width).clamp(0.0, 1.0) as f64;
+    view_range.0 + (view_range.1 - view_range.0) * progress
+}
+
+fn timeline_time_to_pointer_x(
+    time: f64,
+    plot_left: f32,
+    plot_width: f32,
+    view_range: (f64, f64),
+) -> f32 {
+    let progress = ((time - view_range.0) / (view_range.1 - view_range.0)).clamp(0.0, 1.0);
+    plot_left + plot_width * progress as f32
+}
+
+fn normalize_timeline_selection(start: f64, end: f64, duration: f64) -> Option<(f64, f64)> {
+    if !start.is_finite() || !end.is_finite() || !duration.is_finite() || duration <= 0.0 {
+        return None;
+    }
+    let lower = start.min(end).clamp(0.0, duration);
+    let upper = start.max(end).clamp(0.0, duration);
+    (upper - lower > f64::EPSILON).then_some((lower, upper))
+}
+
+fn clamp_timeline_zoom(zoom: Option<(f64, f64)>, duration: f64) -> Option<(f64, f64)> {
+    let (start, end) = zoom?;
+    let range = normalize_timeline_selection(start, end, duration)?;
+    (range.1 - range.0 < duration - f64::EPSILON).then_some(range)
+}
+
+fn intersect_timeline_range(start: f64, end: f64, view_range: (f64, f64)) -> Option<(f64, f64)> {
+    let lower = start.max(view_range.0);
+    let upper = end.min(view_range.1);
+    (upper > lower).then_some((lower, upper))
+}
+
+fn timeline_time_is_visible(time: f64, view_range: (f64, f64)) -> bool {
+    time >= view_range.0 && time <= view_range.1
+}
+
+#[derive(Clone, Copy)]
+enum TimelineLabelEdge {
+    Top,
+    Bottom,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimelineLabelPlacement {
+    position: egui::Pos2,
+    align: egui::Align2,
+}
+
+fn place_timeline_label(
+    marker_x: f32,
+    size: egui::Vec2,
+    plot: egui::Rect,
+    edge: TimelineLabelEdge,
+    occupied: &mut Vec<egui::Rect>,
+) -> TimelineLabelPlacement {
+    const HORIZONTAL_GAP: f32 = 4.0;
+    const LANE_GAP: f32 = 3.0;
+    const COLLISION_GAP: f32 = 2.0;
+
+    let lane_step = size.y + LANE_GAP;
+    let lane_count =
+        (((plot.height() - size.y).max(0.0) / lane_step).floor() as usize + 1).clamp(1, 8);
+    let right_side_fits = marker_x + HORIZONTAL_GAP + size.x <= plot.right();
+    let left_side_fits = marker_x - HORIZONTAL_GAP - size.x >= plot.left();
+    let prefer_right_side = right_side_fits || !left_side_fits;
+
+    for lane in 0..lane_count {
+        let center_y = match edge {
+            TimelineLabelEdge::Top => plot.top() + size.y * 0.5 + lane as f32 * lane_step,
+            TimelineLabelEdge::Bottom => plot.bottom() - size.y * 0.5 - lane as f32 * lane_step,
+        };
+        for place_on_right in [prefer_right_side, !prefer_right_side] {
+            let (position, align, rect) = if place_on_right {
+                let position = egui::pos2(marker_x + HORIZONTAL_GAP, center_y);
+                (
+                    position,
+                    egui::Align2::LEFT_CENTER,
+                    egui::Rect::from_min_size(
+                        egui::pos2(position.x, center_y - size.y * 0.5),
+                        size,
+                    ),
+                )
+            } else {
+                let position = egui::pos2(marker_x - HORIZONTAL_GAP, center_y);
+                (
+                    position,
+                    egui::Align2::RIGHT_CENTER,
+                    egui::Rect::from_min_size(
+                        egui::pos2(position.x - size.x, center_y - size.y * 0.5),
+                        size,
+                    ),
+                )
+            };
+            if rect.left() >= plot.left()
+                && rect.right() <= plot.right()
+                && rect.top() >= plot.top()
+                && rect.bottom() <= plot.bottom()
+                && occupied
+                    .iter()
+                    .all(|other| !other.intersects(rect.expand(COLLISION_GAP)))
+            {
+                occupied.push(rect);
+                return TimelineLabelPlacement { position, align };
+            }
+        }
+    }
+
+    let position = egui::pos2(
+        if size.x <= plot.width() {
+            marker_x.clamp(plot.left() + size.x * 0.5, plot.right() - size.x * 0.5)
+        } else {
+            plot.center().x
+        },
+        match edge {
+            TimelineLabelEdge::Top => plot.top() + size.y * 0.5,
+            TimelineLabelEdge::Bottom => plot.bottom() - size.y * 0.5,
+        },
+    );
+    let rect = egui::Rect::from_center_size(position, size);
+    occupied.push(rect);
+    TimelineLabelPlacement {
+        position,
+        align: egui::Align2::CENTER_CENTER,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_timeline_chart(
     ui: &mut egui::Ui,
     series: &TimelineSeries,
@@ -49,12 +221,13 @@ pub(crate) fn draw_timeline_chart(
     selected_char: &mut Option<u32>,
     dark_mode: bool,
     characters: &HashMap<u32, CharacterInfo>,
+    view_state: &mut TimelineViewState,
 ) {
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), chart_height),
-        egui::Sense::hover(),
+        egui::Sense::click_and_drag(),
     );
-    let painter = ui.painter();
+    let painter = ui.painter().clone();
     painter.rect_filled(rect, 8.0, shadcn_card(dark_mode));
     painter.rect_stroke(
         rect,
@@ -82,6 +255,40 @@ pub(crate) fn draw_timeline_chart(
     if plot.width() <= 1.0 || plot.height() <= 1.0 {
         return;
     }
+    let view_range = view_state.view_range(duration);
+    let plot_painter = painter.with_clip_rect(plot);
+
+    if response.secondary_clicked() {
+        view_state.context_time = response
+            .interact_pointer_pos()
+            .filter(|pointer| plot.contains(*pointer))
+            .map(|pointer| {
+                pointer_x_to_timeline_time(pointer.x, plot.left(), plot.width(), view_range)
+            });
+    }
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        let origin = ui.input(|input| input.pointer.press_origin());
+        view_state.drag_anchor = origin
+            .filter(|origin| plot.contains(*origin))
+            .map(|origin| {
+                pointer_x_to_timeline_time(origin.x, plot.left(), plot.width(), view_range)
+            });
+        view_state.drag_selection = None;
+    }
+    if (response.dragged_by(egui::PointerButton::Primary)
+        || response.drag_stopped_by(egui::PointerButton::Primary))
+        && let Some(anchor) = view_state.drag_anchor
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        let current = pointer_x_to_timeline_time(pointer.x, plot.left(), plot.width(), view_range);
+        view_state.drag_selection = normalize_timeline_selection(anchor, current, duration);
+    }
+    if response.drag_stopped_by(egui::PointerButton::Primary) {
+        view_state.drag_anchor = None;
+    }
+    if let Some((start, end)) = view_state.drag_selection {
+        view_state.drag_selection = normalize_timeline_selection(start, end, duration);
+    }
 
     let team_max_dps = series
         .buckets
@@ -100,13 +307,14 @@ pub(crate) fn draw_timeline_chart(
     .max(1.0);
     let max_damage = series.total_damage.max(1.0);
     let grid_color = shadcn_border(dark_mode).gamma_multiply(0.7);
+    let visible_duration = view_range.1 - view_range.0;
     for step in 0..=4 {
         let x = plot.left() + plot.width() * step as f32 / 4.0;
         painter.line_segment(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
             Stroke::new(1.0_f32, grid_color),
         );
-        let seconds = duration * step as f64 / 4.0;
+        let seconds = view_range.0 + visible_duration * step as f64 / 4.0;
         painter.text(
             egui::pos2(x, rect.bottom() - 12.0),
             egui::Align2::CENTER_CENTER,
@@ -132,32 +340,82 @@ pub(crate) fn draw_timeline_chart(
     }
 
     for interval in &series.time_stop_intervals {
-        let left = plot.left() + (interval.start_offset / duration) as f32 * plot.width();
-        let right = plot.left() + (interval.end_offset / duration) as f32 * plot.width();
+        let Some((visible_start, visible_end)) =
+            intersect_timeline_range(interval.start_offset, interval.end_offset, view_range)
+        else {
+            continue;
+        };
+        let left = timeline_time_to_pointer_x(visible_start, plot.left(), plot.width(), view_range);
+        let right = timeline_time_to_pointer_x(visible_end, plot.left(), plot.width(), view_range);
         let band = egui::Rect::from_min_max(
-            egui::pos2(left.clamp(plot.left(), plot.right()), plot.top()),
-            egui::pos2(right.clamp(plot.left(), plot.right()), plot.bottom()),
+            egui::pos2(left, plot.top()),
+            egui::pos2(right, plot.bottom()),
         );
-        painter.rect_filled(band, 0.0, semantic_warning(dark_mode).gamma_multiply(0.16));
+        plot_painter.rect_filled(band, 0.0, semantic_warning(dark_mode).gamma_multiply(0.16));
     }
 
+    let mut marker_label_rects = Vec::new();
     for marker in &series.markers {
-        let x = plot.left() + (marker.offset / duration) as f32 * plot.width();
+        if !timeline_time_is_visible(marker.offset, view_range) {
+            continue;
+        }
+        let x = timeline_time_to_pointer_x(marker.offset, plot.left(), plot.width(), view_range);
         let color = match marker.kind {
-            TimelineMarkerKind::HalfStart => theme_accent(dark_mode),
+            TimelineMarkerKind::HalfStart => ui.visuals().selection.bg_fill,
             TimelineMarkerKind::Clear => semantic_success(dark_mode),
             TimelineMarkerKind::Exit => semantic_danger(dark_mode),
         };
-        painter.line_segment(
+        plot_painter.line_segment(
             [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
             Stroke::new(1.5_f32, color),
         );
-        painter.text(
-            egui::pos2(x + 4.0, plot.top() + 10.0),
-            egui::Align2::LEFT_CENTER,
-            t(&marker.label),
-            egui::FontId::proportional(10.0),
-            color,
+        let label = t(&marker.label);
+        let font = egui::FontId::proportional(10.0);
+        let size = plot_painter
+            .layout_no_wrap(label.clone(), font.clone(), color)
+            .size();
+        let placement = place_timeline_label(
+            x,
+            size,
+            plot,
+            TimelineLabelEdge::Top,
+            &mut marker_label_rects,
+        );
+        plot_painter.text(placement.position, placement.align, label, font, color);
+    }
+
+    let user_marker_color = ui.visuals().selection.bg_fill.gamma_multiply(0.82);
+    for (index, marker) in view_state.user_markers.iter().copied().enumerate() {
+        if !timeline_time_is_visible(marker, view_range) {
+            continue;
+        }
+        let x = timeline_time_to_pointer_x(marker, plot.left(), plot.width(), view_range);
+        plot_painter.line_segment(
+            [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
+            Stroke::new(1.0_f32, user_marker_color),
+        );
+        plot_painter.circle_filled(egui::pos2(x, plot.top() + 4.0), 3.0, user_marker_color);
+        let label = tf(
+            "Marker {} · {}s",
+            &[&(index + 1).to_string(), &format_timeline_seconds(marker)],
+        );
+        let font = egui::FontId::proportional(9.5);
+        let size = plot_painter
+            .layout_no_wrap(label.clone(), font.clone(), user_marker_color)
+            .size();
+        let placement = place_timeline_label(
+            x,
+            size,
+            plot,
+            TimelineLabelEdge::Bottom,
+            &mut marker_label_rects,
+        );
+        plot_painter.text(
+            placement.position,
+            placement.align,
+            label,
+            font,
+            user_marker_color,
         );
     }
 
@@ -166,32 +424,53 @@ pub(crate) fn draw_timeline_chart(
             let dps_points = series
                 .buckets
                 .iter()
+                .filter(|bucket| {
+                    timeline_time_is_visible(
+                        (bucket.start_offset + bucket.end_offset) * 0.5,
+                        view_range,
+                    )
+                })
                 .map(|bucket| {
-                    let x = plot.left()
-                        + ((bucket.start_offset + bucket.end_offset) * 0.5 / duration) as f32
-                            * plot.width();
+                    let x = timeline_time_to_pointer_x(
+                        (bucket.start_offset + bucket.end_offset) * 0.5,
+                        plot.left(),
+                        plot.width(),
+                        view_range,
+                    );
                     let y = plot.bottom() - (bucket.dps / max_dps) as f32 * plot.height();
                     egui::pos2(x, y)
                 })
                 .collect::<Vec<_>>();
             if dps_points.len() >= 2 {
-                painter.line(dps_points, Stroke::new(2.0_f32, theme_accent(dark_mode)));
+                plot_painter.line(
+                    dps_points,
+                    Stroke::new(2.0_f32, ui.visuals().selection.bg_fill),
+                );
             }
 
             let cumulative_points = series
                 .buckets
                 .iter()
+                .filter(|bucket| {
+                    timeline_time_is_visible(
+                        (bucket.start_offset + bucket.end_offset) * 0.5,
+                        view_range,
+                    )
+                })
                 .map(|bucket| {
-                    let x = plot.left()
-                        + ((bucket.start_offset + bucket.end_offset) * 0.5 / duration) as f32
-                            * plot.width();
+                    let x = timeline_time_to_pointer_x(
+                        (bucket.start_offset + bucket.end_offset) * 0.5,
+                        plot.left(),
+                        plot.width(),
+                        view_range,
+                    );
                     let y = plot.bottom()
                         - (bucket.cumulative_damage / max_damage) as f32 * plot.height();
                     egui::pos2(x, y)
                 })
                 .collect::<Vec<_>>();
             if cumulative_points.len() >= 2 {
-                painter.line(
+                plot_painter.line(
                     cumulative_points,
                     Stroke::new(1.5_f32, ui.visuals().weak_text_color()),
                 );
@@ -199,16 +478,28 @@ pub(crate) fn draw_timeline_chart(
         }
         TimelineDpsViewMode::Characters => {
             for (rank, (char_id, _, _)) in role_totals.iter().enumerate() {
-                let color = readable_accent(character_color(*char_id, characters, rank), dark_mode);
+                let color = readable_accent(
+                    character_color(*char_id, characters, rank, dark_mode),
+                    dark_mode,
+                );
                 let selected = selected_char.is_some_and(|selected| selected == *char_id);
                 let dimmed = selected_char.is_some() && !selected;
                 let points = series
                     .buckets
                     .iter()
+                    .filter(|bucket| {
+                        timeline_time_is_visible(
+                            (bucket.start_offset + bucket.end_offset) * 0.5,
+                            view_range,
+                        )
+                    })
                     .map(|bucket| {
-                        let x = plot.left()
-                            + ((bucket.start_offset + bucket.end_offset) * 0.5 / duration) as f32
-                                * plot.width();
+                        let x = timeline_time_to_pointer_x(
+                            (bucket.start_offset + bucket.end_offset) * 0.5,
+                            plot.left(),
+                            plot.width(),
+                            view_range,
+                        );
                         let dps = bucket
                             .role_damage
                             .iter()
@@ -219,7 +510,7 @@ pub(crate) fn draw_timeline_chart(
                     })
                     .collect::<Vec<_>>();
                 if points.len() >= 2 {
-                    painter.line(
+                    plot_painter.line(
                         points,
                         Stroke::new(
                             if selected { 3.0_f32 } else { 1.5_f32 },
@@ -234,14 +525,26 @@ pub(crate) fn draw_timeline_chart(
                     .enumerate()
                     .find(|(_, (char_id, _, _))| *char_id == selected)
             {
-                let color = readable_accent(character_color(*char_id, characters, rank), dark_mode);
+                let color = readable_accent(
+                    character_color(*char_id, characters, rank, dark_mode),
+                    dark_mode,
+                );
                 let points = series
                     .buckets
                     .iter()
+                    .filter(|bucket| {
+                        timeline_time_is_visible(
+                            (bucket.start_offset + bucket.end_offset) * 0.5,
+                            view_range,
+                        )
+                    })
                     .map(|bucket| {
-                        let x = plot.left()
-                            + ((bucket.start_offset + bucket.end_offset) * 0.5 / duration) as f32
-                                * plot.width();
+                        let x = timeline_time_to_pointer_x(
+                            (bucket.start_offset + bucket.end_offset) * 0.5,
+                            plot.left(),
+                            plot.width(),
+                            view_range,
+                        );
                         let dps = bucket
                             .role_damage
                             .iter()
@@ -252,10 +555,42 @@ pub(crate) fn draw_timeline_chart(
                     })
                     .collect::<Vec<_>>();
                 if points.len() >= 2 {
-                    painter.line(points, Stroke::new(3.4_f32, color));
+                    plot_painter.line(points, Stroke::new(3.4_f32, color));
                 }
             }
         }
+    }
+
+    if let Some((start, end)) = view_state.drag_selection
+        && let Some((visible_start, visible_end)) = intersect_timeline_range(start, end, view_range)
+    {
+        let left = timeline_time_to_pointer_x(visible_start, plot.left(), plot.width(), view_range);
+        let right = timeline_time_to_pointer_x(visible_end, plot.left(), plot.width(), view_range);
+        let selection_rect = egui::Rect::from_min_max(
+            egui::pos2(left, plot.top()),
+            egui::pos2(right, plot.bottom()),
+        );
+        let selection_color = ui.visuals().selection.bg_fill;
+        plot_painter.rect_filled(selection_rect, 0.0, selection_color.gamma_multiply(0.12));
+        plot_painter.rect_stroke(
+            selection_rect,
+            0.0,
+            Stroke::new(1.0_f32, selection_color.gamma_multiply(0.75)),
+            egui::StrokeKind::Inside,
+        );
+        plot_painter.text(
+            selection_rect.center_top() + egui::vec2(0.0, 10.0),
+            egui::Align2::CENTER_CENTER,
+            tf(
+                "Selection · {}s - {}s",
+                &[
+                    &format_timeline_seconds(start),
+                    &format_timeline_seconds(end),
+                ],
+            ),
+            egui::FontId::proportional(9.5),
+            selection_color,
+        );
     }
 
     painter.text(
@@ -270,7 +605,7 @@ pub(crate) fn draw_timeline_chart(
             format_number(max_dps)
         ),
         egui::FontId::monospace(11.0),
-        theme_accent(dark_mode),
+        ui.visuals().selection.bg_fill,
     );
     painter.text(
         rect.right_top() + egui::vec2(-12.0, 12.0),
@@ -284,7 +619,10 @@ pub(crate) fn draw_timeline_chart(
         let mut y = rect.top() + 39.0;
         let mut row = 0;
         for (rank, (char_id, name, _)) in role_totals.iter().enumerate() {
-            let color = readable_accent(character_color(*char_id, characters, rank), dark_mode);
+            let color = readable_accent(
+                character_color(*char_id, characters, rank, dark_mode),
+                dark_mode,
+            );
             let display_name = character_display_name(characters, *char_id, name);
             let label = display_name.as_str();
             let label_width = (label.chars().count() as f32 * 11.0 + 34.0).clamp(76.0, 164.0);
@@ -351,24 +689,37 @@ pub(crate) fn draw_timeline_chart(
         && plot.contains(pointer)
     {
         let hover_time =
-            ((pointer.x - plot.left()) / plot.width()).clamp(0.0, 1.0) as f64 * duration;
+            pointer_x_to_timeline_time(pointer.x, plot.left(), plot.width(), view_range);
         let bucket_index = ((hover_time / series.bucket_seconds.max(0.001)).floor() as usize)
             .min(series.buckets.len().saturating_sub(1));
         if let Some(bucket) = series.buckets.get(bucket_index) {
-            let bucket_left = plot.left() + (bucket.start_offset / duration) as f32 * plot.width();
-            let bucket_right = plot.left() + (bucket.end_offset / duration) as f32 * plot.width();
-            let bucket_rect = egui::Rect::from_min_max(
-                egui::pos2(bucket_left.clamp(plot.left(), plot.right()), plot.top()),
-                egui::pos2(bucket_right.clamp(plot.left(), plot.right()), plot.bottom()),
+            let bucket_left = timeline_time_to_pointer_x(
+                bucket.start_offset,
+                plot.left(),
+                plot.width(),
+                view_range,
             );
-            painter.rect_filled(
+            let bucket_right = timeline_time_to_pointer_x(
+                bucket.end_offset,
+                plot.left(),
+                plot.width(),
+                view_range,
+            );
+            let bucket_rect = egui::Rect::from_min_max(
+                egui::pos2(bucket_left, plot.top()),
+                egui::pos2(bucket_right, plot.bottom()),
+            );
+            plot_painter.rect_filled(
                 bucket_rect,
                 0.0,
-                theme_accent(dark_mode).gamma_multiply(0.08),
+                ui.visuals().selection.bg_fill.gamma_multiply(0.08),
             );
-            let x = plot.left()
-                + ((bucket.start_offset + bucket.end_offset) * 0.5 / duration) as f32
-                    * plot.width();
+            let x = timeline_time_to_pointer_x(
+                (bucket.start_offset + bucket.end_offset) * 0.5,
+                plot.left(),
+                plot.width(),
+                view_range,
+            );
             let hovered_dps = match dps_view_mode {
                 TimelineDpsViewMode::Team => bucket.dps,
                 TimelineDpsViewMode::Characters => bucket
@@ -378,19 +729,23 @@ pub(crate) fn draw_timeline_chart(
                     .fold(0.0, f64::max),
             };
             let y = plot.bottom() - (hovered_dps / max_dps) as f32 * plot.height();
-            painter.line_segment(
+            plot_painter.line_segment(
                 [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
-                Stroke::new(1.0_f32, theme_accent(dark_mode).gamma_multiply(0.8)),
+                Stroke::new(1.0_f32, ui.visuals().selection.bg_fill.gamma_multiply(0.8)),
             );
             if hovered_dps > 0.0 {
-                painter.line_segment(
+                plot_painter.line_segment(
                     [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
-                    Stroke::new(1.0_f32, theme_accent(dark_mode).gamma_multiply(0.45)),
+                    Stroke::new(1.0_f32, ui.visuals().selection.bg_fill.gamma_multiply(0.45)),
                 );
             }
             match dps_view_mode {
                 TimelineDpsViewMode::Team => {
-                    painter.circle_filled(egui::pos2(x, y), 4.0, theme_accent(dark_mode));
+                    plot_painter.circle_filled(
+                        egui::pos2(x, y),
+                        4.0,
+                        ui.visuals().selection.bg_fill,
+                    );
                 }
                 TimelineDpsViewMode::Characters => {
                     for (rank, (char_id, _, _)) in role_totals.iter().enumerate() {
@@ -402,10 +757,13 @@ pub(crate) fn draw_timeline_chart(
                             continue;
                         };
                         let role_y = plot.bottom() - (role.dps / max_dps) as f32 * plot.height();
-                        painter.circle_filled(
+                        plot_painter.circle_filled(
                             egui::pos2(x, role_y),
                             3.0,
-                            readable_accent(character_color(*char_id, characters, rank), dark_mode),
+                            readable_accent(
+                                character_color(*char_id, characters, rank, dark_mode),
+                                dark_mode,
+                            ),
                         );
                     }
                 }
@@ -421,7 +779,7 @@ pub(crate) fn draw_timeline_chart(
             } else {
                 egui::Align2::RIGHT_BOTTOM
             };
-            painter.text(
+            plot_painter.text(
                 label_pos,
                 align,
                 format!(
@@ -441,24 +799,34 @@ pub(crate) fn draw_timeline_chart(
                 hover_time >= interval.start_offset && hover_time <= interval.end_offset
             });
             if let Some(interval) = hovered_time_stop {
-                let left = plot.left() + (interval.start_offset / duration) as f32 * plot.width();
-                let right = plot.left() + (interval.end_offset / duration) as f32 * plot.width();
-                let interval_rect = egui::Rect::from_min_max(
-                    egui::pos2(left.clamp(plot.left(), plot.right()), plot.top()),
-                    egui::pos2(right.clamp(plot.left(), plot.right()), plot.bottom()),
+                let left = timeline_time_to_pointer_x(
+                    interval.start_offset,
+                    plot.left(),
+                    plot.width(),
+                    view_range,
                 );
-                painter.rect_filled(
+                let right = timeline_time_to_pointer_x(
+                    interval.end_offset,
+                    plot.left(),
+                    plot.width(),
+                    view_range,
+                );
+                let interval_rect = egui::Rect::from_min_max(
+                    egui::pos2(left, plot.top()),
+                    egui::pos2(right, plot.bottom()),
+                );
+                plot_painter.rect_filled(
                     interval_rect,
                     0.0,
                     semantic_warning(dark_mode).gamma_multiply(0.28),
                 );
-                painter.rect_stroke(
+                plot_painter.rect_stroke(
                     interval_rect,
                     0.0,
                     Stroke::new(1.0_f32, semantic_warning(dark_mode).gamma_multiply(0.8)),
                     egui::StrokeKind::Inside,
                 );
-                painter.text(
+                plot_painter.text(
                     egui::pos2(interval_rect.center().x, plot.top() + 12.0),
                     egui::Align2::CENTER_CENTER,
                     tf(
@@ -470,7 +838,7 @@ pub(crate) fn draw_timeline_chart(
                     egui::FontId::monospace(10.0),
                     semantic_warning(dark_mode),
                 );
-                response.on_hover_ui_at_pointer(|ui| {
+                response.clone().on_hover_ui_at_pointer(|ui| {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     ui.label(RichText::new(t("Time-stop Interval")).strong());
                     egui::Grid::new("timeline_time_stop_hover")
@@ -511,7 +879,7 @@ pub(crate) fn draw_timeline_chart(
                         });
                 });
             } else {
-                response.on_hover_ui_at_pointer(|ui| {
+                response.clone().on_hover_ui_at_pointer(|ui| {
                     ui.spacing_mut().item_spacing.y = 3.0;
                     ui.label(
                         RichText::new(format!(
@@ -570,6 +938,58 @@ pub(crate) fn draw_timeline_chart(
             }
         }
     }
+
+    let context_time = view_state.context_time;
+    let normalized_selection = view_state
+        .drag_selection
+        .and_then(|(start, end)| normalize_timeline_selection(start, end, duration));
+    let zoom_selection = clamp_timeline_zoom(normalized_selection, duration);
+    response.context_menu(|ui| {
+        if ui
+            .add_enabled(
+                context_time.is_some(),
+                egui::Button::new(t("Add marker here")),
+            )
+            .clicked()
+        {
+            view_state.add_marker(context_time.expect("enabled marker action has a chart time"));
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                zoom_selection.is_some(),
+                egui::Button::new(t("Zoom to selection")),
+            )
+            .clicked()
+        {
+            view_state.zoom = zoom_selection;
+            view_state.drag_selection = None;
+            view_state.drag_anchor = None;
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                view_state.zoom.is_some(),
+                egui::Button::new(t("Reset zoom")),
+            )
+            .clicked()
+        {
+            view_state.zoom = None;
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                context_time.is_some() && !view_state.user_markers.is_empty(),
+                egui::Button::new(t("Remove nearest marker")),
+            )
+            .clicked()
+        {
+            view_state.remove_nearest_marker(
+                context_time.expect("enabled marker removal has a chart time"),
+            );
+            ui.close();
+        }
+    });
 }
 
 pub(crate) fn timeline_bucket_millis(seconds: f32) -> u32 {
@@ -647,8 +1067,10 @@ pub(crate) fn draw_skill_breakdown_rows(
                     egui::vec2(ui.available_width(), 36.0),
                     egui::Sense::hover(),
                 );
-                let color =
-                    readable_accent(character_color(row.char_id, characters, index), dark_mode);
+                let color = readable_accent(
+                    character_color(row.char_id, characters, index, dark_mode),
+                    dark_mode,
+                );
                 let fill = if response.hovered() {
                     shadcn_card_hover(dark_mode)
                 } else {
@@ -805,4 +1227,116 @@ pub(crate) fn draw_unknown_attribution(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1.0e-6,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn pointer_and_timeline_time_round_trip_with_zoom() {
+        let view = (10.0, 30.0);
+        let x = timeline_time_to_pointer_x(20.0, 100.0, 400.0, view);
+        assert_close(x as f64, 300.0);
+        assert_close(pointer_x_to_timeline_time(x, 100.0, 400.0, view), 20.0);
+        assert_close(pointer_x_to_timeline_time(0.0, 100.0, 400.0, view), 10.0);
+        assert_close(pointer_x_to_timeline_time(600.0, 100.0, 400.0, view), 30.0);
+        assert_close(
+            timeline_time_to_pointer_x(5.0, 100.0, 400.0, view) as f64,
+            100.0,
+        );
+        assert_close(
+            timeline_time_to_pointer_x(40.0, 100.0, 400.0, view) as f64,
+            500.0,
+        );
+    }
+
+    #[test]
+    fn selection_normalization_orders_and_clamps_endpoints() {
+        assert_eq!(
+            normalize_timeline_selection(8.0, 2.0, 10.0),
+            Some((2.0, 8.0))
+        );
+        assert_eq!(
+            normalize_timeline_selection(-4.0, 14.0, 10.0),
+            Some((0.0, 10.0))
+        );
+        assert_eq!(normalize_timeline_selection(3.0, 3.0, 10.0), None);
+        assert_eq!(normalize_timeline_selection(f64::NAN, 3.0, 10.0), None);
+        assert_eq!(normalize_timeline_selection(1.0, 3.0, 0.0), None);
+    }
+
+    #[test]
+    fn zoom_clamp_rejects_empty_and_full_ranges() {
+        assert_eq!(
+            clamp_timeline_zoom(Some((-2.0, 4.0)), 10.0),
+            Some((0.0, 4.0))
+        );
+        assert_eq!(
+            clamp_timeline_zoom(Some((12.0, 8.0)), 10.0),
+            Some((8.0, 10.0))
+        );
+        assert_eq!(clamp_timeline_zoom(Some((0.0, 10.0)), 10.0), None);
+        assert_eq!(clamp_timeline_zoom(Some((12.0, 14.0)), 10.0), None);
+        assert_eq!(clamp_timeline_zoom(None, 10.0), None);
+    }
+
+    #[test]
+    fn user_markers_are_sorted_and_removed_nearest_to_context() {
+        let mut state = TimelineViewState::default();
+        state.add_marker(8.0);
+        state.add_marker(2.0);
+        state.add_marker(5.0);
+        assert_eq!(state.user_markers, [2.0, 5.0, 8.0]);
+
+        state.remove_nearest_marker(6.0);
+        assert_eq!(state.user_markers, [2.0, 8.0]);
+    }
+
+    #[test]
+    fn timeline_label_stays_inside_the_right_edge() {
+        let plot = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 80.0));
+        let mut occupied = Vec::new();
+        let placement = place_timeline_label(
+            100.0,
+            egui::vec2(30.0, 12.0),
+            plot,
+            TimelineLabelEdge::Top,
+            &mut occupied,
+        );
+
+        assert!(occupied[0].right() <= plot.right());
+        assert!(occupied[0].left() >= plot.left());
+        assert_eq!(placement.align, egui::Align2::RIGHT_CENTER);
+    }
+
+    #[test]
+    fn nearby_timeline_labels_use_non_overlapping_lanes() {
+        let plot = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(120.0, 80.0));
+        let mut occupied = Vec::new();
+        let first = place_timeline_label(
+            116.0,
+            egui::vec2(36.0, 12.0),
+            plot,
+            TimelineLabelEdge::Top,
+            &mut occupied,
+        );
+        let second = place_timeline_label(
+            112.0,
+            egui::vec2(36.0, 12.0),
+            plot,
+            TimelineLabelEdge::Top,
+            &mut occupied,
+        );
+
+        assert!(!occupied[0].expand(2.0).intersects(occupied[1]));
+        assert_ne!(first.position.y, second.position.y);
+    }
 }

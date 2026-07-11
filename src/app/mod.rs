@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 use std::io::Write as IoWrite;
 use std::net::Ipv4Addr;
@@ -37,15 +37,23 @@ use crate::engine::parser::{
     load_equipment_catalog,
 };
 use crate::platform::file_drop::NativeFileDrop;
-use crate::platform::hotkey::{HotkeyEvent, HotkeyHandle};
-use crate::platform::network::{GameNetwork, detect_game_device, detect_game_network};
+use crate::platform::hotkey::{
+    HotkeyEvent, HotkeyHandle, hotkey_binding_matches_egui, hotkey_key_to_egui,
+    passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
+};
+use crate::platform::network::{
+    GameNetwork, detect_game_device, detect_game_network, game_process_is_running,
+};
 use crate::platform::window_attributes::{
     DialogOwner, WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
+    open_directory,
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
-    self, DpsTimeMode, HudConfig, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX,
-    TIMELINE_BUCKET_SECONDS_MIN, TimelineDpsViewMode, UiConfig,
+    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
+    HUD_WIDTH_MIN, HitDetailColumn, HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig,
+    HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
+    ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
 };
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
@@ -94,12 +102,11 @@ const PASSTHROUGH_HOTKEY_COMBO_WIDTH: f32 = 150.0;
 const CHARACTER_ATTRIBUTE_COMBO_WIDTH: f32 = 150.0;
 const CHARACTER_EDITOR_CARD_HEIGHT: f32 = 68.0;
 const CHARACTER_EDITOR_AVATAR_SIZE: f32 = 48.0;
-/// Width the HUD window shrinks to; height is computed per row count so the
-/// window hugs the readout with no empty translucent area.
-const HUD_WINDOW_WIDTH: f32 = 380.0;
 const UI_CONFIG_SAVE_DELAY: Duration = Duration::from_millis(350);
 const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const STATUS_TOAST_DURATION: Duration = Duration::from_secs(4);
+const UNDO_TOAST_DURATION: Duration = Duration::from_secs(5);
+const HUD_TRANSITION_TRACKING_GUARD_FRAMES: u8 = 8;
 const ABYSS_STAT_NAMES_ZH_CN_PATH: &str = "res/data/abyss/monster_stat_names_zh_cn.json";
 const INLINE_CONTROL_HEIGHT: f32 = 28.0;
 const INLINE_CONTROL_TEXT_SIZE: f32 = 13.0;
@@ -138,6 +145,7 @@ pub(crate) enum FileDialogPurpose {
     TeamDpsImportAll,
     TeamDpsImportLine { upper: bool },
     TeamDpsExport { json: String },
+    HistoryExport { json: String },
     EmptyCurtainExport { json: String },
     CaptureInfoExport,
     RawCaptureExport,
@@ -169,7 +177,6 @@ pub(crate) enum ConfirmationAction {
     ImportCaptureJson(PathBuf),
     ClearEncryptedIni,
     ReloadEncryptedIni(PathBuf),
-    DeleteHistory(String),
     ClearCaptureLogs,
 }
 
@@ -186,8 +193,8 @@ pub(crate) enum ErrorAction {
 /// Tabs of the console window. The first three are user-facing tools promoted
 /// out of the old debug panel; `Packets`/`Diagnostics` are genuine capture
 /// debugging and only get tab buttons in debug builds (`not(no_debug)`).
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-enum ConsoleTab {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ConsoleTab {
     #[default]
     Settings,
     Timeline,
@@ -199,6 +206,110 @@ enum ConsoleTab {
     Packets,
     Resources,
     Diagnostics,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsoleGroup {
+    Common,
+    Review,
+    Advanced,
+}
+
+impl ConsoleGroup {
+    fn label_key(self) -> &'static str {
+        match self {
+            Self::Common => "Common",
+            Self::Review => "Review",
+            Self::Advanced => "Advanced",
+        }
+    }
+}
+
+impl ConsoleTab {
+    fn visible_tabs() -> &'static [Self] {
+        #[cfg(not(feature = "no_debug"))]
+        const TABS: &[ConsoleTab] = &[
+            ConsoleTab::Settings,
+            ConsoleTab::History,
+            ConsoleTab::Timeline,
+            ConsoleTab::Skills,
+            ConsoleTab::EmptyCurtain,
+            ConsoleTab::Characters,
+            ConsoleTab::EncryptedIni,
+            ConsoleTab::Packets,
+            ConsoleTab::Resources,
+            ConsoleTab::Diagnostics,
+        ];
+        #[cfg(feature = "no_debug")]
+        const TABS: &[ConsoleTab] = &[
+            ConsoleTab::Settings,
+            ConsoleTab::History,
+            ConsoleTab::Timeline,
+            ConsoleTab::Skills,
+            ConsoleTab::EmptyCurtain,
+            ConsoleTab::Characters,
+            ConsoleTab::EncryptedIni,
+        ];
+        TABS
+    }
+
+    fn label_key(self) -> &'static str {
+        match self {
+            Self::Settings => "Settings",
+            Self::Timeline => "Timeline",
+            Self::Skills => "Skills",
+            Self::EmptyCurtain => "Console Loadout",
+            Self::History => "History",
+            Self::Characters => "Character Data",
+            Self::EncryptedIni => "Encrypted INI",
+            Self::Packets => "Packets",
+            Self::Resources => "Resources",
+            Self::Diagnostics => "Diagnostics",
+        }
+    }
+
+    /// Material icon rendered with the dedicated font installed in `chrome.rs`.
+    fn icon(self) -> egui_material_icons::MaterialIcon {
+        use egui_material_icons::icons::{
+            ICON_AUTO_AWESOME, ICON_BACKPACK, ICON_FOLDER, ICON_HISTORY, ICON_LOCK, ICON_PERSON,
+            ICON_SENSORS, ICON_SETTINGS, ICON_TIMELINE, ICON_TROUBLESHOOT,
+        };
+
+        match self {
+            Self::Settings => ICON_SETTINGS,
+            Self::Timeline => ICON_TIMELINE,
+            Self::Skills => ICON_AUTO_AWESOME,
+            Self::EmptyCurtain => ICON_BACKPACK,
+            Self::History => ICON_HISTORY,
+            Self::Characters => ICON_PERSON,
+            Self::EncryptedIni => ICON_LOCK,
+            Self::Packets => ICON_SENSORS,
+            Self::Resources => ICON_FOLDER,
+            Self::Diagnostics => ICON_TROUBLESHOOT,
+        }
+    }
+
+    fn group(self) -> ConsoleGroup {
+        match self {
+            Self::Settings | Self::History => ConsoleGroup::Common,
+            Self::Timeline | Self::Skills | Self::EmptyCurtain => ConsoleGroup::Review,
+            Self::Characters
+            | Self::EncryptedIni
+            | Self::Packets
+            | Self::Resources
+            | Self::Diagnostics => ConsoleGroup::Advanced,
+        }
+    }
+
+    fn adjacent(self, offset: isize) -> Self {
+        let tabs = Self::visible_tabs();
+        let index = tabs
+            .iter()
+            .position(|tab| *tab == self)
+            .expect("every ConsoleTab reachable from the UI is in visible_tabs")
+            as isize;
+        tabs[(index + offset).rem_euclid(tabs.len() as isize) as usize]
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -370,6 +481,7 @@ struct EncryptedIniLayoutCacheKey {
     query: String,
     current_match_byte: Option<usize>,
     dark_mode: bool,
+    accent: AccentColor,
     text_color: Color32,
 }
 
@@ -380,6 +492,7 @@ pub(crate) struct EncryptedIniLayoutRequest<'a> {
     current_match_byte: Option<usize>,
     wrap_width: f32,
     dark_mode: bool,
+    accent: AccentColor,
 }
 
 #[derive(Default)]
@@ -738,9 +851,52 @@ struct ResourceAuditState {
     category_filter: ResourceAuditCategoryFilter,
 }
 
+#[derive(Clone, Copy)]
+enum ToastTone {
+    Status,
+    Success,
+    Warning,
+    Danger,
+}
+
+pub(crate) enum UndoState {
+    CombatSession(Box<CombatUndoSnapshot>),
+    HistoryRecord(Box<HistoryRecord>),
+}
+
+pub(crate) struct CombatUndoSnapshot {
+    state: CombatState,
+    capture_quality_source: CaptureQualitySource,
+    timeline_view: TimelineViewState,
+    hidden_character_ids: HashSet<u32>,
+    selected_abyss_half: AbyssHalf,
+    abyss_compact_mode: bool,
+}
+
 struct StatusToast {
+    id: u64,
     text: String,
+    tone: ToastTone,
+    viewport: egui::ViewportId,
     shown_until: Instant,
+    last_tick: Instant,
+    hovered: bool,
+    animation_seeded: bool,
+    undo_id: Option<u64>,
+}
+
+struct PassthroughNotice {
+    enabled: bool,
+    shown_until: Instant,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AppliedStyleKey {
+    dark_mode: bool,
+    theme_preset: ThemePreset,
+    accent: AccentColor,
+    density: UiDensity,
+    reduce_motion: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -764,6 +920,7 @@ pub(crate) struct HudPaintColors {
     accent: Color32,
     text: Color32,
     muted: Color32,
+    halo: Color32,
 }
 
 #[derive(Clone, Copy)]
@@ -794,6 +951,7 @@ enum TextureLoad {
 struct DeviceDetection {
     devices: Vec<CaptureDevice>,
     selected_device: usize,
+    game_process_detected: bool,
     game_network: Option<GameNetwork>,
     local_ip: String,
     status: String,
@@ -811,6 +969,12 @@ pub struct DpsApp {
     equipment_textures: HashMap<String, egui::TextureHandle>,
     kongmu_ui: KongmuUiState,
     state: CombatState,
+    combat_active: bool,
+    last_combat_timestamp: Option<f64>,
+    last_combat_activity: Option<Instant>,
+    combat_start_generation: u32,
+    combat_end_generation: u32,
+    hidden_character_ids: HashSet<u32>,
     selected_abyss_half: AbyssHalf,
     abyss_compact_mode: bool,
     /// Chrome-less "战斗 HUD" overlay: hides the toolbar/cards and paints a
@@ -836,6 +1000,7 @@ pub struct DpsApp {
     team_hit_cache: HitDetailCache,
     skill_summary_cache: SkillSummaryCache,
     timeline_cache: TimelineCache,
+    timeline_view: TimelineViewState,
     skill_breakdown_cache: SkillBreakdownCache,
     selected_timeline_char: Option<u32>,
     selected_skill_breakdown_char: Option<u32>,
@@ -846,6 +1011,7 @@ pub struct DpsApp {
     /// `Some(name)` pins capture to that interface as a VPN fallback. Persisted in `UiConfig`.
     manual_capture_device: Option<String>,
     local_ip: String,
+    game_process_detected: bool,
     game_network: Option<GameNetwork>,
     filter: String,
     active_capture_filter: Option<String>,
@@ -872,6 +1038,10 @@ pub struct DpsApp {
     texture_load_receiver: Receiver<TextureLoad>,
     device_detection_receiver: Receiver<DeviceDetection>,
     awaiting_device_detection: bool,
+    game_process_monitor_receiver: Receiver<Result<bool, String>>,
+    game_process_monitor_stop: Sender<()>,
+    game_process_monitor_thread: Option<thread::JoinHandle<()>>,
+    game_process_monitor_error: Option<String>,
     /// Cached size/count of `logs/nte_raw_*.pcapng`, scanned lazily for the
     /// capture-file section in settings (never per frame). `None` until first
     /// shown or after a refresh request.
@@ -880,14 +1050,18 @@ pub struct DpsApp {
     dropped_debug_packets: u64,
     status: String,
     last_status_toast: String,
-    status_toast: Option<StatusToast>,
+    status_toasts: VecDeque<StatusToast>,
+    undo_states: HashMap<u64, UndoState>,
+    next_toast_id: u64,
     diagnostic: Option<String>,
     last_error: Option<String>,
     last_error_action: Option<ErrorAction>,
     last_error_viewport: egui::ViewportId,
     console_open: bool,
     console_corner_applied: bool,
+    console_sidebar_manually_collapsed: bool,
     console_tab: ConsoleTab,
+    command_palette: CommandPaletteState,
     debug_only_hits: bool,
     debug_search: String,
     character_editor: CharacterEditorState,
@@ -897,9 +1071,21 @@ pub struct DpsApp {
     /// it and calls [`crate::storage::i18n::set_language`] to swap the live locale.
     language: Language,
     dark_mode: bool,
+    theme_preset: ThemePreset,
+    accent: AccentColor,
+    density: UiDensity,
+    reduce_motion: bool,
     always_on_top: bool,
     mouse_passthrough: bool,
+    passthrough_notice: Option<PassthroughNotice>,
     passthrough_hotkey: PassthroughHotkey,
+    global_hotkeys: GlobalHotkeys,
+    recording_hotkey: Option<GlobalHotkeyAction>,
+    hotkey_hook_available: bool,
+    onboarding_done: bool,
+    onboarding_step: u8,
+    onboarding_hotkey_preview_generation: u32,
+    console_sidebar_migration_seen: bool,
     opacity: f32,
     applied_opacity: Option<f32>,
     corner_applied_hwnd: Option<isize>,
@@ -910,23 +1096,21 @@ pub struct DpsApp {
     abyss_window_size: egui::Vec2,
     hit_detail_window_size: egui::Vec2,
     team_hit_detail_window_size: egui::Vec2,
+    hit_detail_columns: HitDetailColumnsConfig,
     console_window_size: egui::Vec2,
     /// Frames to skip main-window size tracking after a programmatic `InnerSize` (HUD exit), while
     /// Windows applies the resize asynchronously and `content_rect` still reports the old HUD size.
     /// Without this, tracking would clobber `main_window_size` with the small HUD size.
     main_size_restore_frames: u8,
-    /// Content width (logical points) the live toolbar needs at the current language, measured each
-    /// frame from the real button labels. Feeds [`Self::enforce_main_min_size`] so the enforced
-    /// window minimum grows with a longer translation and the two button groups can never overlap.
-    toolbar_min_content_width: f32,
     /// Last `MinInnerSize` pushed to the main viewport, so the command is only re-sent on change.
     applied_main_min_size: egui::Vec2,
-    style_dark_mode_applied: Option<bool>,
+    style_key_applied: Option<AppliedStyleKey>,
+    session_epoch: u64,
     opacity_reapply_frames: u8,
     theme_transition_from: Option<Color32>,
-    theme_transition_started_at: Option<f64>,
     pending_file_dialog: Option<PendingFileDialog>,
     active_import: Option<ActiveImport>,
+    engine_task_viewport: Option<egui::ViewportId>,
     pending_confirmation: Option<ConfirmationAction>,
     pending_confirmation_viewport: egui::ViewportId,
     saved_ui_config: UiConfig,
@@ -944,6 +1128,7 @@ pub struct DpsApp {
 // namespace.
 mod abyss;
 mod chrome;
+mod commands;
 mod console_view;
 mod detail_panels;
 mod diagnostics_ui;
@@ -954,12 +1139,14 @@ mod hud;
 mod kongmu;
 mod lifecycle;
 mod main_view;
+mod motion;
 mod resources;
 mod theme;
 mod timeline;
 
 pub(crate) use abyss::*;
 pub(crate) use chrome::*;
+pub(crate) use commands::*;
 pub(crate) use diagnostics_ui::*;
 pub(crate) use editor::*;
 pub(crate) use history_ui::*;
@@ -979,26 +1166,64 @@ impl eframe::App for DpsApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if self.style_dark_mode_applied != Some(self.dark_mode) {
-            configure_style(ctx, self.dark_mode);
-            self.style_dark_mode_applied = Some(self.dark_mode);
+        let style_key = AppliedStyleKey {
+            dark_mode: self.dark_mode,
+            theme_preset: self.theme_preset,
+            accent: self.accent,
+            density: self.density,
+            reduce_motion: self.reduce_motion,
+        };
+        if self.style_key_applied != Some(style_key) {
+            configure_style(
+                ctx,
+                self.dark_mode,
+                self.theme_preset,
+                self.accent,
+                self.density,
+                self.reduce_motion,
+            );
+            self.style_key_applied = Some(style_key);
         }
+        let _ = motion::animate_generation(
+            ctx,
+            "combat_start_pulse",
+            self.combat_start_generation,
+            motion::dur::SLOW,
+            self.reduce_motion,
+        );
+        let _ = motion::animate_generation(
+            ctx,
+            "combat_end_bounce",
+            self.combat_end_generation,
+            motion::dur::SLOW,
+            self.reduce_motion,
+        );
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
+        self.update_combat_visual();
         self.drain_resource_audit();
         self.drain_capture_diagnostics();
         self.drain_texture_loads();
         self.drain_device_detection();
+        self.drain_game_process_monitor();
         self.drain_hotkeys(ctx);
         self.process_file_drops(ctx, frame);
         self.poll_file_dialog(ctx);
+        let hud_progress = motion::animate_bool(
+            ctx,
+            "hud_mode_transition",
+            self.hud_mode,
+            motion::dur::SLOW,
+            self.reduce_motion,
+            motion::ease::standard,
+        );
         let force_opacity = self.opacity_reapply_frames > 0;
         apply_window_attributes(
             frame,
             WindowAttributeConfig {
-                opacity: self.opacity,
+                opacity: egui::lerp(self.opacity..=1.0, hud_progress),
                 force_opacity,
-                hud_overlay: self.hud_mode,
+                hud_overlay: hud_progress >= 0.5,
                 passthrough: self.mouse_passthrough,
             },
             &mut self.applied_opacity,
@@ -1009,9 +1234,9 @@ impl eframe::App for DpsApp {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        // Shrink the window to hug the HUD on entry (so there's no big translucent
-        // rectangle); restore the tracked normal size on exit. These are discrete programmatic
-        // `InnerSize` commands, distinct from the interactive edge-drag resize (`window_resize_grips`).
+        // Keep the native window geometry on the same transition clock as the HUD content. This
+        // prevents the DirectComposition surface from snapping before the in-app transition has
+        // caught up, while remaining distinct from interactive edge-drag resizing.
         if self.hud_mode {
             let rows = self.hud_visible_row_count();
             let show_title = !self.mouse_passthrough;
@@ -1022,75 +1247,101 @@ impl eframe::App for DpsApp {
                 show_status_row,
                 config: self.hud_config.clone(),
             };
-            if self.hud_size_key.as_ref() != Some(&size_key) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(hud_window_size(
-                    rows,
-                    show_title,
-                    show_status_row,
-                    &self.hud_config,
-                )));
+            let target = hud_window_size(rows, show_title, show_status_row, &self.hud_config);
+            if hud_progress < 1.0 || self.hud_size_key.as_ref() != Some(&size_key) {
+                let normal = self.main_window_size.max(self.applied_main_min_size);
+                let size = normal + (target - normal) * hud_progress;
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
                 self.hud_size_key = Some(size_key);
             }
-        } else if self.hud_size_key.take().is_some() {
-            // Leaving HUD mode: restore the normal window to the size the user last dragged it to,
-            // but never below the enforced minimum (a stale small saved size would otherwise come
-            // back cramped and overlap the toolbar). Suppress size tracking until Windows applies
-            // the resize, so the transient HUD size is not mistaken for a user drag and written
-            // back over `main_window_size`.
+        } else if let Some(size_key) = self.hud_size_key.as_ref() {
+            let hud = hud_window_size(
+                size_key.rows,
+                size_key.show_title_strip,
+                size_key.show_status_row,
+                &size_key.config,
+            );
             let restore = self.main_window_size.max(self.applied_main_min_size);
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(restore));
-            self.main_size_restore_frames = 8;
+            let size = restore + (hud - restore) * hud_progress;
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            if hud_progress <= 0.0 {
+                self.hud_size_key = None;
+                self.main_size_restore_frames = HUD_TRANSITION_TRACKING_GUARD_FRAMES;
+            }
         }
         self.update_status_toast(ctx);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let hud_progress = motion::animate_bool(
+            &ctx,
+            "hud_mode_transition",
+            self.hud_mode,
+            motion::dur::SLOW,
+            self.reduce_motion,
+            motion::ease::standard,
+        );
+        let content_opacity = if self.hud_mode {
+            hud_progress
+        } else {
+            1.0 - hud_progress
+        };
+        let normal_visibility = 1.0 - hud_progress;
         // HUD mode replaces the full title bar with a compact strip (drag · 穿透 ·
         // 退出) and strips the panel fill so only the game shows behind it.
-        let show_hud_title = self.hud_mode && !self.mouse_passthrough;
-        if !self.hud_mode || show_hud_title {
-            let title_frame = if self.hud_mode {
-                // No margin so the HUD's control rail can span the full window width.
-                egui::Frame::new()
+        let show_hud_title = if self.hud_mode {
+            !self.mouse_passthrough
+        } else {
+            self.hud_size_key
+                .as_ref()
+                .is_some_and(|key| key.show_title_strip)
+                && hud_progress > 0.0
+        };
+        let title_height = MAIN_TITLE_BAR_HEIGHT * normal_visibility
+            + if show_hud_title {
+                24.0 * hud_progress
             } else {
-                egui::Frame::new()
-                    .fill(ctx.global_style().visuals.panel_fill)
-                    .inner_margin(egui::Margin::symmetric(10, 4))
+                0.0
             };
+        if title_height > 0.5 {
+            let side_margin = (10.0 * normal_visibility).round() as i8;
+            let vertical_margin = (4.0 * normal_visibility).round() as i8;
+            let title_frame = egui::Frame::new()
+                .fill(
+                    ctx.global_style()
+                        .visuals
+                        .panel_fill
+                        .gamma_multiply(normal_visibility),
+                )
+                .inner_margin(egui::Margin::symmetric(side_margin, vertical_margin));
             egui::Panel::top("custom_title_bar")
-                .exact_size(if self.hud_mode {
-                    24.0
-                } else {
-                    MAIN_TITLE_BAR_HEIGHT
-                })
+                .exact_size(title_height)
                 .frame(title_frame)
                 .show_inside(ui, |ui| {
-                    if self.hud_mode {
+                    if show_hud_title && hud_progress >= 0.5 {
+                        ui.set_opacity(hud_progress);
                         self.hud_title_bar(ui);
                     } else {
+                        ui.set_opacity(normal_visibility);
                         self.title_bar(ui);
                     }
                 });
         }
 
-        let central_fill = if self.hud_mode {
-            Color32::TRANSPARENT
+        let theme = self.theme();
+        let central_fill = if self.hud_mode && !self.mouse_passthrough {
+            mix_color(theme.bg, theme.hud.edit_bg, hud_progress)
         } else {
-            shadcn_background(self.dark_mode)
+            theme.bg.gamma_multiply(normal_visibility)
         };
-        let central_margin = if self.hud_mode {
-            egui::Margin::ZERO
-        } else {
-            egui::Margin {
-                // Match the title bar's 10px side margins so the metric cards and
-                // party rows line up with the window controls above and the
-                // rightmost card keeps clearance from the window edge.
-                left: 10,
-                right: 10,
-                top: 0,
-                bottom: 8,
-            }
+        let central_margin = egui::Margin {
+            // Match the title bar's side margins while the normal layout is visible, then
+            // collapse them with the HUD transition so geometry and paint stay synchronized.
+            left: (10.0 * normal_visibility).round() as i8,
+            right: (10.0 * normal_visibility).round() as i8,
+            top: 0,
+            bottom: (8.0 * normal_visibility).round() as i8,
         };
         egui::CentralPanel::default()
             .frame(
@@ -1099,6 +1350,7 @@ impl eframe::App for DpsApp {
                     .inner_margin(central_margin),
             )
             .show_inside(ui, |ui| {
+                ui.set_opacity(content_opacity);
                 if self.hud_mode {
                     self.hud_panel(ui);
                 } else {
@@ -1115,12 +1367,30 @@ impl eframe::App for DpsApp {
             });
 
         // Native edge/corner drag-resize for the borderless main window, plus tracking its size so
-        // it restores on the next launch. Skipped in HUD mode, where the window auto-hugs the HUD.
-        if !self.hud_mode {
+        // it restores on the next launch. HUD edit mode only exposes horizontal grips because its
+        // height follows the visible modules.
+        if self.hud_mode && !self.mouse_passthrough && hud_progress >= 1.0 {
+            window_width_resize_grips(&ctx);
+            if ctx.input(|input| input.pointer.any_down()) {
+                let width = ctx
+                    .content_rect()
+                    .width()
+                    .round()
+                    .clamp(HUD_WIDTH_MIN as f32, HUD_WIDTH_MAX as f32)
+                    as u16;
+                if width != self.hud_config.width {
+                    self.hud_config.width = width;
+                }
+            }
+        } else if !self.hud_mode {
             let maximized = ctx
                 .input(|input| input.viewport().maximized)
                 .unwrap_or(false);
-            if self.main_size_restore_frames > 0 {
+            if self.hud_size_key.is_some() {
+                // The HUD→window transition is still driving `InnerSize`; its duration is
+                // time-based, so a fixed frame guard would expire too early on high-refresh
+                // displays and persist an in-between size as the user's normal window size.
+            } else if self.main_size_restore_frames > 0 {
                 // A programmatic resize (e.g. the HUD-exit restore) is still being
                 // applied by Windows. Skip both tracking — so the transient size is
                 // not written back over `main_window_size` — and min enforcement, so
@@ -1139,7 +1409,9 @@ impl eframe::App for DpsApp {
                 // be squeezed into overlapping.
                 self.enforce_main_min_size(&ctx, maximized);
             }
-            window_resize_grips(&ctx);
+            if self.hud_size_key.is_none() {
+                window_resize_grips(&ctx);
+            }
         }
 
         if self.console_open {
@@ -1160,21 +1432,24 @@ impl eframe::App for DpsApp {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style())
-                        .fill(shadcn_card(self.dark_mode))
-                        .stroke(Stroke::new(2.0_f32, theme_accent(self.dark_mode)))
+                        .fill(self.theme().card)
+                        .stroke(Stroke::new(2.0_f32, self.theme().accent))
                         .inner_margin(egui::Margin::symmetric(28, 20))
                         .show(ui, |ui| {
                             ui.label(
                                 RichText::new(t("Release to import PCAPNG / JSON"))
                                     .size(18.0)
                                     .strong()
-                                    .color(theme_accent(self.dark_mode)),
+                                    .color(self.theme().accent),
                             );
                         });
                 });
         }
         self.show_status_toast(&ctx);
+        self.show_passthrough_notice(&ctx);
+        self.show_command_palette(&ctx);
         self.paint_theme_transition(&ctx);
+        self.show_onboarding(&ctx);
         self.show_viewport_dialogs(&ctx);
         self.persist_ui_config();
         if self.capture.is_none()
@@ -1188,6 +1463,10 @@ impl eframe::App for DpsApp {
 
 impl Drop for DpsApp {
     fn drop(&mut self) {
+        let _ = self.game_process_monitor_stop.send(());
+        if let Some(thread) = self.game_process_monitor_thread.take() {
+            let _ = thread.join();
+        }
         self.persist_ui_config_on_shutdown();
         self.stop_engine();
     }
@@ -1834,8 +2113,8 @@ mod tests {
 
         fill_missing_character_colors_from_avatars(&mut characters, std::path::Path::new("."));
 
-        let first = character_color(1004, &characters, 0);
-        let second = character_color(1020, &characters, 1);
+        let first = character_color(1004, &characters, 0, false);
+        let second = character_color(1020, &characters, 1, false);
         assert_ne!(first, second);
         assert!(characters.values().all(|character| {
             character
@@ -1844,6 +2123,15 @@ mod tests {
                 .and_then(parse_hex_color)
                 .is_some()
         }));
+    }
+
+    #[test]
+    fn character_fallback_color_is_stable_across_rank_indices() {
+        let characters = HashMap::new();
+        assert_eq!(
+            character_color(4242, &characters, 0, false),
+            character_color(4242, &characters, 7, false)
+        );
     }
 
     #[test]
@@ -1868,7 +2156,7 @@ mod tests {
             Some("#123456")
         );
         assert_eq!(
-            character_color(1010, &characters, 0),
+            character_color(1010, &characters, 0, false),
             egui::Color32::from_rgb(0x12, 0x34, 0x56)
         );
     }

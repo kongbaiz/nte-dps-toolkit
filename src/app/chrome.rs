@@ -7,15 +7,6 @@ pub(crate) enum UiConfigSavePlan {
     Save(UiConfig),
 }
 
-pub(crate) fn passthrough_egui_key(hotkey: PassthroughHotkey) -> egui::Key {
-    match hotkey {
-        PassthroughHotkey::Home => egui::Key::Home,
-        PassthroughHotkey::Insert => egui::Key::Insert,
-        PassthroughHotkey::F8 => egui::Key::F8,
-        PassthroughHotkey::F9 => egui::Key::F9,
-    }
-}
-
 pub(crate) fn stable_selectable_value<'a, Value: PartialEq>(
     ui: &mut egui::Ui,
     current_value: &mut Value,
@@ -139,14 +130,6 @@ pub(crate) fn confirmation_content(
             ),
             "Reload",
         ),
-        ConfirmationAction::DeleteHistory(record_id) => (
-            "Confirm Delete",
-            tf(
-                "Deleting history summary {} cannot be undone.",
-                &[record_id],
-            ),
-            "Delete",
-        ),
         ConfirmationAction::ClearCaptureLogs => (
             "Confirm Clear",
             t(
@@ -213,18 +196,20 @@ pub(crate) const CJK_FONT_CANDIDATES: &[&str] = &[
     "Deng.ttf",   // DengXian
 ];
 
-pub(crate) fn install_fonts(ctx: &egui::Context) {
+/// The app's font stack: egui's defaults (which include its emoji/icon
+/// fallback fonts) with the first available Windows CJK font prepended.
+/// `None` when no candidate CJK font exists. Kept separate from
+/// [`install_fonts`] so tests can verify glyph coverage against the exact
+/// same stack the app renders with.
+pub(crate) fn font_definitions() -> Option<egui::FontDefinitions> {
     let windows_dir = std::env::var_os("SystemRoot")
         .or_else(|| std::env::var_os("WINDIR"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
     let fonts_dir = windows_dir.join("Fonts");
-    let Some(bytes) = CJK_FONT_CANDIDATES
+    let bytes = CJK_FONT_CANDIDATES
         .iter()
-        .find_map(|name| std::fs::read(fonts_dir.join(name)).ok())
-    else {
-        return;
-    };
+        .find_map(|name| std::fs::read(fonts_dir.join(name)).ok())?;
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "system-cjk".to_owned(),
@@ -237,7 +222,14 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
             .or_default()
             .insert(0, "system-cjk".to_owned());
     }
-    ctx.set_fonts(fonts);
+    Some(fonts)
+}
+
+pub(crate) fn install_fonts(ctx: &egui::Context) {
+    if let Some(fonts) = font_definitions() {
+        ctx.set_fonts(fonts);
+    }
+    ctx.add_font(egui_material_icons::font_insert());
 }
 
 /// Invisible edge/corner drag handles that give a borderless window native OS resize.
@@ -357,6 +349,50 @@ pub(crate) fn window_resize_grips(ctx: &egui::Context) {
     }
 }
 
+/// Horizontal-only native resize handles used by the HUD editor. The HUD owns
+/// its height, so exposing the top/bottom handles would let a transient manual
+/// height fight the next content-sized update.
+pub(crate) fn window_width_resize_grips(ctx: &egui::Context) {
+    use egui::CursorIcon;
+    use egui::viewport::ResizeDirection as Dir;
+
+    const EDGE: f32 = 8.0;
+    let rect = ctx.content_rect();
+    if rect.width() <= EDGE * 2.0 || rect.height() <= EDGE * 2.0 {
+        return;
+    }
+    for (id, grip, direction) in [
+        (
+            "west",
+            egui::Rect::from_min_size(rect.left_top(), egui::vec2(EDGE, rect.height())),
+            Dir::West,
+        ),
+        (
+            "east",
+            egui::Rect::from_min_size(
+                egui::pos2(rect.right() - EDGE, rect.top()),
+                egui::vec2(EDGE, rect.height()),
+            ),
+            Dir::East,
+        ),
+    ] {
+        let response = egui::Area::new(egui::Id::new(("hud_width_resize", id)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(grip.min)
+            .movable(false)
+            .constrain(false)
+            .sense(egui::Sense::drag())
+            .show(ctx, |ui| {
+                ui.allocate_space(grip.size());
+            })
+            .response
+            .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
+        if response.drag_started() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+        }
+    }
+}
+
 /// Records a viewport's current inner size (logical points) into `target`, ignoring degenerate or
 /// sub-pixel changes. Callers persist `target` through the normal debounced config path, so a
 /// window reopens at the size it was last dragged to.
@@ -385,20 +421,33 @@ pub(crate) enum WindowControlIcon {
 ///
 /// The glyphs are painted (not font characters) so they render identically
 /// regardless of which CJK fallback font [`install_fonts`] picks — the box /
-/// restore shapes are not reliably present in every Windows system font. Close
-/// tints red on hover to match the native title bar; the others brighten.
+/// restore shapes are not reliably present in every Windows system font.
+/// Hover fades a native-caption-style backplate in (red for close, muted for
+/// the rest) and the glyph color tracks the backplate so it stays readable in
+/// both themes.
 pub(crate) fn window_control_button(
     ui: &mut egui::Ui,
     icon: WindowControlIcon,
     tooltip: &str,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(TITLE_BAR_BUTTON_SIZE, egui::Sense::click());
-    let color = match (icon, response.hovered()) {
-        (WindowControlIcon::Close, true) => Color32::from_rgb(232, 76, 76),
-        (_, true) => ui.visuals().strong_text_color(),
-        (_, false) => ui.visuals().text_color(),
+    let tokens = theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc);
+    // `Context::animate_bool` uses the global `style.animation_time`, which
+    // `configure_style` zeroes when reduce-motion is on.
+    let hover = ui
+        .ctx()
+        .animate_bool(response.id.with("hover"), response.hovered());
+    let (backplate, hover_glyph) = match icon {
+        WindowControlIcon::Close => (tokens.danger, contrast_text(tokens.danger)),
+        _ => (tokens.muted, tokens.fg),
     };
-    paint_window_control_icon(ui.painter(), rect, icon, color, ui.visuals().panel_fill);
+    if hover > 0.0 {
+        ui.painter()
+            .rect_filled(rect, 6.0, backplate.gamma_multiply(hover));
+    }
+    let color = mix_color(tokens.fg, hover_glyph, hover);
+    let occlusion = mix_color(ui.visuals().panel_fill, backplate, hover);
+    paint_window_control_icon(ui.painter(), rect, icon, color, occlusion);
     response.on_hover_text(tooltip.to_owned())
 }
 
@@ -601,4 +650,76 @@ pub(crate) fn team_hit_detail_viewport_id() -> egui::ViewportId {
 
 pub(crate) fn abyss_overview_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("nte_abyss_overview_viewport")
+}
+
+#[cfg(test)]
+mod glyph_tests {
+    use super::*;
+
+    /// Guards hand-picked symbols painted with the regular UI font stack. A
+    /// missing glyph renders as a tofu box (e.g. U+2713 "✓" is absent while
+    /// U+2714 "✔" exists), so additions to this set must pass here first.
+    #[test]
+    fn painted_glyphs_exist_in_font_stack() {
+        let definitions = font_definitions().unwrap_or_default();
+        let mut fonts =
+            egui::epaint::text::Fonts::new(egui::epaint::text::TextOptions::default(), definitions);
+        let font_id = egui::FontId::proportional(14.0);
+        for c in "✔›‹▲▼".chars() {
+            assert!(
+                fonts.has_glyph(&font_id, c),
+                "glyph {c} (U+{:04X}) is missing from the app font stack",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn console_sidebar_icons_exist_in_material_font() {
+        let insert = egui_material_icons::font_insert();
+        let family = ConsoleTab::Settings.icon().font_family();
+        assert!(
+            insert.families.iter().any(|entry| entry.family == family),
+            "Material Icons font insert must register the sidebar icon family"
+        );
+
+        let mut definitions = egui::FontDefinitions::empty();
+        definitions
+            .font_data
+            .insert(insert.name.clone(), insert.data.into());
+        definitions.families.insert(family, vec![insert.name]);
+        let mut fonts =
+            egui::epaint::text::Fonts::new(egui::epaint::text::TextOptions::default(), definitions);
+
+        for tab in ConsoleTab::visible_tabs() {
+            let icon = tab.icon();
+            let font_id = egui::FontId::new(14.0, icon.font_family());
+            for c in icon.codepoint.chars() {
+                assert!(
+                    fonts.has_glyph(&font_id, c),
+                    "sidebar icon glyph {c} (U+{:04X}) is missing from Material Icons",
+                    c as u32
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod confirmation_tests {
+    use super::*;
+
+    #[test]
+    fn active_session_reset_warns_that_the_current_task_stops() {
+        let (title, message, confirm) = confirmation_content(&ConfirmationAction::ResetSession);
+
+        assert_eq!(title, "Confirm Reset");
+        assert_eq!(
+            message,
+            t(
+                "This stops the current task and clears this session's stats, abyss state and detail caches."
+            )
+        );
+        assert_eq!(confirm, "Reset");
+    }
 }
