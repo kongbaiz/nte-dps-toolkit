@@ -3273,7 +3273,7 @@ fn hotkey_key_from_egui(key: egui::Key) -> Option<HotkeyKey> {
     HotkeyKey::all()
         .iter()
         .copied()
-        .find(|candidate| candidate.egui_key() == key)
+        .find(|candidate| hotkey_key_to_egui(*candidate) == key)
 }
 
 #[cfg(test)]

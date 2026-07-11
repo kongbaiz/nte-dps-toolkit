@@ -109,6 +109,54 @@ fn hotkey_virtual_key(key: HotkeyKey) -> u32 {
     }
 }
 
+pub(crate) fn hotkey_key_to_egui(key: HotkeyKey) -> egui::Key {
+    match key {
+        HotkeyKey::F1 => egui::Key::F1,
+        HotkeyKey::F2 => egui::Key::F2,
+        HotkeyKey::F3 => egui::Key::F3,
+        HotkeyKey::F4 => egui::Key::F4,
+        HotkeyKey::F5 => egui::Key::F5,
+        HotkeyKey::F6 => egui::Key::F6,
+        HotkeyKey::F7 => egui::Key::F7,
+        HotkeyKey::F8 => egui::Key::F8,
+        HotkeyKey::F9 => egui::Key::F9,
+        HotkeyKey::F10 => egui::Key::F10,
+        HotkeyKey::F11 => egui::Key::F11,
+        HotkeyKey::F12 => egui::Key::F12,
+    }
+}
+
+pub(crate) fn passthrough_hotkey_to_egui(hotkey: PassthroughHotkey) -> egui::Key {
+    match hotkey {
+        PassthroughHotkey::Home => egui::Key::Home,
+        PassthroughHotkey::Insert => egui::Key::Insert,
+        PassthroughHotkey::F8 => egui::Key::F8,
+        PassthroughHotkey::F9 => egui::Key::F9,
+    }
+}
+
+pub(crate) fn hotkey_binding_matches_egui(
+    binding: HotkeyBinding,
+    modifiers: egui::Modifiers,
+    key: egui::Key,
+) -> bool {
+    hotkey_key_to_egui(binding.key) == key
+        && binding.ctrl == modifiers.ctrl
+        && binding.alt == modifiers.alt
+        && binding.shift == modifiers.shift
+}
+
+pub(crate) fn passthrough_hotkey_matches_egui(
+    hotkey: PassthroughHotkey,
+    modifiers: egui::Modifiers,
+    key: egui::Key,
+) -> bool {
+    passthrough_hotkey_to_egui(hotkey) == key
+        && !modifiers.ctrl
+        && !modifiers.alt
+        && !modifiers.shift
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PressedModifiers {
     ctrl: bool,
@@ -545,5 +593,42 @@ mod tests {
         assert_eq!(unique.len(), keys.len());
         assert_eq!(hotkey_virtual_key(HotkeyKey::F1), VK_F1 as u32);
         assert_eq!(hotkey_virtual_key(HotkeyKey::F12), VK_F12 as u32);
+    }
+
+    #[test]
+    fn local_hotkeys_match_exact_egui_modifiers() {
+        let binding = HotkeyBinding::new(true, false, false, HotkeyKey::F9);
+        let ctrl = egui::Modifiers {
+            ctrl: true,
+            ..Default::default()
+        };
+        let ctrl_shift = egui::Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Default::default()
+        };
+
+        assert!(hotkey_binding_matches_egui(binding, ctrl, egui::Key::F9));
+        assert!(!hotkey_binding_matches_egui(
+            binding,
+            ctrl_shift,
+            egui::Key::F9
+        ));
+        assert!(!hotkey_binding_matches_egui(binding, ctrl, egui::Key::F10));
+        assert!(!hotkey_binding_matches_egui(
+            HotkeyBinding::new(false, false, false, HotkeyKey::F9),
+            ctrl,
+            egui::Key::F9
+        ));
+        assert!(passthrough_hotkey_matches_egui(
+            PassthroughHotkey::F9,
+            egui::Modifiers::default(),
+            egui::Key::F9
+        ));
+        assert!(!passthrough_hotkey_matches_egui(
+            PassthroughHotkey::F9,
+            ctrl,
+            egui::Key::F9
+        ));
     }
 }

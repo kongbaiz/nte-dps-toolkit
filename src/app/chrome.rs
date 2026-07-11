@@ -94,6 +94,13 @@ pub(crate) fn confirmation_content(
             t("Starting live capture clears the current stats and re-detects the game connection."),
             "Start",
         ),
+        ConfirmationAction::ResetSession => (
+            "Confirm Reset",
+            t(
+                "This stops the current task and clears this session's stats, abyss state and detail caches.",
+            ),
+            "Reset",
+        ),
         ConfirmationAction::ImportPcapng(path) => (
             "Confirm Import",
             tf(
@@ -695,5 +702,24 @@ mod glyph_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod confirmation_tests {
+    use super::*;
+
+    #[test]
+    fn active_session_reset_warns_that_the_current_task_stops() {
+        let (title, message, confirm) = confirmation_content(&ConfirmationAction::ResetSession);
+
+        assert_eq!(title, "Confirm Reset");
+        assert_eq!(
+            message,
+            t(
+                "This stops the current task and clears this session's stats, abyss state and detail caches."
+            )
+        );
+        assert_eq!(confirm, "Reset");
     }
 }

@@ -407,6 +407,12 @@ impl DpsApp {
     }
 
     pub(crate) fn request_reset_combat_session(&mut self, ctx: &egui::Context) {
+        if self.capture.is_some() || self.replay_thread.is_some() {
+            let viewport = self.interactive_viewport_for(ctx);
+            self.request_confirmation_for(viewport, ConfirmationAction::ResetSession);
+            ctx.send_viewport_cmd_to(viewport, egui::ViewportCommand::Focus);
+            return;
+        }
         if self.capture.is_none()
             && self.replay_thread.is_none()
             && !self.has_session_data()
@@ -414,9 +420,6 @@ impl DpsApp {
         {
             self.apply_undo(id, ctx.viewport_id());
             return;
-        }
-        if self.capture.is_some() || self.replay_thread.is_some() {
-            self.stop_engine();
         }
         if !self.has_session_data() {
             self.reset_combat_session();
@@ -519,6 +522,11 @@ impl DpsApp {
         match action {
             ConfirmationAction::StartLive => {
                 self.start_live_for(viewport);
+            }
+            ConfirmationAction::ResetSession => {
+                self.stop_engine();
+                self.reset_combat_session();
+                self.status = t("Stats reset");
             }
             ConfirmationAction::ImportPcapng(path) => self.start_pcapng_import_for(path, viewport),
             ConfirmationAction::ImportCaptureJson(path) => {
@@ -675,14 +683,14 @@ impl DpsApp {
                 HotkeyKey::all()
                     .iter()
                     .copied()
-                    .filter(|key| key_pressed_without_repeat(&input.events, key.egui_key()))
+                    .filter(|key| {
+                        key_pressed_without_repeat(&input.events, hotkey_key_to_egui(*key))
+                    })
                     .collect::<Vec<_>>(),
             )
         });
-        let passthrough_key = self.passthrough_hotkey.egui_key();
-        if self
-            .passthrough_hotkey
-            .matches_egui(modifiers, passthrough_key)
+        let passthrough_key = passthrough_hotkey_to_egui(self.passthrough_hotkey);
+        if passthrough_hotkey_matches_egui(self.passthrough_hotkey, modifiers, passthrough_key)
             && ctx.input(|input| key_pressed_without_repeat(&input.events, passthrough_key))
         {
             self.toggle_mouse_passthrough(ctx);
@@ -690,9 +698,9 @@ impl DpsApp {
         if self.global_hotkeys.enabled
             && let Some(action) = GlobalHotkeyAction::all().iter().copied().find(|action| {
                 self.global_hotkeys.binding(*action).is_some_and(|binding| {
-                    pressed_keys
-                        .iter()
-                        .any(|key| binding.matches_egui(modifiers, key.egui_key()))
+                    pressed_keys.iter().any(|key| {
+                        hotkey_binding_matches_egui(binding, modifiers, hotkey_key_to_egui(*key))
+                    })
                 })
             })
         {
