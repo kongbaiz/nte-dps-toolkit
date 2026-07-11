@@ -1,5 +1,7 @@
 use super::*;
 
+pub(crate) const HUD_EDITOR_MODULE_HEADER_HEIGHT: f32 = 18.0;
+
 /// Paint text with a light dark halo so HUD text stays readable without the
 /// heavy caption-like outline that would compete with the game scene.
 pub(crate) fn paint_haloed(
@@ -9,16 +11,9 @@ pub(crate) fn paint_haloed(
     text: impl Into<String>,
     font: egui::FontId,
     color: Color32,
+    halo: Color32,
 ) {
-    paint_haloed_with_halo(
-        painter,
-        pos,
-        anchor,
-        text,
-        font,
-        color,
-        theme_tokens(true, AccentColor::Zinc).hud.halo,
-    );
+    paint_haloed_with_halo(painter, pos, anchor, text, font, color, halo);
 }
 
 pub(crate) fn paint_haloed_with_halo(
@@ -44,7 +39,7 @@ pub(crate) fn paint_haloed_with_halo(
     painter.text(pos, anchor, text, font, color);
 }
 
-/// Window size the HUD shrinks to: fixed width, height sized to hug `rows`,
+/// Window size the HUD shrinks to: configured width, height sized to hug `rows`,
 /// the team header, and the optional positioning rail.
 pub(crate) fn hud_window_size(
     rows: usize,
@@ -62,8 +57,18 @@ pub(crate) fn hud_window_size(
         0.0
     };
     let timeline = if config.show_mini_timeline { 42.0 } else { 0.0 };
-    let content = 16.0 + readout_title + summary + status + rows + timeline + 4.0;
-    egui::vec2(HUD_WINDOW_WIDTH, (title_strip + content).round())
+    let editor_headers = if show_title_strip {
+        let visible_modules = usize::from(config.show_title)
+            + usize::from(config.has_summary_row())
+            + usize::from(show_status_row)
+            + usize::from(config.show_character_rows)
+            + usize::from(config.show_mini_timeline);
+        visible_modules as f32 * HUD_EDITOR_MODULE_HEADER_HEIGHT
+    } else {
+        0.0
+    };
+    let content = 16.0 + editor_headers + readout_title + summary + status + rows + timeline + 4.0;
+    egui::vec2(config.width as f32, (title_strip + content).round())
 }
 
 pub(crate) fn is_party_member_row(
@@ -143,6 +148,24 @@ pub(crate) fn translate_reaction_label(label: &str) -> String {
         return format!("{} · {}", t("Esper Cycle"), t(key));
     }
     label.to_owned()
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn hud_editor_size_reserves_module_headers_and_uses_configured_width() {
+        let config = HudConfig::detailed();
+        let passthrough = hud_window_size(4, false, true, &config);
+        let editor = hud_window_size(4, true, true, &config);
+
+        assert_eq!(editor.x, config.width as f32);
+        assert_eq!(
+            editor.y - passthrough.y,
+            24.0 + HUD_EDITOR_MODULE_HEADER_HEIGHT * 5.0
+        );
+    }
 }
 
 /// "类型·名称": the broad attack-type category joined with the resolved skill

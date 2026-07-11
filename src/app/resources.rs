@@ -396,13 +396,15 @@ pub(crate) fn pixel_aligned_rect(
 pub(crate) fn configure_style(
     ctx: &egui::Context,
     dark_mode: bool,
+    theme_preset: ThemePreset,
     accent: AccentColor,
     density: UiDensity,
     reduce_motion: bool,
 ) {
-    let tokens = theme_tokens(dark_mode, accent);
+    let tokens = theme_tokens_for_preset(theme_preset, dark_mode, accent);
     let density = density_tokens(density);
-    let mut visuals = if dark_mode {
+    let effective_dark = dark_mode || theme_preset == ThemePreset::Tactical;
+    let mut visuals = if effective_dark {
         egui::Visuals::dark()
     } else {
         egui::Visuals::light()
@@ -434,6 +436,24 @@ pub(crate) fn configure_style(
     visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, tokens.border_strong);
     visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, tokens.fg);
     visuals.window_stroke = Stroke::new(1.0_f32, tokens.border);
+    visuals.window_shadow = match theme_preset {
+        ThemePreset::HighContrast => egui::epaint::Shadow::NONE,
+        ThemePreset::Zinc | ThemePreset::Tactical => egui::epaint::Shadow {
+            offset: [0, 8],
+            blur: 18,
+            spread: 0,
+            color: Color32::from_black_alpha(if effective_dark { 110 } else { 48 }),
+        },
+    };
+    visuals.popup_shadow = match theme_preset {
+        ThemePreset::HighContrast => egui::epaint::Shadow::NONE,
+        ThemePreset::Zinc | ThemePreset::Tactical => egui::epaint::Shadow {
+            offset: [0, 6],
+            blur: 16,
+            spread: 0,
+            color: Color32::from_black_alpha(if effective_dark { 140 } else { 58 }),
+        },
+    };
     visuals.selection.bg_fill = tokens.accent;
     visuals.selection.stroke = Stroke::new(1.0_f32, tokens.accent_fg);
     ctx.set_visuals(visuals);

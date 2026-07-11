@@ -47,9 +47,9 @@ use crate::platform::window_attributes::{
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
-    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HotkeyBinding, HotkeyKey,
-    HudConfig, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
-    TimelineDpsViewMode, UiConfig, UiDensity,
+    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MIN,
+    HotkeyBinding, HotkeyKey, HudConfig, HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX,
+    TIMELINE_BUCKET_SECONDS_MIN, ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
 };
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
@@ -98,9 +98,6 @@ const PASSTHROUGH_HOTKEY_COMBO_WIDTH: f32 = 150.0;
 const CHARACTER_ATTRIBUTE_COMBO_WIDTH: f32 = 150.0;
 const CHARACTER_EDITOR_CARD_HEIGHT: f32 = 68.0;
 const CHARACTER_EDITOR_AVATAR_SIZE: f32 = 48.0;
-/// Width the HUD window shrinks to; height is computed per row count so the
-/// window hugs the readout with no empty translucent area.
-const HUD_WINDOW_WIDTH: f32 = 380.0;
 const UI_CONFIG_SAVE_DELAY: Duration = Duration::from_millis(350);
 const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
 const STATUS_TOAST_DURATION: Duration = Duration::from_secs(4);
@@ -889,6 +886,7 @@ struct PassthroughNotice {
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct AppliedStyleKey {
     dark_mode: bool,
+    theme_preset: ThemePreset,
     accent: AccentColor,
     density: UiDensity,
     reduce_motion: bool,
@@ -915,6 +913,7 @@ pub(crate) struct HudPaintColors {
     accent: Color32,
     text: Color32,
     muted: Color32,
+    halo: Color32,
 }
 
 #[derive(Clone, Copy)]
@@ -1065,6 +1064,7 @@ pub struct DpsApp {
     /// it and calls [`crate::storage::i18n::set_language`] to swap the live locale.
     language: Language,
     dark_mode: bool,
+    theme_preset: ThemePreset,
     accent: AccentColor,
     density: UiDensity,
     reduce_motion: bool,
@@ -1160,6 +1160,7 @@ impl eframe::App for DpsApp {
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let style_key = AppliedStyleKey {
             dark_mode: self.dark_mode,
+            theme_preset: self.theme_preset,
             accent: self.accent,
             density: self.density,
             reduce_motion: self.reduce_motion,
@@ -1168,6 +1169,7 @@ impl eframe::App for DpsApp {
             configure_style(
                 ctx,
                 self.dark_mode,
+                self.theme_preset,
                 self.accent,
                 self.density,
                 self.reduce_motion,
@@ -1319,7 +1321,12 @@ impl eframe::App for DpsApp {
                 });
         }
 
-        let central_fill = shadcn_background(self.dark_mode).gamma_multiply(normal_visibility);
+        let theme = self.theme();
+        let central_fill = if self.hud_mode && !self.mouse_passthrough {
+            mix_color(theme.bg, theme.hud.edit_bg, hud_progress)
+        } else {
+            theme.bg.gamma_multiply(normal_visibility)
+        };
         let central_margin = egui::Margin {
             // Match the title bar's side margins while the normal layout is visible, then
             // collapse them with the HUD transition so geometry and paint stay synchronized.
@@ -1352,8 +1359,17 @@ impl eframe::App for DpsApp {
             });
 
         // Native edge/corner drag-resize for the borderless main window, plus tracking its size so
-        // it restores on the next launch. Skipped in HUD mode, where the window auto-hugs the HUD.
-        if !self.hud_mode {
+        // it restores on the next launch. HUD edit mode only exposes horizontal grips because its
+        // height follows the visible modules.
+        if self.hud_mode && !self.mouse_passthrough && hud_progress >= 1.0 {
+            window_width_resize_grips(&ctx);
+            if ctx.input(|input| input.pointer.any_down()) {
+                let width = ctx.content_rect().width().round().max(HUD_WIDTH_MIN as f32) as u16;
+                if width != self.hud_config.width {
+                    self.hud_config.width = width;
+                }
+            }
+        } else if !self.hud_mode {
             let maximized = ctx
                 .input(|input| input.viewport().maximized)
                 .unwrap_or(false);
@@ -1403,7 +1419,7 @@ impl eframe::App for DpsApp {
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(&ctx, |ui| {
                     egui::Frame::popup(ui.style())
-                        .fill(shadcn_card(self.dark_mode))
+                        .fill(self.theme().card)
                         .stroke(Stroke::new(2.0_f32, self.theme().accent))
                         .inner_margin(egui::Margin::symmetric(28, 20))
                         .show(ui, |ui| {

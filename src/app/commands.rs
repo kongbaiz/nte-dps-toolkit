@@ -21,8 +21,35 @@ pub(crate) enum AppAction {
     ExportCaptureInfo,
     ExportRawCapture,
     OpenCaptureLogs,
+    ApplyLayoutProfile(LayoutProfile),
+    SetThemePreset(ThemePreset),
     SetAccent(AccentColor),
     SetDensity(UiDensity),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LayoutProfile {
+    Combat,
+    Review,
+    Research,
+}
+
+impl LayoutProfile {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Combat => "Combat Layout",
+            Self::Review => "Review Layout",
+            Self::Research => "Research Layout",
+        }
+    }
+
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::Combat => "Minimal HUD, compact density and mouse passthrough",
+            Self::Review => "Normal window with Console timeline for post-combat review",
+            Self::Research => "Console packets with team details for investigation",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -186,6 +213,48 @@ impl DpsApp {
         }
         commands.extend([
             command(
+                "layout.combat",
+                "Apply Combat Layout",
+                "Windows",
+                &["profile", "hud", "game"],
+                AppAction::ApplyLayoutProfile(LayoutProfile::Combat),
+            ),
+            command(
+                "layout.review",
+                "Apply Review Layout",
+                "Windows",
+                &["profile", "timeline", "review"],
+                AppAction::ApplyLayoutProfile(LayoutProfile::Review),
+            ),
+            command(
+                "layout.research",
+                "Apply Research Layout",
+                "Windows",
+                &["profile", "packets", "debug"],
+                AppAction::ApplyLayoutProfile(LayoutProfile::Research),
+            ),
+            command(
+                "theme.preset.zinc",
+                "Use Zinc Theme",
+                "Appearance",
+                &["theme", "neutral"],
+                AppAction::SetThemePreset(ThemePreset::Zinc),
+            ),
+            command(
+                "theme.preset.tactical",
+                "Use Tactical Theme",
+                "Appearance",
+                &["theme", "neon", "dark"],
+                AppAction::SetThemePreset(ThemePreset::Tactical),
+            ),
+            command(
+                "theme.preset.high_contrast",
+                "Use High Contrast Theme",
+                "Appearance",
+                &["theme", "accessibility", "contrast"],
+                AppAction::SetThemePreset(ThemePreset::HighContrast),
+            ),
+            command(
                 "accent.zinc",
                 "Use Zinc Accent",
                 "Appearance",
@@ -315,9 +384,59 @@ impl DpsApp {
                     ),
                 }
             }
+            AppAction::ApplyLayoutProfile(profile) => self.apply_layout_profile(ctx, profile),
+            AppAction::SetThemePreset(preset) => {
+                self.set_theme_preset(ctx, preset);
+            }
             AppAction::SetAccent(accent) => self.accent = accent,
             AppAction::SetDensity(density) => self.density = density,
         }
+    }
+
+    pub(crate) fn apply_layout_profile(&mut self, ctx: &egui::Context, profile: LayoutProfile) {
+        match profile {
+            LayoutProfile::Combat => {
+                let width = self.hud_config.width;
+                let module_order = self.hud_config.module_order.clone();
+                self.hud_config = HudConfig::minimal();
+                self.hud_config.width = width;
+                self.hud_config.module_order = module_order;
+                self.density = UiDensity::Compact;
+                self.console_open = false;
+                self.abyss_overview_open = false;
+                self.hit_detail_char_id = None;
+                self.team_hit_detail_open = false;
+                self.set_hud_mode(ctx, true);
+                self.set_mouse_passthrough(ctx, true);
+            }
+            LayoutProfile::Review => {
+                self.set_hud_mode(ctx, false);
+                self.set_mouse_passthrough(ctx, false);
+                self.density = UiDensity::Cozy;
+                self.console_tab = ConsoleTab::Timeline;
+                self.console_open = true;
+                self.console_corner_applied = false;
+                self.abyss_overview_open = false;
+                self.hit_detail_char_id = None;
+                self.team_hit_detail_open = false;
+                ctx.send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Focus);
+            }
+            LayoutProfile::Research => {
+                self.set_hud_mode(ctx, false);
+                self.set_mouse_passthrough(ctx, false);
+                self.density = UiDensity::Compact;
+                self.console_tab = ConsoleTab::Packets;
+                self.console_open = true;
+                self.console_corner_applied = false;
+                self.hit_detail_char_id = None;
+                self.team_hit_detail_open = true;
+                self.team_hit_detail_corner_applied = false;
+                self.abyss_overview_open = false;
+                ctx.send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Focus);
+            }
+        }
+        self.hud_size_key = None;
+        self.status = tf("Applied layout profile: {}", &[&t(profile.label())]);
     }
 
     pub(crate) fn toggle_command_palette(&mut self, ctx: &egui::Context) {
@@ -646,6 +765,12 @@ mod tests {
             "import.capture_json",
             "history.save",
             "team.export",
+            "layout.combat",
+            "layout.review",
+            "layout.research",
+            "theme.preset.zinc",
+            "theme.preset.tactical",
+            "theme.preset.high_contrast",
             "accent.zinc",
             "accent.blue",
             "accent.violet",

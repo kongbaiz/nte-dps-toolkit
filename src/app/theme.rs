@@ -79,6 +79,125 @@ pub(crate) fn density_monospace_font(ui: &egui::Ui, base_size: f32) -> egui::Fon
 }
 
 pub(crate) fn theme_tokens(dark_mode: bool, accent: AccentColor) -> ThemeTokens {
+    theme_tokens_for_preset(ThemePreset::Zinc, dark_mode, accent)
+}
+
+pub(crate) fn theme_tokens_for_preset(
+    preset: ThemePreset,
+    dark_mode: bool,
+    accent: AccentColor,
+) -> ThemeTokens {
+    let mut tokens = zinc_theme_tokens(dark_mode, accent);
+    match preset {
+        ThemePreset::Zinc => {}
+        ThemePreset::Tactical => {
+            let tactical_accent = match accent {
+                AccentColor::Violet => Color32::from_rgb(232, 121, 249),
+                AccentColor::Orange => Color32::from_rgb(251, 146, 60),
+                AccentColor::Green => Color32::from_rgb(52, 211, 153),
+                AccentColor::Zinc | AccentColor::Blue => Color32::from_rgb(34, 211, 238),
+            };
+            tokens.bg = Color32::from_rgb(3, 7, 12);
+            tokens.bg_elevated = Color32::from_rgb(7, 13, 22);
+            tokens.card = Color32::from_rgb(10, 19, 30);
+            tokens.card_hover = Color32::from_rgb(16, 30, 46);
+            tokens.muted = Color32::from_rgb(22, 39, 55);
+            tokens.border = Color32::from_rgb(29, 53, 70);
+            tokens.border_strong = Color32::from_rgb(56, 189, 214);
+            tokens.fg = Color32::from_rgb(232, 248, 252);
+            tokens.fg_muted = Color32::from_rgb(144, 180, 191);
+            tokens.fg_faint = Color32::from_rgb(91, 129, 143);
+            tokens.accent = tactical_accent;
+            tokens.accent_fg = contrast_text(tactical_accent);
+            tokens.success = Color32::from_rgb(52, 211, 153);
+            tokens.warning = Color32::from_rgb(250, 204, 21);
+            tokens.danger = Color32::from_rgb(251, 113, 133);
+            tokens.info = Color32::from_rgb(56, 189, 248);
+            tokens.dataviz = [
+                Color32::from_rgb(34, 211, 238),
+                Color32::from_rgb(232, 121, 249),
+                Color32::from_rgb(52, 211, 153),
+                Color32::from_rgb(251, 146, 60),
+                Color32::from_rgb(251, 113, 133),
+                Color32::from_rgb(96, 165, 250),
+                Color32::from_rgb(250, 204, 21),
+                Color32::from_rgb(167, 139, 250),
+            ];
+            tokens.detail_row = Color32::from_rgba_unmultiplied(34, 211, 238, 12);
+            tokens.detail_separator = Color32::from_rgba_unmultiplied(56, 189, 214, 96);
+            tokens.floating = Color32::from_rgb(9, 18, 29);
+            tokens.modal_backdrop = Color32::from_black_alpha(184);
+            tokens.notice_bg = Color32::from_rgba_unmultiplied(3, 9, 15, 238);
+            tokens.hud.accent = tactical_accent;
+            tokens.hud.text = Color32::from_rgb(238, 252, 255);
+            tokens.hud.muted = Color32::from_rgb(154, 207, 218);
+            tokens.hud.track = Color32::from_black_alpha(128);
+            tokens.hud.halo = Color32::from_black_alpha(216);
+            tokens.hud.edit_bg = Color32::from_rgb(3, 10, 17);
+            tokens.hud.edit_border = tactical_accent;
+            tokens.hud.edit_text = Color32::from_rgb(222, 248, 252);
+        }
+        ThemePreset::HighContrast => {
+            let (bg, fg, muted, faint, modal) = if dark_mode {
+                (
+                    Color32::BLACK,
+                    Color32::WHITE,
+                    Color32::from_gray(214),
+                    Color32::from_gray(166),
+                    Color32::from_black_alpha(210),
+                )
+            } else {
+                (
+                    Color32::WHITE,
+                    Color32::BLACK,
+                    Color32::from_gray(38),
+                    Color32::from_gray(82),
+                    Color32::from_black_alpha(120),
+                )
+            };
+            tokens.bg = bg;
+            tokens.bg_elevated = bg;
+            tokens.card = bg;
+            tokens.card_hover = if dark_mode {
+                Color32::from_gray(28)
+            } else {
+                Color32::from_gray(232)
+            };
+            tokens.muted = if dark_mode {
+                Color32::from_gray(44)
+            } else {
+                Color32::from_gray(214)
+            };
+            tokens.border = muted;
+            tokens.border_strong = fg;
+            tokens.fg = fg;
+            tokens.fg_muted = muted;
+            tokens.fg_faint = faint;
+            tokens.accent = fg;
+            tokens.accent_fg = bg;
+            tokens.detail_row = Color32::TRANSPARENT;
+            tokens.detail_separator = muted;
+            tokens.floating = bg;
+            tokens.modal_backdrop = modal;
+            tokens.notice_bg = if dark_mode {
+                Color32::from_gray(12)
+            } else {
+                Color32::from_gray(248)
+            };
+            tokens.hud.accent = Color32::from_rgb(255, 230, 0);
+            tokens.hud.text = Color32::WHITE;
+            tokens.hud.muted = Color32::from_gray(224);
+            tokens.hud.track = Color32::from_black_alpha(196);
+            tokens.hud.halo = Color32::BLACK;
+            tokens.hud.edit_bg = bg;
+            tokens.hud.edit_border = fg;
+            tokens.hud.edit_text = fg;
+        }
+    }
+    tokens
+}
+
+fn zinc_theme_tokens(dark_mode: bool, accent: AccentColor) -> ThemeTokens {
     let accent_choice = accent;
     let (
         bg,
@@ -179,6 +298,23 @@ pub(crate) fn theme_tokens(dark_mode: bool, accent: AccentColor) -> ThemeTokens 
         Color32::from_rgba_unmultiplied(70, 74, 82, 88)
     };
     let floating = Color32::from_rgba_unmultiplied(card.r(), card.g(), card.b(), 242);
+    let (hud_edit_bg, hud_edit_border, hud_edit_text) = if dark_mode {
+        (
+            Color32::from_rgb(14, 16, 20),
+            Color32::from_rgb(39, 201, 146),
+            Color32::from_rgb(218, 224, 228),
+        )
+    } else {
+        (
+            Color32::from_rgb(248, 250, 252),
+            if accent_choice == AccentColor::Zinc {
+                Color32::from_rgb(5, 150, 105)
+            } else {
+                accent
+            },
+            Color32::from_rgb(24, 24, 27),
+        )
+    };
     ThemeTokens {
         bg,
         bg_elevated,
@@ -208,16 +344,16 @@ pub(crate) fn theme_tokens(dark_mode: bool, accent: AccentColor) -> ThemeTokens 
             muted: Color32::from_rgb(176, 187, 194),
             track: Color32::from_black_alpha(96),
             halo: Color32::from_black_alpha(185),
-            edit_bg: Color32::from_rgb(14, 16, 20),
-            edit_border: Color32::from_rgb(39, 201, 146),
-            edit_text: Color32::from_rgb(218, 224, 228),
+            edit_bg: hud_edit_bg,
+            edit_border: hud_edit_border,
+            edit_text: hud_edit_text,
         },
     }
 }
 
 impl DpsApp {
     pub(crate) fn theme(&self) -> ThemeTokens {
-        theme_tokens(self.dark_mode, self.accent)
+        theme_tokens_for_preset(self.theme_preset, self.dark_mode, self.accent)
     }
 }
 
@@ -636,4 +772,47 @@ pub(crate) fn data_root() -> PathBuf {
         .flat_map(|path| path.ancestors().map(PathBuf::from).collect::<Vec<_>>())
         .find(|path| path.join(CHARACTER_DATA_PATH).is_file())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_presets_have_distinct_surface_and_hud_tokens() {
+        let zinc = theme_tokens_for_preset(ThemePreset::Zinc, true, AccentColor::Blue);
+        let tactical = theme_tokens_for_preset(ThemePreset::Tactical, true, AccentColor::Blue);
+        let high_contrast =
+            theme_tokens_for_preset(ThemePreset::HighContrast, true, AccentColor::Blue);
+
+        assert_ne!(zinc.bg, tactical.bg);
+        assert_ne!(tactical.bg, tactical.card);
+        assert_ne!(tactical.card, tactical.floating);
+        assert_ne!(zinc.hud.accent, tactical.hud.accent);
+        assert_eq!(high_contrast.bg, Color32::BLACK);
+        assert_eq!(high_contrast.fg, Color32::WHITE);
+        assert_eq!(high_contrast.border_strong, high_contrast.fg);
+        assert_eq!(high_contrast.accent_fg, high_contrast.bg);
+    }
+
+    #[test]
+    fn high_contrast_preset_respects_light_mode() {
+        let tokens = theme_tokens_for_preset(ThemePreset::HighContrast, false, AccentColor::Orange);
+
+        assert_eq!(tokens.bg, Color32::WHITE);
+        assert_eq!(tokens.fg, Color32::BLACK);
+        assert_eq!(tokens.border_strong, tokens.fg);
+        assert_eq!(tokens.accent_fg, tokens.bg);
+        assert_eq!(tokens.hud.edit_bg, Color32::WHITE);
+        assert_eq!(tokens.hud.edit_text, Color32::BLACK);
+    }
+
+    #[test]
+    fn zinc_hud_editor_tokens_follow_light_mode() {
+        let light = theme_tokens_for_preset(ThemePreset::Zinc, false, AccentColor::Zinc);
+        let dark = theme_tokens_for_preset(ThemePreset::Zinc, true, AccentColor::Zinc);
+
+        assert!(light.hud.edit_bg.r() > light.hud.edit_text.r());
+        assert!(dark.hud.edit_bg.r() < dark.hud.edit_text.r());
+    }
 }

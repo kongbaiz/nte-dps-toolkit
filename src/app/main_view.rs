@@ -1,6 +1,15 @@
 use super::*;
 
 const TOOLBAR_FLEX_GAP: f32 = 24.0;
+const HUD_PREVIEW_ROW_COUNT: usize = 4;
+
+struct HudPreviewData {
+    rows: Vec<CharacterStats>,
+    total_damage: f64,
+    team_dps: f64,
+    duration: f64,
+    damage_taken: f64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MainToolbarLayout {
@@ -73,7 +82,7 @@ impl DpsApp {
                         RichText::new(floor)
                             .size(13.0)
                             .strong()
-                            .color(shadcn_foreground(self.dark_mode)),
+                            .color(self.theme().fg),
                     )
                     .selectable(false),
                 );
@@ -540,6 +549,18 @@ impl DpsApp {
                 self.toggle_theme(ui.ctx());
                 ui.close();
             }
+            ui.menu_button(t("Theme Preset"), |ui| {
+                for preset in ThemePreset::all() {
+                    if ui
+                        .selectable_label(self.theme_preset == *preset, t(preset.label()))
+                        .on_hover_text(t(preset.description()))
+                        .clicked()
+                    {
+                        self.set_theme_preset(ui.ctx(), *preset);
+                        ui.close();
+                    }
+                }
+            });
             ui.separator();
             if self.processing_button(ui) {
                 ui.close();
@@ -652,7 +673,7 @@ impl DpsApp {
                 RichText::new(t("Team"))
                     .size(12.0)
                     .strong()
-                    .color(shadcn_foreground(self.dark_mode)),
+                    .color(self.theme().fg),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
@@ -685,8 +706,8 @@ impl DpsApp {
         ui.painter().rect(
             card_rect,
             egui::CornerRadius::same(10),
-            shadcn_card(self.dark_mode),
-            Stroke::new(1.0_f32, shadcn_border(self.dark_mode)),
+            self.theme().card,
+            Stroke::new(1.0_f32, self.theme().border),
             egui::StrokeKind::Inside,
         );
         let content_rect = card_rect.shrink(18.0);
@@ -703,7 +724,7 @@ impl DpsApp {
             RichText::new(t("Importing and parsing capture"))
                 .size(15.0)
                 .strong()
-                .color(shadcn_foreground(self.dark_mode)),
+                .color(self.theme().fg),
         );
         content.add_space(2.0);
         if let Some(task) = &self.active_import {
@@ -764,7 +785,7 @@ impl DpsApp {
     }
 
     pub(crate) fn toggle_theme(&mut self, ctx: &egui::Context) {
-        self.theme_transition_from = Some(shadcn_background(self.dark_mode));
+        self.theme_transition_from = Some(self.theme().bg);
         motion::seed_bool_for_viewport(
             ctx,
             egui::ViewportId::ROOT,
@@ -772,6 +793,23 @@ impl DpsApp {
             false,
         );
         self.dark_mode = !self.dark_mode;
+    }
+
+    pub(crate) fn set_theme_preset(&mut self, ctx: &egui::Context, preset: ThemePreset) {
+        if self.theme_preset == preset {
+            return;
+        }
+        self.theme_transition_from = Some(self.theme().bg);
+        motion::seed_bool_for_viewport(
+            ctx,
+            egui::ViewportId::ROOT,
+            "theme_transition_overlay",
+            false,
+        );
+        self.theme_preset = preset;
+        if preset == ThemePreset::Tactical {
+            self.dark_mode = true;
+        }
     }
 
     /// Party-member rows (damage desc) plus the team totals shared by the party
@@ -851,7 +889,14 @@ impl DpsApp {
 
     pub(crate) fn hud_visible_row_count(&self) -> usize {
         if self.hud_config.show_character_rows {
-            self.party_member_count().min(TEAM_DPS_MAX_MEMBERS)
+            let count = self.party_member_count().min(TEAM_DPS_MAX_MEMBERS);
+            if !self.mouse_passthrough && count == 0 {
+                let (_, total_damage, team_dps, _) = self.party_readout();
+                if total_damage <= 0.0 && team_dps <= 0.0 {
+                    return HUD_PREVIEW_ROW_COUNT;
+                }
+            }
+            count
         } else {
             0
         }
@@ -1051,26 +1096,61 @@ impl DpsApp {
     /// horizontal damage-share board. Details stay in the normal window.
     pub(crate) fn hud_panel(&mut self, ui: &mut egui::Ui) {
         let hud_theme = self.theme().hud;
-        let (mut rows, total_damage, team_dps, duration) = self.party_readout();
+        let editor = !self.mouse_passthrough;
+        let display_text = if editor {
+            hud_theme.edit_text
+        } else {
+            hud_theme.text
+        };
+        let display_muted = if editor {
+            mix_color(hud_theme.edit_text, hud_theme.edit_bg, 0.45)
+        } else {
+            hud_theme.muted
+        };
+        let display_halo = if editor && !self.dark_mode {
+            Color32::TRANSPARENT
+        } else {
+            hud_theme.halo
+        };
+        let display_accent = if editor {
+            hud_theme.edit_border
+        } else {
+            hud_theme.accent
+        };
+        let (mut rows, mut total_damage, mut team_dps, mut duration) = self.party_readout();
+        let preview =
+            !self.mouse_passthrough && rows.is_empty() && total_damage <= 0.0 && team_dps <= 0.0;
+        let mut damage_taken = self.current_damage_taken_for_hud();
+        if preview {
+            let preview_data = hud_preview_party_readout();
+            rows = preview_data.rows;
+            total_damage = preview_data.total_damage;
+            team_dps = preview_data.team_dps;
+            duration = preview_data.duration;
+            damage_taken = preview_data.damage_taken;
+        }
         if self.hud_config.show_character_rows {
             rows.truncate(TEAM_DPS_MAX_MEMBERS);
         } else {
             rows.clear();
         }
         let area = ui.available_rect_before_wrap();
-        let left = area.left();
-        let width = area.width().min(HUD_WINDOW_WIDTH - 16.0);
+        let horizontal_inset = 8.0;
+        let left = area.left() + horizontal_inset;
+        let width = (area.width() - horizontal_inset * 2.0)
+            .min(self.hud_config.width as f32 - horizontal_inset * 2.0);
         let right = left + width;
         let painter = ui.painter().clone();
         let colors = HudPaintColors {
-            accent: hud_theme.accent,
-            text: hud_theme.text,
-            muted: hud_theme.muted,
+            accent: display_accent,
+            text: display_text,
+            muted: display_muted,
+            halo: display_halo,
         };
 
         if rows.is_empty() && total_damage <= 0.0 && team_dps <= 0.0 {
             let empty = egui::Rect::from_min_size(
-                egui::pos2(left, area.top()),
+                egui::pos2(left, area.top() + 8.0),
                 egui::vec2(width.min(210.0), 38.0),
             );
             paint_haloed_with_halo(
@@ -1079,64 +1159,171 @@ impl DpsApp {
                 egui::Align2::LEFT_CENTER,
                 t("Waiting for damage data"),
                 egui::FontId::proportional(13.0),
-                hud_theme.muted,
-                hud_theme.halo,
+                display_muted,
+                display_halo,
             );
             ui.allocate_rect(empty, egui::Sense::hover());
             return;
         }
 
-        let mut top = area.top();
-        if self.hud_config.show_title {
-            top += self.hud_title_readout_row(
-                &painter,
-                left,
-                top,
-                width,
-                hud_theme.text,
-                hud_theme.muted,
-            );
-        }
-        if self.hud_config.has_summary_row() {
-            top += self.hud_summary_row(
-                &painter,
-                egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 50.0)),
-                HudSummaryValues {
+        let mut top = area.top() + 8.0;
+        let mut reorder = None;
+        let mut hide = None;
+        let dragged_module = egui::DragAndDrop::payload::<HudModule>(ui.ctx()).map(|item| *item);
+        let mut dragged_size = None;
+        for module in self.hud_config.module_order.clone() {
+            let target_module_top = top;
+            let module_top = if editor {
+                motion::animate_value(
+                    ui.ctx(),
+                    ("hud_module_order_y", module),
+                    target_module_top,
+                    motion::dur::BASE,
+                    self.reduce_motion,
+                )
+            } else {
+                target_module_top
+            };
+            let target_content_top = target_module_top
+                + if editor {
+                    HUD_EDITOR_MODULE_HEADER_HEIGHT
+                } else {
+                    0.0
+                };
+            let content_top = module_top
+                + if editor {
+                    HUD_EDITOR_MODULE_HEADER_HEIGHT
+                } else {
+                    0.0
+                };
+            let rendered_height = match module {
+                HudModule::Title if self.hud_config.show_title => {
+                    self.hud_title_readout_row(&painter, left, content_top, width, colors)
+                }
+                HudModule::Summary if self.hud_config.has_summary_row() => self.hud_summary_row(
+                    &painter,
+                    egui::Rect::from_min_size(
+                        egui::pos2(left, content_top),
+                        egui::vec2(width, 50.0),
+                    ),
+                    HudSummaryValues {
+                        total_damage,
+                        team_dps,
+                        duration,
+                        damage_taken,
+                    },
+                    &rows,
+                    colors,
+                ),
+                HudModule::Status if self.hud_status_row_visible() => {
+                    self.hud_status_row(&painter, left, content_top, width, colors)
+                }
+                HudModule::Characters if !rows.is_empty() => self.hud_character_rows(
+                    ui,
+                    &painter,
+                    HudRowsLayout {
+                        left,
+                        right,
+                        top: content_top,
+                        width,
+                    },
+                    &rows,
                     total_damage,
-                    team_dps,
-                    duration,
-                    damage_taken: self.current_damage_taken_for_hud(),
-                },
-                &rows,
-                colors,
-            );
+                    colors,
+                ),
+                HudModule::Timeline if self.hud_config.show_mini_timeline => {
+                    self.hud_mini_timeline(&painter, left, content_top, width, preview, colors)
+                }
+                HudModule::Title
+                | HudModule::Summary
+                | HudModule::Status
+                | HudModule::Characters
+                | HudModule::Timeline => 0.0,
+            };
+            if rendered_height > 0.0 {
+                top = target_content_top + rendered_height;
+            }
+            if editor && rendered_height > 0.0 {
+                let module_rect = egui::Rect::from_min_max(
+                    egui::pos2(left - 4.0, module_top - 1.0),
+                    egui::pos2(right + 4.0, content_top + rendered_height - 1.0),
+                );
+                if dragged_module == Some(module) {
+                    dragged_size = Some(module_rect.size());
+                    painter.rect_filled(module_rect, 4.0, hud_theme.edit_bg);
+                }
+                paint_hud_module_editor_outline(
+                    &painter,
+                    module_rect,
+                    t(module.label()),
+                    hud_theme.edit_border,
+                    display_halo,
+                );
+                let response = ui.interact(
+                    module_rect,
+                    ui.make_persistent_id(("hud_module_editor", module)),
+                    egui::Sense::click_and_drag(),
+                );
+                response.dnd_set_drag_payload(module);
+                if let Some(dragged) = response.dnd_hover_payload::<HudModule>()
+                    && *dragged != module
+                {
+                    let pointer_y = ui
+                        .ctx()
+                        .pointer_interact_pos()
+                        .map_or(module_rect.center().y, |pointer| pointer.y);
+                    let indicator_y = if pointer_y < module_rect.center().y {
+                        module_rect.top()
+                    } else {
+                        module_rect.bottom()
+                    };
+                    painter.line_segment(
+                        [
+                            egui::pos2(module_rect.left(), indicator_y),
+                            egui::pos2(module_rect.right(), indicator_y),
+                        ],
+                        Stroke::new(3.0, hud_theme.accent),
+                    );
+                }
+                if let Some(dropped) = response.dnd_release_payload::<HudModule>()
+                    && *dropped != module
+                {
+                    reorder = Some((*dropped, module));
+                }
+                response.context_menu(|ui| {
+                    if ui.button(t("Hide module")).clicked() {
+                        hide = Some(module);
+                        ui.close();
+                    }
+                });
+            }
         }
-        if self.hud_status_row_visible() {
-            top += self.hud_status_row(&painter, left, top, width, hud_theme.text, hud_theme.muted);
+
+        if let (Some(module), Some(size), Some(pointer)) = (
+            dragged_module,
+            dragged_size,
+            ui.ctx().pointer_interact_pos(),
+        ) {
+            paint_hud_drag_ghost(ui.ctx(), pointer, size, module, hud_theme);
         }
-        if !rows.is_empty() {
-            top += self.hud_character_rows(
-                ui,
-                &painter,
-                HudRowsLayout {
-                    left,
-                    right,
-                    top,
-                    width,
-                },
-                &rows,
-                total_damage,
-            );
+
+        if let Some((dragged, target)) = reorder {
+            let from = self
+                .hud_config
+                .module_order
+                .iter()
+                .position(|module| *module == dragged)
+                .expect("dragged HUD module belongs to module_order");
+            let target = self
+                .hud_config
+                .module_order
+                .iter()
+                .position(|module| *module == target)
+                .expect("drop target belongs to module_order");
+            self.hud_config.module_order.swap(from, target);
         }
-        if self.hud_config.show_mini_timeline {
-            top += self.hud_mini_timeline(
-                &painter,
-                left,
-                top,
-                width,
-                hud_theme.accent,
-                hud_theme.muted,
-            );
+        if let Some(module) = hide {
+            self.hud_config.set_module_visible(module, false);
         }
 
         ui.allocate_rect(
@@ -1151,8 +1338,7 @@ impl DpsApp {
         left: f32,
         top: f32,
         width: f32,
-        text: Color32,
-        muted: Color32,
+        colors: HudPaintColors,
     ) -> f32 {
         let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 20.0));
         paint_haloed(
@@ -1161,7 +1347,8 @@ impl DpsApp {
             egui::Align2::LEFT_CENTER,
             "NTE DPS",
             egui::FontId::proportional(12.0),
-            text,
+            colors.text,
+            colors.halo,
         );
         paint_haloed(
             painter,
@@ -1169,7 +1356,8 @@ impl DpsApp {
             egui::Align2::RIGHT_CENTER,
             t(self.dps_time_mode.label()),
             egui::FontId::proportional(10.5),
-            muted,
+            colors.muted,
+            colors.halo,
         );
         22.0
     }
@@ -1249,6 +1437,7 @@ impl DpsApp {
                 label,
                 egui::FontId::proportional(10.5 * duration_scale),
                 colors.muted,
+                colors.halo,
             );
             let dps_text = format_number(animated_dps);
             let dps_font = egui::FontId::proportional(26.0);
@@ -1264,6 +1453,7 @@ impl DpsApp {
                 dps_text,
                 dps_font,
                 colors.accent,
+                colors.halo,
             );
             paint_hud_trend(
                 painter,
@@ -1279,6 +1469,7 @@ impl DpsApp {
                 format!("{} {:.1}s", t("Time"), values.duration),
                 egui::FontId::monospace(14.0 * duration_scale),
                 colors.text,
+                colors.halo,
             );
         }
 
@@ -1322,6 +1513,7 @@ impl DpsApp {
                 label,
                 egui::FontId::proportional(10.5),
                 colors.muted,
+                colors.halo,
             );
             paint_haloed(
                 painter,
@@ -1330,6 +1522,7 @@ impl DpsApp {
                 value,
                 egui::FontId::monospace(13.0),
                 colors.text,
+                colors.halo,
             );
         }
 
@@ -1385,8 +1578,7 @@ impl DpsApp {
         left: f32,
         top: f32,
         width: f32,
-        text: Color32,
-        muted: Color32,
+        colors: HudPaintColors,
     ) -> f32 {
         let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 18.0));
         if self.hud_config.show_abyss_half && self.state.abyss.is_active() {
@@ -1396,7 +1588,8 @@ impl DpsApp {
                 egui::Align2::LEFT_CENTER,
                 t(self.selected_abyss_half.label()),
                 egui::FontId::proportional(11.0),
-                text,
+                colors.text,
+                colors.halo,
             );
         }
         if self.hud_config.show_passthrough_state {
@@ -1411,7 +1604,8 @@ impl DpsApp {
                 egui::Align2::RIGHT_CENTER,
                 label,
                 egui::FontId::proportional(11.0),
-                muted,
+                colors.muted,
+                colors.halo,
             );
         }
         22.0
@@ -1424,6 +1618,7 @@ impl DpsApp {
         layout: HudRowsLayout,
         rows: &[CharacterStats],
         total_damage: f64,
+        colors: HudPaintColors,
     ) -> f32 {
         let hud_theme = self.theme().hud;
         let track_color = hud_theme.track;
@@ -1488,7 +1683,8 @@ impl DpsApp {
                 egui::Align2::LEFT_CENTER,
                 &row.name,
                 egui::FontId::proportional(12.0),
-                hud_theme.text,
+                colors.text,
+                colors.halo,
             );
 
             let share = if total_damage > 0.0 {
@@ -1501,6 +1697,12 @@ impl DpsApp {
                 egui::pos2(bar_right.max(bar_left + 8.0), center_y + 3.5),
             );
             painter.rect_filled(track, 3.5, track_color);
+            painter.rect_stroke(
+                track,
+                3.5,
+                Stroke::new(1.0, hud_theme.halo),
+                egui::StrokeKind::Inside,
+            );
             let share_animation = motion::animate_share(
                 ui.ctx(),
                 (
@@ -1535,6 +1737,7 @@ impl DpsApp {
                 format!("{share:.1}%"),
                 egui::FontId::proportional(10.5),
                 color,
+                colors.halo,
             );
             paint_haloed(
                 painter,
@@ -1542,7 +1745,8 @@ impl DpsApp {
                 egui::Align2::RIGHT_CENTER,
                 format_number(row_dps),
                 egui::FontId::monospace(12.0),
-                hud_theme.text,
+                colors.text,
+                colors.halo,
             );
         }
         ui.set_clip_rect(previous_clip);
@@ -1555,37 +1759,52 @@ impl DpsApp {
         left: f32,
         top: f32,
         width: f32,
-        accent: Color32,
-        muted: Color32,
+        preview: bool,
+        colors: HudPaintColors,
     ) -> f32 {
+        let accent = colors.accent;
         let rect = egui::Rect::from_min_size(egui::pos2(left, top + 4.0), egui::vec2(width, 34.0));
         let baseline_y = rect.bottom() - 5.0;
         painter.hline(
             rect.x_range(),
             baseline_y,
-            Stroke::new(1.0_f32, self.theme().hud.halo.gamma_multiply(0.6)),
+            Stroke::new(1.0, colors.muted.gamma_multiply(0.6)),
         );
-        let timeline = self.cached_timeline_series();
-        let peak = timeline
-            .buckets
-            .iter()
-            .map(|bucket| bucket.dps)
-            .fold(0.0, f64::max);
-        if peak > 0.0 && timeline.buckets.len() > 1 {
-            let duration = timeline
-                .buckets
-                .last()
-                .map_or(1.0, |bucket| bucket.end_offset)
-                .max(0.001);
+        if preview {
+            let points = [0.16, 0.42, 0.28, 0.7, 0.48, 0.82, 0.36, 0.58, 0.24];
             let mut previous = None;
-            for bucket in &timeline.buckets {
-                let x = rect.left() + rect.width() * (bucket.end_offset / duration) as f32;
-                let y = baseline_y - (rect.height() - 8.0) * (bucket.dps / peak) as f32;
+            for (index, value) in points.into_iter().enumerate() {
+                let x = rect.left() + rect.width() * index as f32 / (points.len() - 1) as f32;
+                let y = baseline_y - (rect.height() - 8.0) * value;
                 let point = egui::pos2(x, y);
                 if let Some(previous) = previous {
-                    painter.line_segment([previous, point], Stroke::new(1.4_f32, accent));
+                    painter.line_segment([previous, point], Stroke::new(1.4, accent));
                 }
                 previous = Some(point);
+            }
+        } else {
+            let timeline = self.cached_timeline_series();
+            let peak = timeline
+                .buckets
+                .iter()
+                .map(|bucket| bucket.dps)
+                .fold(0.0, f64::max);
+            if peak > 0.0 && timeline.buckets.len() > 1 {
+                let duration = timeline
+                    .buckets
+                    .last()
+                    .map_or(1.0, |bucket| bucket.end_offset)
+                    .max(0.001);
+                let mut previous = None;
+                for bucket in &timeline.buckets {
+                    let x = rect.left() + rect.width() * (bucket.end_offset / duration) as f32;
+                    let y = baseline_y - (rect.height() - 8.0) * (bucket.dps / peak) as f32;
+                    let point = egui::pos2(x, y);
+                    if let Some(previous) = previous {
+                        painter.line_segment([previous, point], Stroke::new(1.4, accent));
+                    }
+                    previous = Some(point);
+                }
             }
         }
         paint_haloed(
@@ -1594,7 +1813,8 @@ impl DpsApp {
             egui::Align2::LEFT_CENTER,
             t("DPS"),
             egui::FontId::proportional(9.5),
-            muted,
+            colors.muted,
+            colors.halo,
         );
         42.0
     }
@@ -1688,22 +1908,14 @@ impl DpsApp {
             self.reduce_motion,
             motion::ease::standard,
         );
-        let card_fill = mix_color(
-            shadcn_card(self.dark_mode),
-            shadcn_card_hover(self.dark_mode),
-            hover,
-        );
+        let card_fill = mix_color(self.theme().card, shadcn_card_hover(self.dark_mode), hover);
         ui.painter().rect_filled(rect, 6.0, card_fill);
         ui.painter().rect_stroke(
             rect,
             6.0,
             Stroke::new(
                 1.0_f32,
-                mix_color(
-                    shadcn_border(self.dark_mode),
-                    color.gamma_multiply(0.72),
-                    hover,
-                ),
+                mix_color(self.theme().border, color.gamma_multiply(0.72), hover),
             ),
             egui::StrokeKind::Inside,
         );
@@ -1726,7 +1938,7 @@ impl DpsApp {
             self.reduce_motion,
         );
         ui.painter()
-            .rect_filled(contribution_track, 1.0, shadcn_muted(self.dark_mode));
+            .rect_filled(contribution_track, 1.0, self.theme().muted);
         ui.painter().rect_filled(
             egui::Rect::from_min_size(
                 contribution_track.min,
@@ -1988,6 +2200,148 @@ fn paint_share_tail(
     );
 }
 
+fn paint_hud_module_editor_outline(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    label: String,
+    color: Color32,
+    halo: Color32,
+) {
+    painter.rect_filled(
+        egui::Rect::from_min_size(
+            rect.min,
+            egui::vec2(rect.width(), HUD_EDITOR_MODULE_HEADER_HEIGHT),
+        ),
+        3.0,
+        color.gamma_multiply(0.12),
+    );
+    let path = [
+        rect.left_top(),
+        rect.right_top(),
+        rect.right_bottom(),
+        rect.left_bottom(),
+        rect.left_top(),
+    ];
+    painter.extend(egui::Shape::dashed_line(
+        &path,
+        Stroke::new(1.0, color.gamma_multiply(0.8)),
+        5.0,
+        3.0,
+    ));
+    paint_haloed_with_halo(
+        painter,
+        rect.left_top() + egui::vec2(6.0, HUD_EDITOR_MODULE_HEADER_HEIGHT * 0.5),
+        egui::Align2::LEFT_CENTER,
+        format!("≡  {label}"),
+        egui::FontId::proportional(9.5),
+        color,
+        halo,
+    );
+}
+
+fn paint_hud_drag_ghost(
+    ctx: &egui::Context,
+    pointer: egui::Pos2,
+    source_size: egui::Vec2,
+    module: HudModule,
+    theme: HudThemeTokens,
+) {
+    let rect = hud_drag_ghost_rect(ctx.content_rect(), pointer, source_size);
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("hud_module_drag_ghost"),
+    ));
+    painter.rect_filled(
+        rect.translate(egui::vec2(0.0, 7.0)),
+        8.0,
+        Color32::from_black_alpha(128),
+    );
+    painter.rect_filled(rect, 8.0, theme.edit_bg);
+    painter.rect_stroke(
+        rect,
+        8.0,
+        Stroke::new(2.0, theme.accent),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(4.0, rect.height())),
+        2.0,
+        theme.accent,
+    );
+    painter.text(
+        rect.left_top() + egui::vec2(14.0, 15.0),
+        egui::Align2::LEFT_CENTER,
+        format!("≡  {}", t(module.label())),
+        egui::FontId::proportional(12.0),
+        theme.edit_text,
+    );
+    let detail = match module {
+        HudModule::Title => "NTE DPS".to_owned(),
+        HudModule::Summary => "64,301 DPS".to_owned(),
+        HudModule::Status => t("Edit"),
+        HudModule::Characters => format!("4 × {}", t("Character")),
+        HudModule::Timeline => t("DPS"),
+    };
+    painter.text(
+        rect.left_top() + egui::vec2(14.0, 36.0),
+        egui::Align2::LEFT_CENTER,
+        detail,
+        egui::FontId::proportional(11.0),
+        mix_color(theme.edit_text, theme.edit_bg, 0.45),
+    );
+    ctx.request_repaint();
+}
+
+fn hud_drag_ghost_rect(
+    content_rect: egui::Rect,
+    pointer: egui::Pos2,
+    source_size: egui::Vec2,
+) -> egui::Rect {
+    let size = egui::vec2(
+        source_size.x.clamp(240.0, 420.0),
+        source_size.y.clamp(54.0, 140.0),
+    );
+    let bounds = content_rect.shrink(8.0);
+    let desired = pointer - egui::vec2(22.0, 14.0);
+    let min = egui::pos2(
+        desired
+            .x
+            .clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left())),
+        desired
+            .y
+            .clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top())),
+    );
+    egui::Rect::from_min_size(min, size)
+}
+
+fn hud_preview_party_readout() -> HudPreviewData {
+    let rows = [
+        (u32::MAX - 3, "A", 38, 1_227_500.0),
+        (u32::MAX - 2, "B", 27, 579_000.0),
+        (u32::MAX - 1, "C", 16, 260_000.0),
+        (u32::MAX, "D", 11, 179_785.0),
+    ]
+    .into_iter()
+    .map(|(char_id, suffix, hits, damage)| CharacterStats {
+        char_id,
+        name: format!("{} {suffix}", t("Character")),
+        hits,
+        damage,
+        first_hit: 1.0,
+        last_hit: 34.9,
+        ..CharacterStats::default()
+    })
+    .collect::<Vec<_>>();
+    let total_damage = rows.iter().map(|row| row.damage).sum();
+    HudPreviewData {
+        rows,
+        total_damage,
+        team_dps: 64_301.0,
+        duration: 34.9,
+        damage_taken: 2_834.0,
+    }
+}
+
 fn toolbar_button_group_width<'a>(
     ui: &egui::Ui,
     labels: impl IntoIterator<Item = &'a str>,
@@ -2035,5 +2389,32 @@ mod responsive_tests {
             main_toolbar_layout(300.0, 320.0, 220.0, 90.0, 196.0),
             MainToolbarLayout::ThreeRows
         );
+    }
+
+    #[test]
+    fn hud_preview_has_a_complete_four_member_snapshot() {
+        let preview = hud_preview_party_readout();
+
+        assert_eq!(preview.rows.len(), HUD_PREVIEW_ROW_COUNT);
+        assert_eq!(
+            preview.total_damage,
+            preview.rows.iter().map(|row| row.damage).sum::<f64>()
+        );
+        assert!(preview.team_dps > 0.0);
+        assert!(preview.duration > 0.0);
+        assert!(preview.damage_taken > 0.0);
+    }
+
+    #[test]
+    fn hud_drag_preview_anchors_the_pointer_inside_its_title_strip() {
+        let pointer = egui::pos2(500.0, 260.0);
+        let rect = hud_drag_ghost_rect(
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0)),
+            pointer,
+            egui::vec2(900.0, 90.0),
+        );
+
+        assert!(rect.contains(pointer));
+        assert!(pointer.y <= rect.top() + 30.0);
     }
 }

@@ -342,7 +342,7 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
@@ -353,8 +353,8 @@ impl DpsApp {
                             self.reduce_motion,
                         );
                         egui::Frame::new()
-                            .fill(shadcn_card(self.dark_mode))
-                            .stroke(Stroke::new(1.0_f32, shadcn_border(self.dark_mode)))
+                            .fill(self.theme().card)
+                            .stroke(Stroke::new(1.0_f32, self.theme().border))
                             .corner_radius(10)
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {
@@ -476,7 +476,7 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
@@ -585,7 +585,7 @@ impl DpsApp {
                 ))
                 .size(12.0)
                 .strong()
-                .color(shadcn_foreground(self.dark_mode)),
+                .color(self.theme().fg),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button(t("Reload")).clicked() {
@@ -607,7 +607,7 @@ impl DpsApp {
         ui.painter().vline(
             separator_x,
             main_rect.y_range(),
-            Stroke::new(1.0_f32, shadcn_border(self.dark_mode)),
+            Stroke::new(1.0_f32, self.theme().border),
         );
         let content_rect = egui::Rect::from_min_max(
             egui::pos2(nav_rect.right() + gap, main_rect.top()),
@@ -934,7 +934,7 @@ impl DpsApp {
                 ))
                 .size(16.0)
                 .strong()
-                .color(shadcn_foreground(self.dark_mode)),
+                .color(self.theme().fg),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add(
@@ -1166,7 +1166,7 @@ impl DpsApp {
                 egui::CentralPanel::default()
                     .frame(
                         egui::Frame::new()
-                            .fill(shadcn_background(self.dark_mode))
+                            .fill(self.theme().bg)
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
@@ -1177,8 +1177,8 @@ impl DpsApp {
                             self.reduce_motion,
                         );
                         egui::Frame::new()
-                            .fill(shadcn_card(self.dark_mode))
-                            .stroke(Stroke::new(1.0_f32, shadcn_border(self.dark_mode)))
+                            .fill(self.theme().card)
+                            .stroke(Stroke::new(1.0_f32, self.theme().border))
                             .corner_radius(10)
                             .inner_margin(egui::Margin::same(12))
                             .show(ui, |ui| {

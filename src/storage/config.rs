@@ -22,6 +22,8 @@ const WINDOW_SIZE_MAX: f32 = 6000.0;
 pub const TIMELINE_BUCKET_SECONDS_DEFAULT: f32 = 1.0;
 pub const TIMELINE_BUCKET_SECONDS_MIN: f32 = 0.2;
 pub const TIMELINE_BUCKET_SECONDS_MAX: f32 = 10.0;
+pub const HUD_WIDTH_DEFAULT: u16 = 380;
+pub const HUD_WIDTH_MIN: u16 = 280;
 
 const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::Home,
@@ -39,7 +41,19 @@ const ACCENT_COLORS: [AccentColor; 5] = [
     AccentColor::Orange,
     AccentColor::Green,
 ];
+const THEME_PRESETS: [ThemePreset; 3] = [
+    ThemePreset::Zinc,
+    ThemePreset::Tactical,
+    ThemePreset::HighContrast,
+];
 const UI_DENSITIES: [UiDensity; 3] = [UiDensity::Compact, UiDensity::Cozy, UiDensity::Comfortable];
+const HUD_MODULES: [HudModule; 5] = [
+    HudModule::Title,
+    HudModule::Summary,
+    HudModule::Status,
+    HudModule::Characters,
+    HudModule::Timeline,
+];
 const GLOBAL_HOTKEY_ACTIONS: [GlobalHotkeyAction; 3] = [
     GlobalHotkeyAction::ToggleCapture,
     GlobalHotkeyAction::ResetSession,
@@ -390,6 +404,39 @@ impl AccentColor {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum ThemePreset {
+    #[default]
+    Zinc,
+    Tactical,
+    HighContrast,
+}
+
+impl ThemePreset {
+    pub fn all() -> &'static [Self] {
+        &THEME_PRESETS
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Zinc => "Zinc Theme",
+            Self::Tactical => "Tactical",
+            Self::HighContrast => "High Contrast",
+        }
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Zinc => "Neutral desktop surfaces with the selected accent",
+            Self::Tactical => "Near-black surfaces with a high-saturation tactical accent",
+            Self::HighContrast => "Pure high-contrast surfaces with stronger borders",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     Compact,
     #[default]
@@ -412,9 +459,38 @@ impl UiDensity {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HudModule {
+    Title,
+    Summary,
+    Status,
+    Characters,
+    Timeline,
+}
+
+impl HudModule {
+    pub fn all() -> &'static [Self] {
+        &HUD_MODULES
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Title => "Title",
+            Self::Summary => "Summary",
+            Self::Status => "Status",
+            Self::Characters => "Character Ranking",
+            Self::Timeline => "Curve",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HudConfig {
+    pub width: u16,
+    pub module_order: Vec<HudModule>,
     pub show_title: bool,
     pub show_team_dps: bool,
     pub show_duration: bool,
@@ -429,6 +505,8 @@ pub struct HudConfig {
 impl Default for HudConfig {
     fn default() -> Self {
         Self {
+            width: HUD_WIDTH_DEFAULT,
+            module_order: HUD_MODULES.to_vec(),
             show_title: false,
             show_team_dps: true,
             show_duration: true,
@@ -457,6 +535,7 @@ impl HudConfig {
             show_abyss_half: false,
             show_passthrough_state: false,
             show_mini_timeline: false,
+            ..Self::default()
         }
     }
 
@@ -472,17 +551,65 @@ impl HudConfig {
             show_abyss_half: true,
             show_passthrough_state: true,
             show_mini_timeline: true,
+            ..Self::default()
         }
     }
 
-    /// Retained as the config-sanitize hook even though no field currently needs
-    /// clamping, so callers (and `UiConfig::sanitized`) stay stable.
-    pub fn sanitized(self) -> Self {
+    pub fn sanitized(mut self) -> Self {
+        self.width = self.width.max(HUD_WIDTH_MIN);
+        let mut normalized = Vec::with_capacity(HUD_MODULES.len());
+        for module in self.module_order {
+            if !normalized.contains(&module) {
+                normalized.push(module);
+            }
+        }
+        for module in HudModule::all().iter().copied() {
+            if !normalized.contains(&module) {
+                normalized.push(module);
+            }
+        }
+        self.module_order = normalized;
         self
     }
 
     pub fn has_summary_row(&self) -> bool {
         self.show_team_dps || self.show_duration || self.show_total_damage || self.show_damage_taken
+    }
+
+    pub fn module_visible(&self, module: HudModule) -> bool {
+        match module {
+            HudModule::Title => self.show_title,
+            HudModule::Summary => self.has_summary_row(),
+            HudModule::Status => self.show_abyss_half || self.show_passthrough_state,
+            HudModule::Characters => self.show_character_rows,
+            HudModule::Timeline => self.show_mini_timeline,
+        }
+    }
+
+    pub fn set_module_visible(&mut self, module: HudModule, visible: bool) {
+        match module {
+            HudModule::Title => self.show_title = visible,
+            HudModule::Summary => {
+                if visible {
+                    self.show_team_dps = true;
+                } else {
+                    self.show_team_dps = false;
+                    self.show_duration = false;
+                    self.show_total_damage = false;
+                    self.show_damage_taken = false;
+                }
+            }
+            HudModule::Status => {
+                if visible {
+                    self.show_passthrough_state = true;
+                } else {
+                    self.show_abyss_half = false;
+                    self.show_passthrough_state = false;
+                }
+            }
+            HudModule::Characters => self.show_character_rows = visible,
+            HudModule::Timeline => self.show_mini_timeline = visible,
+        }
     }
 }
 
@@ -494,6 +621,8 @@ pub struct UiConfig {
     pub language: Language,
     pub opacity: f32,
     pub dark_mode: bool,
+    #[serde(default)]
+    pub theme_preset: ThemePreset,
     #[serde(default)]
     pub accent: AccentColor,
     #[serde(default)]
@@ -537,6 +666,7 @@ impl Default for UiConfig {
             language: Language::default(),
             opacity: 0.92,
             dark_mode: false,
+            theme_preset: ThemePreset::default(),
             accent: AccentColor::default(),
             density: UiDensity::default(),
             reduce_motion: false,
@@ -795,6 +925,41 @@ mod tests {
     }
 
     #[test]
+    fn hud_editor_configuration_is_sanitized() {
+        let config = HudConfig {
+            width: u16::MAX,
+            module_order: vec![HudModule::Timeline, HudModule::Timeline, HudModule::Title],
+            ..HudConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(config.width, u16::MAX);
+        assert_eq!(
+            config.module_order,
+            [
+                HudModule::Timeline,
+                HudModule::Title,
+                HudModule::Summary,
+                HudModule::Status,
+                HudModule::Characters,
+            ]
+        );
+
+        let mut visibility = HudConfig::default();
+        visibility.set_module_visible(HudModule::Summary, false);
+        assert!(!visibility.module_visible(HudModule::Summary));
+        visibility.set_module_visible(HudModule::Summary, true);
+        assert!(visibility.module_visible(HudModule::Summary));
+
+        let minimum = HudConfig {
+            width: 0,
+            ..HudConfig::default()
+        }
+        .sanitized();
+        assert_eq!(minimum.width, HUD_WIDTH_MIN);
+    }
+
+    #[test]
     fn interaction_preferences_use_stable_serialized_codes() {
         assert_eq!(
             AccentColor::all()
@@ -830,6 +995,20 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Compact", "Cozy", "Comfortable"]
         );
+        assert_eq!(
+            ThemePreset::all()
+                .iter()
+                .map(|value| serde_json::to_string(value).unwrap())
+                .collect::<Vec<_>>(),
+            ["\"zinc\"", "\"tactical\"", "\"high_contrast\""]
+        );
+        assert_eq!(
+            ThemePreset::all()
+                .iter()
+                .map(|value| value.label())
+                .collect::<Vec<_>>(),
+            ["Zinc Theme", "Tactical", "High Contrast"]
+        );
     }
 
     #[test]
@@ -839,8 +1018,11 @@ mod tests {
 
         assert_eq!(config.opacity, 0.75);
         assert!(config.dark_mode);
+        assert_eq!(config.theme_preset, ThemePreset::Zinc);
         assert_eq!(config.accent, AccentColor::Zinc);
         assert_eq!(config.density, UiDensity::Cozy);
+        assert_eq!(config.hud.width, HUD_WIDTH_DEFAULT);
+        assert_eq!(config.hud.module_order, HudModule::all());
         assert!(!config.reduce_motion);
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
         assert!(config.onboarding_done);

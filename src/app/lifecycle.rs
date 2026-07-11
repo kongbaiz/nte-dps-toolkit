@@ -24,6 +24,7 @@ impl DpsApp {
         configure_style(
             &cc.egui_ctx,
             ui_config.dark_mode,
+            ui_config.theme_preset,
             ui_config.accent,
             ui_config.density,
             ui_config.reduce_motion,
@@ -283,6 +284,7 @@ impl DpsApp {
             paused: false,
             language: ui_config.language,
             dark_mode: ui_config.dark_mode,
+            theme_preset: ui_config.theme_preset,
             accent: ui_config.accent,
             density: ui_config.density,
             reduce_motion: ui_config.reduce_motion,
@@ -1054,12 +1056,12 @@ impl DpsApp {
             if ui
                 .small_button(t("Passthrough"))
                 .on_hover_ui(|ui| {
-                    // The HUD is its own small OS window (HUD_WINDOW_WIDTH), not
+                    // The HUD is its own small OS window, not
                     // a panel inside a larger one — a tooltip can't spill past
                     // its edges the way it could in the normal window, so wrap
                     // well short of that width instead of relying on the
                     // default single-line-then-clip tooltip sizing.
-                    ui.set_max_width(HUD_WINDOW_WIDTH - 100.0);
+                    ui.set_max_width(self.hud_config.width as f32 - 100.0);
                     ui.label(passthrough_hint);
                 })
                 .clicked()
@@ -1312,6 +1314,7 @@ impl DpsApp {
             language: self.language,
             opacity: self.opacity,
             dark_mode: self.dark_mode,
+            theme_preset: self.theme_preset,
             accent: self.accent,
             density: self.density,
             reduce_motion: self.reduce_motion,

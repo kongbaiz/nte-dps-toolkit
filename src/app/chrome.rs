@@ -341,6 +341,50 @@ pub(crate) fn window_resize_grips(ctx: &egui::Context) {
     }
 }
 
+/// Horizontal-only native resize handles used by the HUD editor. The HUD owns
+/// its height, so exposing the top/bottom handles would let a transient manual
+/// height fight the next content-sized update.
+pub(crate) fn window_width_resize_grips(ctx: &egui::Context) {
+    use egui::CursorIcon;
+    use egui::viewport::ResizeDirection as Dir;
+
+    const EDGE: f32 = 8.0;
+    let rect = ctx.content_rect();
+    if rect.width() <= EDGE * 2.0 || rect.height() <= EDGE * 2.0 {
+        return;
+    }
+    for (id, grip, direction) in [
+        (
+            "west",
+            egui::Rect::from_min_size(rect.left_top(), egui::vec2(EDGE, rect.height())),
+            Dir::West,
+        ),
+        (
+            "east",
+            egui::Rect::from_min_size(
+                egui::pos2(rect.right() - EDGE, rect.top()),
+                egui::vec2(EDGE, rect.height()),
+            ),
+            Dir::East,
+        ),
+    ] {
+        let response = egui::Area::new(egui::Id::new(("hud_width_resize", id)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(grip.min)
+            .movable(false)
+            .constrain(false)
+            .sense(egui::Sense::drag())
+            .show(ctx, |ui| {
+                ui.allocate_space(grip.size());
+            })
+            .response
+            .on_hover_and_drag_cursor(CursorIcon::ResizeHorizontal);
+        if response.drag_started() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
+        }
+    }
+}
+
 /// Records a viewport's current inner size (logical points) into `target`, ignoring degenerate or
 /// sub-pixel changes. Callers persist `target` through the normal debounced config path, so a
 /// window reopens at the size it was last dragged to.
