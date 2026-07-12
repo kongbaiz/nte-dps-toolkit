@@ -661,12 +661,16 @@ pub fn load_ability_tip_names(path: &Path, language: Language) -> Result<HashMap
     Ok(abilities
         .iter()
         .filter_map(|(ability_name, row)| {
+            // Some name fields ship the game's rich-text markup baked in (e.g.
+            // `<Title>变轨技能：轮转打击</>`); strip it to the plain text the
+            // player sees, and fall through to the next language when a field is
+            // empty or reduces to nothing.
             let name = field_priority.iter().find_map(|field| {
-                row.get(*field)
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|value| !value.trim().is_empty())
+                let raw = row.get(*field).and_then(serde_json::Value::as_str)?;
+                let name = crate::engine::rich_text::strip_tags(raw);
+                (!name.is_empty()).then_some(name)
             })?;
-            Some((ability_name.clone(), name.trim().to_owned()))
+            Some((ability_name.clone(), name))
         })
         .collect())
 }
