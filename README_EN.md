@@ -50,7 +50,7 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 - **Capture & replay**: saves full Ethernet frames live to `logs/nte_raw_*.pcapng`; export parsed JSON, save full PCAPNG, and import JSON / PCAPNG for debug replay.
 - **Debug tooling**: inspect packet endpoints, character declarations, parse results, and payload previews; edit character data `res/data/characters/characters.json`; open/search/edit and save NTE encrypted INI; resource-coverage checks, an auto-diagnostics wizard, an adapter list, a server-damage calibration toggle, and more.
 - **Customizable HUD**: choose display modules, max characters, and a mini DPS curve; defaults keep total DPS, time, total damage, and character ranking.
-- **Auto persistence**: opacity, light/dark theme, always-on-top, and server-damage calibration saved to `%LOCALAPPDATA%\NTE DPS Tool\config.json`.
+- **Auto persistence**: opacity, light/dark theme, always-on-top, and server-damage calibration saved to `config.json` next to the executable; a legacy `%LOCALAPPDATA%\NTE DPS Tool\config.json` is migrated automatically on first launch.
 - **Hotkeys**: `Home` toggles click-through; `F12` toggles the Console with Packets, Resources, and Diagnostics.
 - **Auto adapter selection**: picks the network adapter and local IP from `HTGame.exe`'s active connections.
 
@@ -123,13 +123,13 @@ Once capturing, the Console can import a full PCAPNG or parsed JSON and run the 
 
 ## Configuration
 
-App settings are saved automatically to:
+App settings are saved automatically next to the executable:
 
 ```text
-%LOCALAPPDATA%\NTE DPS Tool\config.json
+<program directory>\config.json
 ```
 
-This covers opacity, light/dark theme, always-on-top, server-damage calibration, and more — restored on next launch without manual editing.
+This covers opacity, light/dark theme, always-on-top, server-damage calibration, and more — restored on next launch without manual editing. A config from older releases at `%LOCALAPPDATA%\NTE DPS Tool\config.json` is migrated automatically on first launch (the legacy file is left in place). Raw captures and panic logs go to `logs\` and combat history to `history\`, both under the program directory as well.
 
 Resource directory layout:
 

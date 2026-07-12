@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::i18n::Language;
 
-const CONFIG_DIRECTORY: &str = "NTE DPS Tool";
+/// `%LOCALAPPDATA%` folder name used by releases up to 0.3; only read for
+/// migration, never written.
+const LEGACY_CONFIG_DIRECTORY: &str = "NTE DPS Tool";
 const CONFIG_FILENAME: &str = "config.json";
 /// Smallest inner size (logical points) each window may be dragged down to. Enforced both when
 /// sanitizing a persisted size and at runtime via `with_min_inner_size`, so free resize can never
@@ -840,22 +842,36 @@ fn sanitize_window_size(size: Option<[f32; 2]>, min: [f32; 2]) -> Option<[f32; 2
 }
 
 pub fn config_path() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(CONFIG_DIRECTORY)
-        .join(CONFIG_FILENAME)
+    crate::storage::paths::software_dir().join(CONFIG_FILENAME)
+}
+
+/// Where releases up to 0.3 stored the config. Read once when the
+/// exe-adjacent config does not exist yet so an upgrade keeps the user's
+/// settings; the legacy file itself is left untouched.
+fn legacy_config_path() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(|base| {
+        PathBuf::from(base)
+            .join(LEGACY_CONFIG_DIRECTORY)
+            .join(CONFIG_FILENAME)
+    })
 }
 
 pub fn load() -> (UiConfig, Option<String>) {
-    let path = config_path();
-    if !path.is_file() {
-        // Brand-new install: pick the UI language from the system locale (if a
-        // localization file matches it) instead of the historical
-        // Simplified-Chinese default, which only exists to keep upgrades from
-        // older (pre-i18n) configs stable — see `Language::system_default`.
-        let config = new_install_config();
-        let warning = save(&path, &config).err().map(|error| {
+    load_with_paths(&config_path(), legacy_config_path().as_deref())
+}
+
+fn load_with_paths(path: &Path, legacy_path: Option<&Path>) -> (UiConfig, Option<String>) {
+    if path.is_file() {
+        return read_config_file(path);
+    }
+    if let Some(legacy_path) = legacy_path.filter(|legacy_path| legacy_path.is_file()) {
+        let (config, warning) = read_config_file(legacy_path);
+        if warning.is_some() {
+            return (config, warning);
+        }
+        // Adopt the legacy config into the new location so later loads and
+        // saves agree on one file.
+        let warning = save(path, &config).err().map(|error| {
             crate::storage::i18n::tf(
                 "Failed to create default UI config ({}): {}",
                 &[&path.display().to_string(), &error],
@@ -863,7 +879,22 @@ pub fn load() -> (UiConfig, Option<String>) {
         });
         return (config, warning);
     }
-    match fs::read_to_string(&path)
+    // Brand-new install: pick the UI language from the system locale (if a
+    // localization file matches it) instead of the historical
+    // Simplified-Chinese default, which only exists to keep upgrades from
+    // older (pre-i18n) configs stable — see `Language::system_default`.
+    let config = new_install_config();
+    let warning = save(path, &config).err().map(|error| {
+        crate::storage::i18n::tf(
+            "Failed to create default UI config ({}): {}",
+            &[&path.display().to_string(), &error],
+        )
+    });
+    (config, warning)
+}
+
+fn read_config_file(path: &Path) -> (UiConfig, Option<String>) {
+    match fs::read_to_string(path)
         .map_err(|error| error.to_string())
         .and_then(|text| serde_json::from_str::<UiConfig>(&text).map_err(|error| error.to_string()))
     {
@@ -888,6 +919,71 @@ pub fn save(path: &Path, config: &UiConfig) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_config_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nte_config_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_config(path: &Path, opacity: f32) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let config = UiConfig {
+            opacity,
+            ..UiConfig::default()
+        };
+        fs::write(path, serde_json::to_string(&config).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn load_adopts_legacy_config_when_new_path_missing() {
+        let dir = temp_config_dir("legacy");
+        let legacy = dir.join("legacy").join(CONFIG_FILENAME);
+        write_config(&legacy, 0.5);
+        let path = dir.join(CONFIG_FILENAME);
+
+        let (loaded, warning) = load_with_paths(&path, Some(&legacy));
+
+        assert_eq!(warning, None);
+        assert_eq!(loaded.opacity, 0.5);
+        assert!(path.is_file(), "legacy config should be copied to new path");
+        assert!(legacy.is_file(), "legacy config must stay in place");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn load_prefers_existing_config_over_legacy() {
+        let dir = temp_config_dir("prefer_new");
+        let legacy = dir.join("legacy").join(CONFIG_FILENAME);
+        write_config(&legacy, 0.9);
+        let path = dir.join(CONFIG_FILENAME);
+        write_config(&path, 0.5);
+
+        let (loaded, warning) = load_with_paths(&path, Some(&legacy));
+
+        assert_eq!(warning, None);
+        assert_eq!(loaded.opacity, 0.5);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn load_without_any_config_creates_default_at_new_path() {
+        let dir = temp_config_dir("fresh");
+        let path = dir.join(CONFIG_FILENAME);
+
+        let (_, warning) = load_with_paths(&path, None);
+
+        assert_eq!(warning, None);
+        assert!(path.is_file(), "default config should be created");
+        let _ = fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn sanitizes_invalid_opacity() {

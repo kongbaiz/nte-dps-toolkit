@@ -8,4 +8,5 @@ pub mod config;
 pub mod history;
 pub mod i18n;
 pub mod io_util;
+pub mod paths;
 pub mod resource;

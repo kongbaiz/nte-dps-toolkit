@@ -2007,6 +2007,7 @@ mod character_tests {
     }
 
     #[test]
+    #[cfg(not(feature = "external_resources"))]
     fn load_characters_falls_back_to_bundled_resource() {
         let characters = load_characters(Path::new(
             "missing-root/res/data/characters/characters.json",

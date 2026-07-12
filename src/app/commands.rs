@@ -370,10 +370,10 @@ impl DpsApp {
             AppAction::ExportCaptureInfo => self.export_capture_info(ctx),
             AppAction::ExportRawCapture => self.export_raw_capture(ctx),
             AppAction::OpenCaptureLogs => {
-                let path = Path::new(capture_logs::CAPTURE_LOG_DIR);
-                match std::fs::create_dir_all(path)
+                let path = paths::capture_log_dir();
+                match std::fs::create_dir_all(&path)
                     .map_err(|error| error.to_string())
-                    .and_then(|_| std::fs::canonicalize(path).map_err(|error| error.to_string()))
+                    .and_then(|_| std::fs::canonicalize(&path).map_err(|error| error.to_string()))
                     .and_then(|path| open_directory(&path))
                 {
                     Ok(()) => self.status = t("Capture logs folder opened"),

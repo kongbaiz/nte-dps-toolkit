@@ -116,9 +116,10 @@ mod gui_entry {
 
     fn install_panic_log() {
         std::panic::set_hook(Box::new(|info| {
-            let _ = std::fs::create_dir_all("logs");
+            let directory = storage::paths::capture_log_dir();
+            let _ = std::fs::create_dir_all(&directory);
             let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
-            let path = format!("logs/nte_panic_{timestamp}.log");
+            let path = directory.join(format!("nte_panic_{timestamp}.log"));
             let backtrace = std::backtrace::Backtrace::force_capture();
             let _ = std::fs::write(path, format!("{info}\n\n{backtrace}\n"));
         }));

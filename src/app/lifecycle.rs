@@ -543,18 +543,16 @@ impl DpsApp {
         }
     }
 
-    /// Lazily (re)scan `logs/` for raw capture files so the settings panel can show
-    /// disk usage without doing file I/O every frame.
+    /// Lazily (re)scan the capture log directory for raw capture files so the
+    /// settings panel can show disk usage without doing file I/O every frame.
     pub(crate) fn refresh_capture_log_stats(&mut self) {
-        self.capture_log_stats = Some(capture_logs::scan_capture_logs(Path::new(
-            capture_logs::CAPTURE_LOG_DIR,
-        )));
+        self.capture_log_stats = Some(capture_logs::scan_capture_logs(&paths::capture_log_dir()));
     }
 
     /// Delete the raw capture logs. The active capture's file is held open by the
     /// OS, so it fails to delete and is reported as "占用中" rather than removed.
     fn clear_capture_logs_now(&mut self) {
-        let outcome = capture_logs::clear_capture_logs(Path::new(capture_logs::CAPTURE_LOG_DIR));
+        let outcome = capture_logs::clear_capture_logs(&paths::capture_log_dir());
         self.refresh_capture_log_stats();
         self.status = if outcome.deleted == 0 && outcome.failed == 0 {
             t("No capture files to clear")

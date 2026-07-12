@@ -83,6 +83,7 @@ jobs:
         run: |
           cargo test --features gui
           cargo test --no-default-features --features cli
+          cargo test --features "gui external_resources"
 
       - name: Verify CLI dependency tree
         shell: pwsh
