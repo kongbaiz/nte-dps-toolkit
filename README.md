@@ -50,7 +50,7 @@
 - **抓包与回放**：实时保存完整 Ethernet 帧到 `logs/nte_raw_*.pcapng`；支持导出解析后的 JSON、另存完整 PCAPNG，并导入 JSON / PCAPNG 进行 Debug 回放。
 - **Debug 工具**：查看封包端点、角色声明、解析结果和载荷预览；可编辑角色数据 `res/data/characters/characters.json`，打开/搜索/编辑并保存 NTE 加密 INI；提供资源覆盖率检查、自动诊断向导、网卡列表、服务端伤害校准开关等。
 - **可定制 HUD**：自定义显示模块、最大角色数和小型 DPS 曲线，默认保持总 DPS、时间、总伤害和角色排行。
-- **自动持久化**：透明度、深浅色主题、窗口置顶和服务端伤害校准设置保存到 `%LOCALAPPDATA%\NTE DPS Tool\config.json`。
+- **自动持久化**：透明度、深浅色主题、窗口置顶和服务端伤害校准设置保存到程序目录下的 `config.json`；旧版 `%LOCALAPPDATA%\NTE DPS Tool\config.json` 首次启动时自动迁移。
 - **快捷键**：`Home` 切换鼠标穿透；`F12` 打开/关闭包含 Packets、Resources 和 Diagnostics 的 Console。
 - **自动选网卡**：根据 `HTGame.exe` 的活动连接自动选择网卡和本机 IP。
 
@@ -123,13 +123,13 @@ cargo build --release --bin nte-core --no-default-features --features cli
 
 ## 配置说明
 
-应用配置自动保存到：
+应用配置自动保存到程序（exe）所在目录：
 
 ```text
-%LOCALAPPDATA%\NTE DPS Tool\config.json
+<程序目录>\config.json
 ```
 
-包含透明度、深浅色主题、窗口置顶、服务端伤害校准等设置，无需手动编辑即可在下次启动时恢复。
+包含透明度、深浅色主题、窗口置顶、服务端伤害校准等设置，无需手动编辑即可在下次启动时恢复。旧版本保存在 `%LOCALAPPDATA%\NTE DPS Tool\config.json` 的配置会在首次启动时自动迁移到程序目录（原文件保留不动）。原始抓包与崩溃日志同样写入程序目录下的 `logs\`，战斗历史写入 `history\`。
 
 资源目录结构：
 

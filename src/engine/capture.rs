@@ -3309,16 +3309,20 @@ pub fn import_capture_json(
             let equipment_catalog = match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
                 Some(path) => match load_equipment_catalog(&path) {
                     Ok(catalog) => catalog,
+                    // stderr is invisible in the windows-subsystem GUI, so the load
+                    // failure detail must travel over the Warning channel instead.
                     Err(error) if saved_empty_curtain.is_empty() => {
-                        eprintln!(
+                        let _ = sender.send(EngineEvent::Warning(format!(
                             "Failed to load Console equipment data for JSON replay: {error:#}"
-                        );
+                        )));
                         EquipmentCatalog::default()
                     }
                     Err(error) => {
-                        eprintln!(
+                        let _ = sender.send(EngineEvent::Warning(format!(
                             "Failed to load Console equipment data for JSON replay: {error:#}"
-                        );
+                        )));
+                        // humanize_engine_error matches this exact string for the
+                        // localized message; keep the returned error stable.
                         return Err("Console equipment data is unavailable".to_owned());
                     }
                 },

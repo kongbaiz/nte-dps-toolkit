@@ -18,6 +18,7 @@ use crate::engine::model::{CharacterInfo, EngineEvent};
 use crate::platform::network::{
     GameNetwork, detect_game_device, detect_game_network, game_process_is_running,
 };
+use crate::storage::paths::capture_log_dir;
 
 /// Probe whether the game process is running. `Err` means the OS process
 /// query itself failed, not that the game is absent.
@@ -279,7 +280,7 @@ pub fn start(
         options.server_damage_calibration,
         characters,
         CaptureOutput {
-            raw_capture_directory: raw_capture_directory(options.raw_capture, Path::new("logs")),
+            raw_capture_directory: raw_capture_directory(options.raw_capture, &capture_log_dir()),
             packet_emission: options.packet_emission,
             sender,
         },

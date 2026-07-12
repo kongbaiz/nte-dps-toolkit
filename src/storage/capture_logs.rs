@@ -1,17 +1,14 @@
 //! Management of the raw capture logs the engine writes to
-//! `logs/nte_raw_*.pcapng`. Lets the UI report how much disk the captures use and
-//! clear them on demand. The active capture's file is held open by the OS, so a
-//! delete attempt on it simply fails and is skipped — it is never force-removed.
+//! `nte_raw_*.pcapng` under [`crate::storage::paths::capture_log_dir`]. Lets the
+//! UI report how much disk the captures use and clear them on demand. The active
+//! capture's file is held open by the OS, so a delete attempt on it simply fails
+//! and is skipped — it is never force-removed.
 
 use std::fs;
 use std::path::Path;
 
 const CAPTURE_LOG_PREFIX: &str = "nte_raw_";
 const CAPTURE_LOG_EXTENSION: &str = "pcapng";
-
-/// Directory the capture engine writes raw frames to, relative to the process
-/// working directory — the same location `RawCaptureBuffer` uses.
-pub const CAPTURE_LOG_DIR: &str = "logs";
 
 /// Count and total on-disk size of the raw capture logs.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]

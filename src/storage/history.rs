@@ -10,6 +10,7 @@ use crate::engine::model::{
     TeamDpsMember,
 };
 use crate::storage::io_util::atomic_write_text;
+use crate::storage::paths::software_dir;
 
 pub const HISTORY_RECORD_VERSION: u32 = 1;
 pub const MAX_HISTORY_RECORDS: usize = 200;
@@ -123,14 +124,6 @@ pub struct HistorySkillDelta {
 
 pub fn history_dir() -> PathBuf {
     software_dir().join("history")
-}
-
-fn software_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub fn load_history() -> HistoryLoadResult {

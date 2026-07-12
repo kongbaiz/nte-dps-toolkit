@@ -58,6 +58,7 @@ use crate::storage::config::{
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
 use crate::storage::io_util::{atomic_write_file, atomic_write_text};
+use crate::storage::paths;
 use crate::storage::resource::{read_resource_bytes, read_resource_text};
 use crate::support::character_editor::{
     CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
