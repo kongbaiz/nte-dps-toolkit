@@ -1292,6 +1292,12 @@ fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
 
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
 const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
+/// Npcap or a capture driver can report the same outbound frame twice with only
+/// tens of microseconds between copies. Keep the window short so a later, real
+/// transmission of identical application data is not suppressed.
+const DUPLICATE_FRAME_WINDOW_SECONDS: f64 = 0.001;
+/// Bounds memory for external captures containing many frames with one timestamp.
+const MAX_RECENT_CAPTURE_FRAMES: usize = 512;
 const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
 const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
 const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
@@ -1852,6 +1858,61 @@ impl EmptyCurtainDecoder {
     }
 }
 
+struct RecentCaptureFrame {
+    timestamp: f64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+enum FrameTimestamp {
+    Known(f64),
+    Unknown,
+}
+
+/// Suppresses byte-for-byte duplicate Ethernet frames reported back-to-back by
+/// the capture layer. Full-frame comparison keeps a genuine retransmission with
+/// different network headers distinct, even when its UDP payload is unchanged.
+#[derive(Default)]
+struct FrameDedup {
+    recent: VecDeque<RecentCaptureFrame>,
+    last_timestamp: Option<f64>,
+}
+
+impl FrameDedup {
+    fn is_duplicate(&mut self, frame: &[u8], timestamp: Option<f64>) -> bool {
+        let Some(timestamp) = timestamp.filter(|timestamp| timestamp.is_finite()) else {
+            self.recent.clear();
+            self.last_timestamp = None;
+            return false;
+        };
+        if self
+            .last_timestamp
+            .is_some_and(|previous| timestamp < previous)
+        {
+            self.recent.clear();
+        }
+        self.last_timestamp = Some(timestamp);
+
+        while let Some(entry) = self.recent.front() {
+            if timestamp - entry.timestamp <= DUPLICATE_FRAME_WINDOW_SECONDS {
+                break;
+            }
+            self.recent.pop_front();
+        }
+        if self.recent.iter().any(|entry| entry.bytes == frame) {
+            return true;
+        }
+        if self.recent.len() == MAX_RECENT_CAPTURE_FRAMES {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(RecentCaptureFrame {
+            timestamp,
+            bytes: frame.to_vec(),
+        });
+        false
+    }
+}
+
 struct PacketDecoder {
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
@@ -1868,6 +1929,7 @@ struct PacketDecoder {
     pending_ambiguous_hits: Vec<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     empty_curtain: EmptyCurtainDecoder,
+    frame_dedup: FrameDedup,
     resource_warnings: Vec<String>,
 }
 
@@ -1923,6 +1985,7 @@ impl Default for PacketDecoder {
             pending_ambiguous_hits: Vec::new(),
             recent_confirmed_hits: Vec::new(),
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
+            frame_dedup: FrameDedup::default(),
             resource_warnings,
         }
     }
@@ -2533,16 +2596,25 @@ impl PacketDecoder {
     fn process_ethernet_frame(
         &mut self,
         packet: &[u8],
-        timestamp: f64,
+        frame_timestamp: FrameTimestamp,
         local_ip: Option<Ipv4Addr>,
         include_incoming: bool,
         characters: &HashMap<u32, CharacterInfo>,
         sender: &Sender<EngineEvent>,
     ) {
+        let (timestamp, capture_timestamp) = match frame_timestamp {
+            FrameTimestamp::Known(timestamp) => (timestamp, Some(timestamp)),
+            FrameTimestamp::Unknown => (0.0, None),
+        };
         let Some((src, src_port, dst, dst_port, payload)) = parse_udp_ipv4(packet) else {
             return;
         };
         if local_ip.is_some_and(|ip| src != ip && dst != ip) {
+            return;
+        }
+        // Drop a frame already reported by the capture layer so its damage
+        // records are not counted a second time. See [`FrameDedup`].
+        if self.frame_dedup.is_duplicate(packet, capture_timestamp) {
             return;
         }
         let expired_hits = self.take_expired_ambiguous_hits(timestamp);
@@ -2979,7 +3051,7 @@ fn run_parser(
     while let Ok(frame) = frames.recv() {
         decoder.process_ethernet_frame(
             &frame.data,
-            frame.timestamp,
+            FrameTimestamp::Known(frame.timestamp),
             local_ip,
             include_incoming,
             &characters,
@@ -3163,10 +3235,12 @@ pub fn import_pcapng(
                 let (interface_id, timestamp, data) = match block {
                     Block::EnhancedPacket(packet) => (
                         packet.interface_id as usize,
-                        packet.timestamp.as_secs_f64(),
+                        FrameTimestamp::Known(packet.timestamp.as_secs_f64()),
                         packet.data.into_owned(),
                     ),
-                    Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                    Block::SimplePacket(packet) => {
+                        (0, FrameTimestamp::Unknown, packet.data.into_owned())
+                    }
                     _ => continue,
                 };
                 packet_count += 1;
@@ -4534,7 +4608,7 @@ mod tests {
                 remote_ip,
                 7_777,
             ),
-            10.0,
+            FrameTimestamp::Known(10.0),
             Some(local_ip),
             true,
             &characters,
@@ -4556,7 +4630,7 @@ mod tests {
 
         decoder.process_ethernet_frame(
             &udp_ipv4_packet(&[0, 0, 0, 0], local_ip, 50_000, remote_ip, 7_777),
-            15.0,
+            FrameTimestamp::Known(15.0),
             Some(local_ip),
             true,
             &characters,
@@ -4601,7 +4675,7 @@ mod tests {
         let (full_sender, full_receiver) = unbounded();
         PacketDecoder::default().process_ethernet_frame(
             &packet,
-            10.0,
+            FrameTimestamp::Known(10.0),
             Some(local_ip),
             true,
             &characters,
@@ -4623,7 +4697,7 @@ mod tests {
         }
         .process_ethernet_frame(
             &packet,
-            10.0,
+            FrameTimestamp::Known(10.0),
             Some(local_ip),
             true,
             &characters,
@@ -4639,6 +4713,116 @@ mod tests {
             !summary_events
                 .iter()
                 .any(|event| matches!(event, EngineEvent::Packet(_)))
+        );
+    }
+
+    #[test]
+    fn frame_dedup_suppresses_only_identical_frames_within_window() {
+        let mut dedup = FrameDedup::default();
+        let frame = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
+
+        assert!(!dedup.is_duplicate(&frame, Some(10.0)));
+        assert!(dedup.is_duplicate(&frame, Some(10.000_05)));
+
+        let mut different_frame = frame;
+        different_frame[0] ^= 1;
+        assert!(!dedup.is_duplicate(&different_frame, Some(10.000_06)));
+        assert!(!dedup.is_duplicate(&frame, Some(10.002)));
+    }
+
+    #[test]
+    fn frame_dedup_skips_unknown_timestamps_and_resets_on_regression() {
+        let mut dedup = FrameDedup::default();
+        let frame = [0xde, 0xad, 0xbe, 0xef];
+
+        assert!(!dedup.is_duplicate(&frame, Some(10.0)));
+        assert!(!dedup.is_duplicate(&frame, None));
+        assert!(dedup.recent.is_empty());
+        assert!(!dedup.is_duplicate(&frame, Some(10.000_05)));
+        assert!(!dedup.is_duplicate(&frame, Some(f64::NAN)));
+        assert!(dedup.recent.is_empty());
+
+        assert!(!dedup.is_duplicate(&frame, Some(10.0)));
+        assert!(!dedup.is_duplicate(&frame, Some(9.0)));
+        assert!(dedup.is_duplicate(&frame, Some(9.000_05)));
+    }
+
+    #[test]
+    fn frame_dedup_bounds_same_timestamp_cache() {
+        let mut dedup = FrameDedup::default();
+
+        for index in 0..=MAX_RECENT_CAPTURE_FRAMES {
+            assert!(!dedup.is_duplicate(&index.to_le_bytes(), Some(10.0)));
+        }
+
+        assert_eq!(dedup.recent.len(), MAX_RECENT_CAPTURE_FRAMES);
+    }
+
+    #[test]
+    fn duplicate_capture_frame_is_not_decoded_twice() {
+        let payload = (0..128)
+            .map(|index| if index % 2 == 0 { 0x80 } else { 0x01 })
+            .collect::<Vec<_>>();
+        let local_ip = Ipv4Addr::new(10, 0, 0, 2);
+        let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
+        let packet = udp_ipv4_packet(&payload, local_ip, 50_000, remote_ip, 7_777);
+        let characters = HashMap::new();
+        let mut decoder = PacketDecoder::default();
+        let (sender, receiver) = unbounded();
+
+        decoder.process_ethernet_frame(
+            &packet,
+            FrameTimestamp::Known(10.0),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(
+            receiver.try_iter().count() > 0,
+            "the original datagram should be decoded"
+        );
+
+        decoder.process_ethernet_frame(
+            &packet,
+            FrameTimestamp::Known(10.000_05),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert_eq!(
+            receiver.try_iter().count(),
+            0,
+            "a redundant duplicate must be dropped before it is decoded"
+        );
+
+        let mut retransmission = packet.clone();
+        retransmission[18] ^= 1;
+        decoder.process_ethernet_frame(
+            &retransmission,
+            FrameTimestamp::Known(10.000_1),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(
+            receiver.try_iter().count() > 0,
+            "the same payload in a distinct network frame must be decoded"
+        );
+
+        decoder.process_ethernet_frame(
+            &packet,
+            FrameTimestamp::Known(10.002),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(
+            receiver.try_iter().count() > 0,
+            "an identical frame past the window is a fresh transmission"
         );
     }
 
