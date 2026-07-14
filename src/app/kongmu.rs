@@ -432,6 +432,16 @@ fn draw_empty_curtain_card(
         egui::vec2(card_width, EQUIPMENT_CARD_HEIGHT),
         egui::Sense::hover(),
     );
+    // Keep every card-local overlay inside its already allocated card. Otherwise
+    // an inner `allocate_rect` can move the parent row cursor and overlap the next card.
+    let clip_rect = ui.clip_rect().intersect(rect);
+    let mut card_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    card_ui.set_clip_rect(clip_rect);
+    let ui = &mut card_ui;
     let fill = if response.hovered() {
         shadcn_card_hover(visuals.dark_mode)
     } else {
@@ -1720,6 +1730,56 @@ mod tests {
             character_net_id: None,
             equipped_character_id: None,
         }
+    }
+
+    #[test]
+    fn equipped_card_overlay_preserves_next_card_gap() {
+        let mut equipped = item(1, "equipped", Vec::new(), Vec::new());
+        equipped.character_net_id = Some(crate::engine::model::HtItemNetId {
+            solt: 10,
+            serial: 11,
+        });
+        equipped.equipped_character_id = Some(1020);
+        let following = item(2, "following", Vec::new(), Vec::new());
+        let catalog = EquipmentCatalog::default();
+        let equipment_textures = HashMap::new();
+        let characters = HashMap::from([(
+            1020,
+            CharacterInfo {
+                name_zh: "Haniel".to_owned(),
+                name_en: "Haniel".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+        let avatar_textures = HashMap::new();
+        let visuals = EmptyCurtainVisuals {
+            catalog: &catalog,
+            equipment_textures: &equipment_textures,
+            characters: &characters,
+            avatar_textures: &avatar_textures,
+            dark_mode: true,
+        };
+        let mut card_rects = None;
+
+        egui::__run_test_ui(|ui| {
+            ui.spacing_mut().item_spacing.x = EQUIPMENT_CARD_GAP;
+            ui.horizontal(|ui| {
+                let equipped_response =
+                    draw_empty_curtain_card(ui, &equipped, EQUIPMENT_CARD_MIN_WIDTH, &visuals);
+                let following_response =
+                    draw_empty_curtain_card(ui, &following, EQUIPMENT_CARD_MIN_WIDTH, &visuals);
+                card_rects = Some((equipped_response.rect, following_response.rect));
+            });
+        });
+
+        let (equipped_rect, following_rect) =
+            card_rects.expect("test UI must render both equipment cards");
+        assert_eq!(
+            following_rect.left(),
+            equipped_rect.right() + EQUIPMENT_CARD_GAP
+        );
     }
 
     #[test]
