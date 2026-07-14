@@ -36,8 +36,8 @@ use crate::engine::parser::{
     find_declared_character_evidence, find_final_tower_character_evidence, load_ability_tip_names,
     load_equipment_catalog, load_gameplay_effect_mapping, load_gameplay_effect_skills,
     load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_items,
-    parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
+    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
+    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
     validate_empty_curtain_snapshot,
 };
 use crate::storage::i18n;
@@ -1292,6 +1292,12 @@ fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
 
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
 const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
+/// Npcap or a capture driver can report the same outbound frame twice with only
+/// tens of microseconds between copies. Keep the window short so a later, real
+/// transmission of identical application data is not suppressed.
+const DUPLICATE_FRAME_WINDOW_SECONDS: f64 = 0.001;
+/// Bounds memory for external captures containing many frames with one timestamp.
+const MAX_RECENT_CAPTURE_FRAMES: usize = 512;
 const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
 const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
 const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
@@ -1636,6 +1642,7 @@ struct InventoryConnectionState {
     known_channels: HashSet<u16>,
     fragments: HashMap<(u16, u16), SingleBunch>,
     fragment_order: VecDeque<(u16, u16)>,
+    character_ids: HashMap<HtItemNetId, u32>,
 }
 
 impl InventoryConnectionState {
@@ -1815,16 +1822,52 @@ impl EmptyCurtainDecoder {
 
         let mut changed = false;
         for stream in streams {
+            let character_ids = parse_empty_curtain_character_owners(&stream.data, stream.bit_len);
             let parsed = parse_empty_curtain_items(&stream.data, stream.bit_len, &self.catalog);
-            if parsed.is_empty() {
+            if character_ids.is_empty() && parsed.is_empty() {
                 continue;
             }
-            if self.active_connection.as_ref() != Some(&connection) {
+            let character_mapping_changed = {
+                let state = self
+                    .connections
+                    .get_mut(&connection)
+                    .expect("inventory connection must remain present while processing streams");
+                let mut changed = false;
+                for (net_id, character_id) in character_ids {
+                    if state.character_ids.insert(net_id, character_id) != Some(character_id) {
+                        changed = true;
+                    }
+                }
+                changed
+            };
+            if !parsed.is_empty() && self.active_connection.as_ref() != Some(&connection) {
                 self.active_connection = Some(connection.clone());
+                changed |= !self.items.is_empty();
                 self.items.clear();
-                changed = true;
             }
-            for item in parsed {
+            if self.active_connection.as_ref() != Some(&connection) {
+                continue;
+            }
+            let character_ids = &self
+                .connections
+                .get(&connection)
+                .expect("active inventory connection must remain present")
+                .character_ids;
+            if character_mapping_changed {
+                for item in self.items.values_mut() {
+                    let character_id = item
+                        .character_net_id
+                        .and_then(|net_id| character_ids.get(&net_id).copied());
+                    if item.equipped_character_id != character_id {
+                        item.equipped_character_id = character_id;
+                        changed = true;
+                    }
+                }
+            }
+            for mut item in parsed {
+                item.equipped_character_id = item
+                    .character_net_id
+                    .and_then(|net_id| character_ids.get(&net_id).copied());
                 if self.items.get(&item.id) != Some(&item) {
                     if !self.items.contains_key(&item.id) && self.items.len() >= MAX_INVENTORY_ITEMS
                     {
@@ -1852,6 +1895,61 @@ impl EmptyCurtainDecoder {
     }
 }
 
+struct RecentCaptureFrame {
+    timestamp: f64,
+    bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy)]
+enum FrameTimestamp {
+    Known(f64),
+    Unknown,
+}
+
+/// Suppresses byte-for-byte duplicate Ethernet frames reported back-to-back by
+/// the capture layer. Full-frame comparison keeps a genuine retransmission with
+/// different network headers distinct, even when its UDP payload is unchanged.
+#[derive(Default)]
+struct FrameDedup {
+    recent: VecDeque<RecentCaptureFrame>,
+    last_timestamp: Option<f64>,
+}
+
+impl FrameDedup {
+    fn is_duplicate(&mut self, frame: &[u8], timestamp: Option<f64>) -> bool {
+        let Some(timestamp) = timestamp.filter(|timestamp| timestamp.is_finite()) else {
+            self.recent.clear();
+            self.last_timestamp = None;
+            return false;
+        };
+        if self
+            .last_timestamp
+            .is_some_and(|previous| timestamp < previous)
+        {
+            self.recent.clear();
+        }
+        self.last_timestamp = Some(timestamp);
+
+        while let Some(entry) = self.recent.front() {
+            if timestamp - entry.timestamp <= DUPLICATE_FRAME_WINDOW_SECONDS {
+                break;
+            }
+            self.recent.pop_front();
+        }
+        if self.recent.iter().any(|entry| entry.bytes == frame) {
+            return true;
+        }
+        if self.recent.len() == MAX_RECENT_CAPTURE_FRAMES {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(RecentCaptureFrame {
+            timestamp,
+            bytes: frame.to_vec(),
+        });
+        false
+    }
+}
+
 struct PacketDecoder {
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
@@ -1868,6 +1966,7 @@ struct PacketDecoder {
     pending_ambiguous_hits: Vec<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     empty_curtain: EmptyCurtainDecoder,
+    frame_dedup: FrameDedup,
     resource_warnings: Vec<String>,
 }
 
@@ -1923,6 +2022,7 @@ impl Default for PacketDecoder {
             pending_ambiguous_hits: Vec::new(),
             recent_confirmed_hits: Vec::new(),
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
+            frame_dedup: FrameDedup::default(),
             resource_warnings,
         }
     }
@@ -2533,16 +2633,25 @@ impl PacketDecoder {
     fn process_ethernet_frame(
         &mut self,
         packet: &[u8],
-        timestamp: f64,
+        frame_timestamp: FrameTimestamp,
         local_ip: Option<Ipv4Addr>,
         include_incoming: bool,
         characters: &HashMap<u32, CharacterInfo>,
         sender: &Sender<EngineEvent>,
     ) {
+        let (timestamp, capture_timestamp) = match frame_timestamp {
+            FrameTimestamp::Known(timestamp) => (timestamp, Some(timestamp)),
+            FrameTimestamp::Unknown => (0.0, None),
+        };
         let Some((src, src_port, dst, dst_port, payload)) = parse_udp_ipv4(packet) else {
             return;
         };
         if local_ip.is_some_and(|ip| src != ip && dst != ip) {
+            return;
+        }
+        // Drop a frame already reported by the capture layer so its damage
+        // records are not counted a second time. See [`FrameDedup`].
+        if self.frame_dedup.is_duplicate(packet, capture_timestamp) {
             return;
         }
         let expired_hits = self.take_expired_ambiguous_hits(timestamp);
@@ -2979,7 +3088,7 @@ fn run_parser(
     while let Ok(frame) = frames.recv() {
         decoder.process_ethernet_frame(
             &frame.data,
-            frame.timestamp,
+            FrameTimestamp::Known(frame.timestamp),
             local_ip,
             include_incoming,
             &characters,
@@ -3163,10 +3272,12 @@ pub fn import_pcapng(
                 let (interface_id, timestamp, data) = match block {
                     Block::EnhancedPacket(packet) => (
                         packet.interface_id as usize,
-                        packet.timestamp.as_secs_f64(),
+                        FrameTimestamp::Known(packet.timestamp.as_secs_f64()),
                         packet.data.into_owned(),
                     ),
-                    Block::SimplePacket(packet) => (0, 0.0, packet.data.into_owned()),
+                    Block::SimplePacket(packet) => {
+                        (0, FrameTimestamp::Unknown, packet.data.into_owned())
+                    }
                     _ => continue,
                 };
                 packet_count += 1;
@@ -3592,6 +3703,117 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct InventoryTestBitWriter {
+        data: Vec<u8>,
+        bit_len: usize,
+    }
+
+    impl InventoryTestBitWriter {
+        fn push_bits(&mut self, value: u64, count: usize) {
+            let new_bit_len = self.bit_len + count;
+            self.data.resize(new_bit_len.div_ceil(8), 0);
+            for index in 0..count {
+                let target = self.bit_len + index;
+                self.data[target / 8] |= (((value >> index) & 1) as u8) << (target % 8);
+            }
+            self.bit_len = new_bit_len;
+        }
+
+        fn push_bool(&mut self, value: bool) {
+            self.push_bits(u64::from(value), 1);
+        }
+
+        fn push_u16(&mut self, value: u16) {
+            self.push_bits(u64::from(value), 16);
+        }
+
+        fn push_u32(&mut self, value: u32) {
+            self.push_bits(u64::from(value), 32);
+        }
+
+        fn push_i32(&mut self, value: i32) {
+            self.push_u32(value as u32);
+        }
+
+        fn push_i64(&mut self, value: i64) {
+            self.push_bits(value as u64, 64);
+        }
+
+        fn push_f32(&mut self, value: f32) {
+            self.push_u32(value.to_bits());
+        }
+
+        fn push_dynamic_name(&mut self, value: &str) {
+            self.push_bool(false);
+            self.push_i32((value.len() + 1) as i32);
+            for byte in value.bytes() {
+                self.push_bits(u64::from(byte), 8);
+            }
+            self.push_bits(0, 8);
+            self.push_u32(0);
+        }
+    }
+
+    fn character_owner_packet(character_id: u32, net_id: HtItemNetId) -> SequencedPacket {
+        let mut record = InventoryTestBitWriter::default();
+        record.push_dynamic_name(&character_id.to_string());
+        record.push_u32(net_id.solt);
+        record.push_u32(net_id.serial);
+        record.push_i64(1);
+        record.push_i32(0);
+        record.push_i64(1);
+        record.push_u16(1);
+        record.push_i32(80);
+        record.push_i32(6);
+        record.push_u32(100);
+        record.push_u32(200);
+        record.push_i32(6);
+        for value in [1.0, 20_000.0, 3.0, 120.0, 80.0, 1_000.0, 100.0] {
+            record.push_f32(value);
+        }
+        record.push_bool(false);
+        record.push_i32(0);
+        record.push_u16(5);
+
+        let mut payload = InventoryTestBitWriter::default();
+        payload.push_bits(4122, 13);
+        payload.push_bits(87, 10);
+        payload.push_bits(0xccd, 12);
+        payload.push_bits(record.bit_len as u64, 13);
+        for index in 0..record.bit_len {
+            payload.push_bits(u64::from((record.data[index / 8] >> (index % 8)) & 1), 1);
+        }
+        payload.push_bool(true);
+        SequencedPacket {
+            handler_prefix: 0,
+            mode: 0,
+            header_flags: 0,
+            acknowledged_packet_id: 0,
+            packet_id: 0,
+            acknowledgment_history: 0,
+            packet_flags: 0,
+            payload_bit_len: payload.bit_len,
+            payload: payload.data,
+        }
+    }
+
+    fn inventory_test_item(character_net_id: Option<HtItemNetId>) -> EmptyCurtainItem {
+        EmptyCurtainItem {
+            id: HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            item_id: "existing-item".to_owned(),
+            level: 0,
+            main_stats: Vec::new(),
+            sub_stats: Vec::new(),
+            locked: false,
+            character_net_id,
+            equipped_character_id: None,
+        }
+    }
+
     #[test]
     fn inventory_reassembly_replaces_stale_fragments_after_sequence_wrap() {
         let mut state = InventoryConnectionState::default();
@@ -3616,18 +3838,78 @@ mod tests {
     }
 
     #[test]
+    fn owner_only_connection_does_not_replace_active_inventory() {
+        let active = InventoryConnectionKey::new("old:1".to_owned(), "client:1".to_owned());
+        let owner_only = InventoryConnectionKey::new("new:1".to_owned(), "client:1".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let item = inventory_test_item(None);
+        let mut decoder = EmptyCurtainDecoder::new(EquipmentCatalog::default());
+        decoder.active_connection = Some(active.clone());
+        decoder
+            .connections
+            .insert(active.clone(), InventoryConnectionState::default());
+        decoder.items.insert(item.id, item.clone());
+
+        let result = decoder.process_packet(
+            owner_only.clone(),
+            &character_owner_packet(1020, owner_net_id),
+        );
+
+        assert!(result.recognized);
+        assert!(result.snapshot.is_none());
+        assert_eq!(decoder.active_connection, Some(active));
+        assert_eq!(decoder.items, HashMap::from([(item.id, item)]));
+        assert_eq!(
+            decoder.connections[&owner_only]
+                .character_ids
+                .get(&owner_net_id),
+            Some(&1020)
+        );
+    }
+
+    #[test]
+    fn owner_only_active_connection_enriches_existing_inventory() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let item = inventory_test_item(Some(owner_net_id));
+        let mut decoder = EmptyCurtainDecoder::new(EquipmentCatalog::default());
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+        decoder.items.insert(item.id, item);
+
+        let result =
+            decoder.process_packet(connection, &character_owner_packet(1020, owner_net_id));
+
+        assert!(result.recognized);
+        let snapshot = result
+            .snapshot
+            .expect("owner mapping should enrich inventory");
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].equipped_character_id, Some(1020));
+    }
+
+    #[test]
     fn capture_export_defaults_and_preserves_empty_curtain_snapshot() {
         let legacy = parse_capture_export(r#"{"hits":[],"packets":[]}"#)
             .expect("legacy capture export should remain compatible");
         assert!(legacy.empty_curtain.is_empty());
 
         let current = parse_capture_export(
-            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true}]}"#,
+            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true,"character_net_id":{"solt":3,"serial":4},"equipped_character_id":1020}]}"#,
         )
         .expect("current capture export should preserve Console equipment");
         assert_eq!(current.empty_curtain.len(), 1);
         assert_eq!(current.empty_curtain[0].id.solt, 1);
         assert!(current.empty_curtain[0].locked);
+        assert_eq!(current.empty_curtain[0].equipped_character_id, Some(1020));
     }
 
     #[test]
@@ -4534,7 +4816,7 @@ mod tests {
                 remote_ip,
                 7_777,
             ),
-            10.0,
+            FrameTimestamp::Known(10.0),
             Some(local_ip),
             true,
             &characters,
@@ -4556,7 +4838,7 @@ mod tests {
 
         decoder.process_ethernet_frame(
             &udp_ipv4_packet(&[0, 0, 0, 0], local_ip, 50_000, remote_ip, 7_777),
-            15.0,
+            FrameTimestamp::Known(15.0),
             Some(local_ip),
             true,
             &characters,
@@ -4601,7 +4883,7 @@ mod tests {
         let (full_sender, full_receiver) = unbounded();
         PacketDecoder::default().process_ethernet_frame(
             &packet,
-            10.0,
+            FrameTimestamp::Known(10.0),
             Some(local_ip),
             true,
             &characters,
@@ -4623,7 +4905,7 @@ mod tests {
         }
         .process_ethernet_frame(
             &packet,
-            10.0,
+            FrameTimestamp::Known(10.0),
             Some(local_ip),
             true,
             &characters,
@@ -4639,6 +4921,116 @@ mod tests {
             !summary_events
                 .iter()
                 .any(|event| matches!(event, EngineEvent::Packet(_)))
+        );
+    }
+
+    #[test]
+    fn frame_dedup_suppresses_only_identical_frames_within_window() {
+        let mut dedup = FrameDedup::default();
+        let frame = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
+
+        assert!(!dedup.is_duplicate(&frame, Some(10.0)));
+        assert!(dedup.is_duplicate(&frame, Some(10.000_05)));
+
+        let mut different_frame = frame;
+        different_frame[0] ^= 1;
+        assert!(!dedup.is_duplicate(&different_frame, Some(10.000_06)));
+        assert!(!dedup.is_duplicate(&frame, Some(10.002)));
+    }
+
+    #[test]
+    fn frame_dedup_skips_unknown_timestamps_and_resets_on_regression() {
+        let mut dedup = FrameDedup::default();
+        let frame = [0xde, 0xad, 0xbe, 0xef];
+
+        assert!(!dedup.is_duplicate(&frame, Some(10.0)));
+        assert!(!dedup.is_duplicate(&frame, None));
+        assert!(dedup.recent.is_empty());
+        assert!(!dedup.is_duplicate(&frame, Some(10.000_05)));
+        assert!(!dedup.is_duplicate(&frame, Some(f64::NAN)));
+        assert!(dedup.recent.is_empty());
+
+        assert!(!dedup.is_duplicate(&frame, Some(10.0)));
+        assert!(!dedup.is_duplicate(&frame, Some(9.0)));
+        assert!(dedup.is_duplicate(&frame, Some(9.000_05)));
+    }
+
+    #[test]
+    fn frame_dedup_bounds_same_timestamp_cache() {
+        let mut dedup = FrameDedup::default();
+
+        for index in 0..=MAX_RECENT_CAPTURE_FRAMES {
+            assert!(!dedup.is_duplicate(&index.to_le_bytes(), Some(10.0)));
+        }
+
+        assert_eq!(dedup.recent.len(), MAX_RECENT_CAPTURE_FRAMES);
+    }
+
+    #[test]
+    fn duplicate_capture_frame_is_not_decoded_twice() {
+        let payload = (0..128)
+            .map(|index| if index % 2 == 0 { 0x80 } else { 0x01 })
+            .collect::<Vec<_>>();
+        let local_ip = Ipv4Addr::new(10, 0, 0, 2);
+        let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
+        let packet = udp_ipv4_packet(&payload, local_ip, 50_000, remote_ip, 7_777);
+        let characters = HashMap::new();
+        let mut decoder = PacketDecoder::default();
+        let (sender, receiver) = unbounded();
+
+        decoder.process_ethernet_frame(
+            &packet,
+            FrameTimestamp::Known(10.0),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(
+            receiver.try_iter().count() > 0,
+            "the original datagram should be decoded"
+        );
+
+        decoder.process_ethernet_frame(
+            &packet,
+            FrameTimestamp::Known(10.000_05),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert_eq!(
+            receiver.try_iter().count(),
+            0,
+            "a redundant duplicate must be dropped before it is decoded"
+        );
+
+        let mut retransmission = packet.clone();
+        retransmission[18] ^= 1;
+        decoder.process_ethernet_frame(
+            &retransmission,
+            FrameTimestamp::Known(10.000_1),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(
+            receiver.try_iter().count() > 0,
+            "the same payload in a distinct network frame must be decoded"
+        );
+
+        decoder.process_ethernet_frame(
+            &packet,
+            FrameTimestamp::Known(10.002),
+            Some(local_ip),
+            true,
+            &characters,
+            &sender,
+        );
+        assert!(
+            receiver.try_iter().count() > 0,
+            "an identical frame past the window is a fresh transmission"
         );
     }
 
@@ -5614,8 +6006,13 @@ mod tests {
         if let Some(expected) = expected {
             assert_eq!(latest.len(), expected);
         }
+        let equipped = latest.iter().filter(|item| item.is_equipped()).count();
+        let identified = latest
+            .iter()
+            .filter(|item| item.equipped_character_id.is_some())
+            .count();
         println!(
-            "parsed {} Console equipment items from {path}",
+            "parsed {} Console equipment items from {path}; identified {identified}/{equipped} equipped owners",
             latest.len()
         );
     }
