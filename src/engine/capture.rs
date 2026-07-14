@@ -36,8 +36,8 @@ use crate::engine::parser::{
     find_declared_character_evidence, find_final_tower_character_evidence, load_ability_tip_names,
     load_equipment_catalog, load_gameplay_effect_mapping, load_gameplay_effect_skills,
     load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_items,
-    parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
+    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
+    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
     validate_empty_curtain_snapshot,
 };
 use crate::storage::i18n;
@@ -1775,6 +1775,7 @@ struct EmptyCurtainDecoder {
     connections: HashMap<InventoryConnectionKey, InventoryConnectionState>,
     connection_order: VecDeque<InventoryConnectionKey>,
     active_connection: Option<InventoryConnectionKey>,
+    character_ids: HashMap<HtItemNetId, u32>,
     items: HashMap<HtItemNetId, EmptyCurtainItem>,
 }
 
@@ -1785,6 +1786,7 @@ impl EmptyCurtainDecoder {
             connections: HashMap::new(),
             connection_order: VecDeque::new(),
             active_connection: None,
+            character_ids: HashMap::new(),
             items: HashMap::new(),
         }
     }
@@ -1821,16 +1823,38 @@ impl EmptyCurtainDecoder {
 
         let mut changed = false;
         for stream in streams {
+            let character_ids = parse_empty_curtain_character_owners(&stream.data, stream.bit_len);
             let parsed = parse_empty_curtain_items(&stream.data, stream.bit_len, &self.catalog);
-            if parsed.is_empty() {
+            if character_ids.is_empty() && parsed.is_empty() {
                 continue;
             }
             if self.active_connection.as_ref() != Some(&connection) {
                 self.active_connection = Some(connection.clone());
+                changed |= !self.items.is_empty();
+                self.character_ids.clear();
                 self.items.clear();
-                changed = true;
             }
-            for item in parsed {
+            let mut character_mapping_changed = false;
+            for (net_id, character_id) in character_ids {
+                if self.character_ids.insert(net_id, character_id) != Some(character_id) {
+                    character_mapping_changed = true;
+                }
+            }
+            if character_mapping_changed {
+                for item in self.items.values_mut() {
+                    let character_id = item
+                        .character_net_id
+                        .and_then(|net_id| self.character_ids.get(&net_id).copied());
+                    if item.equipped_character_id != character_id {
+                        item.equipped_character_id = character_id;
+                        changed = true;
+                    }
+                }
+            }
+            for mut item in parsed {
+                item.equipped_character_id = item
+                    .character_net_id
+                    .and_then(|net_id| self.character_ids.get(&net_id).copied());
                 if self.items.get(&item.id) != Some(&item) {
                     if !self.items.contains_key(&item.id) && self.items.len() >= MAX_INVENTORY_ITEMS
                     {
@@ -3696,12 +3720,13 @@ mod tests {
         assert!(legacy.empty_curtain.is_empty());
 
         let current = parse_capture_export(
-            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true}]}"#,
+            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true,"character_net_id":{"solt":3,"serial":4},"equipped_character_id":1020}]}"#,
         )
         .expect("current capture export should preserve Console equipment");
         assert_eq!(current.empty_curtain.len(), 1);
         assert_eq!(current.empty_curtain[0].id.solt, 1);
         assert!(current.empty_curtain[0].locked);
+        assert_eq!(current.empty_curtain[0].equipped_character_id, Some(1020));
     }
 
     #[test]
@@ -5798,8 +5823,13 @@ mod tests {
         if let Some(expected) = expected {
             assert_eq!(latest.len(), expected);
         }
+        let equipped = latest.iter().filter(|item| item.is_equipped()).count();
+        let identified = latest
+            .iter()
+            .filter(|item| item.equipped_character_id.is_some())
+            .count();
         println!(
-            "parsed {} Console equipment items from {path}",
+            "parsed {} Console equipment items from {path}; identified {identified}/{equipped} equipped owners",
             latest.len()
         );
     }
