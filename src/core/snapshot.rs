@@ -2,7 +2,9 @@
 //! frontend-neutral snapshots. API DTOs map these types explicitly so internal
 //! parser spellings never become protocol commitments.
 
-use crate::engine::model::{EmptyCurtainItem, EquipmentStat, HtItemNetId};
+use std::collections::HashMap;
+
+use crate::engine::model::{CharacterInfo, EmptyCurtainItem, EquipmentStat, HtItemNetId};
 use crate::engine::parser::{EquipmentCatalog, EquipmentKind};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +53,7 @@ pub struct InventoryItem {
     pub locked: bool,
     pub equipped: bool,
     pub equipped_character_uid: Option<ItemUid>,
+    pub equipped_character_id: Option<u32>,
     pub main_stats: Vec<InventoryStat>,
     pub sub_stats: Vec<InventoryStat>,
 }
@@ -72,6 +75,7 @@ impl InventorySnapshot {
 pub fn inventory_snapshot(
     items: &[EmptyCurtainItem],
     catalog: &EquipmentCatalog,
+    characters: &HashMap<u32, CharacterInfo>,
     generation: u64,
     observed_at_unix_ms: u64,
 ) -> InventorySnapshot {
@@ -81,12 +85,16 @@ pub fn inventory_snapshot(
         complete: true,
         items: items
             .iter()
-            .map(|item| inventory_item(item, catalog))
+            .map(|item| inventory_item(item, catalog, characters))
             .collect(),
     }
 }
 
-fn inventory_item(item: &EmptyCurtainItem, catalog: &EquipmentCatalog) -> InventoryItem {
+fn inventory_item(
+    item: &EmptyCurtainItem,
+    catalog: &EquipmentCatalog,
+    characters: &HashMap<u32, CharacterInfo>,
+) -> InventoryItem {
     let definition = catalog.items.get(&item.item_id);
     let suit = definition
         .and_then(|definition| definition.suit.as_ref())
@@ -117,6 +125,9 @@ fn inventory_item(item: &EmptyCurtainItem, catalog: &EquipmentCatalog) -> Invent
         locked: item.locked,
         equipped: item.is_equipped(),
         equipped_character_uid: item.character_net_id.map(ItemUid::from),
+        equipped_character_id: item
+            .equipped_character_id
+            .filter(|character_id| characters.contains_key(character_id)),
         main_stats: stats(&item.main_stats, catalog),
         sub_stats: stats(&item.sub_stats, catalog),
     }
@@ -152,6 +163,19 @@ mod tests {
         load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH)).unwrap()
     }
 
+    fn characters() -> HashMap<u32, CharacterInfo> {
+        HashMap::from([(
+            1020,
+            CharacterInfo {
+                name_zh: String::new(),
+                name_en: "Haniel".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )])
+    }
+
     #[test]
     fn maps_internal_solt_and_enriches_catalog_fields() {
         let item = EmptyCurtainItem {
@@ -168,8 +192,9 @@ mod tests {
                 solt: 11,
                 serial: 13,
             }),
+            equipped_character_id: Some(1020),
         };
-        let snapshot = inventory_snapshot(&[item], &catalog(), 3, 1234);
+        let snapshot = inventory_snapshot(&[item], &catalog(), &characters(), 3, 1234);
         let mapped = &snapshot.items[0];
         assert_eq!(mapped.uid, ItemUid { slot: 7, serial: 9 });
         assert_eq!(mapped.kind, Some("core"));
@@ -186,6 +211,7 @@ mod tests {
             })
         );
         assert!(mapped.equipped);
+        assert_eq!(mapped.equipped_character_id, Some(1020));
         assert_eq!(snapshot.generation, 3);
         assert_eq!(snapshot.observed_at_unix_ms, 1234);
         assert!(snapshot.complete);
@@ -203,9 +229,13 @@ mod tests {
             }],
             sub_stats: Vec::new(),
             locked: false,
-            character_net_id: None,
+            character_net_id: Some(HtItemNetId {
+                solt: 20,
+                serial: 21,
+            }),
+            equipped_character_id: Some(9999),
         };
-        let snapshot = inventory_snapshot(&[item], &catalog(), 1, 1);
+        let snapshot = inventory_snapshot(&[item], &catalog(), &HashMap::new(), 1, 1);
         let mapped = &snapshot.items[0];
         assert_eq!(mapped.item_id, "unknown-item");
         assert_eq!(mapped.kind, None);
@@ -214,5 +244,6 @@ mod tests {
         assert_eq!(mapped.main_stats[0].property_id, "unknown-property");
         assert_eq!(mapped.main_stats[0].percent, None);
         assert_eq!(mapped.main_stats[0].names, None);
+        assert_eq!(mapped.equipped_character_id, None);
     }
 }

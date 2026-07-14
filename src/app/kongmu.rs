@@ -16,6 +16,7 @@ const EQUIPMENT_CARD_ROW_HEIGHT: f32 = EQUIPMENT_CARD_HEIGHT + EQUIPMENT_CARD_GA
 const EQUIPMENT_CARD_HEADER_HEIGHT: f32 = 62.0;
 const EQUIPMENT_STAT_ROW_HEIGHT: f32 = 22.0;
 const EQUIPMENT_ICON_SIZE: f32 = 42.0;
+const EQUIPPED_CHARACTER_AVATAR_SIZE: f32 = 28.0;
 const FILTER_TILE_WIDTH: f32 = 104.0;
 const FILTER_TILE_HEIGHT: f32 = 88.0;
 const FILTER_ICON_SIZE: f32 = 48.0;
@@ -39,6 +40,21 @@ struct EquipmentFilterOption {
     icon: String,
 }
 
+struct EmptyCurtainVisuals<'a> {
+    catalog: &'a EquipmentCatalog,
+    equipment_textures: &'a HashMap<String, egui::TextureHandle>,
+    characters: &'a HashMap<u32, CharacterInfo>,
+    avatar_textures: &'a HashMap<String, egui::TextureHandle>,
+    dark_mode: bool,
+}
+
+struct EquipmentFilterCandidate<'a> {
+    equipment: Option<&'a EquipmentFilterKey>,
+    quality: Option<&'a str>,
+    character_id: Option<u32>,
+    sub_stats: &'a [EquipmentStat],
+}
+
 #[derive(Default)]
 struct EmptyCurtainFilterCache {
     valid: bool,
@@ -52,6 +68,7 @@ struct EmptyCurtainFilterCache {
 pub(crate) struct KongmuUiState {
     filter_open: bool,
     selected_equipment: HashSet<EquipmentFilterKey>,
+    selected_characters: HashSet<u32>,
     selected_qualities: HashSet<String>,
     selected_substats: HashSet<String>,
     filter_revision: u64,
@@ -64,7 +81,10 @@ impl KongmuUiState {
     }
 
     fn active_filter_count(&self) -> usize {
-        self.selected_equipment.len() + self.selected_qualities.len() + self.selected_substats.len()
+        self.selected_equipment.len()
+            + self.selected_characters.len()
+            + self.selected_qualities.len()
+            + self.selected_substats.len()
     }
 
     fn toggle_equipment(&mut self, key: EquipmentFilterKey) {
@@ -81,6 +101,13 @@ impl KongmuUiState {
         self.filter_revision = self.filter_revision.wrapping_add(1);
     }
 
+    fn toggle_character(&mut self, character_id: u32) {
+        if !self.selected_characters.remove(&character_id) {
+            self.selected_characters.insert(character_id);
+        }
+        self.filter_revision = self.filter_revision.wrapping_add(1);
+    }
+
     fn toggle_substat(&mut self, property: String) {
         if !self.selected_substats.remove(&property) {
             self.selected_substats.insert(property);
@@ -90,12 +117,14 @@ impl KongmuUiState {
 
     fn clear_filters(&mut self) {
         if self.selected_equipment.is_empty()
+            && self.selected_characters.is_empty()
             && self.selected_qualities.is_empty()
             && self.selected_substats.is_empty()
         {
             return;
         }
         self.selected_equipment.clear();
+        self.selected_characters.clear();
         self.selected_qualities.clear();
         self.selected_substats.clear();
         self.filter_revision = self.filter_revision.wrapping_add(1);
@@ -124,9 +153,13 @@ impl KongmuUiState {
                 &self.selected_equipment,
                 &self.selected_qualities,
                 &self.selected_substats,
-                item_key.as_ref(),
-                item_quality,
-                &item.sub_stats,
+                &self.selected_characters,
+                EquipmentFilterCandidate {
+                    equipment: item_key.as_ref(),
+                    quality: item_quality,
+                    character_id: item.equipped_character_id,
+                    sub_stats: &item.sub_stats,
+                },
             ) {
                 self.filter_cache.indices.push(index);
             }
@@ -227,9 +260,13 @@ impl DpsApp {
                 ui,
                 &self.state.empty_curtain,
                 &self.kongmu_ui.filter_cache.indices,
-                &self.equipment_catalog,
-                &self.equipment_textures,
-                self.dark_mode,
+                &EmptyCurtainVisuals {
+                    catalog: &self.equipment_catalog,
+                    equipment_textures: &self.equipment_textures,
+                    characters: &self.characters,
+                    avatar_textures: &self.avatar_textures,
+                    dark_mode: self.dark_mode,
+                },
             );
         }
 
@@ -238,10 +275,14 @@ impl DpsApp {
             show_empty_curtain_filter_window(
                 &ctx,
                 &self.state.empty_curtain,
-                &self.equipment_catalog,
-                &self.equipment_textures,
+                &EmptyCurtainVisuals {
+                    catalog: &self.equipment_catalog,
+                    equipment_textures: &self.equipment_textures,
+                    characters: &self.characters,
+                    avatar_textures: &self.avatar_textures,
+                    dark_mode: self.dark_mode,
+                },
                 &mut self.kongmu_ui,
-                self.dark_mode,
             );
         }
     }
@@ -302,9 +343,7 @@ fn draw_empty_curtain_grid(
     ui: &mut egui::Ui,
     items: &[EmptyCurtainItem],
     filtered_indices: &[usize],
-    catalog: &EquipmentCatalog,
-    textures: &HashMap<String, egui::TextureHandle>,
-    dark_mode: bool,
+    visuals: &EmptyCurtainVisuals<'_>,
 ) {
     let available_width = ui.available_width();
     let column_count = |width: f32| {
@@ -363,9 +402,7 @@ fn draw_empty_curtain_grid(
                             &mut cards,
                             &items[item_index],
                             card_width,
-                            catalog,
-                            textures,
-                            dark_mode,
+                            visuals,
                         );
                     }
                 }
@@ -377,35 +414,34 @@ fn draw_empty_curtain_card(
     ui: &mut egui::Ui,
     item: &EmptyCurtainItem,
     card_width: f32,
-    catalog: &EquipmentCatalog,
-    textures: &HashMap<String, egui::TextureHandle>,
-    dark_mode: bool,
+    visuals: &EmptyCurtainVisuals<'_>,
 ) -> egui::Response {
     assert!(
         item.main_stats.len() + item.sub_stats.len() <= EMPTY_CURTAIN_MAX_STAT_ROWS,
         "validated Console equipment must fit the shared card layout"
     );
-    let definition = catalog.items.get(&item.item_id);
+    let definition = visuals.catalog.items.get(&item.item_id);
     let language = i18n::current_language();
     let name = definition.map_or(item.item_id.as_str(), |definition| {
         definition.name(language)
     });
-    let texture = definition.and_then(|definition| textures.get(&definition.icon));
+    let texture =
+        definition.and_then(|definition| visuals.equipment_textures.get(&definition.icon));
 
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(card_width, EQUIPMENT_CARD_HEIGHT),
         egui::Sense::hover(),
     );
     let fill = if response.hovered() {
-        shadcn_card_hover(dark_mode)
+        shadcn_card_hover(visuals.dark_mode)
     } else {
-        shadcn_card(dark_mode)
+        shadcn_card(visuals.dark_mode)
     };
     ui.painter().rect(
         rect,
         egui::CornerRadius::same(8),
         fill,
-        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(visuals.dark_mode)),
         egui::StrokeKind::Inside,
     );
     let header_rect = egui::Rect::from_min_max(
@@ -421,26 +457,37 @@ fn draw_empty_curtain_card(
             se: 0,
         },
         if response.hovered() {
-            shadcn_muted(dark_mode)
+            shadcn_muted(visuals.dark_mode)
         } else {
-            shadcn_card_hover(dark_mode)
+            shadcn_card_hover(visuals.dark_mode)
         },
     );
     ui.painter().hline(
         rect.left() + 1.0..=rect.right() - 1.0,
         header_rect.bottom(),
-        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
+        Stroke::new(1.0_f32, shadcn_border(visuals.dark_mode)),
     );
 
     let icon_rect = egui::Rect::from_min_size(
         rect.left_top() + egui::vec2(10.0, 10.0),
         egui::vec2(EQUIPMENT_ICON_SIZE, EQUIPMENT_ICON_SIZE),
     );
-    draw_equipment_icon(ui, icon_rect, texture, name, dark_mode);
-    paint_equipment_status(ui, rect, item.is_equipped(), item.locked, dark_mode);
+    draw_equipment_icon(ui, icon_rect, texture, name, visuals.dark_mode);
+    paint_equipment_status(ui, rect, item.is_equipped(), item.locked, visuals.dark_mode);
+    let avatar_rect = item.equipped_character_id.map(|character_id| {
+        paint_equipped_character_avatar(
+            ui,
+            rect,
+            character_id,
+            visuals.characters,
+            visuals.avatar_textures,
+            visuals.dark_mode,
+        )
+    });
 
     let text_left = icon_rect.right() + 10.0;
-    let text_width = rect.right() - 10.0 - text_left;
+    let text_right = avatar_rect.map_or(rect.right() - 10.0, |rect| rect.left() - 6.0);
+    let text_width = text_right - text_left;
     let name_font = fitted_font(
         ui,
         name,
@@ -448,18 +495,18 @@ fn draw_empty_curtain_card(
         15.0,
         10.0,
         text_width,
-        shadcn_foreground(dark_mode),
+        shadcn_foreground(visuals.dark_mode),
     );
     let name_rect = egui::Rect::from_min_max(
         egui::pos2(text_left, rect.top() + 24.0),
-        egui::pos2(rect.right() - 10.0, rect.top() + 42.0),
+        egui::pos2(text_right, rect.top() + 42.0),
     );
     ui.painter().with_clip_rect(name_rect).text(
         name_rect.left_center(),
         egui::Align2::LEFT_CENTER,
         name,
         name_font,
-        shadcn_foreground(dark_mode),
+        shadcn_foreground(visuals.dark_mode),
     );
     let level = tf("Lv.{}", &[&item.level.to_string()]);
     ui.painter().text(
@@ -492,16 +539,26 @@ fn draw_empty_curtain_card(
             ui.painter().hline(
                 row_rect.left()..=row_rect.right(),
                 row_rect.top(),
-                Stroke::new(1.0_f32, shadcn_border(dark_mode).gamma_multiply(0.7)),
+                Stroke::new(
+                    1.0_f32,
+                    shadcn_border(visuals.dark_mode).gamma_multiply(0.7),
+                ),
             );
         }
-        draw_equipment_stat_row(ui, row_rect, stat, main_stat, catalog, dark_mode);
+        draw_equipment_stat_row(
+            ui,
+            row_rect,
+            stat,
+            main_stat,
+            visuals.catalog,
+            visuals.dark_mode,
+        );
     }
 
     let suit = definition
         .filter(|definition| matches!(definition.kind, EquipmentKind::Core))
         .and_then(|definition| definition.suit.as_deref())
-        .and_then(|suit_id| catalog.suits.get(suit_id));
+        .and_then(|suit_id| visuals.catalog.suits.get(suit_id));
     if let Some(suit) = suit {
         response.on_hover_ui(|ui| {
             ui.set_max_width(400.0);
@@ -675,6 +732,61 @@ fn paint_equipment_status(
     }
 }
 
+fn paint_equipped_character_avatar(
+    ui: &mut egui::Ui,
+    card_rect: egui::Rect,
+    character_id: u32,
+    characters: &HashMap<u32, CharacterInfo>,
+    avatar_textures: &HashMap<String, egui::TextureHandle>,
+    dark_mode: bool,
+) -> egui::Rect {
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(
+            card_rect.right() - EQUIPPED_CHARACTER_AVATAR_SIZE - 8.0,
+            card_rect.top() + 28.0,
+        ),
+        egui::vec2(
+            EQUIPPED_CHARACTER_AVATAR_SIZE,
+            EQUIPPED_CHARACTER_AVATAR_SIZE,
+        ),
+    );
+    let texture = characters
+        .get(&character_id)
+        .and_then(|character| character.avatar.as_deref())
+        .and_then(|avatar| avatar_textures.get(avatar));
+    if let Some(texture) = texture {
+        egui::Image::new((texture.id(), rect.size()))
+            .corner_radius(6.0)
+            .paint_at(ui, rect);
+    } else {
+        let color = character_color(character_id, characters, 0, dark_mode);
+        ui.painter()
+            .rect_filled(rect, 6.0, color.gamma_multiply(0.85));
+        let fallback = character_id.to_string();
+        let initial = character_display_name(characters, character_id, &fallback)
+            .chars()
+            .next()
+            .unwrap_or('?');
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            initial,
+            egui::FontId::proportional(14.0),
+            contrast_text(color),
+        );
+    }
+    ui.painter().rect_stroke(
+        rect,
+        6.0,
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+    let fallback = character_id.to_string();
+    ui.allocate_rect(rect, egui::Sense::hover())
+        .on_hover_text(character_display_name(characters, character_id, &fallback));
+    rect
+}
+
 fn paint_lock_icon(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
     let body = egui::Rect::from_min_max(
         egui::pos2(rect.left() + 2.0, rect.top() + 7.0),
@@ -788,15 +900,24 @@ fn empty_curtain_filter_matches(
     selected_equipment: &HashSet<EquipmentFilterKey>,
     selected_qualities: &HashSet<String>,
     selected_substats: &HashSet<String>,
-    item_key: Option<&EquipmentFilterKey>,
-    item_quality: Option<&str>,
-    sub_stats: &[EquipmentStat],
+    selected_characters: &HashSet<u32>,
+    candidate: EquipmentFilterCandidate<'_>,
 ) -> bool {
-    (selected_equipment.is_empty() || item_key.is_some_and(|key| selected_equipment.contains(key)))
+    (selected_equipment.is_empty()
+        || candidate
+            .equipment
+            .is_some_and(|key| selected_equipment.contains(key)))
         && (selected_qualities.is_empty()
-            || item_quality.is_some_and(|quality| selected_qualities.contains(quality)))
+            || candidate
+                .quality
+                .is_some_and(|quality| selected_qualities.contains(quality)))
+        && (selected_characters.is_empty()
+            || candidate
+                .character_id
+                .is_some_and(|character_id| selected_characters.contains(&character_id)))
         && selected_substats.iter().all(|property| {
-            sub_stats
+            candidate
+                .sub_stats
                 .iter()
                 .any(|stat| stat.property.as_str() == property)
         })
@@ -873,15 +994,40 @@ fn trailing_number(value: &str) -> u32 {
         .expect("validated equipment group id must end in a number")
 }
 
+fn parsed_character_filter_ids(
+    items: &[EmptyCurtainItem],
+    characters: &HashMap<u32, CharacterInfo>,
+) -> Vec<u32> {
+    let mut character_ids = items
+        .iter()
+        .filter_map(|item| item.equipped_character_id)
+        .filter(|character_id| characters.contains_key(character_id))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    character_ids.sort_by(|left, right| {
+        character_display_name(characters, *left, &left.to_string())
+            .cmp(&character_display_name(
+                characters,
+                *right,
+                &right.to_string(),
+            ))
+            .then_with(|| left.cmp(right))
+    });
+    character_ids
+}
+
 fn show_empty_curtain_filter_window(
     ctx: &egui::Context,
     items: &[EmptyCurtainItem],
-    catalog: &EquipmentCatalog,
-    textures: &HashMap<String, egui::TextureHandle>,
+    visuals: &EmptyCurtainVisuals<'_>,
     state: &mut KongmuUiState,
-    dark_mode: bool,
 ) {
+    let catalog = visuals.catalog;
+    let textures = visuals.equipment_textures;
+    let dark_mode = visuals.dark_mode;
     let options = equipment_filter_options(catalog);
+    let character_ids = parsed_character_filter_ids(items, visuals.characters);
     let mut substat_properties = items
         .iter()
         .flat_map(|item| item.sub_stats.iter().map(|stat| stat.property.clone()))
@@ -910,6 +1056,35 @@ fn show_empty_curtain_filter_window(
                 .id_salt("empty_curtain_filter_options")
                 .max_height((ctx.content_rect().height() - 180.0).max(260.0))
                 .show(ui, |ui| {
+                    if !character_ids.is_empty() {
+                        ui.label(
+                            RichText::new(t("By Character"))
+                                .size(14.0)
+                                .strong()
+                                .color(shadcn_foreground(dark_mode)),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            for character_id in character_ids.iter().copied() {
+                                let selected = state.selected_characters.contains(&character_id);
+                                if draw_character_filter_option(
+                                    ui,
+                                    character_id,
+                                    visuals.characters,
+                                    visuals.avatar_textures,
+                                    selected,
+                                    dark_mode,
+                                )
+                                .clicked()
+                                {
+                                    state.toggle_character(character_id);
+                                }
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                    }
                     ui.label(
                         RichText::new(t("Drive Modules"))
                             .size(14.0)
@@ -1071,6 +1246,93 @@ fn draw_filter_option(
         egui::vec2(FILTER_ICON_SIZE, FILTER_ICON_SIZE),
     );
     draw_equipment_icon(ui, icon_rect, textures.get(&option.icon), name, dark_mode);
+    let label_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 5.0, icon_rect.bottom() + 5.0),
+        egui::pos2(rect.right() - 5.0, rect.bottom() - 5.0),
+    );
+    let mut label_ui = ui.new_child(egui::UiBuilder::new().max_rect(label_rect).layout(
+        egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+    ));
+    label_ui.add_sized(
+        label_rect.size(),
+        egui::Label::new(
+            RichText::new(name)
+                .size(10.0)
+                .color(shadcn_foreground(dark_mode)),
+        )
+        .wrap()
+        .halign(egui::Align::Center),
+    );
+    response
+}
+
+fn draw_character_filter_option(
+    ui: &mut egui::Ui,
+    character_id: u32,
+    characters: &HashMap<u32, CharacterInfo>,
+    avatar_textures: &HashMap<String, egui::TextureHandle>,
+    selected: bool,
+    dark_mode: bool,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(FILTER_TILE_WIDTH, FILTER_TILE_HEIGHT),
+        egui::Sense::click(),
+    );
+    let fill = if selected {
+        shadcn_muted(dark_mode)
+    } else if response.hovered() {
+        shadcn_card_hover(dark_mode)
+    } else {
+        shadcn_card(dark_mode)
+    };
+    ui.painter().rect(
+        rect,
+        7.0,
+        fill,
+        Stroke::new(
+            if selected { 1.5_f32 } else { 1.0_f32 },
+            if selected {
+                ui.visuals().selection.bg_fill
+            } else {
+                shadcn_border(dark_mode)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+
+    let fallback = character_id.to_string();
+    let name = character_display_name(characters, character_id, &fallback);
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.top() + 8.0 + FILTER_ICON_SIZE * 0.5),
+        egui::vec2(FILTER_ICON_SIZE, FILTER_ICON_SIZE),
+    );
+    let texture = characters
+        .get(&character_id)
+        .and_then(|character| character.avatar.as_deref())
+        .and_then(|avatar| avatar_textures.get(avatar));
+    if let Some(texture) = texture {
+        egui::Image::new((texture.id(), icon_rect.size()))
+            .corner_radius(8.0)
+            .paint_at(ui, icon_rect);
+    } else {
+        let color = character_color(character_id, characters, 0, dark_mode);
+        ui.painter()
+            .rect_filled(icon_rect, 8.0, color.gamma_multiply(0.85));
+        ui.painter().text(
+            icon_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            name.chars().next().unwrap_or('?'),
+            egui::FontId::proportional(18.0),
+            contrast_text(color),
+        );
+    }
+    ui.painter().rect_stroke(
+        icon_rect,
+        8.0,
+        Stroke::new(1.0_f32, shadcn_border(dark_mode)),
+        egui::StrokeKind::Inside,
+    );
+
     let label_rect = egui::Rect::from_min_max(
         egui::pos2(rect.left() + 5.0, icon_rect.bottom() + 5.0),
         egui::pos2(rect.right() - 5.0, rect.bottom() - 5.0),
@@ -1356,6 +1618,20 @@ mod tests {
         }
     }
 
+    fn filter_candidate<'a>(
+        equipment: Option<&'a EquipmentFilterKey>,
+        quality: Option<&'a str>,
+        character_id: Option<u32>,
+        sub_stats: &'a [EquipmentStat],
+    ) -> EquipmentFilterCandidate<'a> {
+        EquipmentFilterCandidate {
+            equipment,
+            quality,
+            character_id,
+            sub_stats,
+        }
+    }
+
     fn stat_v(property: &str, value: f32) -> EquipmentStat {
         EquipmentStat {
             property: property.to_owned(),
@@ -1442,7 +1718,31 @@ mod tests {
             sub_stats: sub,
             locked: false,
             character_net_id: None,
+            equipped_character_id: None,
         }
+    }
+
+    #[test]
+    fn character_filter_options_only_include_parsed_known_characters() {
+        let mut known = item(1, "known", Vec::new(), Vec::new());
+        known.equipped_character_id = Some(1020);
+        let mut unknown = item(2, "unknown", Vec::new(), Vec::new());
+        unknown.equipped_character_id = Some(9999);
+        let characters = HashMap::from([(
+            1020,
+            CharacterInfo {
+                name_zh: "Haniel".to_owned(),
+                name_en: "Haniel".to_owned(),
+                color: None,
+                avatar: None,
+                attribute: None,
+            },
+        )]);
+
+        assert_eq!(
+            parsed_character_filter_ids(&[known, unknown], &characters),
+            [1020]
+        );
     }
 
     #[test]
@@ -1524,17 +1824,20 @@ mod tests {
             &HashSet::new(),
             &HashSet::new(),
             &selected,
-            None,
-            None,
-            &[stat("CritRate"), stat("CritDamage"), stat("Attack")],
+            &HashSet::new(),
+            filter_candidate(
+                None,
+                None,
+                None,
+                &[stat("CritRate"), stat("CritDamage"), stat("Attack")],
+            ),
         ));
         assert!(!empty_curtain_filter_matches(
             &HashSet::new(),
             &HashSet::new(),
             &selected,
-            None,
-            None,
-            &[stat("CritRate"), stat("Attack")],
+            &HashSet::new(),
+            filter_candidate(None, None, None, &[stat("CritRate"), stat("Attack")]),
         ));
     }
 
@@ -1548,25 +1851,27 @@ mod tests {
             &selected_equipment,
             &HashSet::new(),
             &selected_substats,
-            Some(&module),
-            None,
-            &[stat("CritRate")],
+            &HashSet::new(),
+            filter_candidate(Some(&module), None, None, &[stat("CritRate")]),
         ));
         assert!(!empty_curtain_filter_matches(
             &selected_equipment,
             &HashSet::new(),
             &selected_substats,
-            Some(&module),
-            None,
-            &[stat("Attack")],
+            &HashSet::new(),
+            filter_candidate(Some(&module), None, None, &[stat("Attack")]),
         ));
         assert!(!empty_curtain_filter_matches(
             &selected_equipment,
             &HashSet::new(),
             &selected_substats,
-            Some(&EquipmentFilterKey::Module("Shu2".to_owned())),
-            None,
-            &[stat("CritRate")],
+            &HashSet::new(),
+            filter_candidate(
+                Some(&EquipmentFilterKey::Module("Shu2".to_owned())),
+                None,
+                None,
+                &[stat("CritRate")],
+            ),
         ));
     }
 
@@ -1578,27 +1883,50 @@ mod tests {
             &HashSet::new(),
             &qualities,
             &HashSet::new(),
-            None,
-            Some("orange"),
-            &[],
+            &HashSet::new(),
+            filter_candidate(None, Some("orange"), None, &[]),
         ));
         // A color outside the selected set is filtered out.
         assert!(!empty_curtain_filter_matches(
             &HashSet::new(),
             &qualities,
             &HashSet::new(),
-            None,
-            Some("blue"),
-            &[],
+            &HashSet::new(),
+            filter_candidate(None, Some("blue"), None, &[]),
         ));
         // AND across dimensions: color matches but a required substat is absent.
         assert!(!empty_curtain_filter_matches(
             &HashSet::new(),
             &qualities,
             &HashSet::from(["CritRate".to_owned()]),
-            None,
-            Some("orange"),
-            &[stat("Attack")],
+            &HashSet::new(),
+            filter_candidate(None, Some("orange"), None, &[stat("Attack")]),
+        ));
+    }
+
+    #[test]
+    fn character_filter_is_or_within_and_across_dimensions() {
+        let characters = HashSet::from([1020, 1033]);
+        assert!(empty_curtain_filter_matches(
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+            &characters,
+            filter_candidate(None, None, Some(1020), &[]),
+        ));
+        assert!(!empty_curtain_filter_matches(
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashSet::new(),
+            &characters,
+            filter_candidate(None, None, Some(1010), &[]),
+        ));
+        assert!(!empty_curtain_filter_matches(
+            &HashSet::new(),
+            &HashSet::from(["orange".to_owned()]),
+            &HashSet::new(),
+            &characters,
+            filter_candidate(None, Some("blue"), Some(1033), &[]),
         ));
     }
 
