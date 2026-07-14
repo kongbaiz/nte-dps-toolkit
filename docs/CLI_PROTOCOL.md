@@ -246,13 +246,22 @@ Inventory results and `event.inventory.snapshot` contain `generation`,
 also contain the global event `sequence`. Internal item IDs are mapped as:
 
 ```json
-{"uid":{"slot":1,"serial":2}}
+{
+  "uid":{"slot":1,"serial":2},
+  "equipped":true,
+  "equipped_character_uid":{"slot":3,"serial":4},
+  "equipped_character_id":1020
+}
 ```
 
 The internal misspelling `solt` is never exposed. Known equipment definitions
 include kind, quality, geometry, grid, suit ID, item/suit localized names, level
 cap, and localized stat metadata. Unknown item or property definitions preserve
 their stable IDs and values while optional metadata remains null.
+`equipped_character_id` is the stable character ID used as the key in
+`res/data/characters/characters.json`; it is null when the item is unequipped or
+the owner has not been resolved. `equipped_character_uid` remains the
+account-specific character item instance UID.
 
 ## Capture and inventory events
 

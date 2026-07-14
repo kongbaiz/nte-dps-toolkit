@@ -24,6 +24,8 @@ const MAX_TAGGED_PROPERTY_STRING_LENGTH: i32 = 256;
 const MAX_INVENTORY_NAME_LENGTH: usize = 128;
 const MAX_INVENTORY_EXTRA_JSON_LENGTH: usize = 16 * 1024;
 const MAX_INVENTORY_STAT_VALUE: f32 = 1_000_000.0;
+const MAX_INVENTORY_CHARACTER_LEVEL: i32 = 100;
+const MAX_INVENTORY_CHARACTER_ARRAY_LENGTH: u16 = 64;
 const MAX_EMPTY_CURTAIN_ITEMS: usize = 4096;
 
 pub const EMPTY_CURTAIN_MAX_STAT_ROWS: usize = 6;
@@ -1227,6 +1229,68 @@ fn valid_item_net_id(id: HtItemNetId) -> bool {
     id.solt != 0 && id.serial != 0 && id.solt != u32::MAX && id.serial != u32::MAX
 }
 
+fn parse_empty_curtain_character_owner_at(
+    mut reader: InventoryBitReader<'_>,
+) -> Option<(HtItemNetId, u32)> {
+    let character_id = reader.read_dynamic_name()?.parse::<u32>().ok()?;
+    if character_id == 0 {
+        return None;
+    }
+    let net_id = reader.read_item_net_id()?;
+    if !valid_item_net_id(net_id) || reader.read_i64()? != 1 {
+        return None;
+    }
+
+    let _durable = reader.read_i32()?;
+    if reader.read_i64()? < 0 || reader.read_u16()? != 1 {
+        return None;
+    }
+
+    let character_level = reader.read_i32()?;
+    let breakthrough_level = reader.read_i32()?;
+    let fork_net_id = reader.read_item_net_id()?;
+    let awaken_level = reader.read_i32()?;
+    if !(1..=MAX_INVENTORY_CHARACTER_LEVEL).contains(&character_level)
+        || !(0..=MAX_INVENTORY_CHARACTER_LEVEL).contains(&breakthrough_level)
+        || (!fork_net_id.is_zero() && !valid_item_net_id(fork_net_id))
+        || !(0..=MAX_INVENTORY_CHARACTER_LEVEL).contains(&awaken_level)
+    {
+        return None;
+    }
+
+    for _ in 0..7 {
+        let value = reader.read_f32()?;
+        if !value.is_finite() || value < 0.0 {
+            return None;
+        }
+    }
+    let _save_is_dead = reader.read_bool()?;
+    if reader.read_i32()? < 0 || reader.read_u16()? > MAX_INVENTORY_CHARACTER_ARRAY_LENGTH {
+        return None;
+    }
+
+    Some((net_id, character_id))
+}
+
+pub fn parse_empty_curtain_character_owners(
+    data: &[u8],
+    data_bit_len: usize,
+) -> HashMap<HtItemNetId, u32> {
+    if data_bit_len > data.len().saturating_mul(8) {
+        return HashMap::new();
+    }
+    let mut characters = HashMap::new();
+    for bit_offset in 0..data_bit_len {
+        let Some(reader) = InventoryBitReader::at(data, data_bit_len, bit_offset) else {
+            break;
+        };
+        if let Some((net_id, character_id)) = parse_empty_curtain_character_owner_at(reader) {
+            characters.insert(net_id, character_id);
+        }
+    }
+    characters
+}
+
 fn parse_empty_curtain_item_at(
     mut reader: InventoryBitReader<'_>,
     catalog: &EquipmentCatalog,
@@ -1317,6 +1381,7 @@ fn parse_empty_curtain_item_at(
             sub_stats,
             locked,
             character_net_id,
+            equipped_character_id: None,
         },
         reader.cursor,
     ))
@@ -1372,6 +1437,8 @@ pub fn validate_empty_curtain_snapshot(
             || item
                 .character_net_id
                 .is_some_and(|character_id| !valid_item_net_id(character_id))
+            || item.equipped_character_id == Some(0)
+            || (item.equipped_character_id.is_some() && item.character_net_id.is_none())
         {
             return false;
         }
@@ -2563,6 +2630,35 @@ mod empty_curtain_tests {
         writer.push_i32(0);
     }
 
+    fn push_character_record_prefix(
+        writer: &mut BitWriter,
+        item_id: &str,
+        net_id: HtItemNetId,
+        character_count: u16,
+    ) {
+        writer.push_dynamic_name(item_id);
+        writer.push_u32(net_id.solt);
+        writer.push_u32(net_id.serial);
+        writer.push_i64(1);
+        writer.push_i32(0);
+        writer.push_i64(1);
+        writer.push_u16(character_count);
+        if character_count == 0 {
+            return;
+        }
+        writer.push_i32(80);
+        writer.push_i32(6);
+        writer.push_u32(100);
+        writer.push_u32(200);
+        writer.push_i32(6);
+        for value in [1.0, 20_000.0, 3.0, 120.0, 80.0, 1_000.0, 100.0] {
+            writer.push_f32(value);
+        }
+        writer.push_bool(false);
+        writer.push_i32(0);
+        writer.push_u16(5);
+    }
+
     fn catalog() -> EquipmentCatalog {
         load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
             .expect("bundled equipment catalog should load")
@@ -2633,6 +2729,71 @@ mod empty_curtain_tests {
         assert_eq!(items[0].main_stats[0].value, 63.0);
         assert_eq!(items[0].main_stats[1].value, 840.0);
         assert_eq!(items[0].sub_stats.len(), 4);
+    }
+
+    #[test]
+    fn parses_character_instance_to_template_mapping() {
+        let mut writer = BitWriter::default();
+        let net_id = HtItemNetId {
+            solt: 1_135_129_303,
+            serial: 1_041_749_587,
+        };
+        push_character_record_prefix(&mut writer, "1020", net_id, 1);
+
+        let owners = parse_empty_curtain_character_owners(&writer.data, writer.bit_len);
+
+        assert_eq!(owners, HashMap::from([(net_id, 1020)]));
+    }
+
+    #[test]
+    fn character_owner_parser_rejects_truncated_prefix() {
+        let mut writer = BitWriter::default();
+        push_character_record_prefix(
+            &mut writer,
+            "1020",
+            HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            1,
+        );
+
+        assert!(parse_empty_curtain_character_owners(&writer.data, writer.bit_len - 1).is_empty());
+    }
+
+    #[test]
+    fn character_owner_parser_ignores_non_character_item_shapes() {
+        let mut non_numeric = BitWriter::default();
+        push_character_record_prefix(
+            &mut non_numeric,
+            "cell3_style1_1_Orange",
+            HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            1,
+        );
+        let mut no_character_payload = BitWriter::default();
+        push_character_record_prefix(
+            &mut no_character_payload,
+            "1020",
+            HtItemNetId {
+                solt: 10,
+                serial: 20,
+            },
+            0,
+        );
+
+        assert!(
+            parse_empty_curtain_character_owners(&non_numeric.data, non_numeric.bit_len).is_empty()
+        );
+        assert!(
+            parse_empty_curtain_character_owners(
+                &no_character_payload.data,
+                no_character_payload.bit_len
+            )
+            .is_empty()
+        );
     }
 
     #[test]
