@@ -205,6 +205,8 @@ pub struct EmptyCurtainItem {
     pub locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character_net_id: Option<HtItemNetId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equipped_character_id: Option<u32>,
 }
 
 impl EmptyCurtainItem {
@@ -2692,6 +2694,7 @@ mod tests {
             sub_stats: Vec::new(),
             locked: false,
             character_net_id: None,
+            equipped_character_id: None,
         }]);
         let inventory_generation = state.empty_curtain_generation;
 

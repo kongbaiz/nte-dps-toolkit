@@ -127,6 +127,7 @@ pub struct InventoryItemDto {
     pub locked: bool,
     pub equipped: bool,
     pub equipped_character_uid: Option<ItemUidDto>,
+    pub equipped_character_id: Option<u32>,
     pub main_stats: Vec<InventoryStatDto>,
     pub sub_stats: Vec<InventoryStatDto>,
 }
@@ -148,6 +149,7 @@ impl From<&InventoryItem> for InventoryItemDto {
             locked: item.locked,
             equipped: item.equipped,
             equipped_character_uid: item.equipped_character_uid.map(ItemUidDto::from),
+            equipped_character_id: item.equipped_character_id,
             main_stats: item.main_stats.iter().map(InventoryStatDto::from).collect(),
             sub_stats: item.sub_stats.iter().map(InventoryStatDto::from).collect(),
         }
