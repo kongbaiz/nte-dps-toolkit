@@ -274,6 +274,7 @@ impl Runtime {
                 let snapshot = inventory_snapshot(
                     &self.state.empty_curtain,
                     &self.equipment_catalog,
+                    &self.characters,
                     generation,
                     unix_time_ms(),
                 );
@@ -875,7 +876,8 @@ mod tests {
                 main_stats: Vec::new(),
                 sub_stats: Vec::new(),
                 locked: true,
-                character_net_id: None,
+                character_net_id: Some(HtItemNetId { solt: 6, serial: 7 }),
+                equipped_character_id: Some(1020),
             }]))
             .unwrap();
         drain_engine_events(&mut runtime, &engine_receiver, &outbound);
@@ -884,6 +886,14 @@ mod tests {
         assert_eq!(inventory["params"]["generation"], 1);
         assert_eq!(inventory["params"]["item_count"], 1);
         assert_eq!(inventory["params"]["items"][0]["uid"]["slot"], 4);
+        assert_eq!(
+            inventory["params"]["items"][0]["equipped_character_id"],
+            1020
+        );
+        assert_eq!(
+            inventory["params"]["items"][0]["equipped_character_uid"]["slot"],
+            6
+        );
         assert_eq!(
             inventory["params"]["items"][0]["names"]["en"],
             "Shadow Creed"
@@ -1003,6 +1013,7 @@ mod tests {
                 sub_stats: Vec::new(),
                 locked: false,
                 character_net_id: None,
+                equipped_character_id: None,
             }]),
             &outbound,
         );

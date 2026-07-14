@@ -249,6 +249,7 @@ mod tests {
             sub_stats: Vec::new(),
             locked: true,
             character_net_id: None,
+            equipped_character_id: None,
         }];
         let generation_before = state.empty_curtain_generation;
         let signal = apply_engine_event(&mut state, EngineEvent::EmptyCurtain(items));
