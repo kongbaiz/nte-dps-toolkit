@@ -10,6 +10,7 @@ impl DpsApp {
                 t("NTE Console"),
                 self.console_window_size,
                 config::CONSOLE_WINDOW_MIN_SIZE,
+                self.console_geometry,
                 self.console_corner_applied,
             ),
             |ctx, _class| {
@@ -36,7 +37,11 @@ impl DpsApp {
                         motion::apply_viewport_entrance(ui, "console", opening, self.reduce_motion);
                         self.console_contents(ui);
                     });
-                track_window_size(ctx, &mut self.console_window_size);
+                track_secondary_viewport_geometry(
+                    ctx,
+                    &mut self.console_window_size,
+                    &mut self.console_geometry,
+                );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
                 self.show_command_palette(ctx.ctx());

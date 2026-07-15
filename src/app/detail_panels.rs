@@ -329,6 +329,7 @@ impl DpsApp {
                 &title,
                 self.team_hit_detail_window_size,
                 config::TEAM_HIT_DETAIL_WINDOW_MIN_SIZE,
+                self.team_hit_detail_geometry,
                 self.team_hit_detail_corner_applied,
             ),
             |ctx, _class| {
@@ -440,7 +441,11 @@ impl DpsApp {
                         ui.separator();
                         self.team_hits(ui, self.team_hit_detail_filter.clone());
                     });
-                track_window_size(ctx, &mut self.team_hit_detail_window_size);
+                track_secondary_viewport_geometry(
+                    ctx,
+                    &mut self.team_hit_detail_window_size,
+                    &mut self.team_hit_detail_geometry,
+                );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
                 self.show_command_palette(ctx.ctx());
@@ -463,6 +468,7 @@ impl DpsApp {
                 t("Abyss Monster Stats"),
                 self.abyss_window_size,
                 config::ABYSS_WINDOW_MIN_SIZE,
+                self.abyss_overview_geometry,
                 self.abyss_overview_corner_applied,
             ),
             |ctx, _class| {
@@ -488,7 +494,11 @@ impl DpsApp {
                         );
                         self.abyss_overview_contents(ui);
                     });
-                track_window_size(ctx, &mut self.abyss_window_size);
+                track_secondary_viewport_geometry(
+                    ctx,
+                    &mut self.abyss_window_size,
+                    &mut self.abyss_overview_geometry,
+                );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
                 self.show_command_palette(ctx.ctx());
@@ -1153,6 +1163,7 @@ impl DpsApp {
                 &title,
                 self.hit_detail_window_size,
                 config::HIT_DETAIL_WINDOW_MIN_SIZE,
+                self.hit_detail_geometry,
                 self.hit_detail_corner_applied,
             ),
             |ctx, _class| {
@@ -1400,7 +1411,11 @@ impl DpsApp {
                             &skill_filter,
                         );
                     });
-                track_window_size(ctx, &mut self.hit_detail_window_size);
+                track_secondary_viewport_geometry(
+                    ctx,
+                    &mut self.hit_detail_window_size,
+                    &mut self.hit_detail_geometry,
+                );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
                 self.show_command_palette(ctx.ctx());
