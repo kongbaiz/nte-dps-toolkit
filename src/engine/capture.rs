@@ -1303,7 +1303,7 @@ impl UltraTimeStopTracker {
             [] => match (montage_char_id, declared_ids) {
                 (Some(montage_id), [declared_id]) if montage_id != *declared_id => None,
                 (Some(montage_id), _) => Some(montage_id),
-                (None, [declared_id]) if had_time_actor => Some(*declared_id),
+                (None, [declared_id]) if !has_time_actor || had_time_actor => Some(*declared_id),
                 _ => None,
             },
             _ => None,
@@ -5093,6 +5093,29 @@ mod tests {
                 char_id: 1004,
                 ability_id: "GA_Lacrimosa_UltraSkill".to_owned(),
                 duration_seconds: 4.218461,
+            }]
+        );
+    }
+
+    #[test]
+    fn generic_cooldown_uses_single_declared_character_without_time_actor() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "CoolDown.Player.UltraSkill.F",
+                &[1010],
+                true,
+                Some(ultra_test_flow(7_777)),
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
             }]
         );
     }
