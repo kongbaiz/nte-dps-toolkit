@@ -1173,6 +1173,76 @@ impl DpsApp {
         let mut top = area.top() + 8.0;
         let mut reorder = None;
         let mut hide = None;
+        let mut restore = None;
+        let hidden_modules = self
+            .hud_config
+            .module_order
+            .iter()
+            .copied()
+            .filter(|module| !self.hud_config.module_visible(*module))
+            .collect::<Vec<_>>();
+        if editor && !hidden_modules.is_empty() {
+            let tray_height = hud_editor_hidden_tray_height(hidden_modules.len());
+            let tray_rect = egui::Rect::from_min_size(
+                egui::pos2(left - 4.0, top),
+                egui::vec2(width + 8.0, tray_height),
+            );
+            ui.allocate_rect(tray_rect, egui::Sense::hover());
+            painter.rect_filled(tray_rect, 4.0, hud_theme.edit_bg);
+            painter.rect_stroke(
+                tray_rect,
+                4.0,
+                Stroke::new(1.0_f32, hud_theme.edit_border),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                tray_rect.left_top() + egui::vec2(7.0, HUD_EDITOR_HIDDEN_TRAY_HEADER_HEIGHT * 0.5),
+                egui::Align2::LEFT_CENTER,
+                t("Hidden modules"),
+                egui::FontId::proportional(10.0),
+                hud_theme.edit_text,
+            );
+            for (index, module) in hidden_modules.iter().copied().enumerate() {
+                let row_top = tray_rect.top()
+                    + HUD_EDITOR_HIDDEN_TRAY_HEADER_HEIGHT
+                    + index as f32 * HUD_EDITOR_HIDDEN_MODULE_ROW_HEIGHT;
+                let row_rect = egui::Rect::from_min_max(
+                    egui::pos2(tray_rect.left() + 4.0, row_top),
+                    egui::pos2(
+                        tray_rect.right() - 4.0,
+                        row_top + HUD_EDITOR_HIDDEN_MODULE_ROW_HEIGHT - 4.0,
+                    ),
+                );
+                let response = ui
+                    .interact(
+                        row_rect,
+                        ui.make_persistent_id(("hud_hidden_module", module)),
+                        egui::Sense::click(),
+                    )
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(t("Restore module"));
+                painter.rect_filled(
+                    row_rect,
+                    3.0,
+                    if response.hovered() {
+                        hud_theme.edit_border.gamma_multiply(0.22)
+                    } else {
+                        hud_theme.edit_border.gamma_multiply(0.1)
+                    },
+                );
+                painter.text(
+                    row_rect.left_center() + egui::vec2(6.0, 0.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("＋ {}", t(module.label())),
+                    egui::FontId::proportional(10.0),
+                    hud_theme.edit_text,
+                );
+                if response.clicked() {
+                    restore = Some(module);
+                }
+            }
+            top += tray_height;
+        }
         let dragged_module = egui::DragAndDrop::payload::<HudModule>(ui.ctx()).map(|item| *item);
         let mut dragged_size = None;
         for module in self.hud_config.module_order.clone() {
@@ -1313,15 +1383,13 @@ impl DpsApp {
         }
 
         if let Some((dragged, target, insert_after)) = reorder {
-            move_hud_module(
-                &mut self.hud_config.module_order,
-                dragged,
-                target,
-                insert_after,
-            );
+            self.hud_config.move_module(dragged, target, insert_after);
         }
         if let Some(module) = hide {
             self.hud_config.set_module_visible(module, false);
+        }
+        if let Some(module) = restore {
+            self.hud_config.set_module_visible(module, true);
         }
 
         ui.allocate_rect(
@@ -2290,28 +2358,6 @@ fn paint_hud_drag_ghost(
     ctx.request_repaint();
 }
 
-fn move_hud_module(
-    module_order: &mut Vec<HudModule>,
-    dragged: HudModule,
-    target: HudModule,
-    insert_after: bool,
-) {
-    let from = module_order
-        .iter()
-        .position(|module| *module == dragged)
-        .expect("dragged HUD module belongs to module_order");
-    let target = module_order
-        .iter()
-        .position(|module| *module == target)
-        .expect("drop target belongs to module_order");
-    let mut insertion = target + usize::from(insert_after);
-    let dragged = module_order.remove(from);
-    if from < insertion {
-        insertion -= 1;
-    }
-    module_order.insert(insertion, dragged);
-}
-
 fn hud_drag_ghost_rect(
     content_rect: egui::Rect,
     pointer: egui::Pos2,
@@ -2440,12 +2486,12 @@ mod responsive_tests {
 
     #[test]
     fn hud_dragging_down_inserts_after_the_target() {
-        let mut order = HudModule::all().to_vec();
+        let mut config = HudConfig::default();
 
-        move_hud_module(&mut order, HudModule::Title, HudModule::Characters, true);
+        config.move_module(HudModule::Title, HudModule::Characters, true);
 
         assert_eq!(
-            order,
+            config.module_order,
             [
                 HudModule::Summary,
                 HudModule::Status,
@@ -2458,12 +2504,12 @@ mod responsive_tests {
 
     #[test]
     fn hud_dragging_up_inserts_before_the_target() {
-        let mut order = HudModule::all().to_vec();
+        let mut config = HudConfig::default();
 
-        move_hud_module(&mut order, HudModule::Timeline, HudModule::Summary, false);
+        config.move_module(HudModule::Timeline, HudModule::Summary, false);
 
         assert_eq!(
-            order,
+            config.module_order,
             [
                 HudModule::Title,
                 HudModule::Timeline,
