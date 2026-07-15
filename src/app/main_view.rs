@@ -1269,17 +1269,18 @@ impl DpsApp {
                     egui::Sense::click_and_drag(),
                 );
                 response.dnd_set_drag_payload(module);
+                let pointer_y = ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .map_or(module_rect.center().y, |pointer| pointer.y);
+                let insert_after = pointer_y >= module_rect.center().y;
                 if let Some(dragged) = response.dnd_hover_payload::<HudModule>()
                     && *dragged != module
                 {
-                    let pointer_y = ui
-                        .ctx()
-                        .pointer_interact_pos()
-                        .map_or(module_rect.center().y, |pointer| pointer.y);
-                    let indicator_y = if pointer_y < module_rect.center().y {
-                        module_rect.top()
-                    } else {
+                    let indicator_y = if insert_after {
                         module_rect.bottom()
+                    } else {
+                        module_rect.top()
                     };
                     painter.line_segment(
                         [
@@ -1292,7 +1293,7 @@ impl DpsApp {
                 if let Some(dropped) = response.dnd_release_payload::<HudModule>()
                     && *dropped != module
                 {
-                    reorder = Some((*dropped, module));
+                    reorder = Some((*dropped, module, insert_after));
                 }
                 response.context_menu(|ui| {
                     if ui.button(t("Hide module")).clicked() {
@@ -1311,20 +1312,13 @@ impl DpsApp {
             paint_hud_drag_ghost(ui.ctx(), pointer, size, module, hud_theme);
         }
 
-        if let Some((dragged, target)) = reorder {
-            let from = self
-                .hud_config
-                .module_order
-                .iter()
-                .position(|module| *module == dragged)
-                .expect("dragged HUD module belongs to module_order");
-            let target = self
-                .hud_config
-                .module_order
-                .iter()
-                .position(|module| *module == target)
-                .expect("drop target belongs to module_order");
-            self.hud_config.module_order.swap(from, target);
+        if let Some((dragged, target, insert_after)) = reorder {
+            move_hud_module(
+                &mut self.hud_config.module_order,
+                dragged,
+                target,
+                insert_after,
+            );
         }
         if let Some(module) = hide {
             self.hud_config.set_module_visible(module, false);
@@ -2296,6 +2290,28 @@ fn paint_hud_drag_ghost(
     ctx.request_repaint();
 }
 
+fn move_hud_module(
+    module_order: &mut Vec<HudModule>,
+    dragged: HudModule,
+    target: HudModule,
+    insert_after: bool,
+) {
+    let from = module_order
+        .iter()
+        .position(|module| *module == dragged)
+        .expect("dragged HUD module belongs to module_order");
+    let target = module_order
+        .iter()
+        .position(|module| *module == target)
+        .expect("drop target belongs to module_order");
+    let mut insertion = target + usize::from(insert_after);
+    let dragged = module_order.remove(from);
+    if from < insertion {
+        insertion -= 1;
+    }
+    module_order.insert(insertion, dragged);
+}
+
 fn hud_drag_ghost_rect(
     content_rect: egui::Rect,
     pointer: egui::Pos2,
@@ -2420,5 +2436,41 @@ mod responsive_tests {
 
         assert!(rect.contains(pointer));
         assert!(pointer.y <= rect.top() + 30.0);
+    }
+
+    #[test]
+    fn hud_dragging_down_inserts_after_the_target() {
+        let mut order = HudModule::all().to_vec();
+
+        move_hud_module(&mut order, HudModule::Title, HudModule::Characters, true);
+
+        assert_eq!(
+            order,
+            [
+                HudModule::Summary,
+                HudModule::Status,
+                HudModule::Characters,
+                HudModule::Title,
+                HudModule::Timeline,
+            ]
+        );
+    }
+
+    #[test]
+    fn hud_dragging_up_inserts_before_the_target() {
+        let mut order = HudModule::all().to_vec();
+
+        move_hud_module(&mut order, HudModule::Timeline, HudModule::Summary, false);
+
+        assert_eq!(
+            order,
+            [
+                HudModule::Title,
+                HudModule::Timeline,
+                HudModule::Summary,
+                HudModule::Status,
+                HudModule::Characters,
+            ]
+        );
     }
 }
