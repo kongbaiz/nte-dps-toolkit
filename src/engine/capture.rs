@@ -1173,7 +1173,7 @@ impl UltraTimeStopTracker {
                     events.push(event);
                 }
             }
-            [] => {
+            _ => {
                 self.pending_cooldowns
                     .push(PendingUltraTimeStop { timestamp });
                 events.push(TimeStopEvent::ExtraStart {
@@ -1181,7 +1181,6 @@ impl UltraTimeStopTracker {
                     reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
                 });
             }
-            _ => {}
         }
         events
     }
@@ -4716,6 +4715,71 @@ mod tests {
         nanally_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
         assert_eq!(
             tracker.events_from_hits(&[nanally_ultra_hit], &table),
+            vec![
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 13.584608,
+                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+                },
+                TimeStopEvent::UltraAnimation {
+                    timestamp: 10.0,
+                    char_id: 1010,
+                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                    duration_seconds: 3.584608,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn co_axis_cooldown_with_multiple_characters_waits_for_the_ultra_hit() {
+        let table = HashMap::from([
+            (
+                1010,
+                UltraTimeStopEntry {
+                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                    end_ability_event_seconds: 3.584608,
+                    source: "test".to_owned(),
+                    confidence: "high".to_owned(),
+                    ..UltraTimeStopEntry::default()
+                },
+            ),
+            (
+                1052,
+                UltraTimeStopEntry {
+                    ability_id: "GA_Jin_UltraSkill".to_owned(),
+                    end_ability_event_seconds: 2.183333,
+                    source: "test".to_owned(),
+                    confidence: "high".to_owned(),
+                    ..UltraTimeStopEntry::default()
+                },
+            ),
+        ]);
+        let mut tracker = UltraTimeStopTracker::default();
+        assert_eq!(
+            tracker
+                .events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[1052, 1010], &table,),
+            vec![TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
+            }]
+        );
+
+        let mut previous_character_hit = targetless_hit();
+        previous_character_hit.timestamp = 10.2;
+        previous_character_hit.char_id = 1052;
+        previous_character_hit.ability_name = Some("GA_Jin_Skill".to_owned());
+        assert!(
+            tracker
+                .events_from_hits(&[previous_character_hit], &table)
+                .is_empty()
+        );
+
+        let mut active_character_ultra_hit = targetless_hit();
+        active_character_ultra_hit.timestamp = 12.0;
+        active_character_ultra_hit.char_id = 1010;
+        active_character_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
+        assert_eq!(
+            tracker.events_from_hits(&[active_character_ultra_hit], &table),
             vec![
                 TimeStopEvent::ExtraEnd {
                     timestamp: 13.584608,
