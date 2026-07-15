@@ -1221,6 +1221,7 @@ pub struct AbyssRunState {
     pub success_at: Option<f64>,
     pub exited_at: Option<f64>,
     pub event_count: u64,
+    character_halves: HashMap<u32, AbyssHalf>,
 }
 
 impl AbyssRunState {
@@ -1247,6 +1248,8 @@ impl AbyssRunState {
 
     fn clear_restarted_half(&mut self, half: AbyssHalf, timestamp: f64) {
         *self.half_mut(half) = PartyCombatState::default();
+        self.character_halves
+            .retain(|_, character_half| *character_half != half);
         self.success_at = None;
         self.exited_at = None;
         match half {
@@ -1262,6 +1265,7 @@ impl AbyssRunState {
         self.second_half_at = None;
         self.success_at = None;
         self.exited_at = None;
+        self.character_halves.clear();
     }
 
     pub fn apply_event(&mut self, event: AbyssEvent) {
@@ -1334,14 +1338,29 @@ impl AbyssRunState {
     }
 
     pub fn push_hit(&mut self, hit: Hit) {
-        if let Some(half) = self.active_half {
-            self.half_mut(half).push_hit(hit);
-        }
+        let Some(active_half) = self.active_half else {
+            return;
+        };
+        let half = if hit.char_known {
+            *self
+                .character_halves
+                .entry(hit.char_id)
+                .or_insert(active_half)
+        } else {
+            active_half
+        };
+        self.half_mut(half).push_hit(hit);
     }
 
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         match event {
-            TimeStopEvent::UltraAnimation { .. } | TimeStopEvent::ExtraStart { .. } => {
+            TimeStopEvent::UltraAnimation { char_id, .. } => {
+                if let Some(half) = self.active_half {
+                    let half = *self.character_halves.entry(*char_id).or_insert(half);
+                    self.half_mut(half).apply_time_stop_event(event);
+                }
+            }
+            TimeStopEvent::ExtraStart { .. } => {
                 if let Some(half) = self.active_half {
                     self.half_mut(half).apply_time_stop_event(event);
                 }
@@ -1704,14 +1723,16 @@ impl CombatState {
     }
 
     fn backfill_abyss_half_from_global(&mut self, half: AbyssHalf) {
-        let party = self.abyss.half_mut(half);
-        if !party.hits.is_empty() {
+        if !self.abyss.half(half).hits.is_empty() {
             return;
         }
         for hit in self.hits.iter().cloned() {
-            party.push_hit(hit);
+            if hit.char_known {
+                self.abyss.character_halves.insert(hit.char_id, half);
+            }
+            self.abyss.half_mut(half).push_hit(hit);
         }
-        party.time_stop = self.time_stop.clone();
+        self.abyss.half_mut(half).time_stop = self.time_stop.clone();
     }
 }
 
@@ -2915,6 +2936,124 @@ mod tests {
         assert_eq!(state.abyss.second_half.total_damage, 300.0);
         assert_eq!(state.abyss.second_half.hits.len(), 2);
         assert!((state.abyss.second_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn delayed_hit_after_half_switch_keeps_original_character_half() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: Some(5),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
+
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(5),
+            floor: Some(12),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(3.5, 1076, "outgoing", 20.0));
+        state.push_hit(test_hit(3.6, 1052, "outgoing", 200.0));
+
+        assert_eq!(state.abyss.first_half.hits.len(), 2);
+        assert_eq!(state.abyss.first_half.total_damage, 120.0);
+        assert_eq!(state.abyss.second_half.hits.len(), 1);
+        assert_eq!(state.abyss.second_half.total_damage, 200.0);
+        assert!(state.abyss.second_half.stats.contains_key(&1052));
+        assert!(!state.abyss.second_half.stats.contains_key(&1076));
+    }
+
+    #[test]
+    fn ultra_binds_character_before_first_delayed_hit() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: None,
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
+            timestamp: 2.0,
+            char_id: 1010,
+            ability_id: "GA_Nanally_UltraSkill".to_owned(),
+            duration_seconds: 2.0,
+        });
+
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: None,
+            floor: Some(12),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(3.5, 1010, "outgoing", 100.0));
+        state.push_hit(test_hit(3.6, 1052, "outgoing", 200.0));
+
+        assert_eq!(state.abyss.first_half.hits.len(), 1);
+        assert_eq!(state.abyss.first_half.total_damage, 100.0);
+        assert_eq!(state.abyss.second_half.hits.len(), 1);
+        assert_eq!(state.abyss.second_half.total_damage, 200.0);
+    }
+
+    #[test]
+    fn restart_releases_cleared_character_half() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: None,
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
+        state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 3.0 });
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 4.0,
+            cycle: None,
+            floor: Some(12),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(5.0, 1076, "outgoing", 200.0));
+
+        assert!(state.abyss.first_half.hits.is_empty());
+        assert_eq!(state.abyss.second_half.hits.len(), 1);
+        assert_eq!(state.abyss.second_half.total_damage, 200.0);
+    }
+
+    #[test]
+    fn unknown_character_hits_follow_the_active_half() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: None,
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        let mut first = test_hit(2.0, 0, "outgoing", 100.0);
+        first.char_known = false;
+        state.push_hit(first);
+
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: None,
+            floor: Some(12),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        let mut second = test_hit(4.0, 0, "outgoing", 200.0);
+        second.char_known = false;
+        state.push_hit(second);
+
+        assert_eq!(state.abyss.first_half.total_damage, 100.0);
+        assert_eq!(state.abyss.second_half.total_damage, 200.0);
     }
 
     #[test]
