@@ -242,6 +242,10 @@ pub struct UltraTimeStopEntry {
     #[serde(default)]
     pub ability_id: String,
     #[serde(default)]
+    pub montage_asset: String,
+    #[serde(default)]
+    pub activation_cooldown_tags: Vec<String>,
+    #[serde(default)]
     pub end_ability_event_seconds: f64,
     #[serde(default)]
     pub extra_cooldowns: Vec<UltraTimeStopCooldown>,
@@ -2568,6 +2572,36 @@ mod character_tests {
         let payload = b"FCharacterForNet....ft_character_10760".to_vec();
 
         assert!(find_final_tower_character_evidence(&payload).is_empty());
+    }
+
+    #[test]
+    fn every_ultra_time_stop_entry_has_an_activation_cooldown_tag() {
+        let entries = load_ultra_time_stops(Path::new(ULTRA_TIME_STOP_DATA_PATH))
+            .expect("ultra time-stop resource should load");
+        let mut specific_tag_owners = HashMap::new();
+
+        assert!(!entries.is_empty());
+        for (char_id, entry) in entries {
+            assert!(
+                !entry.activation_cooldown_tags.is_empty(),
+                "character {char_id} has no activation cooldown tag"
+            );
+            assert!(entry.activation_cooldown_tags.iter().all(|tag| {
+                tag == "CoolDown.Player.UltraSkill.F"
+                    || tag.starts_with("CoolDown.Player.UltraSkill.")
+            }));
+            for tag in entry
+                .activation_cooldown_tags
+                .iter()
+                .filter(|tag| tag.as_str() != "CoolDown.Player.UltraSkill.F")
+            {
+                assert_eq!(
+                    specific_tag_owners.insert(tag.clone(), char_id),
+                    None,
+                    "activation cooldown tag {tag} belongs to multiple characters"
+                );
+            }
+        }
     }
 }
 

@@ -726,6 +726,79 @@ struct DecodedPayloadText {
     has_readable_text: bool,
 }
 
+fn ultra_montage_object(entry: &UltraTimeStopEntry) -> Option<&str> {
+    let (package, object) = entry.montage_asset.rsplit_once('.')?;
+    (package.rsplit('/').next()? == object).then_some(object)
+}
+
+fn ultra_montage_character_id(package: &str) -> Option<u32> {
+    let player_path = package.strip_prefix("/Game/Characters/Player/")?;
+    let (number, _) = player_path.split_once('_')?;
+    if number.len() != 3 {
+        return None;
+    }
+    number.parse::<u32>().ok()?.checked_add(1000)
+}
+
+fn text_contains_ultra_montage(text: &str, char_id: u32, montage_object: &str) -> bool {
+    text.lines().any(|line| {
+        line.match_indices("/Game/Characters/Player/")
+            .any(|(path_offset, _)| {
+                let player_path = &line[path_offset..];
+                if ultra_montage_character_id(player_path) != Some(char_id) {
+                    return false;
+                }
+                player_path
+                    .match_indices(montage_object)
+                    .any(|(object_offset, _)| {
+                        let bytes = player_path.as_bytes();
+                        let prefix_is_boundary =
+                            object_offset == 0 || matches!(bytes[object_offset - 1], b'/' | b'.');
+                        let suffix = bytes.get(object_offset + montage_object.len());
+                        prefix_is_boundary && matches!(suffix, None | Some(b'.' | b'_'))
+                    })
+            })
+    })
+}
+
+fn ultra_montage_character_ids(
+    decoded_text: &str,
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+) -> Vec<u32> {
+    if !decoded_text.contains("/Game/Characters/Player/") {
+        return Vec::new();
+    }
+    let mut ids = Vec::new();
+    for (char_id, entry) in ultra_time_stops {
+        let Some(montage_object) = ultra_montage_object(entry) else {
+            continue;
+        };
+        if text_contains_ultra_montage(decoded_text, *char_id, montage_object)
+            && !ids.contains(char_id)
+        {
+            ids.push(*char_id);
+        }
+    }
+    ids
+}
+
+fn ultra_activation_character_ids(
+    decoded_text: &str,
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for (char_id, entry) in ultra_time_stops {
+        if entry
+            .activation_cooldown_tags
+            .iter()
+            .any(|tag| tag != ULTRA_COOLDOWN_TAG && text_has_exact_marker(decoded_text, tag))
+        {
+            ids.push(*char_id);
+        }
+    }
+    ids
+}
+
 fn decode_payload_text(data: &[u8]) -> String {
     decode_payload_text_filtered(data, |_| true).text
 }
@@ -738,6 +811,7 @@ fn decode_summary_payload_text(
         value.contains("Abyss")
             || value.contains("ConditionState_Success")
             || value.contains("UltraSkill")
+            || !ultra_montage_character_ids(value, ultra_time_stops).is_empty()
             || ultra_time_stops.values().any(|entry| {
                 entry
                     .ignored_cooldown_tags
@@ -1135,10 +1209,41 @@ fn extra_time_stop_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<T
 struct UltraTimeStopTracker {
     recent_emitted: HashMap<u32, f64>,
     pending_cooldowns: Vec<PendingUltraTimeStop>,
+    recent_montages: Vec<RecentUltraMontage>,
+    next_pending_id: u64,
 }
 
 struct PendingUltraTimeStop {
     timestamp: f64,
+    flow: Option<UltraTimeStopFlowKey>,
+    public_reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UltraTimeStopFlowKey {
+    source: (Ipv4Addr, u16),
+    destination: (Ipv4Addr, u16),
+}
+
+struct RecentUltraMontage {
+    timestamp: f64,
+    char_id: u32,
+    flow: Option<UltraTimeStopFlowKey>,
+}
+
+fn export_ultra_time_stop_flow_key(
+    source: &str,
+    destination: &str,
+) -> Option<UltraTimeStopFlowKey> {
+    fn endpoint(value: &str) -> Option<(Ipv4Addr, u16)> {
+        let (ip, port) = value.rsplit_once(':')?;
+        Some((ip.parse().ok()?, port.parse().ok()?))
+    }
+
+    Some(UltraTimeStopFlowKey {
+        source: endpoint(source)?,
+        destination: endpoint(destination)?,
+    })
 }
 
 impl UltraTimeStopTracker {
@@ -1147,10 +1252,19 @@ impl UltraTimeStopTracker {
         timestamp: f64,
         decoded_text: &str,
         declared_ids: &[u32],
+        server_to_client: bool,
+        flow: Option<UltraTimeStopFlowKey>,
         ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     ) -> Vec<TimeStopEvent> {
         let mut events = extra_time_stop_events_from_text(timestamp, decoded_text);
         self.resolve_finished_cooldowns(timestamp, decoded_text, ultra_time_stops, &mut events);
+        self.observe_ultra_montages(
+            timestamp,
+            decoded_text,
+            server_to_client,
+            flow,
+            ultra_time_stops,
+        );
         let (mut special_events, handled_special_cooldown) = special_ultra_cooldown_events(
             timestamp,
             decoded_text,
@@ -1159,30 +1273,161 @@ impl UltraTimeStopTracker {
         );
         events.append(&mut special_events);
 
-        if handled_special_cooldown || !decoded_text.contains(ULTRA_COOLDOWN_TAG_PREFIX) {
+        if handled_special_cooldown || !server_to_client {
             return events;
         }
-        match declared_ids {
-            [char_id] => {
+
+        let has_time_actor = text_has_exact_marker(decoded_text, ULTRA_TIME_ACTOR_TAG);
+        let activation_char_ids = ultra_activation_character_ids(decoded_text, ultra_time_stops);
+        let has_activation = text_has_exact_marker(decoded_text, ULTRA_COOLDOWN_TAG)
+            || !activation_char_ids.is_empty();
+        if has_time_actor && !has_activation {
+            self.start_time_actor(timestamp, flow, &mut events);
+            return events;
+        }
+        if !has_activation || is_shinku_rage_cooldown_snapshot(decoded_text) {
+            return events;
+        }
+
+        let time_actor_reason = self.take_time_actor_reason(flow);
+        let had_time_actor = time_actor_reason.is_some();
+        if let Some(reason) = time_actor_reason {
+            events.push(TimeStopEvent::ExtraEnd { timestamp, reason });
+        }
+        let montage_char_id = self.consume_recent_ultra_montage(flow);
+        let char_id = match activation_char_ids.as_slice() {
+            [activation_id] => match montage_char_id {
+                Some(montage_id) if montage_id != *activation_id => None,
+                _ => Some(*activation_id),
+            },
+            [] => match (montage_char_id, declared_ids) {
+                (Some(montage_id), [declared_id]) if montage_id != *declared_id => None,
+                (Some(montage_id), _) => Some(montage_id),
+                (None, [declared_id]) if had_time_actor => Some(*declared_id),
+                _ => None,
+            },
+            _ => None,
+        };
+        match char_id {
+            Some(char_id) => {
+                self.clear_internal_cooldowns(flow);
                 if let Some(event) = fixed_ultra_time_stop_event(
                     timestamp,
-                    *char_id,
+                    char_id,
                     ultra_time_stops,
                     &mut self.recent_emitted,
                 ) {
                     events.push(event);
                 }
             }
-            _ => {
-                self.pending_cooldowns
-                    .push(PendingUltraTimeStop { timestamp });
-                events.push(TimeStopEvent::ExtraStart {
-                    timestamp,
-                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-                });
+            None => {
+                if !has_time_actor || had_time_actor {
+                    self.queue_internal_cooldown(timestamp, flow);
+                }
             }
         }
         events
+    }
+
+    fn start_time_actor(
+        &mut self,
+        timestamp: f64,
+        flow: Option<UltraTimeStopFlowKey>,
+        events: &mut Vec<TimeStopEvent>,
+    ) {
+        if self
+            .pending_cooldowns
+            .iter()
+            .any(|pending| pending.flow == flow && pending.public_reason.is_some())
+        {
+            return;
+        }
+        self.clear_internal_cooldowns(flow);
+        let reason = format!("{PENDING_ULTRA_TIME_STOP_REASON}.{}", self.next_pending_id);
+        self.next_pending_id += 1;
+        self.pending_cooldowns.push(PendingUltraTimeStop {
+            timestamp,
+            flow,
+            public_reason: Some(reason.clone()),
+        });
+        events.push(TimeStopEvent::ExtraStart { timestamp, reason });
+    }
+
+    fn take_time_actor_reason(&mut self, flow: Option<UltraTimeStopFlowKey>) -> Option<String> {
+        let index = self
+            .pending_cooldowns
+            .iter()
+            .rposition(|pending| pending.flow == flow && pending.public_reason.is_some())?;
+        self.pending_cooldowns.swap_remove(index).public_reason
+    }
+
+    fn queue_internal_cooldown(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
+        if self.pending_cooldowns.iter().any(|pending| {
+            pending.flow == flow
+                && pending.public_reason.is_none()
+                && timestamp - pending.timestamp <= ULTRA_INTERNAL_COOLDOWN_DUPLICATE_WINDOW_SECONDS
+        }) {
+            return;
+        }
+        self.pending_cooldowns.push(PendingUltraTimeStop {
+            timestamp,
+            flow,
+            public_reason: None,
+        });
+    }
+
+    fn clear_internal_cooldowns(&mut self, flow: Option<UltraTimeStopFlowKey>) {
+        self.pending_cooldowns
+            .retain(|pending| pending.flow != flow || pending.public_reason.is_some());
+    }
+
+    fn observe_ultra_montages(
+        &mut self,
+        timestamp: f64,
+        decoded_text: &str,
+        server_to_client: bool,
+        flow: Option<UltraTimeStopFlowKey>,
+        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+    ) {
+        self.recent_montages.retain(|candidate| {
+            let age = timestamp - candidate.timestamp;
+            (0.0..=ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS).contains(&age)
+        });
+        if !server_to_client {
+            return;
+        }
+        for char_id in ultra_montage_character_ids(decoded_text, ultra_time_stops) {
+            if !self
+                .recent_montages
+                .iter()
+                .any(|candidate| candidate.char_id == char_id && candidate.flow == flow)
+            {
+                self.recent_montages.push(RecentUltraMontage {
+                    timestamp,
+                    char_id,
+                    flow,
+                });
+            }
+        }
+    }
+
+    fn consume_recent_ultra_montage(&mut self, flow: Option<UltraTimeStopFlowKey>) -> Option<u32> {
+        let mut char_id = None;
+        let mut ambiguous = false;
+        for candidate in self
+            .recent_montages
+            .iter()
+            .filter(|candidate| candidate.flow == flow)
+        {
+            match char_id {
+                None => char_id = Some(candidate.char_id),
+                Some(existing) if existing == candidate.char_id => {}
+                Some(_) => ambiguous = true,
+            }
+        }
+        self.recent_montages
+            .retain(|candidate| candidate.flow != flow);
+        if ambiguous { None } else { char_id }
     }
 
     fn events_from_hits(
@@ -1211,38 +1456,34 @@ impl UltraTimeStopTracker {
             .iter()
             .enumerate()
             .filter(|(_, pending)| {
-                hit.timestamp >= pending.timestamp
-                    && hit.timestamp - pending.timestamp <= ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
+                let window = if pending.public_reason.is_some() {
+                    ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
+                } else {
+                    ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
+                };
+                hit.timestamp >= pending.timestamp && hit.timestamp - pending.timestamp <= window
             })
             .max_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp))
         else {
             return;
         };
         let pending = self.pending_cooldowns.swap_remove(index);
+        let activation_timestamp = if let Some(reason) = pending.public_reason {
+            events.push(TimeStopEvent::ExtraEnd {
+                timestamp: hit.timestamp,
+                reason,
+            });
+            hit.timestamp
+        } else {
+            pending.timestamp
+        };
         if let Some(event) = fixed_ultra_time_stop_event(
-            pending.timestamp,
+            activation_timestamp,
             char_id,
             ultra_time_stops,
             &mut self.recent_emitted,
         ) {
-            let TimeStopEvent::UltraAnimation {
-                timestamp,
-                duration_seconds,
-                ..
-            } = &event
-            else {
-                unreachable!("fixed ultra time stop always emits an ultra animation event");
-            };
-            events.push(TimeStopEvent::ExtraEnd {
-                timestamp: timestamp + duration_seconds,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            });
             events.push(event);
-        } else {
-            events.push(TimeStopEvent::ExtraEnd {
-                timestamp: pending.timestamp,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            });
         }
     }
 
@@ -1255,19 +1496,32 @@ impl UltraTimeStopTracker {
     ) {
         let mut index = 0;
         while index < self.pending_cooldowns.len() {
-            let pending_timestamp = self.pending_cooldowns[index].timestamp;
-            let expired = timestamp - pending_timestamp > ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS;
+            let pending = &self.pending_cooldowns[index];
+            let window = if pending.public_reason.is_some() {
+                ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
+            } else {
+                ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
+            };
+            let expired = timestamp - pending.timestamp > window;
             if !expired {
                 index += 1;
                 continue;
             }
             let pending = self.pending_cooldowns.swap_remove(index);
-            events.push(TimeStopEvent::ExtraEnd {
-                timestamp: pending.timestamp,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            });
+            if let Some(reason) = pending.public_reason {
+                events.push(TimeStopEvent::ExtraEnd { timestamp, reason });
+            }
         }
     }
+}
+
+fn text_has_exact_marker(decoded_text: &str, marker: &str) -> bool {
+    decoded_text.lines().any(|line| line.trim() == marker)
+}
+
+fn is_shinku_rage_cooldown_snapshot(decoded_text: &str) -> bool {
+    text_has_exact_marker(decoded_text, SHINKU_RAGE_ABILITY_TAG)
+        || text_has_exact_marker(decoded_text, SHINKU_RAGE_GAMEPLAY_CUE_TAG)
 }
 
 fn ultra_damage_time_stop_char_id(
@@ -1315,9 +1569,15 @@ const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
 const JIN_EXTRA_TIME_STOP_REASON: &str = "Event.Montage.Player.UltraSkill.Jin";
 const JIN_ENTER_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop";
 const JIN_CLEAR_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.ClearTimeStop";
-const ULTRA_COOLDOWN_TAG_PREFIX: &str = "CoolDown.Player.UltraSkill";
+const ULTRA_COOLDOWN_TAG: &str = "CoolDown.Player.UltraSkill.F";
+const ULTRA_TIME_ACTOR_TAG: &str = "CoolDown.Player.UltraSkill.TimeActor";
 const PENDING_ULTRA_TIME_STOP_REASON: &str = "CoolDown.Player.UltraSkill.Pending";
 const ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS: f64 = 4.5;
+const ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS: f64 = 2.5;
+const ULTRA_INTERNAL_COOLDOWN_DUPLICATE_WINDOW_SECONDS: f64 = 0.1;
+const ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.02;
+const SHINKU_RAGE_ABILITY_TAG: &str = "Ability.Player.Shinku.Rage";
+const SHINKU_RAGE_GAMEPLAY_CUE_TAG: &str = "GameplayCue.Display.Shinku.Rage";
 
 fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
     match hit.attack_type.as_deref() {
@@ -2674,6 +2934,10 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
+        let ultra_time_stop_flow = Some(UltraTimeStopFlowKey {
+            source: (src, src_port),
+            destination: (dst, dst_port),
+        });
         let gameplay_effects = parse_gameplay_effects(payload);
         let mut hits = if outgoing {
             let packet_char_id = if ids.len() == 1 {
@@ -2740,6 +3004,8 @@ impl PacketDecoder {
             timestamp,
             &decoded_text,
             &ids,
+            !outgoing,
+            ultra_time_stop_flow,
             &self.ultra_time_stops,
         );
         time_stop_events.extend(
@@ -3537,10 +3803,14 @@ fn send_export_packet(
     } else {
         packet.decoded_text
     };
+    let server_to_client = !packet.direction.eq_ignore_ascii_case("C2S");
+    let ultra_time_stop_flow = export_ultra_time_stop_flow_key(&packet.source, &packet.destination);
     for event in ultra_time_stop.events_from_packet(
         packet.timestamp_unix,
         &decoded_text,
         &declared_ids,
+        server_to_client,
+        ultra_time_stop_flow,
         ultra_time_stops,
     ) {
         sender
@@ -3700,6 +3970,104 @@ mod tests {
             data_bit_len: 8,
             data: vec![data],
         }
+    }
+
+    fn ultra_entry(ability_id: &str, montage_asset: &str, duration: f64) -> UltraTimeStopEntry {
+        UltraTimeStopEntry {
+            ability_id: ability_id.to_owned(),
+            montage_asset: montage_asset.to_owned(),
+            end_ability_event_seconds: duration,
+            source: "test".to_owned(),
+            confidence: "high".to_owned(),
+            ..UltraTimeStopEntry::default()
+        }
+    }
+
+    fn ultra_entry_with_activation_tags(
+        ability_id: &str,
+        montage_asset: &str,
+        duration: f64,
+        activation_cooldown_tags: &[&str],
+    ) -> UltraTimeStopEntry {
+        UltraTimeStopEntry {
+            activation_cooldown_tags: activation_cooldown_tags
+                .iter()
+                .map(|tag| (*tag).to_owned())
+                .collect(),
+            ..ultra_entry(ability_id, montage_asset, duration)
+        }
+    }
+
+    fn ultra_test_flow(server_port: u16) -> UltraTimeStopFlowKey {
+        UltraTimeStopFlowKey {
+            source: (Ipv4Addr::new(10, 0, 0, 3), server_port),
+            destination: (Ipv4Addr::new(10, 0, 0, 2), 50_000),
+        }
+    }
+
+    fn ultra_test_table() -> HashMap<u32, UltraTimeStopEntry> {
+        let female_montage = "/Game/Characters/Player/051_female/animation/Skill/char_f_skill_utraskill_Montage.char_f_skill_utraskill_Montage";
+        HashMap::from([
+            (
+                1003,
+                ultra_entry_with_activation_tags(
+                    "GA_Sagiri_UltraSkill",
+                    "/Game/Characters/Player/003_sagiri_1/animation/Skill/Sagiri_UltralSkill.Sagiri_UltralSkill",
+                    3.533936,
+                    &["CoolDown.Player.UltraSkill.Sagiri"],
+                ),
+            ),
+            (
+                1004,
+                ultra_entry_with_activation_tags(
+                    "GA_Lacrimosa_UltraSkill",
+                    "/Game/Characters/Player/004_lacrimosa/animation/Skill/Lacrimosa_UltraSkill_ModB.Lacrimosa_UltraSkill_ModB",
+                    4.218461,
+                    &["CoolDown.Player.UltraSkill.Lacrimosa"],
+                ),
+            ),
+            (
+                1010,
+                ultra_entry(
+                    "GA_Nanally_UltraSkill",
+                    "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill.Nanally_UltralSkill",
+                    3.584608,
+                ),
+            ),
+            (
+                1025,
+                ultra_entry(
+                    "GA_Hathor_UltraSkill",
+                    "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill.Hathor_UltraSkill",
+                    4.518597,
+                ),
+            ),
+            (
+                1036,
+                ultra_entry("GA_Zankou_UltraSkill", female_montage, 4.161653),
+            ),
+            (
+                1051,
+                ultra_entry("GA_Female051_UltraSkill", female_montage, 4.161653),
+            ),
+            (
+                1055,
+                ultra_entry_with_activation_tags(
+                    "GA_Kuhara_UltraSkill",
+                    "/Game/Characters/Player/055_kuhara/animation/skill/Kuhara_UltraSkill.Kuhara_UltraSkill",
+                    5.599441,
+                    &["CoolDown.Player.UltraSkill.Kuhara"],
+                ),
+            ),
+            (
+                1076,
+                ultra_entry(
+                    "GA_Shinku_UltraSkill",
+                    "/Game/Characters/Player/076_shinku/animation/skill/Shinku_UltraSkill.Shinku_UltraSkill",
+                    7.300015,
+                ),
+            ),
+        ])
     }
 
     #[derive(Default)]
@@ -4452,14 +4820,14 @@ mod tests {
             timestamp_unix: 10.0,
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
-            direction: "C2S".to_owned(),
+            direction: "S2C".to_owned(),
             payload_len: 0,
             declared_ids: serde_json::json!([]),
             parsed_hits: 0,
             note: String::new(),
             payload_preview: String::new(),
             payload_hex: String::new(),
-            decoded_text: "CoolDown.Player.UltraSkill.F".to_owned(),
+            decoded_text: "CoolDown.Player.UltraSkill.TimeActor".to_owned(),
         };
         assert!(
             send_export_packet(
@@ -4489,7 +4857,7 @@ mod tests {
             timestamp_unix: 15.0,
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
-            direction: "C2S".to_owned(),
+            direction: "S2C".to_owned(),
             payload_len: 4,
             declared_ids: serde_json::json!([]),
             parsed_hits: 0,
@@ -4511,7 +4879,7 @@ mod tests {
         assert!(matches!(
             receiver.try_recv().expect("pending end should be emitted"),
             EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
-                timestamp: 10.0,
+                timestamp: 15.0,
                 ..
             })
         ));
@@ -4531,23 +4899,461 @@ mod tests {
             },
         )]);
         let mut tracker = UltraTimeStopTracker::default();
-        let events =
-            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[1052], &table);
+        assert!(matches!(
+            tracker
+                .events_from_packet(
+                    9.0,
+                    "CoolDown.Player.UltraSkill.TimeActor",
+                    &[1052],
+                    true,
+                    None,
+                    &table,
+                )
+                .as_slice(),
+            [TimeStopEvent::ExtraStart { timestamp: 9.0, .. }]
+        ));
+        let events = tracker.events_from_packet(
+            10.0,
+            "CoolDown.Player.UltraSkill.F",
+            &[1052],
+            true,
+            None,
+            &table,
+        );
 
         assert_eq!(
             events,
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1052,
-                ability_id: "GA_Jin_UltraSkill".to_owned(),
-                duration_seconds: 2.183333,
-            }]
+            vec![
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 10.0,
+                    reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
+                },
+                TimeStopEvent::UltraAnimation {
+                    timestamp: 10.0,
+                    char_id: 1052,
+                    ability_id: "GA_Jin_UltraSkill".to_owned(),
+                    duration_seconds: 2.183333,
+                },
+            ]
         );
         assert!(
             tracker
-                .events_from_packet(11.0, "CoolDown.Player.UltraSkill.F", &[1052], &table)
+                .events_from_packet(
+                    11.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[1052],
+                    true,
+                    None,
+                    &table,
+                )
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn time_actor_prelude_closes_at_montage_activation() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "CoolDown.Player.UltraSkill.TimeActor",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
+            }]
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                11.846596,
+                "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 11.846596,
+                    reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
+                },
+                TimeStopEvent::UltraAnimation {
+                    timestamp: 11.846596,
+                    char_id: 1025,
+                    ability_id: "GA_Hathor_UltraSkill".to_owned(),
+                    duration_seconds: 4.518597,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn time_actor_prelude_closes_at_specific_activation_tag() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "CoolDown.Player.UltraSkill.TimeActor",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
+            }]
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                11.877756,
+                "CoolDown.Player.UltraSkill.Sagiri",
+                &[1051],
+                true,
+                flow,
+                &table,
+            ),
+            vec![
+                TimeStopEvent::ExtraEnd {
+                    timestamp: 11.877756,
+                    reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
+                },
+                TimeStopEvent::UltraAnimation {
+                    timestamp: 11.877756,
+                    char_id: 1003,
+                    ability_id: "GA_Sagiri_UltraSkill".to_owned(),
+                    duration_seconds: 3.533936,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn specific_activation_tags_identify_every_non_f_test_character() {
+        let table = ultra_test_table();
+        for (tag, char_id, ability_id, duration_seconds) in [
+            (
+                "CoolDown.Player.UltraSkill.Sagiri",
+                1003,
+                "GA_Sagiri_UltraSkill",
+                3.533936,
+            ),
+            (
+                "CoolDown.Player.UltraSkill.Lacrimosa",
+                1004,
+                "GA_Lacrimosa_UltraSkill",
+                4.218461,
+            ),
+            (
+                "CoolDown.Player.UltraSkill.Kuhara",
+                1055,
+                "GA_Kuhara_UltraSkill",
+                5.599441,
+            ),
+        ] {
+            let mut tracker = UltraTimeStopTracker::default();
+            assert_eq!(
+                tracker.events_from_packet(10.0, tag, &[], true, None, &table),
+                vec![TimeStopEvent::UltraAnimation {
+                    timestamp: 10.0,
+                    char_id,
+                    ability_id: ability_id.to_owned(),
+                    duration_seconds,
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn generic_cooldown_accepts_skin_montage_variant() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "/Game/Characters/Player/004_lacrimosa_fashion2/animation/Skill/Lacrimosa_UltraSkill_ModB\nCoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                Some(ultra_test_flow(7_777)),
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1004,
+                ability_id: "GA_Lacrimosa_UltraSkill".to_owned(),
+                duration_seconds: 4.218461,
+            }]
+        );
+    }
+
+    #[test]
+    fn time_actor_declared_id_does_not_identify_character() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(matches!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.TimeActor",
+                    &[1051],
+                    true,
+                    Some(ultra_test_flow(7_777)),
+                    &table,
+                )
+                .as_slice(),
+            [TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                ..
+            }]
+        ));
+        assert!(tracker.recent_emitted.is_empty());
+    }
+
+    #[test]
+    fn expired_time_actor_ends_at_observed_expiration() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(matches!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.TimeActor",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .as_slice(),
+            [TimeStopEvent::ExtraStart {
+                timestamp: 10.0,
+                ..
+            }]
+        ));
+        assert_eq!(
+            tracker.events_from_packet(13.0, "", &[], true, None, &table),
+            vec![TimeStopEvent::ExtraEnd {
+                timestamp: 13.0,
+                reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
+            }]
+        );
+    }
+
+    #[test]
+    fn mixed_time_actor_snapshot_does_not_open_public_pending() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.TimeActor\nCoolDown.Player.UltraSkill.F",
+                    &[1051],
+                    true,
+                    Some(ultra_test_flow(7_777)),
+                    &table,
+                )
+                .is_empty()
+        );
+        assert!(tracker.pending_cooldowns.is_empty());
+    }
+
+    #[test]
+    fn shinku_rage_repeated_f_does_not_open_or_claim_pending() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "GameplayCue.Display.Shinku.Rage\nCoolDown.Player.UltraSkill.F\nAbility.Player.Shinku.Rage",
+                    &[],
+                    true,
+                    Some(ultra_test_flow(7_777)),
+                    &table,
+                )
+                .is_empty()
+        );
+        let mut hit = targetless_hit();
+        hit.timestamp = 10.5;
+        hit.char_id = 1076;
+        hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
+        assert!(tracker.events_from_hits(&[hit], &table).is_empty());
+    }
+
+    #[test]
+    fn ultra_cooldown_same_packet_montage_identifies_empty_nanally_cast() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\nCoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                Some(ultra_test_flow(7_777)),
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
+        );
+    }
+
+    #[test]
+    fn ultra_cooldown_uses_adjacent_montage_and_ignores_mismatched_table_key() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "/Game/Characters/Player/051_female/animation/Skill/char_f_skill_utraskill_Montage",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                10.003,
+                "CoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.003,
+                char_id: 1051,
+                ability_id: "GA_Female051_UltraSkill".to_owned(),
+                duration_seconds: 4.161653,
+            }]
+        );
+    }
+
+    #[test]
+    fn ultra_cooldown_accepts_character_montage_variant() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "/Game/Characters/Player/076_shinku/animation/skill/Shinku_UltraSkill_Boss\nCoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                Some(ultra_test_flow(7_777)),
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1076,
+                ability_id: "GA_Shinku_UltraSkill".to_owned(),
+                duration_seconds: 7.300015,
+            }]
+        );
+    }
+
+    #[test]
+    fn ultra_cooldown_ignores_c2s_and_other_flow_montages() {
+        let table = ultra_test_table();
+        let montage = "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill";
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(10.0, montage, &[], false, flow, &table)
+                .is_empty()
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.005,
+                    montage,
+                    &[],
+                    true,
+                    Some(ultra_test_flow(8_888)),
+                    &table,
+                )
+                .is_empty()
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.01,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+    }
+
+    #[test]
+    fn ultra_cooldown_keeps_ambiguous_montages_pending() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\n/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    Some(ultra_test_flow(7_777)),
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+    }
+
+    #[test]
+    fn ultra_cooldown_keeps_conflicting_declared_character_pending() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\nCoolDown.Player.UltraSkill.F",
+                    &[1025],
+                    true,
+                    Some(ultra_test_flow(7_777)),
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
     }
 
     #[test]
@@ -4556,6 +5362,10 @@ mod tests {
             1076,
             UltraTimeStopEntry {
                 ability_id: "GA_Shinku_UltraSkill".to_owned(),
+                montage_asset: "/Game/Characters/Player/076_shinku/animation/skill/Shinku_UltraSkill.Shinku_UltraSkill".to_owned(),
+                activation_cooldown_tags: vec![
+                    "CoolDown.Player.UltraSkill.F".to_owned(),
+                ],
                 end_ability_event_seconds: 7.300015,
                 extra_cooldowns: vec![UltraTimeStopCooldown {
                     cooldown_tag: "CoolDown.Player.UltraSkill.Shinku.UltraRage".to_owned(),
@@ -4570,12 +5380,17 @@ mod tests {
             },
         )]);
         let mut tracker = UltraTimeStopTracker::default();
-        assert_eq!(
-            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[], &table),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
         );
 
         let mut hit = targetless_hit();
@@ -4584,18 +5399,12 @@ mod tests {
         hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
         assert_eq!(
             tracker.events_from_hits(&[hit], &table),
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 17.300015000000002,
-                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 10.0,
-                    char_id: 1076,
-                    ability_id: "GA_Shinku_UltraSkill".to_owned(),
-                    duration_seconds: 7.300015,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1076,
+                ability_id: "GA_Shinku_UltraSkill".to_owned(),
+                duration_seconds: 7.300015,
+            }]
         );
 
         assert!(
@@ -4604,6 +5413,8 @@ mod tests {
                     20.0,
                     "CoolDown.Player.UltraSkill.Shinku.UltraPre",
                     &[],
+                    true,
+                    None,
                     &table,
                 )
                 .is_empty()
@@ -4613,6 +5424,8 @@ mod tests {
                 21.2,
                 "CoolDown.Player.UltraSkill.Shinku.UltraRage",
                 &[],
+                true,
+                None,
                 &table,
             ),
             vec![TimeStopEvent::UltraAnimation {
@@ -4637,12 +5450,17 @@ mod tests {
             },
         )]);
         let mut tracker = UltraTimeStopTracker::default();
-        assert_eq!(
-            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[], &table),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
         );
         let mut hit = targetless_hit();
         hit.timestamp = 12.0;
@@ -4652,18 +5470,12 @@ mod tests {
 
         assert_eq!(
             events,
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 13.584608,
-                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 10.0,
-                    char_id: 1010,
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    duration_seconds: 3.584608,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
         );
     }
 
@@ -4692,12 +5504,17 @@ mod tests {
             ),
         ]);
         let mut tracker = UltraTimeStopTracker::default();
-        assert_eq!(
-            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[], &table),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
         );
         let mut jin_skill_hit = targetless_hit();
         jin_skill_hit.timestamp = 10.5;
@@ -4715,18 +5532,12 @@ mod tests {
         nanally_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
         assert_eq!(
             tracker.events_from_hits(&[nanally_ultra_hit], &table),
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 13.584608,
-                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 10.0,
-                    char_id: 1010,
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    duration_seconds: 3.584608,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
         );
     }
 
@@ -4755,14 +5566,19 @@ mod tests {
             ),
         ]);
         let mut tracker = UltraTimeStopTracker::default();
-        assert_eq!(
+        assert!(
             tracker
-                .events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[1052, 1010], &table,),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[1052, 1010],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
         );
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
 
         let mut previous_character_hit = targetless_hit();
         previous_character_hit.timestamp = 10.2;
@@ -4780,18 +5596,12 @@ mod tests {
         active_character_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
         assert_eq!(
             tracker.events_from_hits(&[active_character_ultra_hit], &table),
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 13.584608,
-                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 10.0,
-                    char_id: 1010,
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    duration_seconds: 3.584608,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
         );
     }
 
@@ -4808,19 +5618,29 @@ mod tests {
             },
         )]);
         let mut tracker = UltraTimeStopTracker::default();
-        assert_eq!(
-            tracker.events_from_packet(10.0, "CoolDown.Player.UltraSkill.F", &[], &table),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
         );
-        assert_eq!(
-            tracker.events_from_packet(11.5, "CoolDown.Player.UltraSkill.F", &[], &table),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 11.5,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    11.5,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
         );
 
         let mut hit = targetless_hit();
@@ -4829,26 +5649,18 @@ mod tests {
         hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
         assert_eq!(
             tracker.events_from_hits(&[hit], &table),
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 15.084608,
-                    reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 11.5,
-                    char_id: 1010,
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    duration_seconds: 3.584608,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 11.5,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
         );
 
-        assert_eq!(
-            tracker.events_from_packet(15.0, "", &[], &table),
-            vec![TimeStopEvent::ExtraEnd {
-                timestamp: 10.0,
-                reason: PENDING_ULTRA_TIME_STOP_REASON.to_owned(),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(15.0, "", &[], true, None, &table)
+                .is_empty()
         );
     }
 
@@ -4874,11 +5686,11 @@ mod tests {
 
         decoder.process_ethernet_frame(
             &udp_ipv4_packet(
-                b"CoolDown.Player.UltraSkill.F",
-                local_ip,
-                50_000,
+                b"CoolDown.Player.UltraSkill.TimeActor",
                 remote_ip,
                 7_777,
+                local_ip,
+                50_000,
             ),
             FrameTimestamp::Known(10.0),
             Some(local_ip),
@@ -4901,7 +5713,7 @@ mod tests {
         ));
 
         decoder.process_ethernet_frame(
-            &udp_ipv4_packet(&[0, 0, 0, 0], local_ip, 50_000, remote_ip, 7_777),
+            &udp_ipv4_packet(&[0, 0, 0, 0], remote_ip, 7_777, local_ip, 50_000),
             FrameTimestamp::Known(15.0),
             Some(local_ip),
             true,
@@ -4911,7 +5723,7 @@ mod tests {
         assert!(matches!(
             receiver.try_recv().expect("pending end should be emitted"),
             EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
-                timestamp: 10.0,
+                timestamp: 15.0,
                 ..
             })
         ));
@@ -4932,6 +5744,17 @@ mod tests {
         assert!(abyss.has_readable_text);
         assert!(abyss.text.contains("FAbyssGamePlayData"));
         assert!(abyss.text.contains("ConditionState_Success"));
+    }
+
+    #[test]
+    fn summary_payload_text_retains_registered_montage_with_nonstandard_spelling() {
+        let montage = "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill";
+        let table = ultra_test_table();
+
+        let decoded = decode_summary_payload_text(montage.as_bytes(), &table);
+
+        assert!(decoded.has_readable_text);
+        assert_eq!(decoded.text, montage);
     }
 
     #[test]
@@ -5125,6 +5948,8 @@ mod tests {
             12.0,
             "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop\nEvent.Montage.Player.UltraSkill.Jin.ClearTimeStop",
             &[],
+            true,
+            None,
             &HashMap::new(),
         );
 

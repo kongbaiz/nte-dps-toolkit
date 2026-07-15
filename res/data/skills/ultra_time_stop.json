@@ -4,6 +4,9 @@
   "characters": {
     "1003": {
       "ability_id": "GA_Sagiri_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.Sagiri"
+      ],
       "end_ability_event_seconds": 3.533936,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -16,6 +19,9 @@
     },
     "1004": {
       "ability_id": "GA_Lacrimosa_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.Lacrimosa"
+      ],
       "end_ability_event_seconds": 4.218461,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -28,6 +34,10 @@
     },
     "1008": {
       "ability_id": "GA_Skia_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F",
+        "CoolDown.Player.UltraSkill.Skia"
+      ],
       "end_ability_event_seconds": 4.162118,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -40,6 +50,9 @@
     },
     "1010": {
       "ability_id": "GA_Nanally_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 3.584608,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -52,6 +65,10 @@
     },
     "1019": {
       "ability_id": "GA_Mint019_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F",
+        "CoolDown.Player.UltraSkill.Mint"
+      ],
       "end_ability_event_seconds": 3.903489,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -64,6 +81,9 @@
     },
     "1020": {
       "ability_id": "GA_Haniel_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.237614,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -76,6 +96,9 @@
     },
     "1021": {
       "ability_id": "GA_Edgar_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 3.402224,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -88,6 +111,9 @@
     },
     "1023": {
       "ability_id": "GA_Cang_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 2.854958,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -100,6 +126,9 @@
     },
     "1025": {
       "ability_id": "GA_Hathor_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.518597,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -112,6 +141,9 @@
     },
     "1033": {
       "ability_id": "GA_Adler_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 3.025935,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -124,6 +156,9 @@
     },
     "1036": {
       "ability_id": "GA_Zankou_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.161653,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -136,6 +171,9 @@
     },
     "1039": {
       "ability_id": "GA_Fadia_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.417366,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -148,6 +186,9 @@
     },
     "1051": {
       "ability_id": "GA_Female051_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.161653,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -160,6 +201,9 @@
     },
     "1052": {
       "ability_id": "GA_Jin_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 2.183333,
       "trigger_end_event_tags": [
         "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop"
@@ -172,6 +216,9 @@
     },
     "1054": {
       "ability_id": "GA_Daffodill_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 5.099006,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -184,6 +231,9 @@
     },
     "1055": {
       "ability_id": "GA_Kuhara_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.Kuhara"
+      ],
       "end_ability_event_seconds": 5.599441,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -196,6 +246,9 @@
     },
     "1070": {
       "ability_id": "GA_Mitsuki_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.987703,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -208,6 +261,9 @@
     },
     "1071": {
       "ability_id": "GA_Chaos071_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.802493,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -220,6 +276,9 @@
     },
     "1073": {
       "ability_id": "GA_Chiichan073_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.250936,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -232,6 +291,9 @@
     },
     "1075": {
       "ability_id": "GA_Oneiroi_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 4.349373,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -244,6 +306,9 @@
     },
     "1076": {
       "ability_id": "GA_Shinku_UltraSkill",
+      "activation_cooldown_tags": [
+        "CoolDown.Player.UltraSkill.F"
+      ],
       "end_ability_event_seconds": 7.300015,
       "trigger_end_event_tags": [
         "Event.Montage.Player.UltraSkill.6"
