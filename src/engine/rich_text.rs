@@ -121,7 +121,10 @@ mod tests {
 
     #[test]
     fn strips_title_wrapper_from_names() {
-        assert_eq!(strip_tags("<Title>变轨技能：轮转打击</>"), "变轨技能：轮转打击");
+        assert_eq!(
+            strip_tags("<Title>变轨技能：轮转打击</>"),
+            "变轨技能：轮转打击"
+        );
         assert_eq!(
             strip_tags("<Title>普通攻击：薄荷味旋风</>"),
             "普通攻击：薄荷味旋风"
