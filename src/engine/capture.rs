@@ -1502,14 +1502,18 @@ impl UltraTimeStopTracker {
             } else {
                 ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
             };
-            let expired = timestamp - pending.timestamp > window;
+            let expires_at = pending.timestamp + window;
+            let expired = timestamp > expires_at;
             if !expired {
                 index += 1;
                 continue;
             }
             let pending = self.pending_cooldowns.swap_remove(index);
             if let Some(reason) = pending.public_reason {
-                events.push(TimeStopEvent::ExtraEnd { timestamp, reason });
+                events.push(TimeStopEvent::ExtraEnd {
+                    timestamp: expires_at,
+                    reason,
+                });
             }
         }
     }
@@ -4879,7 +4883,7 @@ mod tests {
         assert!(matches!(
             receiver.try_recv().expect("pending end should be emitted"),
             EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
-                timestamp: 15.0,
+                timestamp: 12.5,
                 ..
             })
         ));
@@ -5145,7 +5149,7 @@ mod tests {
     }
 
     #[test]
-    fn expired_time_actor_ends_at_observed_expiration() {
+    fn expired_time_actor_ends_at_timeout() {
         let table = ultra_test_table();
         let mut tracker = UltraTimeStopTracker::default();
 
@@ -5166,9 +5170,9 @@ mod tests {
             }]
         ));
         assert_eq!(
-            tracker.events_from_packet(13.0, "", &[], true, None, &table),
+            tracker.events_from_packet(30.0, "", &[], true, None, &table),
             vec![TimeStopEvent::ExtraEnd {
-                timestamp: 13.0,
+                timestamp: 10.0 + ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS,
                 reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
             }]
         );
@@ -5746,7 +5750,7 @@ mod tests {
         assert!(matches!(
             receiver.try_recv().expect("pending end should be emitted"),
             EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
-                timestamp: 15.0,
+                timestamp: 12.5,
                 ..
             })
         ));
