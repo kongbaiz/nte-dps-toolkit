@@ -11,7 +11,9 @@ const RECORD_FIELD_TYPES: [u8; 10] = [12, 12, 12, 13, 12, 12, 6, 6, 6, 12];
 const RECORD_FIELD_LENGTHS: [usize; 10] = [4, 4, 4, 8, 4, 4, 4, 4, 4, 4];
 const MAX_RECORD_FIELD_LENGTH: usize = 8;
 const MIN_DAMAGE: f32 = 2.0;
-const MAX_DAMAGE: f32 = 1_000_000_000.0;
+// Damage and boss HP are serialized as f32. 999-night encounters can reach tens of
+// billions, while a one-trillion bound still rejects implausible shifted-float matches.
+const MAX_COMBAT_VALUE: f32 = 1_000_000_000_000.0;
 const MAX_PLAUSIBLE_CURRENT_HP_UPDATE: f32 = 500_000.0;
 const CURRENT_HP_PREFIX_LENGTH: usize = 16;
 const BOSS_HP_PREFIX_LENGTH: usize = 36;
@@ -1494,7 +1496,7 @@ fn parse_damage_record_at(
     let trailing_value = f32_field(&fields[9])?;
 
     if !damage.is_finite()
-        || !(MIN_DAMAGE..=MAX_DAMAGE).contains(&damage)
+        || !(MIN_DAMAGE..=MAX_COMBAT_VALUE).contains(&damage)
         || !target_hp_before.is_finite()
         || target_hp_before < 0.0
         || !target_max_hp.is_finite()
@@ -1591,7 +1593,7 @@ pub fn parse_boss_hp_updates(data: &[u8]) -> Vec<ParsedBossHpUpdate> {
                     .try_into()
                     .expect("Boss HP field has a fixed four-byte length"),
             );
-            if !current_hp.is_finite() || !(0.0..=MAX_DAMAGE).contains(&current_hp) {
+            if !current_hp.is_finite() || !(0.0..=MAX_COMBAT_VALUE).contains(&current_hp) {
                 continue;
             }
             updates.push(ParsedBossHpUpdate {
@@ -2344,6 +2346,44 @@ mod character_tests {
         assert_eq!(updates.len(), 1);
         assert_eq!(updates[0].target_handle, handle);
         assert_eq!(updates[0].current_hp, 1_927_891.0);
+    }
+
+    #[test]
+    fn parses_damage_in_tens_of_billions() {
+        let damage = 50_000_000_000.0_f32;
+        let payload = encoded_damage_record(damage, 90_000_000_000.0, 100_000_000_000.0);
+
+        let records = parse_damage_records(&payload);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].damage, damage);
+    }
+
+    #[test]
+    fn keeps_large_damage_sanity_boundary() {
+        let boundary = encoded_damage_record(MAX_COMBAT_VALUE, MAX_COMBAT_VALUE, MAX_COMBAT_VALUE);
+        let above_boundary = encoded_damage_record(
+            MAX_COMBAT_VALUE * 2.0,
+            MAX_COMBAT_VALUE * 2.0,
+            MAX_COMBAT_VALUE * 2.0,
+        );
+
+        assert!(parse_damage_record_at(&boundary, 0, 0).is_some());
+        assert!(parse_damage_record_at(&above_boundary, 0, 0).is_none());
+    }
+
+    #[test]
+    fn parses_boss_hp_in_tens_of_billions() {
+        let current_hp = 80_000_000_000.0_f32;
+        let mut payload = [0_u8; BOSS_HP_PREFIX_LENGTH + 4];
+        payload[..8].copy_from_slice(&BOSS_HP_PREFIX_HEAD);
+        payload[8..24].copy_from_slice(&[0x42; 16]);
+        payload[BOSS_HP_PREFIX_LENGTH..].copy_from_slice(&current_hp.to_le_bytes());
+
+        let updates = parse_boss_hp_updates(&payload);
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].current_hp, current_hp);
     }
 
     #[test]
