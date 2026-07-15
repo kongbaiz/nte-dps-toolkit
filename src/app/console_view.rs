@@ -1962,6 +1962,11 @@ impl DpsApp {
                     },
                 );
                 let (drop_zone, dropped) = transformed.inner;
+                let pointer_y = ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .map_or(drop_zone.response.rect.center().y, |pointer| pointer.y);
+                let insert_after = pointer_y >= drop_zone.response.rect.center().y;
                 if visible != self.hud_config.module_visible(module) {
                     self.hud_config.set_module_visible(module, visible);
                 }
@@ -1974,10 +1979,15 @@ impl DpsApp {
                 if let Some(dragged) = drop_zone.response.dnd_hover_payload::<HudModule>()
                     && *dragged != module
                 {
+                    let indicator_y = if insert_after {
+                        drop_zone.response.rect.bottom()
+                    } else {
+                        drop_zone.response.rect.top()
+                    };
                     ui.painter().line_segment(
                         [
-                            drop_zone.response.rect.left_bottom(),
-                            drop_zone.response.rect.right_bottom(),
+                            egui::pos2(drop_zone.response.rect.left(), indicator_y),
+                            egui::pos2(drop_zone.response.rect.right(), indicator_y),
                         ],
                         Stroke::new(3.0_f32, theme.accent),
                     );
@@ -1985,7 +1995,7 @@ impl DpsApp {
                 if let Some(dropped) = dropped
                     && *dropped != module
                 {
-                    reorder = Some((*dropped, module));
+                    reorder = Some((*dropped, module, insert_after));
                 }
             }
             if let (Some(module), Some(pointer)) = (dragged_module, ui.ctx().pointer_interact_pos())
@@ -2000,20 +2010,8 @@ impl DpsApp {
             }
             if let Some((from, to)) = move_request {
                 self.hud_config.module_order.swap(from, to);
-            } else if let Some((dragged, target)) = reorder {
-                let from = self
-                    .hud_config
-                    .module_order
-                    .iter()
-                    .position(|module| *module == dragged)
-                    .expect("dragged HUD module belongs to module_order");
-                let target = self
-                    .hud_config
-                    .module_order
-                    .iter()
-                    .position(|module| *module == target)
-                    .expect("drop target belongs to module_order");
-                self.hud_config.module_order.swap(from, target);
+            } else if let Some((dragged, target, insert_after)) = reorder {
+                self.hud_config.move_module(dragged, target, insert_after);
             }
             if let Some(module) = hide_request {
                 self.hud_config.set_module_visible(module, false);

@@ -691,6 +691,25 @@ impl HudConfig {
             HudModule::Timeline => self.show_mini_timeline = visible,
         }
     }
+
+    pub fn move_module(&mut self, dragged: HudModule, target: HudModule, insert_after: bool) {
+        let from = self
+            .module_order
+            .iter()
+            .position(|module| *module == dragged)
+            .expect("dragged HUD module belongs to module_order");
+        let target = self
+            .module_order
+            .iter()
+            .position(|module| *module == target)
+            .expect("drop target belongs to module_order");
+        let mut insertion = target + usize::from(insert_after);
+        let dragged = self.module_order.remove(from);
+        if from < insertion {
+            insertion -= 1;
+        }
+        self.module_order.insert(insertion, dragged);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

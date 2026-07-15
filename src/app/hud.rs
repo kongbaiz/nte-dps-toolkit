@@ -1,6 +1,17 @@
 use super::*;
 
 pub(crate) const HUD_EDITOR_MODULE_HEADER_HEIGHT: f32 = 18.0;
+pub(crate) const HUD_EDITOR_HIDDEN_TRAY_HEADER_HEIGHT: f32 = 22.0;
+pub(crate) const HUD_EDITOR_HIDDEN_MODULE_ROW_HEIGHT: f32 = 24.0;
+
+pub(crate) fn hud_editor_hidden_tray_height(hidden_modules: usize) -> f32 {
+    if hidden_modules == 0 {
+        0.0
+    } else {
+        HUD_EDITOR_HIDDEN_TRAY_HEADER_HEIGHT
+            + hidden_modules as f32 * HUD_EDITOR_HIDDEN_MODULE_ROW_HEIGHT
+    }
+}
 
 /// Paint text with a light dark halo so HUD text stays readable without the
 /// heavy caption-like outline that would compete with the game scene.
@@ -67,7 +78,24 @@ pub(crate) fn hud_window_size(
     } else {
         0.0
     };
-    let content = 16.0 + editor_headers + readout_title + summary + status + rows + timeline + 4.0;
+    let hidden_tray = if show_title_strip {
+        let hidden_modules = HudModule::all()
+            .iter()
+            .filter(|module| !config.module_visible(**module))
+            .count();
+        hud_editor_hidden_tray_height(hidden_modules)
+    } else {
+        0.0
+    };
+    let content = 16.0
+        + hidden_tray
+        + editor_headers
+        + readout_title
+        + summary
+        + status
+        + rows
+        + timeline
+        + 4.0;
     egui::vec2(config.width as f32, (title_strip + content).round())
 }
 
@@ -196,6 +224,15 @@ mod layout_tests {
         assert_eq!(
             editor.y - passthrough.y,
             24.0 + HUD_EDITOR_MODULE_HEADER_HEIGHT * 5.0
+        );
+    }
+
+    #[test]
+    fn hud_editor_hidden_tray_only_reserves_space_when_needed() {
+        assert_eq!(hud_editor_hidden_tray_height(0), 0.0);
+        assert_eq!(
+            hud_editor_hidden_tray_height(2),
+            HUD_EDITOR_HIDDEN_TRAY_HEADER_HEIGHT + HUD_EDITOR_HIDDEN_MODULE_ROW_HEIGHT * 2.0
         );
     }
 }
