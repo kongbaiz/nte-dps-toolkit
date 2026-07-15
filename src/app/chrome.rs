@@ -393,10 +393,16 @@ pub(crate) fn window_width_resize_grips(ctx: &egui::Context) {
     }
 }
 
-/// Records a viewport's current inner size (logical points) into `target`, ignoring degenerate or
-/// sub-pixel changes. Callers persist `target` through the normal debounced config path, so a
-/// window reopens at the size it was last dragged to.
+/// Records a viewport's current normal inner size (logical points) into `target`, ignoring
+/// minimized, maximized, degenerate, or sub-pixel changes. Callers persist `target` through the
+/// normal debounced config path, so a window reopens at the size it was last dragged to.
 pub(crate) fn track_window_size(ctx: &egui::Context, target: &mut egui::Vec2) {
+    if ctx.input(|input| {
+        let viewport = input.viewport();
+        viewport.minimized == Some(true) || viewport.maximized == Some(true)
+    }) {
+        return;
+    }
     let size = ctx.content_rect().size();
     if size.x.is_finite()
         && size.y.is_finite()
@@ -405,6 +411,40 @@ pub(crate) fn track_window_size(ctx: &egui::Context, target: &mut egui::Vec2) {
         && (size - *target).length() > 0.5
     {
         *target = size;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct SecondaryViewportGeometry {
+    normal_position: Option<egui::Pos2>,
+    maximized: bool,
+}
+
+pub(crate) fn track_secondary_viewport_geometry(
+    ctx: &egui::Context,
+    normal_size: &mut egui::Vec2,
+    geometry: &mut SecondaryViewportGeometry,
+) {
+    let (minimized, maximized, outer_position) = ctx.input(|input| {
+        let viewport = input.viewport();
+        (
+            viewport.minimized,
+            viewport.maximized.unwrap_or(false),
+            viewport.outer_rect.map(|rect| rect.min),
+        )
+    });
+    if minimized == Some(true) {
+        return;
+    }
+
+    geometry.maximized = maximized;
+    if maximized {
+        return;
+    }
+
+    track_window_size(ctx, normal_size);
+    if let Some(position) = outer_position.filter(|position| position.is_finite()) {
+        geometry.normal_position = Some(position);
     }
 }
 
@@ -516,18 +556,16 @@ fn paint_window_control_icon(
 /// secondary window (console and the detail panels).
 ///
 /// `already_open` must be the window's "first-frame setup done" flag (its
-/// `*_corner_applied`): the persisted `size` is written into the builder only on the
-/// opening frame. Re-passing `inner_size` every frame would fight the user's live
-/// resize — [`egui::ViewportBuilder::patch`] re-sends `InnerSize` whenever the builder
-/// value changes, and [`track_window_size`] feeds the DPI-rounded OS size straight
-/// back into that field, so requesting it again rounds again: a resize→round→resize
-/// loop seen as window-edge jitter. After the first frame the builder omits
-/// `inner_size` (patch sends nothing) and the OS owns the size; `track_window_size`
-/// still records it for persistence.
+/// `*_corner_applied`): the saved normal size and runtime geometry are written into the
+/// builder only on the opening frame. Re-passing them every frame would fight the user's
+/// live move/resize — [`egui::ViewportBuilder::patch`] re-sends geometry commands whenever
+/// their values change. After the first frame the builder omits them and the OS owns the
+/// window geometry; the tracking helpers only record it for a later viewport recreation.
 pub(crate) fn secondary_viewport_builder(
     title: impl Into<String>,
     size: egui::Vec2,
     min_size: [f32; 2],
+    geometry: SecondaryViewportGeometry,
     already_open: bool,
 ) -> egui::ViewportBuilder {
     let mut builder = egui::ViewportBuilder::default()
@@ -538,7 +576,12 @@ pub(crate) fn secondary_viewport_builder(
         // Borderless but freely resizable via the edge grips (window_resize_grips).
         .with_resizable(true);
     if !already_open {
-        builder = builder.with_inner_size(size);
+        builder = builder
+            .with_inner_size(size)
+            .with_maximized(geometry.maximized);
+        if let Some(position) = geometry.normal_position {
+            builder = builder.with_position(position);
+        }
     }
     builder
 }
@@ -650,6 +693,98 @@ pub(crate) fn team_hit_detail_viewport_id() -> egui::ViewportId {
 
 pub(crate) fn abyss_overview_viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("nte_abyss_overview_viewport")
+}
+
+#[cfg(test)]
+mod viewport_tests {
+    use super::*;
+
+    fn track_geometry(
+        viewport_size: egui::Vec2,
+        position: egui::Pos2,
+        minimized: bool,
+        maximized: bool,
+    ) -> (egui::Vec2, SecondaryViewportGeometry) {
+        let ctx = egui::Context::default();
+        let mut input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, viewport_size)),
+            ..Default::default()
+        };
+        let viewport = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        viewport.minimized = Some(minimized);
+        viewport.maximized = Some(maximized);
+        viewport.outer_rect = Some(egui::Rect::from_min_size(position, viewport_size));
+        let mut saved_size = egui::vec2(913.0, 587.0);
+        let mut geometry = SecondaryViewportGeometry {
+            normal_position: Some(egui::pos2(137.0, 89.0)),
+            maximized: false,
+        };
+
+        let _ = ctx.run_ui(input, |ui| {
+            track_secondary_viewport_geometry(ui.ctx(), &mut saved_size, &mut geometry);
+        });
+
+        (saved_size, geometry)
+    }
+
+    #[test]
+    fn secondary_viewport_reinitialization_restores_saved_builder_state() {
+        let saved_size = egui::vec2(913.0, 587.0);
+        let saved_position = egui::pos2(321.0, 147.0);
+        let builder = secondary_viewport_builder(
+            "secondary",
+            saved_size,
+            config::CONSOLE_WINDOW_MIN_SIZE,
+            SecondaryViewportGeometry {
+                normal_position: Some(saved_position),
+                maximized: true,
+            },
+            false,
+        );
+
+        assert_eq!(builder.inner_size, Some(saved_size));
+        assert_eq!(builder.position, Some(saved_position));
+        assert_eq!(builder.maximized, Some(true));
+        assert_eq!(builder.decorations, Some(false));
+        assert_eq!(builder.resizable, Some(true));
+        assert_eq!(builder.window_level, Some(egui::WindowLevel::AlwaysOnTop));
+    }
+
+    #[test]
+    fn minimized_viewport_does_not_replace_normal_geometry() {
+        let (saved_size, geometry) =
+            track_geometry(egui::vec2(240.0, 38.0), egui::pos2(0.0, 0.0), true, false);
+
+        assert_eq!(saved_size, egui::vec2(913.0, 587.0));
+        assert_eq!(
+            geometry,
+            SecondaryViewportGeometry {
+                normal_position: Some(egui::pos2(137.0, 89.0)),
+                maximized: false,
+            }
+        );
+    }
+
+    #[test]
+    fn restored_viewport_updates_normal_geometry() {
+        let restored_position = egui::pos2(420.0, 235.0);
+        let (saved_size, geometry) =
+            track_geometry(egui::vec2(840.0, 520.0), restored_position, false, false);
+
+        assert_eq!(saved_size, egui::vec2(840.0, 520.0));
+        assert_eq!(geometry.normal_position, Some(restored_position));
+        assert!(!geometry.maximized);
+    }
+
+    #[test]
+    fn maximized_viewport_preserves_normal_geometry() {
+        let (saved_size, geometry) =
+            track_geometry(egui::vec2(1920.0, 1040.0), egui::Pos2::ZERO, false, true);
+
+        assert_eq!(saved_size, egui::vec2(913.0, 587.0));
+        assert_eq!(geometry.normal_position, Some(egui::pos2(137.0, 89.0)));
+        assert!(geometry.maximized);
+    }
 }
 
 #[cfg(test)]

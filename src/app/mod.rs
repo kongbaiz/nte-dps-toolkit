@@ -977,13 +977,16 @@ pub struct DpsApp {
     resource_audit: ResourceAuditState,
     abyss_overview_open: bool,
     abyss_overview_corner_applied: bool,
+    abyss_overview_geometry: SecondaryViewportGeometry,
     hit_detail_char_id: Option<u32>,
     hit_detail_filter: HitDetailFilter,
     hit_detail_skill_filter: String,
     hit_detail_corner_applied: bool,
+    hit_detail_geometry: SecondaryViewportGeometry,
     team_hit_detail_open: bool,
     team_hit_detail_filter: HitDetailFilter,
     team_hit_detail_corner_applied: bool,
+    team_hit_detail_geometry: SecondaryViewportGeometry,
     character_hit_cache: HitDetailCache,
     team_hit_cache: HitDetailCache,
     skill_summary_cache: SkillSummaryCache,
@@ -1047,6 +1050,7 @@ pub struct DpsApp {
     last_error_viewport: egui::ViewportId,
     console_open: bool,
     console_corner_applied: bool,
+    console_geometry: SecondaryViewportGeometry,
     console_sidebar_manually_collapsed: bool,
     console_tab: ConsoleTab,
     command_palette: CommandPaletteState,
@@ -1154,6 +1158,16 @@ impl eframe::App for DpsApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if ctx.input(|input| input.viewport().minimized == Some(true)) {
+            // eframe skips `App::ui` while the root viewport is minimized, which removes all
+            // immediate child viewports from the native backend. Mark their first-frame setup as
+            // pending so restored children receive their recorded normal geometry, maximized
+            // state, and Win32 corner style.
+            self.console_corner_applied = false;
+            self.hit_detail_corner_applied = false;
+            self.team_hit_detail_corner_applied = false;
+            self.abyss_overview_corner_applied = false;
+        }
         let style_key = AppliedStyleKey {
             dark_mode: self.dark_mode,
             theme_preset: self.theme_preset,
