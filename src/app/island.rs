@@ -561,18 +561,6 @@ impl DpsApp {
 
         ui.set_opacity(opacity);
         let painter = ui.painter().clone();
-        // Two soft expanded layers stand in for a real blur shadow: the stage
-        // has no backdrop to blur into, and flat rings read cleanly over games.
-        painter.rect_filled(
-            capsule.expand(5.0).translate(egui::vec2(0.0, 2.0)),
-            radius + 5.0,
-            Color32::from_black_alpha(30),
-        );
-        painter.rect_filled(
-            capsule.expand(1.5).translate(egui::vec2(0.0, 1.0)),
-            radius + 1.5,
-            Color32::from_black_alpha(46),
-        );
         painter.rect_filled(capsule, radius, ISLAND_FILL);
         let border_color = if matches!(tone, ToastTone::Danger)
             && self.island.phase == IslandPhase::Shown
