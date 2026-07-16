@@ -14,6 +14,14 @@ fn key_pressed_without_repeat(events: &[egui::Event], key: egui::Key) -> bool {
     })
 }
 
+fn newest_undo_id(
+    status_toast_ids: impl Iterator<Item = u64>,
+    island_ids: impl Iterator<Item = u64>,
+) -> Option<u64> {
+    // IDs come from one sequence before notices are routed to either store.
+    status_toast_ids.chain(island_ids).max()
+}
+
 impl DpsApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -2333,17 +2341,12 @@ impl DpsApp {
     }
 
     pub(crate) fn undo_latest(&mut self, viewport: egui::ViewportId) {
-        let Some(id) = self
-            .status_toasts
-            .iter()
-            .rev()
-            .find_map(|toast| toast.undo_id)
-            .or_else(|| {
-                self.island
-                    .notices_newest_first()
-                    .find_map(|notice| notice.undo_id)
-            })
-        else {
+        let Some(id) = newest_undo_id(
+            self.status_toasts.iter().filter_map(|toast| toast.undo_id),
+            self.island
+                .notices_newest_first()
+                .filter_map(|notice| notice.undo_id),
+        ) else {
             self.status = t("Nothing to undo");
             return;
         };
@@ -2351,16 +2354,16 @@ impl DpsApp {
     }
 
     fn latest_combat_undo_id(&self) -> Option<u64> {
-        self.status_toasts
-            .iter()
-            .rev()
-            .filter_map(|toast| toast.undo_id)
-            .chain(
-                self.island
-                    .notices_newest_first()
-                    .filter_map(|notice| notice.undo_id),
-            )
-            .find(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_))))
+        newest_undo_id(
+            self.status_toasts
+                .iter()
+                .filter_map(|toast| toast.undo_id)
+                .filter(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_)))),
+            self.island
+                .notices_newest_first()
+                .filter_map(|notice| notice.undo_id)
+                .filter(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_)))),
+        )
     }
 
     pub(crate) fn apply_undo(&mut self, id: u64, viewport: egui::ViewportId) {
@@ -3436,5 +3439,14 @@ mod tests {
 
         assert!(key_pressed_without_repeat(&[event(false)], egui::Key::F9));
         assert!(!key_pressed_without_repeat(&[event(true)], egui::Key::F9));
+    }
+
+    #[test]
+    fn newest_undo_id_compares_both_notification_stores() {
+        assert_eq!(
+            newest_undo_id([3, 8].into_iter(), [5, 9].into_iter()),
+            Some(9)
+        );
+        assert_eq!(newest_undo_id([10].into_iter(), [6].into_iter()), Some(10));
     }
 }

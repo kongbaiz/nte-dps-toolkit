@@ -267,7 +267,12 @@ impl IslandState {
     /// Full reset when the island is disabled mid-run. Returns every live
     /// notice id so the caller can free their undo states.
     pub(crate) fn reset(&mut self) -> Vec<u64> {
-        let mut ids: Vec<u64> = self.current.take().map(|notice| notice.id).into_iter().collect();
+        let mut ids: Vec<u64> = self
+            .current
+            .take()
+            .map(|notice| notice.id)
+            .into_iter()
+            .collect();
         ids.extend(self.queue.drain(..).map(|notice| notice.id));
         ids.append(&mut self.dropped_ids);
         self.enter_hidden();
@@ -304,6 +309,13 @@ fn island_viewport_builder() -> egui::ViewportBuilder {
         // Click-through from the very first frame; hover management takes over.
         .with_mouse_passthrough(true)
         .with_window_level(egui::WindowLevel::AlwaysOnTop)
+}
+
+fn island_stage_position(monitor: egui::Rect, offset_x: f32) -> egui::Pos2 {
+    egui::pos2(
+        (monitor.left() + (monitor.width() - ISLAND_STAGE_SIZE.x) * 0.5 + offset_x).round(),
+        monitor.top().round(),
+    )
 }
 
 /// What the pointer did to the capsule this frame.
@@ -346,14 +358,19 @@ impl DpsApp {
         // Anchor to the top-center of the window's monitor. OuterPosition goes
         // through the winit event loop between frames — never SetWindowPos from
         // inside the frame callback, which re-enters `logic()` via WndProc.
-        if let Some(monitor) = ctx
-            .input(|input| input.viewport().monitor_size)
-            .filter(|size| size.x > 0.0)
-        {
-            let target = egui::pos2(
-                ((monitor.x - ISLAND_STAGE_SIZE.x) * 0.5 + self.island_offset_x).round(),
-                0.0,
+        let pixels_per_point = ctx.pixels_per_point();
+        if let Some((left, top, right, bottom)) = self.island.hwnd.and_then(window_monitor_rect) {
+            let monitor = egui::Rect::from_min_max(
+                egui::pos2(
+                    left as f32 / pixels_per_point,
+                    top as f32 / pixels_per_point,
+                ),
+                egui::pos2(
+                    right as f32 / pixels_per_point,
+                    bottom as f32 / pixels_per_point,
+                ),
             );
+            let target = island_stage_position(monitor, self.island_offset_x);
             if self
                 .island
                 .applied_position
@@ -365,10 +382,8 @@ impl DpsApp {
         }
 
         // --- global-cursor hover + state tick ----------------------------
-        let pixels_per_point = ctx.pixels_per_point();
-        let cursor_points = cursor_screen_pos().map(|(x, y)| {
-            egui::pos2(x as f32 / pixels_per_point, y as f32 / pixels_per_point)
-        });
+        let cursor_points = cursor_screen_pos()
+            .map(|(x, y)| egui::pos2(x as f32 / pixels_per_point, y as f32 / pixels_per_point));
         let was_hovered = self.island.hovered;
         let hovered = self.island.phase == IslandPhase::Shown
             && cursor_points
@@ -465,9 +480,7 @@ impl DpsApp {
         let undo_button_width = undo_id.map(|_| button_width(&undo_label, ui));
         let close_button_width = button_width(&close_label, ui);
 
-        let bubble_width = bubble_galley
-            .as_ref()
-            .map(|galley| galley.size().x + 14.0);
+        let bubble_width = bubble_galley.as_ref().map(|galley| galley.size().x + 14.0);
         let row1_width = CAPSULE_PAD_X * 2.0
             + DOT_DIAMETER
             + ROW_GAP
@@ -527,12 +540,16 @@ impl DpsApp {
             self.island
                 .height
                 .step(dt, motion::spring::STIFFNESS, width_damping);
-            self.island
-                .opacity
-                .step(dt, motion::spring::STIFFNESS, motion::spring::DAMPING_SMOOTH);
-            self.island
-                .expand
-                .step(dt, motion::spring::STIFFNESS, motion::spring::DAMPING_SMOOTH);
+            self.island.opacity.step(
+                dt,
+                motion::spring::STIFFNESS,
+                motion::spring::DAMPING_SMOOTH,
+            );
+            self.island.expand.step(
+                dt,
+                motion::spring::STIFFNESS,
+                motion::spring::DAMPING_SMOOTH,
+            );
         }
 
         if self.island.phase == IslandPhase::Exiting
@@ -596,7 +613,8 @@ impl DpsApp {
         let swap_alpha = if self.reduce_motion {
             1.0
         } else {
-            (now.saturating_duration_since(self.island.swap_at).as_secs_f32()
+            (now.saturating_duration_since(self.island.swap_at)
+                .as_secs_f32()
                 / CONTENT_FADE_SECONDS)
                 .clamp(0.0, 1.0)
         };
@@ -675,6 +693,7 @@ impl DpsApp {
             .then(|| inner_rect.map(|inner| capsule.translate(inner.min.to_vec2()).expand(4.0)))
             .flatten();
 
+        let action_changed_state = action.is_some();
         match action {
             Some(IslandAction::Dismiss) => self.island.dismiss_current(),
             Some(IslandAction::Undo(id)) => self.apply_undo(id, egui::ViewportId::ROOT),
@@ -683,6 +702,9 @@ impl DpsApp {
         }
         for id in self.island.take_dropped() {
             self.undo_states.remove(&id);
+        }
+        if action_changed_state {
+            ctx.request_repaint();
         }
 
         // --- repaint scheduling -----------------------------------------------
@@ -727,6 +749,16 @@ mod island_tests {
         assert_eq!(island.phase, IslandPhase::Shown);
         assert_eq!(island.width.value(), SLIVER_WIDTH);
         assert_eq!(island.opacity.value(), 0.0);
+    }
+
+    #[test]
+    fn stage_position_includes_the_monitor_origin() {
+        let monitor =
+            egui::Rect::from_min_size(egui::pos2(-1920.0, 120.0), egui::vec2(1920.0, 1080.0));
+        assert_eq!(
+            island_stage_position(monitor, 24.0),
+            egui::pos2(-1236.0, 120.0)
+        );
     }
 
     #[test]
