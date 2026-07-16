@@ -45,8 +45,9 @@ use crate::platform::hotkey::{
 };
 use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
-    DialogOwner, WindowAttributeConfig, apply_rounding_to_process_windows, apply_window_attributes,
-    open_directory,
+    DialogOwner, WindowAttributeConfig, apply_island_base_style, apply_rounding_to_process_windows,
+    apply_window_attributes, cursor_screen_pos, find_process_window_by_title, open_directory,
+    set_island_click_through, window_monitor_rect,
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
@@ -840,7 +841,7 @@ struct ResourceAuditState {
 }
 
 #[derive(Clone, Copy)]
-enum ToastTone {
+pub(crate) enum ToastTone {
     Status,
     Success,
     Warning,
@@ -1044,6 +1045,12 @@ pub struct DpsApp {
     status_toasts: VecDeque<StatusToast>,
     undo_states: HashMap<u64, UndoState>,
     next_toast_id: u64,
+    /// Global notification capsule (its own top-center overlay viewport). When
+    /// enabled it receives every notice instead of the in-window
+    /// `status_toasts`; disabling it falls back to the legacy toasts.
+    island: IslandState,
+    island_enabled: bool,
+    island_offset_x: f32,
     diagnostic: Option<String>,
     last_error: Option<String>,
     last_error_action: Option<ErrorAction>,
@@ -1128,6 +1135,7 @@ mod editor;
 mod history_ui;
 mod hit_detail;
 mod hud;
+mod island;
 mod kongmu;
 mod lifecycle;
 mod main_view;
@@ -1144,6 +1152,7 @@ pub(crate) use editor::*;
 pub(crate) use history_ui::*;
 pub(crate) use hit_detail::*;
 pub(crate) use hud::*;
+pub(crate) use island::*;
 pub(crate) use kongmu::*;
 pub(crate) use resources::*;
 pub(crate) use theme::*;
@@ -1167,6 +1176,10 @@ impl eframe::App for DpsApp {
             self.hit_detail_corner_applied = false;
             self.team_hit_detail_corner_applied = false;
             self.abyss_overview_corner_applied = false;
+            // The island window is also torn down with the other immediate
+            // viewports; drop the stale HWND so the replacement window gets
+            // its overlay styles, position and click-through re-applied.
+            self.island.invalidate_window();
         }
         let style_key = AppliedStyleKey {
             dark_mode: self.dark_mode,
@@ -1448,6 +1461,7 @@ impl eframe::App for DpsApp {
                 });
         }
         self.show_status_toast(&ctx);
+        self.show_island(&ctx);
         self.show_passthrough_notice(&ctx);
         self.show_command_palette(&ctx);
         self.paint_theme_transition(&ctx);

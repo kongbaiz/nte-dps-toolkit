@@ -729,6 +729,14 @@ pub struct UiConfig {
     #[serde(default)]
     pub reduce_motion: bool,
     pub always_on_top: bool,
+    /// Show notifications in the global "dynamic island" capsule floating
+    /// above every window (its own overlay viewport). Off falls back to the
+    /// legacy in-window corner toasts.
+    #[serde(default = "default_island_notifications")]
+    pub island_notifications: bool,
+    /// Horizontal offset of the island from the screen center, in logical points.
+    #[serde(default)]
+    pub island_offset_x: f32,
     pub server_damage_calibration: bool,
     /// Manual capture-NIC override (the Npcap device `name`, e.g. `\Device\NPF_{GUID}`). `None`
     /// keeps automatic detection; `Some(name)` pins capture to that interface as a VPN fallback.
@@ -772,6 +780,8 @@ impl Default for UiConfig {
             density: UiDensity::default(),
             reduce_motion: false,
             always_on_top: true,
+            island_notifications: true,
+            island_offset_x: 0.0,
             server_damage_calibration: false,
             manual_capture_device: None,
             dps_time_mode: DpsTimeMode::default(),
@@ -798,6 +808,11 @@ impl UiConfig {
             self.opacity.clamp(0.35, 1.0)
         } else {
             Self::default().opacity
+        };
+        self.island_offset_x = if self.island_offset_x.is_finite() {
+            self.island_offset_x.clamp(-4000.0, 4000.0)
+        } else {
+            0.0
         };
         self.main_window_size = sanitize_window_size(self.main_window_size, MAIN_WINDOW_MIN_SIZE);
         self.abyss_window_size =
@@ -827,6 +842,10 @@ impl UiConfig {
 }
 
 const fn default_onboarding_done() -> bool {
+    true
+}
+
+const fn default_island_notifications() -> bool {
     true
 }
 
