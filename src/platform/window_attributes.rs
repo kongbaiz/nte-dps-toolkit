@@ -3,7 +3,7 @@ use std::path::Path;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
@@ -211,6 +211,15 @@ pub(crate) fn apply_island_base_style(hwnd: isize) {
         if new_style != style {
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
         }
+        // Explicitly opt out of Windows 11 corner rounding: DWM pairs it with
+        // a frame backdrop and drop shadow that would reveal the transparent
+        // stage rect around the capsule (the capsule paints its own corners).
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            std::ptr::from_ref(&DWMWCP_DONOTROUND).cast(),
+            std::mem::size_of_val(&DWMWCP_DONOTROUND) as u32,
+        );
         DwmSetWindowAttribute(
             hwnd,
             DWMWA_BORDER_COLOR as u32,
@@ -260,6 +269,14 @@ pub(crate) fn apply_rounding_to_process_windows() {
             GetWindowThreadProcessId(hwnd, &mut window_process_id);
         }
         if window_process_id != process_id as u32 {
+            return 1;
+        }
+        // Skip overlay tool windows (the notification island): Windows 11
+        // pairs DWMWCP_ROUND with its own frame backdrop and drop shadow,
+        // which makes a transparent overlay's whole stage rect visible.
+        // SAFETY: EnumWindows provides a valid top-level hwnd for this callback.
+        let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+        if (ex_style & WS_EX_TOOLWINDOW as isize) != 0 {
             return 1;
         }
         if !is_visible_content_window(hwnd) {
