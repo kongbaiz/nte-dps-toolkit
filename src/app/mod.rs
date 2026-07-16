@@ -38,6 +38,9 @@ use crate::engine::parser::{
     CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file, load_characters,
     load_equipment_catalog,
 };
+use crate::platform::equipment_plugin::{
+    EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
+};
 use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{
     HotkeyEvent, HotkeyHandle, hotkey_binding_matches_egui, hotkey_key_to_egui,
@@ -956,6 +959,7 @@ pub struct DpsApp {
     reaction_textures: HashMap<u8, Vec<egui::TextureHandle>>,
     equipment_catalog: Arc<EquipmentCatalog>,
     equipment_textures: HashMap<String, egui::TextureHandle>,
+    equipment_plugin: EquipmentPluginClient,
     kongmu_ui: KongmuUiState,
     state: CombatState,
     combat_active: bool,

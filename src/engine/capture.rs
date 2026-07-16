@@ -25,8 +25,9 @@ use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainItem, EngineEvent, Hit, HitDamageCorrection,
-    HitFollowUp, HtItemNetId, PacketDebug, PacketObservation, TimeStopEvent,
+    AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainCharacter, EmptyCurtainItem, EngineEvent,
+    Hit, HitDamageCorrection, HitFollowUp, HtItemNetId, PacketDebug, PacketObservation,
+    TimeStopEvent,
 };
 use crate::engine::parser::{
     ABILITY_TIPS_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, GAMEPLAY_EFFECT_MAPPING_PATH,
@@ -2029,6 +2030,7 @@ fn append_inventory_bits(
 struct InventoryPacketResult {
     recognized: bool,
     snapshot: Option<Vec<EmptyCurtainItem>>,
+    characters: Option<Vec<EmptyCurtainCharacter>>,
 }
 
 struct EmptyCurtainDecoder {
@@ -2080,7 +2082,8 @@ impl EmptyCurtainDecoder {
             state.push_bunches(bunches)
         };
 
-        let mut changed = false;
+        let mut items_changed = false;
+        let mut characters_changed = false;
         for stream in streams {
             let character_ids = parse_empty_curtain_character_owners(&stream.data, stream.bit_len);
             let parsed = parse_empty_curtain_items(&stream.data, stream.bit_len, &self.catalog);
@@ -2102,7 +2105,7 @@ impl EmptyCurtainDecoder {
             };
             if !parsed.is_empty() && self.active_connection.as_ref() != Some(&connection) {
                 self.active_connection = Some(connection.clone());
-                changed |= !self.items.is_empty();
+                items_changed |= !self.items.is_empty();
                 self.items.clear();
             }
             if self.active_connection.as_ref() != Some(&connection) {
@@ -2114,13 +2117,14 @@ impl EmptyCurtainDecoder {
                 .expect("active inventory connection must remain present")
                 .character_ids;
             if character_mapping_changed {
+                characters_changed = true;
                 for item in self.items.values_mut() {
                     let character_id = item
                         .character_net_id
                         .and_then(|net_id| character_ids.get(&net_id).copied());
                     if item.equipped_character_id != character_id {
                         item.equipped_character_id = character_id;
-                        changed = true;
+                        items_changed = true;
                     }
                 }
             }
@@ -2134,11 +2138,11 @@ impl EmptyCurtainDecoder {
                         continue;
                     }
                     self.items.insert(item.id, item);
-                    changed = true;
+                    items_changed = true;
                 }
             }
         }
-        let snapshot = changed.then(|| {
+        let snapshot = items_changed.then(|| {
             let mut items = self.items.values().cloned().collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 left.item_id
@@ -2148,9 +2152,32 @@ impl EmptyCurtainDecoder {
             });
             items
         });
+        let characters = (items_changed || characters_changed).then(|| {
+            let mut characters = self
+                .active_connection
+                .as_ref()
+                .and_then(|connection| self.connections.get(connection))
+                .expect("changed inventory must have an active connection")
+                .character_ids
+                .iter()
+                .map(|(net_id, character_id)| EmptyCurtainCharacter {
+                    net_id: *net_id,
+                    character_id: *character_id,
+                })
+                .collect::<Vec<_>>();
+            characters.sort_by_key(|character| {
+                (
+                    character.character_id,
+                    character.net_id.solt,
+                    character.net_id.serial,
+                )
+            });
+            characters
+        });
         InventoryPacketResult {
             recognized: true,
             snapshot,
+            characters,
         }
     }
 }
@@ -3051,6 +3078,9 @@ impl PacketDecoder {
         } else {
             InventoryPacketResult::default()
         };
+        if let Some(characters) = inventory_result.characters {
+            let _ = sender.send(EngineEvent::EmptyCurtainCharacters(characters));
+        }
         if let Some(snapshot) = inventory_result.snapshot {
             let _ = sender.send(EngineEvent::EmptyCurtain(snapshot));
         }
@@ -3593,6 +3623,8 @@ struct CaptureExport {
     packets: Vec<ExportPacket>,
     #[serde(default)]
     empty_curtain: Vec<EmptyCurtainItem>,
+    #[serde(default)]
+    empty_curtain_characters: Vec<EmptyCurtainCharacter>,
 }
 
 #[derive(Deserialize)]
@@ -3679,6 +3711,27 @@ pub fn import_capture_json(
             let mut document = parse_capture_export(&text)?;
             drop(text);
             let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
+            let mut saved_empty_curtain_characters =
+                std::mem::take(&mut document.empty_curtain_characters);
+            if saved_empty_curtain_characters.is_empty() {
+                saved_empty_curtain_characters = saved_empty_curtain
+                    .iter()
+                    .filter_map(|item| {
+                        Some(EmptyCurtainCharacter {
+                            net_id: item.character_net_id?,
+                            character_id: item.equipped_character_id?,
+                        })
+                    })
+                    .collect();
+                saved_empty_curtain_characters.sort_by_key(|character| {
+                    (
+                        character.character_id,
+                        character.net_id.solt,
+                        character.net_id.serial,
+                    )
+                });
+                saved_empty_curtain_characters.dedup();
+            }
             let ultra_time_stops = find_data_file(Path::new(ULTRA_TIME_STOP_DATA_PATH))
                 .and_then(|path| load_ultra_time_stops(&path).ok())
                 .unwrap_or_default();
@@ -3757,6 +3810,13 @@ pub fn import_capture_json(
                     sender.send(event).map_err(|error| error.to_string())?;
                 }
             }
+            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain_characters.is_empty() {
+                sender
+                    .send(EngineEvent::EmptyCurtainCharacters(
+                        saved_empty_curtain_characters,
+                    ))
+                    .map_err(|error| error.to_string())?;
+            }
             if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
                 sender
                     .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
@@ -3830,6 +3890,11 @@ fn send_export_packet(
     } else {
         InventoryPacketResult::default()
     };
+    if let Some(characters) = inventory_result.characters {
+        sender
+            .send(EngineEvent::EmptyCurtainCharacters(characters))
+            .map_err(|error| error.to_string())?;
+    }
     if let Some(snapshot) = inventory_result.snapshot {
         sender
             .send(EngineEvent::EmptyCurtain(snapshot))
@@ -4228,6 +4293,7 @@ mod tests {
 
         assert!(result.recognized);
         assert!(result.snapshot.is_none());
+        assert!(result.characters.is_none());
         assert_eq!(decoder.active_connection, Some(active));
         assert_eq!(decoder.items, HashMap::from([(item.id, item)]));
         assert_eq!(
@@ -4262,6 +4328,40 @@ mod tests {
             .expect("owner mapping should enrich inventory");
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].equipped_character_id, Some(1020));
+        assert_eq!(
+            result.characters,
+            Some(vec![EmptyCurtainCharacter {
+                net_id: owner_net_id,
+                character_id: 1020,
+            }])
+        );
+    }
+
+    #[test]
+    fn active_connection_publishes_a_character_without_equipped_items() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let mut decoder = EmptyCurtainDecoder::new(EquipmentCatalog::default());
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+
+        let result =
+            decoder.process_packet(connection, &character_owner_packet(1020, owner_net_id));
+
+        assert!(result.recognized);
+        assert!(result.snapshot.is_none());
+        assert_eq!(
+            result.characters,
+            Some(vec![EmptyCurtainCharacter {
+                net_id: owner_net_id,
+                character_id: 1020,
+            }])
+        );
     }
 
     #[test]
@@ -4269,15 +4369,18 @@ mod tests {
         let legacy = parse_capture_export(r#"{"hits":[],"packets":[]}"#)
             .expect("legacy capture export should remain compatible");
         assert!(legacy.empty_curtain.is_empty());
+        assert!(legacy.empty_curtain_characters.is_empty());
 
         let current = parse_capture_export(
-            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true,"character_net_id":{"solt":3,"serial":4},"equipped_character_id":1020}]}"#,
+            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true,"character_net_id":{"solt":3,"serial":4},"equipped_character_id":1020}],"empty_curtain_characters":[{"net_id":{"solt":3,"serial":4},"character_id":1020}]}"#,
         )
         .expect("current capture export should preserve Console equipment");
         assert_eq!(current.empty_curtain.len(), 1);
         assert_eq!(current.empty_curtain[0].id.solt, 1);
         assert!(current.empty_curtain[0].locked);
         assert_eq!(current.empty_curtain[0].equipped_character_id, Some(1020));
+        assert_eq!(current.empty_curtain_characters.len(), 1);
+        assert_eq!(current.empty_curtain_characters[0].character_id, 1020);
     }
 
     #[test]
@@ -6939,10 +7042,14 @@ mod tests {
         handle.join().expect("pcapng import thread should finish");
 
         let mut latest = Vec::new();
+        let mut latest_characters = Vec::new();
         let mut errors = Vec::new();
         for event in receiver.try_iter() {
             match event {
                 EngineEvent::EmptyCurtain(items) => latest = items,
+                EngineEvent::EmptyCurtainCharacters(characters) => {
+                    latest_characters = characters;
+                }
                 EngineEvent::Error(error) => errors.push(error),
                 _ => {}
             }
@@ -6961,8 +7068,9 @@ mod tests {
             .filter(|item| item.equipped_character_id.is_some())
             .count();
         println!(
-            "parsed {} Console equipment items from {path}; identified {identified}/{equipped} equipped owners",
-            latest.len()
+            "parsed {} Console equipment items and {} character session IDs from {path}; identified {identified}/{equipped} equipped owners",
+            latest.len(),
+            latest_characters.len(),
         );
     }
 

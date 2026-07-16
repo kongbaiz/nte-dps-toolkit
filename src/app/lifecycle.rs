@@ -199,6 +199,7 @@ impl DpsApp {
             reaction_textures: HashMap::new(),
             equipment_catalog,
             equipment_textures: HashMap::new(),
+            equipment_plugin: EquipmentPluginClient::new(),
             kongmu_ui: KongmuUiState::default(),
             state: CombatState::default(),
             combat_active: false,
@@ -1619,7 +1620,8 @@ impl DpsApp {
             | EngineEvent::HitDamageCorrection(_)
             | EngineEvent::Abyss(_)
             | EngineEvent::TimeStop(_)
-            | EngineEvent::EmptyCurtain(_) => {
+            | EngineEvent::EmptyCurtain(_)
+            | EngineEvent::EmptyCurtainCharacters(_) => {
                 if self.paused_events.len() == MAX_PAUSED_EVENTS {
                     self.paused_events.pop_front();
                 }
@@ -1698,6 +1700,7 @@ impl DpsApp {
         match crate::core::reducer::apply_engine_event(&mut self.state, event) {
             CoreSignal::StateChanged
             | CoreSignal::InventoryReplaced
+            | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => {}
             CoreSignal::Status(status) => self.status = status,
@@ -2761,6 +2764,13 @@ impl DpsApp {
         let empty_curtain = serde_json::to_string(&self.state.empty_curtain)
             .expect("validated Console equipment snapshot must serialize");
         writeln!(&mut out, "  \"empty_curtain\": {empty_curtain},").ok();
+        let empty_curtain_characters = serde_json::to_string(&self.state.empty_curtain_characters)
+            .expect("validated Console character mapping must serialize");
+        writeln!(
+            &mut out,
+            "  \"empty_curtain_characters\": {empty_curtain_characters},"
+        )
+        .ok();
 
         writeln!(&mut out, "  \"hits\": [").ok();
         for (index, hit) in self.state.hits.iter().enumerate() {

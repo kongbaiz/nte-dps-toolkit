@@ -127,6 +127,31 @@ impl EquipmentSuitDefinition {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+pub struct EquipmentGridCell {
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentShapeDefinition {
+    pub cells: Vec<EquipmentGridCell>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentPlanModule {
+    pub item_id: String,
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentPlanDefinition {
+    pub valid_cells: Vec<EquipmentGridCell>,
+    pub recommended_core: String,
+    pub recommended_modules: Vec<EquipmentPlanModule>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct EquipmentCatalog {
     version: u32,
@@ -136,6 +161,8 @@ pub struct EquipmentCatalog {
     pub attributes: HashMap<String, EquipmentAttributeDefinition>,
     pub curves: HashMap<String, Vec<[f32; 2]>>,
     pub suits: HashMap<String, EquipmentSuitDefinition>,
+    pub shapes: HashMap<String, EquipmentShapeDefinition>,
+    pub plans: HashMap<u32, EquipmentPlanDefinition>,
 }
 
 impl EquipmentCatalog {
@@ -161,6 +188,35 @@ impl EquipmentCatalog {
             EquipmentKind::Core => format!("{property}_Core_{quality}"),
         };
         interpolate_curve(self.curves.get(&curve_key)?, level as f32)
+    }
+
+    pub fn valid_module_positions(
+        &self,
+        character_id: u32,
+        item_id: &str,
+    ) -> Option<Vec<EquipmentGridCell>> {
+        let plan = self.plans.get(&character_id)?;
+        let item = self.items.get(item_id)?;
+        if item.kind != EquipmentKind::Module {
+            return None;
+        }
+        let shape = self.shapes.get(&item.geometry)?;
+        let valid = plan.valid_cells.iter().copied().collect::<HashSet<_>>();
+        let mut positions = plan
+            .valid_cells
+            .iter()
+            .copied()
+            .filter(|origin| {
+                shape.cells.iter().all(|cell| {
+                    valid.contains(&EquipmentGridCell {
+                        row: origin.row + cell.row,
+                        column: origin.column + cell.column,
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        positions.sort_by_key(|cell| (cell.row, cell.column));
+        Some(positions)
     }
 }
 
@@ -294,7 +350,7 @@ pub fn load_equipment_catalog(path: &Path) -> Result<EquipmentCatalog> {
 
 fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
     ensure!(
-        catalog.version == 1,
+        catalog.version == 2,
         "Unsupported Console equipment data version"
     );
     ensure!(
@@ -354,10 +410,17 @@ fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
             "Console equipment item {item_id} has too many stat rows"
         );
         match item.kind {
-            EquipmentKind::Module => ensure!(
-                item.grid.is_some_and(|grid| grid > 0),
-                "Console module {item_id} is missing its grid size"
-            ),
+            EquipmentKind::Module => {
+                ensure!(
+                    item.grid.is_some_and(|grid| grid > 0),
+                    "Console module {item_id} is missing its grid size"
+                );
+                ensure!(
+                    catalog.shapes.contains_key(&item.geometry),
+                    "Console module {item_id} references unknown shape {}",
+                    item.geometry
+                );
+            }
             EquipmentKind::Core => {
                 ensure!(
                     item.grid.is_none(),
@@ -374,6 +437,82 @@ fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
                 catalog.suits.contains_key(suit),
                 "Console equipment item {item_id} references unknown suit {suit}"
             );
+        }
+    }
+
+    ensure!(
+        !catalog.shapes.is_empty(),
+        "Console equipment data has no module shapes"
+    );
+    for (shape_id, shape) in &catalog.shapes {
+        let unique = shape.cells.iter().copied().collect::<HashSet<_>>();
+        ensure!(
+            !shape_id.is_empty()
+                && !shape.cells.is_empty()
+                && unique.len() == shape.cells.len()
+                && unique.contains(&EquipmentGridCell { row: 0, column: 0 }),
+            "Console equipment shape {shape_id} is invalid"
+        );
+    }
+
+    ensure!(
+        !catalog.plans.is_empty(),
+        "Console equipment data has no character plans"
+    );
+    for (character_id, plan) in &catalog.plans {
+        ensure!(
+            *character_id != 0,
+            "Console equipment plan has character ID 0"
+        );
+        let valid = plan.valid_cells.iter().copied().collect::<HashSet<_>>();
+        ensure!(
+            valid.len() == plan.valid_cells.len()
+                && plan
+                    .valid_cells
+                    .iter()
+                    .all(|cell| (1..=5).contains(&cell.row) && (1..=5).contains(&cell.column)),
+            "Console equipment plan {character_id} has invalid template cells"
+        );
+        ensure!(
+            catalog
+                .items
+                .get(&plan.recommended_core)
+                .is_some_and(|item| item.kind == EquipmentKind::Core),
+            "Console equipment plan {character_id} has an invalid recommended core"
+        );
+
+        let mut occupied = HashSet::new();
+        for module in &plan.recommended_modules {
+            let definition = catalog.items.get(&module.item_id).with_context(|| {
+                format!(
+                    "Console equipment plan {character_id} references unknown module {}",
+                    module.item_id
+                )
+            })?;
+            ensure!(
+                definition.kind == EquipmentKind::Module,
+                "Console equipment plan {character_id} references a non-module item"
+            );
+            let shape = catalog.shapes.get(&definition.geometry).with_context(|| {
+                format!(
+                    "Console equipment plan {character_id} references unknown shape {}",
+                    definition.geometry
+                )
+            })?;
+            for cell in &shape.cells {
+                let occupied_cell = EquipmentGridCell {
+                    row: module.row + cell.row,
+                    column: module.column + cell.column,
+                };
+                ensure!(
+                    valid.contains(&occupied_cell),
+                    "Console equipment plan {character_id} leaves its character template"
+                );
+                ensure!(
+                    occupied.insert(occupied_cell),
+                    "Console equipment plan {character_id} has overlapping modules"
+                );
+            }
         }
     }
 
@@ -2751,8 +2890,22 @@ mod empty_curtain_tests {
         assert_eq!(catalog.attributes.len(), 53);
         assert_eq!(catalog.curves.len(), 74);
         assert_eq!(catalog.suits.len(), 12);
+        assert_eq!(catalog.shapes.len(), 12);
+        assert_eq!(catalog.plans.len(), 21);
         assert_eq!(catalog.main_stat_value(item, "AtkAdd", 20), Some(63.0));
         assert_eq!(catalog.main_stat_value(item, "HPMaxAdd", 20), Some(840.0));
+    }
+
+    #[test]
+    fn module_positions_apply_character_template_and_shape_in_business_layer() {
+        let catalog = catalog();
+        let positions = catalog
+            .valid_module_positions(1076, "cell4_style1_1_Orange")
+            .expect("1076 and Hen4 must have equipment metadata");
+
+        assert!(positions.contains(&EquipmentGridCell { row: 2, column: 3 }));
+        assert!(!positions.contains(&EquipmentGridCell { row: 1, column: 1 }));
+        assert!(!positions.contains(&EquipmentGridCell { row: 2, column: 4 }));
     }
 
     #[test]

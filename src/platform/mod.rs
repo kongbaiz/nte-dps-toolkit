@@ -4,6 +4,8 @@
 //! build; the window/hotkey/drop bridges only exist for the GUI.
 
 #[cfg(feature = "gui")]
+pub mod equipment_plugin;
+#[cfg(feature = "gui")]
 pub mod file_drop;
 #[cfg(feature = "gui")]
 pub mod hotkey;

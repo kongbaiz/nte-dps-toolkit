@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::engine::model::{EmptyCurtainItem, EquipmentStat};
+use crate::engine::model::{EmptyCurtainCharacter, EmptyCurtainItem, EquipmentStat, HtItemNetId};
 use crate::engine::parser::{EMPTY_CURTAIN_MAX_STAT_ROWS, EquipmentCatalog, EquipmentKind};
 
 use super::*;
@@ -24,6 +24,49 @@ const FILTER_ICON_SIZE: f32 = 48.0;
 // Modules and cassettes share the same closed set of rarity tiers, ordered from
 // lowest to highest. The parser rejects any other value, so this list is total.
 const EQUIPMENT_QUALITIES: [&str; 3] = ["blue", "purple", "orange"];
+
+#[derive(Clone)]
+struct PendingModulePlacement {
+    character: EmptyCurtainCharacter,
+    equipment: HtItemNetId,
+    item_id: String,
+}
+
+enum EquipmentEquipSelection {
+    Module(PendingModulePlacement),
+    Submit {
+        character: HtItemNetId,
+        operation: EquipmentPluginOperation,
+        mutation: PendingEquipmentMutation,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum CharacterEquipmentAction {
+    EquipOneKey(EmptyCurtainCharacter),
+    UnequipAll(EmptyCurtainCharacter),
+}
+
+enum PendingEquipmentMutation {
+    Assign {
+        character: EmptyCurtainCharacter,
+        equipment: Vec<HtItemNetId>,
+        replace_character_loadout: bool,
+    },
+    Unequip(HtItemNetId),
+    Clear(HtItemNetId),
+}
+
+struct PendingPluginRequest {
+    request_id: u64,
+    mutation: PendingEquipmentMutation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OneKeyPlanError {
+    MissingTemplate,
+    MissingEquipment,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum EquipmentFilterKey {
@@ -73,6 +116,8 @@ pub(crate) struct KongmuUiState {
     selected_substats: HashSet<String>,
     filter_revision: u64,
     filter_cache: EmptyCurtainFilterCache,
+    pending_module_placement: Option<PendingModulePlacement>,
+    plugin_request: Option<PendingPluginRequest>,
 }
 
 impl KongmuUiState {
@@ -173,6 +218,7 @@ impl KongmuUiState {
 
 impl DpsApp {
     pub(crate) fn empty_curtain_contents(&mut self, ui: &mut egui::Ui) {
+        self.drain_equipment_plugin_response(ui.ctx());
         self.kongmu_ui.refresh_filter_cache(
             &self.state.empty_curtain,
             self.state.empty_curtain_generation,
@@ -183,6 +229,7 @@ impl DpsApp {
         let mut open_filter = false;
         let mut clear_filters = false;
         let mut export = false;
+        let mut character_action = None;
         inline_controls(ui, |ui| {
             let filter_label = if active_filter_count == 0 {
                 t("Filter")
@@ -213,6 +260,41 @@ impl DpsApp {
                     export = true;
                 }
             }
+            if !self.state.empty_curtain_characters.is_empty() {
+                ui.separator();
+                ui.menu_button(t("Character Equipment"), |ui| {
+                    if self.kongmu_ui.plugin_request.is_some() {
+                        ui.label(t("Waiting for the equipment plugin..."));
+                        return;
+                    }
+                    for character in &self.state.empty_curtain_characters {
+                        let fallback =
+                            tf("Character ID {}", &[&character.character_id.to_string()]);
+                        let name = character_display_name(
+                            &self.characters,
+                            character.character_id,
+                            &fallback,
+                        );
+                        ui.menu_button(name, |ui| {
+                            if ui.button(t("One-click Equip")).clicked() {
+                                character_action =
+                                    Some(CharacterEquipmentAction::EquipOneKey(*character));
+                                ui.close();
+                            }
+                            if ui.button(t("Unequip All")).clicked() {
+                                character_action =
+                                    Some(CharacterEquipmentAction::UnequipAll(*character));
+                                ui.close();
+                            }
+                        });
+                    }
+                });
+                ui.separator();
+                ui.label(inline_text(
+                    t("Right-click equipment to equip or unequip it through the plugin"),
+                    ui.visuals().weak_text_color(),
+                ));
+            }
         });
         if open_filter {
             self.kongmu_ui.filter_open = true;
@@ -228,6 +310,46 @@ impl DpsApp {
                 self.state.empty_curtain_generation,
                 &self.equipment_catalog,
             );
+        }
+        if let Some(action) = character_action {
+            match action {
+                CharacterEquipmentAction::EquipOneKey(character) => {
+                    match build_one_key_plan(
+                        character,
+                        &self.state.empty_curtain,
+                        &self.equipment_catalog,
+                    ) {
+                        Ok((operation, equipment)) => self.submit_equipment_plugin_request(
+                            ui.ctx(),
+                            character.net_id,
+                            operation,
+                            PendingEquipmentMutation::Assign {
+                                character,
+                                equipment,
+                                replace_character_loadout: true,
+                            },
+                        ),
+                        Err(OneKeyPlanError::MissingTemplate) => self.set_last_error_in(
+                            ui.ctx(),
+                            t("No character equipment template is available"),
+                            None,
+                        ),
+                        Err(OneKeyPlanError::MissingEquipment) => self.set_last_error_in(
+                            ui.ctx(),
+                            t("No complete one-click loadout is available in the inventory"),
+                            None,
+                        ),
+                    }
+                }
+                CharacterEquipmentAction::UnequipAll(character) => {
+                    self.submit_equipment_plugin_request(
+                        ui.ctx(),
+                        character.net_id,
+                        EquipmentPluginOperation::UnequipAll,
+                        PendingEquipmentMutation::Clear(character.net_id),
+                    );
+                }
+            }
         }
         ui.add_space(6.0);
 
@@ -256,10 +378,12 @@ impl DpsApp {
                 },
             );
         } else {
-            draw_empty_curtain_grid(
+            let selection = draw_empty_curtain_grid(
                 ui,
                 &self.state.empty_curtain,
                 &self.kongmu_ui.filter_cache.indices,
+                &self.state.empty_curtain_characters,
+                self.kongmu_ui.plugin_request.is_some(),
                 &EmptyCurtainVisuals {
                     catalog: &self.equipment_catalog,
                     equipment_textures: &self.equipment_textures,
@@ -268,6 +392,23 @@ impl DpsApp {
                     dark_mode: self.dark_mode,
                 },
             );
+            if let Some(selection) = selection {
+                match selection {
+                    EquipmentEquipSelection::Module(placement) => {
+                        self.kongmu_ui.pending_module_placement = Some(placement);
+                    }
+                    EquipmentEquipSelection::Submit {
+                        character,
+                        operation,
+                        mutation,
+                    } => self.submit_equipment_plugin_request(
+                        ui.ctx(),
+                        character,
+                        operation,
+                        mutation,
+                    ),
+                }
+            }
         }
 
         if self.kongmu_ui.filter_open {
@@ -284,6 +425,108 @@ impl DpsApp {
                 },
                 &mut self.kongmu_ui,
             );
+        }
+
+        if let Some((placement, row, column)) = show_module_placement_window(
+            ui.ctx(),
+            &mut self.kongmu_ui.pending_module_placement,
+            &self.characters,
+            &self.equipment_catalog,
+        ) {
+            self.submit_equipment_plugin_request(
+                ui.ctx(),
+                placement.character.net_id,
+                EquipmentPluginOperation::EquipModule {
+                    equipment: placement.equipment,
+                    row,
+                    column,
+                },
+                PendingEquipmentMutation::Assign {
+                    character: placement.character,
+                    equipment: vec![placement.equipment],
+                    replace_character_loadout: false,
+                },
+            );
+        }
+        if self.kongmu_ui.plugin_request.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
+    }
+
+    fn submit_equipment_plugin_request(
+        &mut self,
+        ctx: &egui::Context,
+        character: HtItemNetId,
+        operation: EquipmentPluginOperation,
+        mutation: PendingEquipmentMutation,
+    ) {
+        let request_id = self.equipment_plugin.submit(character, operation);
+        self.kongmu_ui.plugin_request = Some(PendingPluginRequest {
+            request_id,
+            mutation,
+        });
+        self.status = t("Sending equipment request...");
+        self.clear_last_error();
+        ctx.request_repaint_after(Duration::from_millis(50));
+    }
+
+    fn drain_equipment_plugin_response(&mut self, ctx: &egui::Context) {
+        let Some(response) = self.equipment_plugin.try_recv() else {
+            return;
+        };
+        if self
+            .kongmu_ui
+            .plugin_request
+            .as_ref()
+            .is_none_or(|request| request.request_id != response.request_id)
+        {
+            return;
+        }
+        let pending = self
+            .kongmu_ui
+            .plugin_request
+            .take()
+            .expect("matching equipment response must have a pending request");
+        match response.status {
+            Ok(0) => {
+                match pending.mutation {
+                    PendingEquipmentMutation::Assign {
+                        character,
+                        equipment,
+                        replace_character_loadout,
+                    } => self.state.assign_empty_curtain_items(
+                        character,
+                        &equipment,
+                        replace_character_loadout,
+                    ),
+                    PendingEquipmentMutation::Unequip(equipment) => {
+                        self.state.unequip_empty_curtain_item(equipment);
+                    }
+                    PendingEquipmentMutation::Clear(character) => {
+                        self.state.clear_empty_curtain_character(character);
+                    }
+                }
+                self.kongmu_ui.invalidate_inventory();
+                self.status = t("Equipment RPC dispatched; waiting for game synchronization");
+                self.clear_last_error();
+            }
+            Ok(1) => {
+                self.status = t("Equipment request passed plugin dry-run validation");
+                self.clear_last_error();
+            }
+            Ok(status) => self.set_last_error_in(
+                ctx,
+                tf(
+                    "Equipment plugin rejected the request (status {})",
+                    &[&status.to_string()],
+                ),
+                None,
+            ),
+            Err(error) => self.set_last_error_in(
+                ctx,
+                tf("Equipment plugin is unavailable: {}", &[&error]),
+                None,
+            ),
         }
     }
 
@@ -343,8 +586,11 @@ fn draw_empty_curtain_grid(
     ui: &mut egui::Ui,
     items: &[EmptyCurtainItem],
     filtered_indices: &[usize],
+    characters: &[EmptyCurtainCharacter],
+    request_pending: bool,
     visuals: &EmptyCurtainVisuals<'_>,
-) {
+) -> Option<EquipmentEquipSelection> {
+    let mut selection = None;
     let available_width = ui.available_width();
     let column_count = |width: f32| {
         (((width + EQUIPMENT_CARD_GAP) / (EQUIPMENT_CARD_MIN_WIDTH + EQUIPMENT_CARD_GAP)).floor()
@@ -402,19 +648,26 @@ fn draw_empty_curtain_grid(
                             &mut cards,
                             &items[item_index],
                             card_width,
+                            characters,
+                            request_pending,
                             visuals,
+                            &mut selection,
                         );
                     }
                 }
             },
         );
+    selection
 }
 
 fn draw_empty_curtain_card(
     ui: &mut egui::Ui,
     item: &EmptyCurtainItem,
     card_width: f32,
+    characters: &[EmptyCurtainCharacter],
+    request_pending: bool,
     visuals: &EmptyCurtainVisuals<'_>,
+    selection: &mut Option<EquipmentEquipSelection>,
 ) -> egui::Response {
     assert!(
         item.main_stats.len() + item.sub_stats.len() <= EMPTY_CURTAIN_MAX_STAT_ROWS,
@@ -430,7 +683,7 @@ fn draw_empty_curtain_card(
 
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(card_width, EQUIPMENT_CARD_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
     // Keep every card-local overlay inside its already allocated card. Otherwise
     // an inner `allocate_rect` can move the parent row cursor and overlap the next card.
@@ -570,6 +823,15 @@ fn draw_empty_curtain_card(
         .and_then(|definition| definition.suit.as_deref())
         .and_then(|suit_id| visuals.catalog.suits.get(suit_id));
     if let Some(suit) = suit {
+        equipment_card_context_menu(
+            &response,
+            item,
+            definition.map(|definition| definition.kind),
+            characters,
+            request_pending,
+            visuals.characters,
+            selection,
+        );
         response.on_hover_ui(|ui| {
             ui.set_max_width(400.0);
             ui.spacing_mut().item_spacing.y = 5.0;
@@ -590,8 +852,245 @@ fn draw_empty_curtain_card(
             }
         })
     } else {
+        equipment_card_context_menu(
+            &response,
+            item,
+            definition.map(|definition| definition.kind),
+            characters,
+            request_pending,
+            visuals.characters,
+            selection,
+        );
         response
     }
+}
+
+fn equipment_card_context_menu(
+    response: &egui::Response,
+    item: &EmptyCurtainItem,
+    kind: Option<EquipmentKind>,
+    characters: &[EmptyCurtainCharacter],
+    request_pending: bool,
+    character_definitions: &HashMap<u32, CharacterInfo>,
+    selection: &mut Option<EquipmentEquipSelection>,
+) {
+    response.context_menu(|ui| {
+        if request_pending {
+            ui.label(t("Waiting for the equipment plugin..."));
+            return;
+        }
+        let Some(kind) = kind else {
+            ui.label(t("Equipment metadata is unavailable"));
+            return;
+        };
+        if let Some(character) = item.character_net_id {
+            if ui.button(t("Unequip")).clicked() {
+                let operation = match kind {
+                    EquipmentKind::Module => {
+                        EquipmentPluginOperation::UnequipModule { equipment: item.id }
+                    }
+                    EquipmentKind::Core => {
+                        EquipmentPluginOperation::UnequipCore { equipment: item.id }
+                    }
+                };
+                *selection = Some(EquipmentEquipSelection::Submit {
+                    character,
+                    operation,
+                    mutation: PendingEquipmentMutation::Unequip(item.id),
+                });
+                ui.close();
+            }
+            return;
+        }
+        if characters.is_empty() {
+            ui.label(t("No captured characters available"));
+            return;
+        }
+        ui.menu_button(t("Equip to Character"), |ui| {
+            for character in characters {
+                let fallback = tf("Character ID {}", &[&character.character_id.to_string()]);
+                let name = character_display_name(
+                    character_definitions,
+                    character.character_id,
+                    &fallback,
+                );
+                if ui.button(name).clicked() {
+                    *selection = Some(match kind {
+                        EquipmentKind::Module => {
+                            EquipmentEquipSelection::Module(PendingModulePlacement {
+                                character: *character,
+                                equipment: item.id,
+                                item_id: item.item_id.clone(),
+                            })
+                        }
+                        EquipmentKind::Core => EquipmentEquipSelection::Submit {
+                            character: character.net_id,
+                            operation: EquipmentPluginOperation::EquipCore { equipment: item.id },
+                            mutation: PendingEquipmentMutation::Assign {
+                                character: *character,
+                                equipment: vec![item.id],
+                                replace_character_loadout: false,
+                            },
+                        },
+                    });
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
+fn build_one_key_plan(
+    character: EmptyCurtainCharacter,
+    items: &[EmptyCurtainItem],
+    catalog: &EquipmentCatalog,
+) -> Result<(EquipmentPluginOperation, Vec<HtItemNetId>), OneKeyPlanError> {
+    let plan = catalog
+        .plans
+        .get(&character.character_id)
+        .ok_or(OneKeyPlanError::MissingTemplate)?;
+    let mut selected = HashSet::new();
+    let mut placements = Vec::with_capacity(plan.recommended_modules.len());
+
+    for planned in &plan.recommended_modules {
+        let geometry = &catalog
+            .items
+            .get(&planned.item_id)
+            .expect("validated equipment plan must reference a module")
+            .geometry;
+        let item = items
+            .iter()
+            .filter(|item| {
+                !selected.contains(&item.id)
+                    && (item.character_net_id.is_none()
+                        || item.character_net_id == Some(character.net_id))
+                    && catalog.items.get(&item.item_id).is_some_and(|definition| {
+                        definition.kind == EquipmentKind::Module && definition.geometry == *geometry
+                    })
+            })
+            .max_by_key(|item| {
+                let definition = catalog
+                    .items
+                    .get(&item.item_id)
+                    .expect("candidate equipment must have catalog metadata");
+                (
+                    item.item_id == planned.item_id,
+                    equipment_quality_rank(&definition.quality),
+                    item.level,
+                    item.id.solt,
+                    item.id.serial,
+                )
+            })
+            .ok_or(OneKeyPlanError::MissingEquipment)?;
+        selected.insert(item.id);
+        placements.push(EquipmentPluginPlacement {
+            equipment: item.id,
+            row: planned.row,
+            column: planned.column,
+        });
+    }
+
+    let recommended_core = catalog
+        .items
+        .get(&plan.recommended_core)
+        .expect("validated equipment plan must reference a cassette");
+    let core = items
+        .iter()
+        .filter(|item| {
+            (item.character_net_id.is_none() || item.character_net_id == Some(character.net_id))
+                && catalog
+                    .items
+                    .get(&item.item_id)
+                    .is_some_and(|definition| definition.kind == EquipmentKind::Core)
+        })
+        .max_by_key(|item| {
+            let definition = catalog
+                .items
+                .get(&item.item_id)
+                .expect("candidate equipment must have catalog metadata");
+            (
+                item.item_id == plan.recommended_core,
+                definition.suit == recommended_core.suit,
+                equipment_quality_rank(&definition.quality),
+                item.level,
+                item.id.solt,
+                item.id.serial,
+            )
+        })
+        .ok_or(OneKeyPlanError::MissingEquipment)?;
+    let mut equipment = selected.into_iter().collect::<Vec<_>>();
+    equipment.push(core.id);
+
+    Ok((
+        EquipmentPluginOperation::EquipOneKey {
+            placements,
+            core: core.id,
+        },
+        equipment,
+    ))
+}
+
+fn equipment_quality_rank(quality: &str) -> u8 {
+    match quality {
+        "blue" => 0,
+        "purple" => 1,
+        "orange" => 2,
+        _ => unreachable!("equipment quality is validated at resource load"),
+    }
+}
+
+fn show_module_placement_window(
+    ctx: &egui::Context,
+    pending: &mut Option<PendingModulePlacement>,
+    characters: &HashMap<u32, CharacterInfo>,
+    catalog: &EquipmentCatalog,
+) -> Option<(PendingModulePlacement, i32, i32)> {
+    let placement = pending.as_ref()?.clone();
+    let valid_positions = catalog
+        .valid_module_positions(placement.character.character_id, &placement.item_id)
+        .expect("captured module and character must have validated equipment metadata");
+    let mut open = true;
+    let mut selected = None;
+    egui::Window::new(t("Choose Drive Module Position"))
+        .id(egui::Id::new("equipment_plugin_module_position"))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            let fallback = tf(
+                "Character ID {}",
+                &[&placement.character.character_id.to_string()],
+            );
+            let name =
+                character_display_name(characters, placement.character.character_id, &fallback);
+            ui.label(tf("Target character: {}", &[&name]));
+            ui.label(t(
+                "Only positions compatible with the character template and module shape are shown.",
+            ));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for position in &valid_positions {
+                    if ui
+                        .button(format!("{},{}", position.row, position.column))
+                        .on_hover_text(tf(
+                            "Row {}, Column {}",
+                            &[&position.row.to_string(), &position.column.to_string()],
+                        ))
+                        .clicked()
+                    {
+                        selected = Some((position.row, position.column));
+                    }
+                }
+            });
+        });
+    if let Some((row, column)) = selected {
+        *pending = None;
+        return Some((placement, row, column));
+    }
+    if !open {
+        *pending = None;
+    }
+    None
 }
 
 fn draw_equipment_stat_row(
@@ -1650,6 +2149,38 @@ mod tests {
     }
 
     #[test]
+    fn one_key_plan_uses_the_character_template_and_native_batch_operation() {
+        let catalog = crate::engine::parser::load_equipment_catalog(std::path::Path::new(
+            crate::engine::parser::EQUIPMENT_CATALOG_PATH,
+        ))
+        .expect("bundled equipment catalog should load");
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId {
+                solt: 100,
+                serial: 101,
+            },
+            character_id: 1076,
+        };
+        let plan = &catalog.plans[&character.character_id];
+        let mut items = plan
+            .recommended_modules
+            .iter()
+            .enumerate()
+            .map(|(index, module)| item(index as u32 + 1, &module.item_id, Vec::new(), Vec::new()))
+            .collect::<Vec<_>>();
+        items.push(item(1000, &plan.recommended_core, Vec::new(), Vec::new()));
+
+        let (operation, selected) = build_one_key_plan(character, &items, &catalog)
+            .expect("complete inventory must produce a one-key plan");
+        let EquipmentPluginOperation::EquipOneKey { placements, core } = operation else {
+            panic!("one-key planning must use the native batch operation")
+        };
+        assert_eq!(placements.len(), plan.recommended_modules.len());
+        assert_eq!(core, items.last().expect("test core").id);
+        assert_eq!(selected.len(), plan.recommended_modules.len() + 1);
+    }
+
+    #[test]
     fn quality_maps_orange_to_gold() {
         assert_eq!(calculator_quality("blue"), "Blue");
         assert_eq!(calculator_quality("purple"), "Purple");
@@ -1766,10 +2297,25 @@ mod tests {
         egui::__run_test_ui(|ui| {
             ui.spacing_mut().item_spacing.x = EQUIPMENT_CARD_GAP;
             ui.horizontal(|ui| {
-                let equipped_response =
-                    draw_empty_curtain_card(ui, &equipped, EQUIPMENT_CARD_MIN_WIDTH, &visuals);
-                let following_response =
-                    draw_empty_curtain_card(ui, &following, EQUIPMENT_CARD_MIN_WIDTH, &visuals);
+                let mut selection = None;
+                let equipped_response = draw_empty_curtain_card(
+                    ui,
+                    &equipped,
+                    EQUIPMENT_CARD_MIN_WIDTH,
+                    &[],
+                    false,
+                    &visuals,
+                    &mut selection,
+                );
+                let following_response = draw_empty_curtain_card(
+                    ui,
+                    &following,
+                    EQUIPMENT_CARD_MIN_WIDTH,
+                    &[],
+                    false,
+                    &visuals,
+                    &mut selection,
+                );
                 card_rects = Some((equipped_response.rect, following_response.rect));
             });
         });
