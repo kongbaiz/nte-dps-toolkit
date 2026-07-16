@@ -1368,7 +1368,10 @@ impl AbyssRunState {
                 {
                     AbyssHalf::First
                 } else {
-                    return;
+                    let Some(active_half) = self.active_half else {
+                        return;
+                    };
+                    active_half
                 };
                 let half = *self.character_halves.entry(*char_id).or_insert(half);
                 self.half_mut(half).apply_time_stop_event(event);
@@ -2949,6 +2952,31 @@ mod tests {
         assert_eq!(state.abyss.second_half.total_damage, 300.0);
         assert_eq!(state.abyss.second_half.hits.len(), 2);
         assert!((state.abyss.second_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn late_backfilled_half_accepts_delayed_ultra_before_stage_timestamp() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(10.0, 1010, "outgoing", 100.0));
+        state.push_hit(test_hit(15.0, 1010, "outgoing", 200.0));
+
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 20.0,
+            cycle: None,
+            floor: None,
+            half: AbyssHalf::Second,
+            allow_late_backfill: true,
+        });
+        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
+            timestamp: 11.0,
+            char_id: 1010,
+            ability_id: "GA_Nanally_UltraSkill".to_owned(),
+            duration_seconds: 2.0,
+        });
+
+        assert!((state.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
+        assert!((state.abyss.second_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
+        assert_eq!(state.abyss.second_half.time_stop.intervals.len(), 1);
     }
 
     #[test]
