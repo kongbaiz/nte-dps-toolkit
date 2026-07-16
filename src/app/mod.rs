@@ -47,7 +47,7 @@ use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
     DialogOwner, WindowAttributeConfig, apply_island_base_style, apply_rounding_to_process_windows,
     apply_window_attributes, cursor_screen_pos, find_process_window_by_title, open_directory,
-    set_island_click_through,
+    set_island_click_through, window_monitor_rect,
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{

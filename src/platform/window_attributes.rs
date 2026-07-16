@@ -5,6 +5,9 @@ use windows_sys::Win32::Graphics::Dwm::{
     DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
     GetWindowThreadProcessId, IsWindowVisible, LWA_ALPHA, SetLayeredWindowAttributes,
@@ -149,6 +152,31 @@ pub(crate) fn cursor_screen_pos() -> Option<(i32, i32)> {
     let mut point = POINT { x: 0, y: 0 };
     // SAFETY: GetCursorPos writes into a valid stack POINT.
     (unsafe { GetCursorPos(&mut point) } != 0).then_some((point.x, point.y))
+}
+
+/// Physical virtual-desktop bounds of the monitor nearest `hwnd`.
+pub(crate) fn window_monitor_rect(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
+    // SAFETY: hwnd belongs to this process. MonitorFromWindow only queries its
+    // placement, and GetMonitorInfoW writes into a correctly sized stack value.
+    unsafe {
+        let monitor = MonitorFromWindow(hwnd as HWND, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null() {
+            return None;
+        }
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+        Some((
+            info.rcMonitor.left,
+            info.rcMonitor.top,
+            info.rcMonitor.right,
+            info.rcMonitor.bottom,
+        ))
+    }
 }
 
 /// Find this process's top-level window whose title matches `title` exactly.
