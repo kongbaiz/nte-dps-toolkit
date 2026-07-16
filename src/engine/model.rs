@@ -182,8 +182,10 @@ pub struct HtItemNetId {
 }
 
 impl HtItemNetId {
+    pub const ZERO: Self = Self { solt: 0, serial: 0 };
+
     pub fn is_zero(self) -> bool {
-        self.solt == 0 && self.serial == 0
+        self == Self::ZERO
     }
 }
 
@@ -213,6 +215,12 @@ impl EmptyCurtainItem {
     pub fn is_equipped(&self) -> bool {
         self.character_net_id.is_some()
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmptyCurtainCharacter {
+    pub net_id: HtItemNetId,
+    pub character_id: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1481,6 +1489,7 @@ pub struct CombatState {
     pub abyss: AbyssRunState,
     pub damage_correction_count: u64,
     pub empty_curtain: Vec<EmptyCurtainItem>,
+    pub empty_curtain_characters: Vec<EmptyCurtainCharacter>,
     pub empty_curtain_generation: u64,
     time_stop: TimeStopTracker,
 }
@@ -1563,6 +1572,51 @@ impl CombatState {
         self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
     }
 
+    pub fn replace_empty_curtain_characters(&mut self, characters: Vec<EmptyCurtainCharacter>) {
+        self.empty_curtain_characters = characters;
+    }
+
+    pub fn assign_empty_curtain_items(
+        &mut self,
+        character: EmptyCurtainCharacter,
+        equipment: &[HtItemNetId],
+        replace_character_loadout: bool,
+    ) {
+        let equipment = equipment.iter().copied().collect::<HashSet<_>>();
+        for item in &mut self.empty_curtain {
+            if replace_character_loadout && item.character_net_id == Some(character.net_id) {
+                item.character_net_id = None;
+                item.equipped_character_id = None;
+            }
+            if equipment.contains(&item.id) {
+                item.character_net_id = Some(character.net_id);
+                item.equipped_character_id = Some(character.character_id);
+            }
+        }
+        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
+    }
+
+    pub fn unequip_empty_curtain_item(&mut self, equipment: HtItemNetId) {
+        let item = self
+            .empty_curtain
+            .iter_mut()
+            .find(|item| item.id == equipment)
+            .expect("submitted Console equipment must remain in the captured inventory");
+        item.character_net_id = None;
+        item.equipped_character_id = None;
+        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
+    }
+
+    pub fn clear_empty_curtain_character(&mut self, character: HtItemNetId) {
+        for item in &mut self.empty_curtain {
+            if item.character_net_id == Some(character) {
+                item.character_net_id = None;
+                item.equipped_character_id = None;
+            }
+        }
+        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
+    }
+
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => {
@@ -1613,9 +1667,11 @@ impl CombatState {
 
     pub fn clear_battle_preserving_inventory(&mut self) {
         let empty_curtain = std::mem::take(&mut self.empty_curtain);
+        let empty_curtain_characters = std::mem::take(&mut self.empty_curtain_characters);
         let empty_curtain_generation = self.empty_curtain_generation;
         *self = Self::default();
         self.empty_curtain = empty_curtain;
+        self.empty_curtain_characters = empty_curtain_characters;
         self.empty_curtain_generation = empty_curtain_generation;
     }
 
@@ -2014,6 +2070,7 @@ pub enum EngineEvent {
     Abyss(AbyssEvent),
     TimeStop(TimeStopEvent),
     EmptyCurtain(Vec<EmptyCurtainItem>),
+    EmptyCurtainCharacters(Vec<EmptyCurtainCharacter>),
     Status(String),
     Warning(String),
     Error(String),
@@ -2733,6 +2790,10 @@ mod tests {
             character_net_id: None,
             equipped_character_id: None,
         }]);
+        state.replace_empty_curtain_characters(vec![EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 3, serial: 4 },
+            character_id: 1020,
+        }]);
         let inventory_generation = state.empty_curtain_generation;
 
         state.clear_battle_preserving_inventory();
@@ -2741,7 +2802,47 @@ mod tests {
         assert!(state.stats.is_empty());
         assert_eq!(state.total_damage, 0.0);
         assert_eq!(state.empty_curtain.len(), 1);
+        assert_eq!(state.empty_curtain_characters.len(), 1);
         assert_eq!(state.empty_curtain_generation, inventory_generation);
+    }
+
+    #[test]
+    fn optimistic_equipment_mutations_update_card_associations() {
+        let mut state = CombatState::default();
+        let first = HtItemNetId { solt: 1, serial: 2 };
+        let second = HtItemNetId { solt: 3, serial: 4 };
+        state.replace_empty_curtain(
+            [first, second]
+                .into_iter()
+                .map(|id| EmptyCurtainItem {
+                    id,
+                    item_id: "item".to_owned(),
+                    level: 1,
+                    main_stats: Vec::new(),
+                    sub_stats: Vec::new(),
+                    locked: false,
+                    character_net_id: None,
+                    equipped_character_id: None,
+                })
+                .collect(),
+        );
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 5, serial: 6 },
+            character_id: 1076,
+        };
+
+        state.assign_empty_curtain_items(character, &[first, second], true);
+        assert!(
+            state
+                .empty_curtain
+                .iter()
+                .all(|item| item.equipped_character_id == Some(1076))
+        );
+
+        state.unequip_empty_curtain_item(first);
+        assert!(!state.empty_curtain[0].is_equipped());
+        state.clear_empty_curtain_character(character.net_id);
+        assert!(!state.empty_curtain[1].is_equipped());
     }
 
     #[test]

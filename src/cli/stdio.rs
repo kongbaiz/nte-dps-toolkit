@@ -269,6 +269,7 @@ impl Runtime {
         match apply_engine_event(&mut self.state, event) {
             CoreSignal::StateChanged => self.battle_summary_dirty = true,
             CoreSignal::DebugPacket | CoreSignal::PacketObserved => {}
+            CoreSignal::InventoryCharactersReplaced => {}
             CoreSignal::InventoryReplaced => {
                 let generation = self.next_inventory_generation();
                 let snapshot = inventory_snapshot(
