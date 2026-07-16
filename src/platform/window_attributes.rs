@@ -1,14 +1,17 @@
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::path::Path;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Dwm::{
     DWMNCRP_DISABLED, DWMNCRP_ENABLED, DWMWA_BORDER_COLOR, DWMWA_NCRENDERING_POLICY,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DwmSetWindowAttribute,
+};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GWL_EXSTYLE, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    IsWindowVisible, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW, WS_EX_LAYERED,
-    WS_EX_TRANSPARENT,
+    EnumWindows, GWL_EXSTYLE, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindowVisible, LWA_ALPHA, SetLayeredWindowAttributes,
+    SetWindowLongPtrW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 /// DWM border-color sentinels (see `DWMWA_BORDER_COLOR`): suppress the 1px window
@@ -141,6 +144,150 @@ pub(crate) fn apply_window_attributes(
     }
 }
 
+/// Global cursor position in physical desktop pixels. The notification island
+/// polls this instead of egui pointer events because its window is
+/// click-through (`WS_EX_TRANSPARENT`) whenever the cursor is *not* over the
+/// capsule — in that state the window receives no mouse messages at all.
+pub(crate) fn cursor_screen_pos() -> Option<(i32, i32)> {
+    let mut point = POINT { x: 0, y: 0 };
+    // SAFETY: GetCursorPos writes into a valid stack POINT.
+    (unsafe { GetCursorPos(&mut point) } != 0).then_some((point.x, point.y))
+}
+
+/// Physical virtual-desktop bounds of the monitor nearest `hwnd`.
+pub(crate) fn window_monitor_rect(hwnd: isize) -> Option<(i32, i32, i32, i32)> {
+    // SAFETY: hwnd belongs to this process. MonitorFromWindow only queries its
+    // placement, and GetMonitorInfoW writes into a correctly sized stack value.
+    unsafe {
+        let monitor = MonitorFromWindow(hwnd as HWND, MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null() {
+            return None;
+        }
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return None;
+        }
+        Some((
+            info.rcMonitor.left,
+            info.rcMonitor.top,
+            info.rcMonitor.right,
+            info.rcMonitor.bottom,
+        ))
+    }
+}
+
+/// Find this process's top-level window whose title matches `title` exactly.
+/// eframe never exposes secondary-viewport HWNDs, so the island window is
+/// located by the unique title its `ViewportBuilder` sets.
+pub(crate) fn find_process_window_by_title(title: &str) -> Option<isize> {
+    struct Search {
+        process_id: u32,
+        title: Vec<u16>,
+        found: isize,
+    }
+
+    // SAFETY: EnumWindows invokes this callback with the documented ABI; lparam
+    // points at the caller's stack `Search` for the duration of EnumWindows.
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> i32 {
+        // SAFETY: lparam is the Search pointer passed below, valid for the call.
+        let search = unsafe { &mut *(lparam as *mut Search) };
+        let mut window_process_id = 0;
+        // SAFETY: EnumWindows provides a valid top-level hwnd for this callback.
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut window_process_id);
+        }
+        if window_process_id != search.process_id {
+            return 1;
+        }
+        let mut buffer = [0_u16; 128];
+        // SAFETY: buffer is a valid mutable slice for the given length.
+        let length =
+            unsafe { GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32) } as usize;
+        if buffer[..length] == search.title[..] {
+            search.found = hwnd as isize;
+            return 0;
+        }
+        1
+    }
+
+    let mut search = Search {
+        process_id: std::process::id(),
+        title: title.encode_utf16().collect(),
+        found: 0,
+    };
+    // SAFETY: the callback only dereferences lparam during this synchronous call.
+    unsafe {
+        EnumWindows(Some(visit), std::ptr::from_mut(&mut search) as LPARAM);
+    }
+    (search.found != 0).then_some(search.found)
+}
+
+/// One-time overlay styling for the notification island window: never steal
+/// focus even when clicked (`WS_EX_NOACTIVATE` — the game must stay in the
+/// foreground), stay out of Alt-Tab (`WS_EX_TOOLWINDOW`), and drop the DWM
+/// border/non-client chrome like the HUD overlay does.
+pub(crate) fn apply_island_base_style(hwnd: isize) {
+    let hwnd = hwnd as HWND;
+    // SAFETY: hwnd belongs to a live window of this process; the DWM attribute
+    // pointers reference local constants for the duration of each call.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let new_style = style | WS_EX_NOACTIVATE as isize | WS_EX_TOOLWINDOW as isize;
+        if new_style != style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
+        }
+        // Explicitly opt out of Windows 11 corner rounding: DWM pairs it with
+        // a frame backdrop and drop shadow that would reveal the transparent
+        // stage rect around the capsule (the capsule paints its own corners).
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE as u32,
+            std::ptr::from_ref(&DWMWCP_DONOTROUND).cast(),
+            std::mem::size_of_val(&DWMWCP_DONOTROUND) as u32,
+        );
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR as u32,
+            std::ptr::from_ref(&DWMWA_COLOR_NONE).cast(),
+            std::mem::size_of_val(&DWMWA_COLOR_NONE) as u32,
+        );
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY as u32,
+            std::ptr::from_ref(&DWMNCRP_DISABLED).cast(),
+            std::mem::size_of_val(&DWMNCRP_DISABLED) as u32,
+        );
+    }
+}
+
+/// Toggle click-through on the island window. Mirrors the HUD passthrough
+/// path in [`apply_window_attributes`]: `WS_EX_TRANSPARENT` needs
+/// `WS_EX_LAYERED` alongside it to reliably pass hit-testing through on every
+/// compositor path, and a layered window must have its uniform alpha reset to
+/// opaque so the transparent-framebuffer rendering stays untouched.
+pub(crate) fn set_island_click_through(hwnd: isize, click_through: bool) {
+    let hwnd = hwnd as HWND;
+    // SAFETY: hwnd belongs to a live window of this process.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let mut new_style = style;
+        if click_through {
+            new_style |= (WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize;
+        } else {
+            new_style &= !((WS_EX_LAYERED | WS_EX_TRANSPARENT) as isize);
+        }
+        if new_style != style {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_style);
+            if (new_style & WS_EX_LAYERED as isize) != 0 {
+                let _ = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+            }
+        }
+    }
+}
+
 pub(crate) fn apply_rounding_to_process_windows() {
     // SAFETY: EnumWindows invokes this callback with the documented ABI and valid HWND values.
     unsafe extern "system" fn apply_rounding(hwnd: HWND, process_id: LPARAM) -> i32 {
@@ -150,6 +297,14 @@ pub(crate) fn apply_rounding_to_process_windows() {
             GetWindowThreadProcessId(hwnd, &mut window_process_id);
         }
         if window_process_id != process_id as u32 {
+            return 1;
+        }
+        // Skip overlay tool windows (the notification island): Windows 11
+        // pairs DWMWCP_ROUND with its own frame backdrop and drop shadow,
+        // which makes a transparent overlay's whole stage rect visible.
+        // SAFETY: EnumWindows provides a valid top-level hwnd for this callback.
+        let ex_style = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+        if (ex_style & WS_EX_TOOLWINDOW as isize) != 0 {
             return 1;
         }
         if !is_visible_content_window(hwnd) {

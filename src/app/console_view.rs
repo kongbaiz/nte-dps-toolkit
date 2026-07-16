@@ -1735,6 +1735,24 @@ impl DpsApp {
                             "Complete interface transitions instantly and reduce idle redraws",
                         ));
                     ui.end_row();
+
+                    ui.label(t("Notifications"));
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.island_enabled, t("Floating island notifications"))
+                            .on_hover_text(t(
+                                "Show notifications in a capsule floating above all windows; off falls back to in-window toasts",
+                            ));
+                        if self.island_enabled {
+                            ui.add(
+                                egui::DragValue::new(&mut self.island_offset_x)
+                                    .speed(2)
+                                    .range(-4000.0..=4000.0)
+                                    .suffix(" px"),
+                            )
+                            .on_hover_text(t("Horizontal offset from the screen center"));
+                        }
+                    });
+                    ui.end_row();
                 });
         });
     }
