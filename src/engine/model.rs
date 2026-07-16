@@ -1354,11 +1354,24 @@ impl AbyssRunState {
 
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         match event {
-            TimeStopEvent::UltraAnimation { char_id, .. } => {
-                if let Some(half) = self.active_half {
-                    let half = *self.character_halves.entry(*char_id).or_insert(half);
-                    self.half_mut(half).apply_time_stop_event(event);
-                }
+            TimeStopEvent::UltraAnimation {
+                timestamp, char_id, ..
+            } => {
+                let half = if self
+                    .second_half_at
+                    .is_some_and(|started_at| *timestamp >= started_at)
+                {
+                    AbyssHalf::Second
+                } else if self
+                    .first_half_at
+                    .is_some_and(|started_at| *timestamp >= started_at)
+                {
+                    AbyssHalf::First
+                } else {
+                    return;
+                };
+                let half = *self.character_halves.entry(*char_id).or_insert(half);
+                self.half_mut(half).apply_time_stop_event(event);
             }
             TimeStopEvent::ExtraStart { .. } => {
                 if let Some(half) = self.active_half {
@@ -2969,7 +2982,7 @@ mod tests {
     }
 
     #[test]
-    fn ultra_binds_character_before_first_delayed_hit() {
+    fn delayed_ultra_uses_activation_half_before_first_hit() {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
@@ -2978,13 +2991,6 @@ mod tests {
             half: AbyssHalf::First,
             allow_late_backfill: false,
         });
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 2.0,
-            char_id: 1010,
-            ability_id: "GA_Nanally_UltraSkill".to_owned(),
-            duration_seconds: 2.0,
-        });
-
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 3.0,
             cycle: None,
@@ -2992,13 +2998,21 @@ mod tests {
             half: AbyssHalf::Second,
             allow_late_backfill: false,
         });
+        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
+            timestamp: 2.0,
+            char_id: 1010,
+            ability_id: "GA_Nanally_UltraSkill".to_owned(),
+            duration_seconds: 2.0,
+        });
         state.push_hit(test_hit(3.5, 1010, "outgoing", 100.0));
         state.push_hit(test_hit(3.6, 1052, "outgoing", 200.0));
 
         assert_eq!(state.abyss.first_half.hits.len(), 1);
         assert_eq!(state.abyss.first_half.total_damage, 100.0);
+        assert_eq!(state.abyss.first_half.time_stop.intervals.len(), 1);
         assert_eq!(state.abyss.second_half.hits.len(), 1);
         assert_eq!(state.abyss.second_half.total_damage, 200.0);
+        assert!(state.abyss.second_half.time_stop.intervals.is_empty());
     }
 
     #[test]
