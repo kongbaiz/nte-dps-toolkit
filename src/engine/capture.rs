@@ -1296,10 +1296,7 @@ impl UltraTimeStopTracker {
         }
         let montage_char_id = self.consume_recent_ultra_montage(flow);
         let char_id = match activation_char_ids.as_slice() {
-            [activation_id] => match montage_char_id {
-                Some(montage_id) if montage_id != *activation_id => None,
-                _ => Some(*activation_id),
-            },
+            [activation_id] => Some(*activation_id),
             [] => match (montage_char_id, declared_ids) {
                 (Some(montage_id), [declared_id]) if montage_id != *declared_id => None,
                 (Some(montage_id), _) => Some(montage_id),
@@ -5076,6 +5073,42 @@ mod tests {
                 }]
             );
         }
+    }
+
+    #[test]
+    fn specific_activation_tag_overrides_mismatched_recent_montage() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                10.01,
+                "CoolDown.Player.UltraSkill.Sagiri",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.01,
+                char_id: 1003,
+                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
+                duration_seconds: 3.533936,
+            }]
+        );
     }
 
     #[test]
