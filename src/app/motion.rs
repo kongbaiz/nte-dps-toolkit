@@ -443,6 +443,84 @@ pub(crate) fn animate_share(
     }
 }
 
+/// Spring parameter presets for [`Spring`].
+pub(crate) mod spring {
+    /// Geometry morphs that should land with a slight, lively overshoot
+    /// (the notification island expanding).
+    pub(crate) const STIFFNESS: f32 = 320.0;
+    pub(crate) const DAMPING_BOUNCY: f32 = 23.0;
+    /// Settling without any overshoot (exits, opacity, row reveals).
+    pub(crate) const DAMPING_SMOOTH: f32 = 34.0;
+}
+
+/// Damped spring with persistent velocity, for morphing geometry whose target
+/// can change mid-flight (the notification island). Unlike the fixed-duration
+/// tweens above, velocity stays continuous when the target moves, and an
+/// external impulse ([`Spring::kick`]) produces a natural squash-and-rebound
+/// without a scripted keyframe.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Spring {
+    value: f32,
+    velocity: f32,
+    target: f32,
+}
+
+impl Spring {
+    /// Integration step: semi-implicit Euler stays stable for the stiffness
+    /// range above at 240 Hz regardless of the display's frame rate.
+    const SUBSTEP: f32 = 1.0 / 240.0;
+    const REST_DELTA: f32 = 0.05;
+
+    pub(crate) fn new(value: f32) -> Self {
+        Self {
+            value,
+            velocity: 0.0,
+            target: value,
+        }
+    }
+
+    pub(crate) fn value(&self) -> f32 {
+        self.value
+    }
+
+    pub(crate) fn set_target(&mut self, target: f32) {
+        self.target = target;
+    }
+
+    /// Jump to `value` with no residual motion (entrance seeding, reduced motion).
+    pub(crate) fn snap_to(&mut self, value: f32) {
+        self.value = value;
+        self.target = value;
+        self.velocity = 0.0;
+    }
+
+    /// Add an instantaneous velocity impulse (squash on notice replacement).
+    pub(crate) fn kick(&mut self, velocity: f32) {
+        self.velocity += velocity;
+    }
+
+    pub(crate) fn is_settled(&self) -> bool {
+        self.velocity.abs() < Self::REST_DELTA
+            && (self.value - self.target).abs() < Self::REST_DELTA
+    }
+
+    pub(crate) fn step(&mut self, dt: f32, stiffness: f32, damping: f32) -> f32 {
+        let mut remaining = dt.clamp(0.0, 0.1);
+        while remaining > 0.0 && !self.is_settled() {
+            let step = remaining.min(Self::SUBSTEP);
+            let accel = -stiffness * (self.value - self.target) - damping * self.velocity;
+            self.velocity += accel * step;
+            self.value += self.velocity * step;
+            remaining -= step;
+        }
+        if self.is_settled() {
+            self.value = self.target;
+            self.velocity = 0.0;
+        }
+        self.value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,5 +564,57 @@ mod tests {
         assert_eq!(bounce_envelope(0.0), 0.0);
         assert_eq!(bounce_envelope(0.5), 1.0);
         assert_eq!(bounce_envelope(1.0), 0.0);
+    }
+
+    #[test]
+    fn spring_converges_and_settles_on_its_target() {
+        let mut spring = Spring::new(0.0);
+        spring.set_target(100.0);
+        for _ in 0..240 {
+            spring.step(1.0 / 60.0, spring::STIFFNESS, spring::DAMPING_SMOOTH);
+        }
+        assert!(spring.is_settled());
+        assert_eq!(spring.value(), 100.0);
+    }
+
+    #[test]
+    fn bouncy_spring_overshoots_its_target_once() {
+        let mut spring = Spring::new(0.0);
+        spring.set_target(100.0);
+        let mut peak = 0.0_f32;
+        for _ in 0..240 {
+            peak = peak.max(spring.step(1.0 / 60.0, spring::STIFFNESS, spring::DAMPING_BOUNCY));
+        }
+        assert!(peak > 100.0, "expected overshoot, peaked at {peak}");
+        assert!(peak < 115.0, "overshoot too violent: {peak}");
+        assert!(spring.is_settled());
+    }
+
+    #[test]
+    fn spring_velocity_stays_continuous_when_the_target_moves() {
+        let mut spring = Spring::new(0.0);
+        spring.set_target(100.0);
+        for _ in 0..6 {
+            spring.step(1.0 / 60.0, spring::STIFFNESS, spring::DAMPING_SMOOTH);
+        }
+        let mid_value = spring.value();
+        spring.set_target(40.0);
+        let next = spring.step(1.0 / 60.0, spring::STIFFNESS, spring::DAMPING_SMOOTH);
+        // Retargeting must not teleport the value; the next step continues
+        // from the current position with the accumulated velocity.
+        assert!((next - mid_value).abs() < 10.0);
+    }
+
+    #[test]
+    fn spring_kick_produces_a_squash_and_rebound() {
+        let mut spring = Spring::new(200.0);
+        spring.kick(-520.0);
+        let mut low = 200.0_f32;
+        for _ in 0..240 {
+            low = low.min(spring.step(1.0 / 60.0, spring::STIFFNESS, spring::DAMPING_BOUNCY));
+        }
+        assert!(low < 195.0, "kick should compress the value, got {low}");
+        assert!(spring.is_settled());
+        assert_eq!(spring.value(), 200.0);
     }
 }
