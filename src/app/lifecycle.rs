@@ -271,6 +271,9 @@ impl DpsApp {
             status_toasts: VecDeque::new(),
             undo_states: HashMap::new(),
             next_toast_id: 1,
+            island: IslandState::new(),
+            island_enabled: ui_config.island_notifications,
+            island_offset_x: ui_config.island_offset_x,
             diagnostic,
             last_error: startup_error,
             last_error_action: None,
@@ -1325,6 +1328,8 @@ impl DpsApp {
             density: self.density,
             reduce_motion: self.reduce_motion,
             always_on_top: self.always_on_top,
+            island_notifications: self.island_enabled,
+            island_offset_x: self.island_offset_x,
             server_damage_calibration: self.server_damage_calibration,
             manual_capture_device: self.manual_capture_device.clone(),
             dps_time_mode: self.dps_time_mode,
@@ -2265,16 +2270,32 @@ impl DpsApp {
         duration: Duration,
         undo: Option<UndoState>,
     ) {
-        while self.status_toasts.len() >= 5 {
-            if let Some(toast) = self.status_toasts.pop_front() {
-                self.undo_states.remove(&toast.id);
-            }
-        }
         let now = Instant::now();
         let id = self.next_toast_id;
         self.next_toast_id = self.next_toast_id.wrapping_add(1).max(1);
         if let Some(undo) = undo {
             self.undo_states.insert(id, undo);
+        }
+        let undo_id = self.undo_states.contains_key(&id).then_some(id);
+        // The global island (its own overlay window) receives every notice
+        // while enabled; the per-viewport toasts are the fallback path.
+        if self.island_enabled {
+            self.island.push(IslandNotice {
+                id,
+                text,
+                tone,
+                duration,
+                undo_id,
+            });
+            for dropped in self.island.take_dropped() {
+                self.undo_states.remove(&dropped);
+            }
+            return;
+        }
+        while self.status_toasts.len() >= 5 {
+            if let Some(toast) = self.status_toasts.pop_front() {
+                self.undo_states.remove(&toast.id);
+            }
         }
         self.status_toasts.push_back(StatusToast {
             id,
@@ -2285,12 +2306,13 @@ impl DpsApp {
             last_tick: now,
             hovered: false,
             animation_seeded: false,
-            undo_id: self.undo_states.contains_key(&id).then_some(id),
+            undo_id,
         });
     }
 
     fn dismiss_toast(&mut self, id: u64) {
         self.status_toasts.retain(|toast| toast.id != id);
+        self.island.remove(id);
         self.undo_states.remove(&id);
     }
 
@@ -2316,6 +2338,11 @@ impl DpsApp {
             .iter()
             .rev()
             .find_map(|toast| toast.undo_id)
+            .or_else(|| {
+                self.island
+                    .notices_newest_first()
+                    .find_map(|notice| notice.undo_id)
+            })
         else {
             self.status = t("Nothing to undo");
             return;
@@ -2328,16 +2355,22 @@ impl DpsApp {
             .iter()
             .rev()
             .filter_map(|toast| toast.undo_id)
+            .chain(
+                self.island
+                    .notices_newest_first()
+                    .filter_map(|notice| notice.undo_id),
+            )
             .find(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_))))
     }
 
-    fn apply_undo(&mut self, id: u64, viewport: egui::ViewportId) {
+    pub(crate) fn apply_undo(&mut self, id: u64, viewport: egui::ViewportId) {
         let Some(undo) = self.undo_states.remove(&id) else {
             return;
         };
         match undo {
             UndoState::CombatSession(snapshot) => {
                 self.status_toasts.retain(|toast| toast.id != id);
+                self.island.remove(id);
                 if self.has_session_data() || self.capture.is_some() || self.replay_thread.is_some()
                 {
                     self.status = t("Cannot restore the previous session after new data arrives");
@@ -2365,6 +2398,7 @@ impl DpsApp {
             UndoState::HistoryRecord(record) => match history::restore_record(&record) {
                 Ok(()) => {
                     self.status_toasts.retain(|toast| toast.id != id);
+                    self.island.remove(id);
                     let record_id = record.id.clone();
                     self.history.reload();
                     self.history.selected_id = Some(record_id);
