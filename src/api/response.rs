@@ -24,7 +24,7 @@ pub struct HelloResult {
     pub core_version: &'static str,
     pub protocol_version: u32,
     pub data_version: &'static str,
-    pub capabilities: [&'static str; 3],
+    pub capabilities: [&'static str; 4],
     pub raw_capture_default: bool,
 }
 
@@ -34,7 +34,7 @@ impl Default for HelloResult {
             core_version: env!("CARGO_PKG_VERSION"),
             protocol_version: PROTOCOL_VERSION,
             data_version: DATA_VERSION,
-            capabilities: ["capture", "inventory", "battle_summary"],
+            capabilities: ["capture", "inventory", "battle_summary", "equipment"],
             raw_capture_default: true,
         }
     }
@@ -89,6 +89,11 @@ pub struct CaptureStopResult {
 }
 
 #[derive(Debug, Serialize)]
+pub struct EquipmentRequestResult {
+    pub status: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CaptureStatusEvent {
     pub sequence: u64,
     pub operation_id: String,
@@ -105,4 +110,17 @@ pub struct CoreMessageEvent {
 #[derive(Debug, Serialize)]
 pub struct BattleResetResult {
     pub reset: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hello_preserves_existing_capability_order_and_appends_equipment() {
+        assert_eq!(
+            HelloResult::default().capabilities,
+            ["capture", "inventory", "battle_summary", "equipment"]
+        );
+    }
 }

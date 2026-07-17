@@ -30,6 +30,7 @@ struct PendingModulePlacement {
     character: EmptyCurtainCharacter,
     equipment: HtItemNetId,
     item_id: String,
+    move_from_other_character: bool,
 }
 
 enum EquipmentEquipSelection {
@@ -55,6 +56,14 @@ enum PendingEquipmentMutation {
     },
     Unequip(HtItemNetId),
     Clear(HtItemNetId),
+    SetDiscarded {
+        equipment: HtItemNetId,
+        discarded: bool,
+    },
+    SetLocked {
+        equipment: HtItemNetId,
+        locked: bool,
+    },
 }
 
 struct PendingPluginRequest {
@@ -291,7 +300,7 @@ impl DpsApp {
                 });
                 ui.separator();
                 ui.label(inline_text(
-                    t("Right-click equipment to equip or unequip it through the plugin"),
+                    t("Right-click equipment to manage it through the plugin"),
                     ui.visuals().weak_text_color(),
                 ));
             }
@@ -433,14 +442,23 @@ impl DpsApp {
             &self.characters,
             &self.equipment_catalog,
         ) {
-            self.submit_equipment_plugin_request(
-                ui.ctx(),
-                placement.character.net_id,
+            let operation = if placement.move_from_other_character {
+                EquipmentPluginOperation::MoveModuleToCharacter {
+                    equipment: placement.equipment,
+                    row,
+                    column,
+                }
+            } else {
                 EquipmentPluginOperation::EquipModule {
                     equipment: placement.equipment,
                     row,
                     column,
-                },
+                }
+            };
+            self.submit_equipment_plugin_request(
+                ui.ctx(),
+                placement.character.net_id,
+                operation,
                 PendingEquipmentMutation::Assign {
                     character: placement.character,
                     equipment: vec![placement.equipment],
@@ -504,6 +522,15 @@ impl DpsApp {
                     }
                     PendingEquipmentMutation::Clear(character) => {
                         self.state.clear_empty_curtain_character(character);
+                    }
+                    PendingEquipmentMutation::SetDiscarded {
+                        equipment,
+                        discarded,
+                    } => self
+                        .state
+                        .set_empty_curtain_item_discarded(equipment, discarded),
+                    PendingEquipmentMutation::SetLocked { equipment, locked } => {
+                        self.state.set_empty_curtain_item_locked(equipment, locked);
                     }
                 }
                 self.kongmu_ui.invalidate_inventory();
@@ -736,7 +763,14 @@ fn draw_empty_curtain_card(
         egui::vec2(EQUIPMENT_ICON_SIZE, EQUIPMENT_ICON_SIZE),
     );
     draw_equipment_icon(ui, icon_rect, texture, name, visuals.dark_mode);
-    paint_equipment_status(ui, rect, item.is_equipped(), item.locked, visuals.dark_mode);
+    paint_equipment_status(
+        ui,
+        rect,
+        item.is_equipped(),
+        item.locked,
+        item.discarded,
+        visuals.dark_mode,
+    );
     let avatar_rect = item.equipped_character_id.map(|character_id| {
         paint_equipped_character_avatar(
             ui,
@@ -879,6 +913,49 @@ fn equipment_card_context_menu(
             ui.label(t("Waiting for the equipment plugin..."));
             return;
         }
+        let locked = !item.locked;
+        if ui
+            .button(t(if locked { "Lock" } else { "Unlock" }))
+            .clicked()
+        {
+            *selection = Some(EquipmentEquipSelection::Submit {
+                character: HtItemNetId::ZERO,
+                operation: EquipmentPluginOperation::SetItemLocked {
+                    equipment: item.id,
+                    locked,
+                },
+                mutation: PendingEquipmentMutation::SetLocked {
+                    equipment: item.id,
+                    locked,
+                },
+            });
+            ui.close();
+            return;
+        }
+        let discarded = !item.discarded;
+        if ui
+            .button(t(if discarded {
+                "Mark as Discarded"
+            } else {
+                "Clear Discarded Mark"
+            }))
+            .clicked()
+        {
+            *selection = Some(EquipmentEquipSelection::Submit {
+                character: HtItemNetId::ZERO,
+                operation: EquipmentPluginOperation::SetItemDiscarded {
+                    equipment: item.id,
+                    discarded,
+                },
+                mutation: PendingEquipmentMutation::SetDiscarded {
+                    equipment: item.id,
+                    discarded,
+                },
+            });
+            ui.close();
+            return;
+        }
+        ui.separator();
         let Some(kind) = kind else {
             ui.label(t("Equipment metadata is unavailable"));
             return;
@@ -899,6 +976,46 @@ fn equipment_card_context_menu(
                     mutation: PendingEquipmentMutation::Unequip(item.id),
                 });
                 ui.close();
+                return;
+            }
+            if characters.iter().any(|target| target.net_id != character) {
+                ui.menu_button(t("Move to Character"), |ui| {
+                    for target in characters
+                        .iter()
+                        .filter(|target| target.net_id != character)
+                    {
+                        let fallback = tf("Character ID {}", &[&target.character_id.to_string()]);
+                        let name = character_display_name(
+                            character_definitions,
+                            target.character_id,
+                            &fallback,
+                        );
+                        if ui.button(name).clicked() {
+                            *selection = Some(match kind {
+                                EquipmentKind::Module => {
+                                    EquipmentEquipSelection::Module(PendingModulePlacement {
+                                        character: *target,
+                                        equipment: item.id,
+                                        item_id: item.item_id.clone(),
+                                        move_from_other_character: true,
+                                    })
+                                }
+                                EquipmentKind::Core => EquipmentEquipSelection::Submit {
+                                    character: target.net_id,
+                                    operation: EquipmentPluginOperation::MoveCoreToCharacter {
+                                        equipment: item.id,
+                                    },
+                                    mutation: PendingEquipmentMutation::Assign {
+                                        character: *target,
+                                        equipment: vec![item.id],
+                                        replace_character_loadout: false,
+                                    },
+                                },
+                            });
+                            ui.close();
+                        }
+                    }
+                });
             }
             return;
         }
@@ -921,6 +1038,7 @@ fn equipment_card_context_menu(
                                 character: *character,
                                 equipment: item.id,
                                 item_id: item.item_id.clone(),
+                                move_from_other_character: false,
                             })
                         }
                         EquipmentKind::Core => EquipmentEquipSelection::Submit {
@@ -1200,6 +1318,7 @@ fn paint_equipment_status(
     card_rect: egui::Rect,
     equipped: bool,
     locked: bool,
+    discarded: bool,
     dark_mode: bool,
 ) {
     let mut right = card_rect.right() - 8.0;
@@ -1211,8 +1330,13 @@ fn paint_equipment_status(
         paint_lock_icon(ui.painter(), lock_rect, shadcn_foreground(dark_mode));
         right = lock_rect.left() - 4.0;
     }
-    if equipped {
-        let text = t("Equipped");
+    for text in [
+        equipped.then(|| t("Equipped")),
+        discarded.then(|| t("Discarded")),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let font = egui::FontId::proportional(10.0);
         let text_width = ui
             .painter()
@@ -1238,6 +1362,7 @@ fn paint_equipment_status(
             font,
             shadcn_foreground(dark_mode),
         );
+        right = badge_rect.left() - 4.0;
     }
 }
 
@@ -2258,6 +2383,7 @@ mod tests {
             main_stats: main,
             sub_stats: sub,
             locked: false,
+            discarded: false,
             character_net_id: None,
             equipped_character_id: None,
         }
@@ -2266,6 +2392,8 @@ mod tests {
     #[test]
     fn equipped_card_overlay_preserves_next_card_gap() {
         let mut equipped = item(1, "equipped", Vec::new(), Vec::new());
+        equipped.locked = true;
+        equipped.discarded = true;
         equipped.character_net_id = Some(crate::engine::model::HtItemNetId {
             solt: 10,
             serial: 11,

@@ -51,6 +51,7 @@ pub struct InventoryItem {
     pub level: u32,
     pub max_level: Option<u32>,
     pub locked: bool,
+    pub discarded: bool,
     pub equipped: bool,
     pub equipped_character_uid: Option<ItemUid>,
     pub equipped_character_id: Option<u32>,
@@ -123,6 +124,7 @@ fn inventory_item(
         level: item.level,
         max_level: definition.map(|definition| definition.max_level),
         locked: item.locked,
+        discarded: item.discarded,
         equipped: item.is_equipped(),
         equipped_character_uid: item.character_net_id.map(ItemUid::from),
         equipped_character_id: item
@@ -188,6 +190,7 @@ mod tests {
             }],
             sub_stats: Vec::new(),
             locked: true,
+            discarded: true,
             character_net_id: Some(HtItemNetId {
                 solt: 11,
                 serial: 13,
@@ -211,6 +214,7 @@ mod tests {
             })
         );
         assert!(mapped.equipped);
+        assert!(mapped.discarded);
         assert_eq!(mapped.equipped_character_id, Some(1020));
         assert_eq!(snapshot.generation, 3);
         assert_eq!(snapshot.observed_at_unix_ms, 1234);
@@ -229,6 +233,7 @@ mod tests {
             }],
             sub_stats: Vec::new(),
             locked: false,
+            discarded: false,
             character_net_id: Some(HtItemNetId {
                 solt: 20,
                 serial: 21,

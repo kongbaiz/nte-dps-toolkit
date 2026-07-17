@@ -4242,6 +4242,7 @@ mod tests {
             main_stats: Vec::new(),
             sub_stats: Vec::new(),
             locked: false,
+            discarded: false,
             character_net_id,
             equipped_character_id: None,
         }
@@ -4378,6 +4379,7 @@ mod tests {
         assert_eq!(current.empty_curtain.len(), 1);
         assert_eq!(current.empty_curtain[0].id.solt, 1);
         assert!(current.empty_curtain[0].locked);
+        assert!(!current.empty_curtain[0].discarded);
         assert_eq!(current.empty_curtain[0].equipped_character_id, Some(1020));
         assert_eq!(current.empty_curtain_characters.len(), 1);
         assert_eq!(current.empty_curtain_characters[0].character_id, 1020);

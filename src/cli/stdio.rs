@@ -18,11 +18,11 @@ use crate::api::jsonrpc::{
 };
 use crate::api::request::{
     BattleSummaryParams, CaptureDeviceParam, CaptureProfileParam, CaptureStartParams,
-    RawCaptureParam, Request,
+    EquipmentOperationParam, ItemUidParam, RawCaptureParam, Request,
 };
 use crate::api::response::{
     BattleResetResult, CaptureStartResult, CaptureStatusEvent, CaptureStopResult, CoreMessageEvent,
-    HelloResult, ShutdownResult, StatusResult,
+    EquipmentRequestResult, HelloResult, ShutdownResult, StatusResult,
 };
 use crate::cli::args::ServeOptions;
 use crate::core::capture::{
@@ -33,10 +33,15 @@ use crate::core::reducer::{CoreSignal, apply_engine_event};
 use crate::core::snapshot::{InventorySnapshot, inventory_snapshot};
 use crate::core::{CoreError, CoreErrorCode};
 use crate::engine::capture::PacketEmissionMode;
-use crate::engine::model::{CaptureQualitySource, CharacterInfo, CombatState, EngineEvent};
+use crate::engine::model::{
+    CaptureQualitySource, CharacterInfo, CombatState, EngineEvent, HtItemNetId,
+};
 use crate::engine::parser::{
     CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_characters,
     load_equipment_catalog,
+};
+use crate::platform::equipment_plugin::{
+    EquipmentPluginOperation, EquipmentPluginPlacement, EquipmentPluginRequest, call_plugin,
 };
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -136,6 +141,7 @@ struct Runtime {
     sequence: u64,
     inventory_generation: u64,
     operation_sequence: u64,
+    equipment_request_sequence: u64,
     active_operation_id: Option<String>,
     running_notified: bool,
     battle_summary_dirty: bool,
@@ -161,6 +167,7 @@ impl Runtime {
             sequence: 0,
             inventory_generation: 0,
             operation_sequence: 0,
+            equipment_request_sequence: 0,
             active_operation_id: None,
             running_notified: false,
             battle_summary_dirty: false,
@@ -192,6 +199,14 @@ impl Runtime {
             .checked_add(1)
             .expect("inventory generation cannot overflow during one process lifetime");
         self.inventory_generation
+    }
+
+    fn next_equipment_request_id(&mut self) -> u64 {
+        self.equipment_request_sequence = self
+            .equipment_request_sequence
+            .checked_add(1)
+            .expect("equipment request sequence cannot overflow during one process lifetime");
+        self.equipment_request_sequence
     }
 
     fn status(&self) -> StatusResult {
@@ -742,6 +757,38 @@ fn handle_request(
             };
             send(outbound, message)
         }
+        Request::Equipment(operation) => {
+            let request = equipment_plugin_request(runtime.next_equipment_request_id(), operation);
+            let message = match call_plugin(&request) {
+                Ok(0) => success(
+                    id,
+                    EquipmentRequestResult {
+                        status: "rpc_dispatched",
+                    },
+                ),
+                Ok(1) => success(
+                    id,
+                    EquipmentRequestResult {
+                        status: "dry_run_ok",
+                    },
+                ),
+                Ok(status) => failure(
+                    id,
+                    RpcError::domain(
+                        "EQUIPMENT_REQUEST_REJECTED",
+                        format!("Equipment plugin rejected the request with status {status}"),
+                    ),
+                ),
+                Err(_) => failure(
+                    id,
+                    RpcError::domain(
+                        "EQUIPMENT_PLUGIN_UNAVAILABLE",
+                        "Equipment plugin is unavailable",
+                    ),
+                ),
+            };
+            send(outbound, message)
+        }
         Request::BattleGetSummary(BattleSummaryParams { subtract_time_stop }) => {
             drain_engine_events(runtime, engine_receiver, outbound);
             send(
@@ -755,6 +802,126 @@ fn handle_request(
             send(outbound, success(id, BattleResetResult { reset: true }))
         }
         Request::Unknown => send(outbound, failure(id, RpcError::method_not_found())),
+    }
+}
+
+fn equipment_plugin_request(
+    request_id: u64,
+    operation: EquipmentOperationParam,
+) -> EquipmentPluginRequest {
+    let (character, operation) = match operation {
+        EquipmentOperationParam::EquipModule {
+            character,
+            equipment,
+            row,
+            column,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::EquipModule {
+                equipment: item_net_id(equipment),
+                row,
+                column,
+            },
+        ),
+        EquipmentOperationParam::EquipCore {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::EquipCore {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::UnequipModule {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::UnequipModule {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::UnequipCore {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::UnequipCore {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::UnequipAll { character } => {
+            (item_net_id(character), EquipmentPluginOperation::UnequipAll)
+        }
+        EquipmentOperationParam::EquipOneKey {
+            character,
+            placements,
+            core,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::EquipOneKey {
+                placements: placements
+                    .into_iter()
+                    .map(|placement| EquipmentPluginPlacement {
+                        equipment: item_net_id(placement.equipment),
+                        row: placement.row,
+                        column: placement.column,
+                    })
+                    .collect(),
+                core: item_net_id(core),
+            },
+        ),
+        EquipmentOperationParam::MoveModuleToCharacter {
+            character,
+            equipment,
+            row,
+            column,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::MoveModuleToCharacter {
+                equipment: item_net_id(equipment),
+                row,
+                column,
+            },
+        ),
+        EquipmentOperationParam::MoveCoreToCharacter {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::MoveCoreToCharacter {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::SetItemDiscarded {
+            equipment,
+            discarded,
+        } => (
+            HtItemNetId::ZERO,
+            EquipmentPluginOperation::SetItemDiscarded {
+                equipment: item_net_id(equipment),
+                discarded,
+            },
+        ),
+        EquipmentOperationParam::SetItemLocked { equipment, locked } => (
+            HtItemNetId::ZERO,
+            EquipmentPluginOperation::SetItemLocked {
+                equipment: item_net_id(equipment),
+                locked,
+            },
+        ),
+    };
+    EquipmentPluginRequest {
+        request_id,
+        character,
+        operation,
+    }
+}
+
+fn item_net_id(uid: ItemUidParam) -> HtItemNetId {
+    HtItemNetId {
+        solt: uid.slot,
+        serial: uid.serial,
     }
 }
 
@@ -877,6 +1044,7 @@ mod tests {
                 main_stats: Vec::new(),
                 sub_stats: Vec::new(),
                 locked: true,
+                discarded: false,
                 character_net_id: Some(HtItemNetId { solt: 6, serial: 7 }),
                 equipped_character_id: Some(1020),
             }]))
@@ -1013,6 +1181,7 @@ mod tests {
                 main_stats: Vec::new(),
                 sub_stats: Vec::new(),
                 locked: false,
+                discarded: false,
                 character_net_id: None,
                 equipped_character_id: None,
             }]),
@@ -1078,6 +1247,45 @@ mod tests {
         assert_eq!(reset["result"]["reset"], true);
         assert!(runtime.state.hits.is_empty());
         assert!(runtime.battle_summary(true).is_none());
+    }
+
+    #[test]
+    fn equipment_requests_map_external_uids_and_boolean_state() {
+        let request = equipment_plugin_request(
+            17,
+            EquipmentOperationParam::MoveModuleToCharacter {
+                character: ItemUidParam { slot: 1, serial: 2 },
+                equipment: ItemUidParam { slot: 3, serial: 4 },
+                row: 2,
+                column: 5,
+            },
+        );
+        assert_eq!(request.request_id, 17);
+        assert_eq!(request.character, HtItemNetId { solt: 1, serial: 2 });
+        assert!(matches!(
+            request.operation,
+            EquipmentPluginOperation::MoveModuleToCharacter {
+                equipment: HtItemNetId { solt: 3, serial: 4 },
+                row: 2,
+                column: 5,
+            }
+        ));
+
+        let request = equipment_plugin_request(
+            18,
+            EquipmentOperationParam::SetItemLocked {
+                equipment: ItemUidParam { slot: 5, serial: 6 },
+                locked: true,
+            },
+        );
+        assert_eq!(request.character, HtItemNetId::ZERO);
+        assert!(matches!(
+            request.operation,
+            EquipmentPluginOperation::SetItemLocked {
+                equipment: HtItemNetId { solt: 5, serial: 6 },
+                locked: true,
+            }
+        ));
     }
 
     #[test]
