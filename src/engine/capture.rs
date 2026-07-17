@@ -39,7 +39,7 @@ use crate::engine::parser::{
     load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
     parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
     parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
-    validate_empty_curtain_snapshot,
+    valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::storage::i18n;
 
@@ -3732,6 +3732,9 @@ pub fn import_capture_json(
                 });
                 saved_empty_curtain_characters.dedup();
             }
+            let saved_empty_curtain_characters =
+                validate_empty_curtain_characters(saved_empty_curtain_characters)
+                    .ok_or_else(|| "invalid Console equipment snapshot".to_owned())?;
             let ultra_time_stops = find_data_file(Path::new(ULTRA_TIME_STOP_DATA_PATH))
                 .and_then(|path| load_ultra_time_stops(&path).ok())
                 .unwrap_or_default();
@@ -3837,6 +3840,24 @@ pub fn import_capture_json(
             }
         }
     })
+}
+
+fn validate_empty_curtain_characters(
+    characters: Vec<EmptyCurtainCharacter>,
+) -> Option<Vec<EmptyCurtainCharacter>> {
+    let mut character_ids = HashMap::with_capacity(characters.len());
+    let mut validated = Vec::with_capacity(characters.len());
+    for character in characters {
+        if !valid_item_net_id(character.net_id) || character.character_id == 0 {
+            return None;
+        }
+        match character_ids.insert(character.net_id, character.character_id) {
+            None => validated.push(character),
+            Some(existing) if existing == character.character_id => {}
+            Some(_) => return None,
+        }
+    }
+    Some(validated)
 }
 
 fn send_export_packet(
@@ -4383,6 +4404,60 @@ mod tests {
         assert_eq!(current.empty_curtain[0].equipped_character_id, Some(1020));
         assert_eq!(current.empty_curtain_characters.len(), 1);
         assert_eq!(current.empty_curtain_characters[0].character_id, 1020);
+    }
+
+    #[test]
+    fn replay_character_mappings_validate_ids_and_deduplicate() {
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 1, serial: 2 },
+            character_id: 1020,
+        };
+        assert_eq!(
+            validate_empty_curtain_characters(vec![character, character]),
+            Some(vec![character])
+        );
+        for net_id in [
+            HtItemNetId { solt: 0, serial: 0 },
+            HtItemNetId { solt: 0, serial: 2 },
+            HtItemNetId { solt: 1, serial: 0 },
+            HtItemNetId {
+                solt: u32::MAX,
+                serial: 2,
+            },
+            HtItemNetId {
+                solt: 1,
+                serial: u32::MAX,
+            },
+            HtItemNetId {
+                solt: u32::MAX,
+                serial: u32::MAX,
+            },
+        ] {
+            assert!(
+                validate_empty_curtain_characters(vec![EmptyCurtainCharacter {
+                    net_id,
+                    character_id: 1020,
+                }])
+                .is_none()
+            );
+        }
+        assert!(
+            validate_empty_curtain_characters(vec![EmptyCurtainCharacter {
+                character_id: 0,
+                ..character
+            }])
+            .is_none()
+        );
+        assert!(
+            validate_empty_curtain_characters(vec![
+                character,
+                EmptyCurtainCharacter {
+                    character_id: 1032,
+                    ..character
+                },
+            ])
+            .is_none()
+        );
     }
 
     #[test]

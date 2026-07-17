@@ -1374,7 +1374,7 @@ impl<'a> InventoryBitReader<'a> {
     }
 }
 
-fn valid_item_net_id(id: HtItemNetId) -> bool {
+pub(crate) fn valid_item_net_id(id: HtItemNetId) -> bool {
     id.solt != 0 && id.serial != 0 && id.solt != u32::MAX && id.serial != u32::MAX
 }
 
