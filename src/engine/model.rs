@@ -1582,11 +1582,15 @@ impl CombatState {
         &mut self,
         character: EmptyCurtainCharacter,
         equipment: &[HtItemNetId],
+        replaced_equipment: &[HtItemNetId],
         replace_character_loadout: bool,
     ) {
         let equipment = equipment.iter().copied().collect::<HashSet<_>>();
+        let replaced_equipment = replaced_equipment.iter().copied().collect::<HashSet<_>>();
         for item in &mut self.empty_curtain {
-            if replace_character_loadout && item.character_net_id == Some(character.net_id) {
+            if (replace_character_loadout && item.character_net_id == Some(character.net_id))
+                || replaced_equipment.contains(&item.id)
+            {
                 item.character_net_id = None;
                 item.equipped_character_id = None;
             }
@@ -2855,7 +2859,7 @@ mod tests {
             character_id: 1076,
         };
 
-        state.assign_empty_curtain_items(character, &[first, second], true);
+        state.assign_empty_curtain_items(character, &[first, second], &[], true);
         assert!(
             state
                 .empty_curtain
@@ -2870,6 +2874,14 @@ mod tests {
         assert!(state.empty_curtain[0].discarded);
         assert!(state.empty_curtain[0].locked);
         state.clear_empty_curtain_character(character.net_id);
+        assert!(!state.empty_curtain[1].is_equipped());
+
+        state.assign_empty_curtain_items(character, &[second], &[], false);
+        state.assign_empty_curtain_items(character, &[first], &[second], false);
+        assert_eq!(
+            state.empty_curtain[0].character_net_id,
+            Some(character.net_id)
+        );
         assert!(!state.empty_curtain[1].is_equipped());
     }
 

@@ -389,7 +389,7 @@ impl DpsApp {
         self.last_combat_timestamp = None;
         self.last_combat_activity = None;
         self.hidden_character_ids.clear();
-        self.kongmu_ui.invalidate_inventory();
+        self.kongmu_ui.reset_session_state();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
         self.hit_detail_char_id = None;

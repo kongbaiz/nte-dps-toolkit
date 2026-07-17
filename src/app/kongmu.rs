@@ -52,7 +52,7 @@ enum PendingEquipmentMutation {
     Assign {
         character: EmptyCurtainCharacter,
         equipment: Vec<HtItemNetId>,
-        replace_character_loadout: bool,
+        replacement: PendingEquipmentReplacement,
     },
     Unequip(HtItemNetId),
     Clear(HtItemNetId),
@@ -64,6 +64,13 @@ enum PendingEquipmentMutation {
         equipment: HtItemNetId,
         locked: bool,
     },
+}
+
+#[derive(Clone, Copy)]
+enum PendingEquipmentReplacement {
+    None,
+    CharacterLoadout,
+    Core,
 }
 
 struct PendingPluginRequest {
@@ -132,6 +139,12 @@ pub(crate) struct KongmuUiState {
 impl KongmuUiState {
     pub(crate) fn invalidate_inventory(&mut self) {
         self.filter_cache.valid = false;
+    }
+
+    pub(crate) fn reset_session_state(&mut self) {
+        self.invalidate_inventory();
+        self.pending_module_placement = None;
+        self.plugin_request = None;
     }
 
     fn active_filter_count(&self) -> usize {
@@ -335,7 +348,7 @@ impl DpsApp {
                             PendingEquipmentMutation::Assign {
                                 character,
                                 equipment,
-                                replace_character_loadout: true,
+                                replacement: PendingEquipmentReplacement::CharacterLoadout,
                             },
                         ),
                         Err(OneKeyPlanError::MissingTemplate) => self.set_last_error_in(
@@ -462,7 +475,7 @@ impl DpsApp {
                 PendingEquipmentMutation::Assign {
                     character: placement.character,
                     equipment: vec![placement.equipment],
-                    replace_character_loadout: false,
+                    replacement: PendingEquipmentReplacement::None,
                 },
             );
         }
@@ -511,12 +524,25 @@ impl DpsApp {
                     PendingEquipmentMutation::Assign {
                         character,
                         equipment,
-                        replace_character_loadout,
-                    } => self.state.assign_empty_curtain_items(
-                        character,
-                        &equipment,
-                        replace_character_loadout,
-                    ),
+                        replacement,
+                    } => {
+                        let replaced_equipment = match replacement {
+                            PendingEquipmentReplacement::None
+                            | PendingEquipmentReplacement::CharacterLoadout => Vec::new(),
+                            PendingEquipmentReplacement::Core => displaced_core_equipment(
+                                &self.state.empty_curtain,
+                                character.net_id,
+                                &equipment,
+                                &self.equipment_catalog,
+                            ),
+                        };
+                        self.state.assign_empty_curtain_items(
+                            character,
+                            &equipment,
+                            &replaced_equipment,
+                            matches!(replacement, PendingEquipmentReplacement::CharacterLoadout),
+                        );
+                    }
                     PendingEquipmentMutation::Unequip(equipment) => {
                         self.state.unequip_empty_curtain_item(equipment);
                     }
@@ -1008,7 +1034,7 @@ fn equipment_card_context_menu(
                                     mutation: PendingEquipmentMutation::Assign {
                                         character: *target,
                                         equipment: vec![item.id],
-                                        replace_character_loadout: false,
+                                        replacement: PendingEquipmentReplacement::Core,
                                     },
                                 },
                             });
@@ -1047,7 +1073,7 @@ fn equipment_card_context_menu(
                             mutation: PendingEquipmentMutation::Assign {
                                 character: *character,
                                 equipment: vec![item.id],
-                                replace_character_loadout: false,
+                                replacement: PendingEquipmentReplacement::Core,
                             },
                         },
                     });
@@ -1056,6 +1082,26 @@ fn equipment_card_context_menu(
             }
         });
     });
+}
+
+fn displaced_core_equipment(
+    items: &[EmptyCurtainItem],
+    character: HtItemNetId,
+    assigned_equipment: &[HtItemNetId],
+    catalog: &EquipmentCatalog,
+) -> Vec<HtItemNetId> {
+    items
+        .iter()
+        .filter(|item| {
+            item.character_net_id == Some(character)
+                && !assigned_equipment.contains(&item.id)
+                && catalog
+                    .items
+                    .get(&item.item_id)
+                    .is_some_and(|definition| definition.kind == EquipmentKind::Core)
+        })
+        .map(|item| item.id)
+        .collect()
 }
 
 fn build_one_key_plan(
@@ -2245,6 +2291,35 @@ fn calculator_stat_key(property: &str, catalog: &EquipmentCatalog) -> Option<Str
 mod tests {
     use super::*;
 
+    #[test]
+    fn session_reset_invalidates_pending_equipment_work() {
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 1, serial: 2 },
+            character_id: 1020,
+        };
+        let equipment = HtItemNetId { solt: 3, serial: 4 };
+        let mut state = KongmuUiState {
+            pending_module_placement: Some(PendingModulePlacement {
+                character,
+                equipment,
+                item_id: "module".to_owned(),
+                move_from_other_character: false,
+            }),
+            plugin_request: Some(PendingPluginRequest {
+                request_id: 7,
+                mutation: PendingEquipmentMutation::Unequip(equipment),
+            }),
+            ..KongmuUiState::default()
+        };
+        state.filter_cache.valid = true;
+
+        state.reset_session_state();
+
+        assert!(state.pending_module_placement.is_none());
+        assert!(state.plugin_request.is_none());
+        assert!(!state.filter_cache.valid);
+    }
+
     fn stat(property: &str) -> EquipmentStat {
         EquipmentStat {
             property: property.to_owned(),
@@ -2387,6 +2462,49 @@ mod tests {
             character_net_id: None,
             equipped_character_id: None,
         }
+    }
+
+    #[test]
+    fn core_assignment_only_displaces_other_target_cores() {
+        let target = HtItemNetId {
+            solt: 10,
+            serial: 11,
+        };
+        let other = HtItemNetId {
+            solt: 12,
+            serial: 13,
+        };
+        let mut old_core = item(1, "core", Vec::new(), Vec::new());
+        old_core.character_net_id = Some(target);
+        let new_core = item(2, "core", Vec::new(), Vec::new());
+        let mut target_module = item(3, "module", Vec::new(), Vec::new());
+        target_module.character_net_id = Some(target);
+        let mut other_core = item(4, "core", Vec::new(), Vec::new());
+        other_core.character_net_id = Some(other);
+        let mut catalog = EquipmentCatalog::default();
+        catalog.items.insert(
+            "core".to_owned(),
+            item_def(EquipmentKind::Core, "orange", "", None, None),
+        );
+        catalog.items.insert(
+            "module".to_owned(),
+            item_def(EquipmentKind::Module, "orange", "Hen4", Some(4), None),
+        );
+
+        assert_eq!(
+            displaced_core_equipment(
+                &[
+                    old_core.clone(),
+                    new_core.clone(),
+                    target_module,
+                    other_core
+                ],
+                target,
+                &[new_core.id],
+                &catalog,
+            ),
+            vec![old_core.id]
+        );
     }
 
     #[test]
