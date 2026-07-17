@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use super::jsonrpc::RpcError;
@@ -12,6 +13,7 @@ pub enum Request {
     CaptureStart(CaptureStartParams),
     CaptureStop,
     InventoryGetLatest,
+    Equipment(EquipmentOperationParam),
     BattleGetSummary(BattleSummaryParams),
     BattleReset,
     Unknown,
@@ -58,6 +60,105 @@ pub struct CaptureStartParams {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 pub struct BattleSummaryParams {
     pub subtract_time_stop: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub struct ItemUidParam {
+    pub slot: u32,
+    pub serial: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub struct EquipmentPlacementParam {
+    pub equipment: ItemUidParam,
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EquipmentOperationParam {
+    EquipModule {
+        character: ItemUidParam,
+        equipment: ItemUidParam,
+        row: i32,
+        column: i32,
+    },
+    EquipCore {
+        character: ItemUidParam,
+        equipment: ItemUidParam,
+    },
+    UnequipModule {
+        character: ItemUidParam,
+        equipment: ItemUidParam,
+    },
+    UnequipCore {
+        character: ItemUidParam,
+        equipment: ItemUidParam,
+    },
+    UnequipAll {
+        character: ItemUidParam,
+    },
+    EquipOneKey {
+        character: ItemUidParam,
+        placements: Vec<EquipmentPlacementParam>,
+        core: ItemUidParam,
+    },
+    MoveModuleToCharacter {
+        character: ItemUidParam,
+        equipment: ItemUidParam,
+        row: i32,
+        column: i32,
+    },
+    MoveCoreToCharacter {
+        character: ItemUidParam,
+        equipment: ItemUidParam,
+    },
+    SetItemDiscarded {
+        equipment: ItemUidParam,
+        discarded: bool,
+    },
+    SetItemLocked {
+        equipment: ItemUidParam,
+        locked: bool,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct ModuleParams {
+    character: ItemUidParam,
+    equipment: ItemUidParam,
+    row: i32,
+    column: i32,
+}
+
+#[derive(Debug, Deserialize)]
+struct CharacterEquipmentParams {
+    character: ItemUidParam,
+    equipment: ItemUidParam,
+}
+
+#[derive(Debug, Deserialize)]
+struct CharacterParams {
+    character: ItemUidParam,
+}
+
+#[derive(Debug, Deserialize)]
+struct OneKeyParams {
+    character: ItemUidParam,
+    placements: Vec<EquipmentPlacementParam>,
+    core: ItemUidParam,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetDiscardedParams {
+    equipment: ItemUidParam,
+    discarded: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetLockedParams {
+    equipment: ItemUidParam,
+    locked: bool,
 }
 
 pub fn parse_request(method: &str, params: Value) -> Result<Request, RpcError> {
@@ -107,6 +208,114 @@ pub fn parse_request(method: &str, params: Value) -> Result<Request, RpcError> {
             validate_empty_params(&params)?;
             Ok(Request::InventoryGetLatest)
         }
+        "equipment.equip_module" => {
+            let params: ModuleParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.equipment, "equipment")?;
+            validate_grid_position(params.row, params.column)?;
+            Ok(Request::Equipment(EquipmentOperationParam::EquipModule {
+                character: params.character,
+                equipment: params.equipment,
+                row: params.row,
+                column: params.column,
+            }))
+        }
+        "equipment.equip_core" => {
+            let params: CharacterEquipmentParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.equipment, "equipment")?;
+            Ok(Request::Equipment(EquipmentOperationParam::EquipCore {
+                character: params.character,
+                equipment: params.equipment,
+            }))
+        }
+        "equipment.unequip_module" => {
+            let params: CharacterEquipmentParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.equipment, "equipment")?;
+            Ok(Request::Equipment(EquipmentOperationParam::UnequipModule {
+                character: params.character,
+                equipment: params.equipment,
+            }))
+        }
+        "equipment.unequip_core" => {
+            let params: CharacterEquipmentParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.equipment, "equipment")?;
+            Ok(Request::Equipment(EquipmentOperationParam::UnequipCore {
+                character: params.character,
+                equipment: params.equipment,
+            }))
+        }
+        "equipment.unequip_all" => {
+            let params: CharacterParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            Ok(Request::Equipment(EquipmentOperationParam::UnequipAll {
+                character: params.character,
+            }))
+        }
+        "equipment.equip_one_key" => {
+            let params: OneKeyParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.core, "core")?;
+            if params.placements.is_empty() || params.placements.len() > 64 {
+                return Err(RpcError::invalid_params(
+                    "placements must contain between 1 and 64 entries",
+                ));
+            }
+            for placement in &params.placements {
+                validate_uid(placement.equipment, "placement equipment")?;
+                validate_grid_position(placement.row, placement.column)?;
+            }
+            Ok(Request::Equipment(EquipmentOperationParam::EquipOneKey {
+                character: params.character,
+                placements: params.placements,
+                core: params.core,
+            }))
+        }
+        "equipment.move_module_to_character" => {
+            let params: ModuleParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.equipment, "equipment")?;
+            validate_grid_position(params.row, params.column)?;
+            Ok(Request::Equipment(
+                EquipmentOperationParam::MoveModuleToCharacter {
+                    character: params.character,
+                    equipment: params.equipment,
+                    row: params.row,
+                    column: params.column,
+                },
+            ))
+        }
+        "equipment.move_core_to_character" => {
+            let params: CharacterEquipmentParams = parse_params(params, method)?;
+            validate_uid(params.character, "character")?;
+            validate_uid(params.equipment, "equipment")?;
+            Ok(Request::Equipment(
+                EquipmentOperationParam::MoveCoreToCharacter {
+                    character: params.character,
+                    equipment: params.equipment,
+                },
+            ))
+        }
+        "equipment.set_item_discarded" => {
+            let params: SetDiscardedParams = parse_params(params, method)?;
+            validate_uid(params.equipment, "equipment")?;
+            Ok(Request::Equipment(
+                EquipmentOperationParam::SetItemDiscarded {
+                    equipment: params.equipment,
+                    discarded: params.discarded,
+                },
+            ))
+        }
+        "equipment.set_item_locked" => {
+            let params: SetLockedParams = parse_params(params, method)?;
+            validate_uid(params.equipment, "equipment")?;
+            Ok(Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                equipment: params.equipment,
+                locked: params.locked,
+            }))
+        }
         "battle.get_summary" => {
             let params: BattleSummaryParams = serde_json::from_value(params).map_err(|_| {
                 RpcError::invalid_params("battle.get_summary requires subtract_time_stop")
@@ -118,6 +327,31 @@ pub fn parse_request(method: &str, params: Value) -> Result<Request, RpcError> {
             Ok(Request::BattleReset)
         }
         _ => Ok(Request::Unknown),
+    }
+}
+
+fn parse_params<T: DeserializeOwned>(params: Value, method: &str) -> Result<T, RpcError> {
+    serde_json::from_value(params)
+        .map_err(|_| RpcError::invalid_params(format!("{method} parameters are invalid")))
+}
+
+fn validate_uid(uid: ItemUidParam, field: &str) -> Result<(), RpcError> {
+    if uid.slot == 0 && uid.serial == 0 {
+        Err(RpcError::invalid_params(format!(
+            "{field} must not be a zero item UID"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_grid_position(row: i32, column: i32) -> Result<(), RpcError> {
+    if (1..=5).contains(&row) && (1..=5).contains(&column) {
+        Ok(())
+    } else {
+        Err(RpcError::invalid_params(
+            "row and column must both be in the range 1..5",
+        ))
     }
 }
 
@@ -215,6 +449,87 @@ mod tests {
             parse_request(
                 "battle.get_summary",
                 serde_json::json!({"subtract_time_stop": "yes"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn equipment_methods_validate_uids_positions_and_boolean_state() {
+        let request = parse_request(
+            "equipment.move_module_to_character",
+            serde_json::json!({
+                "character": {"slot": 1, "serial": 2},
+                "equipment": {"slot": 3, "serial": 4},
+                "row": 2,
+                "column": 5
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            request,
+            Request::Equipment(EquipmentOperationParam::MoveModuleToCharacter {
+                row: 2,
+                column: 5,
+                ..
+            })
+        ));
+        assert!(
+            parse_request(
+                "equipment.equip_module",
+                serde_json::json!({
+                    "character": {"slot": 0, "serial": 0},
+                    "equipment": {"slot": 3, "serial": 4},
+                    "row": 1,
+                    "column": 1
+                })
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "equipment.move_module_to_character",
+                serde_json::json!({
+                    "character": {"slot": 1, "serial": 2},
+                    "equipment": {"slot": 3, "serial": 4},
+                    "row": 0,
+                    "column": 6
+                })
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "equipment.set_item_locked",
+                serde_json::json!({
+                    "equipment": {"slot": 3, "serial": 4},
+                    "locked": 1
+                })
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn one_key_equipment_requires_a_bounded_nonempty_plan() {
+        let base = serde_json::json!({
+            "character": {"slot": 1, "serial": 2},
+            "placements": [{
+                "equipment": {"slot": 3, "serial": 4},
+                "row": 1,
+                "column": 2
+            }],
+            "core": {"slot": 5, "serial": 6}
+        });
+        assert!(parse_request("equipment.equip_one_key", base).is_ok());
+        assert!(
+            parse_request(
+                "equipment.equip_one_key",
+                serde_json::json!({
+                    "character": {"slot": 1, "serial": 2},
+                    "placements": [],
+                    "core": {"slot": 5, "serial": 6}
+                })
             )
             .is_err()
         );

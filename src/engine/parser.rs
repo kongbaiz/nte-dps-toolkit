@@ -1479,7 +1479,7 @@ fn parse_empty_curtain_item_at(
         return None;
     }
     let locked = reader.read_bool()?;
-    let _discarded = reader.read_bool()?;
+    let discarded = reader.read_bool()?;
     if reader.read_u16()? != 0 || usize::from(reader.read_u16()?) != definition.main_count {
         return None;
     }
@@ -1529,6 +1529,7 @@ fn parse_empty_curtain_item_at(
             main_stats,
             sub_stats,
             locked,
+            discarded,
             character_net_id,
             equipped_character_id: None,
         },
@@ -2809,6 +2810,7 @@ mod empty_curtain_tests {
         id: HtItemNetId,
         character_id: HtItemNetId,
         locked: bool,
+        discarded: bool,
         equipped_tail: i32,
         equipment_count: u16,
     ) {
@@ -2826,7 +2828,7 @@ mod empty_curtain_tests {
         writer.push_u32(character_id.serial);
         writer.push_i32(0);
         writer.push_bool(locked);
-        writer.push_bool(false);
+        writer.push_bool(discarded);
         writer.push_u16(0);
         writer.push_u16(2);
         writer.push_dynamic_name("AtkAdd");
@@ -2935,7 +2937,7 @@ mod empty_curtain_tests {
     }
 
     #[test]
-    fn parses_locked_and_equipped_item_from_character_net_id() {
+    fn parses_locked_discarded_and_equipped_item_from_character_net_id() {
         let mut writer = BitWriter::default();
         push_module_record(
             &mut writer,
@@ -2948,6 +2950,7 @@ mod empty_curtain_tests {
                 serial: 1_041_749_587,
             },
             true,
+            true,
             0,
             1,
         );
@@ -2956,6 +2959,7 @@ mod empty_curtain_tests {
 
         assert_eq!(items.len(), 1);
         assert!(items[0].locked);
+        assert!(items[0].discarded);
         assert!(items[0].is_equipped());
         assert_eq!(items[0].main_stats[0].value, 63.0);
         assert_eq!(items[0].main_stats[1].value, 840.0);
@@ -3039,6 +3043,7 @@ mod empty_curtain_tests {
             },
             HtItemNetId { solt: 0, serial: 0 },
             false,
+            false,
             0,
             1,
         );
@@ -3052,6 +3057,7 @@ mod empty_curtain_tests {
                 serial: 20,
             },
             HtItemNetId { solt: 0, serial: 0 },
+            false,
             false,
             0,
             0,
@@ -3078,6 +3084,7 @@ mod empty_curtain_tests {
                 &mut writer,
                 id,
                 HtItemNetId { solt: 0, serial: 0 },
+                false,
                 false,
                 1,
                 1,

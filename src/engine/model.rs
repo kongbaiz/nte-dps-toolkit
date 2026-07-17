@@ -205,6 +205,8 @@ pub struct EmptyCurtainItem {
     #[serde(default)]
     pub sub_stats: Vec<EquipmentStat>,
     pub locked: bool,
+    #[serde(default)]
+    pub discarded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub character_net_id: Option<HtItemNetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1617,6 +1619,26 @@ impl CombatState {
         self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
     }
 
+    pub fn set_empty_curtain_item_discarded(&mut self, equipment: HtItemNetId, discarded: bool) {
+        let item = self
+            .empty_curtain
+            .iter_mut()
+            .find(|item| item.id == equipment)
+            .expect("submitted Console equipment must remain in the captured inventory");
+        item.discarded = discarded;
+        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
+    }
+
+    pub fn set_empty_curtain_item_locked(&mut self, equipment: HtItemNetId, locked: bool) {
+        let item = self
+            .empty_curtain
+            .iter_mut()
+            .find(|item| item.id == equipment)
+            .expect("submitted Console equipment must remain in the captured inventory");
+        item.locked = locked;
+        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
+    }
+
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => {
@@ -2787,6 +2809,7 @@ mod tests {
             main_stats: Vec::new(),
             sub_stats: Vec::new(),
             locked: false,
+            discarded: false,
             character_net_id: None,
             equipped_character_id: None,
         }]);
@@ -2821,6 +2844,7 @@ mod tests {
                     main_stats: Vec::new(),
                     sub_stats: Vec::new(),
                     locked: false,
+                    discarded: false,
                     character_net_id: None,
                     equipped_character_id: None,
                 })
@@ -2841,6 +2865,10 @@ mod tests {
 
         state.unequip_empty_curtain_item(first);
         assert!(!state.empty_curtain[0].is_equipped());
+        state.set_empty_curtain_item_discarded(first, true);
+        state.set_empty_curtain_item_locked(first, true);
+        assert!(state.empty_curtain[0].discarded);
+        assert!(state.empty_curtain[0].locked);
         state.clear_empty_curtain_character(character.net_id);
         assert!(!state.empty_curtain[1].is_equipped());
     }

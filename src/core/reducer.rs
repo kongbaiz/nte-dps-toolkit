@@ -254,6 +254,7 @@ mod tests {
             main_stats: Vec::new(),
             sub_stats: Vec::new(),
             locked: true,
+            discarded: false,
             character_net_id: None,
             equipped_character_id: None,
         }];
