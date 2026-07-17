@@ -41,7 +41,8 @@ use crate::engine::parser::{
     load_equipment_catalog,
 };
 use crate::platform::equipment_plugin::{
-    EquipmentPluginOperation, EquipmentPluginPlacement, EquipmentPluginRequest, call_plugin,
+    EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
+    EquipmentPluginRequest, EquipmentPluginResponse,
 };
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -142,6 +143,8 @@ struct Runtime {
     inventory_generation: u64,
     operation_sequence: u64,
     equipment_request_sequence: u64,
+    equipment_plugin: EquipmentPluginClient,
+    pending_equipment_requests: HashMap<u64, Value>,
     active_operation_id: Option<String>,
     running_notified: bool,
     battle_summary_dirty: bool,
@@ -168,6 +171,8 @@ impl Runtime {
             inventory_generation: 0,
             operation_sequence: 0,
             equipment_request_sequence: 0,
+            equipment_plugin: EquipmentPluginClient::new(),
+            pending_equipment_requests: HashMap::new(),
             active_operation_id: None,
             running_notified: false,
             battle_summary_dirty: false,
@@ -224,6 +229,56 @@ impl Runtime {
                 .raw_capture_path()
                 .map(|path| path.display().to_string()),
         )
+    }
+
+    fn submit_equipment_request(&mut self, id: Value, request: EquipmentPluginRequest) {
+        assert!(
+            self.pending_equipment_requests
+                .insert(request.request_id, id)
+                .is_none(),
+            "equipment request IDs must be unique during one process lifetime"
+        );
+        self.equipment_plugin.submit_request(request);
+    }
+
+    fn process_equipment_response(
+        &mut self,
+        response: EquipmentPluginResponse,
+        outbound: &Sender<Value>,
+    ) -> bool {
+        let id = self
+            .pending_equipment_requests
+            .remove(&response.request_id)
+            .expect("equipment plugin responses must match a submitted CLI request");
+        let message = match response.status {
+            Ok(0) => success(
+                id,
+                EquipmentRequestResult {
+                    status: "rpc_dispatched",
+                },
+            ),
+            Ok(1) => success(
+                id,
+                EquipmentRequestResult {
+                    status: "dry_run_ok",
+                },
+            ),
+            Ok(status) => failure(
+                id,
+                RpcError::domain(
+                    "EQUIPMENT_REQUEST_REJECTED",
+                    format!("Equipment plugin rejected the request with status {status}"),
+                ),
+            ),
+            Err(_) => failure(
+                id,
+                RpcError::domain(
+                    "EQUIPMENT_PLUGIN_UNAVAILABLE",
+                    "Equipment plugin is unavailable",
+                ),
+            ),
+        };
+        send(outbound, message)
     }
 
     fn start_capture(&mut self, params: CaptureStartParams) -> Result<String, CoreError> {
@@ -605,6 +660,7 @@ fn core_loop(
     mut runtime: Runtime,
 ) {
     let battle_summary_tick = tick(BATTLE_SUMMARY_INTERVAL);
+    let equipment_response_rx = runtime.equipment_plugin.response_receiver();
     loop {
         select! {
             recv(writer_event_rx) -> _ => {
@@ -614,6 +670,13 @@ fn core_loop(
             recv(engine_receiver) -> event => {
                 if let Ok(event) = event {
                     runtime.process_engine_event(event, outbound_tx);
+                }
+            },
+            recv(equipment_response_rx) -> response => {
+                let response = response
+                    .expect("equipment plugin worker must remain alive while Core is running");
+                if runtime.process_equipment_response(response, outbound_tx) {
+                    return;
                 }
             },
             recv(battle_summary_tick) -> _ => runtime.flush_battle_summary(),
@@ -759,35 +822,8 @@ fn handle_request(
         }
         Request::Equipment(operation) => {
             let request = equipment_plugin_request(runtime.next_equipment_request_id(), operation);
-            let message = match call_plugin(&request) {
-                Ok(0) => success(
-                    id,
-                    EquipmentRequestResult {
-                        status: "rpc_dispatched",
-                    },
-                ),
-                Ok(1) => success(
-                    id,
-                    EquipmentRequestResult {
-                        status: "dry_run_ok",
-                    },
-                ),
-                Ok(status) => failure(
-                    id,
-                    RpcError::domain(
-                        "EQUIPMENT_REQUEST_REJECTED",
-                        format!("Equipment plugin rejected the request with status {status}"),
-                    ),
-                ),
-                Err(_) => failure(
-                    id,
-                    RpcError::domain(
-                        "EQUIPMENT_PLUGIN_UNAVAILABLE",
-                        "Equipment plugin is unavailable",
-                    ),
-                ),
-            };
-            send(outbound, message)
+            runtime.submit_equipment_request(id, request);
+            false
         }
         Request::BattleGetSummary(BattleSummaryParams { subtract_time_stop }) => {
             drain_engine_events(runtime, engine_receiver, outbound);
@@ -1286,6 +1322,72 @@ mod tests {
                 locked: true,
             }
         ));
+    }
+
+    #[test]
+    fn equipment_pipe_call_does_not_block_core_loop() {
+        let resources = RuntimeResources::load().unwrap();
+        let (engine_sender, engine_receiver) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime.handshaken = true;
+        let (started_tx, started_rx) = bounded(1);
+        let (release_tx, release_rx) = bounded(1);
+        runtime.equipment_plugin = EquipmentPluginClient::with_call_for_test(move |_| {
+            started_tx.send(()).unwrap();
+            release_rx
+                .recv()
+                .map_err(|_| "test pipe call release channel closed".to_owned())?;
+            Ok(0)
+        });
+
+        let (command_tx, command_rx) = bounded(4);
+        let (outbound_tx, outbound_rx) = bounded(4);
+        let (writer_event_tx, writer_event_rx) = unbounded();
+        let core_outbound = outbound_tx.clone();
+        let core = thread::spawn(move || {
+            core_loop(
+                command_rx,
+                &core_outbound,
+                writer_event_rx,
+                engine_receiver,
+                runtime,
+            );
+        });
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(1),
+                request: Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                    equipment: ItemUidParam { slot: 3, serial: 4 },
+                    locked: true,
+                }),
+            }))
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(2),
+                request: Request::Status,
+            }))
+            .unwrap();
+        let status = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(status["id"], 2);
+        assert!(status.get("result").is_some());
+
+        release_tx.send(()).unwrap();
+        let equipment = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(equipment["id"], 1);
+        assert_eq!(equipment["result"]["status"], "rpc_dispatched");
+
+        command_tx.send(ReaderEvent::Eof).unwrap();
+        core.join().unwrap();
+        drop(writer_event_tx);
     }
 
     #[test]

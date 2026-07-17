@@ -110,13 +110,20 @@ impl Default for EquipmentPluginClient {
 
 impl EquipmentPluginClient {
     pub fn new() -> Self {
+        Self::with_call(call_plugin)
+    }
+
+    fn with_call<F>(call: F) -> Self
+    where
+        F: Fn(&EquipmentPluginRequest) -> Result<u32, String> + Send + 'static,
+    {
         let (sender, command_receiver) = unbounded();
         let (response_sender, receiver) = unbounded();
         let thread = thread::spawn(move || {
             while let Ok(command) = command_receiver.recv() {
                 match command {
                     WorkerCommand::Request(request) => {
-                        let status = call_plugin(&request);
+                        let status = call(&request);
                         if response_sender
                             .send(EquipmentPluginResponse {
                                 request_id: request.request_id,
@@ -142,14 +149,22 @@ impl EquipmentPluginClient {
     pub fn submit(&mut self, character: HtItemNetId, operation: EquipmentPluginOperation) -> u64 {
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1).max(1);
-        self.sender
-            .send(WorkerCommand::Request(EquipmentPluginRequest {
-                request_id,
-                character,
-                operation,
-            }))
-            .expect("equipment plugin worker must remain alive while its client exists");
+        self.submit_request(EquipmentPluginRequest {
+            request_id,
+            character,
+            operation,
+        });
         request_id
+    }
+
+    pub fn submit_request(&self, request: EquipmentPluginRequest) {
+        self.sender
+            .send(WorkerCommand::Request(request))
+            .expect("equipment plugin worker must remain alive while its client exists");
+    }
+
+    pub fn response_receiver(&self) -> Receiver<EquipmentPluginResponse> {
+        self.receiver.clone()
     }
 
     pub fn try_recv(&self) -> Option<EquipmentPluginResponse> {
@@ -160,6 +175,14 @@ impl EquipmentPluginClient {
                 panic!("equipment plugin worker disconnected before its client was dropped")
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_call_for_test<F>(call: F) -> Self
+    where
+        F: Fn(&EquipmentPluginRequest) -> Result<u32, String> + Send + 'static,
+    {
+        Self::with_call(call)
     }
 }
 
