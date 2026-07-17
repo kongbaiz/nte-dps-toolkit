@@ -336,9 +336,9 @@ fn parse_params<T: DeserializeOwned>(params: Value, method: &str) -> Result<T, R
 }
 
 fn validate_uid(uid: ItemUidParam, field: &str) -> Result<(), RpcError> {
-    if uid.slot == 0 && uid.serial == 0 {
+    if uid.slot == 0 || uid.serial == 0 || uid.slot == u32::MAX || uid.serial == u32::MAX {
         Err(RpcError::invalid_params(format!(
-            "{field} must not be a zero item UID"
+            "{field} slot and serial must be nonzero and must not be 4294967295"
         )))
     } else {
         Ok(())
@@ -486,6 +486,29 @@ mod tests {
             )
             .is_err()
         );
+        assert!(validate_uid(ItemUidParam { slot: 0, serial: 1 }, "equipment").is_err());
+        assert!(validate_uid(ItemUidParam { slot: 1, serial: 0 }, "equipment").is_err());
+        assert!(
+            validate_uid(
+                ItemUidParam {
+                    slot: u32::MAX,
+                    serial: 1,
+                },
+                "equipment"
+            )
+            .is_err()
+        );
+        assert!(
+            validate_uid(
+                ItemUidParam {
+                    slot: 1,
+                    serial: u32::MAX,
+                },
+                "equipment"
+            )
+            .is_err()
+        );
+        assert!(validate_uid(ItemUidParam { slot: 1, serial: 2 }, "equipment").is_ok());
         assert!(
             parse_request(
                 "equipment.move_module_to_character",

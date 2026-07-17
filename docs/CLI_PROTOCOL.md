@@ -283,9 +283,10 @@ account-specific character item instance UID.
 Equipment methods call ABI v4 / IPC v3 of `nte-equipment-plugin` through the
 local `\\.\pipe\nte-equipment-plugin-v3` named pipe. They do not inject or load
 the plugin; the matching plugin build must already be loaded by `HTGame.exe`.
-Every character or equipment UID uses the same nonzero
-`{"slot":1,"serial":2}` shape returned by inventory snapshots. Module rows and
-columns are 1-based and must both be in `1..5`. Each `equip_one_key` placement
+Every character or equipment UID uses the same `{"slot":1,"serial":2}` shape
+returned by inventory snapshots. Both components must be nonzero and neither
+may be `4294967295` (`u32::MAX`). Module rows and columns are 1-based and must
+both be in `1..5`. Each `equip_one_key` placement
 is `{"equipment":{"slot":3,"serial":4},"row":1,"column":2}`; its array must
 contain 1..64 entries. `discarded` and `locked` must be JSON booleans.
 
