@@ -1555,6 +1555,12 @@ impl DpsApp {
             FileDialogPurpose::EmptyCurtainExport { json } => {
                 self.finish_empty_curtain_export(viewport, &path, &json);
             }
+            FileDialogPurpose::CharacterLoadoutImport => {
+                self.finish_character_loadout_import(ctx, viewport, &path);
+            }
+            FileDialogPurpose::CharacterLoadoutExport { json } => {
+                self.finish_character_loadout_export(viewport, &path, &json);
+            }
             FileDialogPurpose::CaptureInfoExport => {
                 self.finish_capture_info_export(viewport, &path);
             }
