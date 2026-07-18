@@ -119,6 +119,9 @@ Core domain failures use code `-32000`, message `Core error`, and include stable
 - `CAPTURE_ALREADY_RUNNING`
 - `CAPTURE_NOT_RUNNING`
 - `INVENTORY_NOT_READY`
+- `EQUIPMENT_PLUGIN_UNAVAILABLE`
+- `EQUIPMENT_PLUGIN_BUSY`
+- `EQUIPMENT_REQUEST_REJECTED`
 
 Underlying OS, Npcap, endpoint, payload, and filesystem details are not copied to
 stdout.
@@ -134,7 +137,8 @@ handshake. Repeating a valid handshake is idempotent.
 
 The result contains `core_version`, negotiated `protocol_version`,
 `data_version`, `capabilities`, and `raw_capture_default`. Only the methods
-documented below are callable.
+documented below are callable. `capabilities` contains `equipment` when the
+local equipment-plugin bridge is available in this Core build.
 
 ## Method reference
 
@@ -147,6 +151,16 @@ documented below are callable.
 | `capture.start` | capture options | Yes | process-local `operation_id` |
 | `capture.stop` | `{}` or omitted | Yes | stopped `operation_id` |
 | `inventory.get_latest` | `{}` or omitted | Yes | latest complete inventory snapshot |
+| `equipment.equip_module` | character, equipment, row, column | Yes | plugin dispatch status |
+| `equipment.equip_core` | character, equipment | Yes | plugin dispatch status |
+| `equipment.unequip_module` | character, equipment | Yes | plugin dispatch status |
+| `equipment.unequip_core` | character, equipment | Yes | plugin dispatch status |
+| `equipment.unequip_all` | character | Yes | plugin dispatch status |
+| `equipment.equip_one_key` | character, placements, core | Yes | plugin dispatch status |
+| `equipment.move_module_to_character` | character, equipment, row, column | Yes | plugin dispatch status |
+| `equipment.move_core_to_character` | character, equipment | Yes | plugin dispatch status |
+| `equipment.set_item_discarded` | equipment, discarded | Yes | plugin dispatch status |
+| `equipment.set_item_locked` | equipment, locked | Yes | plugin dispatch status |
 | `battle.get_summary` | `subtract_time_stop` | Yes | battle summary or null |
 | `battle.reset` | `{}` or omitted | Yes | `reset:true` |
 
@@ -248,9 +262,12 @@ also contain the global event `sequence`. Internal item IDs are mapped as:
 ```json
 {
   "uid":{"slot":1,"serial":2},
+  "locked":true,
+  "discarded":false,
   "equipped":true,
   "equipped_character_uid":{"slot":3,"serial":4},
-  "equipped_character_id":1020
+  "equipped_character_id":1020,
+  "equipped_placement":{"row":2,"column":3}
 }
 ```
 
@@ -262,6 +279,61 @@ their stable IDs and values while optional metadata remains null.
 `res/data/characters/characters.json`; it is null when the item is unequipped or
 the owner has not been resolved. `equipped_character_uid` remains the
 account-specific character item instance UID.
+`equipped_placement` is the equipped module's 1-based anchor position. It is
+null for cores, unequipped modules, or when the module position has not been
+resolved yet.
+
+## Equipment methods
+
+Equipment methods call ABI v4 / IPC v3 of `nte-equipment-plugin` through the
+local `\\.\pipe\nte-equipment-plugin-v3` named pipe. They do not inject or load
+the plugin; the matching plugin build must already be loaded by `HTGame.exe`.
+Every character or equipment UID uses the same `{"slot":1,"serial":2}` shape
+returned by inventory snapshots. Both components must be nonzero and neither
+may be `4294967295` (`u32::MAX`). Module rows and columns are 1-based and must
+both be in `1..5`. Each `equip_one_key` placement
+is `{"equipment":{"slot":3,"serial":4},"row":1,"column":2}`; its array must
+contain 1..64 entries. `discarded` and `locked` must be JSON booleans.
+
+The methods map directly to plugin operations:
+
+| Method | Effect |
+| --- | --- |
+| `equipment.equip_module` | Equip an unequipped module at `row`,`column` |
+| `equipment.equip_core` | Equip an unequipped core |
+| `equipment.unequip_module` | Unequip a module from its character |
+| `equipment.unequip_core` | Unequip a core from its character |
+| `equipment.unequip_all` | Unequip all equipment from one character |
+| `equipment.equip_one_key` | Equip 1..64 module placements plus one core |
+| `equipment.move_module_to_character` | Move an equipped module to another character and position |
+| `equipment.move_core_to_character` | Move an equipped core to another character |
+| `equipment.set_item_discarded` | Set or clear the item's discarded flag |
+| `equipment.set_item_locked` | Lock or unlock the item |
+
+Example:
+
+```json
+{
+  "jsonrpc":"2.0",
+  "id":"move-1",
+  "method":"equipment.move_module_to_character",
+  "params":{
+    "character":{"slot":1,"serial":2},
+    "equipment":{"slot":3,"serial":4},
+    "row":2,
+    "column":5
+  }
+}
+```
+
+Successful results are `{"status":"rpc_dispatched"}`. The alternate
+`{"status":"dry_run_ok"}` value is reserved for a dry-run plugin host. A
+successful dispatch only confirms that the RPC was submitted; callers must wait
+for a later captured `event.inventory.snapshot` to confirm game/server state.
+Missing pipes and timeouts return `EQUIPMENT_PLUGIN_UNAVAILABLE`. Plugin
+requests beyond the active call and one queued call return
+`EQUIPMENT_PLUGIN_BUSY`. Plugin validation statuses other than dispatched/dry-run return
+`EQUIPMENT_REQUEST_REJECTED`.
 
 ## Capture and inventory events
 

@@ -18,11 +18,11 @@ use crate::api::jsonrpc::{
 };
 use crate::api::request::{
     BattleSummaryParams, CaptureDeviceParam, CaptureProfileParam, CaptureStartParams,
-    RawCaptureParam, Request,
+    EquipmentOperationParam, ItemUidParam, RawCaptureParam, Request,
 };
 use crate::api::response::{
     BattleResetResult, CaptureStartResult, CaptureStatusEvent, CaptureStopResult, CoreMessageEvent,
-    HelloResult, ShutdownResult, StatusResult,
+    EquipmentRequestResult, HelloResult, ShutdownResult, StatusResult,
 };
 use crate::cli::args::ServeOptions;
 use crate::core::capture::{
@@ -33,10 +33,16 @@ use crate::core::reducer::{CoreSignal, apply_engine_event};
 use crate::core::snapshot::{InventorySnapshot, inventory_snapshot};
 use crate::core::{CoreError, CoreErrorCode};
 use crate::engine::capture::PacketEmissionMode;
-use crate::engine::model::{CaptureQualitySource, CharacterInfo, CombatState, EngineEvent};
+use crate::engine::model::{
+    CaptureQualitySource, CharacterInfo, CombatState, EngineEvent, HtItemNetId,
+};
 use crate::engine::parser::{
     CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_characters,
     load_equipment_catalog,
+};
+use crate::platform::equipment_plugin::{
+    EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
+    EquipmentPluginRequest, EquipmentPluginResponse, EquipmentPluginSubmitError,
 };
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -136,6 +142,9 @@ struct Runtime {
     sequence: u64,
     inventory_generation: u64,
     operation_sequence: u64,
+    equipment_request_sequence: u64,
+    equipment_plugin: EquipmentPluginClient,
+    pending_equipment_requests: HashMap<u64, Value>,
     active_operation_id: Option<String>,
     running_notified: bool,
     battle_summary_dirty: bool,
@@ -161,6 +170,9 @@ impl Runtime {
             sequence: 0,
             inventory_generation: 0,
             operation_sequence: 0,
+            equipment_request_sequence: 0,
+            equipment_plugin: EquipmentPluginClient::new(),
+            pending_equipment_requests: HashMap::new(),
             active_operation_id: None,
             running_notified: false,
             battle_summary_dirty: false,
@@ -194,6 +206,14 @@ impl Runtime {
         self.inventory_generation
     }
 
+    fn next_equipment_request_id(&mut self) -> u64 {
+        self.equipment_request_sequence = self
+            .equipment_request_sequence
+            .checked_add(1)
+            .expect("equipment request sequence cannot overflow during one process lifetime");
+        self.equipment_request_sequence
+    }
+
     fn status(&self) -> StatusResult {
         StatusResult::new(
             self.handshaken,
@@ -209,6 +229,62 @@ impl Runtime {
                 .raw_capture_path()
                 .map(|path| path.display().to_string()),
         )
+    }
+
+    fn submit_equipment_request(
+        &mut self,
+        id: Value,
+        request: EquipmentPluginRequest,
+    ) -> Result<(), EquipmentPluginSubmitError> {
+        let request_id = request.request_id;
+        self.equipment_plugin.submit_request(request)?;
+        assert!(
+            self.pending_equipment_requests
+                .insert(request_id, id)
+                .is_none(),
+            "equipment request IDs must be unique during one process lifetime"
+        );
+        Ok(())
+    }
+
+    fn process_equipment_response(
+        &mut self,
+        response: EquipmentPluginResponse,
+        outbound: &Sender<Value>,
+    ) -> bool {
+        let id = self
+            .pending_equipment_requests
+            .remove(&response.request_id)
+            .expect("equipment plugin responses must match a submitted CLI request");
+        let message = match response.status {
+            Ok(0) => success(
+                id,
+                EquipmentRequestResult {
+                    status: "rpc_dispatched",
+                },
+            ),
+            Ok(1) => success(
+                id,
+                EquipmentRequestResult {
+                    status: "dry_run_ok",
+                },
+            ),
+            Ok(status) => failure(
+                id,
+                RpcError::domain(
+                    "EQUIPMENT_REQUEST_REJECTED",
+                    format!("Equipment plugin rejected the request with status {status}"),
+                ),
+            ),
+            Err(_) => failure(
+                id,
+                RpcError::domain(
+                    "EQUIPMENT_PLUGIN_UNAVAILABLE",
+                    "Equipment plugin is unavailable",
+                ),
+            ),
+        };
+        send(outbound, message)
     }
 
     fn start_capture(&mut self, params: CaptureStartParams) -> Result<String, CoreError> {
@@ -269,6 +345,7 @@ impl Runtime {
         match apply_engine_event(&mut self.state, event) {
             CoreSignal::StateChanged => self.battle_summary_dirty = true,
             CoreSignal::DebugPacket | CoreSignal::PacketObserved => {}
+            CoreSignal::InventoryCharactersReplaced => {}
             CoreSignal::InventoryReplaced => {
                 let generation = self.next_inventory_generation();
                 let snapshot = inventory_snapshot(
@@ -589,6 +666,7 @@ fn core_loop(
     mut runtime: Runtime,
 ) {
     let battle_summary_tick = tick(BATTLE_SUMMARY_INTERVAL);
+    let equipment_response_rx = runtime.equipment_plugin.response_receiver();
     loop {
         select! {
             recv(writer_event_rx) -> _ => {
@@ -598,6 +676,13 @@ fn core_loop(
             recv(engine_receiver) -> event => {
                 if let Ok(event) = event {
                     runtime.process_engine_event(event, outbound_tx);
+                }
+            },
+            recv(equipment_response_rx) -> response => {
+                let response = response
+                    .expect("equipment plugin worker must remain alive while Core is running");
+                if runtime.process_equipment_response(response, outbound_tx) {
+                    return;
                 }
             },
             recv(battle_summary_tick) -> _ => runtime.flush_battle_summary(),
@@ -741,6 +826,22 @@ fn handle_request(
             };
             send(outbound, message)
         }
+        Request::Equipment(operation) => {
+            let request = equipment_plugin_request(runtime.next_equipment_request_id(), operation);
+            match runtime.submit_equipment_request(id.clone(), request) {
+                Ok(()) => false,
+                Err(EquipmentPluginSubmitError::Busy) => send(
+                    outbound,
+                    failure(
+                        id,
+                        RpcError::domain(
+                            "EQUIPMENT_PLUGIN_BUSY",
+                            "Equipment plugin already has the maximum number of pending requests",
+                        ),
+                    ),
+                ),
+            }
+        }
         Request::BattleGetSummary(BattleSummaryParams { subtract_time_stop }) => {
             drain_engine_events(runtime, engine_receiver, outbound);
             send(
@@ -754,6 +855,126 @@ fn handle_request(
             send(outbound, success(id, BattleResetResult { reset: true }))
         }
         Request::Unknown => send(outbound, failure(id, RpcError::method_not_found())),
+    }
+}
+
+fn equipment_plugin_request(
+    request_id: u64,
+    operation: EquipmentOperationParam,
+) -> EquipmentPluginRequest {
+    let (character, operation) = match operation {
+        EquipmentOperationParam::EquipModule {
+            character,
+            equipment,
+            row,
+            column,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::EquipModule {
+                equipment: item_net_id(equipment),
+                row,
+                column,
+            },
+        ),
+        EquipmentOperationParam::EquipCore {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::EquipCore {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::UnequipModule {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::UnequipModule {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::UnequipCore {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::UnequipCore {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::UnequipAll { character } => {
+            (item_net_id(character), EquipmentPluginOperation::UnequipAll)
+        }
+        EquipmentOperationParam::EquipOneKey {
+            character,
+            placements,
+            core,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::EquipOneKey {
+                placements: placements
+                    .into_iter()
+                    .map(|placement| EquipmentPluginPlacement {
+                        equipment: item_net_id(placement.equipment),
+                        row: placement.row,
+                        column: placement.column,
+                    })
+                    .collect(),
+                core: item_net_id(core),
+            },
+        ),
+        EquipmentOperationParam::MoveModuleToCharacter {
+            character,
+            equipment,
+            row,
+            column,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::MoveModuleToCharacter {
+                equipment: item_net_id(equipment),
+                row,
+                column,
+            },
+        ),
+        EquipmentOperationParam::MoveCoreToCharacter {
+            character,
+            equipment,
+        } => (
+            item_net_id(character),
+            EquipmentPluginOperation::MoveCoreToCharacter {
+                equipment: item_net_id(equipment),
+            },
+        ),
+        EquipmentOperationParam::SetItemDiscarded {
+            equipment,
+            discarded,
+        } => (
+            HtItemNetId::ZERO,
+            EquipmentPluginOperation::SetItemDiscarded {
+                equipment: item_net_id(equipment),
+                discarded,
+            },
+        ),
+        EquipmentOperationParam::SetItemLocked { equipment, locked } => (
+            HtItemNetId::ZERO,
+            EquipmentPluginOperation::SetItemLocked {
+                equipment: item_net_id(equipment),
+                locked,
+            },
+        ),
+    };
+    EquipmentPluginRequest {
+        request_id,
+        character,
+        operation,
+    }
+}
+
+fn item_net_id(uid: ItemUidParam) -> HtItemNetId {
+    HtItemNetId {
+        solt: uid.slot,
+        serial: uid.serial,
     }
 }
 
@@ -823,7 +1044,9 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    use crate::engine::model::{EmptyCurtainItem, Hit, HtItemNetId, PacketDebug, TimeStopEvent};
+    use crate::engine::model::{
+        EmptyCurtainItem, EmptyCurtainPlacement, Hit, HtItemNetId, PacketDebug, TimeStopEvent,
+    };
 
     #[test]
     fn bounded_reader_accepts_limit_and_rejects_larger_lines() {
@@ -871,13 +1094,15 @@ mod tests {
         engine_sender
             .send(EngineEvent::EmptyCurtain(vec![EmptyCurtainItem {
                 id: HtItemNetId { solt: 4, serial: 5 },
-                item_id: "Attack_blue".to_owned(),
+                item_id: "cell2_style2_1_Orange".to_owned(),
                 level: 20,
                 main_stats: Vec::new(),
                 sub_stats: Vec::new(),
                 locked: true,
+                discarded: false,
                 character_net_id: Some(HtItemNetId { solt: 6, serial: 7 }),
                 equipped_character_id: Some(1020),
+                equipped_placement: Some(EmptyCurtainPlacement { row: 2, column: 3 }),
             }]))
             .unwrap();
         drain_engine_events(&mut runtime, &engine_receiver, &outbound);
@@ -895,8 +1120,12 @@ mod tests {
             6
         );
         assert_eq!(
+            inventory["params"]["items"][0]["equipped_placement"],
+            serde_json::json!({"row": 2, "column": 3})
+        );
+        assert_eq!(
             inventory["params"]["items"][0]["names"]["en"],
-            "Shadow Creed"
+            "Type II Module"
         );
         assert_eq!(runtime.latest_inventory.as_ref().unwrap().generation, 1);
 
@@ -1012,8 +1241,10 @@ mod tests {
                 main_stats: Vec::new(),
                 sub_stats: Vec::new(),
                 locked: false,
+                discarded: false,
                 character_net_id: None,
                 equipped_character_id: None,
+                equipped_placement: None,
             }]),
             &outbound,
         );
@@ -1077,6 +1308,141 @@ mod tests {
         assert_eq!(reset["result"]["reset"], true);
         assert!(runtime.state.hits.is_empty());
         assert!(runtime.battle_summary(true).is_none());
+    }
+
+    #[test]
+    fn equipment_requests_map_external_uids_and_boolean_state() {
+        let request = equipment_plugin_request(
+            17,
+            EquipmentOperationParam::MoveModuleToCharacter {
+                character: ItemUidParam { slot: 1, serial: 2 },
+                equipment: ItemUidParam { slot: 3, serial: 4 },
+                row: 2,
+                column: 5,
+            },
+        );
+        assert_eq!(request.request_id, 17);
+        assert_eq!(request.character, HtItemNetId { solt: 1, serial: 2 });
+        assert!(matches!(
+            request.operation,
+            EquipmentPluginOperation::MoveModuleToCharacter {
+                equipment: HtItemNetId { solt: 3, serial: 4 },
+                row: 2,
+                column: 5,
+            }
+        ));
+
+        let request = equipment_plugin_request(
+            18,
+            EquipmentOperationParam::SetItemLocked {
+                equipment: ItemUidParam { slot: 5, serial: 6 },
+                locked: true,
+            },
+        );
+        assert_eq!(request.character, HtItemNetId::ZERO);
+        assert!(matches!(
+            request.operation,
+            EquipmentPluginOperation::SetItemLocked {
+                equipment: HtItemNetId { solt: 5, serial: 6 },
+                locked: true,
+            }
+        ));
+    }
+
+    #[test]
+    fn equipment_pipe_call_does_not_block_core_loop() {
+        let resources = RuntimeResources::load().unwrap();
+        let (engine_sender, engine_receiver) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime.handshaken = true;
+        let (started_tx, started_rx) = bounded(1);
+        let (release_tx, release_rx) = bounded(1);
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_call_count = Arc::clone(&call_count);
+        runtime.equipment_plugin = EquipmentPluginClient::with_call_for_test(move |_| {
+            if worker_call_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0 {
+                started_tx.send(()).unwrap();
+                release_rx
+                    .recv()
+                    .map_err(|_| "test pipe call release channel closed".to_owned())?;
+            }
+            Ok(0)
+        });
+
+        let (command_tx, command_rx) = bounded(4);
+        let (outbound_tx, outbound_rx) = bounded(4);
+        let (writer_event_tx, writer_event_rx) = unbounded();
+        let core_outbound = outbound_tx.clone();
+        let core = thread::spawn(move || {
+            core_loop(
+                command_rx,
+                &core_outbound,
+                writer_event_rx,
+                engine_receiver,
+                runtime,
+            );
+        });
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(1),
+                request: Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                    equipment: ItemUidParam { slot: 3, serial: 4 },
+                    locked: true,
+                }),
+            }))
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(2),
+                request: Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                    equipment: ItemUidParam { slot: 5, serial: 6 },
+                    locked: true,
+                }),
+            }))
+            .unwrap();
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(3),
+                request: Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                    equipment: ItemUidParam { slot: 7, serial: 8 },
+                    locked: true,
+                }),
+            }))
+            .unwrap();
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(4),
+                request: Request::Status,
+            }))
+            .unwrap();
+        let busy = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(busy["id"], 3);
+        assert_eq!(
+            busy["error"]["data"]["domain_code"],
+            "EQUIPMENT_PLUGIN_BUSY"
+        );
+        let status = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(status["id"], 4);
+        assert!(status.get("result").is_some());
+
+        release_tx.send(()).unwrap();
+        for expected_id in [1, 2] {
+            let equipment = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(equipment["id"], expected_id);
+            assert_eq!(equipment["result"]["status"], "rpc_dispatched");
+        }
+
+        command_tx.send(ReaderEvent::Eof).unwrap();
+        core.join().unwrap();
+        drop(writer_event_tx);
     }
 
     #[test]

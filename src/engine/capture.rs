@@ -25,20 +25,23 @@ use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
 use serde::Deserialize;
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainItem, EngineEvent, Hit, HitDamageCorrection,
-    HitFollowUp, HtItemNetId, PacketDebug, PacketObservation, TimeStopEvent,
+    AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainCharacter, EmptyCurtainItem,
+    EmptyCurtainPlacement, EngineEvent, Hit, HitDamageCorrection, HitFollowUp, HtItemNetId,
+    PacketDebug, PacketObservation, TimeStopEvent,
 };
 use crate::engine::parser::{
-    ABILITY_TIPS_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, GAMEPLAY_EFFECT_MAPPING_PATH,
-    GameplayEffectSkill, ParsedEquipmentSlot, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH,
-    ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry, classify_attack_type,
-    classify_attack_type_from_description, declared_character_ids_from_evidence, find_data_file,
-    find_declared_character_evidence, find_final_tower_character_evidence, load_ability_tip_names,
-    load_equipment_catalog, load_gameplay_effect_mapping, load_gameplay_effect_skills,
-    load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    ABILITY_TIPS_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
+    GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot,
+    ParsedEquipmentSlot, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH,
+    UltraTimeStopEntry, classify_attack_type, classify_attack_type_from_description,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    find_final_tower_character_evidence, load_ability_tip_names, load_equipment_catalog,
+    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_ultra_time_stops,
+    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
     parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
-    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
-    validate_empty_curtain_snapshot,
+    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
+    parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
+    parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::storage::i18n;
 
@@ -1107,6 +1110,7 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
 fn fixed_ultra_time_stop_event(
     timestamp: f64,
     char_id: u32,
+    evidence: UltraTimeStopEvidence,
     ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     recent_ultra_time_stops: &mut HashMap<u32, f64>,
 ) -> Option<TimeStopEvent> {
@@ -1116,6 +1120,7 @@ fn fixed_ultra_time_stop_event(
         char_id,
         &entry.ability_id,
         entry.end_ability_event_seconds,
+        evidence,
         recent_ultra_time_stops,
     )
 }
@@ -1125,14 +1130,19 @@ fn fixed_ultra_time_stop_event_with_duration(
     char_id: u32,
     ability_id: &str,
     duration: f64,
+    evidence: UltraTimeStopEvidence,
     recent_ultra_time_stops: &mut HashMap<u32, f64>,
 ) -> Option<TimeStopEvent> {
     if !duration.is_finite() || duration <= 0.0 {
         return None;
     }
+    let duplicate_window = match evidence {
+        UltraTimeStopEvidence::Strong => duration.max(1.0),
+        UltraTimeStopEvidence::Weak => ULTRA_WEAK_EVIDENCE_REARM_SECONDS,
+    };
     if recent_ultra_time_stops
         .get(&char_id)
-        .is_some_and(|previous| timestamp - previous < duration.max(1.0))
+        .is_some_and(|previous| timestamp - previous < duplicate_window)
     {
         return None;
     }
@@ -1177,6 +1187,7 @@ fn special_ultra_cooldown_events(
                 *char_id,
                 ability_id,
                 cooldown.duration_seconds,
+                UltraTimeStopEvidence::Strong,
                 recent_ultra_time_stops,
             ) {
                 events.push(event);
@@ -1210,13 +1221,19 @@ struct UltraTimeStopTracker {
     recent_emitted: HashMap<u32, f64>,
     pending_cooldowns: Vec<PendingUltraTimeStop>,
     recent_montages: Vec<RecentUltraMontage>,
-    next_pending_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UltraTimeStopEvidence {
+    Strong,
+    Weak,
 }
 
 struct PendingUltraTimeStop {
     timestamp: f64,
     flow: Option<UltraTimeStopFlowKey>,
-    public_reason: Option<String>,
+    from_time_actor: bool,
+    evidence: UltraTimeStopEvidence,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1257,7 +1274,7 @@ impl UltraTimeStopTracker {
         ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     ) -> Vec<TimeStopEvent> {
         let mut events = extra_time_stop_events_from_text(timestamp, decoded_text);
-        self.resolve_finished_cooldowns(timestamp, decoded_text, ultra_time_stops, &mut events);
+        self.resolve_finished_cooldowns(timestamp);
         self.observe_ultra_montages(
             timestamp,
             decoded_text,
@@ -1282,39 +1299,43 @@ impl UltraTimeStopTracker {
         let has_activation = text_has_exact_marker(decoded_text, ULTRA_COOLDOWN_TAG)
             || !activation_char_ids.is_empty();
         if has_time_actor && !has_activation {
-            self.start_time_actor(timestamp, flow, &mut events);
+            self.start_time_actor(timestamp, flow);
             return events;
         }
         if !has_activation || is_shinku_rage_cooldown_snapshot(decoded_text) {
             return events;
         }
 
-        let time_actor_reason = self.take_time_actor_reason(flow);
-        let had_time_actor = time_actor_reason.is_some();
-        if let Some(reason) = time_actor_reason {
-            events.push(TimeStopEvent::ExtraEnd { timestamp, reason });
-        }
+        let had_time_actor = self.take_time_actor(flow);
         let montage_char_id = self.consume_recent_ultra_montage(flow);
-        let char_id = match activation_char_ids.as_slice() {
-            [activation_id] => Some(*activation_id),
+        let resolved = match activation_char_ids.as_slice() {
+            [activation_id] => Some((*activation_id, UltraTimeStopEvidence::Strong)),
             [] => match (montage_char_id, declared_ids) {
                 (Some(montage_id), [declared_id]) if montage_id != *declared_id => None,
-                (Some(montage_id), _) => Some(montage_id),
-                (None, [declared_id]) if !has_time_actor || had_time_actor => Some(*declared_id),
+                (Some(montage_id), _) => Some((montage_id, UltraTimeStopEvidence::Strong)),
+                (None, [declared_id]) if had_time_actor => {
+                    Some((*declared_id, UltraTimeStopEvidence::Strong))
+                }
+                (None, [declared_id]) if !has_time_actor => {
+                    Some((*declared_id, UltraTimeStopEvidence::Weak))
+                }
                 _ => None,
             },
             _ => None,
         };
-        match char_id {
-            Some(char_id) => {
-                self.clear_internal_cooldowns(flow);
+        match resolved {
+            Some((char_id, evidence)) => {
                 if let Some(event) = fixed_ultra_time_stop_event(
                     timestamp,
                     char_id,
+                    evidence,
                     ultra_time_stops,
                     &mut self.recent_emitted,
                 ) {
+                    self.clear_internal_cooldowns(flow);
                     events.push(event);
+                } else if evidence == UltraTimeStopEvidence::Weak {
+                    self.queue_internal_cooldown(timestamp, flow);
                 }
             }
             None => {
@@ -1326,56 +1347,54 @@ impl UltraTimeStopTracker {
         events
     }
 
-    fn start_time_actor(
-        &mut self,
-        timestamp: f64,
-        flow: Option<UltraTimeStopFlowKey>,
-        events: &mut Vec<TimeStopEvent>,
-    ) {
+    fn start_time_actor(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
         if self
             .pending_cooldowns
             .iter()
-            .any(|pending| pending.flow == flow && pending.public_reason.is_some())
+            .any(|pending| pending.flow == flow && pending.from_time_actor)
         {
             return;
         }
         self.clear_internal_cooldowns(flow);
-        let reason = format!("{PENDING_ULTRA_TIME_STOP_REASON}.{}", self.next_pending_id);
-        self.next_pending_id += 1;
         self.pending_cooldowns.push(PendingUltraTimeStop {
             timestamp,
             flow,
-            public_reason: Some(reason.clone()),
+            from_time_actor: true,
+            evidence: UltraTimeStopEvidence::Strong,
         });
-        events.push(TimeStopEvent::ExtraStart { timestamp, reason });
     }
 
-    fn take_time_actor_reason(&mut self, flow: Option<UltraTimeStopFlowKey>) -> Option<String> {
-        let index = self
+    fn take_time_actor(&mut self, flow: Option<UltraTimeStopFlowKey>) -> bool {
+        let Some(index) = self
             .pending_cooldowns
             .iter()
-            .rposition(|pending| pending.flow == flow && pending.public_reason.is_some())?;
-        self.pending_cooldowns.swap_remove(index).public_reason
+            .rposition(|pending| pending.flow == flow && pending.from_time_actor)
+        else {
+            return false;
+        };
+        self.pending_cooldowns.swap_remove(index);
+        true
     }
 
     fn queue_internal_cooldown(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
-        if self.pending_cooldowns.iter().any(|pending| {
-            pending.flow == flow
-                && pending.public_reason.is_none()
-                && timestamp - pending.timestamp <= ULTRA_INTERNAL_COOLDOWN_DUPLICATE_WINDOW_SECONDS
-        }) {
+        if self
+            .pending_cooldowns
+            .iter()
+            .any(|pending| pending.flow == flow && !pending.from_time_actor)
+        {
             return;
         }
         self.pending_cooldowns.push(PendingUltraTimeStop {
             timestamp,
             flow,
-            public_reason: None,
+            from_time_actor: false,
+            evidence: UltraTimeStopEvidence::Weak,
         });
     }
 
     fn clear_internal_cooldowns(&mut self, flow: Option<UltraTimeStopFlowKey>) {
         self.pending_cooldowns
-            .retain(|pending| pending.flow != flow || pending.public_reason.is_some());
+            .retain(|pending| pending.flow != flow || pending.from_time_actor);
     }
 
     fn observe_ultra_montages(
@@ -1453,7 +1472,7 @@ impl UltraTimeStopTracker {
             .iter()
             .enumerate()
             .filter(|(_, pending)| {
-                let window = if pending.public_reason.is_some() {
+                let window = if pending.from_time_actor {
                     ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
                 } else {
                     ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
@@ -1464,37 +1483,34 @@ impl UltraTimeStopTracker {
         else {
             return;
         };
-        let pending = self.pending_cooldowns.swap_remove(index);
-        let activation_timestamp = if let Some(reason) = pending.public_reason {
-            events.push(TimeStopEvent::ExtraEnd {
-                timestamp: hit.timestamp,
-                reason,
-            });
+        let pending = &self.pending_cooldowns[index];
+        let activation_timestamp = if pending.from_time_actor {
             hit.timestamp
         } else {
             pending.timestamp
         };
-        if let Some(event) = fixed_ultra_time_stop_event(
+        let event = fixed_ultra_time_stop_event(
             activation_timestamp,
             char_id,
+            pending.evidence,
             ultra_time_stops,
             &mut self.recent_emitted,
-        ) {
+        );
+        if event.is_none() && !pending.from_time_actor {
+            return;
+        }
+
+        self.pending_cooldowns.swap_remove(index);
+        if let Some(event) = event {
             events.push(event);
         }
     }
 
-    fn resolve_finished_cooldowns(
-        &mut self,
-        timestamp: f64,
-        _decoded_text: &str,
-        _ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-        events: &mut Vec<TimeStopEvent>,
-    ) {
+    fn resolve_finished_cooldowns(&mut self, timestamp: f64) {
         let mut index = 0;
         while index < self.pending_cooldowns.len() {
             let pending = &self.pending_cooldowns[index];
-            let window = if pending.public_reason.is_some() {
+            let window = if pending.from_time_actor {
                 ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
             } else {
                 ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
@@ -1505,13 +1521,7 @@ impl UltraTimeStopTracker {
                 index += 1;
                 continue;
             }
-            let pending = self.pending_cooldowns.swap_remove(index);
-            if let Some(reason) = pending.public_reason {
-                events.push(TimeStopEvent::ExtraEnd {
-                    timestamp: expires_at,
-                    reason,
-                });
-            }
+            self.pending_cooldowns.swap_remove(index);
         }
     }
 }
@@ -1572,10 +1582,9 @@ const JIN_ENTER_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.Enter
 const JIN_CLEAR_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.ClearTimeStop";
 const ULTRA_COOLDOWN_TAG: &str = "CoolDown.Player.UltraSkill.F";
 const ULTRA_TIME_ACTOR_TAG: &str = "CoolDown.Player.UltraSkill.TimeActor";
-const PENDING_ULTRA_TIME_STOP_REASON: &str = "CoolDown.Player.UltraSkill.Pending";
 const ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS: f64 = 4.5;
 const ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS: f64 = 2.5;
-const ULTRA_INTERNAL_COOLDOWN_DUPLICATE_WINDOW_SECONDS: f64 = 0.1;
+const ULTRA_WEAK_EVIDENCE_REARM_SECONDS: f64 = 30.0;
 const ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.02;
 const SHINKU_RAGE_ABILITY_TAG: &str = "Ability.Player.Shinku.Rage";
 const SHINKU_RAGE_GAMEPLAY_CUE_TAG: &str = "GameplayCue.Display.Shinku.Rage";
@@ -1903,6 +1912,7 @@ struct InventoryConnectionState {
     fragments: HashMap<(u16, u16), SingleBunch>,
     fragment_order: VecDeque<(u16, u16)>,
     character_ids: HashMap<HtItemNetId, u32>,
+    module_placements: HashMap<HtItemNetId, (String, EmptyCurtainPlacement)>,
 }
 
 impl InventoryConnectionState {
@@ -1911,10 +1921,17 @@ impl InventoryConnectionState {
         for bunch in bunches {
             self.known_channels.insert(bunch.prefix);
             let key = (bunch.prefix, bunch.sequence);
-            if let Some(existing) = self.fragments.get(&key) {
-                if existing == &bunch {
-                    continue;
-                }
+            if self.fragments.get(&key) == Some(&bunch) {
+                continue;
+            }
+            if matches!(bunch.partial_flags, 0x09 | 0x0d) {
+                // A partial start begins a new generation on its channel. Older unmatched
+                // continuations must not complete the new stream before its real tail arrives.
+                self.fragments
+                    .retain(|(channel, _), _| *channel != bunch.prefix);
+                self.fragment_order
+                    .retain(|(channel, _)| *channel != bunch.prefix);
+            } else if self.fragments.contains_key(&key) {
                 self.fragment_order.retain(|stored| *stored != key);
             }
             while self.fragments.len() >= MAX_INVENTORY_FRAGMENTS_PER_CONNECTION {
@@ -2029,6 +2046,7 @@ fn append_inventory_bits(
 struct InventoryPacketResult {
     recognized: bool,
     snapshot: Option<Vec<EmptyCurtainItem>>,
+    characters: Option<Vec<EmptyCurtainCharacter>>,
 }
 
 struct EmptyCurtainDecoder {
@@ -2050,6 +2068,177 @@ impl EmptyCurtainDecoder {
         }
     }
 
+    fn apply_equipment_snapshot(
+        &mut self,
+        connection: &InventoryConnectionKey,
+        snapshot: ParsedEmptyCurtainEquipmentSnapshot,
+    ) -> bool {
+        let (character_net_id, character_id, kind, equipped, module_placements) = match snapshot {
+            ParsedEmptyCurtainEquipmentSnapshot::Modules {
+                character_net_id,
+                character_id,
+                placements,
+            } => {
+                let module_placements = placements
+                    .iter()
+                    .map(|placement| {
+                        (
+                            placement.equipment,
+                            (
+                                placement.item_id.clone(),
+                                EmptyCurtainPlacement {
+                                    row: placement.row,
+                                    column: placement.column,
+                                },
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let equipped = placements
+                    .into_iter()
+                    .map(|placement| {
+                        (
+                            placement.equipment,
+                            Some(EmptyCurtainPlacement {
+                                row: placement.row,
+                                column: placement.column,
+                            }),
+                        )
+                    })
+                    .collect::<HashMap<_, _>>();
+                (
+                    character_net_id,
+                    character_id,
+                    EquipmentKind::Module,
+                    equipped,
+                    module_placements,
+                )
+            }
+            ParsedEmptyCurtainEquipmentSnapshot::Core {
+                character_net_id,
+                character_id,
+                item_id,
+            } => (
+                character_net_id,
+                character_id,
+                EquipmentKind::Core,
+                item_id
+                    .into_iter()
+                    .map(|item_id| (item_id, None))
+                    .collect::<HashMap<_, _>>(),
+                Vec::new(),
+            ),
+        };
+        if !module_placements.is_empty() {
+            let state = self
+                .connections
+                .get_mut(connection)
+                .expect("inventory snapshot connection must remain present");
+            for (equipment, placement) in module_placements {
+                if !state.module_placements.contains_key(&equipment)
+                    && state.module_placements.len() >= MAX_INVENTORY_ITEMS
+                {
+                    continue;
+                }
+                state.module_placements.insert(equipment, placement);
+            }
+        }
+        let mut changed = false;
+        for item in self.items.values_mut() {
+            let definition = self
+                .catalog
+                .items
+                .get(&item.item_id)
+                .expect("parsed inventory items must have catalog definitions");
+            if definition.kind != kind {
+                continue;
+            }
+            if let Some(&placement) = equipped.get(&item.id) {
+                if item.character_net_id != Some(character_net_id)
+                    || item.equipped_character_id != Some(character_id)
+                    || item.equipped_placement != placement
+                {
+                    item.character_net_id = Some(character_net_id);
+                    item.equipped_character_id = Some(character_id);
+                    item.equipped_placement = placement;
+                    changed = true;
+                }
+            } else if item.character_net_id == Some(character_net_id) {
+                item.character_net_id = None;
+                item.equipped_character_id = None;
+                item.equipped_placement = None;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn apply_item_updates(
+        &mut self,
+        connection: &InventoryConnectionKey,
+        parsed: Vec<EmptyCurtainItem>,
+    ) -> bool {
+        if self.active_connection.as_ref() != Some(connection) {
+            return false;
+        }
+        let mut changed = false;
+        let state = self
+            .connections
+            .get(connection)
+            .expect("active inventory connection must remain present");
+        for mut item in parsed {
+            item.equipped_character_id = item
+                .character_net_id
+                .and_then(|net_id| state.character_ids.get(&net_id).copied());
+            if let Some(existing) = self.items.get(&item.id)
+                && existing.character_net_id == item.character_net_id
+            {
+                item.equipped_placement = existing.equipped_placement;
+            } else if !self.items.contains_key(&item.id)
+                && item.character_net_id.is_some()
+                && let Some((cached_item_id, placement)) = state.module_placements.get(&item.id)
+                && cached_item_id == &item.item_id
+            {
+                item.equipped_placement = Some(*placement);
+            }
+            if self.items.get(&item.id) != Some(&item) {
+                if !self.items.contains_key(&item.id) && self.items.len() >= MAX_INVENTORY_ITEMS {
+                    continue;
+                }
+                self.items.insert(item.id, item);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    fn apply_item_removals(
+        &mut self,
+        connection: &InventoryConnectionKey,
+        removals: Vec<(HtItemNetId, String)>,
+    ) -> bool {
+        if self.active_connection.as_ref() != Some(connection) {
+            return false;
+        }
+        let state = self
+            .connections
+            .get_mut(connection)
+            .expect("active inventory connection must remain present");
+        let mut changed = false;
+        for (id, item_id) in removals {
+            if self
+                .items
+                .get(&id)
+                .is_some_and(|item| item.item_id == item_id)
+            {
+                self.items.remove(&id);
+                state.module_placements.remove(&id);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     fn process_packet(
         &mut self,
         connection: InventoryConnectionKey,
@@ -2057,9 +2246,15 @@ impl EmptyCurtainDecoder {
     ) -> InventoryPacketResult {
         if !self.connections.contains_key(&connection) {
             while self.connections.len() >= MAX_INVENTORY_CONNECTIONS {
-                let Some(oldest) = self.connection_order.pop_front() else {
-                    break;
-                };
+                let eviction_index = self
+                    .connection_order
+                    .iter()
+                    .position(|stored| self.active_connection.as_ref() != Some(stored))
+                    .expect("a full inventory connection cache must contain a non-active entry");
+                let oldest = self
+                    .connection_order
+                    .remove(eviction_index)
+                    .expect("the selected inventory connection must remain in the order queue");
                 self.connections.remove(&oldest);
             }
             self.connection_order.push_back(connection.clone());
@@ -2067,24 +2262,58 @@ impl EmptyCurtainDecoder {
                 .insert(connection.clone(), InventoryConnectionState::default());
         }
 
-        let streams = {
+        let (raw_items, raw_removals) = if self.active_connection.as_ref() == Some(&connection) {
+            (
+                parse_empty_curtain_items(&packet.payload, packet.payload_bit_len, &self.catalog),
+                parse_empty_curtain_item_removals(
+                    &packet.payload,
+                    packet.payload_bit_len,
+                    &self.catalog,
+                ),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        let raw_items_recognized = !raw_items.is_empty() || !raw_removals.is_empty();
+        let (streams, bunches_recognized) = {
             let state = self
                 .connections
                 .get_mut(&connection)
                 .expect("new or existing inventory connection must be present");
             let known_channels = state.known_channels.iter().copied().collect::<Vec<_>>();
             let bunches = parse_inventory_bunches(packet, &known_channels);
-            if bunches.is_empty() {
-                return InventoryPacketResult::default();
-            }
-            state.push_bunches(bunches)
+            let recognized = !bunches.is_empty();
+            (state.push_bunches(bunches), recognized)
         };
 
-        let mut changed = false;
+        let mut items_changed = false;
+        let mut characters_changed = false;
+        let mut completed_stream_removals = Vec::new();
         for stream in streams {
-            let character_ids = parse_empty_curtain_character_owners(&stream.data, stream.bit_len);
-            let parsed = parse_empty_curtain_items(&stream.data, stream.bit_len, &self.catalog);
-            if character_ids.is_empty() && parsed.is_empty() {
+            let stream_character_ids =
+                parse_empty_curtain_character_owners(&stream.data, stream.bit_len);
+            let compact_module_placements = if stream_character_ids.is_empty() {
+                Vec::new()
+            } else {
+                parse_empty_curtain_compact_module_placements(
+                    &stream.data,
+                    stream.bit_len,
+                    &self.items,
+                    &self.catalog,
+                )
+            };
+            let removals =
+                parse_empty_curtain_item_removals(&stream.data, stream.bit_len, &self.catalog);
+            let parsed = if removals.is_empty() {
+                parse_empty_curtain_items(&stream.data, stream.bit_len, &self.catalog)
+            } else {
+                Vec::new()
+            };
+            if stream_character_ids.is_empty()
+                && compact_module_placements.is_empty()
+                && parsed.is_empty()
+                && removals.is_empty()
+            {
                 continue;
             }
             let character_mapping_changed = {
@@ -2093,52 +2322,120 @@ impl EmptyCurtainDecoder {
                     .get_mut(&connection)
                     .expect("inventory connection must remain present while processing streams");
                 let mut changed = false;
-                for (net_id, character_id) in character_ids {
+                for (&net_id, &character_id) in &stream_character_ids {
                     if state.character_ids.insert(net_id, character_id) != Some(character_id) {
                         changed = true;
                     }
+                }
+                for placement in &compact_module_placements {
+                    if !state.module_placements.contains_key(&placement.equipment)
+                        && state.module_placements.len() >= MAX_INVENTORY_ITEMS
+                    {
+                        continue;
+                    }
+                    state.module_placements.insert(
+                        placement.equipment,
+                        (
+                            placement.item_id.clone(),
+                            EmptyCurtainPlacement {
+                                row: placement.row,
+                                column: placement.column,
+                            },
+                        ),
+                    );
                 }
                 changed
             };
             if !parsed.is_empty() && self.active_connection.as_ref() != Some(&connection) {
                 self.active_connection = Some(connection.clone());
-                changed |= !self.items.is_empty();
+                items_changed |= !self.items.is_empty();
                 self.items.clear();
             }
             if self.active_connection.as_ref() != Some(&connection) {
                 continue;
             }
-            let character_ids = &self
+            completed_stream_removals.extend(removals.iter().cloned());
+            items_changed |= self.apply_item_removals(&connection, removals);
+            let connection_state = self
                 .connections
                 .get(&connection)
-                .expect("active inventory connection must remain present")
-                .character_ids;
+                .expect("active inventory connection must remain present");
+            let character_ids = &connection_state.character_ids;
+            let module_placements = &connection_state.module_placements;
             if character_mapping_changed {
+                characters_changed = true;
                 for item in self.items.values_mut() {
                     let character_id = item
                         .character_net_id
                         .and_then(|net_id| character_ids.get(&net_id).copied());
                     if item.equipped_character_id != character_id {
                         item.equipped_character_id = character_id;
-                        changed = true;
+                        items_changed = true;
                     }
+                }
+            }
+            for placement in &compact_module_placements {
+                let Some(item) = self.items.get_mut(&placement.equipment) else {
+                    continue;
+                };
+                let resolved = EmptyCurtainPlacement {
+                    row: placement.row,
+                    column: placement.column,
+                };
+                if item.character_net_id.is_some()
+                    && item.item_id == placement.item_id
+                    && item.equipped_placement != Some(resolved)
+                {
+                    item.equipped_placement = Some(resolved);
+                    items_changed = true;
                 }
             }
             for mut item in parsed {
                 item.equipped_character_id = item
                     .character_net_id
                     .and_then(|net_id| character_ids.get(&net_id).copied());
+                if let Some(existing) = self.items.get(&item.id)
+                    && existing.character_net_id == item.character_net_id
+                {
+                    item.equipped_placement = existing.equipped_placement;
+                } else if !self.items.contains_key(&item.id)
+                    && item.character_net_id.is_some()
+                    && let Some((cached_item_id, placement)) = module_placements.get(&item.id)
+                    && cached_item_id == &item.item_id
+                {
+                    item.equipped_placement = Some(*placement);
+                }
                 if self.items.get(&item.id) != Some(&item) {
                     if !self.items.contains_key(&item.id) && self.items.len() >= MAX_INVENTORY_ITEMS
                     {
                         continue;
                     }
                     self.items.insert(item.id, item);
-                    changed = true;
+                    items_changed = true;
                 }
             }
+            let equipment_snapshot = parse_empty_curtain_equipment_snapshot(
+                &stream.data,
+                stream.bit_len,
+                &stream_character_ids,
+                &self.items,
+                &self.catalog,
+            );
+            if let Some(snapshot) = equipment_snapshot {
+                items_changed |= self.apply_equipment_snapshot(&connection, snapshot);
+            }
         }
-        let snapshot = changed.then(|| {
+        let raw_items = raw_items
+            .into_iter()
+            .filter(|item| {
+                !completed_stream_removals
+                    .iter()
+                    .any(|(id, item_id)| id == &item.id && item_id == &item.item_id)
+            })
+            .collect();
+        items_changed |= self.apply_item_updates(&connection, raw_items);
+        items_changed |= self.apply_item_removals(&connection, raw_removals);
+        let snapshot = items_changed.then(|| {
             let mut items = self.items.values().cloned().collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 left.item_id
@@ -2148,9 +2445,32 @@ impl EmptyCurtainDecoder {
             });
             items
         });
+        let characters = (items_changed || characters_changed).then(|| {
+            let mut characters = self
+                .active_connection
+                .as_ref()
+                .and_then(|connection| self.connections.get(connection))
+                .expect("changed inventory must have an active connection")
+                .character_ids
+                .iter()
+                .map(|(net_id, character_id)| EmptyCurtainCharacter {
+                    net_id: *net_id,
+                    character_id: *character_id,
+                })
+                .collect::<Vec<_>>();
+            characters.sort_by_key(|character| {
+                (
+                    character.character_id,
+                    character.net_id.solt,
+                    character.net_id.serial,
+                )
+            });
+            characters
+        });
         InventoryPacketResult {
-            recognized: true,
+            recognized: bunches_recognized || raw_items_recognized,
             snapshot,
+            characters,
         }
     }
 }
@@ -3051,6 +3371,9 @@ impl PacketDecoder {
         } else {
             InventoryPacketResult::default()
         };
+        if let Some(characters) = inventory_result.characters {
+            let _ = sender.send(EngineEvent::EmptyCurtainCharacters(characters));
+        }
         if let Some(snapshot) = inventory_result.snapshot {
             let _ = sender.send(EngineEvent::EmptyCurtain(snapshot));
         }
@@ -3593,6 +3916,8 @@ struct CaptureExport {
     packets: Vec<ExportPacket>,
     #[serde(default)]
     empty_curtain: Vec<EmptyCurtainItem>,
+    #[serde(default)]
+    empty_curtain_characters: Vec<EmptyCurtainCharacter>,
 }
 
 #[derive(Deserialize)]
@@ -3679,6 +4004,30 @@ pub fn import_capture_json(
             let mut document = parse_capture_export(&text)?;
             drop(text);
             let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
+            let mut saved_empty_curtain_characters =
+                std::mem::take(&mut document.empty_curtain_characters);
+            if saved_empty_curtain_characters.is_empty() {
+                saved_empty_curtain_characters = saved_empty_curtain
+                    .iter()
+                    .filter_map(|item| {
+                        Some(EmptyCurtainCharacter {
+                            net_id: item.character_net_id?,
+                            character_id: item.equipped_character_id?,
+                        })
+                    })
+                    .collect();
+                saved_empty_curtain_characters.sort_by_key(|character| {
+                    (
+                        character.character_id,
+                        character.net_id.solt,
+                        character.net_id.serial,
+                    )
+                });
+                saved_empty_curtain_characters.dedup();
+            }
+            let saved_empty_curtain_characters =
+                validate_empty_curtain_characters(saved_empty_curtain_characters)
+                    .ok_or_else(|| "invalid Console equipment snapshot".to_owned())?;
             let ultra_time_stops = find_data_file(Path::new(ULTRA_TIME_STOP_DATA_PATH))
                 .and_then(|path| load_ultra_time_stops(&path).ok())
                 .unwrap_or_default();
@@ -3757,6 +4106,13 @@ pub fn import_capture_json(
                     sender.send(event).map_err(|error| error.to_string())?;
                 }
             }
+            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain_characters.is_empty() {
+                sender
+                    .send(EngineEvent::EmptyCurtainCharacters(
+                        saved_empty_curtain_characters,
+                    ))
+                    .map_err(|error| error.to_string())?;
+            }
             if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
                 sender
                     .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
@@ -3777,6 +4133,24 @@ pub fn import_capture_json(
             }
         }
     })
+}
+
+fn validate_empty_curtain_characters(
+    characters: Vec<EmptyCurtainCharacter>,
+) -> Option<Vec<EmptyCurtainCharacter>> {
+    let mut character_ids = HashMap::with_capacity(characters.len());
+    let mut validated = Vec::with_capacity(characters.len());
+    for character in characters {
+        if !valid_item_net_id(character.net_id) || character.character_id == 0 {
+            return None;
+        }
+        match character_ids.insert(character.net_id, character.character_id) {
+            None => validated.push(character),
+            Some(existing) if existing == character.character_id => {}
+            Some(_) => return None,
+        }
+    }
+    Some(validated)
 }
 
 fn send_export_packet(
@@ -3830,6 +4204,11 @@ fn send_export_packet(
     } else {
         InventoryPacketResult::default()
     };
+    if let Some(characters) = inventory_result.characters {
+        sender
+            .send(EngineEvent::EmptyCurtainCharacters(characters))
+            .map_err(|error| error.to_string())?;
+    }
     if let Some(snapshot) = inventory_result.snapshot {
         sender
             .send(EngineEvent::EmptyCurtain(snapshot))
@@ -3960,7 +4339,10 @@ mod tests {
     use super::*;
     use crossbeam_channel::unbounded;
 
-    use crate::engine::parser::{CHARACTER_DATA_PATH, UltraTimeStopCooldown, load_characters};
+    use crate::engine::parser::{
+        CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, UltraTimeStopCooldown,
+        load_characters,
+    };
 
     fn inventory_bunch(sequence: u16, partial_flags: u8, data: u8) -> SingleBunch {
         SingleBunch {
@@ -4123,8 +4505,11 @@ mod tests {
         }
     }
 
-    fn character_owner_packet(character_id: u32, net_id: HtItemNetId) -> SequencedPacket {
-        let mut record = InventoryTestBitWriter::default();
+    fn push_character_owner_record(
+        record: &mut InventoryTestBitWriter,
+        character_id: u32,
+        net_id: HtItemNetId,
+    ) {
         record.push_dynamic_name(&character_id.to_string());
         record.push_u32(net_id.solt);
         record.push_u32(net_id.serial);
@@ -4143,11 +4528,17 @@ mod tests {
         record.push_bool(false);
         record.push_i32(0);
         record.push_u16(5);
+    }
 
+    fn inventory_fragment_packet(
+        record: InventoryTestBitWriter,
+        sequence: u16,
+        partial_flags: u8,
+    ) -> SequencedPacket {
         let mut payload = InventoryTestBitWriter::default();
         payload.push_bits(4122, 13);
-        payload.push_bits(87, 10);
-        payload.push_bits(0xccd, 12);
+        payload.push_bits(u64::from(sequence), 10);
+        payload.push_bits(u64::from(0xcc0_u16 | u16::from(partial_flags)), 12);
         payload.push_bits(record.bit_len as u64, 13);
         for index in 0..record.bit_len {
             payload.push_bits(u64::from((record.data[index / 8] >> (index % 8)) & 1), 1);
@@ -4166,6 +4557,145 @@ mod tests {
         }
     }
 
+    fn inventory_stream_packet(record: InventoryTestBitWriter) -> SequencedPacket {
+        inventory_fragment_packet(record, 87, 0x0d)
+    }
+
+    fn character_owner_packet(character_id: u32, net_id: HtItemNetId) -> SequencedPacket {
+        let mut record = InventoryTestBitWriter::default();
+        push_character_owner_record(&mut record, character_id, net_id);
+        inventory_stream_packet(record)
+    }
+
+    fn compact_module_placement_packet(
+        character_id: u32,
+        character_net_id: HtItemNetId,
+        item_id: &str,
+        id: HtItemNetId,
+        row: i32,
+        column: i32,
+    ) -> SequencedPacket {
+        let mut record = InventoryTestBitWriter::default();
+        push_character_owner_record(&mut record, character_id, character_net_id);
+        for (first_step, cell_row) in [(true, row), (false, row + 1)] {
+            record.push_i32(1);
+            record.push_dynamic_name(item_id);
+            record.push_u32(id.solt);
+            record.push_u32(id.serial);
+            record.push_bool(first_step);
+            record.push_i32(cell_row);
+            record.push_i32(column);
+            record.push_i32(0);
+        }
+        inventory_stream_packet(record)
+    }
+
+    fn raw_inventory_item_packet(
+        catalog: &EquipmentCatalog,
+        id: HtItemNetId,
+        item_id: &str,
+        character_net_id: Option<HtItemNetId>,
+        locked: bool,
+        discarded: bool,
+    ) -> SequencedPacket {
+        raw_inventory_item_packet_at_level(
+            catalog,
+            id,
+            item_id,
+            character_net_id,
+            0,
+            locked,
+            discarded,
+        )
+    }
+
+    fn raw_inventory_item_packet_at_level(
+        catalog: &EquipmentCatalog,
+        id: HtItemNetId,
+        item_id: &str,
+        character_net_id: Option<HtItemNetId>,
+        level: u32,
+        locked: bool,
+        discarded: bool,
+    ) -> SequencedPacket {
+        let definition = catalog
+            .items
+            .get(item_id)
+            .expect("test equipment must exist in the catalog");
+        let main_property = catalog
+            .attributes
+            .keys()
+            .find(|property| {
+                catalog
+                    .main_stat_value(definition, property.as_str(), 0)
+                    .is_some()
+            })
+            .expect("test equipment must have a valid main property");
+        let sub_property = catalog
+            .attributes
+            .keys()
+            .next()
+            .expect("test catalog must have an equipment attribute");
+
+        let mut payload = InventoryTestBitWriter::default();
+        payload.push_dynamic_name(item_id);
+        payload.push_u32(id.solt);
+        payload.push_u32(id.serial);
+        payload.push_i64(1);
+        payload.push_i32(0);
+        payload.push_i64(1);
+        payload.push_u16(0);
+        payload.push_u16(0);
+        payload.push_u16(1);
+        payload.push_i32(level as i32);
+        let character_net_id = character_net_id.unwrap_or(HtItemNetId { solt: 0, serial: 0 });
+        payload.push_u32(character_net_id.solt);
+        payload.push_u32(character_net_id.serial);
+        payload.push_i32(0);
+        payload.push_bool(locked);
+        payload.push_bool(discarded);
+        payload.push_u16(0);
+        payload.push_u16(definition.main_count as u16);
+        for _ in 0..definition.main_count {
+            payload.push_dynamic_name(main_property);
+        }
+        payload.push_u16(definition.sub_count as u16);
+        for _ in 0..definition.sub_count {
+            payload.push_dynamic_name(sub_property);
+            payload.push_f32(1.0);
+        }
+        payload.push_f32(0.0);
+        payload.push_bool(false);
+        payload.push_i32(0);
+        payload.push_i32(0);
+
+        SequencedPacket {
+            handler_prefix: 0,
+            mode: 1,
+            header_flags: 0,
+            acknowledged_packet_id: 0,
+            packet_id: 0,
+            acknowledgment_history: 0,
+            packet_flags: 0,
+            payload_bit_len: payload.bit_len,
+            payload: payload.data,
+        }
+    }
+
+    fn inventory_item_stream_packet(
+        catalog: &EquipmentCatalog,
+        id: HtItemNetId,
+        item_id: &str,
+        character_net_id: HtItemNetId,
+    ) -> SequencedPacket {
+        let raw =
+            raw_inventory_item_packet(catalog, id, item_id, Some(character_net_id), false, false);
+        inventory_stream_packet(InventoryTestBitWriter {
+            data: raw.payload,
+            bit_len: raw.payload_bit_len,
+        })
+    }
+
     fn inventory_test_item(character_net_id: Option<HtItemNetId>) -> EmptyCurtainItem {
         EmptyCurtainItem {
             id: HtItemNetId {
@@ -4177,8 +4707,30 @@ mod tests {
             main_stats: Vec::new(),
             sub_stats: Vec::new(),
             locked: false,
+            discarded: false,
             character_net_id,
             equipped_character_id: None,
+            equipped_placement: None,
+        }
+    }
+
+    fn inventory_equipment_item(
+        id: HtItemNetId,
+        item_id: &str,
+        character_net_id: Option<HtItemNetId>,
+        equipped_character_id: Option<u32>,
+    ) -> EmptyCurtainItem {
+        EmptyCurtainItem {
+            id,
+            item_id: item_id.to_owned(),
+            level: 0,
+            main_stats: Vec::new(),
+            sub_stats: Vec::new(),
+            locked: false,
+            discarded: false,
+            character_net_id,
+            equipped_character_id,
+            equipped_placement: None,
         }
     }
 
@@ -4206,6 +4758,36 @@ mod tests {
     }
 
     #[test]
+    fn inventory_reassembly_does_not_join_a_new_start_to_stale_future_fragments() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(vec![
+                    inventory_bunch(12, 0x08, 0xa3),
+                    inventory_bunch(13, 0x0c, 0xa4),
+                ])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(vec![
+                    inventory_bunch(10, 0x09, 0xb1),
+                    inventory_bunch(11, 0x08, 0xb2),
+                ])
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(vec![
+            inventory_bunch(12, 0x08, 0xb3),
+            inventory_bunch(13, 0x0c, 0xb4),
+        ]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3, 0xb4]);
+        assert_eq!(completed[0].bit_len, 32);
+    }
+
+    #[test]
     fn owner_only_connection_does_not_replace_active_inventory() {
         let active = InventoryConnectionKey::new("old:1".to_owned(), "client:1".to_owned());
         let owner_only = InventoryConnectionKey::new("new:1".to_owned(), "client:1".to_owned());
@@ -4228,6 +4810,7 @@ mod tests {
 
         assert!(result.recognized);
         assert!(result.snapshot.is_none());
+        assert!(result.characters.is_none());
         assert_eq!(decoder.active_connection, Some(active));
         assert_eq!(decoder.items, HashMap::from([(item.id, item)]));
         assert_eq!(
@@ -4235,6 +4818,42 @@ mod tests {
                 .character_ids
                 .get(&owner_net_id),
             Some(&1020)
+        );
+    }
+
+    #[test]
+    fn unrelated_flows_do_not_evict_the_active_inventory_connection() {
+        let active = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let mut active_state = InventoryConnectionState::default();
+        active_state.character_ids.insert(owner_net_id, 1020);
+        let mut decoder = EmptyCurtainDecoder::new(EquipmentCatalog::default());
+        decoder.active_connection = Some(active.clone());
+        decoder.connection_order.push_back(active.clone());
+        decoder.connections.insert(active.clone(), active_state);
+
+        for index in 0..MAX_INVENTORY_CONNECTIONS {
+            let connection =
+                InventoryConnectionKey::new(format!("unrelated:{index}"), "client:1".to_owned());
+            decoder.process_packet(
+                connection,
+                &character_owner_packet(
+                    1023,
+                    HtItemNetId {
+                        solt: 100 + index as u32,
+                        serial: 200 + index as u32,
+                    },
+                ),
+            );
+        }
+
+        assert_eq!(decoder.active_connection, Some(active.clone()));
+        assert_eq!(
+            decoder.connections[&active].character_ids,
+            HashMap::from([(owner_net_id, 1020)])
         );
     }
 
@@ -4262,6 +4881,564 @@ mod tests {
             .expect("owner mapping should enrich inventory");
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].equipped_character_id, Some(1020));
+        assert_eq!(
+            result.characters,
+            Some(vec![EmptyCurtainCharacter {
+                net_id: owner_net_id,
+                character_id: 1020,
+            }])
+        );
+    }
+
+    #[test]
+    fn active_connection_publishes_a_character_without_equipped_items() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let mut decoder = EmptyCurtainDecoder::new(EquipmentCatalog::default());
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+
+        let result =
+            decoder.process_packet(connection, &character_owner_packet(1020, owner_net_id));
+
+        assert!(result.recognized);
+        assert!(result.snapshot.is_none());
+        assert_eq!(
+            result.characters,
+            Some(vec![EmptyCurtainCharacter {
+                net_id: owner_net_id,
+                character_id: 1020,
+            }])
+        );
+    }
+
+    #[test]
+    fn compact_login_placement_is_applied_when_item_details_arrive_later() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let character_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let item_id = "cell2_style2_1_Orange";
+        let id = HtItemNetId {
+            solt: 1_296_894_783,
+            serial: 538_340_435,
+        };
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+
+        let placement_result = decoder.process_packet(
+            connection.clone(),
+            &compact_module_placement_packet(1023, character_net_id, item_id, id, 1, 5),
+        );
+        assert!(placement_result.recognized);
+        assert_eq!(
+            decoder.connections[&connection].module_placements.get(&id),
+            Some(&(
+                item_id.to_owned(),
+                EmptyCurtainPlacement { row: 1, column: 5 }
+            ))
+        );
+
+        let item_result = decoder.process_packet(
+            connection,
+            &inventory_item_stream_packet(&decoder.catalog, id, item_id, character_net_id),
+        );
+        let item = item_result
+            .snapshot
+            .expect("later item details should publish the cached placement")
+            .into_iter()
+            .find(|item| item.id == id)
+            .expect("the equipped module should be present");
+        assert_eq!(item.equipped_character_id, Some(1023));
+        assert_eq!(
+            item.equipped_placement,
+            Some(EmptyCurtainPlacement { row: 1, column: 5 })
+        );
+    }
+
+    #[test]
+    fn full_grid_placement_is_applied_when_item_details_arrive_later() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let character_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let item_id = "cell3_style6_1_Orange";
+        let id = HtItemNetId {
+            solt: 1_296_894_783,
+            serial: 538_340_435,
+        };
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(connection.clone());
+        decoder.connections.insert(
+            connection.clone(),
+            InventoryConnectionState {
+                character_ids: HashMap::from([(character_net_id, 1023)]),
+                ..InventoryConnectionState::default()
+            },
+        );
+
+        assert!(!decoder.apply_equipment_snapshot(
+            &connection,
+            ParsedEmptyCurtainEquipmentSnapshot::Modules {
+                character_net_id,
+                character_id: 1023,
+                placements: vec![ParsedEmptyCurtainModulePlacement {
+                    equipment: id,
+                    item_id: item_id.to_owned(),
+                    row: 1,
+                    column: 2,
+                }],
+            },
+        ));
+        assert_eq!(
+            decoder.connections[&connection].module_placements.get(&id),
+            Some(&(
+                item_id.to_owned(),
+                EmptyCurtainPlacement { row: 1, column: 2 }
+            ))
+        );
+
+        let item_result = decoder.process_packet(
+            connection,
+            &inventory_item_stream_packet(&decoder.catalog, id, item_id, character_net_id),
+        );
+        let item = item_result
+            .snapshot
+            .expect("later item details should publish the cached full-grid placement")
+            .into_iter()
+            .find(|item| item.id == id)
+            .expect("the equipped module should be present");
+        assert_eq!(
+            item.equipped_placement,
+            Some(EmptyCurtainPlacement { row: 1, column: 2 })
+        );
+    }
+
+    #[test]
+    fn raw_item_records_apply_complete_updates_and_insert_new_items() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let item_id = "GetEfficiency_orange";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let packets = [(true, false), (false, false), (false, true), (false, false)].map(
+            |(locked, discarded)| {
+                raw_inventory_item_packet(&catalog, id, item_id, None, locked, discarded)
+            },
+        );
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+        decoder
+            .items
+            .insert(id, inventory_equipment_item(id, item_id, None, None));
+
+        for ((locked, discarded), packet) in
+            [(true, false), (false, false), (false, true), (false, false)]
+                .into_iter()
+                .zip(packets)
+        {
+            let result = decoder.process_packet(connection.clone(), &packet);
+            assert!(result.recognized);
+            let snapshot = result
+                .snapshot
+                .expect("changed raw item flags should publish an inventory snapshot");
+            assert_eq!(
+                (snapshot[0].locked, snapshot[0].discarded),
+                (locked, discarded)
+            );
+        }
+
+        let duplicate =
+            raw_inventory_item_packet(&decoder.catalog, id, item_id, None, false, false);
+        let result = decoder.process_packet(connection.clone(), &duplicate);
+        assert!(result.recognized);
+        assert!(result.snapshot.is_none());
+
+        let upgrade = raw_inventory_item_packet_at_level(
+            &decoder.catalog,
+            id,
+            item_id,
+            None,
+            20,
+            false,
+            false,
+        );
+        let result = decoder.process_packet(connection.clone(), &upgrade);
+        assert!(result.recognized);
+        let upgraded = result
+            .snapshot
+            .expect("a raw level change should publish an inventory snapshot")
+            .into_iter()
+            .find(|item| item.id == id)
+            .expect("the upgraded item should remain in the inventory");
+        assert_eq!(upgraded.level, 20);
+        assert!(!upgraded.main_stats.is_empty());
+
+        let unknown_id = HtItemNetId {
+            solt: id.solt + 1,
+            serial: id.serial + 1,
+        };
+        let unknown =
+            raw_inventory_item_packet(&decoder.catalog, unknown_id, item_id, None, true, false);
+        let result = decoder.process_packet(connection.clone(), &unknown);
+        assert!(result.recognized);
+        assert!(result.snapshot.is_some());
+        assert_eq!(decoder.items[&unknown_id].item_id, item_id);
+        assert!(decoder.items[&unknown_id].locked);
+
+        let other_connection =
+            InventoryConnectionKey::new("other:1".to_owned(), "client:1".to_owned());
+        let inactive = raw_inventory_item_packet(&decoder.catalog, id, item_id, None, true, false);
+        let result = decoder.process_packet(other_connection, &inactive);
+        assert!(!result.recognized);
+        assert!(result.snapshot.is_none());
+        assert_eq!(
+            (decoder.items[&id].locked, decoder.items[&id].discarded),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn raw_remove_notification_deletes_matching_items_without_a_completed_stream() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let removed = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let retained = HtItemNetId {
+            solt: 501,
+            serial: 601,
+        };
+        let item_id = "GetEfficiency_orange";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let raw = raw_inventory_item_packet(&catalog, removed, item_id, None, false, false);
+        let mut notification = InventoryTestBitWriter::default();
+        notification.push_bits(2, 7);
+        notification.push_bits(5, 17);
+        for index in 0..raw.payload_bit_len {
+            notification.push_bits(u64::from((raw.payload[index / 8] >> (index % 8)) & 1), 1);
+        }
+        let packet = SequencedPacket {
+            payload_bit_len: notification.bit_len,
+            payload: notification.data,
+            ..raw
+        };
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+        decoder.items = HashMap::from([
+            (
+                removed,
+                inventory_equipment_item(removed, item_id, None, None),
+            ),
+            (
+                retained,
+                inventory_equipment_item(retained, item_id, None, None),
+            ),
+        ]);
+
+        let result = decoder.process_packet(connection, &packet);
+
+        assert!(result.recognized);
+        assert!(result.snapshot.is_some());
+        assert!(!decoder.items.contains_key(&removed));
+        assert!(decoder.items.contains_key(&retained));
+    }
+
+    #[test]
+    fn completed_remove_stream_wins_over_raw_tail_item_update() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let first_removed = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let tail_removed = HtItemNetId {
+            solt: 501,
+            serial: 601,
+        };
+        let retained = HtItemNetId {
+            solt: 502,
+            serial: 602,
+        };
+        let item_id = "Cosmos_purple";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let first_record =
+            raw_inventory_item_packet(&catalog, first_removed, item_id, None, false, false);
+        let tail_record =
+            raw_inventory_item_packet(&catalog, tail_removed, item_id, None, false, false);
+        let mut start_data = InventoryTestBitWriter::default();
+        start_data.push_bits(2, 7);
+        start_data.push_bits(2, 17);
+        for index in 0..first_record.payload_bit_len {
+            start_data.push_bits(
+                u64::from((first_record.payload[index / 8] >> (index % 8)) & 1),
+                1,
+            );
+        }
+        let start = inventory_fragment_packet(start_data, 472, 0x09);
+        let tail = inventory_fragment_packet(
+            InventoryTestBitWriter {
+                data: tail_record.payload,
+                bit_len: tail_record.payload_bit_len,
+            },
+            473,
+            0x0c,
+        );
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(connection.clone());
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+        decoder.items = HashMap::from([
+            (
+                first_removed,
+                inventory_equipment_item(first_removed, item_id, None, None),
+            ),
+            (
+                tail_removed,
+                inventory_equipment_item(tail_removed, item_id, None, None),
+            ),
+            (
+                retained,
+                inventory_equipment_item(retained, item_id, None, None),
+            ),
+        ]);
+
+        let start_result = decoder.process_packet(connection.clone(), &start);
+        assert_eq!(
+            start_result
+                .snapshot
+                .expect("first removal should publish")
+                .len(),
+            2
+        );
+
+        let tail_result = decoder.process_packet(connection, &tail);
+        let snapshot = tail_result
+            .snapshot
+            .expect("the completed removal stream should publish");
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].id, retained);
+        assert!(!decoder.items.contains_key(&first_removed));
+        assert!(!decoder.items.contains_key(&tail_removed));
+    }
+
+    #[test]
+    fn module_snapshot_assigns_present_items_and_clears_removed_items() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let character_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let other_character_net_id = HtItemNetId {
+            solt: 31,
+            serial: 41,
+        };
+        let equipped = HtItemNetId {
+            solt: 50,
+            serial: 60,
+        };
+        let removed = HtItemNetId {
+            solt: 51,
+            serial: 61,
+        };
+        let other = HtItemNetId {
+            solt: 52,
+            serial: 62,
+        };
+        let core = HtItemNetId {
+            solt: 53,
+            serial: 63,
+        };
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder
+            .connections
+            .insert(connection.clone(), InventoryConnectionState::default());
+        decoder.items = HashMap::from([
+            (
+                equipped,
+                inventory_equipment_item(equipped, "cell3_style6_1_Orange", None, None),
+            ),
+            (
+                removed,
+                inventory_equipment_item(
+                    removed,
+                    "cell2_style2_1_Orange",
+                    Some(character_net_id),
+                    Some(1023),
+                ),
+            ),
+            (
+                other,
+                inventory_equipment_item(
+                    other,
+                    "cell2_style2_1_Orange",
+                    Some(other_character_net_id),
+                    Some(1020),
+                ),
+            ),
+            (
+                core,
+                inventory_equipment_item(
+                    core,
+                    "Incantation_orange",
+                    Some(character_net_id),
+                    Some(1023),
+                ),
+            ),
+        ]);
+        decoder
+            .items
+            .get_mut(&removed)
+            .expect("removed module must exist")
+            .equipped_placement = Some(EmptyCurtainPlacement { row: 2, column: 3 });
+        decoder
+            .items
+            .get_mut(&other)
+            .expect("other character module must exist")
+            .equipped_placement = Some(EmptyCurtainPlacement { row: 4, column: 5 });
+        let snapshot = ParsedEmptyCurtainEquipmentSnapshot::Modules {
+            character_net_id,
+            character_id: 1023,
+            placements: vec![ParsedEmptyCurtainModulePlacement {
+                equipment: equipped,
+                item_id: "cell3_style6_1_Orange".to_owned(),
+                row: 1,
+                column: 2,
+            }],
+        };
+
+        assert!(decoder.apply_equipment_snapshot(&connection, snapshot.clone()));
+        assert_eq!(
+            decoder.items[&equipped].character_net_id,
+            Some(character_net_id)
+        );
+        assert_eq!(decoder.items[&equipped].equipped_character_id, Some(1023));
+        assert_eq!(
+            decoder.items[&equipped].equipped_placement,
+            Some(EmptyCurtainPlacement { row: 1, column: 2 })
+        );
+        assert_eq!(decoder.items[&removed].character_net_id, None);
+        assert_eq!(decoder.items[&removed].equipped_character_id, None);
+        assert_eq!(decoder.items[&removed].equipped_placement, None);
+        assert_eq!(
+            decoder.items[&other].character_net_id,
+            Some(other_character_net_id)
+        );
+        assert_eq!(
+            decoder.items[&other].equipped_placement,
+            Some(EmptyCurtainPlacement { row: 4, column: 5 })
+        );
+        assert_eq!(
+            decoder.items[&core].character_net_id,
+            Some(character_net_id)
+        );
+        assert!(!decoder.apply_equipment_snapshot(&connection, snapshot));
+    }
+
+    #[test]
+    fn core_snapshot_replaces_and_clears_only_the_character_core() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let character_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let equipped = HtItemNetId {
+            solt: 50,
+            serial: 60,
+        };
+        let removed = HtItemNetId {
+            solt: 51,
+            serial: 61,
+        };
+        let module = HtItemNetId {
+            solt: 52,
+            serial: 62,
+        };
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.items = HashMap::from([
+            (
+                equipped,
+                inventory_equipment_item(equipped, "Incantation_orange", None, None),
+            ),
+            (
+                removed,
+                inventory_equipment_item(
+                    removed,
+                    "Nature_orange",
+                    Some(character_net_id),
+                    Some(1023),
+                ),
+            ),
+            (
+                module,
+                inventory_equipment_item(
+                    module,
+                    "cell2_style2_1_Orange",
+                    Some(character_net_id),
+                    Some(1023),
+                ),
+            ),
+        ]);
+
+        assert!(decoder.apply_equipment_snapshot(
+            &connection,
+            ParsedEmptyCurtainEquipmentSnapshot::Core {
+                character_net_id,
+                character_id: 1023,
+                item_id: Some(equipped),
+            }
+        ));
+        assert_eq!(
+            decoder.items[&equipped].character_net_id,
+            Some(character_net_id)
+        );
+        assert_eq!(decoder.items[&removed].character_net_id, None);
+        assert_eq!(
+            decoder.items[&module].character_net_id,
+            Some(character_net_id)
+        );
+        assert!(decoder.apply_equipment_snapshot(
+            &connection,
+            ParsedEmptyCurtainEquipmentSnapshot::Core {
+                character_net_id,
+                character_id: 1023,
+                item_id: None,
+            }
+        ));
+        assert_eq!(decoder.items[&equipped].character_net_id, None);
+        assert_eq!(
+            decoder.items[&module].character_net_id,
+            Some(character_net_id)
+        );
     }
 
     #[test]
@@ -4269,15 +5446,81 @@ mod tests {
         let legacy = parse_capture_export(r#"{"hits":[],"packets":[]}"#)
             .expect("legacy capture export should remain compatible");
         assert!(legacy.empty_curtain.is_empty());
+        assert!(legacy.empty_curtain_characters.is_empty());
 
         let current = parse_capture_export(
-            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true,"character_net_id":{"solt":3,"serial":4},"equipped_character_id":1020}]}"#,
+            r#"{"hits":[],"packets":[],"empty_curtain":[{"id":{"solt":1,"serial":2},"item_id":"cell2_style1_1_Orange","level":20,"main_stats":[],"sub_stats":[],"locked":true,"character_net_id":{"solt":3,"serial":4},"equipped_character_id":1020}],"empty_curtain_characters":[{"net_id":{"solt":3,"serial":4},"character_id":1020}]}"#,
         )
         .expect("current capture export should preserve Console equipment");
         assert_eq!(current.empty_curtain.len(), 1);
         assert_eq!(current.empty_curtain[0].id.solt, 1);
         assert!(current.empty_curtain[0].locked);
+        assert!(!current.empty_curtain[0].discarded);
         assert_eq!(current.empty_curtain[0].equipped_character_id, Some(1020));
+        assert_eq!(current.empty_curtain[0].equipped_placement, None);
+        assert_eq!(current.empty_curtain_characters.len(), 1);
+        assert_eq!(current.empty_curtain_characters[0].character_id, 1020);
+
+        let mut positioned = current.empty_curtain[0].clone();
+        positioned.equipped_placement = Some(EmptyCurtainPlacement { row: 2, column: 3 });
+        let json = serde_json::to_string(&positioned).expect("positioned item should serialize");
+        let restored: EmptyCurtainItem =
+            serde_json::from_str(&json).expect("positioned item should deserialize");
+        assert_eq!(restored.equipped_placement, positioned.equipped_placement);
+    }
+
+    #[test]
+    fn replay_character_mappings_validate_ids_and_deduplicate() {
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 1, serial: 2 },
+            character_id: 1020,
+        };
+        assert_eq!(
+            validate_empty_curtain_characters(vec![character, character]),
+            Some(vec![character])
+        );
+        for net_id in [
+            HtItemNetId { solt: 0, serial: 0 },
+            HtItemNetId { solt: 0, serial: 2 },
+            HtItemNetId { solt: 1, serial: 0 },
+            HtItemNetId {
+                solt: u32::MAX,
+                serial: 2,
+            },
+            HtItemNetId {
+                solt: 1,
+                serial: u32::MAX,
+            },
+            HtItemNetId {
+                solt: u32::MAX,
+                serial: u32::MAX,
+            },
+        ] {
+            assert!(
+                validate_empty_curtain_characters(vec![EmptyCurtainCharacter {
+                    net_id,
+                    character_id: 1020,
+                }])
+                .is_none()
+            );
+        }
+        assert!(
+            validate_empty_curtain_characters(vec![EmptyCurtainCharacter {
+                character_id: 0,
+                ..character
+            }])
+            .is_none()
+        );
+        assert!(
+            validate_empty_curtain_characters(vec![
+                character,
+                EmptyCurtainCharacter {
+                    character_id: 1032,
+                    ..character
+                },
+            ])
+            .is_none()
+        );
     }
 
     #[test]
@@ -4803,7 +6046,7 @@ mod tests {
     }
 
     #[test]
-    fn send_export_packet_emits_pending_time_stop_end_before_filtering() {
+    fn send_export_packet_keeps_time_actor_candidate_internal() {
         let (sender, receiver) = unbounded();
         let table = HashMap::from([(
             1010,
@@ -4841,18 +6084,11 @@ mod tests {
             .unwrap()
         );
         assert!(matches!(
-            receiver
-                .try_recv()
-                .expect("pending start should be emitted"),
-            EngineEvent::TimeStop(TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                ..
-            })
-        ));
-        assert!(matches!(
             receiver.try_recv().expect("debug packet should be emitted"),
             EngineEvent::Packet(_)
         ));
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert!(tracker.pending_cooldowns[0].from_time_actor);
 
         let ignored_packet = ExportPacket {
             timestamp_unix: 15.0,
@@ -4877,14 +6113,8 @@ mod tests {
             )
             .unwrap()
         );
-        assert!(matches!(
-            receiver.try_recv().expect("pending end should be emitted"),
-            EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
-                timestamp: 12.5,
-                ..
-            })
-        ));
         assert!(receiver.try_recv().is_err());
+        assert!(tracker.pending_cooldowns.is_empty());
     }
 
     #[test]
@@ -4900,7 +6130,7 @@ mod tests {
             },
         )]);
         let mut tracker = UltraTimeStopTracker::default();
-        assert!(matches!(
+        assert!(
             tracker
                 .events_from_packet(
                     9.0,
@@ -4910,9 +6140,8 @@ mod tests {
                     None,
                     &table,
                 )
-                .as_slice(),
-            [TimeStopEvent::ExtraStart { timestamp: 9.0, .. }]
-        ));
+                .is_empty()
+        );
         let events = tracker.events_from_packet(
             10.0,
             "CoolDown.Player.UltraSkill.F",
@@ -4924,18 +6153,12 @@ mod tests {
 
         assert_eq!(
             events,
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 10.0,
-                    reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 10.0,
-                    char_id: 1052,
-                    ability_id: "GA_Jin_UltraSkill".to_owned(),
-                    duration_seconds: 2.183333,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1052,
+                ability_id: "GA_Jin_UltraSkill".to_owned(),
+                duration_seconds: 2.183333,
+            }]
         );
         assert!(
             tracker
@@ -4952,24 +6175,22 @@ mod tests {
     }
 
     #[test]
-    fn time_actor_prelude_closes_at_montage_activation() {
+    fn time_actor_candidate_resolves_at_montage_activation() {
         let table = ultra_test_table();
         let flow = Some(ultra_test_flow(7_777));
         let mut tracker = UltraTimeStopTracker::default();
 
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "CoolDown.Player.UltraSkill.TimeActor",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.TimeActor",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
         );
         assert_eq!(
             tracker.events_from_packet(
@@ -4980,40 +6201,32 @@ mod tests {
                 flow,
                 &table,
             ),
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 11.846596,
-                    reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 11.846596,
-                    char_id: 1025,
-                    ability_id: "GA_Hathor_UltraSkill".to_owned(),
-                    duration_seconds: 4.518597,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 11.846596,
+                char_id: 1025,
+                ability_id: "GA_Hathor_UltraSkill".to_owned(),
+                duration_seconds: 4.518597,
+            }]
         );
     }
 
     #[test]
-    fn time_actor_prelude_closes_at_specific_activation_tag() {
+    fn time_actor_candidate_resolves_at_specific_activation_tag() {
         let table = ultra_test_table();
         let flow = Some(ultra_test_flow(7_777));
         let mut tracker = UltraTimeStopTracker::default();
 
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "CoolDown.Player.UltraSkill.TimeActor",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
-            }]
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.TimeActor",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
         );
         assert_eq!(
             tracker.events_from_packet(
@@ -5024,18 +6237,12 @@ mod tests {
                 flow,
                 &table,
             ),
-            vec![
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 11.877756,
-                    reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
-                },
-                TimeStopEvent::UltraAnimation {
-                    timestamp: 11.877756,
-                    char_id: 1003,
-                    ability_id: "GA_Sagiri_UltraSkill".to_owned(),
-                    duration_seconds: 3.533936,
-                },
-            ]
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 11.877756,
+                char_id: 1003,
+                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
+                duration_seconds: 3.533936,
+            }]
         );
     }
 
@@ -5158,11 +6365,143 @@ mod tests {
     }
 
     #[test]
+    fn weak_generic_cooldown_requires_rearm_before_repeating_character() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+        let flow = Some(ultra_test_flow(7_777));
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "CoolDown.Player.UltraSkill.F",
+                &[1010],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    15.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[1010],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                40.1,
+                "CoolDown.Player.UltraSkill.F",
+                &[1010],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 40.1,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
+        );
+    }
+
+    #[test]
+    fn weak_duplicate_character_keeps_candidate_for_later_ultra_hit() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+        let flow = Some(ultra_test_flow(7_777));
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1025,
+                ability_id: "GA_Hathor_UltraSkill".to_owned(),
+                duration_seconds: 4.518597,
+            }]
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    16.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[1025],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert!(!tracker.pending_cooldowns[0].from_time_actor);
+
+        let mut female_ultra_hit = targetless_hit();
+        female_ultra_hit.timestamp = 17.0;
+        female_ultra_hit.char_id = 1051;
+        female_ultra_hit.ability_name = Some("GA_Female051_UltraSkill".to_owned());
+        assert_eq!(
+            tracker.events_from_hits(&[female_ultra_hit], &table),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 16.0,
+                char_id: 1051,
+                ability_id: "GA_Female051_UltraSkill".to_owned(),
+                duration_seconds: 4.161653,
+            }]
+        );
+        assert!(tracker.pending_cooldowns.is_empty());
+    }
+
+    #[test]
+    fn strong_montage_evidence_allows_a_real_second_cast() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+        let flow = Some(ultra_test_flow(7_777));
+        let activation = "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\nCoolDown.Player.UltraSkill.F";
+
+        assert_eq!(
+            tracker.events_from_packet(10.0, activation, &[], true, flow, &table),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
+        );
+        assert_eq!(
+            tracker.events_from_packet(14.0, activation, &[], true, flow, &table),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 14.0,
+                char_id: 1010,
+                ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                duration_seconds: 3.584608,
+            }]
+        );
+    }
+
+    #[test]
     fn time_actor_declared_id_does_not_identify_character() {
         let table = ultra_test_table();
         let mut tracker = UltraTimeStopTracker::default();
 
-        assert!(matches!(
+        assert!(
             tracker
                 .events_from_packet(
                     10.0,
@@ -5172,21 +6511,19 @@ mod tests {
                     Some(ultra_test_flow(7_777)),
                     &table,
                 )
-                .as_slice(),
-            [TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                ..
-            }]
-        ));
+                .is_empty()
+        );
         assert!(tracker.recent_emitted.is_empty());
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert!(tracker.pending_cooldowns[0].from_time_actor);
     }
 
     #[test]
-    fn expired_time_actor_ends_at_timeout() {
+    fn expired_time_actor_candidate_is_discarded_silently() {
         let table = ultra_test_table();
         let mut tracker = UltraTimeStopTracker::default();
 
-        assert!(matches!(
+        assert!(
             tracker
                 .events_from_packet(
                     10.0,
@@ -5196,19 +6533,15 @@ mod tests {
                     None,
                     &table,
                 )
-                .as_slice(),
-            [TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                ..
-            }]
-        ));
-        assert_eq!(
-            tracker.events_from_packet(30.0, "", &[], true, None, &table),
-            vec![TimeStopEvent::ExtraEnd {
-                timestamp: 10.0 + ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS,
-                reason: format!("{PENDING_ULTRA_TIME_STOP_REASON}.0"),
-            }]
+                .is_empty()
         );
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert!(
+            tracker
+                .events_from_packet(30.0, "", &[], true, None, &table)
+                .is_empty()
+        );
+        assert!(tracker.pending_cooldowns.is_empty());
     }
 
     #[test]
@@ -5666,17 +6999,29 @@ mod tests {
     }
 
     #[test]
-    fn pending_ultra_cooldown_claims_closest_prior_start() {
-        let table = HashMap::from([(
-            1010,
-            UltraTimeStopEntry {
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                end_ability_event_seconds: 3.584608,
-                source: "test".to_owned(),
-                confidence: "high".to_owned(),
-                ..UltraTimeStopEntry::default()
-            },
-        )]);
+    fn residual_ultra_hit_preserves_pending_new_cast() {
+        let table = HashMap::from([
+            (
+                1010,
+                UltraTimeStopEntry {
+                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
+                    end_ability_event_seconds: 3.584608,
+                    source: "test".to_owned(),
+                    confidence: "high".to_owned(),
+                    ..UltraTimeStopEntry::default()
+                },
+            ),
+            (
+                1076,
+                UltraTimeStopEntry {
+                    ability_id: "GA_Shinku_UltraSkill".to_owned(),
+                    end_ability_event_seconds: 7.300015,
+                    source: "test".to_owned(),
+                    confidence: "high".to_owned(),
+                    ..UltraTimeStopEntry::default()
+                },
+            ),
+        ]);
         let mut tracker = UltraTimeStopTracker::default();
         assert!(
             tracker
@@ -5710,7 +7055,7 @@ mod tests {
         assert_eq!(
             tracker.events_from_hits(&[hit], &table),
             vec![TimeStopEvent::UltraAnimation {
-                timestamp: 11.5,
+                timestamp: 10.0,
                 char_id: 1010,
                 ability_id: "GA_Nanally_UltraSkill".to_owned(),
                 duration_seconds: 3.584608,
@@ -5719,13 +7064,47 @@ mod tests {
 
         assert!(
             tracker
-                .events_from_packet(15.0, "", &[], true, None, &table)
+                .events_from_packet(
+                    15.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
+        );
+        let mut repeated_hit = targetless_hit();
+        repeated_hit.timestamp = 16.0;
+        repeated_hit.char_id = 1010;
+        repeated_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
+        assert!(tracker.events_from_hits(&[repeated_hit], &table).is_empty());
+        assert_eq!(tracker.pending_cooldowns.len(), 1);
+
+        let mut new_cast_hit = targetless_hit();
+        new_cast_hit.timestamp = 17.0;
+        new_cast_hit.char_id = 1076;
+        new_cast_hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
+        assert_eq!(
+            tracker.events_from_hits(&[new_cast_hit], &table),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 15.0,
+                char_id: 1076,
+                ability_id: "GA_Shinku_UltraSkill".to_owned(),
+                duration_seconds: 7.300015,
+            }]
+        );
+        assert!(tracker.pending_cooldowns.is_empty());
+
+        assert!(
+            tracker
+                .events_from_packet(20.0, "", &[], true, None, &table)
                 .is_empty()
         );
     }
 
     #[test]
-    fn ignored_packet_still_emits_pending_ultra_time_stop_end() {
+    fn ignored_packet_expires_time_actor_candidate_without_public_event() {
         let (sender, receiver) = unbounded();
         let mut decoder = PacketDecoder {
             ultra_time_stops: HashMap::from([(
@@ -5759,15 +7138,6 @@ mod tests {
             &sender,
         );
         assert!(matches!(
-            receiver
-                .try_recv()
-                .expect("pending start should be emitted"),
-            EngineEvent::TimeStop(TimeStopEvent::ExtraStart {
-                timestamp: 10.0,
-                ..
-            })
-        ));
-        assert!(matches!(
             receiver.try_recv().expect("debug packet should be emitted"),
             EngineEvent::Packet(_)
         ));
@@ -5780,14 +7150,8 @@ mod tests {
             &characters,
             &sender,
         );
-        assert!(matches!(
-            receiver.try_recv().expect("pending end should be emitted"),
-            EngineEvent::TimeStop(TimeStopEvent::ExtraEnd {
-                timestamp: 12.5,
-                ..
-            })
-        ));
         assert!(receiver.try_recv().is_err());
+        assert!(decoder.ultra_time_stop.pending_cooldowns.is_empty());
     }
 
     #[test]
@@ -6939,10 +8303,14 @@ mod tests {
         handle.join().expect("pcapng import thread should finish");
 
         let mut latest = Vec::new();
+        let mut latest_characters = Vec::new();
         let mut errors = Vec::new();
         for event in receiver.try_iter() {
             match event {
                 EngineEvent::EmptyCurtain(items) => latest = items,
+                EngineEvent::EmptyCurtainCharacters(characters) => {
+                    latest_characters = characters;
+                }
                 EngineEvent::Error(error) => errors.push(error),
                 _ => {}
             }
@@ -6961,8 +8329,9 @@ mod tests {
             .filter(|item| item.equipped_character_id.is_some())
             .count();
         println!(
-            "parsed {} Console equipment items from {path}; identified {identified}/{equipped} equipped owners",
-            latest.len()
+            "parsed {} Console equipment items and {} character session IDs from {path}; identified {identified}/{equipped} equipped owners",
+            latest.len(),
+            latest_characters.len(),
         );
     }
 

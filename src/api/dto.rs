@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::core::capture::CaptureEnvironment;
 use crate::core::snapshot::{
-    InventoryItem, InventorySnapshot, InventoryStat, ItemUid, LocalizedNames,
+    InventoryItem, InventoryPlacement, InventorySnapshot, InventoryStat, ItemUid, LocalizedNames,
 };
 use crate::engine::capture::CaptureDevice;
 use crate::engine::model::{
@@ -111,6 +111,21 @@ impl From<&InventoryStat> for InventoryStatDto {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct InventoryPlacementDto {
+    pub row: i32,
+    pub column: i32,
+}
+
+impl From<InventoryPlacement> for InventoryPlacementDto {
+    fn from(placement: InventoryPlacement) -> Self {
+        Self {
+            row: placement.row,
+            column: placement.column,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct InventoryItemDto {
     pub uid: ItemUidDto,
@@ -125,9 +140,11 @@ pub struct InventoryItemDto {
     pub level: u32,
     pub max_level: Option<u32>,
     pub locked: bool,
+    pub discarded: bool,
     pub equipped: bool,
     pub equipped_character_uid: Option<ItemUidDto>,
     pub equipped_character_id: Option<u32>,
+    pub equipped_placement: Option<InventoryPlacementDto>,
     pub main_stats: Vec<InventoryStatDto>,
     pub sub_stats: Vec<InventoryStatDto>,
 }
@@ -147,9 +164,11 @@ impl From<&InventoryItem> for InventoryItemDto {
             level: item.level,
             max_level: item.max_level,
             locked: item.locked,
+            discarded: item.discarded,
             equipped: item.equipped,
             equipped_character_uid: item.equipped_character_uid.map(ItemUidDto::from),
             equipped_character_id: item.equipped_character_id,
+            equipped_placement: item.equipped_placement.map(InventoryPlacementDto::from),
             main_stats: item.main_stats.iter().map(InventoryStatDto::from).collect(),
             sub_stats: item.sub_stats.iter().map(InventoryStatDto::from).collect(),
         }
