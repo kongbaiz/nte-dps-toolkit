@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 
-use crate::engine::model::{EmptyCurtainItem, EquipmentStat};
+use crate::core::snapshot::{
+    CHARACTER_LOADOUT_MAX_JSON_BYTES, CharacterLoadoutError, ItemUid, ValidatedCharacterLoadout,
+    export_character_loadout_json, parse_character_loadout_json, validate_character_loadout,
+};
+use crate::engine::model::{EmptyCurtainCharacter, EmptyCurtainItem, EquipmentStat, HtItemNetId};
 use crate::engine::parser::{EMPTY_CURTAIN_MAX_STAT_ROWS, EquipmentCatalog, EquipmentKind};
 
 use super::*;
@@ -24,6 +28,40 @@ const FILTER_ICON_SIZE: f32 = 48.0;
 // Modules and cassettes share the same closed set of rarity tiers, ordered from
 // lowest to highest. The parser rejects any other value, so this list is total.
 const EQUIPMENT_QUALITIES: [&str; 3] = ["blue", "purple", "orange"];
+
+#[derive(Clone)]
+struct PendingModulePlacement {
+    character: EmptyCurtainCharacter,
+    equipment: HtItemNetId,
+    item_id: String,
+    move_from_other_character: bool,
+}
+
+enum EquipmentEquipSelection {
+    Module(PendingModulePlacement),
+    Submit {
+        character: HtItemNetId,
+        operation: EquipmentPluginOperation,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum CharacterEquipmentAction {
+    ImportLoadout,
+    ExportLoadout(EmptyCurtainCharacter),
+    EquipOneKey(EmptyCurtainCharacter),
+    UnequipAll(EmptyCurtainCharacter),
+}
+
+struct PendingPluginRequest {
+    request_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OneKeyPlanError {
+    MissingTemplate,
+    MissingEquipment,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum EquipmentFilterKey {
@@ -73,11 +111,19 @@ pub(crate) struct KongmuUiState {
     selected_substats: HashSet<String>,
     filter_revision: u64,
     filter_cache: EmptyCurtainFilterCache,
+    pending_module_placement: Option<PendingModulePlacement>,
+    plugin_request: Option<PendingPluginRequest>,
 }
 
 impl KongmuUiState {
     pub(crate) fn invalidate_inventory(&mut self) {
         self.filter_cache.valid = false;
+    }
+
+    pub(crate) fn reset_session_state(&mut self) {
+        self.invalidate_inventory();
+        self.pending_module_placement = None;
+        self.plugin_request = None;
     }
 
     fn active_filter_count(&self) -> usize {
@@ -173,6 +219,7 @@ impl KongmuUiState {
 
 impl DpsApp {
     pub(crate) fn empty_curtain_contents(&mut self, ui: &mut egui::Ui) {
+        self.drain_equipment_plugin_response(ui.ctx());
         self.kongmu_ui.refresh_filter_cache(
             &self.state.empty_curtain,
             self.state.empty_curtain_generation,
@@ -183,6 +230,7 @@ impl DpsApp {
         let mut open_filter = false;
         let mut clear_filters = false;
         let mut export = false;
+        let mut character_action = None;
         inline_controls(ui, |ui| {
             let filter_label = if active_filter_count == 0 {
                 t("Filter")
@@ -213,6 +261,63 @@ impl DpsApp {
                     export = true;
                 }
             }
+            if !self.state.empty_curtain_characters.is_empty() {
+                ui.separator();
+                ui.menu_button(t("Character Equipment"), |ui| {
+                    if self.kongmu_ui.plugin_request.is_some() {
+                        ui.label(t("Waiting for the equipment plugin..."));
+                        return;
+                    }
+                    if ui
+                        .button(t("Import Loadout..."))
+                        .on_hover_text(t(
+                            "Import a character Console loadout JSON and switch equipment through the plugin",
+                        ))
+                        .clicked()
+                    {
+                        character_action = Some(CharacterEquipmentAction::ImportLoadout);
+                        ui.close();
+                    }
+                    ui.separator();
+                    for character in &self.state.empty_curtain_characters {
+                        let fallback =
+                            tf("Character ID {}", &[&character.character_id.to_string()]);
+                        let name = character_display_name(
+                            &self.characters,
+                            character.character_id,
+                            &fallback,
+                        );
+                        ui.menu_button(name, |ui| {
+                            if ui
+                                .button(t("Export Loadout..."))
+                                .on_hover_text(t(
+                                    "Save this character's equipped Console loadout as JSON",
+                                ))
+                                .clicked()
+                            {
+                                character_action =
+                                    Some(CharacterEquipmentAction::ExportLoadout(*character));
+                                ui.close();
+                            }
+                            if ui.button(t("One-click Equip")).clicked() {
+                                character_action =
+                                    Some(CharacterEquipmentAction::EquipOneKey(*character));
+                                ui.close();
+                            }
+                            if ui.button(t("Unequip All")).clicked() {
+                                character_action =
+                                    Some(CharacterEquipmentAction::UnequipAll(*character));
+                                ui.close();
+                            }
+                        });
+                    }
+                });
+                ui.separator();
+                ui.label(inline_text(
+                    t("Right-click equipment to manage it through the plugin"),
+                    ui.visuals().weak_text_color(),
+                ));
+            }
         });
         if open_filter {
             self.kongmu_ui.filter_open = true;
@@ -228,6 +333,46 @@ impl DpsApp {
                 self.state.empty_curtain_generation,
                 &self.equipment_catalog,
             );
+        }
+        if let Some(action) = character_action {
+            match action {
+                CharacterEquipmentAction::ImportLoadout => {
+                    self.import_character_loadout(ui.ctx());
+                }
+                CharacterEquipmentAction::ExportLoadout(character) => {
+                    self.export_character_loadout(ui.ctx(), character);
+                }
+                CharacterEquipmentAction::EquipOneKey(character) => {
+                    match build_one_key_plan(
+                        character,
+                        &self.state.empty_curtain,
+                        &self.equipment_catalog,
+                    ) {
+                        Ok(operation) => self.submit_equipment_plugin_request(
+                            ui.ctx(),
+                            character.net_id,
+                            operation,
+                        ),
+                        Err(OneKeyPlanError::MissingTemplate) => self.set_last_error_in(
+                            ui.ctx(),
+                            t("No character equipment template is available"),
+                            None,
+                        ),
+                        Err(OneKeyPlanError::MissingEquipment) => self.set_last_error_in(
+                            ui.ctx(),
+                            t("No complete one-click loadout is available in the inventory"),
+                            None,
+                        ),
+                    }
+                }
+                CharacterEquipmentAction::UnequipAll(character) => {
+                    self.submit_equipment_plugin_request(
+                        ui.ctx(),
+                        character.net_id,
+                        EquipmentPluginOperation::UnequipAll,
+                    );
+                }
+            }
         }
         ui.add_space(6.0);
 
@@ -256,10 +401,12 @@ impl DpsApp {
                 },
             );
         } else {
-            draw_empty_curtain_grid(
+            let selection = draw_empty_curtain_grid(
                 ui,
                 &self.state.empty_curtain,
                 &self.kongmu_ui.filter_cache.indices,
+                &self.state.empty_curtain_characters,
+                self.kongmu_ui.plugin_request.is_some(),
                 &EmptyCurtainVisuals {
                     catalog: &self.equipment_catalog,
                     equipment_textures: &self.equipment_textures,
@@ -268,6 +415,17 @@ impl DpsApp {
                     dark_mode: self.dark_mode,
                 },
             );
+            if let Some(selection) = selection {
+                match selection {
+                    EquipmentEquipSelection::Module(placement) => {
+                        self.kongmu_ui.pending_module_placement = Some(placement);
+                    }
+                    EquipmentEquipSelection::Submit {
+                        character,
+                        operation,
+                    } => self.submit_equipment_plugin_request(ui.ctx(), character, operation),
+                }
+            }
         }
 
         if self.kongmu_ui.filter_open {
@@ -284,6 +442,219 @@ impl DpsApp {
                 },
                 &mut self.kongmu_ui,
             );
+        }
+
+        if let Some((placement, row, column)) = show_module_placement_window(
+            ui.ctx(),
+            &mut self.kongmu_ui.pending_module_placement,
+            &self.characters,
+            &self.equipment_catalog,
+        ) {
+            let operation = if placement.move_from_other_character {
+                EquipmentPluginOperation::MoveModuleToCharacter {
+                    equipment: placement.equipment,
+                    row,
+                    column,
+                }
+            } else {
+                EquipmentPluginOperation::EquipModule {
+                    equipment: placement.equipment,
+                    row,
+                    column,
+                }
+            };
+            self.submit_equipment_plugin_request(ui.ctx(), placement.character.net_id, operation);
+        }
+        if self.kongmu_ui.plugin_request.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(50));
+        }
+    }
+
+    fn submit_equipment_plugin_request(
+        &mut self,
+        ctx: &egui::Context,
+        character: HtItemNetId,
+        operation: EquipmentPluginOperation,
+    ) {
+        match self.equipment_plugin.submit(character, operation) {
+            Ok(request_id) => {
+                self.kongmu_ui.plugin_request = Some(PendingPluginRequest { request_id });
+                self.status = t("Sending equipment request...");
+                self.clear_last_error();
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+            Err(EquipmentPluginSubmitError::Busy) => {
+                self.set_last_error_in(ctx, t("Equipment plugin is busy; try again shortly"), None)
+            }
+        }
+    }
+
+    fn drain_equipment_plugin_response(&mut self, ctx: &egui::Context) {
+        let Some(response) = self.equipment_plugin.try_recv() else {
+            return;
+        };
+        if self
+            .kongmu_ui
+            .plugin_request
+            .as_ref()
+            .is_none_or(|request| request.request_id != response.request_id)
+        {
+            return;
+        }
+        self.kongmu_ui.plugin_request = None;
+        match response.status {
+            Ok(0) => {
+                self.status = t("Equipment RPC dispatched; waiting for game synchronization");
+                self.clear_last_error();
+            }
+            Ok(1) => {
+                self.status = t("Equipment request passed plugin dry-run validation");
+                self.clear_last_error();
+            }
+            Ok(status) => self.set_last_error_in(
+                ctx,
+                tf(
+                    "Equipment plugin rejected the request (status {})",
+                    &[&status.to_string()],
+                ),
+                None,
+            ),
+            Err(error) => self.set_last_error_in(
+                ctx,
+                tf("Equipment plugin is unavailable: {}", &[&error]),
+                None,
+            ),
+        }
+    }
+
+    fn import_character_loadout(&mut self, ctx: &egui::Context) {
+        let filter = t("Console character loadout");
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::CharacterLoadoutImport,
+            move |owner| {
+                with_owner(rfd::FileDialog::new().add_filter(filter, &["json"]), owner).pick_file()
+            },
+        );
+    }
+
+    fn export_character_loadout(&mut self, ctx: &egui::Context, character: EmptyCurtainCharacter) {
+        let json = match export_character_loadout_json(
+            character,
+            &self.state.empty_curtain,
+            &self.equipment_catalog,
+        ) {
+            Ok(json) => json,
+            Err(error) => {
+                self.set_last_error_in(ctx, character_loadout_error_text(&error), None);
+                return;
+            }
+        };
+        let default_name = format!(
+            "nte_loadout_{}_{}.json",
+            character.character_id,
+            Local::now().format("%Y%m%d_%H%M%S")
+        );
+        let filter = t("Console character loadout");
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::CharacterLoadoutExport { json },
+            move |owner| {
+                with_owner(
+                    rfd::FileDialog::new()
+                        .add_filter(filter, &["json"])
+                        .set_file_name(default_name),
+                    owner,
+                )
+                .save_file()
+            },
+        );
+    }
+
+    pub(crate) fn finish_character_loadout_import(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
+        path: &std::path::Path,
+    ) {
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                self.set_last_error_for(
+                    viewport,
+                    tf(
+                        "Failed to read character loadout: {}",
+                        &[&error.to_string()],
+                    ),
+                    None,
+                );
+                return;
+            }
+        };
+        if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
+            self.set_last_error_for(
+                viewport,
+                character_loadout_error_text(&CharacterLoadoutError::JsonTooLarge),
+                None,
+            );
+            return;
+        }
+        let json = match std::fs::read_to_string(path) {
+            Ok(json) => json,
+            Err(error) => {
+                self.set_last_error_for(
+                    viewport,
+                    tf(
+                        "Failed to read character loadout: {}",
+                        &[&error.to_string()],
+                    ),
+                    None,
+                );
+                return;
+            }
+        };
+        let file = match parse_character_loadout_json(&json) {
+            Ok(file) => file,
+            Err(error) => {
+                self.set_last_error_for(viewport, character_loadout_error_text(&error), None);
+                return;
+            }
+        };
+        let loadout = match validate_character_loadout(
+            &file,
+            &self.state.empty_curtain_characters,
+            &self.state.empty_curtain,
+            &self.equipment_catalog,
+        ) {
+            Ok(loadout) => loadout,
+            Err(error) => {
+                self.set_last_error_for(viewport, character_loadout_error_text(&error), None);
+                return;
+            }
+        };
+        let operation = character_loadout_plugin_operation(&loadout);
+        self.submit_equipment_plugin_request(ctx, loadout.character.net_id, operation);
+    }
+
+    pub(crate) fn finish_character_loadout_export(
+        &mut self,
+        viewport: egui::ViewportId,
+        path: &std::path::Path,
+        json: &str,
+    ) {
+        match atomic_write_text(path, json) {
+            Ok(()) => {
+                self.status = t("Character loadout exported");
+                self.clear_last_error();
+            }
+            Err(error) => self.set_last_error_for(
+                viewport,
+                tf(
+                    "Failed to export character loadout: {}",
+                    &[&error.to_string()],
+                ),
+                None,
+            ),
         }
     }
 
@@ -339,12 +710,97 @@ impl DpsApp {
     }
 }
 
+fn character_loadout_plugin_operation(
+    loadout: &ValidatedCharacterLoadout,
+) -> EquipmentPluginOperation {
+    let mut placements = Vec::with_capacity(loadout.placements.len());
+    for placement in &loadout.placements {
+        placements.push(EquipmentPluginPlacement {
+            equipment: placement.equipment,
+            row: placement.row,
+            column: placement.column,
+        });
+    }
+    EquipmentPluginOperation::EquipOneKey {
+        placements,
+        core: loadout.core,
+    }
+}
+
+fn character_loadout_error_text(error: &CharacterLoadoutError) -> String {
+    match error {
+        CharacterLoadoutError::JsonTooLarge => t("Character loadout file is too large"),
+        CharacterLoadoutError::InvalidJson => t("Character loadout JSON is invalid"),
+        CharacterLoadoutError::UnsupportedVersion(version) => tf(
+            "Unsupported character loadout version: {}",
+            &[&version.to_string()],
+        ),
+        CharacterLoadoutError::CharacterUnavailable(character_id) => tf(
+            "Character {} is not available in the current session",
+            &[&character_id.to_string()],
+        ),
+        CharacterLoadoutError::MissingCharacterPlan(_) => {
+            t("No character equipment template is available")
+        }
+        CharacterLoadoutError::MissingCore => t("Character loadout has no cassette"),
+        CharacterLoadoutError::MultipleCores => t("Character loadout has multiple cassettes"),
+        CharacterLoadoutError::MissingModules => t("Character loadout has no drive modules"),
+        CharacterLoadoutError::TooManyModules => t("Character loadout has too many drive modules"),
+        CharacterLoadoutError::MissingPlacement(uid) => tf(
+            "Equipped drive module {} has no captured position",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::InvalidUid(uid) => tf(
+            "Character loadout contains an invalid equipment UID: {}",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::DuplicateItem(uid) => tf(
+            "Character loadout references equipment more than once: {}",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::UnknownItem(item_id) => tf(
+            "Character loadout references unknown equipment: {}",
+            &[item_id],
+        ),
+        CharacterLoadoutError::MissingInventoryItem(uid) => tf(
+            "Equipment {} is not present in the current inventory",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::ItemMismatch(uid) => tf(
+            "Equipment {} no longer matches the exported item",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::WrongKind(uid) => tf(
+            "Equipment {} has the wrong type",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::ItemInUse(uid) => tf(
+            "Equipment {} is currently equipped by another character",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::InvalidPosition(uid) => tf(
+            "Equipment {} has an invalid position for this character",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::OverlappingModules => {
+            t("Character loadout contains overlapping drive modules")
+        }
+    }
+}
+
+fn character_loadout_item_label(uid: ItemUid) -> String {
+    format!("{}:{}", uid.slot, uid.serial)
+}
+
 fn draw_empty_curtain_grid(
     ui: &mut egui::Ui,
     items: &[EmptyCurtainItem],
     filtered_indices: &[usize],
+    characters: &[EmptyCurtainCharacter],
+    request_pending: bool,
     visuals: &EmptyCurtainVisuals<'_>,
-) {
+) -> Option<EquipmentEquipSelection> {
+    let mut selection = None;
     let available_width = ui.available_width();
     let column_count = |width: f32| {
         (((width + EQUIPMENT_CARD_GAP) / (EQUIPMENT_CARD_MIN_WIDTH + EQUIPMENT_CARD_GAP)).floor()
@@ -402,19 +858,26 @@ fn draw_empty_curtain_grid(
                             &mut cards,
                             &items[item_index],
                             card_width,
+                            characters,
+                            request_pending,
                             visuals,
+                            &mut selection,
                         );
                     }
                 }
             },
         );
+    selection
 }
 
 fn draw_empty_curtain_card(
     ui: &mut egui::Ui,
     item: &EmptyCurtainItem,
     card_width: f32,
+    characters: &[EmptyCurtainCharacter],
+    request_pending: bool,
     visuals: &EmptyCurtainVisuals<'_>,
+    selection: &mut Option<EquipmentEquipSelection>,
 ) -> egui::Response {
     assert!(
         item.main_stats.len() + item.sub_stats.len() <= EMPTY_CURTAIN_MAX_STAT_ROWS,
@@ -430,7 +893,7 @@ fn draw_empty_curtain_card(
 
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(card_width, EQUIPMENT_CARD_HEIGHT),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
     // Keep every card-local overlay inside its already allocated card. Otherwise
     // an inner `allocate_rect` can move the parent row cursor and overlap the next card.
@@ -483,7 +946,14 @@ fn draw_empty_curtain_card(
         egui::vec2(EQUIPMENT_ICON_SIZE, EQUIPMENT_ICON_SIZE),
     );
     draw_equipment_icon(ui, icon_rect, texture, name, visuals.dark_mode);
-    paint_equipment_status(ui, rect, item.is_equipped(), item.locked, visuals.dark_mode);
+    paint_equipment_status(
+        ui,
+        rect,
+        item.is_equipped(),
+        item.locked,
+        item.discarded,
+        visuals.dark_mode,
+    );
     let avatar_rect = item.equipped_character_id.map(|character_id| {
         paint_equipped_character_avatar(
             ui,
@@ -570,6 +1040,15 @@ fn draw_empty_curtain_card(
         .and_then(|definition| definition.suit.as_deref())
         .and_then(|suit_id| visuals.catalog.suits.get(suit_id));
     if let Some(suit) = suit {
+        equipment_card_context_menu(
+            &response,
+            item,
+            definition.map(|definition| definition.kind),
+            characters,
+            request_pending,
+            visuals.characters,
+            selection,
+        );
         response.on_hover_ui(|ui| {
             ui.set_max_width(400.0);
             ui.spacing_mut().item_spacing.y = 5.0;
@@ -590,8 +1069,304 @@ fn draw_empty_curtain_card(
             }
         })
     } else {
+        equipment_card_context_menu(
+            &response,
+            item,
+            definition.map(|definition| definition.kind),
+            characters,
+            request_pending,
+            visuals.characters,
+            selection,
+        );
         response
     }
+}
+
+fn equipment_card_context_menu(
+    response: &egui::Response,
+    item: &EmptyCurtainItem,
+    kind: Option<EquipmentKind>,
+    characters: &[EmptyCurtainCharacter],
+    request_pending: bool,
+    character_definitions: &HashMap<u32, CharacterInfo>,
+    selection: &mut Option<EquipmentEquipSelection>,
+) {
+    response.context_menu(|ui| {
+        if request_pending {
+            ui.label(t("Waiting for the equipment plugin..."));
+            return;
+        }
+        let locked = !item.locked;
+        if ui
+            .button(t(if locked { "Lock" } else { "Unlock" }))
+            .clicked()
+        {
+            *selection = Some(EquipmentEquipSelection::Submit {
+                character: HtItemNetId::ZERO,
+                operation: EquipmentPluginOperation::SetItemLocked {
+                    equipment: item.id,
+                    locked,
+                },
+            });
+            ui.close();
+            return;
+        }
+        let discarded = !item.discarded;
+        if ui
+            .button(t(if discarded {
+                "Mark as Discarded"
+            } else {
+                "Clear Discarded Mark"
+            }))
+            .clicked()
+        {
+            *selection = Some(EquipmentEquipSelection::Submit {
+                character: HtItemNetId::ZERO,
+                operation: EquipmentPluginOperation::SetItemDiscarded {
+                    equipment: item.id,
+                    discarded,
+                },
+            });
+            ui.close();
+            return;
+        }
+        ui.separator();
+        let Some(kind) = kind else {
+            ui.label(t("Equipment metadata is unavailable"));
+            return;
+        };
+        if let Some(character) = item.character_net_id {
+            if ui.button(t("Unequip")).clicked() {
+                let operation = match kind {
+                    EquipmentKind::Module => {
+                        EquipmentPluginOperation::UnequipModule { equipment: item.id }
+                    }
+                    EquipmentKind::Core => {
+                        EquipmentPluginOperation::UnequipCore { equipment: item.id }
+                    }
+                };
+                *selection = Some(EquipmentEquipSelection::Submit {
+                    character,
+                    operation,
+                });
+                ui.close();
+                return;
+            }
+            if characters.iter().any(|target| target.net_id != character) {
+                ui.menu_button(t("Move to Character"), |ui| {
+                    for target in characters
+                        .iter()
+                        .filter(|target| target.net_id != character)
+                    {
+                        let fallback = tf("Character ID {}", &[&target.character_id.to_string()]);
+                        let name = character_display_name(
+                            character_definitions,
+                            target.character_id,
+                            &fallback,
+                        );
+                        if ui.button(name).clicked() {
+                            *selection = Some(match kind {
+                                EquipmentKind::Module => {
+                                    EquipmentEquipSelection::Module(PendingModulePlacement {
+                                        character: *target,
+                                        equipment: item.id,
+                                        item_id: item.item_id.clone(),
+                                        move_from_other_character: true,
+                                    })
+                                }
+                                EquipmentKind::Core => EquipmentEquipSelection::Submit {
+                                    character: target.net_id,
+                                    operation: EquipmentPluginOperation::MoveCoreToCharacter {
+                                        equipment: item.id,
+                                    },
+                                },
+                            });
+                            ui.close();
+                        }
+                    }
+                });
+            }
+            return;
+        }
+        if characters.is_empty() {
+            ui.label(t("No captured characters available"));
+            return;
+        }
+        ui.menu_button(t("Equip to Character"), |ui| {
+            for character in characters {
+                let fallback = tf("Character ID {}", &[&character.character_id.to_string()]);
+                let name = character_display_name(
+                    character_definitions,
+                    character.character_id,
+                    &fallback,
+                );
+                if ui.button(name).clicked() {
+                    *selection = Some(match kind {
+                        EquipmentKind::Module => {
+                            EquipmentEquipSelection::Module(PendingModulePlacement {
+                                character: *character,
+                                equipment: item.id,
+                                item_id: item.item_id.clone(),
+                                move_from_other_character: false,
+                            })
+                        }
+                        EquipmentKind::Core => EquipmentEquipSelection::Submit {
+                            character: character.net_id,
+                            operation: EquipmentPluginOperation::EquipCore { equipment: item.id },
+                        },
+                    });
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
+fn build_one_key_plan(
+    character: EmptyCurtainCharacter,
+    items: &[EmptyCurtainItem],
+    catalog: &EquipmentCatalog,
+) -> Result<EquipmentPluginOperation, OneKeyPlanError> {
+    let plan = catalog
+        .plans
+        .get(&character.character_id)
+        .ok_or(OneKeyPlanError::MissingTemplate)?;
+    let mut selected = HashSet::new();
+    let mut placements = Vec::with_capacity(plan.recommended_modules.len());
+
+    for planned in &plan.recommended_modules {
+        let geometry = &catalog
+            .items
+            .get(&planned.item_id)
+            .expect("validated equipment plan must reference a module")
+            .geometry;
+        let item = items
+            .iter()
+            .filter(|item| {
+                !selected.contains(&item.id)
+                    && (item.character_net_id.is_none()
+                        || item.character_net_id == Some(character.net_id))
+                    && catalog.items.get(&item.item_id).is_some_and(|definition| {
+                        definition.kind == EquipmentKind::Module && definition.geometry == *geometry
+                    })
+            })
+            .max_by_key(|item| {
+                let definition = catalog
+                    .items
+                    .get(&item.item_id)
+                    .expect("candidate equipment must have catalog metadata");
+                (
+                    item.item_id == planned.item_id,
+                    equipment_quality_rank(&definition.quality),
+                    item.level,
+                    item.id.solt,
+                    item.id.serial,
+                )
+            })
+            .ok_or(OneKeyPlanError::MissingEquipment)?;
+        selected.insert(item.id);
+        placements.push(EquipmentPluginPlacement {
+            equipment: item.id,
+            row: planned.row,
+            column: planned.column,
+        });
+    }
+
+    let recommended_core = catalog
+        .items
+        .get(&plan.recommended_core)
+        .expect("validated equipment plan must reference a cassette");
+    let core = items
+        .iter()
+        .filter(|item| {
+            (item.character_net_id.is_none() || item.character_net_id == Some(character.net_id))
+                && catalog
+                    .items
+                    .get(&item.item_id)
+                    .is_some_and(|definition| definition.kind == EquipmentKind::Core)
+        })
+        .max_by_key(|item| {
+            let definition = catalog
+                .items
+                .get(&item.item_id)
+                .expect("candidate equipment must have catalog metadata");
+            (
+                item.item_id == plan.recommended_core,
+                definition.suit == recommended_core.suit,
+                equipment_quality_rank(&definition.quality),
+                item.level,
+                item.id.solt,
+                item.id.serial,
+            )
+        })
+        .ok_or(OneKeyPlanError::MissingEquipment)?;
+    Ok(EquipmentPluginOperation::EquipOneKey {
+        placements,
+        core: core.id,
+    })
+}
+
+fn equipment_quality_rank(quality: &str) -> u8 {
+    match quality {
+        "blue" => 0,
+        "purple" => 1,
+        "orange" => 2,
+        _ => unreachable!("equipment quality is validated at resource load"),
+    }
+}
+
+fn show_module_placement_window(
+    ctx: &egui::Context,
+    pending: &mut Option<PendingModulePlacement>,
+    characters: &HashMap<u32, CharacterInfo>,
+    catalog: &EquipmentCatalog,
+) -> Option<(PendingModulePlacement, i32, i32)> {
+    let placement = pending.as_ref()?.clone();
+    let valid_positions = catalog
+        .valid_module_positions(placement.character.character_id, &placement.item_id)
+        .expect("captured module and character must have validated equipment metadata");
+    let mut open = true;
+    let mut selected = None;
+    egui::Window::new(t("Choose Drive Module Position"))
+        .id(egui::Id::new("equipment_plugin_module_position"))
+        .collapsible(false)
+        .resizable(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            let fallback = tf(
+                "Character ID {}",
+                &[&placement.character.character_id.to_string()],
+            );
+            let name =
+                character_display_name(characters, placement.character.character_id, &fallback);
+            ui.label(tf("Target character: {}", &[&name]));
+            ui.label(t(
+                "Only positions compatible with the character template and module shape are shown.",
+            ));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                for position in &valid_positions {
+                    if ui
+                        .button(format!("{},{}", position.row, position.column))
+                        .on_hover_text(tf(
+                            "Row {}, Column {}",
+                            &[&position.row.to_string(), &position.column.to_string()],
+                        ))
+                        .clicked()
+                    {
+                        selected = Some((position.row, position.column));
+                    }
+                }
+            });
+        });
+    if let Some((row, column)) = selected {
+        *pending = None;
+        return Some((placement, row, column));
+    }
+    if !open {
+        *pending = None;
+    }
+    None
 }
 
 fn draw_equipment_stat_row(
@@ -701,6 +1476,7 @@ fn paint_equipment_status(
     card_rect: egui::Rect,
     equipped: bool,
     locked: bool,
+    discarded: bool,
     dark_mode: bool,
 ) {
     let mut right = card_rect.right() - 8.0;
@@ -712,8 +1488,13 @@ fn paint_equipment_status(
         paint_lock_icon(ui.painter(), lock_rect, shadcn_foreground(dark_mode));
         right = lock_rect.left() - 4.0;
     }
-    if equipped {
-        let text = t("Equipped");
+    for text in [
+        equipped.then(|| t("Equipped")),
+        discarded.then(|| t("Discarded")),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let font = egui::FontId::proportional(10.0);
         let text_width = ui
             .painter()
@@ -739,6 +1520,7 @@ fn paint_equipment_status(
             font,
             shadcn_foreground(dark_mode),
         );
+        right = badge_rect.left() - 4.0;
     }
 }
 
@@ -1620,6 +2402,33 @@ fn calculator_stat_key(property: &str, catalog: &EquipmentCatalog) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::snapshot::CharacterLoadoutPlacement;
+
+    #[test]
+    fn session_reset_invalidates_pending_equipment_work() {
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 1, serial: 2 },
+            character_id: 1020,
+        };
+        let equipment = HtItemNetId { solt: 3, serial: 4 };
+        let mut state = KongmuUiState {
+            pending_module_placement: Some(PendingModulePlacement {
+                character,
+                equipment,
+                item_id: "module".to_owned(),
+                move_from_other_character: false,
+            }),
+            plugin_request: Some(PendingPluginRequest { request_id: 7 }),
+            ..KongmuUiState::default()
+        };
+        state.filter_cache.valid = true;
+
+        state.reset_session_state();
+
+        assert!(state.pending_module_placement.is_none());
+        assert!(state.plugin_request.is_none());
+        assert!(!state.filter_cache.valid);
+    }
 
     fn stat(property: &str) -> EquipmentStat {
         EquipmentStat {
@@ -1647,6 +2456,91 @@ mod tests {
             property: property.to_owned(),
             value,
         }
+    }
+
+    #[test]
+    fn one_key_plan_uses_the_character_template_and_native_batch_operation() {
+        let catalog = crate::engine::parser::load_equipment_catalog(std::path::Path::new(
+            crate::engine::parser::EQUIPMENT_CATALOG_PATH,
+        ))
+        .expect("bundled equipment catalog should load");
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId {
+                solt: 100,
+                serial: 101,
+            },
+            character_id: 1076,
+        };
+        let plan = &catalog.plans[&character.character_id];
+        let mut items = plan
+            .recommended_modules
+            .iter()
+            .enumerate()
+            .map(|(index, module)| item(index as u32 + 1, &module.item_id, Vec::new(), Vec::new()))
+            .collect::<Vec<_>>();
+        items.push(item(1000, &plan.recommended_core, Vec::new(), Vec::new()));
+
+        let operation = build_one_key_plan(character, &items, &catalog)
+            .expect("complete inventory must produce a one-key plan");
+        let EquipmentPluginOperation::EquipOneKey { placements, core } = operation else {
+            panic!("one-key planning must use the native batch operation")
+        };
+        assert_eq!(placements.len(), plan.recommended_modules.len());
+        assert_eq!(core, items.last().expect("test core").id);
+    }
+
+    #[test]
+    fn imported_loadout_preserves_saved_placements_in_native_batch_operation() {
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId {
+                solt: 100,
+                serial: 101,
+            },
+            character_id: 1076,
+        };
+        let core = HtItemNetId {
+            solt: 200,
+            serial: 201,
+        };
+        let first = HtItemNetId { solt: 1, serial: 2 };
+        let second = HtItemNetId { solt: 3, serial: 4 };
+        let loadout = ValidatedCharacterLoadout {
+            character,
+            core,
+            placements: vec![
+                CharacterLoadoutPlacement {
+                    equipment: first,
+                    row: 1,
+                    column: 2,
+                },
+                CharacterLoadoutPlacement {
+                    equipment: second,
+                    row: 4,
+                    column: 5,
+                },
+            ],
+        };
+
+        let operation = character_loadout_plugin_operation(&loadout);
+
+        assert_eq!(
+            operation,
+            EquipmentPluginOperation::EquipOneKey {
+                placements: vec![
+                    EquipmentPluginPlacement {
+                        equipment: first,
+                        row: 1,
+                        column: 2,
+                    },
+                    EquipmentPluginPlacement {
+                        equipment: second,
+                        row: 4,
+                        column: 5,
+                    },
+                ],
+                core,
+            }
+        );
     }
 
     #[test]
@@ -1727,14 +2621,18 @@ mod tests {
             main_stats: main,
             sub_stats: sub,
             locked: false,
+            discarded: false,
             character_net_id: None,
             equipped_character_id: None,
+            equipped_placement: None,
         }
     }
 
     #[test]
     fn equipped_card_overlay_preserves_next_card_gap() {
         let mut equipped = item(1, "equipped", Vec::new(), Vec::new());
+        equipped.locked = true;
+        equipped.discarded = true;
         equipped.character_net_id = Some(crate::engine::model::HtItemNetId {
             solt: 10,
             serial: 11,
@@ -1766,10 +2664,25 @@ mod tests {
         egui::__run_test_ui(|ui| {
             ui.spacing_mut().item_spacing.x = EQUIPMENT_CARD_GAP;
             ui.horizontal(|ui| {
-                let equipped_response =
-                    draw_empty_curtain_card(ui, &equipped, EQUIPMENT_CARD_MIN_WIDTH, &visuals);
-                let following_response =
-                    draw_empty_curtain_card(ui, &following, EQUIPMENT_CARD_MIN_WIDTH, &visuals);
+                let mut selection = None;
+                let equipped_response = draw_empty_curtain_card(
+                    ui,
+                    &equipped,
+                    EQUIPMENT_CARD_MIN_WIDTH,
+                    &[],
+                    false,
+                    &visuals,
+                    &mut selection,
+                );
+                let following_response = draw_empty_curtain_card(
+                    ui,
+                    &following,
+                    EQUIPMENT_CARD_MIN_WIDTH,
+                    &[],
+                    false,
+                    &visuals,
+                    &mut selection,
+                );
                 card_rects = Some((equipped_response.rect, following_response.rect));
             });
         });

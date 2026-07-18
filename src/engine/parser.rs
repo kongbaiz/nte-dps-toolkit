@@ -22,6 +22,9 @@ const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
 const EQUIPMENT_SLOT_STATE_ANCHOR: &[u8] = b"\x06\0\0\0State\0";
+const EMPTY_CURTAIN_CORE_SLOT_ANCHOR: &[u8] = b"FEquipmentSlotInfo";
+const EMPTY_CURTAIN_GRID_SIDE: i32 = 7;
+const EMPTY_CURTAIN_GRID_CELLS: usize = 49;
 const MAX_TAGGED_PROPERTY_STRING_LENGTH: i32 = 256;
 const MAX_INVENTORY_NAME_LENGTH: usize = 128;
 const MAX_INVENTORY_EXTRA_JSON_LENGTH: usize = 16 * 1024;
@@ -127,6 +130,31 @@ impl EquipmentSuitDefinition {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Hash)]
+pub struct EquipmentGridCell {
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentShapeDefinition {
+    pub cells: Vec<EquipmentGridCell>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentPlanModule {
+    pub item_id: String,
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct EquipmentPlanDefinition {
+    pub valid_cells: Vec<EquipmentGridCell>,
+    pub recommended_core: String,
+    pub recommended_modules: Vec<EquipmentPlanModule>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct EquipmentCatalog {
     version: u32,
@@ -136,6 +164,8 @@ pub struct EquipmentCatalog {
     pub attributes: HashMap<String, EquipmentAttributeDefinition>,
     pub curves: HashMap<String, Vec<[f32; 2]>>,
     pub suits: HashMap<String, EquipmentSuitDefinition>,
+    pub shapes: HashMap<String, EquipmentShapeDefinition>,
+    pub plans: HashMap<u32, EquipmentPlanDefinition>,
 }
 
 impl EquipmentCatalog {
@@ -161,6 +191,35 @@ impl EquipmentCatalog {
             EquipmentKind::Core => format!("{property}_Core_{quality}"),
         };
         interpolate_curve(self.curves.get(&curve_key)?, level as f32)
+    }
+
+    pub fn valid_module_positions(
+        &self,
+        character_id: u32,
+        item_id: &str,
+    ) -> Option<Vec<EquipmentGridCell>> {
+        let plan = self.plans.get(&character_id)?;
+        let item = self.items.get(item_id)?;
+        if item.kind != EquipmentKind::Module {
+            return None;
+        }
+        let shape = self.shapes.get(&item.geometry)?;
+        let valid = plan.valid_cells.iter().copied().collect::<HashSet<_>>();
+        let mut positions = plan
+            .valid_cells
+            .iter()
+            .copied()
+            .filter(|origin| {
+                shape.cells.iter().all(|cell| {
+                    valid.contains(&EquipmentGridCell {
+                        row: origin.row + cell.row,
+                        column: origin.column + cell.column,
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        positions.sort_by_key(|cell| (cell.row, cell.column));
+        Some(positions)
     }
 }
 
@@ -231,6 +290,36 @@ pub struct ParsedEquipmentSlot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedEmptyCurtainModulePlacement {
+    pub equipment: HtItemNetId,
+    pub item_id: String,
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParsedEmptyCurtainCompactModulePlacement {
+    pub equipment: HtItemNetId,
+    pub item_id: String,
+    pub row: i32,
+    pub column: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ParsedEmptyCurtainEquipmentSnapshot {
+    Modules {
+        character_net_id: HtItemNetId,
+        character_id: u32,
+        placements: Vec<ParsedEmptyCurtainModulePlacement>,
+    },
+    Core {
+        character_net_id: HtItemNetId,
+        character_id: u32,
+        item_id: Option<HtItemNetId>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GameplayEffectSkill {
     pub damage_source_category: Option<String>,
     pub ability_name: Option<String>,
@@ -294,7 +383,7 @@ pub fn load_equipment_catalog(path: &Path) -> Result<EquipmentCatalog> {
 
 fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
     ensure!(
-        catalog.version == 1,
+        catalog.version == 2,
         "Unsupported Console equipment data version"
     );
     ensure!(
@@ -354,10 +443,17 @@ fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
             "Console equipment item {item_id} has too many stat rows"
         );
         match item.kind {
-            EquipmentKind::Module => ensure!(
-                item.grid.is_some_and(|grid| grid > 0),
-                "Console module {item_id} is missing its grid size"
-            ),
+            EquipmentKind::Module => {
+                ensure!(
+                    item.grid.is_some_and(|grid| grid > 0),
+                    "Console module {item_id} is missing its grid size"
+                );
+                ensure!(
+                    catalog.shapes.contains_key(&item.geometry),
+                    "Console module {item_id} references unknown shape {}",
+                    item.geometry
+                );
+            }
             EquipmentKind::Core => {
                 ensure!(
                     item.grid.is_none(),
@@ -374,6 +470,82 @@ fn validate_equipment_catalog(catalog: &EquipmentCatalog) -> Result<()> {
                 catalog.suits.contains_key(suit),
                 "Console equipment item {item_id} references unknown suit {suit}"
             );
+        }
+    }
+
+    ensure!(
+        !catalog.shapes.is_empty(),
+        "Console equipment data has no module shapes"
+    );
+    for (shape_id, shape) in &catalog.shapes {
+        let unique = shape.cells.iter().copied().collect::<HashSet<_>>();
+        ensure!(
+            !shape_id.is_empty()
+                && !shape.cells.is_empty()
+                && unique.len() == shape.cells.len()
+                && unique.contains(&EquipmentGridCell { row: 0, column: 0 }),
+            "Console equipment shape {shape_id} is invalid"
+        );
+    }
+
+    ensure!(
+        !catalog.plans.is_empty(),
+        "Console equipment data has no character plans"
+    );
+    for (character_id, plan) in &catalog.plans {
+        ensure!(
+            *character_id != 0,
+            "Console equipment plan has character ID 0"
+        );
+        let valid = plan.valid_cells.iter().copied().collect::<HashSet<_>>();
+        ensure!(
+            valid.len() == plan.valid_cells.len()
+                && plan
+                    .valid_cells
+                    .iter()
+                    .all(|cell| (1..=5).contains(&cell.row) && (1..=5).contains(&cell.column)),
+            "Console equipment plan {character_id} has invalid template cells"
+        );
+        ensure!(
+            catalog
+                .items
+                .get(&plan.recommended_core)
+                .is_some_and(|item| item.kind == EquipmentKind::Core),
+            "Console equipment plan {character_id} has an invalid recommended core"
+        );
+
+        let mut occupied = HashSet::new();
+        for module in &plan.recommended_modules {
+            let definition = catalog.items.get(&module.item_id).with_context(|| {
+                format!(
+                    "Console equipment plan {character_id} references unknown module {}",
+                    module.item_id
+                )
+            })?;
+            ensure!(
+                definition.kind == EquipmentKind::Module,
+                "Console equipment plan {character_id} references a non-module item"
+            );
+            let shape = catalog.shapes.get(&definition.geometry).with_context(|| {
+                format!(
+                    "Console equipment plan {character_id} references unknown shape {}",
+                    definition.geometry
+                )
+            })?;
+            for cell in &shape.cells {
+                let occupied_cell = EquipmentGridCell {
+                    row: module.row + cell.row,
+                    column: module.column + cell.column,
+                };
+                ensure!(
+                    valid.contains(&occupied_cell),
+                    "Console equipment plan {character_id} leaves its character template"
+                );
+                ensure!(
+                    occupied.insert(occupied_cell),
+                    "Console equipment plan {character_id} has overlapping modules"
+                );
+            }
         }
     }
 
@@ -1235,7 +1407,7 @@ impl<'a> InventoryBitReader<'a> {
     }
 }
 
-fn valid_item_net_id(id: HtItemNetId) -> bool {
+pub(crate) fn valid_item_net_id(id: HtItemNetId) -> bool {
     id.solt != 0 && id.serial != 0 && id.solt != u32::MAX && id.serial != u32::MAX
 }
 
@@ -1301,6 +1473,283 @@ pub fn parse_empty_curtain_character_owners(
     characters
 }
 
+pub(crate) fn parse_empty_curtain_compact_module_placements(
+    data: &[u8],
+    data_bit_len: usize,
+    known_items: &HashMap<HtItemNetId, EmptyCurtainItem>,
+    catalog: &EquipmentCatalog,
+) -> Vec<ParsedEmptyCurtainCompactModulePlacement> {
+    if data_bit_len > data.len().saturating_mul(8) {
+        return Vec::new();
+    }
+
+    let mut modules = HashMap::<
+        HtItemNetId,
+        (
+            String,
+            HashSet<EquipmentGridCell>,
+            Option<EquipmentGridCell>,
+        ),
+    >::new();
+    let mut invalid = HashSet::new();
+    let mut bit_offset = 0;
+    while bit_offset < data_bit_len {
+        let Some(mut reader) = InventoryBitReader::at(data, data_bit_len, bit_offset) else {
+            break;
+        };
+        let parsed = (|| {
+            if reader.read_i32()? != 1 {
+                return None;
+            }
+            let item_id = reader.read_dynamic_name()?;
+            let definition = catalog.items.get(&item_id)?;
+            if definition.kind != EquipmentKind::Module {
+                return None;
+            }
+            let equipment = reader.read_item_net_id()?;
+            let first_step = reader.read_bool()?;
+            let row = reader.read_i32()?;
+            let column = reader.read_i32()?;
+            let new_flag = reader.read_i32()?;
+            if !valid_item_net_id(equipment)
+                || !(0..EMPTY_CURTAIN_GRID_SIDE).contains(&row)
+                || !(0..EMPTY_CURTAIN_GRID_SIDE).contains(&column)
+                || new_flag != 0
+                || known_items
+                    .get(&equipment)
+                    .is_some_and(|item| item.item_id != item_id)
+            {
+                return None;
+            }
+            Some((equipment, item_id, first_step, row, column, reader.cursor))
+        })();
+        let Some((equipment, item_id, first_step, row, column, next_offset)) = parsed else {
+            bit_offset += 1;
+            continue;
+        };
+        let cell = EquipmentGridCell { row, column };
+        let entry = modules
+            .entry(equipment)
+            .or_insert_with(|| (item_id.clone(), HashSet::new(), None));
+        if entry.0 != item_id || !entry.1.insert(cell) {
+            invalid.insert(equipment);
+        }
+        if first_step && entry.2.replace(cell).is_some() {
+            invalid.insert(equipment);
+        }
+        bit_offset = next_offset.max(bit_offset + 1);
+    }
+
+    let mut placements = modules
+        .into_iter()
+        .filter_map(|(equipment, (item_id, cells, first_step))| {
+            if invalid.contains(&equipment) {
+                return None;
+            }
+            let definition = catalog
+                .items
+                .get(&item_id)
+                .expect("compact module candidate must retain its catalog definition");
+            let shape = catalog
+                .shapes
+                .get(&definition.geometry)
+                .expect("catalog-validated module must have a shape");
+            let first_step = first_step?;
+            let expected = shape
+                .cells
+                .iter()
+                .map(|cell| EquipmentGridCell {
+                    row: first_step.row + cell.row,
+                    column: first_step.column + cell.column,
+                })
+                .collect::<HashSet<_>>();
+            if Some(cells.len() as u32) != definition.grid || cells != expected {
+                return None;
+            }
+            Some(ParsedEmptyCurtainCompactModulePlacement {
+                equipment,
+                item_id,
+                row: first_step.row,
+                column: first_step.column,
+            })
+        })
+        .collect::<Vec<_>>();
+    placements.sort_by_key(|placement| (placement.equipment.solt, placement.equipment.serial));
+    placements
+}
+
+fn parse_empty_curtain_module_placements(
+    slots: &[ParsedEquipmentSlot],
+    known_items: &HashMap<HtItemNetId, EmptyCurtainItem>,
+    catalog: &EquipmentCatalog,
+) -> Option<Vec<ParsedEmptyCurtainModulePlacement>> {
+    if slots.len() != EMPTY_CURTAIN_GRID_CELLS {
+        return None;
+    }
+    let bit_shift = slots.first()?.bit_shift;
+    let mut cells = HashSet::with_capacity(EMPTY_CURTAIN_GRID_CELLS);
+    let mut modules =
+        HashMap::<HtItemNetId, (&str, HashSet<EquipmentGridCell>, Option<EquipmentGridCell>)>::new(
+        );
+    for slot in slots {
+        if slot.bit_shift != bit_shift
+            || !(0..EMPTY_CURTAIN_GRID_SIDE).contains(&slot.row)
+            || !(0..EMPTY_CURTAIN_GRID_SIDE).contains(&slot.column)
+            || !cells.insert((slot.row, slot.column))
+        {
+            return None;
+        }
+        let id = HtItemNetId {
+            solt: slot.equip_net_id.solt,
+            serial: slot.equip_net_id.serial,
+        };
+        if id.is_zero() {
+            if slot.equipment_id != "None" || !matches!(slot.state, -1 | 0) || slot.first_step {
+                return None;
+            }
+            continue;
+        }
+        if !valid_item_net_id(id) || slot.state != 1 || slot.equipment_id == "None" {
+            return None;
+        }
+        let definition = catalog.items.get(&slot.equipment_id)?;
+        if definition.kind != EquipmentKind::Module
+            || known_items
+                .get(&id)
+                .is_some_and(|item| item.item_id != slot.equipment_id)
+        {
+            return None;
+        }
+        // A grid update can arrive before that item's detailed inventory record. The exact
+        // 49-cell shape remains authoritative as long as its embedded catalog ID and geometry
+        // are self-consistent; known items still receive the stronger UID-to-item cross-check.
+        let entry = modules
+            .entry(id)
+            .or_insert_with(|| (slot.equipment_id.as_str(), HashSet::new(), None));
+        if entry.0 != slot.equipment_id.as_str()
+            || !entry.1.insert(EquipmentGridCell {
+                row: slot.row,
+                column: slot.column,
+            })
+        {
+            return None;
+        }
+        if slot.first_step
+            && entry
+                .2
+                .replace(EquipmentGridCell {
+                    row: slot.row,
+                    column: slot.column,
+                })
+                .is_some()
+        {
+            return None;
+        }
+    }
+    for (item_id, occupied, first_step) in modules.values() {
+        let definition = catalog
+            .items
+            .get(*item_id)
+            .expect("validated module definitions must remain present");
+        let shape = catalog
+            .shapes
+            .get(&definition.geometry)
+            .expect("catalog-validated module must have a shape");
+        let Some(first_step) = first_step else {
+            return None;
+        };
+        let expected = shape
+            .cells
+            .iter()
+            .map(|cell| EquipmentGridCell {
+                row: first_step.row + cell.row,
+                column: first_step.column + cell.column,
+            })
+            .collect::<HashSet<_>>();
+        if occupied != &expected {
+            return None;
+        }
+    }
+    let mut placements = modules
+        .into_iter()
+        .map(|(equipment, (item_id, _, position))| {
+            let position = position.expect("validated modules must have one first cell");
+            ParsedEmptyCurtainModulePlacement {
+                equipment,
+                item_id: item_id.to_owned(),
+                row: position.row,
+                column: position.column,
+            }
+        })
+        .collect::<Vec<_>>();
+    placements.sort_by_key(|placement| (placement.equipment.solt, placement.equipment.serial));
+    Some(placements)
+}
+
+fn contains_inventory_bytes(data: &[u8], data_bit_len: usize, expected: &[u8]) -> bool {
+    let expected_bit_len = expected.len().saturating_mul(8);
+    if expected_bit_len == 0 || expected_bit_len > data_bit_len {
+        return false;
+    }
+    (0..=data_bit_len - expected_bit_len).any(|bit_offset| {
+        expected.iter().enumerate().all(|(byte_index, byte)| {
+            (0..8).all(|bit_index| {
+                let source = bit_offset + byte_index * 8 + bit_index;
+                ((data[source / 8] >> (source % 8)) & 1) == ((byte >> bit_index) & 1)
+            })
+        })
+    })
+}
+
+pub(crate) fn parse_empty_curtain_equipment_snapshot(
+    data: &[u8],
+    data_bit_len: usize,
+    character_ids: &HashMap<HtItemNetId, u32>,
+    known_items: &HashMap<HtItemNetId, EmptyCurtainItem>,
+    catalog: &EquipmentCatalog,
+) -> Option<ParsedEmptyCurtainEquipmentSnapshot> {
+    if data_bit_len > data.len().saturating_mul(8) || character_ids.len() != 1 {
+        return None;
+    }
+    let (&character_net_id, &character_id) = character_ids.iter().next()?;
+    let slots = parse_equipment_slots(data);
+    if !slots.is_empty() {
+        return Some(ParsedEmptyCurtainEquipmentSnapshot::Modules {
+            character_net_id,
+            character_id,
+            placements: parse_empty_curtain_module_placements(&slots, known_items, catalog)?,
+        });
+    }
+    // Core syncs carry one validated character record and the serialized slot type marker,
+    // but not the tagged 7x7 module grid. A missing known core UID is the empty-slot snapshot.
+    if !contains_inventory_bytes(data, data_bit_len, EMPTY_CURTAIN_CORE_SLOT_ANCHOR) {
+        return None;
+    }
+
+    let mut core_ids = HashSet::new();
+    for bit_offset in 0..=data_bit_len.saturating_sub(64) {
+        let mut reader = InventoryBitReader::at(data, data_bit_len, bit_offset)?;
+        let id = reader.read_item_net_id()?;
+        let Some(item) = known_items.get(&id) else {
+            continue;
+        };
+        let Some(definition) = catalog.items.get(&item.item_id) else {
+            continue;
+        };
+        if definition.kind == EquipmentKind::Core {
+            core_ids.insert(id);
+        }
+    }
+    if core_ids.len() > 1 {
+        return None;
+    }
+    Some(ParsedEmptyCurtainEquipmentSnapshot::Core {
+        character_net_id,
+        character_id,
+        item_id: core_ids.into_iter().next(),
+    })
+}
+
 fn parse_empty_curtain_item_at(
     mut reader: InventoryBitReader<'_>,
     catalog: &EquipmentCatalog,
@@ -1340,7 +1789,7 @@ fn parse_empty_curtain_item_at(
         return None;
     }
     let locked = reader.read_bool()?;
-    let _discarded = reader.read_bool()?;
+    let discarded = reader.read_bool()?;
     if reader.read_u16()? != 0 || usize::from(reader.read_u16()?) != definition.main_count {
         return None;
     }
@@ -1390,8 +1839,10 @@ fn parse_empty_curtain_item_at(
             main_stats,
             sub_stats,
             locked,
+            discarded,
             character_net_id,
             equipped_character_id: None,
+            equipped_placement: None,
         },
         reader.cursor,
     ))
@@ -1426,6 +1877,48 @@ pub fn parse_empty_curtain_items(
     items
 }
 
+pub(crate) fn parse_empty_curtain_item_removals(
+    data: &[u8],
+    data_bit_len: usize,
+    catalog: &EquipmentCatalog,
+) -> Vec<(HtItemNetId, String)> {
+    const NOTIFY_ITEM_REMOVE: u64 = 2;
+    const NOTIFICATION_HEADER_BITS: usize = 24;
+
+    if data_bit_len > data.len().saturating_mul(8) || data_bit_len < NOTIFICATION_HEADER_BITS {
+        return Vec::new();
+    }
+
+    for bit_offset in 0..=data_bit_len - NOTIFICATION_HEADER_BITS {
+        let Some(mut reader) = InventoryBitReader::at(data, data_bit_len, bit_offset) else {
+            break;
+        };
+        if reader.read_bits(7) != Some(NOTIFY_ITEM_REMOVE) {
+            continue;
+        }
+        let Some(item_count) = reader.read_bits(17).map(|count| count as usize) else {
+            continue;
+        };
+        if item_count == 0 || item_count > MAX_EMPTY_CURTAIN_ITEMS {
+            continue;
+        }
+
+        let mut removals = Vec::new();
+        for _ in 0..item_count {
+            let Some((item, next_offset)) = parse_empty_curtain_item_at(reader, catalog) else {
+                break;
+            };
+            removals.push((item.id, item.item_id));
+            reader = InventoryBitReader::at(data, data_bit_len, next_offset)
+                .expect("a parsed inventory item must end inside the packet");
+        }
+        if !removals.is_empty() {
+            return removals;
+        }
+    }
+    Vec::new()
+}
+
 pub fn validate_empty_curtain_snapshot(
     items: &[EmptyCurtainItem],
     catalog: &EquipmentCatalog,
@@ -1449,6 +1942,12 @@ pub fn validate_empty_curtain_snapshot(
                 .is_some_and(|character_id| !valid_item_net_id(character_id))
             || item.equipped_character_id == Some(0)
             || (item.equipped_character_id.is_some() && item.character_net_id.is_none())
+            || (definition.kind == EquipmentKind::Core && item.equipped_placement.is_some())
+            || item.equipped_placement.is_some_and(|placement| {
+                item.character_net_id.is_none()
+                    || !(0..EMPTY_CURTAIN_GRID_SIDE).contains(&placement.row)
+                    || !(0..EMPTY_CURTAIN_GRID_SIDE).contains(&placement.column)
+            })
         {
             return false;
         }
@@ -1998,6 +2497,27 @@ mod character_tests {
         buffer.extend_from_slice(&nested);
     }
 
+    fn encoded_equipment_cell(
+        state: i32,
+        equipment_id: &str,
+        solt: u32,
+        serial: u32,
+        first_step: bool,
+        row: i32,
+        column: i32,
+    ) -> Vec<u8> {
+        let mut payload = Vec::new();
+        push_i32_property(&mut payload, "State", state);
+        push_name_property(&mut payload, "EquipmentID", equipment_id);
+        push_ht_item_net_id_property(&mut payload, solt, serial);
+        push_bool_property(&mut payload, "bFirstStep", u8::from(first_step));
+        push_i32_property(&mut payload, "Row", row);
+        push_i32_property(&mut payload, "Column", column);
+        push_i32_property(&mut payload, "New", 0);
+        push_none_property(&mut payload);
+        payload
+    }
+
     fn encoded_equipment_slot(
         equipment_id: &str,
         solt: u32,
@@ -2005,16 +2525,27 @@ mod character_tests {
         row: i32,
         column: i32,
     ) -> Vec<u8> {
-        let mut payload = Vec::new();
-        push_i32_property(&mut payload, "State", 1);
-        push_name_property(&mut payload, "EquipmentID", equipment_id);
-        push_ht_item_net_id_property(&mut payload, solt, serial);
-        push_bool_property(&mut payload, "bFirstStep", 0x10);
-        push_i32_property(&mut payload, "Row", row);
-        push_i32_property(&mut payload, "Column", column);
-        push_i32_property(&mut payload, "New", 0);
-        push_none_property(&mut payload);
-        payload
+        encoded_equipment_cell(1, equipment_id, solt, serial, true, row, column)
+    }
+
+    fn empty_curtain_test_item(id: HtItemNetId, item_id: &str) -> EmptyCurtainItem {
+        EmptyCurtainItem {
+            id,
+            item_id: item_id.to_owned(),
+            level: 0,
+            main_stats: Vec::new(),
+            sub_stats: Vec::new(),
+            locked: false,
+            discarded: false,
+            character_net_id: None,
+            equipped_character_id: None,
+            equipped_placement: None,
+        }
+    }
+
+    fn empty_curtain_test_catalog() -> EquipmentCatalog {
+        load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load")
     }
 
     fn write_temp_json(name: &str, content: &str) -> PathBuf {
@@ -2062,6 +2593,265 @@ mod character_tests {
         push_name_property(&mut payload, "EquipmentID", "cell2_style1_1_Orange");
 
         assert!(parse_equipment_slots(&payload).is_empty());
+    }
+
+    #[test]
+    fn parses_complete_character_module_grid_snapshot() {
+        let character_net_id = HtItemNetId {
+            solt: 300,
+            serial: 400,
+        };
+        let module_id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let mut payload = Vec::new();
+        for row in 0..EMPTY_CURTAIN_GRID_SIDE {
+            for column in 0..EMPTY_CURTAIN_GRID_SIDE {
+                let first_step = (row, column) == (1, 2);
+                let occupied = first_step || matches!((row, column), (2, 1) | (2, 2));
+                payload.extend_from_slice(&if occupied {
+                    encoded_equipment_cell(
+                        1,
+                        "cell3_style6_1_Orange",
+                        module_id.solt,
+                        module_id.serial,
+                        first_step,
+                        row,
+                        column,
+                    )
+                } else {
+                    encoded_equipment_cell(0, "None", 0, 0, false, row, column)
+                });
+            }
+        }
+        let characters = HashMap::from([(character_net_id, 1023)]);
+        let known_items = HashMap::from([(
+            module_id,
+            empty_curtain_test_item(module_id, "cell3_style6_1_Orange"),
+        )]);
+
+        let expected = Some(ParsedEmptyCurtainEquipmentSnapshot::Modules {
+            character_net_id,
+            character_id: 1023,
+            placements: vec![ParsedEmptyCurtainModulePlacement {
+                equipment: module_id,
+                item_id: "cell3_style6_1_Orange".to_owned(),
+                row: 1,
+                column: 2,
+            }],
+        });
+        let catalog = empty_curtain_test_catalog();
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &payload,
+                payload.len() * 8,
+                &characters,
+                &known_items,
+                &catalog,
+            ),
+            expected.clone()
+        );
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &payload,
+                payload.len() * 8,
+                &characters,
+                &HashMap::new(),
+                &catalog,
+            ),
+            expected
+        );
+
+        let mismatched_items = HashMap::from([(
+            module_id,
+            empty_curtain_test_item(module_id, "cell3_style1_1_Orange"),
+        )]);
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &payload,
+                payload.len() * 8,
+                &characters,
+                &mismatched_items,
+                &catalog,
+            ),
+            None
+        );
+
+        let mut wrong_geometry = Vec::new();
+        for row in 0..EMPTY_CURTAIN_GRID_SIDE {
+            for column in 0..EMPTY_CURTAIN_GRID_SIDE {
+                let first_step = (row, column) == (1, 2);
+                let occupied = first_step || matches!((row, column), (1, 3) | (1, 4));
+                wrong_geometry.extend_from_slice(&if occupied {
+                    encoded_equipment_cell(
+                        1,
+                        "cell3_style6_1_Orange",
+                        module_id.solt,
+                        module_id.serial,
+                        first_step,
+                        row,
+                        column,
+                    )
+                } else {
+                    encoded_equipment_cell(0, "None", 0, 0, false, row, column)
+                });
+            }
+        }
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &wrong_geometry,
+                wrong_geometry.len() * 8,
+                &characters,
+                &known_items,
+                &empty_curtain_test_catalog(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_partial_or_inconsistent_character_module_grid() {
+        let character_net_id = HtItemNetId {
+            solt: 300,
+            serial: 400,
+        };
+        let module_id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let characters = HashMap::from([(character_net_id, 1023)]);
+        let known_items = HashMap::from([(
+            module_id,
+            empty_curtain_test_item(module_id, "cell3_style6_1_Orange"),
+        )]);
+        let payload = encoded_equipment_cell(
+            1,
+            "cell3_style6_1_Orange",
+            module_id.solt,
+            module_id.serial,
+            true,
+            1,
+            2,
+        );
+
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &payload,
+                payload.len() * 8,
+                &characters,
+                &known_items,
+                &empty_curtain_test_catalog(),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn parses_equipped_and_empty_character_core_snapshots() {
+        let character_net_id = HtItemNetId {
+            solt: 300,
+            serial: 400,
+        };
+        let core_id = HtItemNetId {
+            solt: 700,
+            serial: 800,
+        };
+        let characters = HashMap::from([(character_net_id, 1023)]);
+        let known_items = HashMap::from([(
+            core_id,
+            empty_curtain_test_item(core_id, "Incantation_orange"),
+        )]);
+        let mut encoded = EMPTY_CURTAIN_CORE_SLOT_ANCHOR.to_vec();
+        encoded.extend_from_slice(&core_id.solt.to_le_bytes());
+        encoded.extend_from_slice(&core_id.serial.to_le_bytes());
+        let mut equipped = vec![0; encoded.len() + 1];
+        write_shifted_bytes(&mut equipped, 3, 0, &encoded);
+
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &equipped,
+                3 + encoded.len() * 8,
+                &characters,
+                &known_items,
+                &empty_curtain_test_catalog(),
+            ),
+            Some(ParsedEmptyCurtainEquipmentSnapshot::Core {
+                character_net_id,
+                character_id: 1023,
+                item_id: Some(core_id),
+            })
+        );
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                EMPTY_CURTAIN_CORE_SLOT_ANCHOR,
+                EMPTY_CURTAIN_CORE_SLOT_ANCHOR.len() * 8,
+                &characters,
+                &known_items,
+                &empty_curtain_test_catalog(),
+            ),
+            Some(ParsedEmptyCurtainEquipmentSnapshot::Core {
+                character_net_id,
+                character_id: 1023,
+                item_id: None,
+            })
+        );
+    }
+
+    #[test]
+    fn core_snapshot_requires_one_character_and_at_most_one_known_core() {
+        let first_character = HtItemNetId {
+            solt: 300,
+            serial: 400,
+        };
+        let second_character = HtItemNetId {
+            solt: 301,
+            serial: 401,
+        };
+        let first_core = HtItemNetId {
+            solt: 700,
+            serial: 800,
+        };
+        let second_core = HtItemNetId {
+            solt: 701,
+            serial: 801,
+        };
+        let mut payload = EMPTY_CURTAIN_CORE_SLOT_ANCHOR.to_vec();
+        for id in [first_core, second_core] {
+            payload.extend_from_slice(&id.solt.to_le_bytes());
+            payload.extend_from_slice(&id.serial.to_le_bytes());
+        }
+        let known_items = HashMap::from([
+            (
+                first_core,
+                empty_curtain_test_item(first_core, "Incantation_orange"),
+            ),
+            (
+                second_core,
+                empty_curtain_test_item(second_core, "Incantation_orange"),
+            ),
+        ]);
+
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                &payload,
+                payload.len() * 8,
+                &HashMap::from([(first_character, 1023)]),
+                &known_items,
+                &empty_curtain_test_catalog(),
+            ),
+            None
+        );
+        assert_eq!(
+            parse_empty_curtain_equipment_snapshot(
+                EMPTY_CURTAIN_CORE_SLOT_ANCHOR,
+                EMPTY_CURTAIN_CORE_SLOT_ANCHOR.len() * 8,
+                &HashMap::from([(first_character, 1023), (second_character, 1020)]),
+                &known_items,
+                &empty_curtain_test_catalog(),
+            ),
+            None
+        );
     }
 
     #[test]
@@ -2665,11 +3455,30 @@ mod empty_curtain_tests {
         }
     }
 
+    fn push_compact_module_cell(
+        writer: &mut BitWriter,
+        item_id: &str,
+        id: HtItemNetId,
+        first_step: bool,
+        row: i32,
+        column: i32,
+    ) {
+        writer.push_i32(1);
+        writer.push_dynamic_name(item_id);
+        writer.push_u32(id.solt);
+        writer.push_u32(id.serial);
+        writer.push_bool(first_step);
+        writer.push_i32(row);
+        writer.push_i32(column);
+        writer.push_i32(0);
+    }
+
     fn push_module_record(
         writer: &mut BitWriter,
         id: HtItemNetId,
         character_id: HtItemNetId,
         locked: bool,
+        discarded: bool,
         equipped_tail: i32,
         equipment_count: u16,
     ) {
@@ -2687,7 +3496,7 @@ mod empty_curtain_tests {
         writer.push_u32(character_id.serial);
         writer.push_i32(0);
         writer.push_bool(locked);
-        writer.push_bool(false);
+        writer.push_bool(discarded);
         writer.push_u16(0);
         writer.push_u16(2);
         writer.push_dynamic_name("AtkAdd");
@@ -2751,8 +3560,22 @@ mod empty_curtain_tests {
         assert_eq!(catalog.attributes.len(), 53);
         assert_eq!(catalog.curves.len(), 74);
         assert_eq!(catalog.suits.len(), 12);
+        assert_eq!(catalog.shapes.len(), 12);
+        assert_eq!(catalog.plans.len(), 21);
         assert_eq!(catalog.main_stat_value(item, "AtkAdd", 20), Some(63.0));
         assert_eq!(catalog.main_stat_value(item, "HPMaxAdd", 20), Some(840.0));
+    }
+
+    #[test]
+    fn module_positions_apply_character_template_and_shape_in_business_layer() {
+        let catalog = catalog();
+        let positions = catalog
+            .valid_module_positions(1076, "cell4_style1_1_Orange")
+            .expect("1076 and Hen4 must have equipment metadata");
+
+        assert!(positions.contains(&EquipmentGridCell { row: 2, column: 3 }));
+        assert!(!positions.contains(&EquipmentGridCell { row: 1, column: 1 }));
+        assert!(!positions.contains(&EquipmentGridCell { row: 2, column: 4 }));
     }
 
     #[test]
@@ -2782,7 +3605,7 @@ mod empty_curtain_tests {
     }
 
     #[test]
-    fn parses_locked_and_equipped_item_from_character_net_id() {
+    fn parses_locked_discarded_and_equipped_item_from_character_net_id() {
         let mut writer = BitWriter::default();
         push_module_record(
             &mut writer,
@@ -2795,18 +3618,71 @@ mod empty_curtain_tests {
                 serial: 1_041_749_587,
             },
             true,
+            true,
             0,
             1,
         );
 
-        let items = parse_empty_curtain_items(&writer.data, writer.bit_len, &catalog());
+        let catalog = catalog();
+        let mut items = parse_empty_curtain_items(&writer.data, writer.bit_len, &catalog);
 
         assert_eq!(items.len(), 1);
         assert!(items[0].locked);
+        assert!(items[0].discarded);
         assert!(items[0].is_equipped());
         assert_eq!(items[0].main_stats[0].value, 63.0);
         assert_eq!(items[0].main_stats[1].value, 840.0);
         assert_eq!(items[0].sub_stats.len(), 4);
+        assert!(validate_empty_curtain_snapshot(&items, &catalog));
+
+        items[0].equipped_placement =
+            Some(crate::engine::model::EmptyCurtainPlacement { row: 1, column: 2 });
+        assert!(validate_empty_curtain_snapshot(&items, &catalog));
+        items[0].equipped_placement =
+            Some(crate::engine::model::EmptyCurtainPlacement { row: 7, column: 2 });
+        assert!(!validate_empty_curtain_snapshot(&items, &catalog));
+    }
+
+    #[test]
+    fn parses_remove_notification_items_without_treating_other_notifications_as_removals() {
+        let first_id = HtItemNetId {
+            solt: 1_117_099_843,
+            serial: 211_541_362,
+        };
+        let second_id = HtItemNetId {
+            solt: 1_117_099_844,
+            serial: 211_541_363,
+        };
+        let mut writer = BitWriter::default();
+        writer.push_bits(0x12ab, 13);
+        writer.push_bits(2, 7);
+        writer.push_bits(5, 17);
+        push_module_record(&mut writer, first_id, HtItemNetId::ZERO, false, false, 0, 1);
+        push_module_record(
+            &mut writer,
+            second_id,
+            HtItemNetId::ZERO,
+            false,
+            false,
+            0,
+            1,
+        );
+
+        assert_eq!(
+            parse_empty_curtain_item_removals(&writer.data, writer.bit_len, &catalog()),
+            vec![
+                (first_id, "cell3_style1_1_Orange".to_owned()),
+                (second_id, "cell3_style1_1_Orange".to_owned()),
+            ]
+        );
+
+        let mut writer = BitWriter::default();
+        writer.push_bits(1, 7);
+        writer.push_bits(1, 17);
+        push_module_record(&mut writer, first_id, HtItemNetId::ZERO, false, false, 0, 1);
+        assert!(
+            parse_empty_curtain_item_removals(&writer.data, writer.bit_len, &catalog()).is_empty()
+        );
     }
 
     #[test]
@@ -2821,6 +3697,91 @@ mod empty_curtain_tests {
         let owners = parse_empty_curtain_character_owners(&writer.data, writer.bit_len);
 
         assert_eq!(owners, HashMap::from([(net_id, 1020)]));
+    }
+
+    #[test]
+    fn parses_compact_login_module_placement() {
+        let catalog = catalog();
+        let id = HtItemNetId {
+            solt: 1_296_894_783,
+            serial: 538_340_435,
+        };
+        let mut writer = BitWriter::default();
+        push_compact_module_cell(&mut writer, "cell2_style2_1_Orange", id, true, 1, 5);
+        push_compact_module_cell(&mut writer, "cell2_style2_1_Orange", id, false, 2, 5);
+
+        assert_eq!(
+            parse_empty_curtain_compact_module_placements(
+                &writer.data,
+                writer.bit_len,
+                &HashMap::new(),
+                &catalog,
+            ),
+            vec![ParsedEmptyCurtainCompactModulePlacement {
+                equipment: id,
+                item_id: "cell2_style2_1_Orange".to_owned(),
+                row: 1,
+                column: 5,
+            }]
+        );
+    }
+
+    #[test]
+    fn compact_login_module_parser_rejects_incomplete_geometry() {
+        let catalog = catalog();
+        let id = HtItemNetId {
+            solt: 1_296_894_783,
+            serial: 538_340_435,
+        };
+        let mut writer = BitWriter::default();
+        push_compact_module_cell(&mut writer, "cell2_style2_1_Orange", id, true, 1, 5);
+
+        assert!(
+            parse_empty_curtain_compact_module_placements(
+                &writer.data,
+                writer.bit_len,
+                &HashMap::new(),
+                &catalog,
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn compact_login_module_parser_rejects_uid_item_mismatch() {
+        let catalog = catalog();
+        let id = HtItemNetId {
+            solt: 1_296_894_783,
+            serial: 538_340_435,
+        };
+        let mut writer = BitWriter::default();
+        push_compact_module_cell(&mut writer, "cell2_style2_1_Orange", id, true, 1, 5);
+        push_compact_module_cell(&mut writer, "cell2_style2_1_Orange", id, false, 2, 5);
+        let known_items = HashMap::from([(
+            id,
+            EmptyCurtainItem {
+                id,
+                item_id: "cell2_style1_1_Orange".to_owned(),
+                level: 0,
+                main_stats: Vec::new(),
+                sub_stats: Vec::new(),
+                locked: false,
+                discarded: false,
+                character_net_id: None,
+                equipped_character_id: None,
+                equipped_placement: None,
+            },
+        )]);
+
+        assert!(
+            parse_empty_curtain_compact_module_placements(
+                &writer.data,
+                writer.bit_len,
+                &known_items,
+                &catalog,
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -2886,6 +3847,7 @@ mod empty_curtain_tests {
             },
             HtItemNetId { solt: 0, serial: 0 },
             false,
+            false,
             0,
             1,
         );
@@ -2899,6 +3861,7 @@ mod empty_curtain_tests {
                 serial: 20,
             },
             HtItemNetId { solt: 0, serial: 0 },
+            false,
             false,
             0,
             0,
@@ -2925,6 +3888,7 @@ mod empty_curtain_tests {
                 &mut writer,
                 id,
                 HtItemNetId { solt: 0, serial: 0 },
+                false,
                 false,
                 1,
                 1,

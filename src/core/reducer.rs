@@ -14,6 +14,8 @@ pub enum CoreSignal {
     StateChanged,
     /// The equipment snapshot was replaced wholesale.
     InventoryReplaced,
+    /// The captured character-template to session-item mapping changed.
+    InventoryCharactersReplaced,
     /// A debug packet was recorded into the state's packet ring.
     DebugPacket,
     /// A lightweight packet observation updated quality counters without
@@ -63,6 +65,10 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             state.replace_empty_curtain(items);
             CoreSignal::InventoryReplaced
         }
+        EngineEvent::EmptyCurtainCharacters(characters) => {
+            state.replace_empty_curtain_characters(characters);
+            CoreSignal::InventoryCharactersReplaced
+        }
         EngineEvent::Status(status) => CoreSignal::Status(status),
         EngineEvent::Warning(warning) => CoreSignal::Warning(warning),
         EngineEvent::Error(error) => CoreSignal::Error(error),
@@ -74,8 +80,8 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
 mod tests {
     use super::*;
     use crate::engine::model::{
-        AbyssEvent, EmptyCurtainItem, Hit, HitDamageCorrection, HitFollowUp, HtItemNetId,
-        PacketDebug, PacketObservation, TimeStopEvent,
+        AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, Hit, HitDamageCorrection, HitFollowUp,
+        HtItemNetId, PacketDebug, PacketObservation, TimeStopEvent,
     };
 
     fn test_hit(timestamp: f64, char_id: u32, damage: f64) -> Hit {
@@ -248,8 +254,10 @@ mod tests {
             main_stats: Vec::new(),
             sub_stats: Vec::new(),
             locked: true,
+            discarded: false,
             character_net_id: None,
             equipped_character_id: None,
+            equipped_placement: None,
         }];
         let generation_before = state.empty_curtain_generation;
         let signal = apply_engine_event(&mut state, EngineEvent::EmptyCurtain(items));
@@ -259,6 +267,21 @@ mod tests {
             state.empty_curtain_generation,
             generation_before.wrapping_add(1)
         );
+    }
+
+    #[test]
+    fn empty_curtain_character_mapping_reaches_state() {
+        let mut state = CombatState::default();
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId { solt: 3, serial: 4 },
+            character_id: 1020,
+        };
+        let signal = apply_engine_event(
+            &mut state,
+            EngineEvent::EmptyCurtainCharacters(vec![character]),
+        );
+        assert_eq!(signal, CoreSignal::InventoryCharactersReplaced);
+        assert_eq!(state.empty_curtain_characters, vec![character]);
     }
 
     #[test]

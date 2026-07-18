@@ -199,6 +199,7 @@ impl DpsApp {
             reaction_textures: HashMap::new(),
             equipment_catalog,
             equipment_textures: HashMap::new(),
+            equipment_plugin: EquipmentPluginClient::new(),
             kongmu_ui: KongmuUiState::default(),
             state: CombatState::default(),
             combat_active: false,
@@ -388,7 +389,7 @@ impl DpsApp {
         self.last_combat_timestamp = None;
         self.last_combat_activity = None;
         self.hidden_character_ids.clear();
-        self.kongmu_ui.invalidate_inventory();
+        self.kongmu_ui.reset_session_state();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
         self.hit_detail_char_id = None;
@@ -1554,6 +1555,12 @@ impl DpsApp {
             FileDialogPurpose::EmptyCurtainExport { json } => {
                 self.finish_empty_curtain_export(viewport, &path, &json);
             }
+            FileDialogPurpose::CharacterLoadoutImport => {
+                self.finish_character_loadout_import(ctx, viewport, &path);
+            }
+            FileDialogPurpose::CharacterLoadoutExport { json } => {
+                self.finish_character_loadout_export(viewport, &path, &json);
+            }
             FileDialogPurpose::CaptureInfoExport => {
                 self.finish_capture_info_export(viewport, &path);
             }
@@ -1619,7 +1626,8 @@ impl DpsApp {
             | EngineEvent::HitDamageCorrection(_)
             | EngineEvent::Abyss(_)
             | EngineEvent::TimeStop(_)
-            | EngineEvent::EmptyCurtain(_) => {
+            | EngineEvent::EmptyCurtain(_)
+            | EngineEvent::EmptyCurtainCharacters(_) => {
                 if self.paused_events.len() == MAX_PAUSED_EVENTS {
                     self.paused_events.pop_front();
                 }
@@ -1698,6 +1706,7 @@ impl DpsApp {
         match crate::core::reducer::apply_engine_event(&mut self.state, event) {
             CoreSignal::StateChanged
             | CoreSignal::InventoryReplaced
+            | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => {}
             CoreSignal::Status(status) => self.status = status,
@@ -2761,6 +2770,13 @@ impl DpsApp {
         let empty_curtain = serde_json::to_string(&self.state.empty_curtain)
             .expect("validated Console equipment snapshot must serialize");
         writeln!(&mut out, "  \"empty_curtain\": {empty_curtain},").ok();
+        let empty_curtain_characters = serde_json::to_string(&self.state.empty_curtain_characters)
+            .expect("validated Console character mapping must serialize");
+        writeln!(
+            &mut out,
+            "  \"empty_curtain_characters\": {empty_curtain_characters},"
+        )
+        .ok();
 
         writeln!(&mut out, "  \"hits\": [").ok();
         for (index, hit) in self.state.hits.iter().enumerate() {
