@@ -42,7 +42,7 @@ use crate::engine::parser::{
 };
 use crate::platform::equipment_plugin::{
     EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
-    EquipmentPluginRequest, EquipmentPluginResponse,
+    EquipmentPluginRequest, EquipmentPluginResponse, EquipmentPluginSubmitError,
 };
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -231,14 +231,20 @@ impl Runtime {
         )
     }
 
-    fn submit_equipment_request(&mut self, id: Value, request: EquipmentPluginRequest) {
+    fn submit_equipment_request(
+        &mut self,
+        id: Value,
+        request: EquipmentPluginRequest,
+    ) -> Result<(), EquipmentPluginSubmitError> {
+        let request_id = request.request_id;
+        self.equipment_plugin.submit_request(request)?;
         assert!(
             self.pending_equipment_requests
-                .insert(request.request_id, id)
+                .insert(request_id, id)
                 .is_none(),
             "equipment request IDs must be unique during one process lifetime"
         );
-        self.equipment_plugin.submit_request(request);
+        Ok(())
     }
 
     fn process_equipment_response(
@@ -822,8 +828,19 @@ fn handle_request(
         }
         Request::Equipment(operation) => {
             let request = equipment_plugin_request(runtime.next_equipment_request_id(), operation);
-            runtime.submit_equipment_request(id, request);
-            false
+            match runtime.submit_equipment_request(id.clone(), request) {
+                Ok(()) => false,
+                Err(EquipmentPluginSubmitError::Busy) => send(
+                    outbound,
+                    failure(
+                        id,
+                        RpcError::domain(
+                            "EQUIPMENT_PLUGIN_BUSY",
+                            "Equipment plugin already has the maximum number of pending requests",
+                        ),
+                    ),
+                ),
+            }
         }
         Request::BattleGetSummary(BattleSummaryParams { subtract_time_stop }) => {
             drain_engine_events(runtime, engine_receiver, outbound);
@@ -1027,7 +1044,9 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    use crate::engine::model::{EmptyCurtainItem, Hit, HtItemNetId, PacketDebug, TimeStopEvent};
+    use crate::engine::model::{
+        EmptyCurtainItem, EmptyCurtainPlacement, Hit, HtItemNetId, PacketDebug, TimeStopEvent,
+    };
 
     #[test]
     fn bounded_reader_accepts_limit_and_rejects_larger_lines() {
@@ -1075,7 +1094,7 @@ mod tests {
         engine_sender
             .send(EngineEvent::EmptyCurtain(vec![EmptyCurtainItem {
                 id: HtItemNetId { solt: 4, serial: 5 },
-                item_id: "Attack_blue".to_owned(),
+                item_id: "cell2_style2_1_Orange".to_owned(),
                 level: 20,
                 main_stats: Vec::new(),
                 sub_stats: Vec::new(),
@@ -1083,6 +1102,7 @@ mod tests {
                 discarded: false,
                 character_net_id: Some(HtItemNetId { solt: 6, serial: 7 }),
                 equipped_character_id: Some(1020),
+                equipped_placement: Some(EmptyCurtainPlacement { row: 2, column: 3 }),
             }]))
             .unwrap();
         drain_engine_events(&mut runtime, &engine_receiver, &outbound);
@@ -1100,8 +1120,12 @@ mod tests {
             6
         );
         assert_eq!(
+            inventory["params"]["items"][0]["equipped_placement"],
+            serde_json::json!({"row": 2, "column": 3})
+        );
+        assert_eq!(
             inventory["params"]["items"][0]["names"]["en"],
-            "Shadow Creed"
+            "Type II Module"
         );
         assert_eq!(runtime.latest_inventory.as_ref().unwrap().generation, 1);
 
@@ -1220,6 +1244,7 @@ mod tests {
                 discarded: false,
                 character_net_id: None,
                 equipped_character_id: None,
+                equipped_placement: None,
             }]),
             &outbound,
         );
@@ -1338,11 +1363,15 @@ mod tests {
         runtime.handshaken = true;
         let (started_tx, started_rx) = bounded(1);
         let (release_tx, release_rx) = bounded(1);
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_call_count = Arc::clone(&call_count);
         runtime.equipment_plugin = EquipmentPluginClient::with_call_for_test(move |_| {
-            started_tx.send(()).unwrap();
-            release_rx
-                .recv()
-                .map_err(|_| "test pipe call release channel closed".to_owned())?;
+            if worker_call_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0 {
+                started_tx.send(()).unwrap();
+                release_rx
+                    .recv()
+                    .map_err(|_| "test pipe call release channel closed".to_owned())?;
+            }
             Ok(0)
         });
 
@@ -1373,17 +1402,43 @@ mod tests {
         command_tx
             .send(ReaderEvent::Request(ValidatedRequest {
                 id: serde_json::json!(2),
+                request: Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                    equipment: ItemUidParam { slot: 5, serial: 6 },
+                    locked: true,
+                }),
+            }))
+            .unwrap();
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(3),
+                request: Request::Equipment(EquipmentOperationParam::SetItemLocked {
+                    equipment: ItemUidParam { slot: 7, serial: 8 },
+                    locked: true,
+                }),
+            }))
+            .unwrap();
+        command_tx
+            .send(ReaderEvent::Request(ValidatedRequest {
+                id: serde_json::json!(4),
                 request: Request::Status,
             }))
             .unwrap();
+        let busy = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(busy["id"], 3);
+        assert_eq!(
+            busy["error"]["data"]["domain_code"],
+            "EQUIPMENT_PLUGIN_BUSY"
+        );
         let status = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(status["id"], 2);
+        assert_eq!(status["id"], 4);
         assert!(status.get("result").is_some());
 
         release_tx.send(()).unwrap();
-        let equipment = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(equipment["id"], 1);
-        assert_eq!(equipment["result"]["status"], "rpc_dispatched");
+        for expected_id in [1, 2] {
+            let equipment = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(equipment["id"], expected_id);
+            assert_eq!(equipment["result"]["status"], "rpc_dispatched");
+        }
 
         command_tx.send(ReaderEvent::Eof).unwrap();
         core.join().unwrap();

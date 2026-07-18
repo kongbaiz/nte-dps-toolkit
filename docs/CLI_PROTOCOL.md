@@ -120,6 +120,7 @@ Core domain failures use code `-32000`, message `Core error`, and include stable
 - `CAPTURE_NOT_RUNNING`
 - `INVENTORY_NOT_READY`
 - `EQUIPMENT_PLUGIN_UNAVAILABLE`
+- `EQUIPMENT_PLUGIN_BUSY`
 - `EQUIPMENT_REQUEST_REJECTED`
 
 Underlying OS, Npcap, endpoint, payload, and filesystem details are not copied to
@@ -265,7 +266,8 @@ also contain the global event `sequence`. Internal item IDs are mapped as:
   "discarded":false,
   "equipped":true,
   "equipped_character_uid":{"slot":3,"serial":4},
-  "equipped_character_id":1020
+  "equipped_character_id":1020,
+  "equipped_placement":{"row":2,"column":3}
 }
 ```
 
@@ -277,6 +279,9 @@ their stable IDs and values while optional metadata remains null.
 `res/data/characters/characters.json`; it is null when the item is unequipped or
 the owner has not been resolved. `equipped_character_uid` remains the
 account-specific character item instance UID.
+`equipped_placement` is the equipped module's 1-based anchor position. It is
+null for cores, unequipped modules, or when the module position has not been
+resolved yet.
 
 ## Equipment methods
 
@@ -326,7 +331,8 @@ Successful results are `{"status":"rpc_dispatched"}`. The alternate
 successful dispatch only confirms that the RPC was submitted; callers must wait
 for a later captured `event.inventory.snapshot` to confirm game/server state.
 Missing pipes and timeouts return `EQUIPMENT_PLUGIN_UNAVAILABLE`. Plugin
-validation statuses other than dispatched/dry-run return
+requests beyond the active call and one queued call return
+`EQUIPMENT_PLUGIN_BUSY`. Plugin validation statuses other than dispatched/dry-run return
 `EQUIPMENT_REQUEST_REJECTED`.
 
 ## Capture and inventory events

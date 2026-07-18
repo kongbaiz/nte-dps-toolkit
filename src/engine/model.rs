@@ -195,6 +195,12 @@ pub struct EquipmentStat {
     pub value: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmptyCurtainPlacement {
+    pub row: i32,
+    pub column: i32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EmptyCurtainItem {
     pub id: HtItemNetId,
@@ -211,6 +217,8 @@ pub struct EmptyCurtainItem {
     pub character_net_id: Option<HtItemNetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub equipped_character_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equipped_placement: Option<EmptyCurtainPlacement>,
 }
 
 impl EmptyCurtainItem {
@@ -996,6 +1004,7 @@ struct TimeStopInterval {
 struct TimeStopTracker {
     intervals: Vec<TimeStopInterval>,
     active_extra_starts: HashMap<String, f64>,
+    ultra_releases: HashMap<u32, f64>,
     event_count: u64,
 }
 
@@ -1005,9 +1014,18 @@ impl TimeStopTracker {
         match event {
             TimeStopEvent::UltraAnimation {
                 timestamp,
+                char_id,
                 duration_seconds,
                 ..
-            } => self.push_interval(*timestamp, *timestamp + duration_seconds),
+            } => {
+                self.push_interval(*timestamp, *timestamp + duration_seconds);
+                if timestamp.is_finite() {
+                    self.ultra_releases
+                        .entry(*char_id)
+                        .and_modify(|value| *value = value.max(*timestamp))
+                        .or_insert(*timestamp);
+                }
+            }
             TimeStopEvent::ExtraStart { timestamp, reason } => {
                 self.active_extra_starts.insert(reason.clone(), *timestamp);
             }
@@ -1032,6 +1050,10 @@ impl TimeStopTracker {
             .into_iter()
             .map(|interval| interval.end - interval.start)
             .sum()
+    }
+
+    fn latest_ultra_release(&self) -> Option<f64> {
+        self.ultra_releases.values().copied().reduce(f64::max)
     }
 
     fn intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
@@ -1093,6 +1115,7 @@ pub struct PartyCombatState {
     pub ended_at: Option<f64>,
     pub total_damage: f64,
     pub total_damage_taken: f64,
+    stage_started_at: Option<f64>,
     time_stop: TimeStopTracker,
 }
 
@@ -1121,6 +1144,7 @@ impl PartyCombatState {
                 &mut self.total_damage_taken,
             );
         }
+        self.sync_clock_with_ultra_releases();
     }
 
     pub fn apply_follow_up(&mut self, follow_up: &HitFollowUp) -> bool {
@@ -1135,6 +1159,7 @@ impl PartyCombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
+            self.sync_clock_with_ultra_releases();
         }
         updated
     }
@@ -1151,6 +1176,7 @@ impl PartyCombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
+            self.sync_clock_with_ultra_releases();
         }
         updated
     }
@@ -1194,6 +1220,22 @@ impl PartyCombatState {
 
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         self.time_stop.apply_event(event);
+        self.sync_clock_with_ultra_releases();
+    }
+
+    fn sync_clock_with_ultra_releases(&mut self) {
+        if let Some(timestamp) = self.stage_started_at {
+            self.started_at = Some(
+                self.started_at
+                    .map_or(timestamp, |value| value.min(timestamp)),
+            );
+        }
+        sync_combat_clock_with_ultra_releases(
+            &mut self.stats,
+            self.started_at,
+            &mut self.ended_at,
+            &self.time_stop,
+        );
     }
 
     #[allow(dead_code)]
@@ -1295,11 +1337,12 @@ impl AbyssRunState {
             }
             AbyssEvent::Stage {
                 timestamp,
-                cycle: _,
+                cycle,
                 floor,
                 half,
                 allow_late_backfill: _,
             } => {
+                let starts_combat = cycle.is_some() || floor.is_some();
                 if floor.is_some() {
                     self.floor = floor;
                 }
@@ -1320,6 +1363,15 @@ impl AbyssRunState {
                     }
                 }
                 self.active_half = Some(half);
+                if starts_combat {
+                    let party = self.half_mut(half);
+                    party.stage_started_at = Some(
+                        party
+                            .stage_started_at
+                            .map_or(timestamp, |value| value.min(timestamp)),
+                    );
+                    party.sync_clock_with_ultra_releases();
+                }
                 match half {
                     AbyssHalf::First => {
                         self.first_half_at = Some(
@@ -1522,6 +1574,7 @@ impl CombatState {
                 &mut self.total_damage_taken,
             );
         }
+        self.sync_clock_with_ultra_releases();
     }
 
     pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) {
@@ -1536,6 +1589,7 @@ impl CombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
+            self.sync_clock_with_ultra_releases();
         }
         self.abyss.first_half.apply_follow_up(&follow_up);
         self.abyss.second_half.apply_follow_up(&follow_up);
@@ -1554,6 +1608,7 @@ impl CombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
+            self.sync_clock_with_ultra_releases();
         }
         self.abyss.first_half.apply_damage_correction(&correction);
         self.abyss.second_half.apply_damage_correction(&correction);
@@ -1576,71 +1631,6 @@ impl CombatState {
 
     pub fn replace_empty_curtain_characters(&mut self, characters: Vec<EmptyCurtainCharacter>) {
         self.empty_curtain_characters = characters;
-    }
-
-    pub fn assign_empty_curtain_items(
-        &mut self,
-        character: EmptyCurtainCharacter,
-        equipment: &[HtItemNetId],
-        replaced_equipment: &[HtItemNetId],
-        replace_character_loadout: bool,
-    ) {
-        let equipment = equipment.iter().copied().collect::<HashSet<_>>();
-        let replaced_equipment = replaced_equipment.iter().copied().collect::<HashSet<_>>();
-        for item in &mut self.empty_curtain {
-            if (replace_character_loadout && item.character_net_id == Some(character.net_id))
-                || replaced_equipment.contains(&item.id)
-            {
-                item.character_net_id = None;
-                item.equipped_character_id = None;
-            }
-            if equipment.contains(&item.id) {
-                item.character_net_id = Some(character.net_id);
-                item.equipped_character_id = Some(character.character_id);
-            }
-        }
-        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
-    }
-
-    pub fn unequip_empty_curtain_item(&mut self, equipment: HtItemNetId) {
-        let item = self
-            .empty_curtain
-            .iter_mut()
-            .find(|item| item.id == equipment)
-            .expect("submitted Console equipment must remain in the captured inventory");
-        item.character_net_id = None;
-        item.equipped_character_id = None;
-        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
-    }
-
-    pub fn clear_empty_curtain_character(&mut self, character: HtItemNetId) {
-        for item in &mut self.empty_curtain {
-            if item.character_net_id == Some(character) {
-                item.character_net_id = None;
-                item.equipped_character_id = None;
-            }
-        }
-        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
-    }
-
-    pub fn set_empty_curtain_item_discarded(&mut self, equipment: HtItemNetId, discarded: bool) {
-        let item = self
-            .empty_curtain
-            .iter_mut()
-            .find(|item| item.id == equipment)
-            .expect("submitted Console equipment must remain in the captured inventory");
-        item.discarded = discarded;
-        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
-    }
-
-    pub fn set_empty_curtain_item_locked(&mut self, equipment: HtItemNetId, locked: bool) {
-        let item = self
-            .empty_curtain
-            .iter_mut()
-            .find(|item| item.id == equipment)
-            .expect("submitted Console equipment must remain in the captured inventory");
-        item.locked = locked;
-        self.empty_curtain_generation = self.empty_curtain_generation.wrapping_add(1);
     }
 
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
@@ -1725,7 +1715,17 @@ impl CombatState {
 
     pub fn apply_time_stop_event(&mut self, event: TimeStopEvent) {
         self.time_stop.apply_event(&event);
+        self.sync_clock_with_ultra_releases();
         self.abyss.apply_time_stop_event(&event);
+    }
+
+    fn sync_clock_with_ultra_releases(&mut self) {
+        sync_combat_clock_with_ultra_releases(
+            &mut self.stats,
+            self.started_at,
+            &mut self.ended_at,
+            &self.time_stop,
+        );
     }
 
     #[allow(dead_code)]
@@ -1831,6 +1831,7 @@ impl CombatState {
             self.abyss.half_mut(half).push_hit(hit);
         }
         self.abyss.half_mut(half).time_stop = self.time_stop.clone();
+        self.abyss.half_mut(half).sync_clock_with_ultra_releases();
     }
 }
 
@@ -1941,6 +1942,32 @@ fn character_duration_after_time_stop(
         return raw;
     }
     (raw - time_stop.frozen_between(row.first_hit, row.last_hit)).max(0.001)
+}
+
+fn sync_combat_clock_with_ultra_releases(
+    stats: &mut HashMap<u32, CharacterStats>,
+    started_at: Option<f64>,
+    ended_at: &mut Option<f64>,
+    time_stop: &TimeStopTracker,
+) {
+    let Some(started_at) = started_at else {
+        return;
+    };
+    if let Some(timestamp) = time_stop.latest_ultra_release()
+        && timestamp >= started_at
+    {
+        *ended_at = Some(ended_at.map_or(timestamp, |value| value.max(timestamp)));
+    }
+    for (char_id, timestamp) in &time_stop.ultra_releases {
+        if *timestamp < started_at {
+            continue;
+        }
+        if let Some(row) = stats.get_mut(char_id)
+            && row.hits > 0
+        {
+            row.last_hit = row.last_hit.max(*timestamp);
+        }
+    }
 }
 
 fn summarize_timeline_with_time_stop<'a>(
@@ -2816,6 +2843,7 @@ mod tests {
             discarded: false,
             character_net_id: None,
             equipped_character_id: None,
+            equipped_placement: None,
         }]);
         state.replace_empty_curtain_characters(vec![EmptyCurtainCharacter {
             net_id: HtItemNetId { solt: 3, serial: 4 },
@@ -2831,58 +2859,6 @@ mod tests {
         assert_eq!(state.empty_curtain.len(), 1);
         assert_eq!(state.empty_curtain_characters.len(), 1);
         assert_eq!(state.empty_curtain_generation, inventory_generation);
-    }
-
-    #[test]
-    fn optimistic_equipment_mutations_update_card_associations() {
-        let mut state = CombatState::default();
-        let first = HtItemNetId { solt: 1, serial: 2 };
-        let second = HtItemNetId { solt: 3, serial: 4 };
-        state.replace_empty_curtain(
-            [first, second]
-                .into_iter()
-                .map(|id| EmptyCurtainItem {
-                    id,
-                    item_id: "item".to_owned(),
-                    level: 1,
-                    main_stats: Vec::new(),
-                    sub_stats: Vec::new(),
-                    locked: false,
-                    discarded: false,
-                    character_net_id: None,
-                    equipped_character_id: None,
-                })
-                .collect(),
-        );
-        let character = EmptyCurtainCharacter {
-            net_id: HtItemNetId { solt: 5, serial: 6 },
-            character_id: 1076,
-        };
-
-        state.assign_empty_curtain_items(character, &[first, second], &[], true);
-        assert!(
-            state
-                .empty_curtain
-                .iter()
-                .all(|item| item.equipped_character_id == Some(1076))
-        );
-
-        state.unequip_empty_curtain_item(first);
-        assert!(!state.empty_curtain[0].is_equipped());
-        state.set_empty_curtain_item_discarded(first, true);
-        state.set_empty_curtain_item_locked(first, true);
-        assert!(state.empty_curtain[0].discarded);
-        assert!(state.empty_curtain[0].locked);
-        state.clear_empty_curtain_character(character.net_id);
-        assert!(!state.empty_curtain[1].is_equipped());
-
-        state.assign_empty_curtain_items(character, &[second], &[], false);
-        state.assign_empty_curtain_items(character, &[first], &[second], false);
-        assert_eq!(
-            state.empty_curtain[0].character_net_id,
-            Some(character.net_id)
-        );
-        assert!(!state.empty_curtain[1].is_equipped());
     }
 
     #[test]
@@ -2954,6 +2930,76 @@ mod tests {
 
         assert!((state.duration_with_time_stop(true) - 7.0).abs() < 1e-9);
         assert!((state.dps_with_time_stop(true) - (300.0 / 7.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ultra_release_advances_global_and_abyss_clocks_immediately() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(0.0, 1010, "outgoing", 100.0));
+        let mut last_hit = test_hit(15.0, 1010, "outgoing", 200.0);
+        last_hit.target_hp_before = 1_000.0;
+        last_hit.target_hp_after = 800.0;
+        last_hit.target_max_hp = 1_000.0;
+        last_hit.gameplay_effect_index = Some(42);
+        state.push_hit(last_hit);
+
+        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
+            timestamp: 20.0,
+            char_id: 1010,
+            ability_id: "GA_Nanally_UltraSkill".to_owned(),
+            duration_seconds: 5.0,
+        });
+
+        assert_eq!(state.ended_at, Some(20.0));
+        assert_eq!(state.stats.get(&1010).unwrap().last_hit, 20.0);
+        assert!((state.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
+        assert!(
+            (state.character_duration_with_time_stop(state.stats.get(&1010).unwrap(), true) - 20.0)
+                .abs()
+                < 1e-9
+        );
+        assert_eq!(state.abyss.first_half.ended_at, Some(20.0));
+        assert_eq!(
+            state.abyss.first_half.stats.get(&1010).unwrap().last_hit,
+            20.0
+        );
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
+        assert!(state.abyss.second_half.ended_at.is_none());
+
+        state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 15.0,
+            source_char_id: 1010,
+            source_damage: 200.0,
+            source_target_hp_before: 1_000.0,
+            source_target_hp_after: 800.0,
+            source_target_max_hp: 1_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 250.0,
+            target_hp_before: 1_050.0,
+            target_hp_after: 800.0,
+            target_hp_percent: 80.0,
+        });
+
+        assert_eq!(state.ended_at, Some(20.0));
+        assert_eq!(state.stats.get(&1010).unwrap().last_hit, 20.0);
+        assert_eq!(state.abyss.first_half.ended_at, Some(20.0));
+        assert_eq!(
+            state.abyss.first_half.stats.get(&1010).unwrap().last_hit,
+            20.0
+        );
+
+        state.push_hit(test_hit(25.0, 1010, "outgoing", 100.0));
+
+        assert!((state.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(false) - 25.0).abs() < 1e-9);
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
     }
 
     #[test]
@@ -3054,7 +3100,8 @@ mod tests {
         });
         state.push_hit(test_hit(6.0, 1010, "outgoing", 100.0));
 
-        assert!((state.abyss.first_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
+        assert_eq!(state.abyss.first_half.started_at, Some(0.0));
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 4.0).abs() < 1e-9);
         let row = state.abyss.first_half.stats.get(&1010).unwrap();
         assert!(
             (state
@@ -3065,6 +3112,49 @@ mod tests {
                 .abs()
                 < 1e-9
         );
+    }
+
+    #[test]
+    fn authoritative_stage_starts_half_clock_before_first_hit() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: None,
+            floor: None,
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(5),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(4.0, 1010, "outgoing", 100.0));
+        let mut last_hit = test_hit(10.0, 1010, "outgoing", 100.0);
+        last_hit.target_hp_before = 1_000.0;
+        last_hit.target_hp_after = 900.0;
+        last_hit.target_max_hp = 1_000.0;
+        last_hit.gameplay_effect_index = Some(42);
+        state.push_hit(last_hit);
+
+        state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 10.0,
+            source_char_id: 1010,
+            source_damage: 100.0,
+            source_target_hp_before: 1_000.0,
+            source_target_hp_after: 900.0,
+            source_target_max_hp: 1_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 110.0,
+            target_hp_before: 1_010.0,
+            target_hp_after: 900.0,
+            target_hp_percent: 90.0,
+        });
+
+        assert_eq!(state.abyss.first_half.started_at, Some(3.0));
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 7.0).abs() < 1e-9);
     }
 
     #[test]

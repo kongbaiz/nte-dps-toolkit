@@ -3,9 +3,11 @@
 //! validated session item IDs and polls completed responses.
 
 use std::io;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 use windows_sys::Win32::System::Pipes::CallNamedPipeW;
 
 use crate::engine::model::HtItemNetId;
@@ -90,6 +92,11 @@ pub struct EquipmentPluginResponse {
     pub status: Result<u32, String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EquipmentPluginSubmitError {
+    Busy,
+}
+
 enum WorkerCommand {
     Request(EquipmentPluginRequest),
     Stop,
@@ -99,6 +106,7 @@ pub struct EquipmentPluginClient {
     sender: Sender<WorkerCommand>,
     receiver: Receiver<EquipmentPluginResponse>,
     thread: Option<JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
     next_request_id: u64,
 }
 
@@ -117,12 +125,17 @@ impl EquipmentPluginClient {
     where
         F: Fn(&EquipmentPluginRequest) -> Result<u32, String> + Send + 'static,
     {
-        let (sender, command_receiver) = unbounded();
+        let (sender, command_receiver) = bounded(1);
         let (response_sender, receiver) = unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
         let thread = thread::spawn(move || {
             while let Ok(command) = command_receiver.recv() {
                 match command {
                     WorkerCommand::Request(request) => {
+                        if worker_stop.load(Ordering::Acquire) {
+                            return;
+                        }
                         let status = call(&request);
                         if response_sender
                             .send(EquipmentPluginResponse {
@@ -131,6 +144,9 @@ impl EquipmentPluginClient {
                             })
                             .is_err()
                         {
+                            return;
+                        }
+                        if worker_stop.load(Ordering::Acquire) {
                             return;
                         }
                     }
@@ -142,25 +158,37 @@ impl EquipmentPluginClient {
             sender,
             receiver,
             thread: Some(thread),
+            stop,
             next_request_id: 1,
         }
     }
 
-    pub fn submit(&mut self, character: HtItemNetId, operation: EquipmentPluginOperation) -> u64 {
+    pub fn submit(
+        &mut self,
+        character: HtItemNetId,
+        operation: EquipmentPluginOperation,
+    ) -> Result<u64, EquipmentPluginSubmitError> {
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1).max(1);
         self.submit_request(EquipmentPluginRequest {
             request_id,
             character,
             operation,
-        });
-        request_id
+        })?;
+        Ok(request_id)
     }
 
-    pub fn submit_request(&self, request: EquipmentPluginRequest) {
-        self.sender
-            .send(WorkerCommand::Request(request))
-            .expect("equipment plugin worker must remain alive while its client exists");
+    pub fn submit_request(
+        &self,
+        request: EquipmentPluginRequest,
+    ) -> Result<(), EquipmentPluginSubmitError> {
+        match self.sender.try_send(WorkerCommand::Request(request)) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => Err(EquipmentPluginSubmitError::Busy),
+            Err(TrySendError::Disconnected(_)) => {
+                panic!("equipment plugin worker must remain alive while its client exists")
+            }
+        }
     }
 
     pub fn response_receiver(&self) -> Receiver<EquipmentPluginResponse> {
@@ -188,7 +216,8 @@ impl EquipmentPluginClient {
 
 impl Drop for EquipmentPluginClient {
     fn drop(&mut self) {
-        let _ = self.sender.send(WorkerCommand::Stop);
+        self.stop.store(true, Ordering::Release);
+        let _ = self.sender.try_send(WorkerCommand::Stop);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -512,5 +541,55 @@ mod tests {
         bytes[8..16].copy_from_slice(&9_u64.to_le_bytes());
         bytes[16..20].copy_from_slice(&12_u32.to_le_bytes());
         assert_eq!(decode_response(&bytes, 9), Ok(12));
+    }
+
+    #[test]
+    fn client_bounds_requests_behind_the_active_pipe_call() {
+        let (started_tx, started_rx) = bounded(1);
+        let (release_tx, release_rx) = bounded(1);
+        let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let worker_call_count = Arc::clone(&call_count);
+        let mut client = EquipmentPluginClient::with_call_for_test(move |_| {
+            if worker_call_count.fetch_add(1, Ordering::AcqRel) == 0 {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }
+            Ok(0)
+        });
+
+        assert_eq!(
+            client.submit(
+                HtItemNetId { solt: 1, serial: 2 },
+                EquipmentPluginOperation::UnequipAll
+            ),
+            Ok(1)
+        );
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(
+            client.submit(
+                HtItemNetId { solt: 3, serial: 4 },
+                EquipmentPluginOperation::UnequipAll
+            ),
+            Ok(2)
+        );
+        assert_eq!(
+            client.submit(
+                HtItemNetId { solt: 5, serial: 6 },
+                EquipmentPluginOperation::UnequipAll
+            ),
+            Err(EquipmentPluginSubmitError::Busy)
+        );
+
+        release_tx.send(()).unwrap();
+        assert_eq!(
+            client
+                .receiver
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .unwrap()
+                .request_id,
+            1
+        );
     }
 }

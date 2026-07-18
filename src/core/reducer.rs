@@ -257,6 +257,7 @@ mod tests {
             discarded: false,
             character_net_id: None,
             equipped_character_id: None,
+            equipped_placement: None,
         }];
         let generation_before = state.empty_curtain_generation;
         let signal = apply_engine_event(&mut state, EngineEvent::EmptyCurtain(items));

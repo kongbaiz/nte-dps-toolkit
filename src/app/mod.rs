@@ -40,6 +40,7 @@ use crate::engine::parser::{
 };
 use crate::platform::equipment_plugin::{
     EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
+    EquipmentPluginSubmitError,
 };
 use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{
@@ -152,6 +153,8 @@ pub(crate) enum FileDialogPurpose {
     TeamDpsExport { json: String },
     HistoryExport { json: String },
     EmptyCurtainExport { json: String },
+    CharacterLoadoutImport,
+    CharacterLoadoutExport { json: String },
     CaptureInfoExport,
     RawCaptureExport,
 }

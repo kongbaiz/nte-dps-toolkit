@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, HashSet};
 
+use crate::core::snapshot::{
+    CHARACTER_LOADOUT_MAX_JSON_BYTES, CharacterLoadoutError, ItemUid, ValidatedCharacterLoadout,
+    export_character_loadout_json, parse_character_loadout_json, validate_character_loadout,
+};
 use crate::engine::model::{EmptyCurtainCharacter, EmptyCurtainItem, EquipmentStat, HtItemNetId};
 use crate::engine::parser::{EMPTY_CURTAIN_MAX_STAT_ROWS, EquipmentCatalog, EquipmentKind};
 
@@ -38,44 +42,19 @@ enum EquipmentEquipSelection {
     Submit {
         character: HtItemNetId,
         operation: EquipmentPluginOperation,
-        mutation: PendingEquipmentMutation,
     },
 }
 
 #[derive(Clone, Copy)]
 enum CharacterEquipmentAction {
+    ImportLoadout,
+    ExportLoadout(EmptyCurtainCharacter),
     EquipOneKey(EmptyCurtainCharacter),
     UnequipAll(EmptyCurtainCharacter),
 }
 
-enum PendingEquipmentMutation {
-    Assign {
-        character: EmptyCurtainCharacter,
-        equipment: Vec<HtItemNetId>,
-        replacement: PendingEquipmentReplacement,
-    },
-    Unequip(HtItemNetId),
-    Clear(HtItemNetId),
-    SetDiscarded {
-        equipment: HtItemNetId,
-        discarded: bool,
-    },
-    SetLocked {
-        equipment: HtItemNetId,
-        locked: bool,
-    },
-}
-
-#[derive(Clone, Copy)]
-enum PendingEquipmentReplacement {
-    None,
-    CharacterLoadout,
-    Core,
-}
-
 struct PendingPluginRequest {
     request_id: u64,
-    mutation: PendingEquipmentMutation,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -289,6 +268,17 @@ impl DpsApp {
                         ui.label(t("Waiting for the equipment plugin..."));
                         return;
                     }
+                    if ui
+                        .button(t("Import Loadout..."))
+                        .on_hover_text(t(
+                            "Import a character Console loadout JSON and switch equipment through the plugin",
+                        ))
+                        .clicked()
+                    {
+                        character_action = Some(CharacterEquipmentAction::ImportLoadout);
+                        ui.close();
+                    }
+                    ui.separator();
                     for character in &self.state.empty_curtain_characters {
                         let fallback =
                             tf("Character ID {}", &[&character.character_id.to_string()]);
@@ -298,6 +288,17 @@ impl DpsApp {
                             &fallback,
                         );
                         ui.menu_button(name, |ui| {
+                            if ui
+                                .button(t("Export Loadout..."))
+                                .on_hover_text(t(
+                                    "Save this character's equipped Console loadout as JSON",
+                                ))
+                                .clicked()
+                            {
+                                character_action =
+                                    Some(CharacterEquipmentAction::ExportLoadout(*character));
+                                ui.close();
+                            }
                             if ui.button(t("One-click Equip")).clicked() {
                                 character_action =
                                     Some(CharacterEquipmentAction::EquipOneKey(*character));
@@ -335,21 +336,22 @@ impl DpsApp {
         }
         if let Some(action) = character_action {
             match action {
+                CharacterEquipmentAction::ImportLoadout => {
+                    self.import_character_loadout(ui.ctx());
+                }
+                CharacterEquipmentAction::ExportLoadout(character) => {
+                    self.export_character_loadout(ui.ctx(), character);
+                }
                 CharacterEquipmentAction::EquipOneKey(character) => {
                     match build_one_key_plan(
                         character,
                         &self.state.empty_curtain,
                         &self.equipment_catalog,
                     ) {
-                        Ok((operation, equipment)) => self.submit_equipment_plugin_request(
+                        Ok(operation) => self.submit_equipment_plugin_request(
                             ui.ctx(),
                             character.net_id,
                             operation,
-                            PendingEquipmentMutation::Assign {
-                                character,
-                                equipment,
-                                replacement: PendingEquipmentReplacement::CharacterLoadout,
-                            },
                         ),
                         Err(OneKeyPlanError::MissingTemplate) => self.set_last_error_in(
                             ui.ctx(),
@@ -368,7 +370,6 @@ impl DpsApp {
                         ui.ctx(),
                         character.net_id,
                         EquipmentPluginOperation::UnequipAll,
-                        PendingEquipmentMutation::Clear(character.net_id),
                     );
                 }
             }
@@ -422,13 +423,7 @@ impl DpsApp {
                     EquipmentEquipSelection::Submit {
                         character,
                         operation,
-                        mutation,
-                    } => self.submit_equipment_plugin_request(
-                        ui.ctx(),
-                        character,
-                        operation,
-                        mutation,
-                    ),
+                    } => self.submit_equipment_plugin_request(ui.ctx(), character, operation),
                 }
             }
         }
@@ -468,16 +463,7 @@ impl DpsApp {
                     column,
                 }
             };
-            self.submit_equipment_plugin_request(
-                ui.ctx(),
-                placement.character.net_id,
-                operation,
-                PendingEquipmentMutation::Assign {
-                    character: placement.character,
-                    equipment: vec![placement.equipment],
-                    replacement: PendingEquipmentReplacement::None,
-                },
-            );
+            self.submit_equipment_plugin_request(ui.ctx(), placement.character.net_id, operation);
         }
         if self.kongmu_ui.plugin_request.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
@@ -489,16 +475,18 @@ impl DpsApp {
         ctx: &egui::Context,
         character: HtItemNetId,
         operation: EquipmentPluginOperation,
-        mutation: PendingEquipmentMutation,
     ) {
-        let request_id = self.equipment_plugin.submit(character, operation);
-        self.kongmu_ui.plugin_request = Some(PendingPluginRequest {
-            request_id,
-            mutation,
-        });
-        self.status = t("Sending equipment request...");
-        self.clear_last_error();
-        ctx.request_repaint_after(Duration::from_millis(50));
+        match self.equipment_plugin.submit(character, operation) {
+            Ok(request_id) => {
+                self.kongmu_ui.plugin_request = Some(PendingPluginRequest { request_id });
+                self.status = t("Sending equipment request...");
+                self.clear_last_error();
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+            Err(EquipmentPluginSubmitError::Busy) => {
+                self.set_last_error_in(ctx, t("Equipment plugin is busy; try again shortly"), None)
+            }
+        }
     }
 
     fn drain_equipment_plugin_response(&mut self, ctx: &egui::Context) {
@@ -513,53 +501,9 @@ impl DpsApp {
         {
             return;
         }
-        let pending = self
-            .kongmu_ui
-            .plugin_request
-            .take()
-            .expect("matching equipment response must have a pending request");
+        self.kongmu_ui.plugin_request = None;
         match response.status {
             Ok(0) => {
-                match pending.mutation {
-                    PendingEquipmentMutation::Assign {
-                        character,
-                        equipment,
-                        replacement,
-                    } => {
-                        let replaced_equipment = match replacement {
-                            PendingEquipmentReplacement::None
-                            | PendingEquipmentReplacement::CharacterLoadout => Vec::new(),
-                            PendingEquipmentReplacement::Core => displaced_core_equipment(
-                                &self.state.empty_curtain,
-                                character.net_id,
-                                &equipment,
-                                &self.equipment_catalog,
-                            ),
-                        };
-                        self.state.assign_empty_curtain_items(
-                            character,
-                            &equipment,
-                            &replaced_equipment,
-                            matches!(replacement, PendingEquipmentReplacement::CharacterLoadout),
-                        );
-                    }
-                    PendingEquipmentMutation::Unequip(equipment) => {
-                        self.state.unequip_empty_curtain_item(equipment);
-                    }
-                    PendingEquipmentMutation::Clear(character) => {
-                        self.state.clear_empty_curtain_character(character);
-                    }
-                    PendingEquipmentMutation::SetDiscarded {
-                        equipment,
-                        discarded,
-                    } => self
-                        .state
-                        .set_empty_curtain_item_discarded(equipment, discarded),
-                    PendingEquipmentMutation::SetLocked { equipment, locked } => {
-                        self.state.set_empty_curtain_item_locked(equipment, locked);
-                    }
-                }
-                self.kongmu_ui.invalidate_inventory();
                 self.status = t("Equipment RPC dispatched; waiting for game synchronization");
                 self.clear_last_error();
             }
@@ -578,6 +522,137 @@ impl DpsApp {
             Err(error) => self.set_last_error_in(
                 ctx,
                 tf("Equipment plugin is unavailable: {}", &[&error]),
+                None,
+            ),
+        }
+    }
+
+    fn import_character_loadout(&mut self, ctx: &egui::Context) {
+        let filter = t("Console character loadout");
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::CharacterLoadoutImport,
+            move |owner| {
+                with_owner(rfd::FileDialog::new().add_filter(filter, &["json"]), owner).pick_file()
+            },
+        );
+    }
+
+    fn export_character_loadout(&mut self, ctx: &egui::Context, character: EmptyCurtainCharacter) {
+        let json = match export_character_loadout_json(
+            character,
+            &self.state.empty_curtain,
+            &self.equipment_catalog,
+        ) {
+            Ok(json) => json,
+            Err(error) => {
+                self.set_last_error_in(ctx, character_loadout_error_text(&error), None);
+                return;
+            }
+        };
+        let default_name = format!(
+            "nte_loadout_{}_{}.json",
+            character.character_id,
+            Local::now().format("%Y%m%d_%H%M%S")
+        );
+        let filter = t("Console character loadout");
+        self.spawn_file_dialog(
+            ctx,
+            FileDialogPurpose::CharacterLoadoutExport { json },
+            move |owner| {
+                with_owner(
+                    rfd::FileDialog::new()
+                        .add_filter(filter, &["json"])
+                        .set_file_name(default_name),
+                    owner,
+                )
+                .save_file()
+            },
+        );
+    }
+
+    pub(crate) fn finish_character_loadout_import(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
+        path: &std::path::Path,
+    ) {
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                self.set_last_error_for(
+                    viewport,
+                    tf(
+                        "Failed to read character loadout: {}",
+                        &[&error.to_string()],
+                    ),
+                    None,
+                );
+                return;
+            }
+        };
+        if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
+            self.set_last_error_for(
+                viewport,
+                character_loadout_error_text(&CharacterLoadoutError::JsonTooLarge),
+                None,
+            );
+            return;
+        }
+        let json = match std::fs::read_to_string(path) {
+            Ok(json) => json,
+            Err(error) => {
+                self.set_last_error_for(
+                    viewport,
+                    tf(
+                        "Failed to read character loadout: {}",
+                        &[&error.to_string()],
+                    ),
+                    None,
+                );
+                return;
+            }
+        };
+        let file = match parse_character_loadout_json(&json) {
+            Ok(file) => file,
+            Err(error) => {
+                self.set_last_error_for(viewport, character_loadout_error_text(&error), None);
+                return;
+            }
+        };
+        let loadout = match validate_character_loadout(
+            &file,
+            &self.state.empty_curtain_characters,
+            &self.state.empty_curtain,
+            &self.equipment_catalog,
+        ) {
+            Ok(loadout) => loadout,
+            Err(error) => {
+                self.set_last_error_for(viewport, character_loadout_error_text(&error), None);
+                return;
+            }
+        };
+        let operation = character_loadout_plugin_operation(&loadout);
+        self.submit_equipment_plugin_request(ctx, loadout.character.net_id, operation);
+    }
+
+    pub(crate) fn finish_character_loadout_export(
+        &mut self,
+        viewport: egui::ViewportId,
+        path: &std::path::Path,
+        json: &str,
+    ) {
+        match atomic_write_text(path, json) {
+            Ok(()) => {
+                self.status = t("Character loadout exported");
+                self.clear_last_error();
+            }
+            Err(error) => self.set_last_error_for(
+                viewport,
+                tf(
+                    "Failed to export character loadout: {}",
+                    &[&error.to_string()],
+                ),
                 None,
             ),
         }
@@ -633,6 +708,88 @@ impl DpsApp {
             ),
         }
     }
+}
+
+fn character_loadout_plugin_operation(
+    loadout: &ValidatedCharacterLoadout,
+) -> EquipmentPluginOperation {
+    let mut placements = Vec::with_capacity(loadout.placements.len());
+    for placement in &loadout.placements {
+        placements.push(EquipmentPluginPlacement {
+            equipment: placement.equipment,
+            row: placement.row,
+            column: placement.column,
+        });
+    }
+    EquipmentPluginOperation::EquipOneKey {
+        placements,
+        core: loadout.core,
+    }
+}
+
+fn character_loadout_error_text(error: &CharacterLoadoutError) -> String {
+    match error {
+        CharacterLoadoutError::JsonTooLarge => t("Character loadout file is too large"),
+        CharacterLoadoutError::InvalidJson => t("Character loadout JSON is invalid"),
+        CharacterLoadoutError::UnsupportedVersion(version) => tf(
+            "Unsupported character loadout version: {}",
+            &[&version.to_string()],
+        ),
+        CharacterLoadoutError::CharacterUnavailable(character_id) => tf(
+            "Character {} is not available in the current session",
+            &[&character_id.to_string()],
+        ),
+        CharacterLoadoutError::MissingCharacterPlan(_) => {
+            t("No character equipment template is available")
+        }
+        CharacterLoadoutError::MissingCore => t("Character loadout has no cassette"),
+        CharacterLoadoutError::MultipleCores => t("Character loadout has multiple cassettes"),
+        CharacterLoadoutError::MissingModules => t("Character loadout has no drive modules"),
+        CharacterLoadoutError::TooManyModules => t("Character loadout has too many drive modules"),
+        CharacterLoadoutError::MissingPlacement(uid) => tf(
+            "Equipped drive module {} has no captured position",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::InvalidUid(uid) => tf(
+            "Character loadout contains an invalid equipment UID: {}",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::DuplicateItem(uid) => tf(
+            "Character loadout references equipment more than once: {}",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::UnknownItem(item_id) => tf(
+            "Character loadout references unknown equipment: {}",
+            &[item_id],
+        ),
+        CharacterLoadoutError::MissingInventoryItem(uid) => tf(
+            "Equipment {} is not present in the current inventory",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::ItemMismatch(uid) => tf(
+            "Equipment {} no longer matches the exported item",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::WrongKind(uid) => tf(
+            "Equipment {} has the wrong type",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::ItemInUse(uid) => tf(
+            "Equipment {} is currently equipped by another character",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::InvalidPosition(uid) => tf(
+            "Equipment {} has an invalid position for this character",
+            &[&character_loadout_item_label(*uid)],
+        ),
+        CharacterLoadoutError::OverlappingModules => {
+            t("Character loadout contains overlapping drive modules")
+        }
+    }
+}
+
+fn character_loadout_item_label(uid: ItemUid) -> String {
+    format!("{}:{}", uid.slot, uid.serial)
 }
 
 fn draw_empty_curtain_grid(
@@ -950,10 +1107,6 @@ fn equipment_card_context_menu(
                     equipment: item.id,
                     locked,
                 },
-                mutation: PendingEquipmentMutation::SetLocked {
-                    equipment: item.id,
-                    locked,
-                },
             });
             ui.close();
             return;
@@ -970,10 +1123,6 @@ fn equipment_card_context_menu(
             *selection = Some(EquipmentEquipSelection::Submit {
                 character: HtItemNetId::ZERO,
                 operation: EquipmentPluginOperation::SetItemDiscarded {
-                    equipment: item.id,
-                    discarded,
-                },
-                mutation: PendingEquipmentMutation::SetDiscarded {
                     equipment: item.id,
                     discarded,
                 },
@@ -999,7 +1148,6 @@ fn equipment_card_context_menu(
                 *selection = Some(EquipmentEquipSelection::Submit {
                     character,
                     operation,
-                    mutation: PendingEquipmentMutation::Unequip(item.id),
                 });
                 ui.close();
                 return;
@@ -1030,11 +1178,6 @@ fn equipment_card_context_menu(
                                     character: target.net_id,
                                     operation: EquipmentPluginOperation::MoveCoreToCharacter {
                                         equipment: item.id,
-                                    },
-                                    mutation: PendingEquipmentMutation::Assign {
-                                        character: *target,
-                                        equipment: vec![item.id],
-                                        replacement: PendingEquipmentReplacement::Core,
                                     },
                                 },
                             });
@@ -1070,11 +1213,6 @@ fn equipment_card_context_menu(
                         EquipmentKind::Core => EquipmentEquipSelection::Submit {
                             character: character.net_id,
                             operation: EquipmentPluginOperation::EquipCore { equipment: item.id },
-                            mutation: PendingEquipmentMutation::Assign {
-                                character: *character,
-                                equipment: vec![item.id],
-                                replacement: PendingEquipmentReplacement::Core,
-                            },
                         },
                     });
                     ui.close();
@@ -1084,31 +1222,11 @@ fn equipment_card_context_menu(
     });
 }
 
-fn displaced_core_equipment(
-    items: &[EmptyCurtainItem],
-    character: HtItemNetId,
-    assigned_equipment: &[HtItemNetId],
-    catalog: &EquipmentCatalog,
-) -> Vec<HtItemNetId> {
-    items
-        .iter()
-        .filter(|item| {
-            item.character_net_id == Some(character)
-                && !assigned_equipment.contains(&item.id)
-                && catalog
-                    .items
-                    .get(&item.item_id)
-                    .is_some_and(|definition| definition.kind == EquipmentKind::Core)
-        })
-        .map(|item| item.id)
-        .collect()
-}
-
 fn build_one_key_plan(
     character: EmptyCurtainCharacter,
     items: &[EmptyCurtainItem],
     catalog: &EquipmentCatalog,
-) -> Result<(EquipmentPluginOperation, Vec<HtItemNetId>), OneKeyPlanError> {
+) -> Result<EquipmentPluginOperation, OneKeyPlanError> {
     let plan = catalog
         .plans
         .get(&character.character_id)
@@ -1182,16 +1300,10 @@ fn build_one_key_plan(
             )
         })
         .ok_or(OneKeyPlanError::MissingEquipment)?;
-    let mut equipment = selected.into_iter().collect::<Vec<_>>();
-    equipment.push(core.id);
-
-    Ok((
-        EquipmentPluginOperation::EquipOneKey {
-            placements,
-            core: core.id,
-        },
-        equipment,
-    ))
+    Ok(EquipmentPluginOperation::EquipOneKey {
+        placements,
+        core: core.id,
+    })
 }
 
 fn equipment_quality_rank(quality: &str) -> u8 {
@@ -2290,6 +2402,7 @@ fn calculator_stat_key(property: &str, catalog: &EquipmentCatalog) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::snapshot::CharacterLoadoutPlacement;
 
     #[test]
     fn session_reset_invalidates_pending_equipment_work() {
@@ -2305,10 +2418,7 @@ mod tests {
                 item_id: "module".to_owned(),
                 move_from_other_character: false,
             }),
-            plugin_request: Some(PendingPluginRequest {
-                request_id: 7,
-                mutation: PendingEquipmentMutation::Unequip(equipment),
-            }),
+            plugin_request: Some(PendingPluginRequest { request_id: 7 }),
             ..KongmuUiState::default()
         };
         state.filter_cache.valid = true;
@@ -2370,14 +2480,67 @@ mod tests {
             .collect::<Vec<_>>();
         items.push(item(1000, &plan.recommended_core, Vec::new(), Vec::new()));
 
-        let (operation, selected) = build_one_key_plan(character, &items, &catalog)
+        let operation = build_one_key_plan(character, &items, &catalog)
             .expect("complete inventory must produce a one-key plan");
         let EquipmentPluginOperation::EquipOneKey { placements, core } = operation else {
             panic!("one-key planning must use the native batch operation")
         };
         assert_eq!(placements.len(), plan.recommended_modules.len());
         assert_eq!(core, items.last().expect("test core").id);
-        assert_eq!(selected.len(), plan.recommended_modules.len() + 1);
+    }
+
+    #[test]
+    fn imported_loadout_preserves_saved_placements_in_native_batch_operation() {
+        let character = EmptyCurtainCharacter {
+            net_id: HtItemNetId {
+                solt: 100,
+                serial: 101,
+            },
+            character_id: 1076,
+        };
+        let core = HtItemNetId {
+            solt: 200,
+            serial: 201,
+        };
+        let first = HtItemNetId { solt: 1, serial: 2 };
+        let second = HtItemNetId { solt: 3, serial: 4 };
+        let loadout = ValidatedCharacterLoadout {
+            character,
+            core,
+            placements: vec![
+                CharacterLoadoutPlacement {
+                    equipment: first,
+                    row: 1,
+                    column: 2,
+                },
+                CharacterLoadoutPlacement {
+                    equipment: second,
+                    row: 4,
+                    column: 5,
+                },
+            ],
+        };
+
+        let operation = character_loadout_plugin_operation(&loadout);
+
+        assert_eq!(
+            operation,
+            EquipmentPluginOperation::EquipOneKey {
+                placements: vec![
+                    EquipmentPluginPlacement {
+                        equipment: first,
+                        row: 1,
+                        column: 2,
+                    },
+                    EquipmentPluginPlacement {
+                        equipment: second,
+                        row: 4,
+                        column: 5,
+                    },
+                ],
+                core,
+            }
+        );
     }
 
     #[test]
@@ -2461,50 +2624,8 @@ mod tests {
             discarded: false,
             character_net_id: None,
             equipped_character_id: None,
+            equipped_placement: None,
         }
-    }
-
-    #[test]
-    fn core_assignment_only_displaces_other_target_cores() {
-        let target = HtItemNetId {
-            solt: 10,
-            serial: 11,
-        };
-        let other = HtItemNetId {
-            solt: 12,
-            serial: 13,
-        };
-        let mut old_core = item(1, "core", Vec::new(), Vec::new());
-        old_core.character_net_id = Some(target);
-        let new_core = item(2, "core", Vec::new(), Vec::new());
-        let mut target_module = item(3, "module", Vec::new(), Vec::new());
-        target_module.character_net_id = Some(target);
-        let mut other_core = item(4, "core", Vec::new(), Vec::new());
-        other_core.character_net_id = Some(other);
-        let mut catalog = EquipmentCatalog::default();
-        catalog.items.insert(
-            "core".to_owned(),
-            item_def(EquipmentKind::Core, "orange", "", None, None),
-        );
-        catalog.items.insert(
-            "module".to_owned(),
-            item_def(EquipmentKind::Module, "orange", "Hen4", Some(4), None),
-        );
-
-        assert_eq!(
-            displaced_core_equipment(
-                &[
-                    old_core.clone(),
-                    new_core.clone(),
-                    target_module,
-                    other_core
-                ],
-                target,
-                &[new_core.id],
-                &catalog,
-            ),
-            vec![old_core.id]
-        );
     }
 
     #[test]
