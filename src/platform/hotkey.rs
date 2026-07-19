@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Mutex, OnceLock, RwLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
 };
 use std::thread;
 use std::time::Duration;
@@ -12,9 +12,9 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui;
 use windows_sys::Win32::Foundation::{GetLastError, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    VK_CONTROL, VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9, VK_F10, VK_F11,
-    VK_F12, VK_HOME, VK_INSERT, VK_K, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU, VK_RCONTROL,
-    VK_RMENU, VK_RSHIFT, VK_SHIFT,
+    GetAsyncKeyState, VK_CONTROL, VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8, VK_F9,
+    VK_F10, VK_F11, VK_F12, VK_HOME, VK_INSERT, VK_K, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_MENU,
+    VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, KBDLLHOOKSTRUCT, MSG, PM_REMOVE,
@@ -35,7 +35,9 @@ static HOTKEY_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static PASSTHROUGH_VK: AtomicU64 = AtomicU64::new(VK_HOME as u64);
 static MODIFIERS_DOWN: AtomicU64 = AtomicU64::new(0);
 static WATCHED_KEYS_DOWN: AtomicU64 = AtomicU64::new(0);
+static FOREGROUND_PROCESS_ID: AtomicU32 = AtomicU32::new(0);
 static HOTKEY_RECORDING: AtomicBool = AtomicBool::new(false);
+static MOUSE_PASSTHROUGH_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const MODIFIER_LEFT_CTRL: u64 = 1 << 0;
 const MODIFIER_RIGHT_CTRL: u64 = 1 << 1;
@@ -206,12 +208,45 @@ fn update_modifier_state(virtual_key: u32, pressed: bool) -> bool {
 }
 
 fn pressed_modifiers() -> PressedModifiers {
-    let bits = MODIFIERS_DOWN.load(Ordering::Relaxed);
+    pressed_modifiers_from_bits(MODIFIERS_DOWN.load(Ordering::Relaxed))
+}
+
+fn pressed_modifiers_from_bits(bits: u64) -> PressedModifiers {
     PressedModifiers {
         ctrl: bits & MODIFIER_CTRL_MASK != 0,
         alt: bits & MODIFIER_ALT_MASK != 0,
         shift: bits & MODIFIER_SHIFT_MASK != 0,
     }
+}
+
+fn modifier_bits(ctrl: bool, alt: bool, shift: bool) -> u64 {
+    let mut bits = 0;
+    if ctrl {
+        bits |= MODIFIER_GENERIC_CTRL;
+    }
+    if alt {
+        bits |= MODIFIER_GENERIC_ALT;
+    }
+    if shift {
+        bits |= MODIFIER_GENERIC_SHIFT;
+    }
+    bits
+}
+
+fn async_key_down(virtual_key: u32) -> bool {
+    // SAFETY: GetAsyncKeyState reads process-independent keyboard state for a valid virtual key.
+    unsafe { GetAsyncKeyState(virtual_key as i32) < 0 }
+}
+
+fn reconcile_async_modifier_state() {
+    MODIFIERS_DOWN.store(
+        modifier_bits(
+            async_key_down(VK_CONTROL as u32),
+            async_key_down(VK_MENU as u32),
+            async_key_down(VK_SHIFT as u32),
+        ),
+        Ordering::Relaxed,
+    );
 }
 
 fn binding_matches(binding: HotkeyBinding, virtual_key: u32, modifiers: PressedModifiers) -> bool {
@@ -246,6 +281,10 @@ fn passthrough_matches(virtual_key: u32, modifiers: PressedModifiers) -> bool {
         virtual_key,
         modifiers,
     )
+}
+
+fn hook_handles_passthrough(app_is_foreground: bool, mouse_passthrough_active: bool) -> bool {
+    !app_is_foreground || mouse_passthrough_active
 }
 
 fn unmodified_key_matches(
@@ -292,9 +331,41 @@ fn release_key(virtual_key: u32) {
     }
 }
 
+fn reset_pressed_input_state(modifiers_down: &AtomicU64, watched_keys_down: &AtomicU64) {
+    modifiers_down.store(0, Ordering::Relaxed);
+    watched_keys_down.store(0, Ordering::Relaxed);
+}
+
+fn reconcile_foreground_process(
+    foreground_process_id: &AtomicU32,
+    modifiers_down: &AtomicU64,
+    watched_keys_down: &AtomicU64,
+    current_process_id: u32,
+) {
+    let previous_process_id = foreground_process_id.swap(current_process_id, Ordering::Relaxed);
+    if previous_process_id != current_process_id {
+        reset_pressed_input_state(modifiers_down, watched_keys_down);
+    }
+}
+
 fn reset_hook_state() {
-    MODIFIERS_DOWN.store(0, Ordering::Relaxed);
-    WATCHED_KEYS_DOWN.store(0, Ordering::Relaxed);
+    reset_pressed_input_state(&MODIFIERS_DOWN, &WATCHED_KEYS_DOWN);
+    FOREGROUND_PROCESS_ID.store(0, Ordering::Relaxed);
+}
+
+fn foreground_process_id() -> u32 {
+    // SAFETY: The low-level keyboard hook runs on a Windows hook thread; querying the current
+    // foreground window and its owning process does not require ownership of the returned HWND.
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.is_null() {
+        return 0;
+    }
+    let mut process_id = 0_u32;
+    // SAFETY: foreground was returned by GetForegroundWindow and the out pointer is valid.
+    unsafe {
+        GetWindowThreadProcessId(foreground, &mut process_id);
+    }
+    process_id
 }
 
 // SAFETY: Windows calls this function with the WH_KEYBOARD_LL hook ABI and hook-owned
@@ -315,6 +386,14 @@ unsafe extern "system" fn low_level_keyboard_proc(
             // SAFETY: Forwarding the hook parameters exactly as received is required by the API.
             return unsafe { CallNextHookEx(std::ptr::null_mut(), code, w_param, l_param) };
         }
+        let foreground_process_id = foreground_process_id();
+        reconcile_foreground_process(
+            &FOREGROUND_PROCESS_ID,
+            &MODIFIERS_DOWN,
+            &WATCHED_KEYS_DOWN,
+            foreground_process_id,
+        );
+
         let virtual_key = keyboard.vkCode;
         let is_modifier = update_modifier_state(virtual_key, pressed);
         let initial_press = if pressed {
@@ -326,24 +405,15 @@ unsafe extern "system" fn low_level_keyboard_proc(
             false
         };
 
-        // SAFETY: The low-level keyboard hook is called on a Windows hook thread; querying
-        // the current foreground window does not require ownership of the returned HWND.
-        let foreground = unsafe { GetForegroundWindow() };
-        let mut foreground_process_id = 0_u32;
-        if !foreground.is_null() {
-            // SAFETY: foreground was returned by GetForegroundWindow and the out pointer is valid.
-            unsafe {
-                GetWindowThreadProcessId(foreground, &mut foreground_process_id);
-            }
-        }
-        // Foreground app input is consumed through egui so shortcut recording and text focus stay
-        // authoritative. Modifier/latch bookkeeping above still runs to avoid stale global state.
-        if foreground_process_id == std::process::id() || is_modifier || !pressed || !initial_press
-        {
+        if is_modifier || !pressed || !initial_press {
             // SAFETY: Forwarding the hook parameters exactly as received is required by the API.
             return unsafe { CallNextHookEx(std::ptr::null_mut(), code, w_param, l_param) };
         }
 
+        // A fullscreen focus transfer can omit the modifier key-up callback while Windows already
+        // considers the key released. Refresh before matching Home/F-key chords so a stale Alt bit
+        // cannot block the passthrough recovery hotkey.
+        reconcile_async_modifier_state();
         let modifiers = pressed_modifiers();
         if HOTKEY_RECORDING.load(Ordering::Relaxed) {
             // Shortcut capture only accepts input from the focused Console viewport. If focus
@@ -351,8 +421,20 @@ unsafe extern "system" fn low_level_keyboard_proc(
             // the old binding in the game or another application.
             return unsafe { CallNextHookEx(std::ptr::null_mut(), code, w_param, l_param) };
         }
-        if passthrough_matches(virtual_key, modifiers) {
+        let app_is_foreground = foreground_process_id == std::process::id();
+        if hook_handles_passthrough(
+            app_is_foreground,
+            MOUSE_PASSTHROUGH_ACTIVE.load(Ordering::Relaxed),
+        ) && passthrough_matches(virtual_key, modifiers)
+        {
             send_hotkey(HotkeyEvent::TogglePassthrough);
+        }
+        // Foreground app input normally belongs to egui. A mouse-passthrough viewport is the
+        // exception: Windows can leave its HWND foreground while egui receives no keyboard event,
+        // so the global hook above owns the recovery hotkey until passthrough is disabled.
+        if app_is_foreground {
+            // SAFETY: Forwarding the hook parameters exactly as received is required by the API.
+            return unsafe { CallNextHookEx(std::ptr::null_mut(), code, w_param, l_param) };
         }
         if is_configurable_key(virtual_key)
             && let Some(action) =
@@ -391,6 +473,7 @@ impl HotkeyHandle {
         );
         store_global_hotkeys(global_hotkeys);
         HOTKEY_RECORDING.store(false, Ordering::Relaxed);
+        MOUSE_PASSTHROUGH_ACTIVE.store(false, Ordering::Relaxed);
         reset_hook_state();
         {
             let state = HOTKEY_STATE.get_or_init(|| Mutex::new(HotkeyState::default()));
@@ -459,12 +542,17 @@ impl HotkeyHandle {
     pub fn set_recording(&self, recording: bool) {
         HOTKEY_RECORDING.store(recording, Ordering::Relaxed);
     }
+
+    pub fn set_mouse_passthrough(&self, active: bool) {
+        MOUSE_PASSTHROUGH_ACTIVE.store(active, Ordering::Relaxed);
+    }
 }
 
 impl Drop for HotkeyHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         HOTKEY_RECORDING.store(false, Ordering::Relaxed);
+        MOUSE_PASSTHROUGH_ACTIVE.store(false, Ordering::Relaxed);
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -574,6 +662,48 @@ mod tests {
         assert!(!claim_key_bit(&state, bit));
         state.fetch_and(!bit, Ordering::Relaxed);
         assert!(claim_key_bit(&state, bit));
+    }
+
+    #[test]
+    fn foreground_process_change_releases_stale_hotkey_state() {
+        let foreground_process = AtomicU32::new(100);
+        let modifiers = AtomicU64::new(MODIFIER_LEFT_ALT);
+        let watched =
+            AtomicU64::new(watched_key_bit(VK_HOME as u32).expect("Home should be watched"));
+
+        reconcile_foreground_process(&foreground_process, &modifiers, &watched, 100);
+        assert_eq!(modifiers.load(Ordering::Relaxed), MODIFIER_LEFT_ALT);
+        assert_ne!(watched.load(Ordering::Relaxed), 0);
+
+        reconcile_foreground_process(&foreground_process, &modifiers, &watched, 200);
+        assert_eq!(modifiers.load(Ordering::Relaxed), 0);
+        assert_eq!(watched.load(Ordering::Relaxed), 0);
+        assert!(claim_key_bit(
+            &watched,
+            watched_key_bit(VK_HOME as u32).expect("Home should be watched")
+        ));
+    }
+
+    #[test]
+    fn passthrough_hook_keeps_recovery_key_when_overlay_stays_foreground() {
+        assert!(hook_handles_passthrough(false, false));
+        assert!(!hook_handles_passthrough(true, false));
+        assert!(hook_handles_passthrough(true, true));
+    }
+
+    #[test]
+    fn physical_modifier_snapshot_replaces_a_stale_alt_latch() {
+        assert_eq!(
+            pressed_modifiers_from_bits(MODIFIER_LEFT_ALT),
+            PressedModifiers {
+                alt: true,
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            pressed_modifiers_from_bits(modifier_bits(false, false, false)),
+            PressedModifiers::default()
+        );
     }
 
     #[test]

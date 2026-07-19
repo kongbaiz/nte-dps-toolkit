@@ -749,6 +749,7 @@
   "Import PCAPNG": "PCAPNG をインポート",
   "Keep control while playing": "プレイ中も操作を維持",
   "Live capture is already running": "ライブキャプチャはすでに実行中です",
+  "Live capture is not running": "ライブキャプチャは開始されていません",
   "Marker {} · {}s": "マーカー {} · {}秒",
   "Motion": "モーション",
   "Notifications": "通知",

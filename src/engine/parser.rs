@@ -43,6 +43,11 @@ pub const WOODEN_DAMAGE_DESCRIPTIONS_PATH: &str = "res/data/skills/wooden_damage
 pub const ABILITY_TIPS_PATH: &str = "res/data/skills/ability_tips.json";
 pub const EQUIPMENT_CATALOG_PATH: &str = "res/data/equipment/equipment.json";
 
+// DT_SkillDamageData assigns Jin's time-stop katana hits to an unnamed internal
+// ability, while the parent ability owns those GE rows and the localized name.
+const ABILITY_DISPLAY_NAME_ALIASES: [(&str, &str); 1] =
+    [("GA_Jin_UltraSkill_Melee", "GA_Jin_UltraSkill")];
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EquipmentKind {
@@ -334,6 +339,8 @@ pub struct UltraTimeStopEntry {
     pub montage_asset: String,
     #[serde(default)]
     pub activation_cooldown_tags: Vec<String>,
+    #[serde(default)]
+    pub activation_evidence_tags: Vec<String>,
     #[serde(default)]
     pub end_ability_event_seconds: f64,
     #[serde(default)]
@@ -838,7 +845,7 @@ pub fn load_ability_tip_names(path: &Path, language: Language) -> Result<HashMap
         .and_then(serde_json::Value::as_object)
         .context("技能说明表缺少 abilities")?;
     let field_priority = ability_name_field_priority(language);
-    Ok(abilities
+    let mut names = abilities
         .iter()
         .filter_map(|(ability_name, row)| {
             // Some name fields ship the game's rich-text markup baked in (e.g.
@@ -852,7 +859,15 @@ pub fn load_ability_tip_names(path: &Path, language: Language) -> Result<HashMap
             })?;
             Some((ability_name.clone(), name))
         })
-        .collect())
+        .collect::<HashMap<_, _>>();
+    for (alias, source) in ABILITY_DISPLAY_NAME_ALIASES {
+        if !names.contains_key(alias)
+            && let Some(name) = names.get(source).cloned()
+        {
+            names.insert(alias.to_owned(), name);
+        }
+    }
+    Ok(names)
 }
 
 fn ability_name_field_priority(language: Language) -> [&'static str; 3] {
@@ -2968,6 +2983,24 @@ mod character_tests {
     }
 
     #[test]
+    fn ability_tip_names_alias_jin_ultra_melee_to_its_named_parent() {
+        let path = write_temp_json(
+            "jin_ultra_melee_ability_tips.json",
+            r#"{"abilities":{
+                "GA_Jin_UltraSkill": {"name_zh": "浮世来潮", "name_en": "World's Tide", "name_ja": "浮世の波"},
+                "GA_Jin_UltraSkill_Melee": {"name_zh": "", "name_en": "", "name_ja": ""}
+            }}"#,
+        );
+
+        let names = load_ability_tip_names(&path, Language::SimplifiedChinese).unwrap();
+
+        assert_eq!(
+            names.get("GA_Jin_UltraSkill_Melee").map(String::as_str),
+            Some("浮世来潮")
+        );
+    }
+
+    #[test]
     fn loads_attack_types_from_skill_damage_assets() {
         let skills = load_gameplay_effect_skills(Path::new(SKILL_DAMAGE_DATA_PATH)).unwrap();
 
@@ -3369,8 +3402,17 @@ mod character_tests {
         let entries = load_ultra_time_stops(Path::new(ULTRA_TIME_STOP_DATA_PATH))
             .expect("ultra time-stop resource should load");
         let mut specific_tag_owners = HashMap::new();
+        let mut evidence_tag_owners = HashMap::new();
 
         assert!(!entries.is_empty());
+        assert!(
+            entries
+                .get(&1020)
+                .expect("Haniel time-stop entry should exist")
+                .activation_evidence_tags
+                .iter()
+                .any(|tag| tag == "Buff_Haniel_UltraSkill_Earphone")
+        );
         for (char_id, entry) in entries {
             assert!(
                 !entry.activation_cooldown_tags.is_empty(),
@@ -3389,6 +3431,14 @@ mod character_tests {
                     specific_tag_owners.insert(tag.clone(), char_id),
                     None,
                     "activation cooldown tag {tag} belongs to multiple characters"
+                );
+            }
+            for tag in &entry.activation_evidence_tags {
+                assert!(!tag.is_empty());
+                assert_eq!(
+                    evidence_tag_owners.insert(tag.clone(), char_id),
+                    None,
+                    "activation evidence tag {tag} belongs to multiple characters"
                 );
             }
         }

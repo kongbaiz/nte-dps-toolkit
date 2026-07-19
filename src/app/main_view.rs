@@ -63,6 +63,14 @@ fn main_width_class(width: f32) -> MainWidthClass {
     }
 }
 
+fn hud_empty_state_text_key(capture_running: bool, replay_running: bool) -> &'static str {
+    if capture_running || replay_running {
+        "Waiting for damage data"
+    } else {
+        "Live capture is not running"
+    }
+}
+
 impl DpsApp {
     pub(crate) fn abyss_selector(&mut self, ui: &mut egui::Ui) {
         if !self.state.abyss.is_active() {
@@ -1153,15 +1161,18 @@ impl DpsApp {
         };
 
         if rows.is_empty() && total_damage <= 0.0 && team_dps <= 0.0 {
-            let empty = egui::Rect::from_min_size(
-                egui::pos2(left, area.top() + 8.0),
-                egui::vec2(width.min(210.0), 38.0),
+            let empty = egui::Rect::from_min_max(
+                egui::pos2(left, area.top()),
+                egui::pos2(right, area.bottom()),
             );
             paint_haloed_with_halo(
                 &painter,
-                egui::pos2(empty.left(), empty.center().y),
-                egui::Align2::LEFT_CENTER,
-                t("Waiting for damage data"),
+                empty.center(),
+                egui::Align2::CENTER_CENTER,
+                t(hud_empty_state_text_key(
+                    self.capture.is_some(),
+                    self.replay_thread.is_some(),
+                )),
                 egui::FontId::proportional(13.0),
                 display_muted,
                 display_halo,
@@ -2432,6 +2443,22 @@ fn toolbar_button_group_width<'a>(
 #[cfg(test)]
 mod responsive_tests {
     use super::*;
+
+    #[test]
+    fn hud_empty_state_distinguishes_idle_from_active_capture() {
+        assert_eq!(
+            hud_empty_state_text_key(false, false),
+            "Live capture is not running"
+        );
+        assert_eq!(
+            hud_empty_state_text_key(true, false),
+            "Waiting for damage data"
+        );
+        assert_eq!(
+            hud_empty_state_text_key(false, true),
+            "Waiting for damage data"
+        );
+    }
 
     #[test]
     fn main_width_class_uses_exact_breakpoints() {

@@ -38,6 +38,11 @@
         "CoolDown.Player.UltraSkill.F",
         "CoolDown.Player.UltraSkill.Skia"
       ],
+      "activation_evidence_tags": [
+        "Buff_Player_Skia_UltraSkill3_",
+        "Buff_Player_Skia_UltraSkillPassivity2",
+        "Buff_Player_Skia_UltraSkill3_Outline"
+      ],
       "end_ability_event_seconds": 4.162118,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -84,6 +89,11 @@
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
       ],
+      "activation_evidence_tags": [
+        "Buff_Haniel_Skill_UltraSkill",
+        "Buff_Haniel_UltraSkill_Atkup",
+        "Buff_Haniel_UltraSkill_Earphone"
+      ],
       "end_ability_event_seconds": 4.237614,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -114,6 +124,9 @@
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
       ],
+      "activation_evidence_tags": [
+        "Buff_CangUltraSkill_Field"
+      ],
       "end_ability_event_seconds": 2.854958,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -143,6 +156,9 @@
       "ability_id": "GA_Adler_UltraSkill",
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
+      ],
+      "activation_evidence_tags": [
+        "Buff_AdlerUltraSkill_QiHaiAdd"
       ],
       "end_ability_event_seconds": 3.025935,
       "trigger_end_event_tags": [
@@ -204,6 +220,9 @@
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
       ],
+      "activation_evidence_tags": [
+        "Buff_Jin_UltraskillEffect"
+      ],
       "end_ability_event_seconds": 2.183333,
       "trigger_end_event_tags": [
         "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop"
@@ -233,6 +252,10 @@
       "ability_id": "GA_Kuhara_UltraSkill",
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.Kuhara"
+      ],
+      "activation_evidence_tags": [
+        "Buff_Kuhara_GrowSeed_UltraSkill",
+        "Buff_Kuhara_UltraSkill_Display"
       ],
       "end_ability_event_seconds": 5.599441,
       "trigger_end_event_tags": [
@@ -264,6 +287,10 @@
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
       ],
+      "activation_evidence_tags": [
+        "Buff_Chaos_Ultraskill",
+        "Buff_Chaos_Ultraskill_display"
+      ],
       "end_ability_event_seconds": 4.802493,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -279,6 +306,10 @@
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
       ],
+      "activation_evidence_tags": [
+        "Buff_Chiichan073_UltraSkill_BigA",
+        "Buff_Chiichan073_UltraSkillDisplay"
+      ],
       "end_ability_event_seconds": 4.250936,
       "trigger_end_event_tags": [
         "Event.Montage.Player.Common.EndAbilitySkill"
@@ -293,6 +324,11 @@
       "ability_id": "GA_Oneiroi_UltraSkill",
       "activation_cooldown_tags": [
         "CoolDown.Player.UltraSkill.F"
+      ],
+      "activation_evidence_tags": [
+        "Buff_Oneiroi_UltraSkill_Treat",
+        "Buff_Oneiroi_UltraSkill_Treat_Period",
+        "Buff_Oneiroi_UltraSkill_Damage"
       ],
       "end_ability_event_seconds": 4.349373,
       "trigger_end_event_tags": [
