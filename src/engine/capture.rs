@@ -56,6 +56,7 @@ const MAX_IGNORABLE_BINARY_PACKET_LEN: usize = 96;
 const UNREADABLE_PROTOCOL_TEXT: &str = "未解析到可读协议文本";
 const CAPTURE_SNAPLEN: u32 = 65_535;
 const RAW_CAPTURE_FLUSH_INTERVAL: u64 = 256;
+const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 /// Bounded queue between the acquisition thread and the parser thread. Large enough that realistic
 /// game traffic never fills it, so a parse latency spike no longer stalls `pcap_next_ex` (which
 /// would let the Npcap kernel buffer overflow and drop frames). If it ever fills under pathological
@@ -802,6 +803,23 @@ fn ultra_activation_character_ids(
     ids
 }
 
+fn ultra_activation_evidence_character_ids(
+    decoded_text: &str,
+    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for (char_id, entry) in ultra_time_stops {
+        if entry
+            .activation_evidence_tags
+            .iter()
+            .any(|marker| !marker.is_empty() && decoded_text.contains(marker))
+        {
+            ids.push(*char_id);
+        }
+    }
+    ids
+}
+
 fn decode_payload_text(data: &[u8]) -> String {
     decode_payload_text_filtered(data, |_| true).text
 }
@@ -815,6 +833,7 @@ fn decode_summary_payload_text(
             || value.contains("ConditionState_Success")
             || value.contains("UltraSkill")
             || !ultra_montage_character_ids(value, ultra_time_stops).is_empty()
+            || !ultra_activation_evidence_character_ids(value, ultra_time_stops).is_empty()
             || ultra_time_stops.values().any(|entry| {
                 entry
                     .ignored_cooldown_tags
@@ -1219,8 +1238,9 @@ fn extra_time_stop_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<T
 #[derive(Default)]
 struct UltraTimeStopTracker {
     recent_emitted: HashMap<u32, f64>,
-    pending_cooldowns: Vec<PendingUltraTimeStop>,
+    pending_casts: Vec<PendingUltraCast>,
     recent_montages: Vec<RecentUltraMontage>,
+    recent_character_evidence: Vec<RecentUltraCharacterEvidence>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1229,11 +1249,26 @@ enum UltraTimeStopEvidence {
     Weak,
 }
 
-struct PendingUltraTimeStop {
+struct PendingUltraCast {
     timestamp: f64,
     flow: Option<UltraTimeStopFlowKey>,
     from_time_actor: bool,
-    evidence: UltraTimeStopEvidence,
+    cast_evidence: UltraTimeStopEvidence,
+}
+
+impl PendingUltraCast {
+    fn confirmed_evidence(
+        &self,
+        identity_evidence: UltraTimeStopEvidence,
+    ) -> UltraTimeStopEvidence {
+        if self.cast_evidence == UltraTimeStopEvidence::Strong
+            || identity_evidence == UltraTimeStopEvidence::Strong
+        {
+            UltraTimeStopEvidence::Strong
+        } else {
+            UltraTimeStopEvidence::Weak
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1242,7 +1277,29 @@ struct UltraTimeStopFlowKey {
     destination: (Ipv4Addr, u16),
 }
 
+impl UltraTimeStopFlowKey {
+    fn new(source: (Ipv4Addr, u16), destination: (Ipv4Addr, u16)) -> Self {
+        if source <= destination {
+            Self {
+                source,
+                destination,
+            }
+        } else {
+            Self {
+                source: destination,
+                destination: source,
+            }
+        }
+    }
+}
+
 struct RecentUltraMontage {
+    timestamp: f64,
+    char_id: u32,
+    flow: Option<UltraTimeStopFlowKey>,
+}
+
+struct RecentUltraCharacterEvidence {
     timestamp: f64,
     char_id: u32,
     flow: Option<UltraTimeStopFlowKey>,
@@ -1257,10 +1314,10 @@ fn export_ultra_time_stop_flow_key(
         Some((ip.parse().ok()?, port.parse().ok()?))
     }
 
-    Some(UltraTimeStopFlowKey {
-        source: endpoint(source)?,
-        destination: endpoint(destination)?,
-    })
+    Some(UltraTimeStopFlowKey::new(
+        endpoint(source)?,
+        endpoint(destination)?,
+    ))
 }
 
 impl UltraTimeStopTracker {
@@ -1274,7 +1331,10 @@ impl UltraTimeStopTracker {
         ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     ) -> Vec<TimeStopEvent> {
         let mut events = extra_time_stop_events_from_text(timestamp, decoded_text);
-        self.resolve_finished_cooldowns(timestamp);
+        self.resolve_finished_casts(timestamp);
+        if is_ultra_cooldown_state_snapshot(decoded_text) {
+            return events;
+        }
         self.observe_ultra_montages(
             timestamp,
             decoded_text,
@@ -1282,6 +1342,24 @@ impl UltraTimeStopTracker {
             flow,
             ultra_time_stops,
         );
+        let character_evidence_ids =
+            ultra_activation_evidence_character_ids(decoded_text, ultra_time_stops);
+
+        if !server_to_client {
+            self.observe_character_evidence(timestamp, &character_evidence_ids, flow);
+            if let [char_id] = character_evidence_ids.as_slice()
+                && let Some(event) = self.resolve_cast_from_character_evidence(
+                    timestamp,
+                    *char_id,
+                    flow,
+                    ultra_time_stops,
+                )
+            {
+                events.push(event);
+            }
+            return events;
+        }
+
         let (mut special_events, handled_special_cooldown) = special_ultra_cooldown_events(
             timestamp,
             decoded_text,
@@ -1290,7 +1368,7 @@ impl UltraTimeStopTracker {
         );
         events.append(&mut special_events);
 
-        if handled_special_cooldown || !server_to_client {
+        if handled_special_cooldown {
             return events;
         }
 
@@ -1307,40 +1385,63 @@ impl UltraTimeStopTracker {
         }
 
         let had_time_actor = self.take_time_actor(flow);
+        let cast_evidence = if had_time_actor {
+            UltraTimeStopEvidence::Strong
+        } else {
+            UltraTimeStopEvidence::Weak
+        };
+        let character_evidence_char_id = self.consume_recent_character_evidence(timestamp, flow);
         let montage_char_id = self.consume_recent_ultra_montage(flow);
         let resolved = match activation_char_ids.as_slice() {
             [activation_id] => Some((*activation_id, UltraTimeStopEvidence::Strong)),
-            [] => match (montage_char_id, declared_ids) {
-                (Some(montage_id), [declared_id]) if montage_id != *declared_id => None,
-                (Some(montage_id), _) => Some((montage_id, UltraTimeStopEvidence::Strong)),
-                (None, [declared_id]) if had_time_actor => {
-                    Some((*declared_id, UltraTimeStopEvidence::Strong))
+            [] => {
+                if let Some(char_id) = character_evidence_char_id {
+                    Some((char_id, UltraTimeStopEvidence::Strong))
+                } else {
+                    match (montage_char_id, declared_ids) {
+                        (Some(montage_id), [declared_id]) if montage_id != *declared_id => None,
+                        (Some(montage_id), _) => Some((montage_id, UltraTimeStopEvidence::Strong)),
+                        (None, [declared_id]) if had_time_actor => {
+                            Some((*declared_id, UltraTimeStopEvidence::Strong))
+                        }
+                        (None, [declared_id]) if !has_time_actor => {
+                            Some((*declared_id, UltraTimeStopEvidence::Weak))
+                        }
+                        _ => None,
+                    }
                 }
-                (None, [declared_id]) if !has_time_actor => {
-                    Some((*declared_id, UltraTimeStopEvidence::Weak))
-                }
-                _ => None,
-            },
+            }
             _ => None,
         };
         match resolved {
             Some((char_id, evidence)) => {
+                let associated_cast = (evidence == UltraTimeStopEvidence::Strong)
+                    .then(|| self.recent_cast_index(timestamp, flow))
+                    .flatten();
+                let activation_timestamp = associated_cast
+                    .map(|index| self.pending_casts[index].timestamp)
+                    .unwrap_or(timestamp);
+                let evidence = associated_cast
+                    .map(|index| self.pending_casts[index].confirmed_evidence(evidence))
+                    .unwrap_or(evidence);
                 if let Some(event) = fixed_ultra_time_stop_event(
-                    timestamp,
+                    activation_timestamp,
                     char_id,
                     evidence,
                     ultra_time_stops,
                     &mut self.recent_emitted,
                 ) {
-                    self.clear_internal_cooldowns(flow);
                     events.push(event);
                 } else if evidence == UltraTimeStopEvidence::Weak {
-                    self.queue_internal_cooldown(timestamp, flow);
+                    self.queue_cast(timestamp, flow, cast_evidence);
+                }
+                if let Some(index) = associated_cast {
+                    self.pending_casts.swap_remove(index);
                 }
             }
             None => {
                 if !has_time_actor || had_time_actor {
-                    self.queue_internal_cooldown(timestamp, flow);
+                    self.queue_cast(timestamp, flow, cast_evidence);
                 }
             }
         }
@@ -1349,52 +1450,142 @@ impl UltraTimeStopTracker {
 
     fn start_time_actor(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
         if self
-            .pending_cooldowns
+            .pending_casts
             .iter()
             .any(|pending| pending.flow == flow && pending.from_time_actor)
         {
             return;
         }
-        self.clear_internal_cooldowns(flow);
-        self.pending_cooldowns.push(PendingUltraTimeStop {
+        self.pending_casts.push(PendingUltraCast {
             timestamp,
             flow,
             from_time_actor: true,
-            evidence: UltraTimeStopEvidence::Strong,
+            cast_evidence: UltraTimeStopEvidence::Strong,
         });
     }
 
     fn take_time_actor(&mut self, flow: Option<UltraTimeStopFlowKey>) -> bool {
         let Some(index) = self
-            .pending_cooldowns
+            .pending_casts
             .iter()
             .rposition(|pending| pending.flow == flow && pending.from_time_actor)
         else {
             return false;
         };
-        self.pending_cooldowns.swap_remove(index);
+        self.pending_casts.swap_remove(index);
         true
     }
 
-    fn queue_internal_cooldown(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
-        if self
-            .pending_cooldowns
-            .iter()
-            .any(|pending| pending.flow == flow && !pending.from_time_actor)
-        {
+    fn queue_cast(
+        &mut self,
+        timestamp: f64,
+        flow: Option<UltraTimeStopFlowKey>,
+        cast_evidence: UltraTimeStopEvidence,
+    ) {
+        if self.pending_casts.iter().any(|pending| {
+            pending.flow == flow && !pending.from_time_actor && pending.timestamp == timestamp
+        }) {
             return;
         }
-        self.pending_cooldowns.push(PendingUltraTimeStop {
+        self.pending_casts.push(PendingUltraCast {
             timestamp,
             flow,
             from_time_actor: false,
-            evidence: UltraTimeStopEvidence::Weak,
+            cast_evidence,
         });
     }
 
-    fn clear_internal_cooldowns(&mut self, flow: Option<UltraTimeStopFlowKey>) {
-        self.pending_cooldowns
-            .retain(|pending| pending.flow != flow || pending.from_time_actor);
+    fn observe_character_evidence(
+        &mut self,
+        timestamp: f64,
+        char_ids: &[u32],
+        flow: Option<UltraTimeStopFlowKey>,
+    ) {
+        self.recent_character_evidence.retain(|candidate| {
+            let age = timestamp - candidate.timestamp;
+            (0.0..=ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS).contains(&age)
+        });
+        for char_id in char_ids {
+            if !self
+                .recent_character_evidence
+                .iter()
+                .any(|candidate| candidate.char_id == *char_id && candidate.flow == flow)
+            {
+                self.recent_character_evidence
+                    .push(RecentUltraCharacterEvidence {
+                        timestamp,
+                        char_id: *char_id,
+                        flow,
+                    });
+            }
+        }
+    }
+
+    fn consume_recent_character_evidence(
+        &mut self,
+        timestamp: f64,
+        flow: Option<UltraTimeStopFlowKey>,
+    ) -> Option<u32> {
+        self.recent_character_evidence.retain(|candidate| {
+            let age = timestamp - candidate.timestamp;
+            (0.0..=ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS).contains(&age)
+        });
+        let mut char_id = None;
+        let mut ambiguous = false;
+        for candidate in self
+            .recent_character_evidence
+            .iter()
+            .filter(|candidate| candidate.flow == flow)
+        {
+            match char_id {
+                None => char_id = Some(candidate.char_id),
+                Some(existing) if existing == candidate.char_id => {}
+                Some(_) => ambiguous = true,
+            }
+        }
+        self.recent_character_evidence
+            .retain(|candidate| candidate.flow != flow);
+        if ambiguous { None } else { char_id }
+    }
+
+    fn resolve_cast_from_character_evidence(
+        &mut self,
+        timestamp: f64,
+        char_id: u32,
+        flow: Option<UltraTimeStopFlowKey>,
+        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
+    ) -> Option<TimeStopEvent> {
+        let index = self.recent_cast_index(timestamp, flow)?;
+        let event = fixed_ultra_time_stop_event(
+            self.pending_casts[index].timestamp,
+            char_id,
+            self.pending_casts[index].confirmed_evidence(UltraTimeStopEvidence::Strong),
+            ultra_time_stops,
+            &mut self.recent_emitted,
+        );
+        self.pending_casts.swap_remove(index);
+        self.recent_character_evidence
+            .retain(|candidate| candidate.flow != flow);
+        event
+    }
+
+    fn recent_cast_index(
+        &self,
+        timestamp: f64,
+        flow: Option<UltraTimeStopFlowKey>,
+    ) -> Option<usize> {
+        self.pending_casts
+            .iter()
+            .enumerate()
+            .filter(|(_, pending)| {
+                !pending.from_time_actor
+                    && pending.flow == flow
+                    && timestamp >= pending.timestamp
+                    && timestamp - pending.timestamp
+                        <= ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS
+            })
+            .max_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp))
+            .map(|(index, _)| index)
     }
 
     fn observe_ultra_montages(
@@ -1468,7 +1659,7 @@ impl UltraTimeStopTracker {
             return;
         };
         let Some((index, _)) = self
-            .pending_cooldowns
+            .pending_casts
             .iter()
             .enumerate()
             .filter(|(_, pending)| {
@@ -1483,7 +1674,7 @@ impl UltraTimeStopTracker {
         else {
             return;
         };
-        let pending = &self.pending_cooldowns[index];
+        let pending = &self.pending_casts[index];
         let activation_timestamp = if pending.from_time_actor {
             hit.timestamp
         } else {
@@ -1492,7 +1683,7 @@ impl UltraTimeStopTracker {
         let event = fixed_ultra_time_stop_event(
             activation_timestamp,
             char_id,
-            pending.evidence,
+            pending.confirmed_evidence(UltraTimeStopEvidence::Strong),
             ultra_time_stops,
             &mut self.recent_emitted,
         );
@@ -1500,16 +1691,16 @@ impl UltraTimeStopTracker {
             return;
         }
 
-        self.pending_cooldowns.swap_remove(index);
+        self.pending_casts.swap_remove(index);
         if let Some(event) = event {
             events.push(event);
         }
     }
 
-    fn resolve_finished_cooldowns(&mut self, timestamp: f64) {
+    fn resolve_finished_casts(&mut self, timestamp: f64) {
         let mut index = 0;
-        while index < self.pending_cooldowns.len() {
-            let pending = &self.pending_cooldowns[index];
+        while index < self.pending_casts.len() {
+            let pending = &self.pending_casts[index];
             let window = if pending.from_time_actor {
                 ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
             } else {
@@ -1521,13 +1712,32 @@ impl UltraTimeStopTracker {
                 index += 1;
                 continue;
             }
-            self.pending_cooldowns.swap_remove(index);
+            self.pending_casts.swap_remove(index);
         }
     }
 }
 
 fn text_has_exact_marker(decoded_text: &str, marker: &str) -> bool {
     decoded_text.lines().any(|line| line.trim() == marker)
+}
+
+fn is_ultra_cooldown_state_snapshot(decoded_text: &str) -> bool {
+    if !decoded_text
+        .lines()
+        .any(|line| line.trim().starts_with("CoolDown.Player.UltraSkill"))
+    {
+        return false;
+    }
+    [
+        "State.Common.DeathCanBeAddedTag",
+        "State.Common.StaticBufferTag",
+        "State.Property.ForceEnterFight",
+        "UI.Buffer.AbyssCardStack",
+    ]
+    .into_iter()
+    .filter(|marker| text_has_exact_marker(decoded_text, marker))
+    .count()
+        >= 2
 }
 
 fn is_shinku_rage_cooldown_snapshot(decoded_text: &str) -> bool {
@@ -1544,7 +1754,13 @@ fn ultra_damage_time_stop_char_id(
     }
     let ability_name = hit.ability_name.as_deref()?;
     let entry = ultra_time_stops.get(&hit.char_id)?;
-    (ability_name == entry.ability_id && ability_name.contains("UltraSkill")).then_some(hit.char_id)
+    (ability_name == entry.ability_id
+        && ability_name.contains("UltraSkill")
+        && hit
+            .attack_type
+            .as_deref()
+            .is_none_or(|attack_type| attack_type == "Q技能"))
+    .then_some(hit.char_id)
 }
 
 fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
@@ -1586,6 +1802,7 @@ const ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS: f64 = 4.5;
 const ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS: f64 = 2.5;
 const ULTRA_WEAK_EVIDENCE_REARM_SECONDS: f64 = 30.0;
 const ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.02;
+const ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.5;
 const SHINKU_RAGE_ABILITY_TAG: &str = "Ability.Player.Shinku.Rage";
 const SHINKU_RAGE_GAMEPLAY_CUE_TAG: &str = "GameplayCue.Display.Shinku.Rage";
 
@@ -2530,6 +2747,97 @@ impl FrameDedup {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct GameplayEffectFragmentKey {
+    source: (Ipv4Addr, u16),
+    destination: (Ipv4Addr, u16),
+    channel: u16,
+}
+
+struct PendingGameplayEffectFragment {
+    next_sequence: u16,
+    effect: Option<ParsedGameplayEffect>,
+}
+
+#[derive(Default)]
+struct GameplayEffectFragmentTracker {
+    pending: HashMap<GameplayEffectFragmentKey, PendingGameplayEffectFragment>,
+    order: VecDeque<GameplayEffectFragmentKey>,
+}
+
+impl GameplayEffectFragmentTracker {
+    fn observe(
+        &mut self,
+        source: (Ipv4Addr, u16),
+        destination: (Ipv4Addr, u16),
+        bunch: &SingleBunch,
+        effects: &[ParsedGameplayEffect],
+    ) -> Option<ParsedGameplayEffect> {
+        let key = GameplayEffectFragmentKey {
+            source,
+            destination,
+            channel: bunch.prefix,
+        };
+        let own_effect = match effects {
+            [effect] => Some(effect.clone()),
+            _ => None,
+        };
+        match bunch.partial_flags {
+            0x09 => {
+                self.insert(
+                    key,
+                    PendingGameplayEffectFragment {
+                        next_sequence: (bunch.sequence + 1) & 0x03ff,
+                        effect: own_effect,
+                    },
+                );
+                None
+            }
+            0x08 | 0x0c => {
+                let mut pending = self.remove(key)?;
+                if pending.next_sequence != bunch.sequence {
+                    return None;
+                }
+                let inherited = effects.is_empty().then(|| pending.effect.clone()).flatten();
+                pending.effect = match effects {
+                    [] => pending.effect,
+                    [_] => own_effect,
+                    _ => None,
+                };
+                pending.next_sequence = (bunch.sequence + 1) & 0x03ff;
+                if bunch.partial_flags == 0x08 {
+                    self.insert(key, pending);
+                }
+                inherited
+            }
+            _ => {
+                self.remove(key);
+                None
+            }
+        }
+    }
+
+    fn insert(&mut self, key: GameplayEffectFragmentKey, pending: PendingGameplayEffectFragment) {
+        if self.pending.contains_key(&key) {
+            self.order.retain(|stored| *stored != key);
+        }
+        while self.pending.len() >= MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.pending.remove(&oldest);
+        }
+        self.order.push_back(key);
+        self.pending.insert(key, pending);
+    }
+
+    fn remove(&mut self, key: GameplayEffectFragmentKey) -> Option<PendingGameplayEffectFragment> {
+        let pending = self.pending.remove(&key)?;
+        self.order.retain(|stored| *stored != key);
+        Some(pending)
+    }
+}
+
 struct PacketDecoder {
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
@@ -2547,6 +2855,7 @@ struct PacketDecoder {
     recent_confirmed_hits: Vec<Hit>,
     empty_curtain: EmptyCurtainDecoder,
     frame_dedup: FrameDedup,
+    gameplay_effect_fragments: GameplayEffectFragmentTracker,
     resource_warnings: Vec<String>,
 }
 
@@ -2603,6 +2912,7 @@ impl Default for PacketDecoder {
             recent_confirmed_hits: Vec::new(),
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
             frame_dedup: FrameDedup::default(),
+            gameplay_effect_fragments: GameplayEffectFragmentTracker::default(),
             resource_warnings,
         }
     }
@@ -3255,11 +3565,22 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
-        let ultra_time_stop_flow = Some(UltraTimeStopFlowKey {
-            source: (src, src_port),
-            destination: (dst, dst_port),
-        });
+        let ultra_time_stop_flow =
+            Some(UltraTimeStopFlowKey::new((src, src_port), (dst, dst_port)));
+        let transport_packet = parse_transport_packet(payload);
+        let single_bunch = match &transport_packet {
+            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
+            _ => None,
+        };
         let gameplay_effects = parse_gameplay_effects(payload);
+        let inherited_gameplay_effect = single_bunch.as_ref().and_then(|bunch| {
+            self.gameplay_effect_fragments.observe(
+                (src, src_port),
+                (dst, dst_port),
+                bunch,
+                &gameplay_effects,
+            )
+        });
         let mut hits = if outgoing {
             let packet_char_id = if ids.len() == 1 {
                 ids.first().copied()
@@ -3282,10 +3603,13 @@ impl PacketDecoder {
         } else {
             Vec::new()
         };
+        let effective_gameplay_effects = inherited_gameplay_effect
+            .as_ref()
+            .map_or(gameplay_effects.as_slice(), std::slice::from_ref);
         for hit in &mut hits {
             enrich_hit_with_gameplay_effect(
                 hit,
-                &gameplay_effects,
+                effective_gameplay_effects,
                 &self.gameplay_effect_names,
                 &self.gameplay_effect_skills,
                 &self.ability_tip_names,
@@ -3351,11 +3675,6 @@ impl PacketDecoder {
             Vec::new()
         } else {
             parse_boss_hp_updates(payload)
-        };
-        let transport_packet = parse_transport_packet(payload);
-        let single_bunch = match &transport_packet {
-            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
-            _ => None,
         };
         let inventory_result = if !outgoing {
             match &transport_packet {
@@ -4382,14 +4701,22 @@ mod tests {
     }
 
     fn ultra_test_flow(server_port: u16) -> UltraTimeStopFlowKey {
-        UltraTimeStopFlowKey {
-            source: (Ipv4Addr::new(10, 0, 0, 3), server_port),
-            destination: (Ipv4Addr::new(10, 0, 0, 2), 50_000),
-        }
+        UltraTimeStopFlowKey::new(
+            (Ipv4Addr::new(10, 0, 0, 3), server_port),
+            (Ipv4Addr::new(10, 0, 0, 2), 50_000),
+        )
     }
 
     fn ultra_test_table() -> HashMap<u32, UltraTimeStopEntry> {
         let female_montage = "/Game/Characters/Player/051_female/animation/Skill/char_f_skill_utraskill_Montage.char_f_skill_utraskill_Montage";
+        let haniel = UltraTimeStopEntry {
+            activation_evidence_tags: vec!["Buff_Haniel_UltraSkill_Earphone".to_owned()],
+            ..ultra_entry(
+                "GA_Haniel_UltraSkill",
+                "/Game/Characters/Player/020_haniel_1/animation/Skill/char_Haniel_skill_ultraskill_Montage.char_Haniel_skill_ultraskill_Montage",
+                4.237614,
+            )
+        };
         HashMap::from([
             (
                 1003,
@@ -4417,6 +4744,7 @@ mod tests {
                     3.584608,
                 ),
             ),
+            (1020, haniel),
             (
                 1025,
                 ultra_entry(
@@ -4785,6 +5113,92 @@ mod tests {
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3, 0xb4]);
         assert_eq!(completed[0].bit_len, 32);
+    }
+
+    #[test]
+    fn gameplay_effect_fragment_context_reaches_contiguous_tail() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let effect = ParsedGameplayEffect {
+            unique_index: 4741,
+            byte_offset: 62,
+            bit_shift: 3,
+        };
+        let mut tracker = GameplayEffectFragmentTracker::default();
+
+        assert_eq!(
+            tracker.observe(
+                source,
+                destination,
+                &inventory_bunch(647, 0x09, 1),
+                std::slice::from_ref(&effect),
+            ),
+            None
+        );
+        assert_eq!(
+            tracker.observe(source, destination, &inventory_bunch(648, 0x08, 2), &[],),
+            Some(effect.clone())
+        );
+        assert_eq!(
+            tracker.observe(source, destination, &inventory_bunch(649, 0x0c, 3), &[],),
+            Some(effect)
+        );
+        assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn gameplay_effect_fragment_context_rejects_sequence_gap() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let effect = ParsedGameplayEffect {
+            unique_index: 4741,
+            byte_offset: 62,
+            bit_shift: 3,
+        };
+        let mut tracker = GameplayEffectFragmentTracker::default();
+
+        tracker.observe(
+            source,
+            destination,
+            &inventory_bunch(647, 0x09, 1),
+            &[effect],
+        );
+        assert_eq!(
+            tracker.observe(source, destination, &inventory_bunch(649, 0x0c, 2), &[],),
+            None
+        );
+        assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn gameplay_effect_fragment_context_rejects_ambiguous_start() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let mut tracker = GameplayEffectFragmentTracker::default();
+        let effects = [
+            ParsedGameplayEffect {
+                unique_index: 4740,
+                byte_offset: 32,
+                bit_shift: 3,
+            },
+            ParsedGameplayEffect {
+                unique_index: 4741,
+                byte_offset: 62,
+                bit_shift: 3,
+            },
+        ];
+
+        tracker.observe(
+            source,
+            destination,
+            &inventory_bunch(647, 0x09, 1),
+            &effects,
+        );
+        assert_eq!(
+            tracker.observe(source, destination, &inventory_bunch(648, 0x0c, 2), &[],),
+            None
+        );
+        assert!(tracker.pending.is_empty());
     }
 
     #[test]
@@ -6087,8 +6501,8 @@ mod tests {
             receiver.try_recv().expect("debug packet should be emitted"),
             EngineEvent::Packet(_)
         ));
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
-        assert!(tracker.pending_cooldowns[0].from_time_actor);
+        assert_eq!(tracker.pending_casts.len(), 1);
+        assert!(tracker.pending_casts[0].from_time_actor);
 
         let ignored_packet = ExportPacket {
             timestamp_unix: 15.0,
@@ -6114,7 +6528,7 @@ mod tests {
             .unwrap()
         );
         assert!(receiver.try_recv().is_err());
-        assert!(tracker.pending_cooldowns.is_empty());
+        assert!(tracker.pending_casts.is_empty());
     }
 
     #[test]
@@ -6450,8 +6864,8 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
-        assert!(!tracker.pending_cooldowns[0].from_time_actor);
+        assert_eq!(tracker.pending_casts.len(), 1);
+        assert!(!tracker.pending_casts[0].from_time_actor);
 
         let mut female_ultra_hit = targetless_hit();
         female_ultra_hit.timestamp = 17.0;
@@ -6466,7 +6880,7 @@ mod tests {
                 duration_seconds: 4.161653,
             }]
         );
-        assert!(tracker.pending_cooldowns.is_empty());
+        assert!(tracker.pending_casts.is_empty());
     }
 
     #[test]
@@ -6497,6 +6911,217 @@ mod tests {
     }
 
     #[test]
+    fn time_actor_candidate_preserves_strong_evidence_for_fast_recast() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1025,
+                ability_id: "GA_Hathor_UltraSkill".to_owned(),
+                duration_seconds: 4.518597,
+            }]
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    37.5,
+                    "CoolDown.Player.UltraSkill.TimeActor",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    39.3,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(tracker.pending_casts.len(), 1);
+        assert_eq!(
+            tracker.pending_casts[0].cast_evidence,
+            UltraTimeStopEvidence::Strong
+        );
+
+        let mut hit = targetless_hit();
+        hit.timestamp = 41.5;
+        hit.char_id = 1025;
+        hit.ability_name = Some("GA_Hathor_UltraSkill".to_owned());
+        assert_eq!(
+            tracker.events_from_hits(&[hit], &table),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 39.3,
+                char_id: 1025,
+                ability_id: "GA_Hathor_UltraSkill".to_owned(),
+                duration_seconds: 4.518597,
+            }]
+        );
+    }
+
+    #[test]
+    fn character_evidence_before_generic_cooldown_resolves_bidirectional_cast() {
+        let table = ultra_test_table();
+        let server = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let client = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "/Game/Blueprints/Abilities/Player/Ability_020_haniel/Buff/Buff_Haniel_UltraSkill_Earphone",
+                    &[],
+                    false,
+                    Some(UltraTimeStopFlowKey::new(client, server)),
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                10.06,
+                "CoolDown.Player.UltraSkill.F",
+                &[],
+                true,
+                Some(UltraTimeStopFlowKey::new(server, client)),
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.06,
+                char_id: 1020,
+                ability_id: "GA_Haniel_UltraSkill".to_owned(),
+                duration_seconds: 4.237614,
+            }]
+        );
+    }
+
+    #[test]
+    fn strong_activation_evidence_consumes_the_matching_pending_cast() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert!(
+            tracker
+                .events_from_packet(
+                    10.0,
+                    "CoolDown.Player.UltraSkill.F",
+                    &[],
+                    true,
+                    flow,
+                    &table,
+                )
+                .is_empty()
+        );
+        assert_eq!(
+            tracker.events_from_packet(
+                10.1,
+                "CoolDown.Player.UltraSkill.Sagiri",
+                &[],
+                true,
+                flow,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1003,
+                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
+                duration_seconds: 3.533936,
+            }]
+        );
+        assert!(tracker.pending_casts.is_empty());
+    }
+
+    #[test]
+    fn cooldown_state_snapshot_does_not_emit_duplicate_specific_cast() {
+        let table = ultra_test_table();
+        let mut tracker = UltraTimeStopTracker::default();
+
+        assert_eq!(
+            tracker.events_from_packet(
+                10.0,
+                "CoolDown.Player.UltraSkill.Sagiri",
+                &[],
+                true,
+                None,
+                &table,
+            ),
+            vec![TimeStopEvent::UltraAnimation {
+                timestamp: 10.0,
+                char_id: 1003,
+                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
+                duration_seconds: 3.533936,
+            }]
+        );
+        assert!(
+            tracker
+                .events_from_packet(
+                    21.5,
+                    "GameplayCue.Display.Haniel.UltraSkill.buff\nCoolDown.Player.UltraSkill.Sagiri\nState.Common.DeathCanBeAddedTag\nState.Common.StaticBufferTag\nState.Property.ForceEnterFight\nUI.Buffer.AbyssCardStack",
+                    &[],
+                    true,
+                    None,
+                    &table,
+                )
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn consecutive_unresolved_cooldowns_keep_separate_cast_candidates() {
+        let table = ultra_test_table();
+        let flow = Some(ultra_test_flow(7_777));
+        let mut tracker = UltraTimeStopTracker::default();
+
+        for timestamp in [10.0, 11.5] {
+            assert!(
+                tracker
+                    .events_from_packet(
+                        timestamp,
+                        "CoolDown.Player.UltraSkill.F",
+                        &[],
+                        true,
+                        flow,
+                        &table,
+                    )
+                    .is_empty()
+            );
+        }
+        assert_eq!(tracker.pending_casts.len(), 2);
+        assert!(
+            tracker
+                .pending_casts
+                .iter()
+                .any(|candidate| candidate.timestamp == 10.0)
+        );
+        assert!(
+            tracker
+                .pending_casts
+                .iter()
+                .any(|candidate| candidate.timestamp == 11.5)
+        );
+    }
+
+    #[test]
     fn time_actor_declared_id_does_not_identify_character() {
         let table = ultra_test_table();
         let mut tracker = UltraTimeStopTracker::default();
@@ -6514,8 +7139,8 @@ mod tests {
                 .is_empty()
         );
         assert!(tracker.recent_emitted.is_empty());
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
-        assert!(tracker.pending_cooldowns[0].from_time_actor);
+        assert_eq!(tracker.pending_casts.len(), 1);
+        assert!(tracker.pending_casts[0].from_time_actor);
     }
 
     #[test]
@@ -6535,13 +7160,13 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert_eq!(tracker.pending_casts.len(), 1);
         assert!(
             tracker
                 .events_from_packet(30.0, "", &[], true, None, &table)
                 .is_empty()
         );
-        assert!(tracker.pending_cooldowns.is_empty());
+        assert!(tracker.pending_casts.is_empty());
     }
 
     #[test]
@@ -6561,7 +7186,7 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert!(tracker.pending_cooldowns.is_empty());
+        assert!(tracker.pending_casts.is_empty());
     }
 
     #[test]
@@ -6706,7 +7331,7 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert_eq!(tracker.pending_casts.len(), 1);
     }
 
     #[test]
@@ -6726,7 +7351,7 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert_eq!(tracker.pending_casts.len(), 1);
     }
 
     #[test]
@@ -6746,7 +7371,7 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert_eq!(tracker.pending_casts.len(), 1);
     }
 
     #[test]
@@ -6759,6 +7384,7 @@ mod tests {
                 activation_cooldown_tags: vec![
                     "CoolDown.Player.UltraSkill.F".to_owned(),
                 ],
+                activation_evidence_tags: Vec::new(),
                 end_ability_event_seconds: 7.300015,
                 extra_cooldowns: vec![UltraTimeStopCooldown {
                     cooldown_tag: "CoolDown.Player.UltraSkill.Shinku.UltraRage".to_owned(),
@@ -6971,7 +7597,7 @@ mod tests {
                 )
                 .is_empty()
         );
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert_eq!(tracker.pending_casts.len(), 1);
 
         let mut previous_character_hit = targetless_hit();
         previous_character_hit.timestamp = 10.2;
@@ -7055,7 +7681,7 @@ mod tests {
         assert_eq!(
             tracker.events_from_hits(&[hit], &table),
             vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
+                timestamp: 11.5,
                 char_id: 1010,
                 ability_id: "GA_Nanally_UltraSkill".to_owned(),
                 duration_seconds: 3.584608,
@@ -7065,7 +7691,7 @@ mod tests {
         assert!(
             tracker
                 .events_from_packet(
-                    15.0,
+                    16.0,
                     "CoolDown.Player.UltraSkill.F",
                     &[],
                     true,
@@ -7075,26 +7701,27 @@ mod tests {
                 .is_empty()
         );
         let mut repeated_hit = targetless_hit();
-        repeated_hit.timestamp = 16.0;
+        repeated_hit.timestamp = 16.5;
         repeated_hit.char_id = 1010;
         repeated_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
+        repeated_hit.attack_type = Some("普攻".to_owned());
         assert!(tracker.events_from_hits(&[repeated_hit], &table).is_empty());
-        assert_eq!(tracker.pending_cooldowns.len(), 1);
+        assert_eq!(tracker.pending_casts.len(), 1);
 
         let mut new_cast_hit = targetless_hit();
-        new_cast_hit.timestamp = 17.0;
+        new_cast_hit.timestamp = 17.5;
         new_cast_hit.char_id = 1076;
         new_cast_hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
         assert_eq!(
             tracker.events_from_hits(&[new_cast_hit], &table),
             vec![TimeStopEvent::UltraAnimation {
-                timestamp: 15.0,
+                timestamp: 16.0,
                 char_id: 1076,
                 ability_id: "GA_Shinku_UltraSkill".to_owned(),
                 duration_seconds: 7.300015,
             }]
         );
-        assert!(tracker.pending_cooldowns.is_empty());
+        assert!(tracker.pending_casts.is_empty());
 
         assert!(
             tracker
@@ -7151,7 +7778,7 @@ mod tests {
             &sender,
         );
         assert!(receiver.try_recv().is_err());
-        assert!(decoder.ultra_time_stop.pending_cooldowns.is_empty());
+        assert!(decoder.ultra_time_stop.pending_casts.is_empty());
     }
 
     #[test]

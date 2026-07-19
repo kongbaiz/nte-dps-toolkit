@@ -749,6 +749,7 @@
   "Import PCAPNG": "导入 PCAPNG",
   "Keep control while playing": "游戏中保持操作",
   "Live capture is already running": "实时抓包已在运行",
+  "Live capture is not running": "未启用抓包",
   "Marker {} · {}s": "标记 {} · {}秒",
   "Motion": "动效",
   "Notifications": "通知",

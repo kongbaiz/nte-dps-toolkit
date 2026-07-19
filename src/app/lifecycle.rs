@@ -22,6 +22,14 @@ fn newest_undo_id(
     status_toast_ids.chain(island_ids).max()
 }
 
+fn should_warn_hud_without_capture(
+    capture_running: bool,
+    replay_running: bool,
+    has_session_data: bool,
+) -> bool {
+    !capture_running && !replay_running && !has_session_data
+}
+
 impl DpsApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -703,7 +711,8 @@ impl DpsApp {
             )
         });
         let passthrough_key = passthrough_hotkey_to_egui(self.passthrough_hotkey);
-        if passthrough_hotkey_matches_egui(self.passthrough_hotkey, modifiers, passthrough_key)
+        if !self.mouse_passthrough
+            && passthrough_hotkey_matches_egui(self.passthrough_hotkey, modifiers, passthrough_key)
             && ctx.input(|input| key_pressed_without_repeat(&input.events, passthrough_key))
         {
             self.toggle_mouse_passthrough(ctx);
@@ -790,6 +799,7 @@ impl DpsApp {
             return;
         }
         self.mouse_passthrough = enabled;
+        self.hotkey.set_mouse_passthrough(enabled);
         let now = Instant::now();
         motion::seed_bool_for_viewport(
             ctx,
@@ -855,6 +865,19 @@ impl DpsApp {
             } else {
                 t("Combat HUD opened in edit mode because global hotkeys are unavailable")
             };
+            if should_warn_hud_without_capture(
+                self.capture.is_some(),
+                self.replay_thread.is_some(),
+                self.has_session_data(),
+            ) {
+                self.push_status_toast(
+                    egui::ViewportId::ROOT,
+                    t("Live capture is not running"),
+                    ToastTone::Warning,
+                    STATUS_TOAST_DURATION,
+                    None,
+                );
+            }
         } else {
             self.set_mouse_passthrough(ctx, false);
             self.status = t("Exited combat HUD");
@@ -3455,6 +3478,14 @@ mod tests {
 
         assert!(key_pressed_without_repeat(&[event(false)], egui::Key::F9));
         assert!(!key_pressed_without_repeat(&[event(true)], egui::Key::F9));
+    }
+
+    #[test]
+    fn hud_capture_warning_requires_an_empty_idle_session() {
+        assert!(should_warn_hud_without_capture(false, false, false));
+        assert!(!should_warn_hud_without_capture(true, false, false));
+        assert!(!should_warn_hud_without_capture(false, true, false));
+        assert!(!should_warn_hud_without_capture(false, false, true));
     }
 
     #[test]
