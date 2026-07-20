@@ -5,6 +5,9 @@ use anyhow::{Context, Result, anyhow};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 
+#[cfg(feature = "gui")]
+const EQUIPMENT_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
+
 pub(crate) fn bundled_resource(path: &str) -> Option<&'static [u8]> {
     embedded_resource(path)
 }
@@ -13,6 +16,28 @@ pub(crate) fn resource_file_path(path: &Path) -> Option<PathBuf> {
     disk_resource_candidates(path)
         .into_iter()
         .find(|candidate| candidate.is_file())
+}
+
+#[cfg(feature = "gui")]
+pub(crate) fn read_equipment_plugin() -> std::io::Result<Option<Vec<u8>>> {
+    let relative_path = Path::new(EQUIPMENT_PLUGIN_PATH);
+    let candidates = [
+        super::paths::software_dir().join(relative_path),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path),
+    ];
+    read_first_existing_file(&candidates)
+}
+
+#[cfg(feature = "gui")]
+fn read_first_existing_file(candidates: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
+    for candidate in candidates {
+        match std::fs::read(candidate) {
+            Ok(bytes) => return Ok(Some(bytes)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) fn resource_exists(path: &Path) -> bool {
@@ -124,6 +149,28 @@ mod tests {
 
         assert_eq!(text, "disk wins");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn equipment_plugin_loader_reads_the_first_available_candidate() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "nte-plugin-source-test-{}-{unique}",
+            std::process::id()
+        ));
+        let missing = root.join("missing/dwmapi.dll");
+        let plugin = root.join("plugins/dwmapi.dll");
+        std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+        std::fs::write(&plugin, b"plugin bytes").unwrap();
+
+        let bytes = read_first_existing_file(&[missing, plugin]).unwrap();
+
+        assert_eq!(bytes.as_deref(), Some(b"plugin bytes".as_slice()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -6,6 +6,8 @@ on:
       - master
     paths:
       - "src/**"
+      - "native/**"
+      - "plugins/**"
       - "res/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -21,6 +23,8 @@ on:
       - master
     paths:
       - "src/**"
+      - "native/**"
+      - "plugins/**"
       - "res/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -56,6 +60,33 @@ jobs:
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
+
+      - name: Build native equipment plugin
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installation = & $vswhere `
+            -latest `
+            -products '*' `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installation) {
+            throw "Visual Studio with the MSVC x64 toolset was not found"
+          }
+
+          $msbuild = Join-Path $installation "MSBuild\Current\Bin\MSBuild.exe"
+          & $msbuild `
+            native/nte-equipment-plugin/nte-equipment-plugin.sln `
+            /t:Clean,Build `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          if (-not (Test-Path -LiteralPath plugins/dwmapi.dll -PathType Leaf)) {
+            throw "Native build did not stage plugins/dwmapi.dll"
+          }
 
       - name: Check formatting
         run: cargo fmt --check
@@ -102,6 +133,7 @@ jobs:
           cargo build --release --bin nte-dps-tool --features gui
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
           Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
+          Copy-Item plugins dist/nte-dps-tool-windows-x64/plugins -Recurse
 
           cargo build --release --bin nte-core --no-default-features --features cli
           New-Item -ItemType Directory -Force dist/nte-core-windows-x64 | Out-Null
@@ -114,6 +146,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
           Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
+          Copy-Item plugins dist/nte-dps-tool-windows-external-resources/plugins -Recurse
 
       - name: Compress release executables with UPX
         shell: pwsh
@@ -161,6 +194,7 @@ jobs:
 
           - Standard GUI release with F12, Packets, Resources, and Diagnostics available.
           - Runtime resources are embedded in the executable.
+          - The optional in-game equipment plugin is loaded from plugins/dwmapi.dll and is installed only after the timed risk confirmation.
           - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
@@ -177,6 +211,7 @@ jobs:
 
           - Standard GUI release with F12 and all diagnostics available.
           - Runtime resources are not embedded in the executable.
+          - The optional in-game equipment plugin is loaded from plugins/dwmapi.dll and is installed only after the timed risk confirmation.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
@@ -245,9 +280,9 @@ jobs:
             $commitLines
             ""
             "构建产物："
-            "- nte-dps-tool-windows-x64.zip：完整 GUI，资源内嵌，包含 F12 与诊断工具。"
+            "- nte-dps-tool-windows-x64.zip：完整 GUI，资源内嵌，包含 plugins/dwmapi.dll、F12 与诊断工具。"
             "- nte-core-windows-x64.zip：本地 stdio Sidecar，供第三方本机工具集成。"
-            "- nte-dps-tool-windows-external-resources.zip：完整 GUI，资源外置，需保持 res 目录与 exe 同级。"
+            "- nte-dps-tool-windows-external-resources.zip：完整 GUI，资源外置，包含 plugins/dwmapi.dll，需保持 res、plugins 目录与 exe 同级。"
           ) -join "`n"
           gh release create $releaseTag `
             nte-dps-tool-windows-x64.zip `

@@ -87,15 +87,45 @@ cargo test
 cargo run --release --bin nte-dps-tool --features gui
 ```
 
+### Optional native equipment module
+
+`native/nte-equipment-plugin` is a standalone Windows x64 submodule in this
+repository. It contains only the runtime core, the stable IPC header, and the
+Visual Studio project, with no vcpkg or client SDK dependency. After installing
+the Visual Studio 2022 "Desktop development with C++" workload, run this from
+the repository root:
+
+```powershell
+# Run in "Developer PowerShell for VS 2022"
+msbuild .\native\nte-equipment-plugin\nte-equipment-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
+```
+
+The original output is `native/nte-equipment-plugin/x64/Release/dwmapi.dll`.
+After each build it is staged automatically as `plugins/dwmapi.dll`, the single
+runtime location read by the app. See
+[`native/nte-equipment-plugin/README.md`](native/nte-equipment-plugin/README.md)
+for module details.
+
+GUI release archives place `plugins/` beside `nte-dps-tool.exe`. Open
+**Console → Empty Curtain** and enable **Enable in-game equipment plugin** to review the
+third-party-mod risks and loading mechanism. Enable stays locked for five
+seconds, while Cancel and `Esc` close the dialog immediately. After confirmation, the app installs `dwmapi.dll` beside
+`HTGame.exe` in the selected client, where the game loads it on its next launch.
+When both China and Global clients are installed, choose the client to manage
+first. Close the game before changing this option. Turning it off removes the
+copy installed by this tool from the selected client. If another `dwmapi.dll`
+is already present there, the app preserves it and reports a conflict instead
+of overwriting or deleting another mod.
+
 ---
 
 ## GUI and local CLI sidecar
 
 Official Windows artifacts are:
 
-- `nte-dps-tool-windows-x64.zip`: standard GUI with embedded resources and the full F12 diagnostics toolset;
+- `nte-dps-tool-windows-x64.zip`: standard GUI with embedded resources, `plugins/dwmapi.dll`, and the full F12 diagnostics toolset;
 - `nte-core-windows-x64.zip`: GUI-free local sidecar for third-party integrations;
-- `nte-dps-tool-windows-external-resources.zip`: full GUI with an external `res/` directory.
+- `nte-dps-tool-windows-external-resources.zip`: full GUI with an external `res/` directory and `plugins/dwmapi.dll`.
 
 The automated `master` build runs formatting, compilation, tests, Clippy, and the GUI/CLI dependency-boundary check. After all three distribution directories are built, every `.exe` is compressed with `upx -9` from a pinned UPX release and verified with `upx -t` before the ZIP archives are created; the downloaded official UPX archive is also checked against its SHA-256 digest. GitHub Release titles come from the `Cargo.toml` version (for example, `v0.3.0`), while tags retain the build number and short commit SHA so the same version can be rebuilt. The release changelog lists every non-merge commit for the current version since the previous version's build tag, in chronological order, instead of showing only the last push.
 

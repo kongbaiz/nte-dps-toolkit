@@ -13,6 +13,7 @@ __pycache__/
 /UnrealExporter/
 /NTE-Drive-Calculator/
 /tests/
+/plugins/*.dll
 
 # C# / MSBuild build artifacts (contain local user paths)
 **/bin/

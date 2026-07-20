@@ -2863,6 +2863,7 @@ impl DpsApp {
     pub(crate) fn show_viewport_dialogs(&mut self, ctx: &egui::Context) {
         self.show_confirmation_dialog(ctx);
         self.show_error_window(ctx);
+        self.show_equipment_plugin_risk_dialog(ctx);
     }
 
     pub(crate) fn show_confirmation_dialog(&mut self, ctx: &egui::Context) {
@@ -2980,6 +2981,7 @@ impl DpsApp {
         if self.engine_task_viewport == Some(from) {
             self.engine_task_viewport = Some(to);
         }
+        self.retarget_equipment_plugin_dialog(from, to);
         self.close_command_palette_for(from);
         for toast in &mut self.status_toasts {
             if toast.viewport == from {
