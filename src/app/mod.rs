@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local};
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
 use eframe::egui::{self, Color32, RichText, Stroke};
 
 use crate::core::capture::{self as core_capture, CaptureStartOptions, RawCaptureMode};
@@ -39,7 +39,8 @@ use crate::engine::parser::{
     load_equipment_catalog,
 };
 use crate::platform::equipment_plugin::{
-    EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
+    EquipmentPluginClient, EquipmentPluginDeploymentError, EquipmentPluginDeploymentStatus,
+    EquipmentPluginGameRegion, EquipmentPluginOperation, EquipmentPluginPlacement,
     EquipmentPluginSubmitError,
 };
 use crate::platform::file_drop::NativeFileDrop;
@@ -64,7 +65,7 @@ use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
 use crate::storage::io_util::{atomic_write_file, atomic_write_text};
 use crate::storage::paths;
-use crate::storage::resource::{read_resource_bytes, read_resource_text};
+use crate::storage::resource::{read_equipment_plugin, read_resource_bytes, read_resource_text};
 use crate::support::character_editor::{
     CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
 };

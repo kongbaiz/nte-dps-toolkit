@@ -288,6 +288,9 @@ resolved yet.
 Equipment methods call ABI v4 / IPC v3 of `nte-equipment-plugin` through the
 local `\\.\pipe\nte-equipment-plugin-v3` named pipe. They do not inject or load
 the plugin; the matching plugin build must already be loaded by `HTGame.exe`.
+GUI users can install or remove the embedded plugin from **Console → Console
+Loadout** after closing the game and accepting the timed risk confirmation. The
+stdio Core itself never changes the game directory.
 Every character or equipment UID uses the same `{"slot":1,"serial":2}` shape
 returned by inventory snapshots. Both components must be nonzero and neither
 may be `4294967295` (`u32::MAX`). Module rows and columns are 1-based and must

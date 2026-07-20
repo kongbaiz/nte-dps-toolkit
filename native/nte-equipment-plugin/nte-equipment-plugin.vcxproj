@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{2E4EAD80-4B02-4DB0-9F49-9E3C3520C2A1}</ProjectGuid>
+    <RootNamespace>NteEquipmentPlugin</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
+  </ImportGroup>
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+    <OutDir>$(SolutionDir)x64\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)x64\$(Configuration)\obj\$(ProjectName)\</IntDir>
+    <TargetName>dwmapi</TargetName>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
+      <Optimization>MinSpace</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <SDLCheck>false</SDLCheck>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <ExceptionHandling>false</ExceptionHandling>
+      <PreprocessorDefinitions>NDEBUG;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalIncludeDirectories>include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /bigobj /Zl /EHs-c- /GR- %(AdditionalOptions)</AdditionalOptions>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+      <EntryPointSymbol>DllMain</EntryPointSymbol>
+      <AdditionalDependencies>kernel32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/IGNORE:4104 %(AdditionalOptions)</AdditionalOptions>
+      <ModuleDefinitionFile>src\dwmapi.def</ModuleDefinitionFile>
+      <ImportLibrary>$(OutDir)nte_equipment_plugin.lib</ImportLibrary>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="include\nte_equipment_ipc.h" />
+    <ClInclude Include="src\dwmapi_proxy.hpp" />
+    <ClInclude Include="src\equipment_rpc.hpp" />
+    <ClInclude Include="src\ipc_transport.hpp" />
+    <ClInclude Include="src\memory_access.hpp" />
+    <ClInclude Include="src\obfuscated_string.hpp" />
+    <ClInclude Include="src\offset_resolver.hpp" />
+    <ClInclude Include="src\plugin_runtime.hpp" />
+    <ClInclude Include="src\shadow_vtable_hook.hpp" />
+    <ClInclude Include="src\viewport_hook_policy.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\dwmapi_proxy.cpp" />
+    <ClCompile Include="src\equipment_rpc.cpp" />
+    <ClCompile Include="src\ipc_transport.cpp" />
+    <ClCompile Include="src\memory_access.cpp" />
+    <ClCompile Include="src\obfuscated_string.cpp" />
+    <ClCompile Include="src\offset_resolver.cpp" />
+    <ClCompile Include="src\shadow_vtable_hook.cpp" />
+    <ClCompile Include="src\nte_equipment_plugin.cpp" />
+    <ClCompile Include="src\plugin_runtime.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="src\dwmapi_stubs.asm">
+      <ObjectFileName>$(IntDir)dwmapi_stubs.obj</ObjectFileName>
+    </MASM>
+    <MASM Include="src\runtime_shims.asm">
+      <ObjectFileName>$(IntDir)runtime_shims.obj</ObjectFileName>
+    </MASM>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
+    <None Include="src\dwmapi.def" />
+    <None Include="src\dwmapi_exports.inc" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
+  </ImportGroup>
+  <Target Name="StageRuntimePlugin" AfterTargets="Build">
+    <MakeDir Directories="$(SolutionDir)..\..\plugins" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(SolutionDir)..\..\plugins\dwmapi.dll" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

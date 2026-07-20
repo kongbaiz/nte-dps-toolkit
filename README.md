@@ -87,15 +87,39 @@ cargo test
 cargo run --release --bin nte-dps-tool --features gui
 ```
 
+### 可选原生装备模块
+
+`native/nte-equipment-plugin` 是仓库内可独立编译的 Windows x64 子模块，只包含
+运行核心、固定 IPC 头文件和 Visual Studio 工程，不依赖 vcpkg 或客户端 SDK。
+安装 Visual Studio 2022 的“使用 C++ 的桌面开发”工作负载后，可在仓库根目录运行：
+
+```powershell
+# 在“Developer PowerShell for VS 2022”中执行
+msbuild .\native\nte-equipment-plugin\nte-equipment-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
+```
+
+原始输出位于 `native/nte-equipment-plugin/x64/Release/dwmapi.dll`，构建完成后会自动
+同步到主程序统一读取的 `plugins/dwmapi.dll`。模块细节见
+[`native/nte-equipment-plugin/README.md`](native/nte-equipment-plugin/README.md)。
+
+GUI 发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并加入压缩包。
+在“控制台 → 空幕”中打开“启用游戏内装备
+插件”后，程序会先显示第三方 Mod 风险与加载原理；启用按钮在 5 秒内保持锁定，
+取消按钮和 `Esc` 可立即关闭弹窗。若同时安装了国服与国际服，可先选择需要管理的客户端。确认后，程序
+只把 `dwmapi.dll` 安装到所选客户端中 `HTGame.exe` 所在目录，游戏下次启动时
+会加载它。更改此选项前必须关闭游戏；
+关闭选项会移除由本工具安装的副本。若目录里已有其他来源的 `dwmapi.dll`，程序会
+保留该文件并报告冲突，不会覆盖或删除其他 Mod。
+
 ---
 
 ## GUI 与本地 CLI Sidecar
 
 正式 Windows 产物分为：
 
-- `nte-dps-tool-windows-x64.zip`：标准 GUI，资源内嵌，始终包含 F12 和完整诊断工具；
+- `nte-dps-tool-windows-x64.zip`：标准 GUI，资源内嵌，包含 `plugins/dwmapi.dll`，始终包含 F12 和完整诊断工具；
 - `nte-core-windows-x64.zip`：无 GUI 的本地 Sidecar，供第三方本机工具集成；
-- `nte-dps-tool-windows-external-resources.zip`：完整 GUI，`res/` 资源外置。
+- `nte-dps-tool-windows-external-resources.zip`：完整 GUI，`res/` 资源外置，并包含 `plugins/dwmapi.dll`。
 
 `master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 GUI／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.0`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的“本次改动”会按时间顺序累计当前版本相对上一个版本构建标签的全部非合并提交，而不是只显示最后一次 push。
 

@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 description = "Local Windows DPS diagnostics tool for NTE."
 repository = "https://github.com/kongbaiz/nte-dps-toolkit"
@@ -59,6 +59,7 @@ windows-sys = { version = "0.60", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Pipes",
+    "Win32_System_Registry",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",

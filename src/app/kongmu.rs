@@ -24,6 +24,7 @@ const EQUIPPED_CHARACTER_AVATAR_SIZE: f32 = 28.0;
 const FILTER_TILE_WIDTH: f32 = 104.0;
 const FILTER_TILE_HEIGHT: f32 = 88.0;
 const FILTER_ICON_SIZE: f32 = 48.0;
+const EQUIPMENT_PLUGIN_RISK_LOCK_DURATION: Duration = Duration::from_secs(5);
 
 // Modules and cassettes share the same closed set of rarity tiers, ordered from
 // lowest to highest. The parser rejects any other value, so this list is total.
@@ -55,6 +56,25 @@ enum CharacterEquipmentAction {
 
 struct PendingPluginRequest {
     request_id: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PluginDeploymentAction {
+    Inspect,
+    Install(EquipmentPluginGameRegion),
+    Remove(EquipmentPluginGameRegion),
+}
+
+struct PendingPluginDeployment {
+    action: PluginDeploymentAction,
+    receiver: Receiver<Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError>>,
+}
+
+#[derive(Clone, Copy)]
+struct PluginRiskConfirmation {
+    opened_at: Instant,
+    viewport: egui::ViewportId,
+    region: EquipmentPluginGameRegion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +133,11 @@ pub(crate) struct KongmuUiState {
     filter_cache: EmptyCurtainFilterCache,
     pending_module_placement: Option<PendingModulePlacement>,
     plugin_request: Option<PendingPluginRequest>,
+    plugin_deployment_status:
+        Option<Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError>>,
+    plugin_deployment: Option<PendingPluginDeployment>,
+    plugin_risk_confirmation: Option<PluginRiskConfirmation>,
+    selected_plugin_region: Option<EquipmentPluginGameRegion>,
 }
 
 impl KongmuUiState {
@@ -220,6 +245,14 @@ impl KongmuUiState {
 impl DpsApp {
     pub(crate) fn empty_curtain_contents(&mut self, ui: &mut egui::Ui) {
         self.drain_equipment_plugin_response(ui.ctx());
+        self.drain_plugin_deployment(ui.ctx());
+        if self.kongmu_ui.plugin_deployment_status.is_none()
+            && self.kongmu_ui.plugin_deployment.is_none()
+        {
+            self.start_plugin_deployment(ui.ctx(), PluginDeploymentAction::Inspect);
+        }
+        self.plugin_deployment_controls(ui);
+        ui.add_space(8.0);
         self.kongmu_ui.refresh_filter_cache(
             &self.state.empty_curtain,
             self.state.empty_curtain_generation,
@@ -470,6 +503,272 @@ impl DpsApp {
         }
     }
 
+    fn plugin_deployment_controls(&mut self, ui: &mut egui::Ui) {
+        let theme = self.theme();
+        let pending_action = self
+            .kongmu_ui
+            .plugin_deployment
+            .as_ref()
+            .map(|pending| pending.action);
+        let deployment_status = self.kongmu_ui.plugin_deployment_status.as_ref();
+        let games = deployment_status
+            .and_then(|result| result.as_ref().ok())
+            .map(|status| status.games.as_slice())
+            .unwrap_or_default();
+        let mut selected_region = self
+            .kongmu_ui
+            .selected_plugin_region
+            .filter(|selected| games.iter().any(|game| game.region == *selected))
+            .or_else(|| {
+                games
+                    .iter()
+                    .find(|game| game.installed)
+                    .or_else(|| games.first())
+                    .map(|game| game.region)
+            });
+        let mut enabled = selected_region.is_some_and(|selected| {
+            games
+                .iter()
+                .any(|game| game.region == selected && game.installed)
+        });
+        let source_available = deployment_status
+            .and_then(|result| result.as_ref().ok())
+            .is_some_and(|status| status.source_available);
+        let interactive =
+            pending_action.is_none() && selected_region.is_some() && (enabled || source_available);
+        let status_text =
+            plugin_deployment_status_text(pending_action, deployment_status, selected_region);
+        let mut requested = None;
+
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("⚠").color(theme.warning))
+                .on_hover_text(t(
+                    "This is a third-party mod loaded by the game process. Read the risk warning before enabling it.",
+                ));
+            ui.label(RichText::new(t("In-game Equipment Plugin")).strong());
+            if let Some(region) = &mut selected_region {
+                ui.add_enabled_ui(pending_action.is_none(), |ui| {
+                    egui::ComboBox::from_id_salt("equipment_plugin_game_region")
+                        .width(132.0)
+                        .selected_text(t(plugin_game_region_label(*region)))
+                        .show_ui(ui, |ui| {
+                            for game in games {
+                                ui.selectable_value(
+                                    region,
+                                    game.region,
+                                    t(plugin_game_region_label(game.region)),
+                                );
+                            }
+                        });
+                });
+            }
+            ui.label(RichText::new(status_text).color(theme.fg_muted));
+            let response = ui.add_enabled(
+                interactive,
+                egui::Checkbox::new(&mut enabled, t("Enable")),
+            );
+            if response.changed() {
+                requested = Some(enabled);
+            }
+        });
+
+        self.kongmu_ui.selected_plugin_region = selected_region;
+
+        match (requested, selected_region) {
+            (Some(_), _) if self.game_process_detected => self.set_last_error_in(
+                ui.ctx(),
+                t("Close HTGame.exe before changing the equipment plugin."),
+                None,
+            ),
+            (Some(true), Some(region)) => {
+                self.kongmu_ui.plugin_risk_confirmation = Some(PluginRiskConfirmation {
+                    opened_at: Instant::now(),
+                    viewport: ui.ctx().viewport_id(),
+                    region,
+                });
+                ui.ctx().request_repaint_after(Duration::from_millis(100));
+            }
+            (Some(false), Some(region)) => {
+                self.start_plugin_deployment(ui.ctx(), PluginDeploymentAction::Remove(region))
+            }
+            _ => {}
+        }
+    }
+
+    fn start_plugin_deployment(&mut self, ctx: &egui::Context, action: PluginDeploymentAction) {
+        if self.kongmu_ui.plugin_deployment.is_some() {
+            return;
+        }
+        let (sender, receiver) = bounded(1);
+        let repaint = ctx.clone();
+        thread::spawn(move || {
+            let plugin = if matches!(action, PluginDeploymentAction::Remove(_)) {
+                Ok(None)
+            } else {
+                read_equipment_plugin()
+                    .map_err(|error| EquipmentPluginDeploymentError::FileSystem(error.to_string()))
+            };
+            let result = plugin.and_then(|plugin| match action {
+                PluginDeploymentAction::Inspect => {
+                    crate::platform::equipment_plugin::inspect_plugin_deployment(plugin.as_deref())
+                }
+                PluginDeploymentAction::Install(region) => {
+                    crate::platform::equipment_plugin::install_equipment_plugin(
+                        region,
+                        plugin
+                            .as_deref()
+                            .ok_or(EquipmentPluginDeploymentError::PluginSourceNotFound)?,
+                    )
+                }
+                PluginDeploymentAction::Remove(region) => {
+                    crate::platform::equipment_plugin::remove_equipment_plugin(region)
+                }
+            });
+            let _ = sender.send(result);
+            repaint.request_repaint();
+        });
+        self.kongmu_ui.plugin_deployment = Some(PendingPluginDeployment { action, receiver });
+    }
+
+    fn drain_plugin_deployment(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.kongmu_ui.plugin_deployment.as_ref() else {
+            return;
+        };
+        let result = match pending.receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                panic!("equipment plugin deployment worker must return a result")
+            }
+        };
+        let action = pending.action;
+        self.kongmu_ui.plugin_deployment = None;
+        match result {
+            Ok(status) => {
+                self.kongmu_ui.plugin_deployment_status = Some(Ok(status));
+                match action {
+                    PluginDeploymentAction::Inspect => {}
+                    PluginDeploymentAction::Install(_) => {
+                        self.status = t("Equipment plugin enabled");
+                        self.clear_last_error();
+                    }
+                    PluginDeploymentAction::Remove(_) => {
+                        self.status = t("Equipment plugin removed");
+                        self.clear_last_error();
+                        self.start_plugin_deployment(ctx, PluginDeploymentAction::Inspect);
+                    }
+                }
+            }
+            Err(error) => {
+                if matches!(action, PluginDeploymentAction::Inspect) {
+                    self.kongmu_ui.plugin_deployment_status = Some(Err(error.clone()));
+                }
+                self.set_last_error_in(ctx, plugin_deployment_error_text(&error), None);
+                if !matches!(action, PluginDeploymentAction::Inspect) {
+                    self.start_plugin_deployment(ctx, PluginDeploymentAction::Inspect);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn show_equipment_plugin_risk_dialog(&mut self, ctx: &egui::Context) {
+        let Some(confirmation) = self.kongmu_ui.plugin_risk_confirmation else {
+            return;
+        };
+        if confirmation.viewport != ctx.viewport_id() {
+            return;
+        }
+        let remaining = plugin_risk_confirmation_remaining(confirmation.opened_at, Instant::now());
+        let unlocked = remaining.is_zero();
+        if !unlocked {
+            ctx.request_repaint_after(Duration::from_millis(100).min(remaining));
+        }
+        let mut confirm = unlocked
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let mut cancel =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if !unlocked {
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        }
+        let theme = self.theme();
+        egui::Modal::new(egui::Id::new("equipment_plugin_risk_confirmation"))
+            .backdrop_color(theme.modal_backdrop)
+            .frame(
+                egui::Frame::popup(&ctx.global_style())
+                    .fill(theme.bg_elevated)
+                    .stroke(Stroke::new(1.0_f32, theme.danger))
+                    .corner_radius(12)
+                    .inner_margin(egui::Margin::symmetric(22, 18)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width((ctx.content_rect().width() - 48.0).clamp(320.0, 500.0));
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(t("Warning: third-party game plugin"))
+                            .size(20.0)
+                            .strong()
+                            .color(theme.danger),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(t(
+                            "This plugin lets the tool equip, move, unequip, lock, discard, and apply one-key equipment plans in the game. Leave it disabled if you do not use these features.",
+                        ))
+                        .strong()
+                        .color(theme.success),
+                    );
+                    for message in [
+                        "Enabling this option installs a third-party mod into the game directory.",
+                        "It copies dwmapi.dll beside HTGame.exe. The game loads the proxy at startup, and the proxy exposes a local named pipe used for equipment operations.",
+                        "Changing the game directory may trigger integrity or anti-cheat checks and may cause client or account risk. Enable it only after accepting these risks.",
+                    ] {
+                        ui.label(RichText::new(t(message)).color(theme.danger));
+                    }
+                    ui.add_space(12.0);
+                    if !unlocked {
+                        let seconds = remaining.as_millis().div_ceil(1_000).to_string();
+                        ui.label(
+                            RichText::new(tf(
+                                "Please read the warning. Enable unlocks in {} seconds; you can close this dialog at any time.",
+                                &[&seconds],
+                            ))
+                            .strong()
+                            .color(theme.warning),
+                        );
+                    }
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(unlocked, egui::Button::new(t("Accept Risk and Enable")))
+                            .clicked()
+                        {
+                            confirm = true;
+                        }
+                        if ui.button(t("Cancel")).clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            });
+        if confirm {
+            self.kongmu_ui.plugin_risk_confirmation = None;
+            self.start_plugin_deployment(ctx, PluginDeploymentAction::Install(confirmation.region));
+        } else if cancel {
+            self.kongmu_ui.plugin_risk_confirmation = None;
+        }
+    }
+
+    pub(crate) fn retarget_equipment_plugin_dialog(
+        &mut self,
+        from: egui::ViewportId,
+        to: egui::ViewportId,
+    ) {
+        if let Some(confirmation) = &mut self.kongmu_ui.plugin_risk_confirmation
+            && confirmation.viewport == from
+        {
+            confirmation.viewport = to;
+        }
+    }
+
     fn submit_equipment_plugin_request(
         &mut self,
         ctx: &egui::Context,
@@ -706,6 +1005,86 @@ impl DpsApp {
                 ),
                 None,
             ),
+        }
+    }
+}
+
+fn plugin_deployment_status_text(
+    pending: Option<PluginDeploymentAction>,
+    status: Option<&Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError>>,
+    selected_region: Option<EquipmentPluginGameRegion>,
+) -> String {
+    if let Some(action) = pending {
+        return match action {
+            PluginDeploymentAction::Inspect => t("Checking equipment plugin status..."),
+            PluginDeploymentAction::Install(_) => t("Installing equipment plugin..."),
+            PluginDeploymentAction::Remove(_) => t("Removing equipment plugin..."),
+        };
+    }
+    let selected_game = status
+        .and_then(|result| result.as_ref().ok())
+        .and_then(|status| {
+            selected_region
+                .and_then(|selected| status.games.iter().find(|game| game.region == selected))
+        });
+    let source_available = status
+        .and_then(|result| result.as_ref().ok())
+        .is_some_and(|status| status.source_available);
+    match (status, selected_game) {
+        (_, Some(_)) if !source_available => {
+            t("Equipment plugin file plugins/dwmapi.dll was not found")
+        }
+        (_, Some(game)) if !game.installed => t("Equipment plugin is disabled"),
+        (_, Some(game)) if !game.current => {
+            t("Equipment plugin is enabled, but the installed copy differs from this app version")
+        }
+        (_, Some(_)) => t("Equipment plugin is enabled for the selected game client"),
+        (Some(Err(EquipmentPluginDeploymentError::GameInstallationNotFound)), _) => {
+            t("Game installation not detected")
+        }
+        (Some(Err(_)), _) => t("Equipment plugin status check failed"),
+        _ => t("Checking equipment plugin status..."),
+    }
+}
+
+fn plugin_game_region_label(region: EquipmentPluginGameRegion) -> &'static str {
+    match region {
+        EquipmentPluginGameRegion::China => "China client",
+        EquipmentPluginGameRegion::Global => "Global client",
+    }
+}
+
+fn plugin_risk_confirmation_remaining(opened_at: Instant, now: Instant) -> Duration {
+    EQUIPMENT_PLUGIN_RISK_LOCK_DURATION.saturating_sub(now.saturating_duration_since(opened_at))
+}
+
+fn plugin_deployment_error_text(error: &EquipmentPluginDeploymentError) -> String {
+    match error {
+        EquipmentPluginDeploymentError::GameRunning => {
+            t("Close HTGame.exe before changing the equipment plugin.")
+        }
+        EquipmentPluginDeploymentError::GameProcessProbe(error) => tf(
+            "Failed to check whether HTGame.exe is running: {}",
+            &[error],
+        ),
+        EquipmentPluginDeploymentError::GameInstallationNotFound => t(
+            "No supported game installation was found. Repair or reinstall the official launcher registration, then try again.",
+        ),
+        EquipmentPluginDeploymentError::Registry(error) => tf(
+            "Failed to locate the game installation from the registry: {}",
+            &[error],
+        ),
+        EquipmentPluginDeploymentError::PluginSourceNotFound => {
+            t("Equipment plugin file plugins/dwmapi.dll was not found")
+        }
+        EquipmentPluginDeploymentError::ConflictingDwmapi => t(
+            "The game directory already contains a dwmapi.dll that is not managed by this tool. Remove the conflicting mod manually before enabling this plugin.",
+        ),
+        EquipmentPluginDeploymentError::InstalledPluginChanged => t(
+            "The installed dwmapi.dll or its ownership marker changed outside this tool. Check the game directory manually before trying again.",
+        ),
+        EquipmentPluginDeploymentError::FileSystem(error) => {
+            tf("Failed to update the equipment plugin files: {}", &[error])
         }
     }
 }
@@ -2428,6 +2807,20 @@ mod tests {
         assert!(state.pending_module_placement.is_none());
         assert!(state.plugin_request.is_none());
         assert!(!state.filter_cache.valid);
+    }
+
+    #[test]
+    fn equipment_plugin_risk_dialog_unlocks_only_after_five_seconds() {
+        let opened_at = Instant::now();
+
+        assert_eq!(
+            plugin_risk_confirmation_remaining(opened_at, opened_at + Duration::from_secs(4)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            plugin_risk_confirmation_remaining(opened_at, opened_at + Duration::from_secs(5)),
+            Duration::ZERO
+        );
     }
 
     fn stat(property: &str) -> EquipmentStat {

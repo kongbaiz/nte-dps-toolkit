@@ -7,8 +7,21 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
+#[cfg(feature = "gui")]
+use std::fs;
+#[cfg(feature = "gui")]
+use std::path::{Path, PathBuf};
+#[cfg(feature = "gui")]
+use std::ptr;
+
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
+#[cfg(feature = "gui")]
+use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 use windows_sys::Win32::System::Pipes::CallNamedPipeW;
+#[cfg(feature = "gui")]
+use windows_sys::Win32::System::Registry::{
+    HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY, RegGetValueW,
+};
 
 use crate::engine::model::HtItemNetId;
 
@@ -32,6 +45,28 @@ const PLACEMENT_SIZE: usize = 16;
 const REQUEST_SIZE: usize = REQUEST_HEADER_SIZE + MAX_PLACEMENTS * PLACEMENT_SIZE;
 const RESPONSE_SIZE: usize = 24;
 const MAX_PLUGIN_STATUS: u32 = 12;
+
+#[cfg(feature = "gui")]
+const GAME_INSTALL_REGISTRY_KEYS: [(EquipmentPluginGameRegion, &str); 2] = [
+    (
+        EquipmentPluginGameRegion::China,
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\YH",
+    ),
+    (
+        EquipmentPluginGameRegion::Global,
+        r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NTEGlobal",
+    ),
+];
+#[cfg(feature = "gui")]
+const GAME_BINARY_RELATIVE_PATH: &str = r"Client\WindowsNoEditor\HT\Binaries\Win64";
+#[cfg(feature = "gui")]
+const GAME_EXECUTABLE_NAME: &str = "HTGame.exe";
+#[cfg(feature = "gui")]
+const PLUGIN_FILE_NAME: &str = "dwmapi.dll";
+#[cfg(feature = "gui")]
+const PLUGIN_MARKER_FILE_NAME: &str = ".nte-dps-tool-equipment-plugin";
+#[cfg(feature = "gui")]
+const PLUGIN_MARKER_HEADER: &str = "NTE_DPS_TOOL_EQUIPMENT_PLUGIN_V1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EquipmentPluginPlacement {
@@ -95,6 +130,44 @@ pub struct EquipmentPluginResponse {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EquipmentPluginSubmitError {
     Busy,
+}
+
+#[cfg(feature = "gui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EquipmentPluginGameRegion {
+    China,
+    Global,
+}
+
+#[cfg(feature = "gui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EquipmentPluginGameStatus {
+    pub region: EquipmentPluginGameRegion,
+    pub installed: bool,
+    pub current: bool,
+}
+
+#[cfg(feature = "gui")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EquipmentPluginDeploymentStatus {
+    pub installations: usize,
+    pub installed: usize,
+    pub current: usize,
+    pub source_available: bool,
+    pub games: Vec<EquipmentPluginGameStatus>,
+}
+
+#[cfg(feature = "gui")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EquipmentPluginDeploymentError {
+    GameRunning,
+    GameProcessProbe(String),
+    GameInstallationNotFound,
+    Registry(String),
+    PluginSourceNotFound,
+    ConflictingDwmapi,
+    InstalledPluginChanged,
+    FileSystem(String),
 }
 
 enum WorkerCommand {
@@ -410,6 +483,345 @@ fn decode_response(bytes: &[u8; RESPONSE_SIZE], request_id: u64) -> Result<u32, 
     Ok(status)
 }
 
+#[cfg(feature = "gui")]
+pub fn inspect_plugin_deployment(
+    current_plugin: Option<&[u8]>,
+) -> Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError> {
+    let installations = game_installation_directories()?;
+    inspect_game_installations(&installations, current_plugin)
+}
+
+#[cfg(feature = "gui")]
+pub fn install_equipment_plugin(
+    region: EquipmentPluginGameRegion,
+    plugin: &[u8],
+) -> Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError> {
+    ensure_game_is_closed()?;
+    let installations = game_installation_directories()?;
+    let directory = selected_game_directory(&installations, region)?;
+    install_plugin_to_directories(std::slice::from_ref(directory), plugin)?;
+    inspect_game_installations(&installations, Some(plugin))
+}
+
+#[cfg(feature = "gui")]
+pub fn remove_equipment_plugin(
+    region: EquipmentPluginGameRegion,
+) -> Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError> {
+    ensure_game_is_closed()?;
+    let installations = game_installation_directories()?;
+    let directory = selected_game_directory(&installations, region)?;
+    remove_plugin_from_directories(std::slice::from_ref(directory))?;
+    inspect_game_installations(&installations, None)
+}
+
+#[cfg(feature = "gui")]
+fn ensure_game_is_closed() -> Result<(), EquipmentPluginDeploymentError> {
+    match super::network::game_process_is_running() {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(EquipmentPluginDeploymentError::GameRunning),
+        Err(error) => Err(EquipmentPluginDeploymentError::GameProcessProbe(error)),
+    }
+}
+
+#[cfg(feature = "gui")]
+fn game_installation_directories()
+-> Result<Vec<(EquipmentPluginGameRegion, PathBuf)>, EquipmentPluginDeploymentError> {
+    let mut directories = Vec::new();
+    for (region, key) in GAME_INSTALL_REGISTRY_KEYS {
+        let Some(root) = read_registry_string(key, "InstallLocation")? else {
+            continue;
+        };
+        let root = PathBuf::from(root.trim().trim_matches('"'));
+        for directory in [
+            root.join(GAME_BINARY_RELATIVE_PATH),
+            root.join("Neverness To Everness")
+                .join(GAME_BINARY_RELATIVE_PATH),
+        ] {
+            if directory.join(GAME_EXECUTABLE_NAME).is_file()
+                && !directories.iter().any(|(_, known)| known == &directory)
+            {
+                directories.push((region, directory));
+                break;
+            }
+        }
+    }
+    if directories.is_empty() {
+        return Err(EquipmentPluginDeploymentError::GameInstallationNotFound);
+    }
+    Ok(directories)
+}
+
+#[cfg(feature = "gui")]
+fn selected_game_directory(
+    installations: &[(EquipmentPluginGameRegion, PathBuf)],
+    region: EquipmentPluginGameRegion,
+) -> Result<&PathBuf, EquipmentPluginDeploymentError> {
+    installations
+        .iter()
+        .find_map(|(candidate, directory)| (*candidate == region).then_some(directory))
+        .ok_or(EquipmentPluginDeploymentError::GameInstallationNotFound)
+}
+
+#[cfg(feature = "gui")]
+fn read_registry_string(
+    subkey: &str,
+    value: &str,
+) -> Result<Option<String>, EquipmentPluginDeploymentError> {
+    let subkey = wide_null(subkey);
+    let value = wide_null(value);
+    let flags = RRF_RT_REG_SZ | RRF_SUBKEY_WOW6432KEY;
+    let mut value_type = 0;
+    let mut byte_len = 0;
+    // SAFETY: both strings are NUL-terminated, output pointers are valid, and
+    // the first call requests only the required byte count.
+    let first = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            flags,
+            &mut value_type,
+            ptr::null_mut(),
+            &mut byte_len,
+        )
+    };
+    if first == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if first != 0 {
+        return Err(EquipmentPluginDeploymentError::Registry(format!(
+            "registry query failed with error code {first}"
+        )));
+    }
+    if value_type != REG_SZ || byte_len < 2 || byte_len % 2 != 0 {
+        return Err(EquipmentPluginDeploymentError::Registry(
+            "game install registry value has an invalid type or length".to_owned(),
+        ));
+    }
+    let mut buffer = vec![0_u16; byte_len as usize / 2];
+    // SAFETY: the buffer has the exact byte capacity reported by the first
+    // query and the same NUL-terminated key and value names remain alive.
+    let second = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            subkey.as_ptr(),
+            value.as_ptr(),
+            flags,
+            &mut value_type,
+            buffer.as_mut_ptr().cast(),
+            &mut byte_len,
+        )
+    };
+    if second != 0 {
+        return Err(EquipmentPluginDeploymentError::Registry(format!(
+            "registry value read failed with error code {second}"
+        )));
+    }
+    if value_type != REG_SZ
+        || byte_len < 2
+        || byte_len % 2 != 0
+        || byte_len as usize > buffer.len() * 2
+    {
+        return Err(EquipmentPluginDeploymentError::Registry(
+            "game install registry value changed to an invalid type or length".to_owned(),
+        ));
+    }
+    buffer.truncate(byte_len as usize / 2);
+    if buffer.last() != Some(&0) {
+        return Err(EquipmentPluginDeploymentError::Registry(
+            "game install registry value is not a terminated string".to_owned(),
+        ));
+    }
+    buffer.pop();
+    String::from_utf16(&buffer).map(Some).map_err(|_| {
+        EquipmentPluginDeploymentError::Registry(
+            "game install registry value is not valid UTF-16".to_owned(),
+        )
+    })
+}
+
+#[cfg(feature = "gui")]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain([0]).collect()
+}
+
+#[cfg(feature = "gui")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PluginMarker {
+    size: u64,
+    fingerprint: u64,
+}
+
+#[cfg(feature = "gui")]
+fn plugin_marker(plugin: &[u8]) -> PluginMarker {
+    PluginMarker {
+        size: plugin.len() as u64,
+        fingerprint: fnv1a64(plugin),
+    }
+}
+
+#[cfg(feature = "gui")]
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+#[cfg(feature = "gui")]
+fn encode_plugin_marker(plugin: &[u8]) -> String {
+    let marker = plugin_marker(plugin);
+    format!(
+        "{PLUGIN_MARKER_HEADER}\nsize={}\nfnv1a64={:016x}\n",
+        marker.size, marker.fingerprint
+    )
+}
+
+#[cfg(feature = "gui")]
+fn parse_plugin_marker(text: &str) -> Option<PluginMarker> {
+    let mut lines = text.lines();
+    if lines.next()? != PLUGIN_MARKER_HEADER {
+        return None;
+    }
+    let size = lines.next()?.strip_prefix("size=")?.parse().ok()?;
+    let fingerprint = u64::from_str_radix(lines.next()?.strip_prefix("fnv1a64=")?, 16).ok()?;
+    if lines.next().is_some() {
+        return None;
+    }
+    Some(PluginMarker { size, fingerprint })
+}
+
+#[cfg(feature = "gui")]
+fn inspect_game_installations(
+    installations: &[(EquipmentPluginGameRegion, PathBuf)],
+    current_plugin: Option<&[u8]>,
+) -> Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError> {
+    let mut status = EquipmentPluginDeploymentStatus {
+        source_available: current_plugin.is_some(),
+        ..Default::default()
+    };
+    for (region, directory) in installations {
+        let game_status =
+            inspect_plugin_directories(std::slice::from_ref(directory), current_plugin)?;
+        status.installations += 1;
+        status.installed += game_status.installed;
+        status.current += game_status.current;
+        status.games.push(EquipmentPluginGameStatus {
+            region: *region,
+            installed: game_status.installed == 1,
+            current: game_status.current == 1,
+        });
+    }
+    Ok(status)
+}
+
+#[cfg(feature = "gui")]
+fn inspect_plugin_directories(
+    directories: &[PathBuf],
+    current_plugin: Option<&[u8]>,
+) -> Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError> {
+    let mut status = EquipmentPluginDeploymentStatus {
+        installations: directories.len(),
+        ..Default::default()
+    };
+    for directory in directories {
+        let plugin_path = directory.join(PLUGIN_FILE_NAME);
+        let marker_path = directory.join(PLUGIN_MARKER_FILE_NAME);
+        if !marker_path.exists() {
+            continue;
+        }
+        let marker = read_marker(&marker_path)?;
+        let plugin = fs::read(&plugin_path)
+            .map_err(|_| EquipmentPluginDeploymentError::InstalledPluginChanged)?;
+        if plugin_marker(&plugin) != marker {
+            return Err(EquipmentPluginDeploymentError::InstalledPluginChanged);
+        }
+        status.installed += 1;
+        if current_plugin.is_some_and(|current| current == plugin) {
+            status.current += 1;
+        }
+    }
+    Ok(status)
+}
+
+#[cfg(feature = "gui")]
+fn install_plugin_to_directories(
+    directories: &[PathBuf],
+    plugin: &[u8],
+) -> Result<(), EquipmentPluginDeploymentError> {
+    if plugin.is_empty() {
+        return Err(EquipmentPluginDeploymentError::FileSystem(
+            "equipment plugin file is empty".to_owned(),
+        ));
+    }
+    for directory in directories {
+        let plugin_path = directory.join(PLUGIN_FILE_NAME);
+        let marker_path = directory.join(PLUGIN_MARKER_FILE_NAME);
+        if !plugin_path.exists() {
+            continue;
+        }
+        if marker_path.exists() {
+            let marker = read_marker(&marker_path)?;
+            let existing = fs::read(&plugin_path).map_err(file_system_error)?;
+            if plugin_marker(&existing) != marker {
+                return Err(EquipmentPluginDeploymentError::InstalledPluginChanged);
+            }
+        } else {
+            let existing = fs::read(&plugin_path).map_err(file_system_error)?;
+            if existing != plugin {
+                return Err(EquipmentPluginDeploymentError::ConflictingDwmapi);
+            }
+        }
+    }
+    let marker = encode_plugin_marker(plugin);
+    for directory in directories {
+        let plugin_path = directory.join(PLUGIN_FILE_NAME);
+        let marker_path = directory.join(PLUGIN_MARKER_FILE_NAME);
+        fs::write(&plugin_path, plugin).map_err(file_system_error)?;
+        if let Err(error) = fs::write(&marker_path, marker.as_bytes()) {
+            let _ = fs::remove_file(plugin_path);
+            return Err(file_system_error(error));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "gui")]
+fn remove_plugin_from_directories(
+    directories: &[PathBuf],
+) -> Result<(), EquipmentPluginDeploymentError> {
+    for directory in directories {
+        let plugin_path = directory.join(PLUGIN_FILE_NAME);
+        let marker_path = directory.join(PLUGIN_MARKER_FILE_NAME);
+        if !marker_path.exists() {
+            continue;
+        }
+        if plugin_path.exists() {
+            let marker = read_marker(&marker_path)?;
+            let plugin = fs::read(&plugin_path).map_err(file_system_error)?;
+            if plugin_marker(&plugin) != marker {
+                return Err(EquipmentPluginDeploymentError::InstalledPluginChanged);
+            }
+            fs::remove_file(&plugin_path).map_err(file_system_error)?;
+        }
+        fs::remove_file(&marker_path).map_err(file_system_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "gui")]
+fn read_marker(path: &Path) -> Result<PluginMarker, EquipmentPluginDeploymentError> {
+    let text = fs::read_to_string(path).map_err(file_system_error)?;
+    parse_plugin_marker(&text).ok_or(EquipmentPluginDeploymentError::InstalledPluginChanged)
+}
+
+#[cfg(feature = "gui")]
+fn file_system_error(error: io::Error) -> EquipmentPluginDeploymentError {
+    EquipmentPluginDeploymentError::FileSystem(error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,5 +1003,130 @@ mod tests {
                 .request_id,
             1
         );
+    }
+
+    #[cfg(feature = "gui")]
+    fn deployment_test_directory(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nte-equipment-plugin-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn deployment_marks_installs_and_removes_only_the_managed_plugin() {
+        let directory = deployment_test_directory("lifecycle");
+        let directories = vec![directory.clone()];
+        let plugin = b"test equipment plugin";
+
+        install_plugin_to_directories(&directories, plugin).unwrap();
+        assert_eq!(
+            inspect_plugin_directories(&directories, Some(plugin)).unwrap(),
+            EquipmentPluginDeploymentStatus {
+                installations: 1,
+                installed: 1,
+                current: 1,
+                source_available: false,
+                games: Vec::new(),
+            }
+        );
+        remove_plugin_from_directories(&directories).unwrap();
+        assert_eq!(
+            inspect_plugin_directories(&directories, Some(plugin)).unwrap(),
+            EquipmentPluginDeploymentStatus {
+                installations: 1,
+                installed: 0,
+                current: 0,
+                source_available: false,
+                games: Vec::new(),
+            }
+        );
+        assert!(!directory.join(PLUGIN_FILE_NAME).exists());
+        assert!(!directory.join(PLUGIN_MARKER_FILE_NAME).exists());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn deployment_preserves_an_unmanaged_dwmapi_proxy() {
+        let directory = deployment_test_directory("conflict");
+        fs::write(directory.join(PLUGIN_FILE_NAME), b"another mod").unwrap();
+
+        assert_eq!(
+            install_plugin_to_directories(std::slice::from_ref(&directory), b"our plugin"),
+            Err(EquipmentPluginDeploymentError::ConflictingDwmapi)
+        );
+        assert_eq!(
+            fs::read(directory.join(PLUGIN_FILE_NAME)).unwrap(),
+            b"another mod"
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn selected_client_install_ignores_another_clients_unmanaged_proxy() {
+        let china = deployment_test_directory("selected-china");
+        let global = deployment_test_directory("selected-global");
+        fs::write(global.join(PLUGIN_FILE_NAME), b"another mod").unwrap();
+        let installations = vec![
+            (EquipmentPluginGameRegion::China, china.clone()),
+            (EquipmentPluginGameRegion::Global, global.clone()),
+        ];
+        let selected =
+            selected_game_directory(&installations, EquipmentPluginGameRegion::China).unwrap();
+
+        install_plugin_to_directories(std::slice::from_ref(selected), b"our plugin").unwrap();
+        let status = inspect_game_installations(&installations, Some(b"our plugin")).unwrap();
+
+        assert!(status.source_available);
+        assert_eq!(
+            status.games,
+            vec![
+                EquipmentPluginGameStatus {
+                    region: EquipmentPluginGameRegion::China,
+                    installed: true,
+                    current: true,
+                },
+                EquipmentPluginGameStatus {
+                    region: EquipmentPluginGameRegion::Global,
+                    installed: false,
+                    current: false,
+                },
+            ]
+        );
+        assert_eq!(
+            fs::read(global.join(PLUGIN_FILE_NAME)).unwrap(),
+            b"another mod"
+        );
+
+        fs::remove_dir_all(china).unwrap();
+        fs::remove_dir_all(global).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn deployment_rejects_a_managed_plugin_changed_outside_the_tool() {
+        let directory = deployment_test_directory("changed");
+        let directories = vec![directory.clone()];
+        install_plugin_to_directories(&directories, b"original plugin").unwrap();
+        fs::write(directory.join(PLUGIN_FILE_NAME), b"changed plugin").unwrap();
+
+        assert_eq!(
+            remove_plugin_from_directories(&directories),
+            Err(EquipmentPluginDeploymentError::InstalledPluginChanged)
+        );
+        assert!(directory.join(PLUGIN_FILE_NAME).exists());
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }
