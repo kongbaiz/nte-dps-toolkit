@@ -327,10 +327,10 @@ enum IslandAction {
 
 impl DpsApp {
     pub(crate) fn show_island(&mut self, ctx: &egui::Context) {
-        if !self.island_enabled {
-            if !self.island.is_idle() {
-                for id in self.island.reset() {
-                    self.undo_states.remove(&id);
+        if !self.notifications.island_enabled {
+            if !self.notifications.island.is_idle() {
+                for id in self.notifications.island.reset() {
+                    self.notifications.undo_states.remove(&id);
                 }
             }
             return;
@@ -349,17 +349,19 @@ impl DpsApp {
         let now = Instant::now();
 
         // --- native window plumbing -------------------------------------
-        if self.island.hwnd.is_none()
+        if self.notifications.island.hwnd.is_none()
             && let Some(hwnd) = find_process_window_by_title(ISLAND_WINDOW_TITLE)
         {
             apply_island_base_style(hwnd);
-            self.island.hwnd = Some(hwnd);
+            self.notifications.island.hwnd = Some(hwnd);
         }
         // Anchor to the top-center of the window's monitor. OuterPosition goes
         // through the winit event loop between frames — never SetWindowPos from
         // inside the frame callback, which re-enters `logic()` via WndProc.
         let pixels_per_point = ctx.pixels_per_point();
-        if let Some((left, top, right, bottom)) = self.island.hwnd.and_then(window_monitor_rect) {
+        if let Some((left, top, right, bottom)) =
+            self.notifications.island.hwnd.and_then(window_monitor_rect)
+        {
             let monitor = egui::Rect::from_min_max(
                 egui::pos2(
                     left as f32 / pixels_per_point,
@@ -370,68 +372,70 @@ impl DpsApp {
                     bottom as f32 / pixels_per_point,
                 ),
             );
-            let target = island_stage_position(monitor, self.island_offset_x);
+            let target = island_stage_position(monitor, self.notifications.island_offset_x);
             if self
+                .notifications
                 .island
                 .applied_position
                 .is_none_or(|applied| applied.distance(target) > 0.5)
             {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(target));
-                self.island.applied_position = Some(target);
+                self.notifications.island.applied_position = Some(target);
             }
         }
 
         // --- global-cursor hover + state tick ----------------------------
         let cursor_points = cursor_screen_pos()
             .map(|(x, y)| egui::pos2(x as f32 / pixels_per_point, y as f32 / pixels_per_point));
-        let was_hovered = self.island.hovered;
-        let hovered = self.island.phase == IslandPhase::Shown
+        let was_hovered = self.notifications.island.hovered;
+        let hovered = self.notifications.island.phase == IslandPhase::Shown
             && cursor_points
-                .zip(self.island.hit_rect_screen)
+                .zip(self.notifications.island.hit_rect_screen)
                 .is_some_and(|(pos, rect)| rect.contains(pos));
-        if was_hovered && !hovered && self.island.phase == IslandPhase::Shown {
+        if was_hovered && !hovered && self.notifications.island.phase == IslandPhase::Shown {
             // Leaving the capsule grants a short grace period before expiry.
             let grace = now + HOVER_EXIT_GRACE;
-            if self.island.shown_until < grace {
-                self.island.shown_until = grace;
+            if self.notifications.island.shown_until < grace {
+                self.notifications.island.shown_until = grace;
             }
         }
-        self.island.hovered = hovered;
-        self.island.tick(now);
-        for id in self.island.take_dropped() {
-            self.undo_states.remove(&id);
+        self.notifications.island.hovered = hovered;
+        self.notifications.island.tick(now);
+        for id in self.notifications.island.take_dropped() {
+            self.notifications.undo_states.remove(&id);
         }
 
         // --- click-through gating ----------------------------------------
         // Interactive only while a shown capsule is actually hovered; in every
         // other state (hidden, exiting, cursor elsewhere) clicks fall through
         // to whatever is behind the stage.
-        let interactive = hovered && self.island.phase == IslandPhase::Shown;
-        if let Some(hwnd) = self.island.hwnd
-            && self.island.applied_click_through != Some(!interactive)
+        let interactive = hovered && self.notifications.island.phase == IslandPhase::Shown;
+        if let Some(hwnd) = self.notifications.island.hwnd
+            && self.notifications.island.applied_click_through != Some(!interactive)
         {
             set_island_click_through(hwnd, !interactive);
-            self.island.applied_click_through = Some(!interactive);
+            self.notifications.island.applied_click_through = Some(!interactive);
         }
 
-        if self.island.phase == IslandPhase::Hidden {
+        if self.notifications.island.phase == IslandPhase::Hidden {
             return;
         }
 
         // --- render-data snapshot ------------------------------------------
         let Some((text, tone, undo_id)) = self
+            .notifications
             .island
             .current
             .as_ref()
             .map(|notice| (notice.text.clone(), notice.tone, notice.undo_id))
         else {
-            self.island.enter_hidden();
+            self.notifications.island.enter_hidden();
             return;
         };
-        let queued = self.island.queue.len();
+        let queued = self.notifications.island.queue.len();
         let theme = self.theme();
         let tone_color = match tone {
-            ToastTone::Status => status_color(&text, self.paused, true),
+            ToastTone::Status => status_color(&text, self.capture_ui.paused, true),
             ToastTone::Success => theme.success,
             ToastTone::Warning => theme.warning,
             ToastTone::Danger => theme.danger,
@@ -495,7 +499,7 @@ impl DpsApp {
         let stage = ui.max_rect();
         let expanded = hovered;
         let (target_width, target_height, target_opacity, target_expand) =
-            if self.island.phase == IslandPhase::Exiting {
+            if self.notifications.island.phase == IslandPhase::Exiting {
                 (SLIVER_WIDTH, SLIVER_HEIGHT, 0.0, 0.0)
             } else {
                 let width = if expanded {
@@ -514,61 +518,69 @@ impl DpsApp {
                     if expanded { 1.0 } else { 0.0 },
                 )
             };
-        self.island.width.set_target(target_width);
-        self.island.height.set_target(target_height);
-        self.island.opacity.set_target(target_opacity);
-        self.island.expand.set_target(target_expand);
+        self.notifications.island.width.set_target(target_width);
+        self.notifications.island.height.set_target(target_height);
+        self.notifications.island.opacity.set_target(target_opacity);
+        self.notifications.island.expand.set_target(target_expand);
 
         let dt = ctx.input(|input| input.stable_dt).min(0.05);
-        if self.reduce_motion {
-            self.island.width.snap_to(target_width);
-            self.island.height.snap_to(target_height);
-            self.island.opacity.snap_to(target_opacity);
-            self.island.expand.snap_to(target_expand);
+        if self.preferences.reduce_motion {
+            self.notifications.island.width.snap_to(target_width);
+            self.notifications.island.height.snap_to(target_height);
+            self.notifications.island.opacity.snap_to(target_opacity);
+            self.notifications.island.expand.snap_to(target_expand);
         } else {
             // Width carries the personality: bouncy on approach so expansion
             // overshoots a touch and replacement squashes visibly. Exit and
             // the row reveal settle without overshoot, like the original.
-            let width_damping = if self.island.phase == IslandPhase::Exiting {
+            let width_damping = if self.notifications.island.phase == IslandPhase::Exiting {
                 motion::spring::DAMPING_SMOOTH
             } else {
                 motion::spring::DAMPING_BOUNCY
             };
-            self.island
+            self.notifications
+                .island
                 .width
                 .step(dt, motion::spring::STIFFNESS, width_damping);
-            self.island
+            self.notifications
+                .island
                 .height
                 .step(dt, motion::spring::STIFFNESS, width_damping);
-            self.island.opacity.step(
+            self.notifications.island.opacity.step(
                 dt,
                 motion::spring::STIFFNESS,
                 motion::spring::DAMPING_SMOOTH,
             );
-            self.island.expand.step(
+            self.notifications.island.expand.step(
                 dt,
                 motion::spring::STIFFNESS,
                 motion::spring::DAMPING_SMOOTH,
             );
         }
 
-        if self.island.phase == IslandPhase::Exiting
-            && self.island.opacity.is_settled()
-            && self.island.opacity.value() < 0.02
+        if self.notifications.island.phase == IslandPhase::Exiting
+            && self.notifications.island.opacity.is_settled()
+            && self.notifications.island.opacity.value() < 0.02
         {
-            self.island.enter_hidden();
+            self.notifications.island.enter_hidden();
             return;
         }
 
         // --- paint -----------------------------------------------------------
-        let opacity = self.island.opacity.value().clamp(0.0, 1.0);
-        let width = self.island.width.value().clamp(8.0, stage.width());
+        let opacity = self.notifications.island.opacity.value().clamp(0.0, 1.0);
+        let width = self
+            .notifications
+            .island
+            .width
+            .value()
+            .clamp(8.0, stage.width());
         let height = self
+            .notifications
             .island
             .height
             .value()
             .clamp(4.0, EXPANDED_HEIGHT + 12.0);
-        let expand_alpha = self.island.expand.value().clamp(0.0, 1.0);
+        let expand_alpha = self.notifications.island.expand.value().clamp(0.0, 1.0);
         let top = stage.top() + CAPSULE_TOP_MARGIN - (1.0 - opacity) * ENTRANCE_RISE;
         let capsule = egui::Rect::from_min_size(
             egui::pos2(stage.center().x - width * 0.5, top),
@@ -580,11 +592,11 @@ impl DpsApp {
         let painter = ui.painter().clone();
         painter.rect_filled(capsule, radius, ISLAND_FILL);
         let border_color = if matches!(tone, ToastTone::Danger)
-            && self.island.phase == IslandPhase::Shown
-            && !self.reduce_motion
+            && self.notifications.island.phase == IslandPhase::Shown
+            && !self.preferences.reduce_motion
         {
-            self.island.pulse_phase += dt * 3.0;
-            let glow = 0.5 + 0.5 * self.island.pulse_phase.sin();
+            self.notifications.island.pulse_phase += dt * 3.0;
+            let glow = 0.5 + 0.5 * self.notifications.island.pulse_phase.sin();
             mix_color(ISLAND_BORDER, tone_color, 0.25 + 0.55 * glow)
         } else {
             ISLAND_BORDER
@@ -610,10 +622,10 @@ impl DpsApp {
         let content_painter = painter.with_clip_rect(capsule);
         let row1_center_y = capsule.top() + COMPACT_HEIGHT * 0.5;
         let mut cursor_x = capsule.left() + CAPSULE_PAD_X;
-        let swap_alpha = if self.reduce_motion {
+        let swap_alpha = if self.preferences.reduce_motion {
             1.0
         } else {
-            (now.saturating_duration_since(self.island.swap_at)
+            (now.saturating_duration_since(self.notifications.island.swap_at)
                 .as_secs_f32()
                 / CONTENT_FADE_SECONDS)
                 .clamp(0.0, 1.0)
@@ -689,36 +701,38 @@ impl DpsApp {
         // Publish this frame's hit rect (in desktop points) for the next
         // frame's global-cursor test, with a little grace margin.
         let inner_rect = ctx.input(|input| input.viewport().inner_rect);
-        self.island.hit_rect_screen = (self.island.phase == IslandPhase::Shown)
+        self.notifications.island.hit_rect_screen = (self.notifications.island.phase
+            == IslandPhase::Shown)
             .then(|| inner_rect.map(|inner| capsule.translate(inner.min.to_vec2()).expand(4.0)))
             .flatten();
 
         let action_changed_state = action.is_some();
         match action {
-            Some(IslandAction::Dismiss) => self.island.dismiss_current(),
+            Some(IslandAction::Dismiss) => self.notifications.island.dismiss_current(),
             Some(IslandAction::Undo(id)) => self.apply_undo(id, egui::ViewportId::ROOT),
-            Some(IslandAction::CloseAll) => self.island.close_all(),
+            Some(IslandAction::CloseAll) => self.notifications.island.close_all(),
             None => {}
         }
-        for id in self.island.take_dropped() {
-            self.undo_states.remove(&id);
+        for id in self.notifications.island.take_dropped() {
+            self.notifications.undo_states.remove(&id);
         }
         if action_changed_state {
             ctx.request_repaint();
         }
 
         // --- repaint scheduling -----------------------------------------------
-        let springs_settled = self.island.width.is_settled()
-            && self.island.height.is_settled()
-            && self.island.opacity.is_settled()
-            && self.island.expand.is_settled();
+        let springs_settled = self.notifications.island.width.is_settled()
+            && self.notifications.island.height.is_settled()
+            && self.notifications.island.opacity.is_settled()
+            && self.notifications.island.expand.is_settled();
         let danger_pulsing = matches!(tone, ToastTone::Danger)
-            && self.island.phase == IslandPhase::Shown
-            && !self.reduce_motion;
+            && self.notifications.island.phase == IslandPhase::Shown
+            && !self.preferences.reduce_motion;
         if !springs_settled || swap_alpha < 1.0 || danger_pulsing {
             ctx.request_repaint();
-        } else if self.island.phase == IslandPhase::Shown {
+        } else if self.notifications.island.phase == IslandPhase::Shown {
             let until_expiry = self
+                .notifications
                 .island
                 .shown_until
                 .saturating_duration_since(now)

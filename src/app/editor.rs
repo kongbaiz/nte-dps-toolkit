@@ -1,75 +1,7 @@
 use super::*;
 
-pub(crate) struct IoFmtWriter<'a, W: IoWrite> {
-    inner: &'a mut W,
-    error: Option<String>,
-}
-
-impl<'a, W: IoWrite> IoFmtWriter<'a, W> {
-    pub(crate) fn new(inner: &'a mut W) -> Self {
-        Self { inner, error: None }
-    }
-
-    pub(crate) fn finish(self) -> Result<(), String> {
-        self.error.map_or(Ok(()), Err)
-    }
-}
-
-impl<W: IoWrite> std::fmt::Write for IoFmtWriter<'_, W> {
-    fn write_str(&mut self, value: &str) -> std::fmt::Result {
-        if self.error.is_some() {
-            return Err(std::fmt::Error);
-        }
-        if let Err(error) = self.inner.write_all(value.as_bytes()) {
-            self.error = Some(error.to_string());
-            return Err(std::fmt::Error);
-        }
-        Ok(())
-    }
-}
-
 pub(crate) fn default_export_filename() -> String {
     format!("nte_capture_{}.json", Local::now().format("%Y%m%d_%H%M%S"))
-}
-
-pub(crate) fn json_option_time(value: Option<f64>) -> String {
-    value
-        .map(|timestamp| json_string(&format_time(timestamp)))
-        .unwrap_or_else(|| "null".to_owned())
-}
-
-pub(crate) fn json_option_f64(value: Option<f64>) -> String {
-    value.map(json_f64).unwrap_or_else(|| "null".to_owned())
-}
-
-pub(crate) fn json_f64(value: f64) -> String {
-    if value.is_finite() {
-        format!("{value:.3}")
-    } else {
-        "null".to_owned()
-    }
-}
-
-pub(crate) fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            '\u{08}' => escaped.push_str("\\b"),
-            '\u{0C}' => escaped.push_str("\\f"),
-            ch if ch.is_control() => {
-                write!(&mut escaped, "\\u{:04x}", ch as u32).ok();
-            }
-            ch => escaped.push(ch),
-        }
-    }
-    escaped.push('"');
-    escaped
 }
 
 pub(crate) fn character_text_field(

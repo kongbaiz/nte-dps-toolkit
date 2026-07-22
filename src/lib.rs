@@ -34,7 +34,19 @@ mod gui_entry {
         let (ui_config, config_warning) = storage::config::load();
         // Load the active locale before the first frame so the UI never flashes English keys.
         storage::i18n::set_language(ui_config.language);
-        storage::ability_names::init(ui_config.language);
+        let (ability_catalog, ability_catalog_warning) =
+            storage::ability_names::init(ui_config.language);
+        let ability_catalog_warning = ability_catalog_warning.map(|warning| {
+            storage::i18n::tf(
+                "Some resources failed to load; features degraded: {}",
+                &[&warning],
+            )
+        });
+        let config_warning = [config_warning, ability_catalog_warning]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        let config_warning = (!config_warning.is_empty()).then(|| config_warning.join("\n"));
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_title("NTE DPS TOOL")
@@ -73,7 +85,14 @@ mod gui_entry {
         eframe::run_native(
             "NTE DPS TOOL",
             options,
-            Box::new(move |cc| Ok(Box::new(DpsApp::new(cc, ui_config, config_warning)))),
+            Box::new(move |cc| {
+                Ok(Box::new(DpsApp::new(
+                    cc,
+                    ui_config,
+                    config_warning,
+                    ability_catalog,
+                )))
+            }),
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))
     }

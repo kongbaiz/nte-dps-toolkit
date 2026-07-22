@@ -3,7 +3,10 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::engine::model::{CharacterInfo, EmptyCurtainItem, EquipmentStat, Hit, HtItemNetId};
+use crate::engine::model::{
+    CharacterInfo, EmptyCurtainItem, EquipmentStat, Hit, HitCharacterSource, HitDirection,
+    HtItemNetId,
+};
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
 
@@ -688,6 +691,31 @@ pub fn load_gameplay_effect_mapping(path: &Path) -> Result<HashMap<u32, String>>
                 .map(|index| (index, name.clone()))
         })
         .collect())
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AbilityCatalog {
+    skills: HashMap<String, GameplayEffectSkill>,
+}
+
+impl AbilityCatalog {
+    pub fn load(path: &Path) -> Result<Self> {
+        load_gameplay_effect_skills(path).map(Self::from)
+    }
+
+    pub fn skill(&self, effect_name: &str) -> Option<&GameplayEffectSkill> {
+        self.skills.get(effect_name)
+    }
+
+    pub fn ability_name(&self, effect_name: &str) -> Option<&str> {
+        self.skill(effect_name)?.ability_name.as_deref()
+    }
+}
+
+impl From<HashMap<String, GameplayEffectSkill>> for AbilityCatalog {
+    fn from(skills: HashMap<String, GameplayEffectSkill>) -> Self {
+        Self { skills }
+    }
 }
 
 pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, GameplayEffectSkill>> {
@@ -2349,11 +2377,11 @@ pub fn parse_damage_payload(
         let targets_declared_character =
             damage_record_targets_declared_character(&record, resolved_packet_char_id, evidence);
         let direction = if targets_declared_character {
-            "incoming"
+            HitDirection::Incoming
         } else if resolved_packet_char_id.is_some() {
-            "outgoing"
+            HitDirection::Outgoing
         } else {
-            "unknown"
+            HitDirection::Unknown
         };
         hits.push(Hit {
             timestamp,
@@ -2364,14 +2392,13 @@ pub fn parse_damage_payload(
             byte_offset,
             bit_shift,
             char_source: if resolved_packet_char_id.is_some() {
-                "packet"
+                HitCharacterSource::Packet
             } else if fallback_char_id.is_some() {
-                "session"
+                HitCharacterSource::Session
             } else {
-                "unknown"
-            }
-            .to_owned(),
-            direction: direction.to_owned(),
+                HitCharacterSource::Unknown
+            },
+            direction,
             target_hp_before: target_hp_before as f64,
             target_hp_after: target_hp_after as f64,
             target_max_hp: target_max_hp as f64,
@@ -3233,7 +3260,7 @@ mod character_tests {
         let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "incoming");
+        assert_eq!(hits[0].direction, HitDirection::Incoming);
         assert_eq!(hits[0].char_id, 1001);
         assert!(hits[0].target_id.is_none());
         assert!(hits[0].target_name.is_none());
@@ -3258,7 +3285,7 @@ mod character_tests {
         let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert_eq!(hits[0].char_id, 1001);
     }
 
@@ -3280,7 +3307,7 @@ mod character_tests {
         let hits = parse_damage_payload(&payload, 1.0, Some(1023), None, &characters, &evidence);
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert_eq!(hits[0].char_id, 1023);
     }
 
@@ -3303,7 +3330,7 @@ mod character_tests {
         let hits = parse_damage_payload(&payload, 1.0, Some(1004), None, &characters, &evidence);
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert_eq!(hits[0].char_id, 1004);
     }
 
@@ -3326,7 +3353,7 @@ mod character_tests {
         let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert_eq!(hits[0].char_id, 1001);
     }
 
@@ -3348,7 +3375,7 @@ mod character_tests {
         let hits = parse_damage_payload(&payload, 1.0, Some(1001), None, &characters, &evidence);
 
         assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].direction, "outgoing");
+        assert_eq!(hits[0].direction, HitDirection::Outgoing);
         assert_eq!(hits[0].char_id, 1001);
     }
 
