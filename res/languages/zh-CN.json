@@ -491,6 +491,8 @@
   "No capture info to export": "当前没有可导出的抓包信息",
   "Stop capture or replay first, then export this capture info": "请先停止抓包或回放，再导出本次抓包信息",
   "Capture info JSON": "抓包信息 JSON",
+  "Capture info export is already running": "抓包信息正在导出",
+  "Exporting capture info...": "正在导出抓包信息...",
   "Capture info exported": "已导出抓包信息",
   "Capture logs folder opened": "已打开抓包日志文件夹",
   "Failed to export capture info: {}": "导出抓包信息失败：{}",

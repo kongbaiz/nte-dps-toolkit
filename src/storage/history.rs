@@ -373,18 +373,20 @@ fn compare_skills(
 ) -> Vec<HistorySkillDelta> {
     let mut rows = std::collections::HashMap::<(String, String), HistorySkillDelta>::new();
     for row in left {
-        let key = (row.name.clone(), row.category.clone());
+        let comparison_name = row.damage_name.as_ref().unwrap_or(&row.name);
+        let key = skill_comparison_key(row, right);
         let entry = rows.entry(key).or_insert_with(|| HistorySkillDelta {
-            name: row.name.clone(),
+            name: comparison_name.clone(),
             category: row.category.clone(),
             ..Default::default()
         });
         entry.left_damage += row.damage;
     }
     for row in right {
-        let key = (row.name.clone(), row.category.clone());
+        let comparison_name = row.damage_name.as_ref().unwrap_or(&row.name);
+        let key = skill_comparison_key(row, left);
         let entry = rows.entry(key).or_insert_with(|| HistorySkillDelta {
-            name: row.name.clone(),
+            name: comparison_name.clone(),
             category: row.category.clone(),
             ..Default::default()
         });
@@ -396,12 +398,36 @@ fn compare_skills(
     rows.into_values().collect()
 }
 
+fn skill_comparison_key(
+    row: &CombatSessionSkillSummary,
+    other: &[CombatSessionSkillSummary],
+) -> (String, String) {
+    let Some(identity) = row
+        .ability_name
+        .as_deref()
+        .or(row.gameplay_effect_name.as_deref())
+    else {
+        return (format!("legacy:{}", row.name), row.category.clone());
+    };
+    if let Some(display_name) = row.damage_name.as_deref()
+        && other.iter().any(|candidate| {
+            candidate.category == row.category
+                && candidate.ability_name.is_none()
+                && candidate.gameplay_effect_name.is_none()
+                && candidate.name == display_name
+        })
+    {
+        return (format!("legacy:{display_name}"), row.category.clone());
+    }
+    (format!("stable:{identity}"), row.category.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::model::{
-        CombatSessionAbyssHalfSummary, CombatSessionAbyssSummary, CombatSessionCharacterSummary,
-        CombatSessionSummary,
+        AbyssHalf, CombatSessionAbyssHalfSummary, CombatSessionAbyssSummary,
+        CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis,
     };
 
     #[test]
@@ -410,7 +436,7 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(
             directory.join("legacy.json"),
-            r#"{"version":0,"id":"","saved_at":"2026-01-01T00:00:00Z","summary":{"total_damage":100.0}}"#,
+            r#"{"version":0,"id":"","saved_at":"2026-01-01T00:00:00Z","summary":{"dps_time_mode":"扣除时停","total_damage":100.0,"abyss":{"detected":true,"active_half":"上行线","first_half":{"half":"Ascending Line"},"second_half":{"half":"下りライン"}}}}"#,
         )
         .unwrap();
 
@@ -420,6 +446,14 @@ mod tests {
         assert_eq!(result.records.len(), 1);
         assert_eq!(result.records[0].version, 0);
         assert!(!result.records[0].id.is_empty());
+        assert_eq!(
+            result.records[0].summary.dps_time_mode,
+            DpsTimeBasis::SubtractTimeStop
+        );
+        let abyss = &result.records[0].summary.abyss;
+        assert_eq!(abyss.active_half, Some(AbyssHalf::First));
+        assert_eq!(abyss.first_half.as_ref().unwrap().half, AbyssHalf::First);
+        assert_eq!(abyss.second_half.as_ref().unwrap().half, AbyssHalf::Second);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -536,13 +570,13 @@ mod tests {
                 abyss: CombatSessionAbyssSummary {
                     detected: true,
                     first_half: Some(CombatSessionAbyssHalfSummary {
-                        half: "上行线".to_owned(),
+                        half: AbyssHalf::First,
                         total_dps: 10.0,
                         characters: vec![character(1, "上角色", 100.0, 10.0)],
                         ..Default::default()
                     }),
                     second_half: Some(CombatSessionAbyssHalfSummary {
-                        half: "下行线".to_owned(),
+                        half: AbyssHalf::Second,
                         total_dps: 20.0,
                         characters: vec![character(2, "下角色", 200.0, 20.0)],
                         ..Default::default()
@@ -590,6 +624,85 @@ mod tests {
         assert_eq!(delta.left_damage, 125.0);
         assert_eq!(delta.right_damage, 15.0);
         assert_eq!(delta.delta_damage, -110.0);
+    }
+
+    #[test]
+    fn compare_records_matches_legacy_display_name_to_stable_skill_identity() {
+        let left = HistoryRecord {
+            id: "legacy".to_owned(),
+            summary: CombatSessionSummary {
+                skills: vec![skill("Test Ultimate", "Q技能", 100.0)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let right = HistoryRecord {
+            id: "stable".to_owned(),
+            summary: CombatSessionSummary {
+                skills: vec![CombatSessionSkillSummary {
+                    name: "GA_Test_UltraSkill".to_owned(),
+                    category: "Q技能".to_owned(),
+                    ability_name: Some("GA_Test_UltraSkill".to_owned()),
+                    damage_name: Some("Test Ultimate".to_owned()),
+                    damage: 125.0,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &right);
+
+        assert_eq!(comparison.skill_deltas.len(), 1);
+        let delta = &comparison.skill_deltas[0];
+        assert_eq!(delta.name, "Test Ultimate");
+        assert_eq!(delta.left_damage, 100.0);
+        assert_eq!(delta.right_damage, 125.0);
+        assert_eq!(delta.delta_damage, 25.0);
+    }
+
+    #[test]
+    fn compare_records_keeps_distinct_stable_skills_with_shared_display_name() {
+        let stable_skill = |ability_name: &str, damage: f64| CombatSessionSkillSummary {
+            name: ability_name.to_owned(),
+            category: "Q技能".to_owned(),
+            ability_name: Some(ability_name.to_owned()),
+            damage_name: Some("Shared Display".to_owned()),
+            damage,
+            ..Default::default()
+        };
+        let left = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![
+                    stable_skill("GA_Test_First", 100.0),
+                    stable_skill("GA_Test_Second", 200.0),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let right = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![
+                    stable_skill("GA_Test_First", 125.0),
+                    stable_skill("GA_Test_Second", 250.0),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &right);
+
+        assert_eq!(comparison.skill_deltas.len(), 2);
+        let mut deltas = comparison
+            .skill_deltas
+            .iter()
+            .map(|delta| delta.delta_damage)
+            .collect::<Vec<_>>();
+        deltas.sort_by(f64::total_cmp);
+        assert_eq!(deltas, vec![25.0, 50.0]);
     }
 
     fn temp_history_dir(name: &str) -> PathBuf {

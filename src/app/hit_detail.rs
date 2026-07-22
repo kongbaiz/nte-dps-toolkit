@@ -44,10 +44,14 @@ pub(crate) fn hit_detail_hover_text(
     include_character: bool,
 ) -> String {
     let mut lines = Vec::new();
+    let type_text = match hit.direction {
+        HitDirection::Incoming | HitDirection::Unknown => t(hit_type_label(hit)),
+        HitDirection::Outgoing => hit_type_display_text(hit),
+    };
     if include_character {
-        lines.push(format!("{} · {}", hit.char_name, t(hit_type_label(hit))));
+        lines.push(format!("{} · {type_text}", hit.char_name));
     } else {
-        lines.push(t(hit_type_label(hit)));
+        lines.push(type_text);
     }
     if hit.follow_up_damage > 0.0 {
         lines.push(tf(
@@ -70,7 +74,7 @@ pub(crate) fn hit_detail_hover_text(
             ],
         ));
     }
-    if hit.direction == "unknown" {
+    if hit.direction.is_unknown() {
         lines.push(t("Direction not yet confirmed"));
     } else if let Some(ability_name) = hit.ability_name.as_deref() {
         lines.push(format!("GA：{ability_name}"));
@@ -85,7 +89,7 @@ pub(crate) fn aggregate_character_skill_damage(
     let mut summaries = HashMap::<String, SkillDamageSummary>::new();
     for hit in hits
         .iter()
-        .filter(|hit| hit.char_id == char_id && hit.direction != "incoming")
+        .filter(|hit| hit.char_id == char_id && !hit.direction.is_incoming())
     {
         let name = hit_specific_type(hit).to_owned();
         let row = summaries
@@ -109,6 +113,21 @@ pub(crate) fn aggregate_character_skill_damage(
     rows
 }
 
+pub(crate) fn skill_summary_display_text(summary: &SkillDamageSummary) -> String {
+    skill_name_display_text(
+        summary
+            .name
+            .starts_with("GA_")
+            .then_some(summary.name.as_str()),
+        summary
+            .name
+            .starts_with("GE_")
+            .then_some(summary.name.as_str()),
+        None,
+        &summary.name,
+    )
+}
+
 /// Attack types shown as their own filterable chip in the "Reaction Damage"
 /// summary strip instead of being folded into whoever triggered them: the
 /// QTE-chain reactions plus "倾陷伤害" (Unbalance/Tenacity burst, issue #15 —
@@ -123,7 +142,7 @@ pub(crate) fn summarize_qte_type_filters(
 ) -> Vec<QteTypeFilterSummary> {
     let mut summaries = HashMap::<String, QteTypeFilterSummary>::new();
     for hit in hits.iter().filter(|hit| {
-        hit.direction != "incoming" && char_id.is_none_or(|char_id| hit.char_id == char_id)
+        !hit.direction.is_incoming() && char_id.is_none_or(|char_id| hit.char_id == char_id)
     }) {
         if let Some(attack_type) = hit.attack_type.as_deref()
             && is_shared_attribution_attack_type(attack_type)
@@ -365,7 +384,7 @@ pub(crate) fn build_hit_detail_cache(
 }
 
 pub(crate) fn cached_hit_row(index: usize, hit: &crate::engine::model::Hit) -> CachedHitRow {
-    let is_incoming = hit.direction == "incoming";
+    let is_incoming = hit.direction.is_incoming();
     CachedHitRow {
         index,
         is_incoming,
@@ -500,6 +519,7 @@ pub(crate) fn draw_skill_damage_summary(
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 for (rank, summary) in summaries.iter().enumerate() {
+                    let display_name = skill_summary_display_text(summary);
                     let share = if total_damage > 0.0 {
                         summary.damage / total_damage * 100.0
                     } else {
@@ -552,7 +572,7 @@ pub(crate) fn draw_skill_damage_summary(
                     ui.painter().with_clip_rect(left_clip).text(
                         rect.left_center() + egui::vec2(10.0, 0.0),
                         egui::Align2::LEFT_CENTER,
-                        format!("{}. {}  [{}]", rank + 1, summary.name, summary.category),
+                        format!("{}. {}  [{}]", rank + 1, display_name, summary.category),
                         density_proportional_font(ui, 12.0),
                         foreground,
                     );
@@ -867,7 +887,7 @@ pub(crate) fn damage_digit_key_for_hit<'a>(
     hit: &'a crate::engine::model::Hit,
     characters: &'a HashMap<u32, CharacterInfo>,
 ) -> Option<&'a str> {
-    if hit.direction == "incoming" {
+    if hit.direction.is_incoming() {
         return Some("HP");
     }
     let source_attribute = hit.damage_attribute.as_deref().or_else(|| {
@@ -1107,11 +1127,11 @@ pub(crate) fn draw_character_hit_row(
         egui::vec2(layout.row_width, row_height),
         egui::Sense::hover(),
     );
-    let incoming = hit.direction == "incoming";
-    let type_color = match hit.direction.as_str() {
-        "incoming" => semantic_danger(ui.visuals().dark_mode),
-        "unknown" => semantic_warning(ui.visuals().dark_mode),
-        _ => hit_output_badge_color(ui.visuals().dark_mode),
+    let incoming = hit.direction.is_incoming();
+    let type_color = match hit.direction {
+        HitDirection::Incoming => semantic_danger(ui.visuals().dark_mode),
+        HitDirection::Unknown => semantic_warning(ui.visuals().dark_mode),
+        HitDirection::Outgoing => hit_output_badge_color(ui.visuals().dark_mode),
     };
     ui.painter().rect_filled(
         rect,
@@ -1219,7 +1239,7 @@ pub(crate) fn draw_hit_type_badge_content(
     type_color: Color32,
     reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
 ) {
-    if hit.direction == "outgoing"
+    if hit.direction.is_outgoing()
         && let Some(textures) =
             reaction_text_key_for_hit(hit).and_then(|key| reaction_textures.get(&key))
         && !textures.is_empty()
@@ -1227,9 +1247,9 @@ pub(crate) fn draw_hit_type_badge_content(
         draw_reaction_text_images(ui, badge_rect.shrink2(egui::vec2(8.0, 3.0)), textures);
         return;
     }
-    let text = match hit.direction.as_str() {
-        "incoming" | "unknown" => t(hit_type_label(hit)),
-        _ => hit_type_display_text(hit),
+    let text = match hit.direction {
+        HitDirection::Incoming | HitDirection::Unknown => t(hit_type_label(hit)),
+        HitDirection::Outgoing => hit_type_display_text(hit),
     };
     draw_clipped_label(
         ui,
@@ -1298,11 +1318,11 @@ pub(crate) fn draw_team_hit_row(
         egui::vec2(layout.row_width, row_height),
         egui::Sense::hover(),
     );
-    let incoming = hit.direction == "incoming";
-    let type_color = match hit.direction.as_str() {
-        "incoming" => semantic_danger(ui.visuals().dark_mode),
-        "unknown" => semantic_warning(ui.visuals().dark_mode),
-        _ => hit_output_badge_color(ui.visuals().dark_mode),
+    let incoming = hit.direction.is_incoming();
+    let type_color = match hit.direction {
+        HitDirection::Incoming => semantic_danger(ui.visuals().dark_mode),
+        HitDirection::Unknown => semantic_warning(ui.visuals().dark_mode),
+        HitDirection::Outgoing => hit_output_badge_color(ui.visuals().dark_mode),
     };
     ui.painter().rect_filled(
         rect,

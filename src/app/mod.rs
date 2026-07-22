@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
-use std::io::Write as IoWrite;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -22,21 +21,22 @@ use crate::engine::abyss_data::{
     required_dps_for_target_time,
 };
 use crate::engine::capture::{
-    CaptureDevice, CaptureHandle, PacketEmissionMode, RawCaptureBuffer, import_capture_json,
-    import_pcapng,
+    CaptureDevice, CaptureExportDocument, CaptureExportNetwork, CaptureExportOptions,
+    CaptureHandle, CaptureResources, EngineEventSink, PacketEmissionMode, RawCaptureBuffer,
+    import_capture_json, import_pcapng, write_capture_export,
 };
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CaptureQualitySource, CaptureQualitySummary,
     CharacterInfo, CharacterStats, CombatSegment, CombatSessionAbyssHalfSummary,
-    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState, EngineEvent,
-    HitDirectionSummary, PartyCombatState, SkillBreakdown, SkillBreakdownRow,
-    TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember,
-    TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE, summarize_combat_segments,
-    summarize_hit_directions,
+    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState, DpsTimeBasis,
+    EngineEvent, HitDirection, HitDirectionSummary, PartyCombatState, SkillBreakdown,
+    SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport,
+    TeamDpsMember, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
+    summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
-    CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file, load_characters,
-    load_equipment_catalog,
+    AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file,
+    load_characters, load_equipment_catalog,
 };
 use crate::platform::equipment_plugin::{
     EquipmentPluginClient, EquipmentPluginDeploymentError, EquipmentPluginDeploymentStatus,
@@ -63,7 +63,7 @@ use crate::storage::config::{
 };
 use crate::storage::history::{self, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
-use crate::storage::io_util::{atomic_write_file, atomic_write_text};
+use crate::storage::io_util::atomic_write_text;
 use crate::storage::paths;
 use crate::storage::resource::{read_equipment_plugin, read_resource_bytes, read_resource_text};
 use crate::support::character_editor::{
@@ -86,12 +86,13 @@ const MAX_UI_EVENTS_WHILE_SCROLLING: usize = 256;
 const UI_EVENT_BUDGET: Duration = Duration::from_millis(4);
 const DETAIL_CACHE_REFRESH_DELAY: Duration = Duration::from_millis(200);
 const MAX_PAUSED_EVENTS: usize = 50_000;
-const MAX_ENGINE_QUEUE_BACKLOG: usize = 20_000;
-/// Absolute ceiling on the engine→UI queue. Best-effort shedding within the per-frame budget is
-/// skipped while a detail list is scrolling, so without this the unbounded channel could grow
-/// indefinitely under a sustained flood. This cap is enforced every frame regardless of scrolling
-/// or pause state so memory stays bounded.
-const MAX_ENGINE_QUEUE_HARD_CAP: usize = 100_000;
+/// Semantic events are rare relative to raw packet diagnostics. This capacity
+/// absorbs long UI stalls without letting reliable event memory grow without a
+/// bound; a full lane backpressures the parser until the UI catches up.
+const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
+/// Full PacketDebug records contain payload hex/text, so keep their producer
+/// queue small and discard excess records before allocating more queued state.
+const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
 const MAX_DETAIL_HITS: usize = 10_000;
 const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
 const MAIN_TITLE_BAR_HEIGHT: f32 = 40.0;
@@ -177,6 +178,12 @@ struct PendingFileDialog {
     /// routed back to it.
     viewport: egui::ViewportId,
     receiver: Receiver<Option<PathBuf>>,
+}
+
+struct PendingCaptureExport {
+    viewport: egui::ViewportId,
+    receiver: Receiver<Result<(), String>>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 pub(crate) enum ConfirmationAction {
@@ -321,10 +328,10 @@ impl HitDetailFilter {
     fn matches(&self, hit: &crate::engine::model::Hit) -> bool {
         match self {
             Self::All => true,
-            Self::Outgoing => hit.direction != "incoming",
-            Self::Incoming => hit.direction == "incoming",
+            Self::Outgoing => !hit.direction.is_incoming(),
+            Self::Incoming => hit.direction.is_incoming(),
             Self::QteType(attack_type) => {
-                hit.direction != "incoming"
+                !hit.direction.is_incoming()
                     && (hit.attack_type.as_deref() == Some(attack_type)
                         || hit.follow_up_attack_type.as_deref() == Some(attack_type))
             }
@@ -391,7 +398,8 @@ struct SkillSummaryCacheKey {
 #[derive(Default)]
 struct SkillSummaryCache {
     key: Option<SkillSummaryCacheKey>,
-    rows: Vec<SkillDamageSummary>,
+    /// Cache hits occur on every visible frame; snapshots must stay O(1) to hand out.
+    rows: Arc<Vec<SkillDamageSummary>>,
     dirty_since: Option<Instant>,
 }
 
@@ -406,7 +414,8 @@ struct TimelineCacheKey {
 #[derive(Default)]
 struct TimelineCache {
     key: Option<TimelineCacheKey>,
-    series: TimelineSeries,
+    /// A long timeline can contain thousands of buckets and nested role rows.
+    series: Arc<TimelineSeries>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -419,7 +428,8 @@ struct SkillBreakdownCacheKey {
 #[derive(Default)]
 struct SkillBreakdownCache {
     key: Option<SkillBreakdownCacheKey>,
-    breakdown: SkillBreakdown,
+    /// Shared with the visible view so a cache hit does not clone every label.
+    breakdown: Arc<SkillBreakdown>,
 }
 
 const ATTRIBUTE_ICON_PATHS: [(&str, &str); 6] = [
@@ -954,8 +964,308 @@ struct DeviceDetection {
     diagnostic: Option<String>,
 }
 
+struct CaptureUiState {
+    devices: Vec<CaptureDevice>,
+    selected_device: usize,
+    /// Manual capture-NIC override (Npcap device `name`). `None` selects automatic detection.
+    manual_capture_device: Option<String>,
+    local_ip: String,
+    game_process_detected: bool,
+    game_network: Option<GameNetwork>,
+    filter: String,
+    active_capture_filter: Option<String>,
+    capture_quality_source: CaptureQualitySource,
+    include_incoming: bool,
+    server_damage_calibration: bool,
+    dps_time_mode: DpsTimeMode,
+    timeline_bucket_seconds: f32,
+    timeline_dps_view_mode: TimelineDpsViewMode,
+    /// Cached size/count of `logs/nte_raw_*.pcapng`, scanned only on demand in settings.
+    capture_log_stats: Option<CaptureLogStats>,
+    paused: bool,
+    dropped_debug_packets: u64,
+}
+
+impl CaptureUiState {
+    fn from_config(config: &UiConfig) -> Self {
+        Self {
+            devices: Vec::new(),
+            selected_device: 0,
+            manual_capture_device: config.manual_capture_device.clone(),
+            local_ip: String::new(),
+            game_process_detected: false,
+            game_network: None,
+            filter: "udp".to_owned(),
+            active_capture_filter: None,
+            capture_quality_source: CaptureQualitySource::Unknown,
+            include_incoming: true,
+            server_damage_calibration: config.server_damage_calibration,
+            dps_time_mode: config.dps_time_mode,
+            timeline_bucket_seconds: config.timeline_bucket_seconds,
+            timeline_dps_view_mode: config.timeline_dps_view_mode,
+            capture_log_stats: None,
+            paused: false,
+            dropped_debug_packets: 0,
+        }
+    }
+}
+
+struct WindowState {
+    /// Chrome-less combat overlay that replaces the normal root-window content.
+    hud_mode: bool,
+    /// Last HUD row/strip combination used to size the root window.
+    hud_size_key: Option<HudSizeKey>,
+    abyss_overview_open: bool,
+    abyss_overview_corner_applied: bool,
+    abyss_overview_geometry: SecondaryViewportGeometry,
+    hit_detail_char_id: Option<u32>,
+    hit_detail_corner_applied: bool,
+    hit_detail_geometry: SecondaryViewportGeometry,
+    team_hit_detail_open: bool,
+    team_hit_detail_corner_applied: bool,
+    team_hit_detail_geometry: SecondaryViewportGeometry,
+    console_open: bool,
+    console_corner_applied: bool,
+    console_geometry: SecondaryViewportGeometry,
+    applied_opacity: Option<f32>,
+    corner_applied_hwnd: Option<isize>,
+    /// Live logical inner sizes persisted after the user resizes each viewport.
+    main_window_size: egui::Vec2,
+    abyss_window_size: egui::Vec2,
+    hit_detail_window_size: egui::Vec2,
+    team_hit_detail_window_size: egui::Vec2,
+    console_window_size: egui::Vec2,
+    /// Guards root-size tracking while Windows applies the HUD exit resize.
+    main_size_restore_frames: u8,
+    /// Last root minimum size sent to egui, avoiding duplicate viewport commands.
+    applied_main_min_size: egui::Vec2,
+    opacity_reapply_frames: u8,
+}
+
+impl WindowState {
+    fn from_config(config: &UiConfig) -> Self {
+        Self {
+            hud_mode: false,
+            hud_size_key: None,
+            abyss_overview_open: false,
+            abyss_overview_corner_applied: false,
+            abyss_overview_geometry: SecondaryViewportGeometry::default(),
+            hit_detail_char_id: None,
+            hit_detail_corner_applied: false,
+            hit_detail_geometry: SecondaryViewportGeometry::default(),
+            team_hit_detail_open: false,
+            team_hit_detail_corner_applied: false,
+            team_hit_detail_geometry: SecondaryViewportGeometry::default(),
+            console_open: false,
+            console_corner_applied: false,
+            console_geometry: SecondaryViewportGeometry::default(),
+            applied_opacity: None,
+            corner_applied_hwnd: None,
+            main_window_size: config
+                .main_window_size
+                .map(egui::Vec2::from)
+                .unwrap_or(MAIN_WINDOW_BASE_SIZE),
+            abyss_window_size: config
+                .abyss_window_size
+                .map(egui::Vec2::from)
+                .unwrap_or(ABYSS_WINDOW_BASE_SIZE),
+            hit_detail_window_size: config
+                .hit_detail_window_size
+                .map(egui::Vec2::from)
+                .unwrap_or(HIT_DETAIL_WINDOW_BASE_SIZE),
+            team_hit_detail_window_size: config
+                .team_hit_detail_window_size
+                .map(egui::Vec2::from)
+                .unwrap_or(TEAM_HIT_DETAIL_WINDOW_BASE_SIZE),
+            console_window_size: config
+                .console_window_size
+                .map(egui::Vec2::from)
+                .unwrap_or(CONSOLE_WINDOW_BASE_SIZE),
+            main_size_restore_frames: 0,
+            applied_main_min_size: egui::Vec2::ZERO,
+            opacity_reapply_frames: 4,
+        }
+    }
+}
+
+struct UiPreferences {
+    hud_config: HudConfig,
+    language: Language,
+    dark_mode: bool,
+    theme_preset: ThemePreset,
+    accent: AccentColor,
+    density: UiDensity,
+    reduce_motion: bool,
+    always_on_top: bool,
+    mouse_passthrough: bool,
+    passthrough_hotkey: PassthroughHotkey,
+    global_hotkeys: GlobalHotkeys,
+    recording_hotkey: Option<GlobalHotkeyAction>,
+    hotkey_hook_available: bool,
+    onboarding_done: bool,
+    onboarding_step: u8,
+    onboarding_hotkey_preview_generation: u32,
+    console_sidebar_migration_seen: bool,
+    console_sidebar_manually_collapsed: bool,
+    opacity: f32,
+    hit_detail_columns: HitDetailColumnsConfig,
+}
+
+impl UiPreferences {
+    fn from_config(config: &UiConfig) -> Self {
+        Self {
+            hud_config: config.hud.clone(),
+            language: config.language,
+            dark_mode: config.dark_mode,
+            theme_preset: config.theme_preset,
+            accent: config.accent,
+            density: config.density,
+            reduce_motion: config.reduce_motion,
+            always_on_top: config.always_on_top,
+            mouse_passthrough: false,
+            passthrough_hotkey: config.passthrough_hotkey,
+            global_hotkeys: config.global_hotkeys,
+            recording_hotkey: None,
+            hotkey_hook_available: false,
+            onboarding_done: config.onboarding_done,
+            onboarding_step: 0,
+            onboarding_hotkey_preview_generation: 0,
+            console_sidebar_migration_seen: config.console_sidebar_migration_seen,
+            console_sidebar_manually_collapsed: false,
+            opacity: config.opacity,
+            hit_detail_columns: config.hit_detail_columns,
+        }
+    }
+}
+
+struct BackgroundTasks {
+    resource_audit_sender: Sender<ResourceAuditSummary>,
+    resource_audit_receiver: Receiver<ResourceAuditSummary>,
+    resource_audit_thread: Option<thread::JoinHandle<()>>,
+    diagnostics_sender: Sender<DiagnosticReport>,
+    diagnostics_receiver: Receiver<DiagnosticReport>,
+    diagnostics_thread: Option<thread::JoinHandle<()>>,
+    diagnostics_running: bool,
+    texture_load_receiver: Receiver<TextureLoad>,
+    device_detection_receiver: Receiver<DeviceDetection>,
+    awaiting_device_detection: bool,
+    game_process_monitor_receiver: Receiver<Result<bool, String>>,
+    game_process_monitor_stop: Sender<()>,
+    game_process_monitor_thread: Option<thread::JoinHandle<()>>,
+    game_process_monitor_error: Option<String>,
+    pending_file_dialog: Option<PendingFileDialog>,
+    pending_capture_export: Option<PendingCaptureExport>,
+}
+
+impl BackgroundTasks {
+    fn new(
+        resource_audit: (Sender<ResourceAuditSummary>, Receiver<ResourceAuditSummary>),
+        diagnostics: (Sender<DiagnosticReport>, Receiver<DiagnosticReport>),
+        texture_load_receiver: Receiver<TextureLoad>,
+        device_detection_receiver: Receiver<DeviceDetection>,
+        game_process_monitor: (
+            Receiver<Result<bool, String>>,
+            Sender<()>,
+            thread::JoinHandle<()>,
+        ),
+    ) -> Self {
+        let (resource_audit_sender, resource_audit_receiver) = resource_audit;
+        let (diagnostics_sender, diagnostics_receiver) = diagnostics;
+        let (game_process_monitor_receiver, game_process_monitor_stop, game_process_monitor_thread) =
+            game_process_monitor;
+        Self {
+            resource_audit_sender,
+            resource_audit_receiver,
+            resource_audit_thread: None,
+            diagnostics_sender,
+            diagnostics_receiver,
+            diagnostics_thread: None,
+            diagnostics_running: false,
+            texture_load_receiver,
+            device_detection_receiver,
+            awaiting_device_detection: true,
+            game_process_monitor_receiver,
+            game_process_monitor_stop,
+            game_process_monitor_thread: Some(game_process_monitor_thread),
+            game_process_monitor_error: None,
+            pending_file_dialog: None,
+            pending_capture_export: None,
+        }
+    }
+
+    fn stop_game_process_monitor(&mut self) {
+        let _ = self.game_process_monitor_stop.send(());
+        if let Some(thread) = self.game_process_monitor_thread.take() {
+            let _ = thread.join();
+        }
+    }
+
+    fn join_pending_capture_export(&mut self) {
+        if let Some(mut pending) = self.pending_capture_export.take()
+            && let Some(thread) = pending.thread.take()
+        {
+            let _ = thread.join();
+        }
+    }
+}
+
+struct NotificationState {
+    status: String,
+    last_status_toast: String,
+    status_toasts: VecDeque<StatusToast>,
+    undo_states: HashMap<u64, UndoState>,
+    next_toast_id: u64,
+    /// Global notification capsule (its own top-center overlay viewport). When
+    /// enabled it receives every notice instead of the in-window
+    /// `status_toasts`; disabling it falls back to the legacy toasts.
+    island: IslandState,
+    island_enabled: bool,
+    island_offset_x: f32,
+    diagnostic: Option<String>,
+    last_error: Option<String>,
+    last_error_action: Option<ErrorAction>,
+    last_error_viewport: egui::ViewportId,
+    passthrough_notice: Option<PassthroughNotice>,
+    pending_confirmation: Option<ConfirmationAction>,
+    pending_confirmation_viewport: egui::ViewportId,
+}
+
+impl NotificationState {
+    fn new(
+        config: &UiConfig,
+        status: String,
+        diagnostic: Option<String>,
+        last_error: Option<String>,
+    ) -> Self {
+        Self {
+            last_status_toast: status.clone(),
+            status,
+            status_toasts: VecDeque::new(),
+            undo_states: HashMap::new(),
+            next_toast_id: 1,
+            island: IslandState::new(),
+            island_enabled: config.island_notifications,
+            island_offset_x: config.island_offset_x,
+            diagnostic,
+            last_error,
+            last_error_action: None,
+            last_error_viewport: egui::ViewportId::ROOT,
+            passthrough_notice: None,
+            pending_confirmation: None,
+            pending_confirmation_viewport: egui::ViewportId::ROOT,
+        }
+    }
+
+    fn allocate_toast_id(&mut self) -> u64 {
+        let id = self.next_toast_id;
+        self.next_toast_id = self.next_toast_id.wrapping_add(1).max(1);
+        id
+    }
+}
+
 pub struct DpsApp {
     characters: Arc<HashMap<u32, CharacterInfo>>,
+    ability_catalog: Arc<AbilityCatalog>,
     avatar_textures: HashMap<String, egui::TextureHandle>,
     attribute_textures: HashMap<String, egui::TextureHandle>,
     monster_textures: HashMap<String, egui::TextureHandle>,
@@ -974,28 +1284,12 @@ pub struct DpsApp {
     hidden_character_ids: HashSet<u32>,
     selected_abyss_half: AbyssHalf,
     abyss_compact_mode: bool,
-    /// Chrome-less "战斗 HUD" overlay: hides the toolbar/cards and paints a
-    /// background-less readout that floats directly on the game (see [`Self::hud_panel`]).
-    hud_mode: bool,
-    /// Row count and title-strip visibility the HUD window was last sized to.
-    /// Drives shrinking the window to hug the HUD and restoring it on exit.
-    hud_size_key: Option<HudSizeKey>,
-    hud_config: HudConfig,
     abyss_overview: AbyssOverviewState,
     history: HistoryState,
     resource_audit: ResourceAuditState,
-    abyss_overview_open: bool,
-    abyss_overview_corner_applied: bool,
-    abyss_overview_geometry: SecondaryViewportGeometry,
-    hit_detail_char_id: Option<u32>,
     hit_detail_filter: HitDetailFilter,
     hit_detail_skill_filter: String,
-    hit_detail_corner_applied: bool,
-    hit_detail_geometry: SecondaryViewportGeometry,
-    team_hit_detail_open: bool,
     team_hit_detail_filter: HitDetailFilter,
-    team_hit_detail_corner_applied: bool,
-    team_hit_detail_geometry: SecondaryViewportGeometry,
     character_hit_cache: HitDetailCache,
     team_hit_cache: HitDetailCache,
     skill_summary_cache: SkillSummaryCache,
@@ -1005,121 +1299,31 @@ pub struct DpsApp {
     selected_timeline_char: Option<u32>,
     selected_skill_breakdown_char: Option<u32>,
     detail_last_scroll_activity: Option<Instant>,
-    devices: Vec<CaptureDevice>,
-    selected_device: usize,
-    /// Manual capture-NIC override (Npcap device `name`). `None` = automatic detection;
-    /// `Some(name)` pins capture to that interface as a VPN fallback. Persisted in `UiConfig`.
-    manual_capture_device: Option<String>,
-    local_ip: String,
-    game_process_detected: bool,
-    game_network: Option<GameNetwork>,
-    filter: String,
-    active_capture_filter: Option<String>,
-    capture_quality_source: CaptureQualitySource,
-    include_incoming: bool,
-    server_damage_calibration: bool,
-    dps_time_mode: DpsTimeMode,
-    timeline_bucket_seconds: f32,
-    timeline_dps_view_mode: TimelineDpsViewMode,
+    capture_ui: CaptureUiState,
+    windows: WindowState,
+    preferences: UiPreferences,
     capture: Option<CaptureHandle>,
     raw_capture: Option<RawCaptureBuffer>,
     replay_stop: Option<Arc<AtomicBool>>,
     replay_thread: Option<thread::JoinHandle<()>>,
-    sender: Sender<EngineEvent>,
+    sender: EngineEventSink,
     receiver: Receiver<EngineEvent>,
-    resource_audit_sender: Sender<ResourceAuditSummary>,
-    resource_audit_receiver: Receiver<ResourceAuditSummary>,
-    resource_audit_thread: Option<thread::JoinHandle<()>>,
-    diagnostics_sender: Sender<DiagnosticReport>,
-    diagnostics_receiver: Receiver<DiagnosticReport>,
-    diagnostics_thread: Option<thread::JoinHandle<()>>,
+    debug_receiver: Receiver<EngineEvent>,
     diagnostics_report: Option<DiagnosticReport>,
-    diagnostics_running: bool,
-    texture_load_receiver: Receiver<TextureLoad>,
-    device_detection_receiver: Receiver<DeviceDetection>,
-    awaiting_device_detection: bool,
-    game_process_monitor_receiver: Receiver<Result<bool, String>>,
-    game_process_monitor_stop: Sender<()>,
-    game_process_monitor_thread: Option<thread::JoinHandle<()>>,
-    game_process_monitor_error: Option<String>,
-    /// Cached size/count of `logs/nte_raw_*.pcapng`, scanned lazily for the
-    /// capture-file section in settings (never per frame). `None` until first
-    /// shown or after a refresh request.
-    capture_log_stats: Option<CaptureLogStats>,
+    background_tasks: BackgroundTasks,
     paused_events: VecDeque<EngineEvent>,
-    dropped_debug_packets: u64,
-    status: String,
-    last_status_toast: String,
-    status_toasts: VecDeque<StatusToast>,
-    undo_states: HashMap<u64, UndoState>,
-    next_toast_id: u64,
-    /// Global notification capsule (its own top-center overlay viewport). When
-    /// enabled it receives every notice instead of the in-window
-    /// `status_toasts`; disabling it falls back to the legacy toasts.
-    island: IslandState,
-    island_enabled: bool,
-    island_offset_x: f32,
-    diagnostic: Option<String>,
-    last_error: Option<String>,
-    last_error_action: Option<ErrorAction>,
-    last_error_viewport: egui::ViewportId,
-    console_open: bool,
-    console_corner_applied: bool,
-    console_geometry: SecondaryViewportGeometry,
-    console_sidebar_manually_collapsed: bool,
+    notifications: NotificationState,
     console_tab: ConsoleTab,
     command_palette: CommandPaletteState,
     debug_only_hits: bool,
     debug_search: String,
     character_editor: CharacterEditorState,
     encrypted_ini_editor: EncryptedIniEditorState,
-    paused: bool,
-    /// Active UI language. Mirrors `UiConfig::language`; the settings dropdown writes
-    /// it and calls [`crate::storage::i18n::set_language`] to swap the live locale.
-    language: Language,
-    dark_mode: bool,
-    theme_preset: ThemePreset,
-    accent: AccentColor,
-    density: UiDensity,
-    reduce_motion: bool,
-    always_on_top: bool,
-    mouse_passthrough: bool,
-    passthrough_notice: Option<PassthroughNotice>,
-    passthrough_hotkey: PassthroughHotkey,
-    global_hotkeys: GlobalHotkeys,
-    recording_hotkey: Option<GlobalHotkeyAction>,
-    hotkey_hook_available: bool,
-    onboarding_done: bool,
-    onboarding_step: u8,
-    onboarding_hotkey_preview_generation: u32,
-    console_sidebar_migration_seen: bool,
-    opacity: f32,
-    applied_opacity: Option<f32>,
-    corner_applied_hwnd: Option<isize>,
-    // Live inner size (logical points) of each window, updated every frame from the viewport's
-    // `screen_rect` while it is open and persisted (debounced) so the window reopens at the size
-    // the user last dragged it to. Replaces the retired −／＋ scale factor.
-    main_window_size: egui::Vec2,
-    abyss_window_size: egui::Vec2,
-    hit_detail_window_size: egui::Vec2,
-    team_hit_detail_window_size: egui::Vec2,
-    hit_detail_columns: HitDetailColumnsConfig,
-    console_window_size: egui::Vec2,
-    /// Frames to skip main-window size tracking after a programmatic `InnerSize` (HUD exit), while
-    /// Windows applies the resize asynchronously and `content_rect` still reports the old HUD size.
-    /// Without this, tracking would clobber `main_window_size` with the small HUD size.
-    main_size_restore_frames: u8,
-    /// Last `MinInnerSize` pushed to the main viewport, so the command is only re-sent on change.
-    applied_main_min_size: egui::Vec2,
     style_key_applied: Option<AppliedStyleKey>,
     session_epoch: u64,
-    opacity_reapply_frames: u8,
     theme_transition_from: Option<Color32>,
-    pending_file_dialog: Option<PendingFileDialog>,
     active_import: Option<ActiveImport>,
     engine_task_viewport: Option<egui::ViewportId>,
-    pending_confirmation: Option<ConfirmationAction>,
-    pending_confirmation_viewport: egui::ViewportId,
     saved_ui_config: UiConfig,
     pending_ui_config: Option<(UiConfig, Instant)>,
     ui_config_path: PathBuf,
@@ -1180,30 +1384,30 @@ impl eframe::App for DpsApp {
             // immediate child viewports from the native backend. Mark their first-frame setup as
             // pending so restored children receive their recorded normal geometry, maximized
             // state, and Win32 corner style.
-            self.console_corner_applied = false;
-            self.hit_detail_corner_applied = false;
-            self.team_hit_detail_corner_applied = false;
-            self.abyss_overview_corner_applied = false;
+            self.windows.console_corner_applied = false;
+            self.windows.hit_detail_corner_applied = false;
+            self.windows.team_hit_detail_corner_applied = false;
+            self.windows.abyss_overview_corner_applied = false;
             // The island window is also torn down with the other immediate
             // viewports; drop the stale HWND so the replacement window gets
             // its overlay styles, position and click-through re-applied.
-            self.island.invalidate_window();
+            self.notifications.island.invalidate_window();
         }
         let style_key = AppliedStyleKey {
-            dark_mode: self.dark_mode,
-            theme_preset: self.theme_preset,
-            accent: self.accent,
-            density: self.density,
-            reduce_motion: self.reduce_motion,
+            dark_mode: self.preferences.dark_mode,
+            theme_preset: self.preferences.theme_preset,
+            accent: self.preferences.accent,
+            density: self.preferences.density,
+            reduce_motion: self.preferences.reduce_motion,
         };
         if self.style_key_applied != Some(style_key) {
             configure_style(
                 ctx,
-                self.dark_mode,
-                self.theme_preset,
-                self.accent,
-                self.density,
-                self.reduce_motion,
+                self.preferences.dark_mode,
+                self.preferences.theme_preset,
+                self.preferences.accent,
+                self.preferences.density,
+                self.preferences.reduce_motion,
             );
             self.style_key_applied = Some(style_key);
         }
@@ -1212,14 +1416,14 @@ impl eframe::App for DpsApp {
             "combat_start_pulse",
             self.combat_start_generation,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
         let _ = motion::animate_generation(
             ctx,
             "combat_end_bounce",
             self.combat_end_generation,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
@@ -1232,27 +1436,28 @@ impl eframe::App for DpsApp {
         self.drain_hotkeys(ctx);
         self.process_file_drops(ctx, frame);
         self.poll_file_dialog(ctx);
+        self.poll_capture_info_export(ctx);
         let hud_progress = motion::animate_bool(
             ctx,
             "hud_mode_transition",
-            self.hud_mode,
+            self.windows.hud_mode,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
             motion::ease::standard,
         );
-        let force_opacity = self.opacity_reapply_frames > 0;
+        let force_opacity = self.windows.opacity_reapply_frames > 0;
         apply_window_attributes(
             frame,
             WindowAttributeConfig {
-                opacity: egui::lerp(self.opacity..=1.0, hud_progress),
+                opacity: egui::lerp(self.preferences.opacity..=1.0, hud_progress),
                 force_opacity,
                 hud_overlay: hud_progress >= 0.5,
-                passthrough: self.mouse_passthrough,
+                passthrough: self.preferences.mouse_passthrough,
             },
-            &mut self.applied_opacity,
-            &mut self.corner_applied_hwnd,
+            &mut self.windows.applied_opacity,
+            &mut self.windows.corner_applied_hwnd,
         );
-        self.opacity_reapply_frames = self.opacity_reapply_frames.saturating_sub(1);
+        self.windows.opacity_reapply_frames = self.windows.opacity_reapply_frames.saturating_sub(1);
         if self.capture.is_some() || self.replay_thread.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
@@ -1260,36 +1465,47 @@ impl eframe::App for DpsApp {
         // Keep the native window geometry on the same transition clock as the HUD content. This
         // prevents the DirectComposition surface from snapping before the in-app transition has
         // caught up, while remaining distinct from interactive edge-drag resizing.
-        if self.hud_mode {
+        if self.windows.hud_mode {
             let rows = self.hud_visible_row_count();
-            let show_title = !self.mouse_passthrough;
+            let show_title = !self.preferences.mouse_passthrough;
             let show_status_row = self.hud_status_row_visible();
             let size_key = HudSizeKey {
                 rows,
                 show_title_strip: show_title,
                 show_status_row,
-                config: self.hud_config.clone(),
+                config: self.preferences.hud_config.clone(),
             };
-            let target = hud_window_size(rows, show_title, show_status_row, &self.hud_config);
-            if hud_progress < 1.0 || self.hud_size_key.as_ref() != Some(&size_key) {
-                let normal = self.main_window_size.max(self.applied_main_min_size);
+            let target = hud_window_size(
+                rows,
+                show_title,
+                show_status_row,
+                &self.preferences.hud_config,
+            );
+            if hud_progress < 1.0 || self.windows.hud_size_key.as_ref() != Some(&size_key) {
+                let normal = self
+                    .windows
+                    .main_window_size
+                    .max(self.windows.applied_main_min_size);
                 let size = normal + (target - normal) * hud_progress;
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-                self.hud_size_key = Some(size_key);
+                self.windows.hud_size_key = Some(size_key);
             }
-        } else if let Some(size_key) = self.hud_size_key.as_ref() {
+        } else if let Some(size_key) = self.windows.hud_size_key.as_ref() {
             let hud = hud_window_size(
                 size_key.rows,
                 size_key.show_title_strip,
                 size_key.show_status_row,
                 &size_key.config,
             );
-            let restore = self.main_window_size.max(self.applied_main_min_size);
+            let restore = self
+                .windows
+                .main_window_size
+                .max(self.windows.applied_main_min_size);
             let size = restore + (hud - restore) * hud_progress;
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
             if hud_progress <= 0.0 {
-                self.hud_size_key = None;
-                self.main_size_restore_frames = HUD_TRANSITION_TRACKING_GUARD_FRAMES;
+                self.windows.hud_size_key = None;
+                self.windows.main_size_restore_frames = HUD_TRANSITION_TRACKING_GUARD_FRAMES;
             }
         }
         self.update_status_toast(ctx);
@@ -1300,12 +1516,12 @@ impl eframe::App for DpsApp {
         let hud_progress = motion::animate_bool(
             &ctx,
             "hud_mode_transition",
-            self.hud_mode,
+            self.windows.hud_mode,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
             motion::ease::standard,
         );
-        let content_opacity = if self.hud_mode {
+        let content_opacity = if self.windows.hud_mode {
             hud_progress
         } else {
             1.0 - hud_progress
@@ -1313,10 +1529,11 @@ impl eframe::App for DpsApp {
         let normal_visibility = 1.0 - hud_progress;
         // HUD mode replaces the full title bar with a compact strip (drag · 穿透 ·
         // 退出) and strips the panel fill so only the game shows behind it.
-        let show_hud_title = if self.hud_mode {
-            !self.mouse_passthrough
+        let show_hud_title = if self.windows.hud_mode {
+            !self.preferences.mouse_passthrough
         } else {
-            self.hud_size_key
+            self.windows
+                .hud_size_key
                 .as_ref()
                 .is_some_and(|key| key.show_title_strip)
                 && hud_progress > 0.0
@@ -1353,7 +1570,7 @@ impl eframe::App for DpsApp {
         }
 
         let theme = self.theme();
-        let central_fill = if self.hud_mode && !self.mouse_passthrough {
+        let central_fill = if self.windows.hud_mode && !self.preferences.mouse_passthrough {
             mix_color(theme.bg, theme.hud.edit_bg, hud_progress)
         } else {
             theme.bg.gamma_multiply(normal_visibility)
@@ -1374,7 +1591,7 @@ impl eframe::App for DpsApp {
             )
             .show_inside(ui, |ui| {
                 ui.set_opacity(content_opacity);
-                if self.hud_mode {
+                if self.windows.hud_mode {
                     self.hud_panel(ui);
                 } else {
                     self.animated_controls(ui);
@@ -1392,7 +1609,7 @@ impl eframe::App for DpsApp {
         // Native edge/corner drag-resize for the borderless main window, plus tracking its size so
         // it restores on the next launch. HUD edit mode only exposes horizontal grips because its
         // height follows the visible modules.
-        if self.hud_mode && !self.mouse_passthrough && hud_progress >= 1.0 {
+        if self.windows.hud_mode && !self.preferences.mouse_passthrough && hud_progress >= 1.0 {
             window_width_resize_grips(&ctx);
             if ctx.input(|input| input.pointer.any_down()) {
                 let width = ctx
@@ -1401,52 +1618,52 @@ impl eframe::App for DpsApp {
                     .round()
                     .clamp(HUD_WIDTH_MIN as f32, HUD_WIDTH_MAX as f32)
                     as u16;
-                if width != self.hud_config.width {
-                    self.hud_config.width = width;
+                if width != self.preferences.hud_config.width {
+                    self.preferences.hud_config.width = width;
                 }
             }
-        } else if !self.hud_mode {
+        } else if !self.windows.hud_mode {
             let maximized = ctx
                 .input(|input| input.viewport().maximized)
                 .unwrap_or(false);
-            if self.hud_size_key.is_some() {
+            if self.windows.hud_size_key.is_some() {
                 // The HUD→window transition is still driving `InnerSize`; its duration is
                 // time-based, so a fixed frame guard would expire too early on high-refresh
                 // displays and persist an in-between size as the user's normal window size.
-            } else if self.main_size_restore_frames > 0 {
+            } else if self.windows.main_size_restore_frames > 0 {
                 // A programmatic resize (e.g. the HUD-exit restore) is still being
                 // applied by Windows. Skip both tracking — so the transient size is
                 // not written back over `main_window_size` — and min enforcement, so
                 // it does not clamp a larger restored size down to the minimum before
                 // the restore lands.
-                self.main_size_restore_frames -= 1;
+                self.windows.main_size_restore_frames -= 1;
             } else {
                 if !maximized {
                     // While maximized the inner size is the screen work area, not a
                     // size the user chose — persisting it would make the window reopen
                     // huge, so only the last restored size is tracked.
-                    track_window_size(&ctx, &mut self.main_window_size);
+                    track_window_size(&ctx, &mut self.windows.main_window_size);
                 }
                 // Grow the window minimum to whatever the current-language toolbar
                 // needs, and heal an undersized window, so the button groups can never
                 // be squeezed into overlapping.
                 self.enforce_main_min_size(&ctx, maximized);
             }
-            if self.hud_size_key.is_none() {
+            if self.windows.hud_size_key.is_none() {
                 window_resize_grips(&ctx);
             }
         }
 
-        if self.console_open {
+        if self.windows.console_open {
             self.console_panel(&ctx);
         }
-        if let Some(char_id) = self.hit_detail_char_id {
+        if let Some(char_id) = self.windows.hit_detail_char_id {
             self.hit_detail_panel(&ctx, char_id);
         }
-        if self.team_hit_detail_open {
+        if self.windows.team_hit_detail_open {
             self.team_hit_detail_panel(&ctx);
         }
-        if self.abyss_overview_open {
+        if self.windows.abyss_overview_open {
             self.abyss_overview_panel(&ctx);
         }
         if ctx.input(|input| !input.raw.hovered_files.is_empty()) {
@@ -1487,34 +1704,39 @@ impl eframe::App for DpsApp {
 
 impl Drop for DpsApp {
     fn drop(&mut self) {
-        let _ = self.game_process_monitor_stop.send(());
-        if let Some(thread) = self.game_process_monitor_thread.take() {
-            let _ = thread.join();
-        }
+        self.background_tasks.stop_game_process_monitor();
         self.persist_ui_config_on_shutdown();
         self.stop_engine();
+        self.background_tasks.join_pending_capture_export();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AbyssOverviewState, ConsoleTab, DpsApp, HitDetailFilter, QteTypeFilterSummary,
-        UiConfigSavePlan, adjusted_cached_index, build_team_dps_export, cached_hit_row,
-        character_color, compare_cached_team_hits, damage_digit_key_for_hit,
-        damage_digit_resource_path, damage_number_digits_text,
-        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
-        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
-        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
+        AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailFilter,
+        NotificationState, PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache,
+        SkillDamageSummary, SkillSummaryCache, TimelineCache, UiConfigSavePlan, UiPreferences,
+        WindowState, adjusted_cached_index, build_team_dps_export, cached_hit_row, character_color,
+        compare_cached_team_hits, damage_digit_key_for_hit, damage_digit_resource_path,
+        damage_number_digits_text, fill_missing_character_colors_from_avatars,
+        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
+        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
+        qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
         summarize_qte_type_filters, translate_reaction_label,
     };
     use crate::engine::model::{
-        CharacterInfo, CharacterStats, CombatSessionSkillSummary, CombatState, Hit, TeamDps,
-        TeamDpsMember, UNBALANCE_ATTACK_TYPE,
+        CaptureQualitySource, CharacterInfo, CharacterStats, CombatSessionSkillSummary,
+        CombatState, Hit, HitCharacterSource, HitDirection, SkillBreakdown, SkillBreakdownRow,
+        TeamDps, TeamDpsMember, TimelineBucket, TimelineRoleBucket, TimelineSeries,
+        UNBALANCE_ATTACK_TYPE,
     };
-    use crate::storage::config::UiConfig;
+    use crate::storage::config::{
+        AccentColor, DpsTimeMode, GlobalHotkeys, HitDetailColumnsConfig, HudConfig,
+        PassthroughHotkey, ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+    };
     use crate::storage::i18n::Language;
     use crate::support::encrypted_ini::{
         EncryptedIniKey, decrypt_encrypted_ini_text, encrypt_aes256_ecb,
@@ -1525,6 +1747,7 @@ mod tests {
     use base64::engine::general_purpose::STANDARD as BASE64;
     use eframe::egui;
     use std::collections::{HashMap, VecDeque};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -1533,6 +1756,312 @@ mod tests {
         assert!(tabs.contains(&ConsoleTab::Packets));
         assert!(tabs.contains(&ConsoleTab::Resources));
         assert!(tabs.contains(&ConsoleTab::Diagnostics));
+    }
+
+    #[test]
+    fn capture_ui_state_uses_configured_policy_and_fresh_runtime_state() {
+        let config = UiConfig {
+            manual_capture_device: Some("capture-device".to_owned()),
+            server_damage_calibration: false,
+            dps_time_mode: DpsTimeMode::RealTime,
+            timeline_bucket_seconds: 2.5,
+            timeline_dps_view_mode: TimelineDpsViewMode::Characters,
+            ..UiConfig::default()
+        };
+
+        let state = CaptureUiState::from_config(&config);
+
+        assert_eq!(
+            state.manual_capture_device.as_deref(),
+            Some("capture-device")
+        );
+        assert!(!state.server_damage_calibration);
+        assert_eq!(state.dps_time_mode, DpsTimeMode::RealTime);
+        assert_eq!(state.timeline_bucket_seconds, 2.5);
+        assert_eq!(
+            state.timeline_dps_view_mode,
+            TimelineDpsViewMode::Characters
+        );
+        assert!(state.devices.is_empty());
+        assert_eq!(state.selected_device, 0);
+        assert_eq!(state.filter, "udp");
+        assert!(state.active_capture_filter.is_none());
+        assert_eq!(state.capture_quality_source, CaptureQualitySource::Unknown);
+        assert!(state.include_incoming);
+        assert!(state.capture_log_stats.is_none());
+        assert!(!state.paused);
+        assert_eq!(state.dropped_debug_packets, 0);
+    }
+
+    #[test]
+    fn window_state_restores_sizes_and_starts_with_closed_viewports() {
+        let defaults = WindowState::from_config(&UiConfig::default());
+        assert_eq!(defaults.main_window_size, super::MAIN_WINDOW_BASE_SIZE);
+        assert_eq!(defaults.abyss_window_size, super::ABYSS_WINDOW_BASE_SIZE);
+        assert_eq!(
+            defaults.hit_detail_window_size,
+            super::HIT_DETAIL_WINDOW_BASE_SIZE
+        );
+        assert_eq!(
+            defaults.team_hit_detail_window_size,
+            super::TEAM_HIT_DETAIL_WINDOW_BASE_SIZE
+        );
+        assert_eq!(
+            defaults.console_window_size,
+            super::CONSOLE_WINDOW_BASE_SIZE
+        );
+
+        let config = UiConfig {
+            main_window_size: Some([640.0, 480.0]),
+            abyss_window_size: Some([900.0, 700.0]),
+            hit_detail_window_size: Some([920.0, 710.0]),
+            team_hit_detail_window_size: Some([880.0, 680.0]),
+            console_window_size: Some([860.0, 620.0]),
+            ..UiConfig::default()
+        };
+
+        let state = WindowState::from_config(&config);
+
+        assert_eq!(state.main_window_size, egui::vec2(640.0, 480.0));
+        assert_eq!(state.abyss_window_size, egui::vec2(900.0, 700.0));
+        assert_eq!(state.hit_detail_window_size, egui::vec2(920.0, 710.0));
+        assert_eq!(state.team_hit_detail_window_size, egui::vec2(880.0, 680.0));
+        assert_eq!(state.console_window_size, egui::vec2(860.0, 620.0));
+        assert!(!state.hud_mode);
+        assert!(state.hud_size_key.is_none());
+        assert!(!state.abyss_overview_open);
+        assert!(state.hit_detail_char_id.is_none());
+        assert!(!state.team_hit_detail_open);
+        assert!(!state.console_open);
+        assert_eq!(state.abyss_overview_geometry, Default::default());
+        assert_eq!(state.hit_detail_geometry, Default::default());
+        assert_eq!(state.team_hit_detail_geometry, Default::default());
+        assert_eq!(state.console_geometry, Default::default());
+        assert!(state.applied_opacity.is_none());
+        assert!(state.corner_applied_hwnd.is_none());
+        assert_eq!(state.main_size_restore_frames, 0);
+        assert_eq!(state.applied_main_min_size, egui::Vec2::ZERO);
+        assert_eq!(state.opacity_reapply_frames, 4);
+    }
+
+    #[test]
+    fn ui_preferences_restore_config_and_reset_runtime_editing_state() {
+        let hud = HudConfig::minimal();
+        let columns = HitDetailColumnsConfig {
+            show_time: false,
+            character_width: 180,
+            ..HitDetailColumnsConfig::default()
+        };
+        let global_hotkeys = GlobalHotkeys {
+            enabled: false,
+            capture: None,
+            reset: None,
+            hud: None,
+        };
+        let config = UiConfig {
+            language: Language::Japanese,
+            opacity: 0.72,
+            dark_mode: true,
+            theme_preset: ThemePreset::Tactical,
+            accent: AccentColor::Violet,
+            density: UiDensity::Comfortable,
+            reduce_motion: true,
+            always_on_top: false,
+            hud: hud.clone(),
+            hit_detail_columns: columns,
+            passthrough_hotkey: PassthroughHotkey::F8,
+            global_hotkeys,
+            onboarding_done: true,
+            console_sidebar_migration_seen: true,
+            ..UiConfig::default()
+        };
+
+        let preferences = UiPreferences::from_config(&config);
+
+        assert_eq!(preferences.hud_config, hud);
+        assert_eq!(preferences.language, Language::Japanese);
+        assert!(preferences.dark_mode);
+        assert_eq!(preferences.theme_preset, ThemePreset::Tactical);
+        assert_eq!(preferences.accent, AccentColor::Violet);
+        assert_eq!(preferences.density, UiDensity::Comfortable);
+        assert!(preferences.reduce_motion);
+        assert!(!preferences.always_on_top);
+        assert_eq!(preferences.passthrough_hotkey, PassthroughHotkey::F8);
+        assert_eq!(preferences.global_hotkeys, global_hotkeys);
+        assert!(preferences.onboarding_done);
+        assert!(preferences.console_sidebar_migration_seen);
+        assert_eq!(preferences.opacity, 0.72);
+        assert_eq!(preferences.hit_detail_columns, columns);
+        assert!(!preferences.mouse_passthrough);
+        assert!(preferences.recording_hotkey.is_none());
+        assert!(!preferences.hotkey_hook_available);
+        assert_eq!(preferences.onboarding_step, 0);
+        assert_eq!(preferences.onboarding_hotkey_preview_generation, 0);
+        assert!(!preferences.console_sidebar_manually_collapsed);
+    }
+
+    #[test]
+    fn notification_state_restores_island_preferences_and_starts_clean() {
+        let config = UiConfig {
+            island_notifications: false,
+            island_offset_x: 42.5,
+            ..UiConfig::default()
+        };
+        let mut notifications = NotificationState::new(
+            &config,
+            "Ready".to_owned(),
+            Some("Network warning".to_owned()),
+            Some("Startup warning".to_owned()),
+        );
+
+        assert_eq!(notifications.status, "Ready");
+        assert_eq!(notifications.last_status_toast, "Ready");
+        assert!(notifications.status_toasts.is_empty());
+        assert!(notifications.undo_states.is_empty());
+        assert!(!notifications.island_enabled);
+        assert_eq!(notifications.island_offset_x, 42.5);
+        assert_eq!(notifications.diagnostic.as_deref(), Some("Network warning"));
+        assert_eq!(notifications.last_error.as_deref(), Some("Startup warning"));
+        assert!(notifications.last_error_action.is_none());
+        assert_eq!(notifications.last_error_viewport, egui::ViewportId::ROOT);
+        assert!(notifications.passthrough_notice.is_none());
+        assert!(notifications.pending_confirmation.is_none());
+        assert_eq!(
+            notifications.pending_confirmation_viewport,
+            egui::ViewportId::ROOT
+        );
+
+        assert_eq!(notifications.allocate_toast_id(), 1);
+        assert_eq!(notifications.allocate_toast_id(), 2);
+        notifications.next_toast_id = u64::MAX;
+        assert_eq!(notifications.allocate_toast_id(), u64::MAX);
+        assert_eq!(notifications.next_toast_id, 1);
+    }
+
+    #[test]
+    fn background_tasks_start_idle_and_join_owned_workers() {
+        let resource_audit = crossbeam_channel::unbounded();
+        let diagnostics = crossbeam_channel::unbounded();
+        let (_texture_sender, texture_receiver) = crossbeam_channel::unbounded();
+        let (_device_sender, device_receiver) = crossbeam_channel::unbounded();
+        let (_monitor_sender, monitor_receiver) = crossbeam_channel::unbounded();
+        let (monitor_stop, monitor_stop_receiver) = crossbeam_channel::unbounded();
+        let monitor_thread = std::thread::spawn(move || {
+            let _ = monitor_stop_receiver.recv();
+        });
+        let mut tasks = BackgroundTasks::new(
+            resource_audit,
+            diagnostics,
+            texture_receiver,
+            device_receiver,
+            (monitor_receiver, monitor_stop, monitor_thread),
+        );
+
+        assert!(tasks.resource_audit_thread.is_none());
+        assert!(tasks.diagnostics_thread.is_none());
+        assert!(!tasks.diagnostics_running);
+        assert!(tasks.awaiting_device_detection);
+        assert!(tasks.game_process_monitor_thread.is_some());
+        assert!(tasks.game_process_monitor_error.is_none());
+        assert!(tasks.pending_file_dialog.is_none());
+        assert!(tasks.pending_capture_export.is_none());
+
+        let (_export_sender, export_receiver) = crossbeam_channel::unbounded();
+        tasks.pending_capture_export = Some(PendingCaptureExport {
+            viewport: egui::ViewportId::ROOT,
+            receiver: export_receiver,
+            thread: Some(std::thread::spawn(|| {})),
+        });
+        tasks.stop_game_process_monitor();
+        tasks.join_pending_capture_export();
+
+        assert!(tasks.game_process_monitor_thread.is_none());
+        assert!(tasks.pending_capture_export.is_none());
+    }
+
+    #[test]
+    #[ignore = "manual performance probe for cached derived-view cloning"]
+    fn profile_cached_derived_view_clone_cost() {
+        const ITERATIONS: usize = 500;
+
+        let skill_summary_cache = SkillSummaryCache {
+            key: None,
+            rows: Arc::new(
+                (0..512)
+                    .map(|index| SkillDamageSummary {
+                        name: format!("skill-{index}"),
+                        category: format!("category-{}", index % 8),
+                        hits: index as u64,
+                        damage: index as f64 * 100.0,
+                    })
+                    .collect(),
+            ),
+            dirty_since: None,
+        };
+        let timeline_cache = TimelineCache {
+            key: None,
+            series: Arc::new(TimelineSeries {
+                buckets: (0..3_600)
+                    .map(|index| TimelineBucket {
+                        start_offset: index as f64,
+                        end_offset: index as f64 + 1.0,
+                        role_damage: (0..4)
+                            .map(|role| TimelineRoleBucket {
+                                char_id: role,
+                                char_name: format!("character-{role}"),
+                                damage: index as f64 * 10.0,
+                                dps: index as f64 * 10.0,
+                            })
+                            .collect(),
+                        ..TimelineBucket::default()
+                    })
+                    .collect(),
+                ..TimelineSeries::default()
+            }),
+        };
+        let skill_breakdown_cache = SkillBreakdownCache {
+            key: None,
+            breakdown: Arc::new(SkillBreakdown {
+                rows: (0..512)
+                    .map(|index| SkillBreakdownRow {
+                        char_id: (index % 4) as u32,
+                        char_name: format!("character-{}", index % 4),
+                        name: format!("skill-{index}"),
+                        category: format!("category-{}", index % 8),
+                        ability_name: Some(format!("ability-{index}")),
+                        damage_name: Some(format!("damage-{index}")),
+                        gameplay_effect_index: Some(index as u32),
+                        gameplay_effect_name: Some(format!("effect-{index}")),
+                        is_follow_up: false,
+                        hits: index as u64,
+                        damage: index as f64 * 100.0,
+                    })
+                    .collect(),
+                ..SkillBreakdown::default()
+            }),
+        };
+
+        let started = Instant::now();
+        for _ in 0..ITERATIONS {
+            std::hint::black_box(skill_summary_cache.rows.clone());
+        }
+        let skill_summaries = started.elapsed();
+
+        let started = Instant::now();
+        for _ in 0..ITERATIONS {
+            std::hint::black_box(timeline_cache.series.clone());
+        }
+        let timeline = started.elapsed();
+
+        let started = Instant::now();
+        for _ in 0..ITERATIONS {
+            std::hint::black_box(skill_breakdown_cache.breakdown.clone());
+        }
+        let skill_breakdown = started.elapsed();
+
+        println!(
+            "cached derived-view clones x{ITERATIONS}: skill summaries {skill_summaries:?}, timeline {timeline:?}, skill breakdown {skill_breakdown:?}"
+        );
     }
 
     fn hit_with_direction(direction: &str) -> Hit {
@@ -1544,8 +2073,8 @@ mod tests {
             damage: 1.0,
             byte_offset: 0,
             bit_shift: 0,
-            char_source: "unknown".to_owned(),
-            direction: direction.to_owned(),
+            char_source: HitCharacterSource::Unknown,
+            direction: HitDirection::try_from(direction).expect("test direction must be valid"),
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
@@ -1597,6 +2126,9 @@ mod tests {
         let english = CombatSessionSkillSummary {
             name: "GA_Shinku_UltraSkill".to_owned(),
             category: "技能".to_owned(),
+            ability_name: None,
+            gameplay_effect_name: None,
+            damage_name: None,
             char_id: 1076,
             char_name: "真红".to_owned(),
             damage: 593_779.0,
@@ -1929,12 +2461,12 @@ mod tests {
         hit.damage_attribute = Some("物理".to_owned());
         assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("物理"));
 
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
         hit.attack_type = Some("覆纹".to_owned());
         hit.damage_attribute = Some("咒".to_owned());
         assert_eq!(damage_digit_key_for_hit(&hit, &characters), Some("HP"));
 
-        hit.direction = "outgoing".to_owned();
+        hit.direction = HitDirection::Outgoing;
         hit.follow_up_attack_type = Some("覆纹".to_owned());
         hit.follow_up_damage_attribute = Some("咒".to_owned());
         assert_eq!(follow_up_damage_digit_key_for_hit(&hit), Some("lingzhou_L"));

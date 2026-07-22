@@ -1094,10 +1094,20 @@ pub(crate) fn draw_skill_breakdown_rows(
                     6.0,
                     color,
                 );
-                let label = if row.is_follow_up {
-                    format!("{} · {}", row.name, t("follow-up"))
+                let display_name = if row.is_follow_up {
+                    translate_reaction_label(&row.name)
                 } else {
-                    row.name.clone()
+                    skill_name_display_text(
+                        row.ability_name.as_deref(),
+                        row.gameplay_effect_name.as_deref(),
+                        row.damage_name.as_deref(),
+                        &row.name,
+                    )
+                };
+                let label = if row.is_follow_up {
+                    format!("{display_name} · {}", t("follow-up"))
+                } else {
+                    display_name
                 };
                 let left_clip = egui::Rect::from_min_max(
                     rect.min + egui::vec2(10.0, 0.0),

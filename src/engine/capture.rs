@@ -8,12 +8,12 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
+use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use libloading::Library;
 use pcap_file::DataLink;
@@ -22,28 +22,28 @@ use pcap_file::pcapng::blocks::interface_description::{
     InterfaceDescriptionBlock, InterfaceDescriptionOption,
 };
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::engine::model::{
-    AbyssEvent, AbyssHalf, CharacterInfo, EmptyCurtainCharacter, EmptyCurtainItem,
-    EmptyCurtainPlacement, EngineEvent, Hit, HitDamageCorrection, HitFollowUp, HtItemNetId,
-    PacketDebug, PacketObservation, TimeStopEvent,
+    AbyssEvent, AbyssHalf, CharacterInfo, CombatState, DpsTimeBasis, EmptyCurtainCharacter,
+    EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit, HitCharacterSource,
+    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, PacketDebug, PacketObservation,
+    PartyCombatState, TimeStopEvent,
 };
 use crate::engine::parser::{
-    ABILITY_TIPS_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
+    AbilityCatalog, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
     GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot,
     ParsedEquipmentSlot, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH,
-    UltraTimeStopEntry, classify_attack_type, classify_attack_type_from_description,
-    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    find_final_tower_character_evidence, load_ability_tip_names, load_equipment_catalog,
-    load_gameplay_effect_mapping, load_gameplay_effect_skills, load_ultra_time_stops,
-    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
-    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
-    parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
-    parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
+    UltraTimeStopEntry, classify_attack_type, declared_character_ids_from_evidence, find_data_file,
+    find_declared_character_evidence, find_final_tower_character_evidence, load_equipment_catalog,
+    load_gameplay_effect_mapping, load_ultra_time_stops, matches_shifted_bytes_at,
+    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
+    parse_empty_curtain_character_owners, parse_empty_curtain_compact_module_placements,
+    parse_empty_curtain_equipment_snapshot, parse_empty_curtain_item_removals,
+    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
+    valid_item_net_id, validate_empty_curtain_snapshot,
 };
-use crate::storage::i18n;
+use crate::storage::io_util::atomic_write_file;
 
 use crate::engine::protocol::{
     SequencedPacket, SingleBunch, TransportPacket, parse_inventory_bunches, parse_single_bunch,
@@ -205,7 +205,83 @@ pub struct CaptureHandle {
 pub struct CaptureOutput {
     pub raw_capture_directory: Option<PathBuf>,
     pub packet_emission: PacketEmissionMode,
-    pub sender: Sender<EngineEvent>,
+    pub sender: EngineEventSink,
+}
+
+#[derive(Clone)]
+pub struct CaptureResources {
+    pub characters: Arc<HashMap<u32, CharacterInfo>>,
+    pub ability_catalog: Arc<AbilityCatalog>,
+}
+
+/// Frontend-neutral event output. Semantic events use the reliable lane; full
+/// debug packets use an optional bounded lane and are discarded at the producer
+/// when that lane is full, before their large payload strings can accumulate.
+#[derive(Clone)]
+pub struct EngineEventSink {
+    reliable: Sender<EngineEvent>,
+    debug: Option<Sender<EngineEvent>>,
+    dropped_debug_packets: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EngineEventSendError;
+
+impl std::fmt::Display for EngineEventSendError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("engine event receiver disconnected")
+    }
+}
+
+impl std::error::Error for EngineEventSendError {}
+
+impl EngineEventSink {
+    pub fn reliable(sender: Sender<EngineEvent>) -> Self {
+        Self {
+            reliable: sender,
+            debug: None,
+            dropped_debug_packets: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn split(reliable: Sender<EngineEvent>, debug: Sender<EngineEvent>) -> Self {
+        Self {
+            reliable,
+            debug: Some(debug),
+            dropped_debug_packets: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn send(&self, event: EngineEvent) -> Result<(), EngineEventSendError> {
+        if !event.is_droppable_debug_packet() {
+            return self.reliable.send(event).map_err(|_| EngineEventSendError);
+        }
+        let Some(debug) = &self.debug else {
+            return self.reliable.send(event).map_err(|_| EngineEventSendError);
+        };
+        match debug.try_send(event) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                let _ = self.dropped_debug_packets.fetch_update(
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                    |count| Some(count.saturating_add(1)),
+                );
+                Ok(())
+            }
+            Err(TrySendError::Disconnected(_)) => Err(EngineEventSendError),
+        }
+    }
+
+    pub fn take_dropped_debug_packets(&self) -> u64 {
+        self.dropped_debug_packets.swap(0, Ordering::Relaxed)
+    }
+}
+
+impl From<Sender<EngineEvent>> for EngineEventSink {
+    fn from(sender: Sender<EngineEvent>) -> Self {
+        Self::reliable(sender)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,7 +296,23 @@ impl CaptureHandle {
     }
 
     pub fn stop(&mut self) {
+        self.stop_with_drain(|| {});
+    }
+
+    /// Stop while allowing a bounded event consumer to make progress. GUI
+    /// callers use this to release a parser blocked on the reliable lane before
+    /// joining its thread; unbounded consumers can keep using [`Self::stop`].
+    pub fn stop_with_drain(&mut self, mut drain: impl FnMut()) {
         self.stop.store(true, Ordering::Relaxed);
+        while self
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+        {
+            drain();
+            thread::sleep(Duration::from_millis(1));
+        }
+        drain();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
@@ -1802,7 +1894,7 @@ fn ultra_damage_time_stop_char_id(
     hit: &Hit,
     ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
 ) -> Option<u32> {
-    if hit.direction == "incoming" {
+    if hit.direction.is_incoming() {
         return None;
     }
     let ability_name = hit.ability_name.as_deref()?;
@@ -1816,7 +1908,7 @@ fn ultra_damage_time_stop_char_id(
     .then_some(hit.char_id)
 }
 
-fn send_packet_events(sender: &Sender<EngineEvent>, packet: PacketDebug) {
+fn send_packet_events(sender: &EngineEventSink, packet: PacketDebug) {
     for event in abyss_events_from_text(packet.timestamp, &packet.decoded_text) {
         let _ = sender.send(EngineEvent::Abyss(event));
     }
@@ -1918,7 +2010,7 @@ impl FollowUpDamageTracker {
         _gameplay_effect_index: Option<u32>,
         characters: &HashMap<u32, CharacterInfo>,
     ) {
-        if hit.direction == "incoming"
+        if hit.direction.is_incoming()
             || hit.char_id == 0
             || hit.target_max_hp <= 500_000.0
             || hit.target_hp_before <= 0.0
@@ -1963,7 +2055,7 @@ impl FollowUpDamageTracker {
     }
 
     fn observe_fuwen_trigger_hit(&mut self, hit: &Hit) {
-        if hit.direction == "incoming" || hit.attack_type.as_deref() != Some("环合·覆纹") {
+        if hit.direction.is_incoming() || hit.attack_type.as_deref() != Some("环合·覆纹") {
             return;
         }
         self.fuwen_active = true;
@@ -2062,7 +2154,7 @@ struct ServerDamageCalibrationTracker {
 
 impl ServerDamageCalibrationTracker {
     fn observe_hit(&mut self, hit: &Hit) {
-        if hit.direction == "incoming"
+        if hit.direction.is_incoming()
             || hit.char_id == 0
             || hit.target_max_hp <= 0.0
             || hit.target_hp_before <= 0.0
@@ -2896,9 +2988,8 @@ struct PacketDecoder {
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
     gameplay_effect_names: HashMap<u32, String>,
-    gameplay_effect_skills: HashMap<String, GameplayEffectSkill>,
+    ability_catalog: Arc<AbilityCatalog>,
     ultra_time_stops: HashMap<u32, UltraTimeStopEntry>,
-    ability_tip_names: HashMap<String, String>,
     follow_up_damage: FollowUpDamageTracker,
     server_damage_calibration: ServerDamageCalibrationTracker,
     use_server_damage_calibration: bool,
@@ -2923,25 +3014,42 @@ struct PreparedHits {
 impl Default for PacketDecoder {
     fn default() -> Self {
         let mut resource_warnings = Vec::new();
+        let ability_catalog = Arc::new(load_resource(
+            SKILL_DAMAGE_DATA_PATH,
+            &mut resource_warnings,
+            AbilityCatalog::load,
+        ));
+        Self::with_ability_catalog_and_warnings(ability_catalog, false, resource_warnings)
+    }
+}
+
+impl PacketDecoder {
+    fn with_ability_catalog(
+        ability_catalog: Arc<AbilityCatalog>,
+        use_server_damage_calibration: bool,
+    ) -> Self {
+        Self::with_ability_catalog_and_warnings(
+            ability_catalog,
+            use_server_damage_calibration,
+            Vec::new(),
+        )
+    }
+
+    fn with_ability_catalog_and_warnings(
+        ability_catalog: Arc<AbilityCatalog>,
+        use_server_damage_calibration: bool,
+        mut resource_warnings: Vec<String>,
+    ) -> Self {
         let gameplay_effect_names = load_resource(
             GAMEPLAY_EFFECT_MAPPING_PATH,
             &mut resource_warnings,
             load_gameplay_effect_mapping,
-        );
-        let gameplay_effect_skills = load_resource(
-            SKILL_DAMAGE_DATA_PATH,
-            &mut resource_warnings,
-            load_gameplay_effect_skills,
         );
         let ultra_time_stops = load_resource(
             ULTRA_TIME_STOP_DATA_PATH,
             &mut resource_warnings,
             load_ultra_time_stops,
         );
-        let ui_language = i18n::current_language();
-        let ability_tip_names = load_resource(ABILITY_TIPS_PATH, &mut resource_warnings, |path| {
-            load_ability_tip_names(path, ui_language)
-        });
         let equipment_catalog = load_resource(
             EQUIPMENT_CATALOG_PATH,
             &mut resource_warnings,
@@ -2953,12 +3061,11 @@ impl Default for PacketDecoder {
             session_characters: HashMap::new(),
             client_endpoints: HashSet::new(),
             gameplay_effect_names,
-            gameplay_effect_skills,
+            ability_catalog,
             ultra_time_stops,
-            ability_tip_names,
             follow_up_damage: FollowUpDamageTracker::default(),
             server_damage_calibration: ServerDamageCalibrationTracker::default(),
-            use_server_damage_calibration: false,
+            use_server_damage_calibration,
             character_declarations: HashMap::new(),
             ultra_time_stop: UltraTimeStopTracker::default(),
             pending_ambiguous_hits: Vec::new(),
@@ -2969,9 +3076,7 @@ impl Default for PacketDecoder {
             resource_warnings,
         }
     }
-}
-
-impl PacketDecoder {
+    #[cfg(test)]
     fn with_server_damage_calibration(use_server_damage_calibration: bool) -> Self {
         Self {
             use_server_damage_calibration,
@@ -3029,7 +3134,7 @@ impl PacketDecoder {
         &mut self,
         hits: impl IntoIterator<Item = Hit>,
         characters: &HashMap<u32, CharacterInfo>,
-        sender: &Sender<EngineEvent>,
+        sender: &EngineEventSink,
     ) {
         for hit in hits {
             self.follow_up_damage
@@ -3053,13 +3158,13 @@ impl PacketDecoder {
             self.recent_confirmed_hits.retain(|confirmed| {
                 hit.timestamp - confirmed.timestamp <= RECENT_CONFIRMED_HIT_WINDOW_SECONDS
             });
-            if !include_incoming && hit.direction == "incoming" {
+            if !include_incoming && hit.direction.is_incoming() {
                 prepared.filtered_incoming += 1;
                 continue;
             }
             if gameplay_effect_confirms_session_hit(&hit, declared_ids, characters) {
-                hit.direction = "outgoing".to_owned();
-                hit.char_source = "gameplay_effect".to_owned();
+                hit.direction = HitDirection::Outgoing;
+                hit.char_source = HitCharacterSource::GameplayEffect;
             }
             if is_recent_confirmed_duplicate(&hit, &self.recent_confirmed_hits) {
                 prepared.suppressed_ambiguous += 1;
@@ -3099,7 +3204,7 @@ impl PacketDecoder {
             return None;
         }
         let source_index = self.recent_confirmed_hits.iter().rev().position(|hit| {
-            hit.direction != "incoming"
+            !hit.direction.is_incoming()
                 && hit.target_max_hp > 0.0
                 && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
         })?;
@@ -3204,8 +3309,8 @@ impl PacketDecoder {
 
 fn is_ambiguous_session_hit(hit: &Hit, declared_ids: &[u32]) -> bool {
     declared_ids.len() > 1
-        && hit.char_source == "session"
-        && hit.direction == "unknown"
+        && hit.char_source == HitCharacterSource::Session
+        && hit.direction.is_unknown()
         && hit.gameplay_effect_index.is_some()
 }
 
@@ -3215,8 +3320,8 @@ fn gameplay_effect_confirms_session_hit(
     characters: &HashMap<u32, CharacterInfo>,
 ) -> bool {
     if declared_ids.len() <= 1
-        || hit.char_source != "session"
-        || hit.direction != "unknown"
+        || hit.char_source != HitCharacterSource::Session
+        || !hit.direction.is_unknown()
         || !declared_ids.contains(&hit.char_id)
     {
         return false;
@@ -3235,7 +3340,10 @@ fn gameplay_effect_confirms_session_hit(
 }
 
 fn is_confirmed_packet_hit(hit: &Hit) -> bool {
-    matches!(hit.char_source.as_str(), "packet" | "gameplay_effect") && hit.direction == "outgoing"
+    matches!(
+        hit.char_source,
+        HitCharacterSource::Packet | HitCharacterSource::GameplayEffect
+    ) && hit.direction.is_outgoing()
 }
 
 fn same_damage_event(left: &Hit, right: &Hit) -> bool {
@@ -3353,8 +3461,7 @@ fn enrich_hit_with_gameplay_effect(
     hit: &mut Hit,
     effects: &[ParsedGameplayEffect],
     names: &HashMap<u32, String>,
-    skills: &HashMap<String, GameplayEffectSkill>,
-    ability_tip_names: &HashMap<String, String>,
+    ability_catalog: &AbilityCatalog,
 ) {
     let Some(effect) = matching_gameplay_effect(hit, effects) else {
         return;
@@ -3364,28 +3471,21 @@ fn enrich_hit_with_gameplay_effect(
         return;
     };
     hit.gameplay_effect_name = Some(effect_name.clone());
-    hit.damage_name = resolve_damage_name(effect_name, skills, ability_tip_names);
-    let skill = skills.get(effect_name);
+    let skill = ability_catalog.skill(effect_name);
     if let Some(skill) = skill {
         hit.ability_name = skill.ability_name.clone();
         hit.attack_type = Some(skill.attack_type.clone());
-    } else if let Some(attack_type) = hit
-        .damage_name
-        .as_deref()
-        .and_then(classify_attack_type_from_description)
-    {
-        hit.attack_type = Some(attack_type);
     } else {
         hit.attack_type = Some(classify_attack_type(None, effect_name, None));
     }
     if is_known_incoming_damage_effect(effect_name) {
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
     }
     if is_known_outgoing_damage_effect(effect_name, skill) {
-        hit.direction = "outgoing".to_owned();
+        hit.direction = HitDirection::Outgoing;
     }
     if is_vehicle_physical_damage_effect(effect_name) {
-        hit.direction = "outgoing".to_owned();
+        hit.direction = HitDirection::Outgoing;
         hit.damage_attribute = Some("物理".to_owned());
         hit.attack_type = Some("载具伤害".to_owned());
     }
@@ -3424,10 +3524,10 @@ fn reattribute_hit_from_ability_name(
     can_override_packet_id: bool,
     characters: &HashMap<u32, CharacterInfo>,
 ) {
-    if hit.direction == "incoming" {
+    if hit.direction.is_incoming() {
         return;
     }
-    if hit.char_source == "packet" && !can_override_packet_id {
+    if hit.char_source == HitCharacterSource::Packet && !can_override_packet_id {
         return;
     }
     let Some(ability_name) = hit.ability_name.as_deref() else {
@@ -3440,7 +3540,7 @@ fn reattribute_hit_from_ability_name(
         return;
     }
     set_hit_character(hit, character_id, characters);
-    hit.char_source = "gameplay_effect".to_owned();
+    hit.char_source = HitCharacterSource::GameplayEffect;
 }
 
 fn is_known_outgoing_damage_effect(effect_name: &str, skill: Option<&GameplayEffectSkill>) -> bool {
@@ -3483,15 +3583,6 @@ fn is_vehicle_physical_damage_effect(effect_name: &str) -> bool {
     effect_name.starts_with("GE_Vehicle_HitOut")
         || effect_name.starts_with("GE_VehicleCombatDamage")
         || effect_name == "GE_Player_VehicleExplode_HitOut"
-}
-
-fn resolve_damage_name(
-    effect_name: &str,
-    skills: &HashMap<String, GameplayEffectSkill>,
-    ability_tip_names: &HashMap<String, String>,
-) -> Option<String> {
-    let ability_name = skills.get(effect_name)?.ability_name.as_deref()?;
-    ability_tip_names.get(ability_name).cloned()
 }
 
 fn set_hit_character(hit: &mut Hit, new_char_id: u32, characters: &HashMap<u32, CharacterInfo>) {
@@ -3580,7 +3671,7 @@ impl PacketDecoder {
         local_ip: Option<Ipv4Addr>,
         include_incoming: bool,
         characters: &HashMap<u32, CharacterInfo>,
-        sender: &Sender<EngineEvent>,
+        sender: &EngineEventSink,
     ) {
         let (timestamp, capture_timestamp) = match frame_timestamp {
             FrameTimestamp::Known(timestamp) => (timestamp, Some(timestamp)),
@@ -3664,8 +3755,7 @@ impl PacketDecoder {
                 hit,
                 effective_gameplay_effects,
                 &self.gameplay_effect_names,
-                &self.gameplay_effect_skills,
-                &self.ability_tip_names,
+                &self.ability_catalog,
             );
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
             if hit
@@ -3978,7 +4068,7 @@ pub fn start_capture(
     filter: String,
     include_incoming: bool,
     use_server_damage_calibration: bool,
-    characters: Arc<HashMap<u32, CharacterInfo>>,
+    resources: CaptureResources,
     output: CaptureOutput,
 ) -> CaptureHandle {
     let CaptureOutput {
@@ -3997,7 +4087,7 @@ pub fn start_capture(
             filter: &filter,
             include_incoming,
             use_server_damage_calibration,
-            characters,
+            resources,
             sender: &sender,
             stop: &thread_stop,
             raw_capture: &thread_raw_capture,
@@ -4022,8 +4112,8 @@ struct CaptureRunConfig<'a> {
     filter: &'a str,
     include_incoming: bool,
     use_server_damage_calibration: bool,
-    characters: Arc<HashMap<u32, CharacterInfo>>,
-    sender: &'a Sender<EngineEvent>,
+    resources: CaptureResources,
+    sender: &'a EngineEventSink,
     stop: &'a AtomicBool,
     raw_capture: &'a RawCaptureBuffer,
     packet_emission: PacketEmissionMode,
@@ -4038,10 +4128,15 @@ fn run_parser(
     include_incoming: bool,
     use_server_damage_calibration: bool,
     packet_emission: PacketEmissionMode,
-    characters: Arc<HashMap<u32, CharacterInfo>>,
-    sender: Sender<EngineEvent>,
+    resources: CaptureResources,
+    sender: EngineEventSink,
 ) {
-    let mut decoder = PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
+    let CaptureResources {
+        characters,
+        ability_catalog,
+    } = resources;
+    let mut decoder =
+        PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
     decoder.packet_emission = packet_emission;
     if let Some(warning) = decoder.resource_warning() {
         let _ = sender.send(EngineEvent::Warning(warning));
@@ -4067,7 +4162,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         filter,
         include_incoming,
         use_server_damage_calibration,
-        characters,
+        resources,
         sender,
         stop,
         raw_capture,
@@ -4136,7 +4231,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         // copy onto the bounded queue.
         let (frame_sender, frame_receiver) = bounded::<CaptureFrame>(CAPTURE_FRAME_QUEUE_CAPACITY);
         let parser_thread = {
-            let characters = Arc::clone(&characters);
+            let resources = resources.clone();
             let sender = sender.clone();
             thread::spawn(move || {
                 run_parser(
@@ -4145,7 +4240,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
                     include_incoming,
                     use_server_damage_calibration,
                     packet_emission,
-                    characters,
+                    resources,
                     sender,
                 );
             })
@@ -4199,14 +4294,19 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
 
 pub fn import_pcapng(
     path: PathBuf,
-    characters: Arc<HashMap<u32, CharacterInfo>>,
+    resources: CaptureResources,
     local_ip_hint: Option<Ipv4Addr>,
     include_incoming: bool,
     use_server_damage_calibration: bool,
-    sender: Sender<EngineEvent>,
+    sender: impl Into<EngineEventSink>,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
+    let sender = sender.into();
     thread::spawn(move || {
+        let CaptureResources {
+            characters,
+            ability_catalog,
+        } = resources;
         let direction_mode = local_ip_hint.map_or_else(
             || "heuristic direction".to_owned(),
             |ip| format!("local IP {ip}"),
@@ -4218,7 +4318,7 @@ pub fn import_pcapng(
             let file = File::open(&path).map_err(|error| error.to_string())?;
             let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
             let mut decoder =
-                PacketDecoder::with_server_damage_calibration(use_server_damage_calibration);
+                PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
             if let Some(warning) = decoder.resource_warning() {
                 let _ = sender.send(EngineEvent::Warning(warning));
             }
@@ -4280,26 +4380,150 @@ pub fn import_pcapng(
     })
 }
 
-#[derive(Deserialize)]
-struct CaptureExport {
+pub const CAPTURE_EXPORT_VERSION: u32 = 1;
+
+fn capture_export_version() -> u32 {
+    CAPTURE_EXPORT_VERSION
+}
+
+#[derive(Clone, Debug)]
+pub struct CaptureExportOptions {
+    pub filter: String,
+    pub include_incoming: bool,
+    pub game_network: Option<CaptureExportNetwork>,
+    pub dps_time_mode: DpsTimeBasis,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CaptureExportNetwork {
+    pub pid: u32,
+    pub local_ip: String,
+    pub remote_ip: String,
+    pub remote_port: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CaptureExportDocument {
+    #[serde(default = "capture_export_version")]
+    version: u32,
     #[serde(default)]
-    hits: Vec<ExportHit>,
+    exported_at: String,
     #[serde(default)]
-    packets: Vec<ExportPacket>,
+    filter: String,
+    #[serde(default)]
+    include_incoming: bool,
+    #[serde(default)]
+    game_network: Option<CaptureExportNetwork>,
+    #[serde(default)]
+    summary: CaptureExportSummary,
+    #[serde(default)]
+    party: Vec<CaptureExportPartyRow>,
+    #[serde(default)]
+    abyss: CaptureExportAbyss,
     #[serde(default)]
     empty_curtain: Vec<EmptyCurtainItem>,
     #[serde(default)]
     empty_curtain_characters: Vec<EmptyCurtainCharacter>,
+    #[serde(default)]
+    hits: Vec<ExportHit>,
+    #[serde(default)]
+    packets: Vec<ExportPacket>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct CaptureExportSummary {
+    hits: usize,
+    packets: usize,
+    total_damage: f64,
+    dps: f64,
+    duration_seconds: f64,
+    dps_time_mode: String,
+    #[serde(default)]
+    started_at_unix: Option<f64>,
+    #[serde(default)]
+    started_at_local: Option<String>,
+    #[serde(default)]
+    ended_at_unix: Option<f64>,
+    #[serde(default)]
+    ended_at_local: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct CaptureExportPartyRow {
+    char_id: u32,
+    name: String,
+    hits: u64,
+    damage: f64,
+    dps: f64,
+    duration_seconds: f64,
+    share_percent: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct CaptureExportAbyss {
+    detected: bool,
+    #[serde(default)]
+    floor: Option<u32>,
+    #[serde(default)]
+    active_half: Option<String>,
+    #[serde(default)]
+    success_at_unix: Option<f64>,
+    #[serde(default)]
+    first_half_at_unix: Option<f64>,
+    #[serde(default)]
+    second_half_at_unix: Option<f64>,
+    #[serde(default)]
+    exited_at_unix: Option<f64>,
+    #[serde(default)]
+    first_half: CaptureExportAbyssHalf,
+    #[serde(default)]
+    second_half: CaptureExportAbyssHalf,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct CaptureExportAbyssHalf {
+    hits: usize,
+    total_damage: f64,
+    total_damage_taken: f64,
+    dps: f64,
+    duration_seconds: f64,
+    #[serde(default)]
+    started_at_unix: Option<f64>,
+    #[serde(default)]
+    ended_at_unix: Option<f64>,
+    #[serde(default)]
+    party: Vec<CaptureExportAbyssPartyRow>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct CaptureExportAbyssPartyRow {
+    char_id: u32,
+    name: String,
+    hits: u64,
+    damage: f64,
+    hits_taken: u64,
+    damage_taken: f64,
+    dps: f64,
+    duration_seconds: f64,
+    share_percent: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct ExportHit {
     timestamp_unix: f64,
+    #[serde(default)]
+    time_local: String,
     char_id: u32,
     char_name: String,
     damage: f64,
     #[serde(default = "default_outgoing_direction")]
-    direction: String,
+    direction: HitDirection,
     #[serde(default)]
     target_hp_before: f64,
     #[serde(default)]
@@ -4338,13 +4562,15 @@ struct ExportHit {
     follow_up_damage_attribute: Option<String>,
 }
 
-fn default_outgoing_direction() -> String {
-    "outgoing".to_owned()
+fn default_outgoing_direction() -> HitDirection {
+    HitDirection::Outgoing
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct ExportPacket {
     timestamp_unix: f64,
+    #[serde(default)]
+    time_local: String,
     source: String,
     destination: String,
     #[serde(default)]
@@ -4365,11 +4591,184 @@ struct ExportPacket {
     decoded_text: String,
 }
 
+impl CaptureExportDocument {
+    pub fn snapshot(state: &CombatState, options: CaptureExportOptions) -> Self {
+        let subtract_time_stop = options.dps_time_mode.subtracts_time_stop();
+        let duration = state.duration_with_time_stop(subtract_time_stop).max(0.001);
+        let ended_at = state
+            .hits
+            .iter()
+            .map(|hit| hit.timestamp)
+            .chain(state.packets.iter().map(|packet| packet.timestamp))
+            .max_by(|left, right| left.total_cmp(right));
+        let party = capture_export_party(state, subtract_time_stop);
+        let abyss = CaptureExportAbyss {
+            detected: state.abyss.is_active(),
+            floor: state.abyss.floor,
+            active_half: state.abyss.active_half.map(|half| half.label().to_owned()),
+            success_at_unix: state.abyss.success_at,
+            first_half_at_unix: state.abyss.first_half_at,
+            second_half_at_unix: state.abyss.second_half_at,
+            exited_at_unix: state.abyss.exited_at,
+            first_half: capture_export_abyss_half(&state.abyss.first_half, subtract_time_stop),
+            second_half: capture_export_abyss_half(&state.abyss.second_half, subtract_time_stop),
+        };
+
+        Self {
+            version: CAPTURE_EXPORT_VERSION,
+            exported_at: Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            filter: options.filter,
+            include_incoming: options.include_incoming,
+            game_network: options.game_network,
+            summary: CaptureExportSummary {
+                hits: state.hits.len(),
+                packets: state.packets.len(),
+                total_damage: state.total_damage,
+                dps: state.dps_with_time_stop(subtract_time_stop),
+                duration_seconds: duration,
+                dps_time_mode: options.dps_time_mode.label().to_owned(),
+                started_at_unix: state.started_at,
+                started_at_local: state.started_at.map(format_capture_time),
+                ended_at_unix: ended_at,
+                ended_at_local: ended_at.map(format_capture_time),
+            },
+            party,
+            abyss,
+            empty_curtain: state.empty_curtain.clone(),
+            empty_curtain_characters: state.empty_curtain_characters.clone(),
+            hits: state.hits.iter().map(ExportHit::from).collect(),
+            packets: state.packets.iter().map(ExportPacket::from).collect(),
+        }
+    }
+}
+
+impl From<&Hit> for ExportHit {
+    fn from(hit: &Hit) -> Self {
+        Self {
+            timestamp_unix: hit.timestamp,
+            time_local: format_capture_time(hit.timestamp),
+            char_id: hit.char_id,
+            char_name: hit.char_name.clone(),
+            damage: hit.damage,
+            direction: hit.direction,
+            target_hp_before: hit.target_hp_before,
+            target_hp_after: hit.target_hp_after,
+            target_max_hp: hit.target_max_hp,
+            target_hp_percent: hit.target_hp_percent,
+            target_id: hit.target_id.clone(),
+            target_name: hit.target_name.clone(),
+            target_context: hit.target_context.clone(),
+            gameplay_effect_index: hit.gameplay_effect_index,
+            gameplay_effect_name: hit.gameplay_effect_name.clone(),
+            ability_name: hit.ability_name.clone(),
+            damage_name: hit.damage_name.clone(),
+            attack_type: hit.attack_type.clone(),
+            damage_attribute: hit.damage_attribute.clone(),
+            follow_up_damage: hit.follow_up_damage,
+            follow_up_timestamp: hit.follow_up_timestamp,
+            follow_up_damage_name: hit.follow_up_damage_name.clone(),
+            follow_up_attack_type: hit.follow_up_attack_type.clone(),
+            follow_up_damage_attribute: hit.follow_up_damage_attribute.clone(),
+        }
+    }
+}
+
+impl From<&PacketDebug> for ExportPacket {
+    fn from(packet: &PacketDebug) -> Self {
+        Self {
+            timestamp_unix: packet.timestamp,
+            time_local: format_capture_time(packet.timestamp),
+            source: packet.source.clone(),
+            destination: packet.destination.clone(),
+            direction: packet.direction.clone(),
+            payload_len: packet.payload_len,
+            declared_ids: serde_json::json!(packet.declared_ids),
+            parsed_hits: packet.parsed_hits,
+            note: packet.note.clone(),
+            payload_preview: packet.payload_preview.clone(),
+            payload_hex: packet.payload_hex.clone(),
+            decoded_text: packet.decoded_text.clone(),
+        }
+    }
+}
+
+pub fn write_capture_export(path: &Path, document: &CaptureExportDocument) -> Result<(), String> {
+    atomic_write_file(path, |writer| {
+        serde_json::to_writer_pretty(writer, document).map_err(|error| error.to_string())
+    })
+}
+
+fn capture_export_party(
+    state: &CombatState,
+    subtract_time_stop: bool,
+) -> Vec<CaptureExportPartyRow> {
+    let mut rows = state.stats.values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
+    rows.into_iter()
+        .map(|row| CaptureExportPartyRow {
+            char_id: row.char_id,
+            name: row.name.clone(),
+            hits: row.hits,
+            damage: row.damage,
+            dps: state.character_dps_with_time_stop(row, subtract_time_stop),
+            duration_seconds: state.character_duration_with_time_stop(row, subtract_time_stop),
+            share_percent: if state.total_damage > 0.0 {
+                row.damage / state.total_damage * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect()
+}
+
+fn capture_export_abyss_half(
+    party: &PartyCombatState,
+    subtract_time_stop: bool,
+) -> CaptureExportAbyssHalf {
+    let mut rows = party.stats.values().collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
+    let rows = rows
+        .into_iter()
+        .map(|row| CaptureExportAbyssPartyRow {
+            char_id: row.char_id,
+            name: row.name.clone(),
+            hits: row.hits,
+            damage: row.damage,
+            hits_taken: row.hits_taken,
+            damage_taken: row.damage_taken,
+            dps: party.character_dps_with_time_stop(row, subtract_time_stop),
+            duration_seconds: party.character_duration_with_time_stop(row, subtract_time_stop),
+            share_percent: if party.total_damage > 0.0 {
+                row.damage / party.total_damage * 100.0
+            } else {
+                0.0
+            },
+        })
+        .collect();
+    CaptureExportAbyssHalf {
+        hits: party.hits.len(),
+        total_damage: party.total_damage,
+        total_damage_taken: party.total_damage_taken,
+        dps: party.dps_with_time_stop(subtract_time_stop),
+        duration_seconds: party.duration_with_time_stop(subtract_time_stop),
+        started_at_unix: party.started_at,
+        ended_at_unix: party.ended_at,
+        party: rows,
+    }
+}
+
+fn format_capture_time(timestamp: f64) -> String {
+    DateTime::<Local>::from(std::time::UNIX_EPOCH + Duration::from_secs_f64(timestamp.max(0.0)))
+        .format("%H:%M:%S%.3f")
+        .to_string()
+}
+
 pub fn import_capture_json(
     path: PathBuf,
-    sender: Sender<EngineEvent>,
+    sender: impl Into<EngineEventSink>,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
+    let sender = sender.into();
     thread::spawn(move || {
         let result = (|| -> Result<(usize, usize), String> {
             let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -4527,7 +4926,7 @@ fn validate_empty_curtain_characters(
 
 fn send_export_packet(
     packet: ExportPacket,
-    sender: &Sender<EngineEvent>,
+    sender: &EngineEventSink,
     ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
     ultra_time_stop: &mut UltraTimeStopTracker,
     empty_curtain: &mut EmptyCurtainDecoder,
@@ -4640,7 +5039,7 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         damage: hit.damage,
         byte_offset: 0,
         bit_shift: 0,
-        char_source: "export_json".to_owned(),
+        char_source: HitCharacterSource::ExportJson,
         direction: hit.direction,
         target_hp_before: hit.target_hp_before,
         target_hp_after: hit.target_hp_after,
@@ -4671,8 +5070,8 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
     }))
 }
 
-fn parse_capture_export(text: &str) -> Result<CaptureExport, String> {
-    serde_json::from_str(text)
+fn parse_capture_export(text: &str) -> Result<CaptureExportDocument, String> {
+    let document: CaptureExportDocument = serde_json::from_str(text)
         .or_else(|_| {
             let repaired = text
                 .lines()
@@ -4687,7 +5086,14 @@ fn parse_capture_export(text: &str) -> Result<CaptureExport, String> {
                 .join("\n");
             serde_json::from_str(&repaired)
         })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    if document.version != CAPTURE_EXPORT_VERSION {
+        return Err(format!(
+            "unsupported capture export version {}; expected {}",
+            document.version, CAPTURE_EXPORT_VERSION
+        ));
+    }
+    Ok(document)
 }
 
 fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
@@ -4715,6 +5121,103 @@ mod tests {
         CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, UltraTimeStopCooldown,
         load_characters,
     };
+
+    fn debug_packet(note: &str) -> PacketDebug {
+        PacketDebug {
+            timestamp: 1.0,
+            source: "127.0.0.1:1".to_owned(),
+            destination: "127.0.0.1:2".to_owned(),
+            direction: "C2S".to_owned(),
+            payload_len: 0,
+            declared_ids: Vec::new(),
+            parsed_hits: 0,
+            note: note.to_owned(),
+            payload_preview: String::new(),
+            payload_hex: String::new(),
+            decoded_text: String::new(),
+        }
+    }
+
+    #[test]
+    fn split_event_sink_bounds_debug_without_dropping_reliable_events() {
+        let (reliable_sender, reliable_receiver) = bounded(2);
+        let (debug_sender, debug_receiver) = bounded(1);
+        let sink = EngineEventSink::split(reliable_sender, debug_sender);
+
+        sink.send(EngineEvent::EmptyCurtain(Vec::new())).unwrap();
+        sink.send(EngineEvent::PacketObservation(PacketObservation {
+            parsed_hits: 3,
+        }))
+        .unwrap();
+        sink.send(EngineEvent::Packet(Box::new(debug_packet("kept"))))
+            .unwrap();
+        sink.send(EngineEvent::Packet(Box::new(debug_packet("dropped"))))
+            .unwrap();
+
+        assert!(matches!(
+            reliable_receiver.try_recv().unwrap(),
+            EngineEvent::EmptyCurtain(_)
+        ));
+        assert!(matches!(
+            reliable_receiver.try_recv().unwrap(),
+            EngineEvent::PacketObservation(PacketObservation { parsed_hits: 3 })
+        ));
+        let EngineEvent::Packet(packet) = debug_receiver.try_recv().unwrap() else {
+            panic!("debug lane must contain the retained packet");
+        };
+        assert_eq!(packet.note, "kept");
+        assert_eq!(sink.take_dropped_debug_packets(), 1);
+        assert_eq!(sink.take_dropped_debug_packets(), 0);
+    }
+
+    #[test]
+    fn reliable_only_event_sink_preserves_debug_events_for_cli_consumers() {
+        let (sender, receiver) = unbounded();
+        let sink = EngineEventSink::reliable(sender);
+
+        sink.send(EngineEvent::Packet(Box::new(debug_packet("cli"))))
+            .unwrap();
+
+        assert!(matches!(
+            receiver.try_recv().unwrap(),
+            EngineEvent::Packet(_)
+        ));
+        assert_eq!(sink.take_dropped_debug_packets(), 0);
+    }
+
+    #[test]
+    fn stop_with_drain_releases_a_blocked_reliable_sender() {
+        let (sender, receiver) = bounded(1);
+        let sink = EngineEventSink::reliable(sender);
+        sink.send(EngineEvent::Status("first".to_owned())).unwrap();
+        let worker_sink = sink.clone();
+        let worker = thread::spawn(move || {
+            worker_sink
+                .send(EngineEvent::Status("second".to_owned()))
+                .unwrap();
+        });
+        let mut handle = CaptureHandle {
+            stop: Arc::new(AtomicBool::new(false)),
+            thread: Some(worker),
+            raw_capture: RawCaptureBuffer::new(
+                CaptureDevice {
+                    name: "test".to_owned(),
+                    description: String::new(),
+                    ipv4: Vec::new(),
+                },
+                None,
+            ),
+        };
+        let mut statuses = Vec::new();
+
+        handle.stop_with_drain(|| {
+            while let Ok(EngineEvent::Status(status)) = receiver.try_recv() {
+                statuses.push(status);
+            }
+        });
+
+        assert_eq!(statuses, ["first", "second"]);
+    }
 
     fn inventory_bunch(sequence: u16, partial_flags: u8, data: u8) -> SingleBunch {
         SingleBunch {
@@ -5912,6 +6415,7 @@ mod tests {
     fn capture_export_defaults_and_preserves_empty_curtain_snapshot() {
         let legacy = parse_capture_export(r#"{"hits":[],"packets":[]}"#)
             .expect("legacy capture export should remain compatible");
+        assert_eq!(legacy.version, CAPTURE_EXPORT_VERSION);
         assert!(legacy.empty_curtain.is_empty());
         assert!(legacy.empty_curtain_characters.is_empty());
 
@@ -5934,6 +6438,164 @@ mod tests {
         let restored: EmptyCurtainItem =
             serde_json::from_str(&json).expect("positioned item should deserialize");
         assert_eq!(restored.equipped_placement, positioned.equipped_placement);
+    }
+
+    #[test]
+    fn versioned_capture_export_snapshot_round_trips_replay_fields() {
+        let mut state = CombatState::default();
+        let mut hit = targetless_hit();
+        hit.timestamp = 1.25;
+        hit.char_id = 1076;
+        hit.char_name = "Shinku".to_owned();
+        hit.damage = 1_234.5;
+        hit.target_id = Some("TARGET".to_owned());
+        hit.target_context = vec!["context-a".to_owned(), "context-b".to_owned()];
+        hit.ability_name = Some("GA_Test".to_owned());
+        hit.follow_up_damage = 12.5;
+        hit.follow_up_timestamp = Some(1.5);
+        state.push_hit(hit);
+        state.push_packet(debug_packet("round trip"));
+
+        let document = CaptureExportDocument::snapshot(
+            &state,
+            CaptureExportOptions {
+                filter: "udp and host TARGET".to_owned(),
+                include_incoming: true,
+                game_network: Some(CaptureExportNetwork {
+                    pid: 123,
+                    local_ip: "127.0.0.1".to_owned(),
+                    remote_ip: "127.0.0.2".to_owned(),
+                    remote_port: 30_031,
+                }),
+                dps_time_mode: DpsTimeBasis::SubtractTimeStop,
+            },
+        );
+        let json = serde_json::to_string_pretty(&document)
+            .expect("capture export snapshot should serialize");
+        let restored = parse_capture_export(&json)
+            .expect("serialized capture export snapshot should remain replayable");
+
+        assert_eq!(restored.version, CAPTURE_EXPORT_VERSION);
+        assert_eq!(restored.filter, "udp and host TARGET");
+        assert!(restored.include_incoming);
+        assert_eq!(restored.summary.hits, 1);
+        assert_eq!(restored.summary.packets, 1);
+        assert_eq!(restored.summary.dps_time_mode, "Exclude Time Stop");
+        assert_eq!(restored.party.len(), 1);
+        assert_eq!(restored.hits[0].ability_name.as_deref(), Some("GA_Test"));
+        assert_eq!(restored.hits[0].target_context, ["context-a", "context-b"]);
+        assert_eq!(restored.packets[0].note, "round trip");
+        assert_eq!(restored.packets[0].declared_ids, serde_json::json!([]));
+    }
+
+    #[test]
+    fn capture_export_rejects_unknown_versions() {
+        let error = parse_capture_export(r#"{"version":2,"hits":[],"packets":[]}"#)
+            .expect_err("unknown capture export versions must be rejected");
+        assert!(error.contains("unsupported capture export version 2"));
+    }
+
+    #[test]
+    fn capture_export_writer_persists_a_replayable_document() {
+        let path = std::env::temp_dir().join(format!(
+            "nte-capture-export-{}-{}.json",
+            std::process::id(),
+            Local::now()
+                .timestamp_nanos_opt()
+                .expect("current local time must fit in nanoseconds")
+        ));
+        let document = CaptureExportDocument::snapshot(
+            &CombatState::default(),
+            CaptureExportOptions {
+                filter: "udp".to_owned(),
+                include_incoming: false,
+                game_network: None,
+                dps_time_mode: DpsTimeBasis::WallClock,
+            },
+        );
+
+        write_capture_export(&path, &document)
+            .expect("capture export should be written atomically");
+        let text = std::fs::read_to_string(&path).expect("capture export should be readable");
+        let restored = parse_capture_export(&text).expect("written capture export should replay");
+        std::fs::remove_file(&path).expect("capture export fixture should be removable");
+
+        assert_eq!(restored.version, CAPTURE_EXPORT_VERSION);
+        assert_eq!(restored.filter, "udp");
+        assert_eq!(restored.summary.dps_time_mode, "Real Time");
+    }
+
+    #[test]
+    fn current_capture_hit_schema_replays_every_supported_field() {
+        let document = parse_capture_export(
+            r#"{
+                "hits":[{
+                    "timestamp_unix":1.25,
+                    "char_id":1076,
+                    "char_name":"Shinku",
+                    "damage":1234.5,
+                    "direction":"outgoing",
+                    "target_hp_before":10000.0,
+                    "target_hp_after":8765.5,
+                    "target_max_hp":10000.0,
+                    "target_hp_percent":87.655,
+                    "target_id":"TARGET",
+                    "target_name":"Target Name",
+                    "target_context":["context-a","context-b"],
+                    "gameplay_effect_index":77,
+                    "gameplay_effect_name":"GE_Test_Damage",
+                    "ability_name":"GA_Test",
+                    "damage_name":"Test Move",
+                    "attack_type":"Q技能",
+                    "damage_attribute":"灵",
+                    "follow_up_damage":12.5,
+                    "follow_up_timestamp":1.5,
+                    "follow_up_damage_name":"Follow Up",
+                    "follow_up_attack_type":"覆纹",
+                    "follow_up_damage_attribute":"灵"
+                }],
+                "packets":[],
+                "empty_curtain":[],
+                "empty_curtain_characters":[]
+            }"#,
+        )
+        .expect("current capture schema should parse");
+
+        let event = export_hit_event(
+            document
+                .hits
+                .into_iter()
+                .next()
+                .expect("fixture contains one hit"),
+        );
+        let EngineEvent::Hit(hit) = event else {
+            panic!("capture hit must replay as a hit event");
+        };
+
+        assert_eq!(hit.timestamp, 1.25);
+        assert_eq!(hit.char_id, 1076);
+        assert_eq!(hit.char_name, "Shinku");
+        assert_eq!(hit.damage, 1234.5);
+        assert_eq!(hit.direction, HitDirection::Outgoing);
+        assert_eq!(hit.target_hp_before, 10_000.0);
+        assert_eq!(hit.target_hp_after, 8_765.5);
+        assert_eq!(hit.target_max_hp, 10_000.0);
+        assert_eq!(hit.target_hp_percent, 87.655);
+        assert_eq!(hit.target_id.as_deref(), Some("TARGET"));
+        assert_eq!(hit.target_name.as_deref(), Some("Target Name"));
+        assert_eq!(hit.target_context, ["context-a", "context-b"]);
+        assert_eq!(hit.gameplay_effect_index, Some(77));
+        assert_eq!(hit.gameplay_effect_name.as_deref(), Some("GE_Test_Damage"));
+        assert_eq!(hit.ability_name.as_deref(), Some("GA_Test"));
+        assert_eq!(hit.damage_name.as_deref(), Some("Test Move"));
+        assert_eq!(hit.attack_type.as_deref(), Some("Q技能"));
+        assert_eq!(hit.damage_attribute.as_deref(), Some("灵"));
+        assert_eq!(hit.follow_up_damage, 12.5);
+        assert_eq!(hit.follow_up_timestamp, Some(1.5));
+        assert_eq!(hit.follow_up_damage_name.as_deref(), Some("Follow Up"));
+        assert_eq!(hit.follow_up_attack_type.as_deref(), Some("覆纹"));
+        assert_eq!(hit.follow_up_damage_attribute.as_deref(), Some("灵"));
+        assert_eq!(hit.char_source, HitCharacterSource::ExportJson);
     }
 
     #[test]
@@ -6370,9 +7032,11 @@ mod tests {
     #[test]
     fn send_export_packet_rejects_invalid_hex_payload() {
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let packet = ExportPacket {
             timestamp_unix: 1.0,
+            time_local: String::new(),
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
@@ -6401,10 +7065,12 @@ mod tests {
     #[test]
     fn send_export_packet_adds_final_tower_ids_from_payload() {
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let payload = b"FCharacterForNet....ft_character_1076".to_vec();
         let packet = ExportPacket {
             timestamp_unix: 1.0,
+            time_local: String::new(),
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
             direction: "C2S".to_owned(),
@@ -6440,9 +7106,11 @@ mod tests {
     #[test]
     fn send_export_packet_accepts_empty_payload_hex() {
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let packet = ExportPacket {
             timestamp_unix: 1.0,
+            time_local: String::new(),
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
@@ -6477,9 +7145,11 @@ mod tests {
     #[test]
     fn send_export_packet_preserves_exported_decoded_text() {
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let packet = ExportPacket {
             timestamp_unix: 1.0,
+            time_local: String::new(),
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
@@ -6515,6 +7185,7 @@ mod tests {
     #[test]
     fn send_export_packet_keeps_time_actor_candidate_internal() {
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let table = HashMap::from([(
             1010,
             UltraTimeStopEntry {
@@ -6529,6 +7200,7 @@ mod tests {
         let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
         let start_packet = ExportPacket {
             timestamp_unix: 10.0,
+            time_local: String::new(),
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
@@ -6559,6 +7231,7 @@ mod tests {
 
         let ignored_packet = ExportPacket {
             timestamp_unix: 15.0,
+            time_local: String::new(),
             source: "127.0.0.1:1234".to_owned(),
             destination: "127.0.0.1:5678".to_owned(),
             direction: "S2C".to_owned(),
@@ -7809,6 +8482,7 @@ mod tests {
     #[test]
     fn ignored_packet_expires_time_actor_candidate_without_public_event() {
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let mut decoder = PacketDecoder {
             ultra_time_stops: HashMap::from([(
                 1010,
@@ -7895,6 +8569,7 @@ mod tests {
         let characters = HashMap::new();
 
         let (full_sender, full_receiver) = unbounded();
+        let full_sender = EngineEventSink::reliable(full_sender);
         PacketDecoder::default().process_ethernet_frame(
             &packet,
             FrameTimestamp::Known(10.0),
@@ -7913,6 +8588,7 @@ mod tests {
         assert!(!full_packet.payload_preview.is_empty());
 
         let (summary_sender, summary_receiver) = unbounded();
+        let summary_sender = EngineEventSink::reliable(summary_sender);
         PacketDecoder {
             packet_emission: PacketEmissionMode::SummaryOnly,
             ..PacketDecoder::default()
@@ -7991,6 +8667,7 @@ mod tests {
         let characters = HashMap::new();
         let mut decoder = PacketDecoder::default();
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
 
         decoder.process_ethernet_frame(
             &packet,
@@ -8104,17 +8781,11 @@ mod tests {
         }];
         let names = HashMap::from([(1845, "GE_Vehicle_HitOut2".to_owned())]);
         let mut hit = targetless_hit();
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(
-            &mut hit,
-            &effects,
-            &names,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("载具伤害"));
         assert_eq!(hit.damage_attribute.as_deref(), Some("物理"));
     }
@@ -8128,17 +8799,11 @@ mod tests {
         }];
         let names = HashMap::from([(2031, "GE_Player_Hathor_QTE1_Damage".to_owned())]);
         let mut hit = targetless_hit();
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(
-            &mut hit,
-            &effects,
-            &names,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("环合"));
     }
 
@@ -8159,11 +8824,11 @@ mod tests {
             },
         )]);
         let mut hit = targetless_hit();
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &skills, &HashMap::new());
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::from(skills));
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("普攻"));
     }
 
@@ -8176,14 +8841,14 @@ mod tests {
         let mut hit = targetless_hit();
         hit.char_id = 1076;
         hit.char_name = "真红".to_owned();
-        hit.char_source = "packet".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
         hit.ability_name = Some("GA_Mint019_Skill".to_owned());
 
         reattribute_hit_from_ability_name(&mut hit, true, &characters);
 
         assert_eq!(hit.char_id, 1019);
         assert_eq!(hit.char_name, "薄荷");
-        assert_eq!(hit.char_source, "gameplay_effect");
+        assert_eq!(hit.char_source, HitCharacterSource::GameplayEffect);
     }
 
     #[test]
@@ -8195,14 +8860,14 @@ mod tests {
         let mut hit = targetless_hit();
         hit.char_id = 1076;
         hit.char_name = "真红".to_owned();
-        hit.char_source = "packet".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
         hit.ability_name = Some("GA_Mint019_Skill".to_owned());
 
         reattribute_hit_from_ability_name(&mut hit, false, &characters);
 
         assert_eq!(hit.char_id, 1076);
         assert_eq!(hit.char_name, "真红");
-        assert_eq!(hit.char_source, "packet");
+        assert_eq!(hit.char_source, HitCharacterSource::Packet);
     }
 
     #[test]
@@ -8214,14 +8879,14 @@ mod tests {
         let mut hit = targetless_hit();
         hit.char_id = 1076;
         hit.char_name = "真红".to_owned();
-        hit.char_source = "session".to_owned();
+        hit.char_source = HitCharacterSource::Session;
         hit.ability_name = Some("GA_Mint019_QTE".to_owned());
 
         reattribute_hit_from_ability_name(&mut hit, false, &characters);
 
         assert_eq!(hit.char_id, 1019);
         assert_eq!(hit.char_name, "薄荷");
-        assert_eq!(hit.char_source, "gameplay_effect");
+        assert_eq!(hit.char_source, HitCharacterSource::GameplayEffect);
     }
 
     #[test]
@@ -8233,17 +8898,11 @@ mod tests {
         }];
         let names = HashMap::from([(4010, "GE_ActorReaction_1_Damage".to_owned())]);
         let mut hit = targetless_hit();
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(
-            &mut hit,
-            &effects,
-            &names,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("创生花"));
     }
 
@@ -8256,17 +8915,11 @@ mod tests {
         }];
         let names = HashMap::from([(4011, "Buff_Reaction_4_new".to_owned())]);
         let mut hit = targetless_hit();
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(
-            &mut hit,
-            &effects,
-            &names,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("黯星"));
     }
 
@@ -8279,17 +8932,11 @@ mod tests {
         }];
         let names = HashMap::from([(4012, "Buff_Tenacity_damage".to_owned())]);
         let mut hit = targetless_hit();
-        hit.direction = "incoming".to_owned();
+        hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(
-            &mut hit,
-            &effects,
-            &names,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("倾陷伤害"));
     }
 
@@ -8302,17 +8949,11 @@ mod tests {
         }];
         let names = HashMap::from([(5010, "GE_mon_25_act05_Dmg02_BP".to_owned())]);
         let mut hit = targetless_hit();
-        hit.direction = "outgoing".to_owned();
+        hit.direction = HitDirection::Outgoing;
 
-        enrich_hit_with_gameplay_effect(
-            &mut hit,
-            &effects,
-            &names,
-            &HashMap::new(),
-            &HashMap::new(),
-        );
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
 
-        assert_eq!(hit.direction, "incoming");
+        assert_eq!(hit.direction, HitDirection::Incoming);
         assert_eq!(hit.attack_type.as_deref(), Some("其他"));
     }
 
@@ -8333,11 +8974,11 @@ mod tests {
             },
         )]);
         let mut hit = targetless_hit();
-        hit.direction = "outgoing".to_owned();
+        hit.direction = HitDirection::Outgoing;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &skills, &HashMap::new());
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::from(skills));
 
-        assert_eq!(hit.direction, "outgoing");
+        assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("E技能"));
     }
 
@@ -8382,8 +9023,8 @@ mod tests {
             damage: 100.0,
             byte_offset: 0,
             bit_shift: 0,
-            char_source: "test".to_owned(),
-            direction: "outgoing".to_owned(),
+            char_source: HitCharacterSource::Unknown,
+            direction: HitDirection::Outgoing,
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
@@ -8507,18 +9148,22 @@ mod tests {
         }
     }
 
-    fn duplicate_test_hit(timestamp: f64, char_source: &str, direction: &str) -> Hit {
+    fn duplicate_test_hit(timestamp: f64, char_source: HitCharacterSource, direction: &str) -> Hit {
         let mut hit = targetless_hit();
         hit.timestamp = timestamp;
-        hit.char_id = if char_source == "packet" { 1051 } else { 1010 };
-        hit.char_name = if char_source == "packet" {
+        hit.char_id = if char_source == HitCharacterSource::Packet {
+            1051
+        } else {
+            1010
+        };
+        hit.char_name = if char_source == HitCharacterSource::Packet {
             "零(女)".to_owned()
         } else {
             "娜娜莉".to_owned()
         };
         hit.damage = 5_829.0;
-        hit.char_source = char_source.to_owned();
-        hit.direction = direction.to_owned();
+        hit.char_source = char_source;
+        hit.direction = HitDirection::try_from(direction).expect("test direction must be valid");
         hit.target_hp_before = 1_389_577.0;
         hit.target_hp_after = 1_383_748.0;
         hit.target_max_hp = 1_930_389.0;
@@ -8588,17 +9233,16 @@ mod tests {
         );
         assert_eq!(
             decoder
-                .gameplay_effect_skills
-                .get("GE_Player_Nanally_Melee1_Damage")
+                .ability_catalog
+                .skill("GE_Player_Nanally_Melee1_Damage")
                 .map(|skill| skill.attack_type.as_str()),
             Some("普攻")
         );
         assert_eq!(
             decoder
-                .ability_tip_names
-                .get("GA_Cang_Melee")
-                .map(String::as_str),
-            Some("言行合一")
+                .ability_catalog
+                .ability_name("GE_Player_Cang_Melee1_Damage"),
+            Some("GA_Cang_Melee")
         );
     }
 
@@ -8619,7 +9263,7 @@ mod tests {
                 .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
                 .is_none()
         );
-        let mut hit = duplicate_test_hit(10.0, "packet", "outgoing");
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         hit.damage = 1_000.0;
         hit.target_hp_before = 10_000.0;
         hit.target_hp_after = 9_000.0;
@@ -8644,11 +9288,11 @@ mod tests {
                 .observe_boss_hp(9.0, &boss_hp_update(10_000.0))
                 .is_none()
         );
-        let mut first = duplicate_test_hit(10.0, "packet", "outgoing");
+        let mut first = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         first.target_hp_before = 10_000.0;
         first.target_hp_after = 9_000.0;
         first.target_max_hp = 10_000.0;
-        let mut second = duplicate_test_hit(10.02, "packet", "outgoing");
+        let mut second = duplicate_test_hit(10.02, HitCharacterSource::Packet, "outgoing");
         second.target_hp_before = 9_000.0;
         second.target_hp_after = 8_500.0;
         second.target_max_hp = 10_000.0;
@@ -8768,7 +9412,7 @@ mod tests {
         let warm_up = boss_hp_update(10_000.0);
         let _ = decoder.reconcile_boss_hp_updates(9.0, std::slice::from_ref(&warm_up), &characters);
 
-        let mut hit = duplicate_test_hit(10.0, "packet", "outgoing");
+        let mut hit = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         hit.damage = 1_000.0;
         hit.target_hp_before = 10_000.0;
         hit.target_hp_after = 9_000.0;
@@ -8791,7 +9435,7 @@ mod tests {
     #[test]
     fn confirmed_packet_hit_suppresses_ambiguous_session_candidate() {
         let mut decoder = PacketDecoder::default();
-        let candidate = duplicate_test_hit(10.0, "session", "unknown");
+        let candidate = duplicate_test_hit(10.0, HitCharacterSource::Session, "unknown");
 
         let characters = duplicate_test_characters();
 
@@ -8802,7 +9446,7 @@ mod tests {
         assert_eq!(prepared.deferred_ambiguous, 1);
         assert_eq!(decoder.pending_ambiguous_hits.len(), 1);
 
-        let confirmed = duplicate_test_hit(10.1, "packet", "outgoing");
+        let confirmed = duplicate_test_hit(10.1, HitCharacterSource::Packet, "outgoing");
         let prepared =
             decoder.prepare_hits_for_emission(vec![confirmed], &[1051], false, &characters);
 
@@ -8816,7 +9460,7 @@ mod tests {
     fn confirmed_packet_hit_suppresses_recent_duplicate_records() {
         let mut decoder = PacketDecoder::default();
         let characters = duplicate_test_characters();
-        let confirmed = duplicate_test_hit(10.0, "packet", "outgoing");
+        let confirmed = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         let mut duplicate = confirmed.clone();
         duplicate.gameplay_effect_index = None;
         duplicate.gameplay_effect_name = None;
@@ -8840,7 +9484,7 @@ mod tests {
     fn boss_hp_sync_damage_merges_into_recent_confirmed_hit() {
         let mut decoder = PacketDecoder::default();
         let characters = duplicate_test_characters();
-        let mut source = duplicate_test_hit(10.0, "packet", "outgoing");
+        let mut source = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         source.damage = 26_185.0;
         source.target_hp_before = 29_700.0;
         source.target_hp_after = 3_515.0;
@@ -8863,7 +9507,7 @@ mod tests {
     fn nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit() {
         let mut decoder = PacketDecoder::default();
         let characters = duplicate_test_characters();
-        let mut source = duplicate_test_hit(10.0, "packet", "outgoing");
+        let mut source = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
         source.damage = 8_446.0;
         source.target_hp_after = 1_081_975.0;
         source.target_max_hp = 1_930_389.0;
@@ -8886,8 +9530,8 @@ mod tests {
         hit.timestamp = 10.0;
         hit.char_id = 1020;
         hit.char_name = "哈尼娅".to_owned();
-        hit.char_source = "session".to_owned();
-        hit.direction = "unknown".to_owned();
+        hit.char_source = HitCharacterSource::Session;
+        hit.direction = HitDirection::Unknown;
         hit.damage = 6_961.0;
         hit.gameplay_effect_index = Some(3261);
         hit.gameplay_effect_name = Some("GE_Player_Haniel_Skill1_Damage".to_owned());
@@ -8898,15 +9542,18 @@ mod tests {
 
         assert_eq!(prepared.emit.len(), 1);
         assert_eq!(prepared.deferred_ambiguous, 0);
-        assert_eq!(prepared.emit[0].direction, "outgoing");
-        assert_eq!(prepared.emit[0].char_source, "gameplay_effect");
+        assert_eq!(prepared.emit[0].direction, HitDirection::Outgoing);
+        assert_eq!(
+            prepared.emit[0].char_source,
+            HitCharacterSource::GameplayEffect
+        );
         assert!(decoder.pending_ambiguous_hits.is_empty());
     }
 
     #[test]
     fn ambiguous_session_candidate_expires_when_unconfirmed() {
         let mut decoder = PacketDecoder::default();
-        let candidate = duplicate_test_hit(10.0, "session", "unknown");
+        let candidate = duplicate_test_hit(10.0, HitCharacterSource::Session, "unknown");
 
         let characters = duplicate_test_characters();
 
@@ -8916,67 +9563,37 @@ mod tests {
         let expired = decoder.take_expired_ambiguous_hits(10.75);
 
         assert_eq!(expired.len(), 1);
-        assert_eq!(expired[0].char_source, "session");
+        assert_eq!(expired[0].char_source, HitCharacterSource::Session);
         assert!(decoder.pending_ambiguous_hits.is_empty());
     }
 
     #[test]
-    fn resolves_damage_name_from_ability_tips() {
-        let skills = HashMap::from([(
-            "GE_Player_Cang_Melee1_Damage".to_owned(),
-            GameplayEffectSkill {
-                damage_source_category: Some("A".to_owned()),
-                ability_name: Some("GA_Cang_Melee".to_owned()),
-                attack_type: "普攻".to_owned(),
-            },
-        )]);
-        let ability_tips = HashMap::from([("GA_Cang_Melee".to_owned(), "言行合一".to_owned())]);
-
-        assert_eq!(
-            resolve_damage_name("GE_Player_Cang_Melee1_Damage", &skills, &ability_tips).as_deref(),
-            Some("言行合一")
-        );
-    }
-
-    #[test]
-    fn resolves_explode_damage_name_from_its_own_ability_name() {
-        let skills = HashMap::from([(
-            "GE_Player_Lacrimosa_B_Melee3_Explode_Damage".to_owned(),
-            GameplayEffectSkill {
-                damage_source_category: Some("A".to_owned()),
-                ability_name: Some("GA_Lacrimosa_Melee".to_owned()),
-                attack_type: "普攻".to_owned(),
-            },
-        )]);
-        let ability_tips =
-            HashMap::from([("GA_Lacrimosa_Melee".to_owned(), "酸甜口味的制裁".to_owned())]);
-
-        assert_eq!(
-            resolve_damage_name(
-                "GE_Player_Lacrimosa_B_Melee3_Explode_Damage",
-                &skills,
-                &ability_tips
-            )
-            .as_deref(),
-            Some("酸甜口味的制裁")
-        );
-    }
-
-    #[test]
-    fn returns_none_when_ability_has_no_tip() {
-        let skills = HashMap::from([(
+    fn gameplay_effect_enrichment_keeps_localized_name_out_of_hit() {
+        let catalog = AbilityCatalog::from(HashMap::from([(
             "GE_Test_Skill1_Damage".to_owned(),
             GameplayEffectSkill {
                 damage_source_category: Some("E".to_owned()),
                 ability_name: Some("GA_Test_Skill".to_owned()),
                 attack_type: "E技能".to_owned(),
             },
-        )]);
+        )]));
+        let effects = [ParsedGameplayEffect {
+            unique_index: 42,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(42, "GE_Test_Skill1_Damage".to_owned())]);
+        let mut hit = targetless_hit();
 
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &catalog);
+
+        assert_eq!(hit.ability_name.as_deref(), Some("GA_Test_Skill"));
+        assert_eq!(hit.attack_type.as_deref(), Some("E技能"));
         assert_eq!(
-            resolve_damage_name("GE_Test_Skill1_Damage", &skills, &HashMap::new()),
-            None
+            hit.gameplay_effect_name.as_deref(),
+            Some("GE_Test_Skill1_Damage")
         );
+        assert_eq!(hit.damage_name, None);
     }
 
     #[test]
@@ -8993,10 +9610,14 @@ mod tests {
                 .expect("character resource table should load"),
         );
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
         let handle = import_pcapng(
             PathBuf::from(&path),
-            characters,
+            CaptureResources {
+                characters,
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
             None,
             true,
             true,
@@ -9047,10 +9668,14 @@ mod tests {
                 .expect("character resource table should load"),
         );
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
         let handle = import_pcapng(
             PathBuf::from(path),
-            characters,
+            CaptureResources {
+                characters,
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
             None,
             true,
             true,
@@ -9129,6 +9754,7 @@ mod tests {
         let path =
             std::env::var("NTE_TEST_CAPTURE_JSON").expect("NTE_TEST_CAPTURE_JSON must be set");
         let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
         let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop);
         handle.join().expect("json import thread should finish");
@@ -9234,7 +9860,7 @@ mod tests {
                         }
                     }
                 }
-                EngineEvent::Hit(hit) if hit.direction == "outgoing" => {
+                EngineEvent::Hit(hit) if hit.direction.is_outgoing() => {
                     events.push(Event::Hit {
                         timestamp: hit.timestamp,
                         char_id: hit.char_id,

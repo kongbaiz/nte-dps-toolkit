@@ -17,6 +17,7 @@ on:
       - "README_EN.md"
       - "THIRD_PARTY_LICENSES.md"
       - "licenses/**"
+      - "scripts/**"
       - ".github/workflows/build.yml"
   pull_request:
     branches:
@@ -34,6 +35,7 @@ on:
       - "README_EN.md"
       - "THIRD_PARTY_LICENSES.md"
       - "licenses/**"
+      - "scripts/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -106,8 +108,8 @@ jobs:
       - name: Lint GUI and CLI targets
         shell: pwsh
         run: |
-          cargo clippy --bin nte-dps-tool --features gui -- -D warnings
-          cargo clippy --bin nte-core --no-default-features --features cli -- -D warnings
+          cargo clippy --all-targets --features gui -- -D warnings
+          cargo clippy --all-targets --no-default-features --features cli -- -D warnings
 
       - name: Test GUI and CLI targets
         shell: pwsh
@@ -116,16 +118,9 @@ jobs:
           cargo test --no-default-features --features cli
           cargo test --features "gui external_resources"
 
-      - name: Verify CLI dependency tree
+      - name: Verify architecture policy
         shell: pwsh
-        run: |
-          $tree = cargo tree -e normal --no-default-features --features cli
-          $tree
-          $forbidden = $tree | Select-String -Pattern '(^|[ ├└─])(eframe|egui|wgpu|rfd|raw-window-handle) v'
-          if ($forbidden) {
-            Write-Error "CLI dependency tree contains GUI crates:`n$($forbidden -join "`n")"
-            exit 1
-          }
+        run: pwsh -NoProfile -File scripts/verify_architecture.ps1
 
       - name: Build release variants
         shell: pwsh

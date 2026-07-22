@@ -319,17 +319,17 @@ impl DpsApp {
             AppAction::ToggleCapture => {
                 if self.capture.is_some() || self.replay_thread.is_some() {
                     self.stop_engine();
-                    self.status = t("Stopped");
+                    self.notifications.status = t("Stopped");
                 } else {
                     self.request_start_live(ctx);
                 }
             }
             AppAction::ResetSession => self.request_reset_combat_session(ctx),
-            AppAction::ToggleHud => self.set_hud_mode(ctx, !self.hud_mode),
+            AppAction::ToggleHud => self.set_hud_mode(ctx, !self.windows.hud_mode),
             AppAction::TogglePassthrough => self.toggle_mouse_passthrough(ctx),
             AppAction::TogglePause => {
-                self.paused = !self.paused;
-                self.status = if self.paused {
+                self.capture_ui.paused = !self.capture_ui.paused;
+                self.notifications.status = if self.capture_ui.paused {
                     t("Processing paused")
                 } else {
                     t("Processing resumed")
@@ -337,25 +337,27 @@ impl DpsApp {
             }
             AppAction::TogglePin => self.toggle_always_on_top(ctx),
             AppAction::ToggleTheme => self.toggle_theme(ctx),
-            AppAction::ToggleReducedMotion => self.reduce_motion = !self.reduce_motion,
+            AppAction::ToggleReducedMotion => {
+                self.preferences.reduce_motion = !self.preferences.reduce_motion
+            }
             AppAction::UndoLatest => self.undo_latest(ctx.viewport_id()),
             AppAction::OpenConsole(tab) => {
                 self.console_tab = tab;
-                self.console_open = true;
-                self.console_corner_applied = false;
+                self.windows.console_open = true;
+                self.windows.console_corner_applied = false;
                 ctx.send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Focus);
             }
             AppAction::OpenAbyss => {
-                self.abyss_overview_open = true;
-                self.abyss_overview_corner_applied = false;
+                self.windows.abyss_overview_open = true;
+                self.windows.abyss_overview_corner_applied = false;
                 ctx.send_viewport_cmd_to(
                     abyss_overview_viewport_id(),
                     egui::ViewportCommand::Focus,
                 );
             }
             AppAction::OpenTeamDetails => {
-                self.team_hit_detail_open = true;
-                self.team_hit_detail_corner_applied = false;
+                self.windows.team_hit_detail_open = true;
+                self.windows.team_hit_detail_corner_applied = false;
                 ctx.send_viewport_cmd_to(
                     team_hit_detail_viewport_id(),
                     egui::ViewportCommand::Focus,
@@ -376,7 +378,7 @@ impl DpsApp {
                     .and_then(|_| std::fs::canonicalize(&path).map_err(|error| error.to_string()))
                     .and_then(|path| open_directory(&path))
                 {
-                    Ok(()) => self.status = t("Capture logs folder opened"),
+                    Ok(()) => self.notifications.status = t("Capture logs folder opened"),
                     Err(error) => self.set_last_error_in(
                         ctx,
                         tf("Failed to open capture logs folder: {}", &[&error]),
@@ -388,55 +390,55 @@ impl DpsApp {
             AppAction::SetThemePreset(preset) => {
                 self.set_theme_preset(ctx, preset);
             }
-            AppAction::SetAccent(accent) => self.accent = accent,
-            AppAction::SetDensity(density) => self.density = density,
+            AppAction::SetAccent(accent) => self.preferences.accent = accent,
+            AppAction::SetDensity(density) => self.preferences.density = density,
         }
     }
 
     pub(crate) fn apply_layout_profile(&mut self, ctx: &egui::Context, profile: LayoutProfile) {
         match profile {
             LayoutProfile::Combat => {
-                let width = self.hud_config.width;
-                let module_order = self.hud_config.module_order.clone();
-                self.hud_config = HudConfig::minimal();
-                self.hud_config.width = width;
-                self.hud_config.module_order = module_order;
-                self.density = UiDensity::Compact;
-                self.console_open = false;
-                self.abyss_overview_open = false;
-                self.hit_detail_char_id = None;
-                self.team_hit_detail_open = false;
+                let width = self.preferences.hud_config.width;
+                let module_order = self.preferences.hud_config.module_order.clone();
+                self.preferences.hud_config = HudConfig::minimal();
+                self.preferences.hud_config.width = width;
+                self.preferences.hud_config.module_order = module_order;
+                self.preferences.density = UiDensity::Compact;
+                self.windows.console_open = false;
+                self.windows.abyss_overview_open = false;
+                self.windows.hit_detail_char_id = None;
+                self.windows.team_hit_detail_open = false;
                 self.set_hud_mode(ctx, true);
                 self.set_mouse_passthrough(ctx, true);
             }
             LayoutProfile::Review => {
                 self.set_hud_mode(ctx, false);
                 self.set_mouse_passthrough(ctx, false);
-                self.density = UiDensity::Cozy;
+                self.preferences.density = UiDensity::Cozy;
                 self.console_tab = ConsoleTab::Timeline;
-                self.console_open = true;
-                self.console_corner_applied = false;
-                self.abyss_overview_open = false;
-                self.hit_detail_char_id = None;
-                self.team_hit_detail_open = false;
+                self.windows.console_open = true;
+                self.windows.console_corner_applied = false;
+                self.windows.abyss_overview_open = false;
+                self.windows.hit_detail_char_id = None;
+                self.windows.team_hit_detail_open = false;
                 ctx.send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Focus);
             }
             LayoutProfile::Research => {
                 self.set_hud_mode(ctx, false);
                 self.set_mouse_passthrough(ctx, false);
-                self.density = UiDensity::Compact;
+                self.preferences.density = UiDensity::Compact;
                 self.console_tab = ConsoleTab::Packets;
-                self.console_open = true;
-                self.console_corner_applied = false;
-                self.hit_detail_char_id = None;
-                self.team_hit_detail_open = true;
-                self.team_hit_detail_corner_applied = false;
-                self.abyss_overview_open = false;
+                self.windows.console_open = true;
+                self.windows.console_corner_applied = false;
+                self.windows.hit_detail_char_id = None;
+                self.windows.team_hit_detail_open = true;
+                self.windows.team_hit_detail_corner_applied = false;
+                self.windows.abyss_overview_open = false;
                 ctx.send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Focus);
             }
         }
-        self.hud_size_key = None;
-        self.status = tf("Applied layout profile: {}", &[&t(profile.label())]);
+        self.windows.hud_size_key = None;
+        self.notifications.status = tf("Applied layout profile: {}", &[&t(profile.label())]);
     }
 
     pub(crate) fn toggle_command_palette(&mut self, ctx: &egui::Context) {
@@ -654,7 +656,7 @@ impl DpsApp {
     }
 
     fn action_hotkey(&self, action: AppAction) -> Option<String> {
-        if !self.global_hotkeys.enabled
+        if !self.preferences.global_hotkeys.enabled
             && matches!(
                 action,
                 AppAction::ToggleCapture | AppAction::ResetSession | AppAction::ToggleHud
@@ -664,18 +666,23 @@ impl DpsApp {
         }
         match action {
             AppAction::ToggleCapture => self
+                .preferences
                 .global_hotkeys
                 .binding(GlobalHotkeyAction::ToggleCapture)
                 .map(HotkeyBinding::label),
             AppAction::ResetSession => self
+                .preferences
                 .global_hotkeys
                 .binding(GlobalHotkeyAction::ResetSession)
                 .map(HotkeyBinding::label),
             AppAction::ToggleHud => self
+                .preferences
                 .global_hotkeys
                 .binding(GlobalHotkeyAction::ToggleHud)
                 .map(HotkeyBinding::label),
-            AppAction::TogglePassthrough => Some(self.passthrough_hotkey.label().to_owned()),
+            AppAction::TogglePassthrough => {
+                Some(self.preferences.passthrough_hotkey.label().to_owned())
+            }
             AppAction::UndoLatest => Some("Ctrl+Z".to_owned()),
             _ => None,
         }
