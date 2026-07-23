@@ -34,11 +34,11 @@ use crate::core::snapshot::{InventorySnapshot, inventory_snapshot};
 use crate::core::{CoreError, CoreErrorCode};
 use crate::engine::capture::PacketEmissionMode;
 use crate::engine::model::{
-    CaptureQualitySource, CharacterInfo, CombatState, EngineEvent, HtItemNetId,
+    CaptureQualitySource, CharacterInfo, CombatState, DpsTimeBasis, EngineEvent, HtItemNetId,
 };
 use crate::engine::parser::{
-    CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_characters,
-    load_equipment_catalog,
+    AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog,
+    SKILL_DAMAGE_DATA_PATH, load_characters, load_equipment_catalog,
 };
 use crate::platform::equipment_plugin::{
     EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
@@ -120,6 +120,7 @@ impl LatestMessageReceiver {
 
 struct RuntimeResources {
     characters: Arc<HashMap<u32, CharacterInfo>>,
+    ability_catalog: Arc<AbilityCatalog>,
     equipment_catalog: EquipmentCatalog,
 }
 
@@ -127,6 +128,7 @@ impl RuntimeResources {
     fn load() -> anyhow::Result<Self> {
         Ok(Self {
             characters: Arc::new(load_characters(Path::new(CHARACTER_DATA_PATH))?),
+            ability_catalog: Arc::new(AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))?),
             equipment_catalog: load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))?,
         })
     }
@@ -137,6 +139,7 @@ struct Runtime {
     state: CombatState,
     capture: CaptureController,
     characters: Arc<HashMap<u32, CharacterInfo>>,
+    ability_catalog: Arc<AbilityCatalog>,
     equipment_catalog: EquipmentCatalog,
     latest_inventory: Option<InventorySnapshot>,
     sequence: u64,
@@ -165,6 +168,7 @@ impl Runtime {
             state: CombatState::default(),
             capture: CaptureController::default(),
             characters: resources.characters,
+            ability_catalog: resources.ability_catalog,
             equipment_catalog: resources.equipment_catalog,
             latest_inventory: None,
             sequence: 0,
@@ -313,6 +317,7 @@ impl Runtime {
                 packet_emission: PacketEmissionMode::SummaryOnly,
             },
             Arc::clone(&self.characters),
+            Arc::clone(&self.ability_catalog),
             self.engine_sender.clone(),
         )?;
         let operation_id = self.next_operation_id();
@@ -411,16 +416,10 @@ impl Runtime {
     }
 
     fn battle_summary(&self, subtract_time_stop: bool) -> Option<BattleSummaryDto> {
-        let dps_time_mode = if subtract_time_stop {
-            "subtract_time_stop"
-        } else {
-            "wall_clock"
-        };
         self.state
             .session_summary(
                 CaptureQualitySource::Live,
-                dps_time_mode,
-                subtract_time_stop,
+                DpsTimeBasis::from_subtract_time_stop(subtract_time_stop),
             )
             .as_ref()
             .map(BattleSummaryDto::from)
@@ -1045,7 +1044,8 @@ mod tests {
     use std::io::Cursor;
 
     use crate::engine::model::{
-        EmptyCurtainItem, EmptyCurtainPlacement, Hit, HtItemNetId, PacketDebug, TimeStopEvent,
+        EmptyCurtainItem, EmptyCurtainPlacement, Hit, HitCharacterSource, HitDirection,
+        HtItemNetId, PacketDebug, TimeStopEvent,
     };
 
     #[test]
@@ -1475,8 +1475,8 @@ mod tests {
             damage,
             byte_offset: 0,
             bit_shift: 0,
-            char_source: "test".to_owned(),
-            direction: "outgoing".to_owned(),
+            char_source: HitCharacterSource::Unknown,
+            direction: HitDirection::Outgoing,
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,

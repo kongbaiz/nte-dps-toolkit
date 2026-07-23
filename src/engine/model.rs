@@ -66,6 +66,53 @@ pub struct CharacterInfo {
     pub attribute: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitCharacterSource {
+    Packet,
+    Session,
+    GameplayEffect,
+    ExportJson,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitDirection {
+    Outgoing,
+    Incoming,
+    #[default]
+    Unknown,
+}
+
+impl HitDirection {
+    pub const fn is_incoming(self) -> bool {
+        matches!(self, Self::Incoming)
+    }
+
+    pub const fn is_outgoing(self) -> bool {
+        matches!(self, Self::Outgoing)
+    }
+
+    pub const fn is_unknown(self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+}
+
+impl TryFrom<&str> for HitDirection {
+    type Error = &'static str;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "outgoing" => Ok(Self::Outgoing),
+            "incoming" => Ok(Self::Incoming),
+            "unknown" => Ok(Self::Unknown),
+            _ => Err("invalid hit direction"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hit {
     pub timestamp: f64,
@@ -75,8 +122,8 @@ pub struct Hit {
     pub damage: f64,
     pub byte_offset: usize,
     pub bit_shift: u8,
-    pub char_source: String,
-    pub direction: String,
+    pub char_source: HitCharacterSource,
+    pub direction: HitDirection,
     pub target_hp_before: f64,
     pub target_hp_after: f64,
     pub target_max_hp: f64,
@@ -272,16 +319,16 @@ pub fn summarize_hit_directions<'a>(
     let mut summary = HitDirectionSummary::default();
     for hit in hits {
         let damage = hit.total_damage();
-        match hit.direction.as_str() {
-            "incoming" => {
+        match hit.direction {
+            HitDirection::Incoming => {
                 summary.incoming_damage += damage;
                 summary.incoming_hits += 1;
             }
-            "outgoing" => {
+            HitDirection::Outgoing => {
                 summary.outgoing_damage += damage;
                 summary.outgoing_hits += 1;
             }
-            _ => {
+            HitDirection::Unknown => {
                 summary.unknown_damage += damage;
                 summary.unknown_hits += 1;
             }
@@ -482,7 +529,7 @@ impl CaptureQualitySummary {
 #[serde(default)]
 pub struct CombatSessionSummary {
     pub duration_seconds: f64,
-    pub dps_time_mode: String,
+    pub dps_time_mode: DpsTimeBasis,
     pub total_damage: f64,
     pub total_dps: f64,
     pub total_damage_taken: f64,
@@ -491,6 +538,57 @@ pub struct CombatSessionSummary {
     pub skills: Vec<CombatSessionSkillSummary>,
     pub abyss: CombatSessionAbyssSummary,
     pub quality: CaptureQualitySummary,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DpsTimeBasis {
+    #[default]
+    #[serde(
+        rename = "subtract_time_stop",
+        alias = "time_stop_adjusted",
+        alias = "Exclude Time Stop",
+        alias = "扣除时停",
+        alias = "時間停止を除外"
+    )]
+    SubtractTimeStop,
+    #[serde(
+        rename = "wall_clock",
+        alias = "real_time",
+        alias = "Real Time",
+        alias = "实时",
+        alias = "现实时间",
+        alias = "実時間"
+    )]
+    WallClock,
+}
+
+impl DpsTimeBasis {
+    pub const fn from_subtract_time_stop(subtract_time_stop: bool) -> Self {
+        if subtract_time_stop {
+            Self::SubtractTimeStop
+        } else {
+            Self::WallClock
+        }
+    }
+
+    pub const fn subtracts_time_stop(self) -> bool {
+        matches!(self, Self::SubtractTimeStop)
+    }
+
+    pub const fn protocol_code(self) -> &'static str {
+        match self {
+            Self::SubtractTimeStop => "subtract_time_stop",
+            Self::WallClock => "wall_clock",
+        }
+    }
+
+    /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::SubtractTimeStop => "Exclude Time Stop",
+            Self::WallClock => "Real Time",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -513,6 +611,12 @@ pub struct CombatSessionSkillSummary {
     pub char_name: String,
     pub name: String,
     pub category: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ability_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gameplay_effect_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub damage_name: Option<String>,
     pub hits: u64,
     pub damage: f64,
     pub damage_share_percent: f64,
@@ -524,7 +628,7 @@ pub struct CombatSessionSkillSummary {
 pub struct CombatSessionAbyssSummary {
     pub detected: bool,
     pub floor: Option<u32>,
-    pub active_half: Option<String>,
+    pub active_half: Option<AbyssHalf>,
     pub success: bool,
     pub first_half: Option<CombatSessionAbyssHalfSummary>,
     pub second_half: Option<CombatSessionAbyssHalfSummary>,
@@ -533,7 +637,7 @@ pub struct CombatSessionAbyssSummary {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CombatSessionAbyssHalfSummary {
-    pub half: String,
+    pub half: AbyssHalf,
     pub duration_seconds: f64,
     pub total_damage: f64,
     pub total_dps: f64,
@@ -637,13 +741,13 @@ pub fn summarize_skill_breakdown<'a>(
     let mut total_hits = 0;
 
     for hit in hits.into_iter().filter(|hit| {
-        hit.direction != "incoming" && char_filter.is_none_or(|char_id| hit.char_id == char_id)
+        !hit.direction.is_incoming() && char_filter.is_none_or(|char_id| hit.char_id == char_id)
     }) {
         if !hit.char_known {
             unknown_characters.insert(hit.char_id);
             unknown.unknown_character_hits += 1;
         }
-        if hit.direction == "unknown" {
+        if hit.direction.is_unknown() {
             unknown.unknown_direction_hits += 1;
             unknown.unknown_direction_damage += hit.total_damage();
         }
@@ -701,7 +805,6 @@ struct SkillBreakdownKey {
     name: String,
     category: String,
     ability_name: Option<String>,
-    damage_name: Option<String>,
     gameplay_effect_index: Option<u32>,
     gameplay_effect_name: Option<String>,
     is_follow_up: bool,
@@ -741,10 +844,10 @@ impl SkillEntryRef {
 
         Self {
             name: hit
-                .damage_name
+                .ability_name
                 .as_deref()
-                .or(hit.ability_name.as_deref())
                 .or(hit.gameplay_effect_name.as_deref())
+                .or(hit.damage_name.as_deref())
                 .or(hit.attack_type.as_deref())
                 .unwrap_or("待映射技能")
                 .to_owned(),
@@ -773,36 +876,44 @@ fn push_skill_breakdown_entry(
     let keep_gameplay_effect_key = entry.damage_name.is_none() && entry.ability_name.is_none();
     let key = SkillBreakdownKey {
         char_id: hit.char_id,
-        name: entry.name,
-        category: entry.category,
-        ability_name: entry.ability_name,
-        damage_name: entry.damage_name,
+        name: entry.name.clone(),
+        category: entry.category.clone(),
+        ability_name: entry.ability_name.clone(),
         gameplay_effect_index: if keep_gameplay_effect_key {
             entry.gameplay_effect_index
         } else {
             None
         },
         gameplay_effect_name: if keep_gameplay_effect_key {
-            entry.gameplay_effect_name
+            entry.gameplay_effect_name.clone()
         } else {
             None
         },
         is_follow_up: entry.is_follow_up,
     };
-    let row_key = key.clone();
+    let gameplay_effect_index = entry.gameplay_effect_index;
+    let gameplay_effect_name = entry.gameplay_effect_name.clone();
     let row = rows.entry(key).or_insert_with(move || SkillBreakdownRow {
         char_id: hit.char_id,
         char_name: hit.char_name.clone(),
-        name: row_key.name,
-        category: row_key.category,
-        ability_name: row_key.ability_name,
-        damage_name: row_key.damage_name,
-        gameplay_effect_index: row_key.gameplay_effect_index,
-        gameplay_effect_name: row_key.gameplay_effect_name,
-        is_follow_up: row_key.is_follow_up,
+        name: entry.name,
+        category: entry.category,
+        ability_name: entry.ability_name,
+        damage_name: entry.damage_name,
+        gameplay_effect_index: entry.gameplay_effect_index,
+        gameplay_effect_name: entry.gameplay_effect_name,
+        is_follow_up: entry.is_follow_up,
         hits: 0,
         damage: 0.0,
     });
+    if row.hits > 0 {
+        if row.gameplay_effect_index != gameplay_effect_index {
+            row.gameplay_effect_index = None;
+        }
+        if row.gameplay_effect_name != gameplay_effect_name {
+            row.gameplay_effect_name = None;
+        }
+    }
     row.char_name.clone_from(&hit.char_name);
     row.hits += 1;
     row.damage += damage;
@@ -889,7 +1000,7 @@ fn update_combat_totals(
     });
     row.name.clone_from(&hit.char_name);
     let damage = hit.total_damage();
-    if hit.direction == "incoming" {
+    if hit.direction.is_incoming() {
         row.hits_taken += 1;
         row.damage_taken += damage;
         *total_damage_taken += damage;
@@ -938,10 +1049,13 @@ fn rebuild_combat_totals(
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AbyssHalf {
     #[default]
+    #[serde(alias = "Ascending Line", alias = "上行线", alias = "上りライン")]
     First,
+    #[serde(alias = "Descending Line", alias = "下行线", alias = "下りライン")]
     Second,
 }
 
@@ -1615,9 +1729,6 @@ impl CombatState {
     }
 
     pub fn push_packet(&mut self, packet: PacketDebug) {
-        self.observe_packet(PacketObservation {
-            parsed_hits: packet.parsed_hits,
-        });
         self.packets.push_back(packet);
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
@@ -1790,24 +1901,24 @@ impl CombatState {
     pub fn session_summary(
         &self,
         source: CaptureQualitySource,
-        dps_time_mode: impl Into<String>,
-        subtract_time_stop: bool,
+        dps_time_mode: DpsTimeBasis,
     ) -> Option<CombatSessionSummary> {
         if self.hits.is_empty() && self.stats.is_empty() && !self.abyss.is_active() {
             return None;
         }
+        let subtract_time_stop = dps_time_mode.subtracts_time_stop();
         let duration = self.duration_with_time_stop(subtract_time_stop);
         let skills = summarize_session_skills(self.skill_breakdown(None).rows);
         Some(CombatSessionSummary {
             duration_seconds: duration,
-            dps_time_mode: dps_time_mode.into(),
+            dps_time_mode,
             total_damage: self.total_damage,
             total_dps: self.dps_with_time_stop(subtract_time_stop),
             total_damage_taken: self.total_damage_taken,
             total_hits: self
                 .hits
                 .iter()
-                .filter(|hit| hit.direction != "incoming")
+                .filter(|hit| !hit.direction.is_incoming())
                 .count() as u64,
             characters: summarize_session_characters(
                 self.stats.values(),
@@ -1842,7 +1953,7 @@ fn summarize_session_abyss(
     CombatSessionAbyssSummary {
         detected: abyss.is_active(),
         floor: abyss.floor,
-        active_half: abyss.active_half.map(|half| half.label().to_owned()),
+        active_half: abyss.active_half,
         success: abyss.success_at.is_some(),
         first_half: summarize_session_abyss_half(
             AbyssHalf::First,
@@ -1866,7 +1977,7 @@ fn summarize_session_abyss_half(
         return None;
     }
     Some(CombatSessionAbyssHalfSummary {
-        half: half.label().to_owned(),
+        half,
         duration_seconds: party.duration_with_time_stop(subtract_time_stop),
         total_damage: party.total_damage,
         total_dps: party.dps_with_time_stop(subtract_time_stop),
@@ -1917,6 +2028,9 @@ fn summarize_session_skills(rows: Vec<SkillBreakdownRow>) -> Vec<CombatSessionSk
             char_name: row.char_name,
             name: row.name,
             category: row.category,
+            ability_name: row.ability_name,
+            gameplay_effect_name: row.gameplay_effect_name,
+            damage_name: row.damage_name,
             hits: row.hits,
             damage: row.damage,
             damage_share_percent: if total_damage > 0.0 {
@@ -1984,7 +2098,7 @@ fn summarize_timeline_with_time_stop<'a>(
     };
     let hits = hits
         .into_iter()
-        .filter(|hit| hit.direction != "incoming" && hit.timestamp.is_finite())
+        .filter(|hit| !hit.direction.is_incoming() && hit.timestamp.is_finite())
         .collect::<Vec<_>>();
     let Some(start) = hits
         .iter()
@@ -2130,6 +2244,12 @@ pub enum EngineEvent {
     CaptureStopped,
 }
 
+impl EngineEvent {
+    pub fn is_droppable_debug_packet(&self) -> bool {
+        matches!(self, Self::Packet(_))
+    }
+}
+
 fn apply_follow_up_to_hits(hits: &mut VecDeque<Hit>, follow_up: &HitFollowUp) -> bool {
     let Some(hit) = hits
         .iter_mut()
@@ -2273,6 +2393,119 @@ mod tests {
         assert_eq!(parsed.single.unwrap().dps, 100.0);
     }
 
+    #[test]
+    fn hit_direction_json_values_roundtrip() {
+        for (direction, json) in [
+            (HitDirection::Outgoing, r#""outgoing""#),
+            (HitDirection::Incoming, r#""incoming""#),
+            (HitDirection::Unknown, r#""unknown""#),
+        ] {
+            assert_eq!(serde_json::to_string(&direction).unwrap(), json);
+            assert_eq!(
+                serde_json::from_str::<HitDirection>(json).unwrap(),
+                direction
+            );
+        }
+    }
+
+    #[test]
+    fn hit_direction_json_rejects_invalid_value() {
+        assert!(serde_json::from_str::<HitDirection>(r#""sideways""#).is_err());
+    }
+
+    #[test]
+    fn hit_character_source_json_values_roundtrip() {
+        for (source, json) in [
+            (HitCharacterSource::Packet, r#""packet""#),
+            (HitCharacterSource::Session, r#""session""#),
+            (HitCharacterSource::GameplayEffect, r#""gameplay_effect""#),
+            (HitCharacterSource::ExportJson, r#""export_json""#),
+            (HitCharacterSource::Unknown, r#""unknown""#),
+        ] {
+            assert_eq!(serde_json::to_string(&source).unwrap(), json);
+            assert_eq!(
+                serde_json::from_str::<HitCharacterSource>(json).unwrap(),
+                source
+            );
+        }
+    }
+
+    #[test]
+    fn hit_character_source_json_rejects_invalid_value() {
+        assert!(serde_json::from_str::<HitCharacterSource>(r#""heuristic""#).is_err());
+    }
+
+    #[test]
+    fn abyss_half_json_is_stable_and_accepts_legacy_labels() {
+        assert_eq!(
+            serde_json::to_string(&AbyssHalf::First).unwrap(),
+            r#""first""#
+        );
+        assert_eq!(
+            serde_json::to_string(&AbyssHalf::Second).unwrap(),
+            r#""second""#
+        );
+        for value in [r#""Ascending Line""#, r#""上行线""#, r#""上りライン""#] {
+            assert_eq!(
+                serde_json::from_str::<AbyssHalf>(value).unwrap(),
+                AbyssHalf::First
+            );
+        }
+        for value in [r#""Descending Line""#, r#""下行线""#, r#""下りライン""#] {
+            assert_eq!(
+                serde_json::from_str::<AbyssHalf>(value).unwrap(),
+                AbyssHalf::Second
+            );
+        }
+    }
+
+    #[test]
+    fn abyss_half_json_rejects_invalid_value() {
+        assert!(serde_json::from_str::<AbyssHalf>(r#""middle""#).is_err());
+    }
+
+    #[test]
+    fn dps_time_basis_json_is_stable_and_accepts_legacy_labels() {
+        assert_eq!(
+            serde_json::to_string(&DpsTimeBasis::SubtractTimeStop).unwrap(),
+            r#""subtract_time_stop""#
+        );
+        assert_eq!(
+            serde_json::to_string(&DpsTimeBasis::WallClock).unwrap(),
+            r#""wall_clock""#
+        );
+        for value in [
+            r#""time_stop_adjusted""#,
+            r#""Exclude Time Stop""#,
+            r#""扣除时停""#,
+            r#""時間停止を除外""#,
+        ] {
+            assert_eq!(
+                serde_json::from_str::<DpsTimeBasis>(value).unwrap(),
+                DpsTimeBasis::SubtractTimeStop
+            );
+        }
+        for value in [
+            r#""real_time""#,
+            r#""Real Time""#,
+            r#""实时""#,
+            r#""现实时间""#,
+            r#""実時間""#,
+        ] {
+            assert_eq!(
+                serde_json::from_str::<DpsTimeBasis>(value).unwrap(),
+                DpsTimeBasis::WallClock
+            );
+        }
+        assert!(DpsTimeBasis::from_subtract_time_stop(true).subtracts_time_stop());
+        assert!(!DpsTimeBasis::from_subtract_time_stop(false).subtracts_time_stop());
+    }
+
+    #[test]
+    fn dps_time_basis_json_rejects_invalid_value() {
+        assert!(serde_json::from_str::<DpsTimeBasis>(r#""paused_only""#).is_err());
+    }
+
     fn test_hit(timestamp: f64, char_id: u32, direction: &str, damage: f64) -> Hit {
         Hit {
             timestamp,
@@ -2282,8 +2515,8 @@ mod tests {
             damage,
             byte_offset: 0,
             bit_shift: 0,
-            char_source: "test".to_owned(),
-            direction: direction.to_owned(),
+            char_source: HitCharacterSource::Unknown,
+            direction: HitDirection::try_from(direction).expect("test direction must be valid"),
             target_hp_before: 0.0,
             target_hp_after: 0.0,
             target_max_hp: 0.0,
@@ -2305,6 +2538,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_full_debug_packets_are_droppable_under_backpressure() {
+        let packet = PacketDebug {
+            timestamp: 1.0,
+            source: "127.0.0.1:1".to_owned(),
+            destination: "127.0.0.1:2".to_owned(),
+            direction: "outgoing".to_owned(),
+            payload_len: 0,
+            declared_ids: Vec::new(),
+            parsed_hits: 0,
+            note: String::new(),
+            payload_preview: String::new(),
+            payload_hex: String::new(),
+            decoded_text: String::new(),
+        };
+
+        assert!(EngineEvent::Packet(Box::new(packet)).is_droppable_debug_packet());
+        assert!(
+            !EngineEvent::PacketObservation(PacketObservation { parsed_hits: 0 })
+                .is_droppable_debug_packet()
+        );
+        assert!(
+            !EngineEvent::Hit(Box::new(test_hit(1.0, 1, "outgoing", 10.0)))
+                .is_droppable_debug_packet()
+        );
+        assert!(!EngineEvent::EmptyCurtain(Vec::new()).is_droppable_debug_packet());
+        assert!(!EngineEvent::CaptureStopped.is_droppable_debug_packet());
+    }
+
     fn assert_totals_match_hits(
         hits: &VecDeque<Hit>,
         stats: &HashMap<u32, CharacterStats>,
@@ -2317,12 +2579,12 @@ mod tests {
 
         let expected_damage: f64 = hits
             .iter()
-            .filter(|hit| hit.direction != "incoming")
+            .filter(|hit| !hit.direction.is_incoming())
             .map(Hit::total_damage)
             .sum();
         let expected_damage_taken: f64 = hits
             .iter()
-            .filter(|hit| hit.direction == "incoming")
+            .filter(|hit| hit.direction.is_incoming())
             .map(Hit::total_damage)
             .sum();
         assert_eq!(total_damage, expected_damage);
@@ -2337,14 +2599,14 @@ mod tests {
                 row.hits,
                 char_hits
                     .iter()
-                    .filter(|hit| hit.direction != "incoming")
+                    .filter(|hit| !hit.direction.is_incoming())
                     .count() as u64
             );
             assert_eq!(
                 row.damage,
                 char_hits
                     .iter()
-                    .filter(|hit| hit.direction != "incoming")
+                    .filter(|hit| !hit.direction.is_incoming())
                     .map(|hit| hit.total_damage())
                     .sum::<f64>()
             );
@@ -2352,14 +2614,14 @@ mod tests {
                 row.hits_taken,
                 char_hits
                     .iter()
-                    .filter(|hit| hit.direction == "incoming")
+                    .filter(|hit| hit.direction.is_incoming())
                     .count() as u64
             );
             assert_eq!(
                 row.damage_taken,
                 char_hits
                     .iter()
-                    .filter(|hit| hit.direction == "incoming")
+                    .filter(|hit| hit.direction.is_incoming())
                     .map(|hit| hit.total_damage())
                     .sum::<f64>()
             );
@@ -2367,7 +2629,7 @@ mod tests {
 
         let outgoing_timestamps: Vec<_> = hits
             .iter()
-            .filter(|hit| hit.direction != "incoming")
+            .filter(|hit| !hit.direction.is_incoming())
             .map(|hit| hit.timestamp)
             .collect();
         let expected_duration =
@@ -2582,12 +2844,14 @@ mod tests {
         let mut first = test_hit(1.0, 10, "outgoing", 100.0);
         first.attack_type = Some("Q技能".to_owned());
         first.ability_name = Some("GA_Test_UltraSkill".to_owned());
+        first.damage_name = Some("Test Ultimate".to_owned());
         first.gameplay_effect_index = Some(101);
         first.gameplay_effect_name = Some("GE_Test_UltraSkill1_Damage".to_owned());
 
         let mut second = test_hit(2.0, 10, "outgoing", 75.0);
         second.attack_type = Some("Q技能".to_owned());
         second.ability_name = Some("GA_Test_UltraSkill".to_owned());
+        second.damage_name = Some("测试大招".to_owned());
         second.gameplay_effect_index = Some(102);
         second.gameplay_effect_name = Some("GE_Test_UltraSkill2_Damage".to_owned());
 
@@ -2598,12 +2862,41 @@ mod tests {
         assert_eq!(breakdown.rows[0].name, "GA_Test_UltraSkill");
         assert_eq!(breakdown.rows[0].hits, 2);
         assert_eq!(breakdown.rows[0].damage, 175.0);
+        assert_eq!(
+            breakdown.rows[0].ability_name.as_deref(),
+            Some("GA_Test_UltraSkill")
+        );
+        assert!(breakdown.rows[0].gameplay_effect_index.is_none());
+        assert!(breakdown.rows[0].gameplay_effect_name.is_none());
+    }
+
+    #[test]
+    fn skill_breakdown_preserves_shared_effect_identity() {
+        let mut first = test_hit(1.0, 10, "outgoing", 100.0);
+        first.attack_type = Some("Q技能".to_owned());
+        first.ability_name = Some("GA_Test_UltraSkill".to_owned());
+        first.gameplay_effect_index = Some(101);
+        first.gameplay_effect_name = Some("GE_Test_UltraSkill_Damage".to_owned());
+        let mut second = first.clone();
+        second.timestamp = 2.0;
+        second.damage = 75.0;
+
+        let hits = Vec::from([first, second]);
+        let breakdown = summarize_skill_breakdown(hits.iter(), None);
+
+        assert_eq!(breakdown.rows.len(), 1);
+        assert_eq!(breakdown.rows[0].gameplay_effect_index, Some(101));
+        assert_eq!(
+            breakdown.rows[0].gameplay_effect_name.as_deref(),
+            Some("GE_Test_UltraSkill_Damage")
+        );
     }
 
     #[test]
     fn capture_quality_summary_is_redacted() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
+        state.observe_packet(PacketObservation { parsed_hits: 1 });
         state.push_packet(PacketDebug {
             timestamp: 1.0,
             source: "192.0.2.1:1111".to_owned(),
@@ -2647,10 +2940,13 @@ mod tests {
         state.push_hit(hit);
 
         let summary = state
-            .session_summary(CaptureQualitySource::JsonReplay, "扣除时停", true)
+            .session_summary(
+                CaptureQualitySource::JsonReplay,
+                DpsTimeBasis::SubtractTimeStop,
+            )
             .expect("summary should exist");
 
-        assert_eq!(summary.dps_time_mode, "扣除时停");
+        assert_eq!(summary.dps_time_mode, DpsTimeBasis::SubtractTimeStop);
         assert_eq!(summary.total_damage, 120.0);
         assert_eq!(summary.total_hits, 1);
         assert_eq!(summary.characters[0].name, "测试角色");
@@ -2685,13 +2981,19 @@ mod tests {
         state.push_hit(second);
 
         let summary = state
-            .session_summary(CaptureQualitySource::JsonReplay, "扣除时停", true)
+            .session_summary(
+                CaptureQualitySource::JsonReplay,
+                DpsTimeBasis::SubtractTimeStop,
+            )
             .expect("summary should exist");
         let first_half = summary.abyss.first_half.expect("first half summary");
         let second_half = summary.abyss.second_half.expect("second half summary");
 
+        assert_eq!(summary.abyss.active_half, Some(AbyssHalf::Second));
+        assert_eq!(first_half.half, AbyssHalf::First);
         assert_eq!(first_half.characters[0].name, "上半角色");
         assert_eq!(first_half.skills[0].name, "上半技能");
+        assert_eq!(second_half.half, AbyssHalf::Second);
         assert_eq!(second_half.characters[0].name, "下半角色");
         assert_eq!(second_half.skills[0].name, "下半技能");
     }
@@ -2930,6 +3232,36 @@ mod tests {
 
         assert!((state.duration_with_time_stop(true) - 7.0).abs() < 1e-9);
         assert!((state.dps_with_time_stop(true) - (300.0 / 7.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn session_summary_time_basis_controls_duration_and_dps() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
+            timestamp: 11.0,
+            char_id: 1021,
+            ability_id: "GA_Edgar_UltraSkill".to_owned(),
+            duration_seconds: 3.0,
+        });
+        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+
+        let adjusted = state
+            .session_summary(
+                CaptureQualitySource::Unknown,
+                DpsTimeBasis::SubtractTimeStop,
+            )
+            .expect("adjusted summary should exist");
+        let wall_clock = state
+            .session_summary(CaptureQualitySource::Unknown, DpsTimeBasis::WallClock)
+            .expect("wall-clock summary should exist");
+
+        assert_eq!(adjusted.dps_time_mode, DpsTimeBasis::SubtractTimeStop);
+        assert!((adjusted.duration_seconds - 7.0).abs() < 1e-9);
+        assert!((adjusted.total_dps - (300.0 / 7.0)).abs() < 1e-9);
+        assert_eq!(wall_clock.dps_time_mode, DpsTimeBasis::WallClock);
+        assert!((wall_clock.duration_seconds - 10.0).abs() < 1e-9);
+        assert!((wall_clock.total_dps - 30.0).abs() < 1e-9);
     }
 
     #[test]

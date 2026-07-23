@@ -11,6 +11,9 @@ namespace nte::equipment
 		void* player_state;
 	};
 
+	bool IsEquipmentRpcCacheReady();
+	void PrepareEquipmentRpcCache(const EquipmentContext* context);
+
 	NteEquipmentStatus EquipOneKey(
 		const EquipmentContext* context,
 		const NteItemNetId* character,

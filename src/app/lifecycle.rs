@@ -35,6 +35,7 @@ impl DpsApp {
         cc: &eframe::CreationContext<'_>,
         ui_config: UiConfig,
         config_warning: Option<String>,
+        ability_catalog: Arc<AbilityCatalog>,
     ) -> Self {
         install_fonts(&cc.egui_ctx);
         configure_style(
@@ -51,7 +52,9 @@ impl DpsApp {
             ui_config.passthrough_hotkey,
             ui_config.global_hotkeys,
         );
-        let (sender, receiver) = unbounded();
+        let (reliable_sender, receiver) = bounded(RELIABLE_ENGINE_EVENT_CAPACITY);
+        let (debug_sender, debug_receiver) = bounded(DEBUG_ENGINE_EVENT_CAPACITY);
+        let sender = EngineEventSink::split(reliable_sender, debug_sender);
         let (resource_audit_sender, resource_audit_receiver) = unbounded();
         let (diagnostics_sender, diagnostics_receiver) = unbounded();
         let data_root = data_root();
@@ -151,11 +154,6 @@ impl DpsApp {
         // `drain_device_detection`, guarded so a late result never clobbers a live
         // capture or a user-initiated refresh.
         let manual_capture_device = ui_config.manual_capture_device.clone();
-        let devices: Vec<CaptureDevice> = Vec::new();
-        let selected_device: usize = 0;
-        let game_network: Option<GameNetwork> = None;
-        let game_process_detected = false;
-        let local_ip = String::new();
         let status = t("Detecting the capture environment...");
         let diagnostic: Option<String> = None;
         let (device_detection_sender, device_detection_receiver) = unbounded();
@@ -197,9 +195,24 @@ impl DpsApp {
             .flatten()
             .collect::<Vec<_>>();
         let startup_error = (!startup_errors.is_empty()).then(|| startup_errors.join("\n"));
-        let last_status_toast = status.clone();
+        let capture_ui = CaptureUiState::from_config(&ui_config);
+        let windows = WindowState::from_config(&ui_config);
+        let preferences = UiPreferences::from_config(&ui_config);
+        let background_tasks = BackgroundTasks::new(
+            (resource_audit_sender, resource_audit_receiver),
+            (diagnostics_sender, diagnostics_receiver),
+            texture_load_receiver,
+            device_detection_receiver,
+            (
+                game_process_monitor_receiver,
+                game_process_monitor_stop,
+                game_process_monitor_thread,
+            ),
+        );
+        let notifications = NotificationState::new(&ui_config, status, diagnostic, startup_error);
         Self {
             characters,
+            ability_catalog,
             avatar_textures: HashMap::new(),
             attribute_textures: HashMap::new(),
             monster_textures: HashMap::new(),
@@ -218,24 +231,12 @@ impl DpsApp {
             hidden_character_ids: HashSet::new(),
             selected_abyss_half: AbyssHalf::First,
             abyss_compact_mode: false,
-            hud_mode: false,
-            hud_size_key: None,
-            hud_config: ui_config.hud.clone(),
             abyss_overview,
             history,
             resource_audit: ResourceAuditState::default(),
-            abyss_overview_open: false,
-            abyss_overview_corner_applied: false,
-            abyss_overview_geometry: SecondaryViewportGeometry::default(),
-            hit_detail_char_id: None,
             hit_detail_filter: HitDetailFilter::All,
             hit_detail_skill_filter: String::new(),
-            hit_detail_corner_applied: false,
-            hit_detail_geometry: SecondaryViewportGeometry::default(),
-            team_hit_detail_open: false,
             team_hit_detail_filter: HitDetailFilter::All,
-            team_hit_detail_corner_applied: false,
-            team_hit_detail_geometry: SecondaryViewportGeometry::default(),
             character_hit_cache: HitDetailCache::default(),
             team_hit_cache: HitDetailCache::default(),
             skill_summary_cache: SkillSummaryCache::default(),
@@ -245,120 +246,32 @@ impl DpsApp {
             selected_timeline_char: None,
             selected_skill_breakdown_char: None,
             detail_last_scroll_activity: None,
-            devices,
-            selected_device,
-            manual_capture_device,
-            local_ip,
-            game_process_detected,
-            game_network,
-            filter: "udp".to_owned(),
-            active_capture_filter: None,
-            capture_quality_source: CaptureQualitySource::Unknown,
-            include_incoming: true,
-            server_damage_calibration: ui_config.server_damage_calibration,
-            dps_time_mode: ui_config.dps_time_mode,
-            timeline_bucket_seconds: ui_config.timeline_bucket_seconds,
-            timeline_dps_view_mode: ui_config.timeline_dps_view_mode,
+            capture_ui,
+            windows,
+            preferences,
             capture: None,
             raw_capture: None,
             replay_stop: None,
             replay_thread: None,
             sender,
             receiver,
-            resource_audit_sender,
-            resource_audit_receiver,
-            resource_audit_thread: None,
-            diagnostics_sender,
-            diagnostics_receiver,
-            diagnostics_thread: None,
+            debug_receiver,
             diagnostics_report: None,
-            diagnostics_running: false,
-            texture_load_receiver,
-            device_detection_receiver,
-            awaiting_device_detection: true,
-            game_process_monitor_receiver,
-            game_process_monitor_stop,
-            game_process_monitor_thread: Some(game_process_monitor_thread),
-            game_process_monitor_error: None,
-            capture_log_stats: None,
+            background_tasks,
             paused_events: VecDeque::new(),
-            dropped_debug_packets: 0,
-            status,
-            last_status_toast,
-            status_toasts: VecDeque::new(),
-            undo_states: HashMap::new(),
-            next_toast_id: 1,
-            island: IslandState::new(),
-            island_enabled: ui_config.island_notifications,
-            island_offset_x: ui_config.island_offset_x,
-            diagnostic,
-            last_error: startup_error,
-            last_error_action: None,
-            last_error_viewport: egui::ViewportId::ROOT,
-            console_open: false,
-            console_corner_applied: false,
-            console_geometry: SecondaryViewportGeometry::default(),
-            console_sidebar_manually_collapsed: false,
+            notifications,
             console_tab: ConsoleTab::default(),
             command_palette: CommandPaletteState::default(),
             debug_only_hits: false,
             debug_search: String::new(),
             character_editor,
             encrypted_ini_editor: EncryptedIniEditorState::default(),
-            paused: false,
-            language: ui_config.language,
-            dark_mode: ui_config.dark_mode,
-            theme_preset: ui_config.theme_preset,
-            accent: ui_config.accent,
-            density: ui_config.density,
-            reduce_motion: ui_config.reduce_motion,
-            always_on_top: ui_config.always_on_top,
-            mouse_passthrough: false,
-            passthrough_notice: None,
-            passthrough_hotkey: ui_config.passthrough_hotkey,
-            global_hotkeys: ui_config.global_hotkeys,
-            recording_hotkey: None,
-            hotkey_hook_available: false,
-            onboarding_done: ui_config.onboarding_done,
-            onboarding_step: 0,
-            onboarding_hotkey_preview_generation: 0,
-            console_sidebar_migration_seen: ui_config.console_sidebar_migration_seen,
-            opacity: ui_config.opacity,
-            applied_opacity: None,
-            corner_applied_hwnd: None,
-            main_window_size: ui_config
-                .main_window_size
-                .map(egui::Vec2::from)
-                .unwrap_or(MAIN_WINDOW_BASE_SIZE),
-            abyss_window_size: ui_config
-                .abyss_window_size
-                .map(egui::Vec2::from)
-                .unwrap_or(ABYSS_WINDOW_BASE_SIZE),
-            hit_detail_window_size: ui_config
-                .hit_detail_window_size
-                .map(egui::Vec2::from)
-                .unwrap_or(HIT_DETAIL_WINDOW_BASE_SIZE),
-            team_hit_detail_window_size: ui_config
-                .team_hit_detail_window_size
-                .map(egui::Vec2::from)
-                .unwrap_or(TEAM_HIT_DETAIL_WINDOW_BASE_SIZE),
-            hit_detail_columns: ui_config.hit_detail_columns,
-            console_window_size: ui_config
-                .console_window_size
-                .map(egui::Vec2::from)
-                .unwrap_or(CONSOLE_WINDOW_BASE_SIZE),
-            main_size_restore_frames: 0,
-            applied_main_min_size: egui::Vec2::ZERO,
             // eframe may replace the context style after app construction.
             style_key_applied: None,
             session_epoch: 0,
-            opacity_reapply_frames: 4,
             theme_transition_from: None,
-            pending_file_dialog: None,
             active_import: None,
             engine_task_viewport: None,
-            pending_confirmation: None,
-            pending_confirmation_viewport: egui::ViewportId::ROOT,
             saved_ui_config: ui_config,
             pending_ui_config: None,
             ui_config_path: config::config_path(),
@@ -371,12 +284,16 @@ impl DpsApp {
 
     pub(crate) fn stop_engine(&mut self) {
         if let Some(mut capture) = self.capture.take() {
-            capture.stop();
+            capture.stop_with_drain(|| self.drain_pending_events());
         }
         if let Some(stop) = self.replay_stop.take() {
             stop.store(true, Ordering::Relaxed);
         }
         if let Some(thread) = self.replay_thread.take() {
+            while !thread.is_finished() {
+                self.drain_pending_events();
+                thread::sleep(Duration::from_millis(1));
+            }
             let _ = thread.join();
         }
         // All producers are joined, so every queued event belongs to the stopped task.
@@ -400,13 +317,13 @@ impl DpsApp {
         self.kongmu_ui.reset_session_state();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
-        self.hit_detail_char_id = None;
+        self.windows.hit_detail_char_id = None;
         self.hit_detail_filter = HitDetailFilter::All;
         self.hit_detail_skill_filter.clear();
-        self.hit_detail_corner_applied = false;
-        self.team_hit_detail_open = false;
+        self.windows.hit_detail_corner_applied = false;
+        self.windows.team_hit_detail_open = false;
         self.team_hit_detail_filter = HitDetailFilter::All;
-        self.team_hit_detail_corner_applied = false;
+        self.windows.team_hit_detail_corner_applied = false;
         self.character_hit_cache = HitDetailCache::default();
         self.team_hit_cache = HitDetailCache::default();
         self.skill_summary_cache = SkillSummaryCache::default();
@@ -416,10 +333,10 @@ impl DpsApp {
         self.selected_timeline_char = None;
         self.selected_skill_breakdown_char = None;
         self.detail_last_scroll_activity = None;
-        self.paused = false;
+        self.capture_ui.paused = false;
         self.paused_events.clear();
-        self.dropped_debug_packets = 0;
-        self.capture_quality_source = CaptureQualitySource::Unknown;
+        self.capture_ui.dropped_debug_packets = 0;
+        self.capture_ui.capture_quality_source = CaptureQualitySource::Unknown;
     }
 
     pub(crate) fn has_session_data(&self) -> bool {
@@ -447,12 +364,12 @@ impl DpsApp {
         }
         if !self.has_session_data() {
             self.reset_combat_session();
-            self.status = t("Stats reset");
+            self.notifications.status = t("Stats reset");
             return;
         }
         let previous = CombatUndoSnapshot {
             state: std::mem::take(&mut self.state),
-            capture_quality_source: self.capture_quality_source,
+            capture_quality_source: self.capture_ui.capture_quality_source,
             timeline_view: std::mem::take(&mut self.timeline_view),
             hidden_character_ids: std::mem::take(&mut self.hidden_character_ids),
             selected_abyss_half: self.selected_abyss_half,
@@ -460,9 +377,10 @@ impl DpsApp {
         };
         self.session_epoch = self.session_epoch.wrapping_add(1);
         self.reset_combat_view_state();
-        self.status = t("Stats reset");
-        let reset_message = if self.global_hotkeys.enabled {
-            self.global_hotkeys
+        self.notifications.status = t("Stats reset");
+        let reset_message = if self.preferences.global_hotkeys.enabled {
+            self.preferences
+                .global_hotkeys
                 .binding(GlobalHotkeyAction::ResetSession)
                 .map(|binding| {
                     tf(
@@ -483,7 +401,8 @@ impl DpsApp {
     }
 
     pub(crate) fn preferred_interactive_viewport(&self, ctx: &egui::Context) -> egui::ViewportId {
-        if ctx.viewport_id() == egui::ViewportId::ROOT && (self.hud_mode || self.mouse_passthrough)
+        if ctx.viewport_id() == egui::ViewportId::ROOT
+            && (self.windows.hud_mode || self.preferences.mouse_passthrough)
         {
             console_viewport_id()
         } else {
@@ -494,8 +413,8 @@ impl DpsApp {
     pub(crate) fn interactive_viewport_for(&mut self, ctx: &egui::Context) -> egui::ViewportId {
         let viewport = self.preferred_interactive_viewport(ctx);
         if viewport == console_viewport_id() {
-            self.console_open = true;
-            self.console_corner_applied = false;
+            self.windows.console_open = true;
+            self.windows.console_corner_applied = false;
         }
         viewport
     }
@@ -550,7 +469,7 @@ impl DpsApp {
             ConfirmationAction::ResetSession => {
                 self.stop_engine();
                 self.reset_combat_session();
-                self.status = t("Stats reset");
+                self.notifications.status = t("Stats reset");
             }
             ConfirmationAction::ImportPcapng(path) => self.start_pcapng_import_for(path, viewport),
             ConfirmationAction::ImportCaptureJson(path) => {
@@ -558,7 +477,7 @@ impl DpsApp {
             }
             ConfirmationAction::ClearEncryptedIni => {
                 self.encrypted_ini_editor = EncryptedIniEditorState::default();
-                self.status = t("Encrypted INI editor cleared");
+                self.notifications.status = t("Encrypted INI editor cleared");
             }
             ConfirmationAction::ReloadEncryptedIni(path) => {
                 self.load_encrypted_ini_for(path, viewport)
@@ -570,7 +489,8 @@ impl DpsApp {
     /// Lazily (re)scan the capture log directory for raw capture files so the
     /// settings panel can show disk usage without doing file I/O every frame.
     pub(crate) fn refresh_capture_log_stats(&mut self) {
-        self.capture_log_stats = Some(capture_logs::scan_capture_logs(&paths::capture_log_dir()));
+        self.capture_ui.capture_log_stats =
+            Some(capture_logs::scan_capture_logs(&paths::capture_log_dir()));
     }
 
     /// Delete the raw capture logs. The active capture's file is held open by the
@@ -578,7 +498,7 @@ impl DpsApp {
     fn clear_capture_logs_now(&mut self) {
         let outcome = capture_logs::clear_capture_logs(&paths::capture_log_dir());
         self.refresh_capture_log_stats();
-        self.status = if outcome.deleted == 0 && outcome.failed == 0 {
+        self.notifications.status = if outcome.deleted == 0 && outcome.failed == 0 {
             t("No capture files to clear")
         } else if outcome.failed > 0 {
             tf(
@@ -606,8 +526,8 @@ impl DpsApp {
         action: ConfirmationAction,
     ) {
         self.close_command_palette_for(viewport);
-        self.pending_confirmation = Some(action);
-        self.pending_confirmation_viewport = viewport;
+        self.notifications.pending_confirmation = Some(action);
+        self.notifications.pending_confirmation_viewport = viewport;
     }
 
     pub(crate) fn set_last_error(
@@ -625,9 +545,9 @@ impl DpsApp {
         action: Option<ErrorAction>,
     ) {
         self.close_command_palette_for(viewport);
-        self.last_error = Some(message.into());
-        self.last_error_action = action;
-        self.last_error_viewport = viewport;
+        self.notifications.last_error = Some(message.into());
+        self.notifications.last_error_action = action;
+        self.notifications.last_error_viewport = viewport;
     }
 
     pub(crate) fn set_last_error_in(
@@ -640,26 +560,28 @@ impl DpsApp {
     }
 
     pub(crate) fn clear_last_error(&mut self) {
-        self.last_error = None;
-        self.last_error_action = None;
+        self.notifications.last_error = None;
+        self.notifications.last_error_action = None;
     }
 
     pub(crate) fn set_passthrough_hotkey(&mut self, hotkey: PassthroughHotkey) {
-        if self.passthrough_hotkey == hotkey {
+        if self.preferences.passthrough_hotkey == hotkey {
             return;
         }
-        self.passthrough_hotkey = hotkey;
+        self.preferences.passthrough_hotkey = hotkey;
         self.hotkey.set_passthrough_hotkey(hotkey);
-        self.status = tf("Mouse passthrough hotkey switched to {}", &[hotkey.label()]);
+        self.notifications.status =
+            tf("Mouse passthrough hotkey switched to {}", &[hotkey.label()]);
     }
 
     pub(crate) fn set_global_hotkeys(&mut self, hotkeys: GlobalHotkeys) {
-        self.global_hotkeys = hotkeys.sanitized();
-        self.hotkey.set_global_hotkeys(self.global_hotkeys);
+        self.preferences.global_hotkeys = hotkeys.sanitized();
+        self.hotkey
+            .set_global_hotkeys(self.preferences.global_hotkeys);
     }
 
     pub(crate) fn set_recording_hotkey(&mut self, action: Option<GlobalHotkeyAction>) {
-        self.recording_hotkey = action;
+        self.preferences.recording_hotkey = action;
         self.hotkey.set_recording(action.is_some());
     }
 
@@ -671,17 +593,17 @@ impl DpsApp {
                 HotkeyEvent::GlobalAction(action) => self.execute_global_hotkey(ctx, action),
                 HotkeyEvent::ToggleCommandPalette => self.toggle_command_palette(ctx),
                 HotkeyEvent::ToggleDebug => self.toggle_debug_console(),
-                HotkeyEvent::HookInstalled => self.hotkey_hook_available = true,
+                HotkeyEvent::HookInstalled => self.preferences.hotkey_hook_available = true,
                 HotkeyEvent::HookInstallFailed { error } => {
-                    self.hotkey_hook_available = false;
-                    if self.mouse_passthrough {
+                    self.preferences.hotkey_hook_available = false;
+                    if self.preferences.mouse_passthrough {
                         self.set_mouse_passthrough(ctx, false);
                     }
                     let message = tf(
                         "Could not install the global keyboard hook (error {})",
                         &[&error.to_string()],
                     );
-                    self.diagnostic = Some(message.clone());
+                    self.notifications.diagnostic = Some(message.clone());
                     self.push_status_toast(
                         egui::ViewportId::ROOT,
                         message,
@@ -695,7 +617,7 @@ impl DpsApp {
     }
 
     pub(crate) fn handle_local_hotkeys(&mut self, ctx: &egui::Context) {
-        if self.recording_hotkey.is_some() {
+        if self.preferences.recording_hotkey.is_some() {
             return;
         }
         let (modifiers, pressed_keys) = ctx.input(|input| {
@@ -710,20 +632,31 @@ impl DpsApp {
                     .collect::<Vec<_>>(),
             )
         });
-        let passthrough_key = passthrough_hotkey_to_egui(self.passthrough_hotkey);
-        if !self.mouse_passthrough
-            && passthrough_hotkey_matches_egui(self.passthrough_hotkey, modifiers, passthrough_key)
+        let passthrough_key = passthrough_hotkey_to_egui(self.preferences.passthrough_hotkey);
+        if !self.preferences.mouse_passthrough
+            && passthrough_hotkey_matches_egui(
+                self.preferences.passthrough_hotkey,
+                modifiers,
+                passthrough_key,
+            )
             && ctx.input(|input| key_pressed_without_repeat(&input.events, passthrough_key))
         {
             self.toggle_mouse_passthrough(ctx);
         }
-        if self.global_hotkeys.enabled
+        if self.preferences.global_hotkeys.enabled
             && let Some(action) = GlobalHotkeyAction::all().iter().copied().find(|action| {
-                self.global_hotkeys.binding(*action).is_some_and(|binding| {
-                    pressed_keys.iter().any(|key| {
-                        hotkey_binding_matches_egui(binding, modifiers, hotkey_key_to_egui(*key))
+                self.preferences
+                    .global_hotkeys
+                    .binding(*action)
+                    .is_some_and(|binding| {
+                        pressed_keys.iter().any(|key| {
+                            hotkey_binding_matches_egui(
+                                binding,
+                                modifiers,
+                                hotkey_key_to_egui(*key),
+                            )
+                        })
                     })
-                })
             })
         {
             self.execute_global_hotkey(ctx, action);
@@ -781,24 +714,24 @@ impl DpsApp {
     }
 
     fn toggle_debug_console(&mut self) {
-        self.console_open = !self.console_open;
-        if self.console_open {
-            self.console_corner_applied = false;
+        self.windows.console_open = !self.windows.console_open;
+        if self.windows.console_open {
+            self.windows.console_corner_applied = false;
             self.console_tab = ConsoleTab::Packets;
         }
     }
 
     pub(crate) fn set_mouse_passthrough(&mut self, ctx: &egui::Context, enabled: bool) {
-        if self.mouse_passthrough == enabled {
+        if self.preferences.mouse_passthrough == enabled {
             return;
         }
-        if enabled && !self.hotkey_hook_available {
+        if enabled && !self.preferences.hotkey_hook_available {
             let message = t("Global hotkeys are not ready; mouse passthrough was not enabled");
-            self.status = message.clone();
+            self.notifications.status = message.clone();
             self.set_last_error_in(ctx, message, None);
             return;
         }
-        self.mouse_passthrough = enabled;
+        self.preferences.mouse_passthrough = enabled;
         self.hotkey.set_mouse_passthrough(enabled);
         let now = Instant::now();
         motion::seed_bool_for_viewport(
@@ -807,7 +740,7 @@ impl DpsApp {
             "passthrough_notice_visibility",
             false,
         );
-        self.passthrough_notice = Some(PassthroughNotice {
+        self.notifications.passthrough_notice = Some(PassthroughNotice {
             enabled,
             shown_until: now + Duration::from_millis(1200),
         });
@@ -815,15 +748,15 @@ impl DpsApp {
             egui::ViewportId::ROOT,
             egui::ViewportCommand::MousePassthrough(enabled),
         );
-        self.opacity_reapply_frames = 2;
-        let hotkey = self.passthrough_hotkey.label();
-        self.status = if self.mouse_passthrough {
-            if self.hud_mode {
+        self.windows.opacity_reapply_frames = 2;
+        let hotkey = self.preferences.passthrough_hotkey.label();
+        self.notifications.status = if self.preferences.mouse_passthrough {
+            if self.windows.hud_mode {
                 tf("HUD passthrough on; press {} to enter edit mode", &[hotkey])
             } else {
                 tf("Mouse passthrough on; press {} to turn off", &[hotkey])
             }
-        } else if self.hud_mode {
+        } else if self.windows.hud_mode {
             tf(
                 "HUD edit mode on; press {} to return to game passthrough",
                 &[hotkey],
@@ -834,11 +767,11 @@ impl DpsApp {
     }
 
     pub(crate) fn toggle_mouse_passthrough(&mut self, ctx: &egui::Context) {
-        self.set_mouse_passthrough(ctx, !self.mouse_passthrough);
+        self.set_mouse_passthrough(ctx, !self.preferences.mouse_passthrough);
     }
 
     pub(crate) fn set_hud_mode(&mut self, ctx: &egui::Context, enabled: bool) {
-        if self.hud_mode == enabled {
+        if self.windows.hud_mode == enabled {
             return;
         }
         motion::seed_bool_for_viewport(
@@ -847,20 +780,20 @@ impl DpsApp {
             "hud_mode_transition",
             !enabled,
         );
-        self.hud_mode = enabled;
+        self.windows.hud_mode = enabled;
         if enabled {
-            if !self.always_on_top {
-                self.always_on_top = true;
+            if !self.preferences.always_on_top {
+                self.preferences.always_on_top = true;
                 ctx.send_viewport_cmd_to(
                     egui::ViewportId::ROOT,
                     egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop),
                 );
             }
             self.set_mouse_passthrough(ctx, true);
-            self.status = if self.mouse_passthrough {
+            self.notifications.status = if self.preferences.mouse_passthrough {
                 tf(
                     "Combat HUD on: always-on-top with mouse passthrough by default; press {} to edit",
-                    &[self.passthrough_hotkey.label()],
+                    &[self.preferences.passthrough_hotkey.label()],
                 )
             } else {
                 t("Combat HUD opened in edit mode because global hotkeys are unavailable")
@@ -880,13 +813,13 @@ impl DpsApp {
             }
         } else {
             self.set_mouse_passthrough(ctx, false);
-            self.status = t("Exited combat HUD");
+            self.notifications.status = t("Exited combat HUD");
         }
     }
 
     pub(crate) fn toggle_always_on_top(&mut self, ctx: &egui::Context) {
-        self.always_on_top = !self.always_on_top;
-        let level = if self.always_on_top {
+        self.preferences.always_on_top = !self.preferences.always_on_top;
+        let level = if self.preferences.always_on_top {
             egui::WindowLevel::AlwaysOnTop
         } else {
             egui::WindowLevel::Normal
@@ -895,8 +828,8 @@ impl DpsApp {
             egui::ViewportId::ROOT,
             egui::ViewportCommand::WindowLevel(level),
         );
-        self.opacity_reapply_frames = 2;
-        self.status = if self.always_on_top {
+        self.windows.opacity_reapply_frames = 2;
+        self.notifications.status = if self.preferences.always_on_top {
             t("Always-on-top enabled")
         } else {
             t("Always-on-top disabled")
@@ -916,16 +849,16 @@ impl DpsApp {
         if title_drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
-        let title_status = if self.paused {
+        let title_status = if self.capture_ui.paused {
             tf(
                 "Paused · pending {} · dropped debug packets {}",
                 &[
                     &self.paused_events.len().to_string(),
-                    &self.dropped_debug_packets.to_string(),
+                    &self.capture_ui.dropped_debug_packets.to_string(),
                 ],
             )
         } else {
-            self.status.clone()
+            self.notifications.status.clone()
         };
 
         // Native window controls, right-aligned: minimize · maximize/restore ·
@@ -975,7 +908,11 @@ impl DpsApp {
         ui.painter().circle_filled(
             dot_center,
             3.5,
-            status_color(&self.status, self.paused, self.dark_mode),
+            status_color(
+                &self.notifications.status,
+                self.capture_ui.paused,
+                self.preferences.dark_mode,
+            ),
         );
         dot_response.on_hover_text(title_status);
 
@@ -1013,9 +950,9 @@ impl DpsApp {
         // resize oscillation (edge "jitter").
         const UNDERSIZE_DEADBAND: f32 = 6.0;
         let min_size = egui::Vec2::from(config::MAIN_WINDOW_MIN_SIZE);
-        if (min_size - self.applied_main_min_size).length() > 0.5 {
+        if (min_size - self.windows.applied_main_min_size).length() > 0.5 {
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(min_size));
-            self.applied_main_min_size = min_size;
+            self.windows.applied_main_min_size = min_size;
         }
         // winit clamps only *future* user resizes to the minimum, so a window that is
         // already too small (startup default, stale saved size, HUD-exit restore, or a
@@ -1037,7 +974,7 @@ impl DpsApp {
     /// matter while positioning the overlay. It is hidden completely while
     /// click-through is active so the combat readout sits directly on the game.
     pub(crate) fn hud_title_bar(&mut self, ui: &mut egui::Ui) {
-        if self.mouse_passthrough {
+        if self.preferences.mouse_passthrough {
             return;
         }
         let (full_rect, drag) = ui.allocate_exact_size(
@@ -1081,8 +1018,8 @@ impl DpsApp {
             let passthrough_hint = tf(
                 "{} toggles anytime; while passthrough is on you can't click buttons, so press {} to turn it off before exiting",
                 &[
-                    self.passthrough_hotkey.label(),
-                    self.passthrough_hotkey.label(),
+                    self.preferences.passthrough_hotkey.label(),
+                    self.preferences.passthrough_hotkey.label(),
                 ],
             );
             if ui
@@ -1104,7 +1041,7 @@ impl DpsApp {
                     // its edges the way it could in the normal window, so wrap
                     // well short of that width instead of relying on the
                     // default single-line-then-clip tooltip sizing.
-                    ui.set_max_width(self.hud_config.width as f32 - 100.0);
+                    ui.set_max_width(self.preferences.hud_config.width as f32 - 100.0);
                     ui.label(passthrough_hint);
                 })
                 .clicked()
@@ -1116,19 +1053,24 @@ impl DpsApp {
 
     pub(crate) fn start_live_for(&mut self, viewport: egui::ViewportId) -> bool {
         self.stop_engine();
-        self.active_capture_filter = None;
+        self.capture_ui.active_capture_filter = None;
         if let Err(error) = self.refresh_game_network() {
             if viewport == console_viewport_id() {
-                self.console_open = true;
-                self.console_corner_applied = false;
+                self.windows.console_open = true;
+                self.windows.console_corner_applied = false;
             }
             self.set_last_error_for(viewport, error, Some(ErrorAction::RefreshNetwork));
             return false;
         }
-        let Some(device) = self.devices.get(self.selected_device).cloned() else {
+        let Some(device) = self
+            .capture_ui
+            .devices
+            .get(self.capture_ui.selected_device)
+            .cloned()
+        else {
             if viewport == console_viewport_id() {
-                self.console_open = true;
-                self.console_corner_applied = false;
+                self.windows.console_open = true;
+                self.windows.console_corner_applied = false;
             }
             self.set_last_error_for(
                 viewport,
@@ -1137,60 +1079,69 @@ impl DpsApp {
             );
             return false;
         };
-        let local_ip = self.game_network.as_ref().map(|network| network.local_ip);
+        let local_ip = self
+            .capture_ui
+            .game_network
+            .as_ref()
+            .map(|network| network.local_ip);
         // Why the filter widens beyond plain UDP: see `core::capture::compose_bpf`.
-        let capture_filter = core_capture::compose_bpf(&self.filter, self.game_network.as_ref());
+        let capture_filter = core_capture::compose_bpf(
+            &self.capture_ui.filter,
+            self.capture_ui.game_network.as_ref(),
+        );
         self.reset_combat_session();
-        self.capture_quality_source = CaptureQualitySource::Live;
+        self.capture_ui.capture_quality_source = CaptureQualitySource::Live;
         let capture = core_capture::start(
             CaptureStartOptions {
                 device,
                 local_ip,
                 filter: capture_filter.clone(),
-                include_incoming: self.include_incoming,
-                server_damage_calibration: self.server_damage_calibration,
+                include_incoming: self.capture_ui.include_incoming,
+                server_damage_calibration: self.capture_ui.server_damage_calibration,
                 raw_capture: RawCaptureMode::Enabled,
                 packet_emission: PacketEmissionMode::FullDebug,
             },
             self.characters.clone(),
+            self.ability_catalog.clone(),
             self.sender.clone(),
         );
-        self.active_capture_filter = Some(capture_filter);
+        self.capture_ui.active_capture_filter = Some(capture_filter);
         self.raw_capture = Some(capture.raw_capture());
         self.capture = Some(capture);
         self.engine_task_viewport = Some(viewport);
-        self.status = t("Starting live capture...");
+        self.notifications.status = t("Starting live capture...");
         true
     }
 
     pub(crate) fn refresh_game_network(&mut self) -> Result<(), String> {
         // A user-initiated refresh owns the device state from here on; drop any
         // still-pending startup probe so it can't clobber this result.
-        self.awaiting_device_detection = false;
-        self.game_process_detected = false;
-        self.game_network = None;
-        self.local_ip.clear();
-        self.game_process_detected = core_capture::probe_game_process().map_err(|error| {
-            self.diagnostic = Some(error.detail.clone());
-            error.detail
-        })?;
-        self.devices = core_capture::enumerate_devices().map_err(|error| {
-            self.diagnostic = Some(error.detail.clone());
-            error.detail
-        })?;
-        if let Some(name) = self.manual_capture_device.clone() {
-            return self.apply_manual_capture_device(&name);
-        }
-        let (index, network) =
-            core_capture::resolve_auto_device(&self.devices).map_err(|error| {
-                self.diagnostic = Some(error.detail.clone());
+        self.background_tasks.awaiting_device_detection = false;
+        self.capture_ui.game_process_detected = false;
+        self.capture_ui.game_network = None;
+        self.capture_ui.local_ip.clear();
+        self.capture_ui.game_process_detected =
+            core_capture::probe_game_process().map_err(|error| {
+                self.notifications.diagnostic = Some(error.detail.clone());
                 error.detail
             })?;
-        self.selected_device = index;
-        self.local_ip = network.local_ip.to_string();
-        self.status = t("Game detected, ready");
-        self.diagnostic = None;
-        self.game_network = Some(network);
+        self.capture_ui.devices = core_capture::enumerate_devices().map_err(|error| {
+            self.notifications.diagnostic = Some(error.detail.clone());
+            error.detail
+        })?;
+        if let Some(name) = self.capture_ui.manual_capture_device.clone() {
+            return self.apply_manual_capture_device(&name);
+        }
+        let (index, network) = core_capture::resolve_auto_device(&self.capture_ui.devices)
+            .map_err(|error| {
+                self.notifications.diagnostic = Some(error.detail.clone());
+                error.detail
+            })?;
+        self.capture_ui.selected_device = index;
+        self.capture_ui.local_ip = network.local_ip.to_string();
+        self.notifications.status = t("Game detected, ready");
+        self.notifications.diagnostic = None;
+        self.capture_ui.game_network = Some(network);
         Ok(())
     }
 
@@ -1198,30 +1149,32 @@ impl DpsApp {
     /// IP for direction inference. A missing game connection is non-fatal — capture still proceeds
     /// and `infer_outgoing` falls back to its public/private heuristic. Only a vanished NIC aborts.
     pub(crate) fn apply_manual_capture_device(&mut self, name: &str) -> Result<(), String> {
-        let Ok((index, network)) = core_capture::resolve_manual_device(&self.devices, name) else {
+        let Ok((index, network)) =
+            core_capture::resolve_manual_device(&self.capture_ui.devices, name)
+        else {
             let message = tf(
                 "The manually selected NIC ({}) is currently unavailable; reselect in settings or switch back to auto",
                 &[name],
             );
-            self.diagnostic = Some(message.clone());
-            self.game_network = None;
-            self.local_ip.clear();
-            self.status = t("Manual NIC unavailable");
+            self.notifications.diagnostic = Some(message.clone());
+            self.capture_ui.game_network = None;
+            self.capture_ui.local_ip.clear();
+            self.notifications.status = t("Manual NIC unavailable");
             return Err(message);
         };
-        self.selected_device = index;
+        self.capture_ui.selected_device = index;
         match network {
             Ok(network) => {
-                self.local_ip = network.local_ip.to_string();
-                self.game_network = Some(network);
-                self.status = t("Ready (manual NIC)");
-                self.diagnostic = None;
+                self.capture_ui.local_ip = network.local_ip.to_string();
+                self.capture_ui.game_network = Some(network);
+                self.notifications.status = t("Ready (manual NIC)");
+                self.notifications.diagnostic = None;
             }
             Err(error) => {
-                self.local_ip.clear();
-                self.game_network = None;
-                self.status = t("Manual NIC selected (no game connection detected)");
-                self.diagnostic = Some(error.detail);
+                self.capture_ui.local_ip.clear();
+                self.capture_ui.game_network = None;
+                self.notifications.status = t("Manual NIC selected (no game connection detected)");
+                self.notifications.diagnostic = Some(error.detail);
             }
         }
         Ok(())
@@ -1230,14 +1183,15 @@ impl DpsApp {
     pub(crate) fn start_pcapng_import_for(&mut self, path: PathBuf, viewport: egui::ViewportId) {
         self.stop_engine();
         self.raw_capture = None;
-        self.active_capture_filter = None;
+        self.capture_ui.active_capture_filter = None;
         self.reset_combat_session();
-        self.capture_quality_source = CaptureQualitySource::PcapngReplay;
+        self.capture_ui.capture_quality_source = CaptureQualitySource::PcapngReplay;
         let local_ip_hint = self
+            .capture_ui
             .game_network
             .as_ref()
             .map(|network| network.local_ip)
-            .or_else(|| self.local_ip.parse::<Ipv4Addr>().ok());
+            .or_else(|| self.capture_ui.local_ip.parse::<Ipv4Addr>().ok());
         let stop = Arc::new(AtomicBool::new(false));
         self.active_import = Some(ActiveImport {
             kind: DebugImportKind::Pcapng,
@@ -1248,15 +1202,18 @@ impl DpsApp {
         self.engine_task_viewport = Some(viewport);
         self.replay_thread = Some(import_pcapng(
             path,
-            self.characters.clone(),
+            CaptureResources {
+                characters: self.characters.clone(),
+                ability_catalog: self.ability_catalog.clone(),
+            },
             local_ip_hint,
-            self.include_incoming,
-            self.server_damage_calibration,
+            self.capture_ui.include_incoming,
+            self.capture_ui.server_damage_calibration,
             self.sender.clone(),
             stop.clone(),
         ));
         self.replay_stop = Some(stop);
-        self.status = local_ip_hint.map_or_else(
+        self.notifications.status = local_ip_hint.map_or_else(
             || t("Importing and parsing pcapng (heuristic direction)..."),
             |ip| {
                 tf(
@@ -1274,9 +1231,9 @@ impl DpsApp {
     ) {
         self.stop_engine();
         self.raw_capture = None;
-        self.active_capture_filter = None;
+        self.capture_ui.active_capture_filter = None;
         self.reset_combat_session();
-        self.capture_quality_source = CaptureQualitySource::JsonReplay;
+        self.capture_ui.capture_quality_source = CaptureQualitySource::JsonReplay;
         let stop = Arc::new(AtomicBool::new(false));
         self.active_import = Some(ActiveImport {
             kind: DebugImportKind::CaptureJson,
@@ -1287,7 +1244,7 @@ impl DpsApp {
         self.engine_task_viewport = Some(viewport);
         self.replay_thread = Some(import_capture_json(path, self.sender.clone(), stop.clone()));
         self.replay_stop = Some(stop);
-        self.status = t("Importing capture JSON...");
+        self.notifications.status = t("Importing capture JSON...");
     }
 
     pub(crate) fn process_file_drops(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
@@ -1343,47 +1300,61 @@ impl DpsApp {
     /// [`crate::storage::ability_names`]). `current_ui_config` includes the
     /// language so the debounced save persists the choice to the config file.
     pub(crate) fn set_language(&mut self, ctx: &egui::Context, language: Language) {
-        self.language = language;
+        self.preferences.language = language;
         i18n::set_language(language);
-        crate::storage::ability_names::reload(language);
+        if let Some(warning) = crate::storage::ability_names::reload(language) {
+            self.notifications.diagnostic = Some(tf(
+                "Some resources failed to load; features degraded: {}",
+                &[&warning],
+            ));
+        }
         self.reaction_textures = load_reaction_text_textures(ctx, &data_root());
         ctx.request_repaint();
     }
 
     pub(crate) fn current_ui_config(&self) -> UiConfig {
         UiConfig {
-            language: self.language,
-            opacity: self.opacity,
-            dark_mode: self.dark_mode,
-            theme_preset: self.theme_preset,
-            accent: self.accent,
-            density: self.density,
-            reduce_motion: self.reduce_motion,
-            always_on_top: self.always_on_top,
-            island_notifications: self.island_enabled,
-            island_offset_x: self.island_offset_x,
-            server_damage_calibration: self.server_damage_calibration,
-            manual_capture_device: self.manual_capture_device.clone(),
-            dps_time_mode: self.dps_time_mode,
-            timeline_bucket_seconds: self.timeline_bucket_seconds,
-            timeline_dps_view_mode: self.timeline_dps_view_mode,
-            hud: self.hud_config.clone(),
-            hit_detail_columns: self.hit_detail_columns,
-            passthrough_hotkey: self.passthrough_hotkey,
-            global_hotkeys: self.global_hotkeys,
-            onboarding_done: self.onboarding_done,
-            console_sidebar_migration_seen: self.console_sidebar_migration_seen,
-            main_window_size: Some([self.main_window_size.x, self.main_window_size.y]),
-            abyss_window_size: Some([self.abyss_window_size.x, self.abyss_window_size.y]),
+            language: self.preferences.language,
+            opacity: self.preferences.opacity,
+            dark_mode: self.preferences.dark_mode,
+            theme_preset: self.preferences.theme_preset,
+            accent: self.preferences.accent,
+            density: self.preferences.density,
+            reduce_motion: self.preferences.reduce_motion,
+            always_on_top: self.preferences.always_on_top,
+            island_notifications: self.notifications.island_enabled,
+            island_offset_x: self.notifications.island_offset_x,
+            server_damage_calibration: self.capture_ui.server_damage_calibration,
+            manual_capture_device: self.capture_ui.manual_capture_device.clone(),
+            dps_time_mode: self.capture_ui.dps_time_mode,
+            timeline_bucket_seconds: self.capture_ui.timeline_bucket_seconds,
+            timeline_dps_view_mode: self.capture_ui.timeline_dps_view_mode,
+            hud: self.preferences.hud_config.clone(),
+            hit_detail_columns: self.preferences.hit_detail_columns,
+            passthrough_hotkey: self.preferences.passthrough_hotkey,
+            global_hotkeys: self.preferences.global_hotkeys,
+            onboarding_done: self.preferences.onboarding_done,
+            console_sidebar_migration_seen: self.preferences.console_sidebar_migration_seen,
+            main_window_size: Some([
+                self.windows.main_window_size.x,
+                self.windows.main_window_size.y,
+            ]),
+            abyss_window_size: Some([
+                self.windows.abyss_window_size.x,
+                self.windows.abyss_window_size.y,
+            ]),
             hit_detail_window_size: Some([
-                self.hit_detail_window_size.x,
-                self.hit_detail_window_size.y,
+                self.windows.hit_detail_window_size.x,
+                self.windows.hit_detail_window_size.y,
             ]),
             team_hit_detail_window_size: Some([
-                self.team_hit_detail_window_size.x,
-                self.team_hit_detail_window_size.y,
+                self.windows.team_hit_detail_window_size.x,
+                self.windows.team_hit_detail_window_size.y,
             ]),
-            console_window_size: Some([self.console_window_size.x, self.console_window_size.y]),
+            console_window_size: Some([
+                self.windows.console_window_size.x,
+                self.windows.console_window_size.y,
+            ]),
         }
         .sanitized()
     }
@@ -1513,10 +1484,10 @@ impl DpsApp {
         purpose: FileDialogPurpose,
         dialog: impl FnOnce(Option<DialogOwner>) -> Option<PathBuf> + Send + 'static,
     ) {
-        if self.pending_file_dialog.is_some() {
+        if self.background_tasks.pending_file_dialog.is_some() {
             return;
         }
-        let owner = DialogOwner::from_hwnd(self.corner_applied_hwnd);
+        let owner = DialogOwner::from_hwnd(self.windows.corner_applied_hwnd);
         let (sender, receiver) = unbounded();
         let waker = ctx.clone();
         thread::spawn(move || {
@@ -1525,7 +1496,7 @@ impl DpsApp {
             // Wake an idle UI so poll_file_dialog sees the result promptly.
             waker.request_repaint();
         });
-        self.pending_file_dialog = Some(PendingFileDialog {
+        self.background_tasks.pending_file_dialog = Some(PendingFileDialog {
             purpose,
             viewport: ctx.viewport_id(),
             receiver,
@@ -1534,7 +1505,7 @@ impl DpsApp {
     }
 
     pub(crate) fn poll_file_dialog(&mut self, ctx: &egui::Context) {
-        let Some(pending) = &self.pending_file_dialog else {
+        let Some(pending) = &self.background_tasks.pending_file_dialog else {
             return;
         };
         let result = match pending.receiver.try_recv() {
@@ -1548,12 +1519,12 @@ impl DpsApp {
         };
         let Some(PendingFileDialog {
             purpose, viewport, ..
-        }) = self.pending_file_dialog.take()
+        }) = self.background_tasks.pending_file_dialog.take()
         else {
             return;
         };
         // Nudge opacity to reapply in case focus moved while the dialog was open.
-        self.opacity_reapply_frames = 2;
+        self.windows.opacity_reapply_frames = 2;
         ctx.request_repaint();
         let Some(path) = result else {
             return;
@@ -1585,13 +1556,14 @@ impl DpsApp {
                 self.finish_character_loadout_export(viewport, &path, &json);
             }
             FileDialogPurpose::CaptureInfoExport => {
-                self.finish_capture_info_export(viewport, &path);
+                self.finish_capture_info_export(ctx, viewport, path);
             }
             FileDialogPurpose::RawCaptureExport => self.finish_raw_capture_export(viewport, &path),
         }
     }
 
     pub(crate) fn drain_events(&mut self) {
+        self.collect_dropped_debug_packets();
         let started = Instant::now();
         let scrolling = self.detail_scroll_active();
         let event_limit = if scrolling {
@@ -1599,19 +1571,12 @@ impl DpsApp {
         } else {
             MAX_UI_EVENTS_PER_FRAME
         };
-        if self.paused {
+        if self.capture_ui.paused {
             for _ in 0..event_limit {
                 if started.elapsed() >= UI_EVENT_BUDGET {
                     break;
                 }
-                let Ok(event) = self.receiver.try_recv() else {
-                    break;
-                };
-                self.buffer_paused_event(event);
-            }
-            // Bound the queue even if inflow outpaces the per-frame budget while paused.
-            while self.receiver.len() > MAX_ENGINE_QUEUE_HARD_CAP {
-                let Ok(event) = self.receiver.try_recv() else {
+                let Some(event) = self.try_recv_engine_event() else {
                     break;
                 };
                 self.buffer_paused_event(event);
@@ -1624,25 +1589,25 @@ impl DpsApp {
             }
             let event = if let Some(event) = self.paused_events.pop_front() {
                 event
-            } else if let Ok(event) = self.receiver.try_recv() {
-                event
             } else {
-                break;
+                let Some(event) = self.try_recv_engine_event() else {
+                    break;
+                };
+                event
             };
             self.apply_engine_event(event);
         }
-        if !scrolling && started.elapsed() < UI_EVENT_BUDGET {
-            self.shed_event_backlog(started);
-        }
-        self.enforce_engine_queue_hard_cap();
     }
 
     /// Routes one event while paused: debug packets are dropped, hit-like events are buffered
-    /// (oldest dropped past the cap) for replay on resume, and lifecycle events apply immediately.
+    /// for replay on resume, and lifecycle events apply immediately. At the paused buffer cap the
+    /// oldest semantic event is applied instead of discarded, preserving final combat/inventory
+    /// state while keeping the deferred portion bounded.
     pub(crate) fn buffer_paused_event(&mut self, event: EngineEvent) {
         match event {
             EngineEvent::Packet(_) => {
-                self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
+                self.capture_ui.dropped_debug_packets =
+                    self.capture_ui.dropped_debug_packets.saturating_add(1);
             }
             EngineEvent::Hit(_)
             | EngineEvent::HitFollowUp(_)
@@ -1652,7 +1617,11 @@ impl DpsApp {
             | EngineEvent::EmptyCurtain(_)
             | EngineEvent::EmptyCurtainCharacters(_) => {
                 if self.paused_events.len() == MAX_PAUSED_EVENTS {
-                    self.paused_events.pop_front();
+                    let oldest = self
+                        .paused_events
+                        .pop_front()
+                        .expect("full paused event queue must contain an event");
+                    self.apply_engine_event(oldest);
                 }
                 self.paused_events.push_back(event);
             }
@@ -1664,43 +1633,42 @@ impl DpsApp {
         }
     }
 
-    /// Absolute ceiling on the engine→UI queue so it can never grow without bound — e.g. a sustained
-    /// packet flood while the user keeps a detail list scrolling (which otherwise skips shedding).
-    /// Dropping debug packets is O(1); the rare non-packet events are applied so stats stay correct.
-    pub(crate) fn enforce_engine_queue_hard_cap(&mut self) {
-        while self.receiver.len() > MAX_ENGINE_QUEUE_HARD_CAP {
-            let Ok(event) = self.receiver.try_recv() else {
-                break;
-            };
-            if matches!(event, EngineEvent::Packet(_)) {
-                self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
-            } else {
-                self.apply_engine_event(event);
+    fn try_recv_engine_event(&self) -> Option<EngineEvent> {
+        match self.receiver.try_recv() {
+            Ok(event) => Some(event),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
+                self.debug_receiver.try_recv().ok()
             }
         }
     }
 
-    pub(crate) fn shed_event_backlog(&mut self, started: Instant) {
-        while self.receiver.len() > MAX_ENGINE_QUEUE_BACKLOG && started.elapsed() < UI_EVENT_BUDGET
-        {
-            let Ok(event) = self.receiver.try_recv() else {
-                break;
-            };
-            if matches!(event, EngineEvent::Packet(_)) {
-                self.dropped_debug_packets = self.dropped_debug_packets.saturating_add(1);
-            } else {
-                self.apply_engine_event(event);
-            }
+    fn collect_dropped_debug_packets(&mut self) {
+        self.capture_ui.dropped_debug_packets = self
+            .capture_ui
+            .dropped_debug_packets
+            .saturating_add(self.sender.take_dropped_debug_packets());
+    }
+
+    pub(crate) fn discard_queued_debug_packets(&mut self) {
+        self.collect_dropped_debug_packets();
+        while self.debug_receiver.try_recv().is_ok() {
+            self.capture_ui.dropped_debug_packets =
+                self.capture_ui.dropped_debug_packets.saturating_add(1);
         }
     }
 
     pub(crate) fn drain_pending_events(&mut self) {
+        self.collect_dropped_debug_packets();
         while let Some(event) = self.paused_events.pop_front() {
             self.apply_engine_event(event);
         }
         while let Ok(event) = self.receiver.try_recv() {
             self.apply_engine_event(event);
         }
+        while let Ok(event) = self.debug_receiver.try_recv() {
+            self.apply_engine_event(event);
+        }
+        self.collect_dropped_debug_packets();
     }
 
     pub(crate) fn apply_engine_event(&mut self, event: EngineEvent) {
@@ -1732,15 +1700,15 @@ impl DpsApp {
             | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => {}
-            CoreSignal::Status(status) => self.status = status,
+            CoreSignal::Status(status) => self.notifications.status = status,
             CoreSignal::Warning(warning) => {
-                self.diagnostic = Some(tf(
+                self.notifications.diagnostic = Some(tf(
                     "Some resources failed to load; features degraded: {}",
                     &[&warning],
                 ));
             }
             CoreSignal::Error(error) => {
-                self.status = t("Run failed");
+                self.notifications.status = t("Run failed");
                 let action = import_error_action(&error);
                 let mut viewport = self
                     .active_import
@@ -1748,12 +1716,14 @@ impl DpsApp {
                     .map(|task| task.viewport)
                     .or(self.engine_task_viewport)
                     .unwrap_or(egui::ViewportId::ROOT);
-                if viewport == egui::ViewportId::ROOT && (self.hud_mode || self.mouse_passthrough) {
+                if viewport == egui::ViewportId::ROOT
+                    && (self.windows.hud_mode || self.preferences.mouse_passthrough)
+                {
                     viewport = console_viewport_id();
                 }
                 if viewport == console_viewport_id() {
-                    self.console_open = true;
-                    self.console_corner_applied = false;
+                    self.windows.console_open = true;
+                    self.windows.console_corner_applied = false;
                 }
                 self.set_last_error_for(viewport, humanize_engine_error(&error), action);
             }
@@ -1769,9 +1739,10 @@ impl DpsApp {
                     self.selected_abyss_half = AbyssHalf::First;
                     self.abyss_compact_mode = false;
                     self.active_import = None;
-                    self.status = t("Import complete; see parse quality on the diagnostics page");
+                    self.notifications.status =
+                        t("Import complete; see parse quality on the diagnostics page");
                 } else {
-                    self.status = t("Stopped");
+                    self.notifications.status = t("Stopped");
                 }
             }
         }
@@ -1779,12 +1750,12 @@ impl DpsApp {
 
     pub(crate) fn update_status_toast(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
-        if self.last_status_toast != self.status {
-            self.last_status_toast = self.status.clone();
-            if !self.status.trim().is_empty() {
+        if self.notifications.last_status_toast != self.notifications.status {
+            self.notifications.last_status_toast = self.notifications.status.clone();
+            if !self.notifications.status.trim().is_empty() {
                 self.push_status_toast(
                     egui::ViewportId::ROOT,
-                    self.status.clone(),
+                    self.notifications.status.clone(),
                     ToastTone::Status,
                     STATUS_TOAST_DURATION,
                     None,
@@ -1793,7 +1764,7 @@ impl DpsApp {
         }
 
         let mut expired = Vec::new();
-        for toast in &mut self.status_toasts {
+        for toast in &mut self.notifications.status_toasts {
             let elapsed = now.saturating_duration_since(toast.last_tick);
             if toast.hovered {
                 toast.shown_until += elapsed;
@@ -1812,7 +1783,7 @@ impl DpsApp {
     }
 
     fn note_combat_hit(&mut self, hit: &crate::engine::model::Hit) {
-        if hit.direction == "incoming" {
+        if hit.direction.is_incoming() {
             return;
         }
         if self.combat_active
@@ -1838,7 +1809,7 @@ impl DpsApp {
     }
 
     pub(crate) fn update_combat_visual(&mut self) {
-        if !self.paused
+        if !self.capture_ui.paused
             && self.combat_active
             && self.last_combat_activity.is_some_and(|activity| {
                 activity.elapsed().as_secs_f64() >= COMBAT_SEGMENT_GAP_SECONDS
@@ -1852,6 +1823,7 @@ impl DpsApp {
         let now = Instant::now();
         let viewport = ctx.viewport_id();
         let ids = self
+            .notifications
             .status_toasts
             .iter()
             .rev()
@@ -1863,6 +1835,7 @@ impl DpsApp {
         let mut undo = None;
         for id in ids {
             let seed_entrance = self
+                .notifications
                 .status_toasts
                 .iter_mut()
                 .find(|toast| toast.id == id)
@@ -1874,14 +1847,21 @@ impl DpsApp {
             if seed_entrance {
                 motion::seed_bool(ctx, ("toast_entrance", id), false);
             }
-            let Some(toast) = self.status_toasts.iter().find(|toast| toast.id == id) else {
+            let Some(toast) = self
+                .notifications
+                .status_toasts
+                .iter()
+                .find(|toast| toast.id == id)
+            else {
                 continue;
             };
             let text = toast.text.clone();
             let tone = toast.tone;
             let undo_id = toast.undo_id;
             let color = match tone {
-                ToastTone::Status => status_color(&text, self.paused, self.dark_mode),
+                ToastTone::Status => {
+                    status_color(&text, self.capture_ui.paused, self.preferences.dark_mode)
+                }
                 ToastTone::Success => self.theme().success,
                 ToastTone::Warning => self.theme().warning,
                 ToastTone::Danger => self.theme().danger,
@@ -1891,7 +1871,7 @@ impl DpsApp {
                 ("toast_entrance", id),
                 true,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
                 motion::ease::entrance,
             );
             let animated_stack = motion::animate_value(
@@ -1899,7 +1879,7 @@ impl DpsApp {
                 ("toast_stack", id),
                 stack_y,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             );
             let fill = self.theme().floating;
             let response = egui::Area::new(egui::Id::new(("status_toast", id)))
@@ -1917,7 +1897,7 @@ impl DpsApp {
                         .corner_radius(8)
                         .inner_margin(egui::Margin::symmetric(12, 8))
                         .show(ui, |ui| {
-                            let max_width = if self.hud_mode { 330.0 } else { 420.0 };
+                            let max_width = if self.windows.hud_mode { 330.0 } else { 420.0 };
                             ui.set_max_width(max_width);
                             ui.horizontal(|ui| {
                                 let (dot_rect, _) = ui.allocate_exact_size(
@@ -1940,7 +1920,12 @@ impl DpsApp {
                         });
                 })
                 .response;
-            if let Some(toast) = self.status_toasts.iter_mut().find(|toast| toast.id == id) {
+            if let Some(toast) = self
+                .notifications
+                .status_toasts
+                .iter_mut()
+                .find(|toast| toast.id == id)
+            {
                 toast.hovered = response.hovered();
             }
             if response.clicked() && undo != undo_id {
@@ -1957,26 +1942,26 @@ impl DpsApp {
     }
 
     pub(crate) fn show_onboarding(&mut self, ctx: &egui::Context) {
-        if self.onboarding_done || ctx.viewport_id() != egui::ViewportId::ROOT {
+        if self.preferences.onboarding_done || ctx.viewport_id() != egui::ViewportId::ROOT {
             return;
         }
 
-        let step = self.onboarding_step.min(3);
+        let step = self.preferences.onboarding_step.min(3);
         let theme = self.theme();
-        let awaiting_detection = self.awaiting_device_detection;
-        let device_count = self.devices.len();
-        let game_connection_detected = self.game_network.is_some();
-        let game_process_error = self.game_process_monitor_error.clone();
+        let awaiting_detection = self.background_tasks.awaiting_device_detection;
+        let device_count = self.capture_ui.devices.len();
+        let game_connection_detected = self.capture_ui.game_network.is_some();
+        let game_process_error = self.background_tasks.game_process_monitor_error.clone();
         let capture_active = self.capture.is_some();
-        let passthrough_hotkey = self.passthrough_hotkey.label();
-        let current_hud = self.hud_config.clone();
+        let passthrough_hotkey = self.preferences.passthrough_hotkey.label();
+        let current_hud = self.preferences.hud_config.clone();
         let hotkey_preview = (step == 2).then(|| {
             motion::animate_generation(
                 ctx,
                 "onboarding_hotkey_preview",
-                self.onboarding_hotkey_preview_generation,
+                self.preferences.onboarding_hotkey_preview_generation,
                 motion::dur::TREND,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             )
         });
         let available_width = (ctx.content_rect().width() - 48.0).clamp(320.0, 460.0);
@@ -2111,7 +2096,7 @@ impl DpsApp {
                                     "The shortcut always restores edit mode, even while passthrough is active.",
                                 ));
                                 ui.add_space(10.0);
-                                let phase = if self.onboarding_hotkey_preview_generation == 0 {
+                                let phase = if self.preferences.onboarding_hotkey_preview_generation == 0 {
                                     None
                                 } else {
                                     Some(
@@ -2213,36 +2198,40 @@ impl DpsApp {
             self.set_last_error(error, Some(ErrorAction::RefreshNetwork));
         }
         if let Some(preset) = selected_hud {
-            self.hud_config = preset;
+            self.preferences.hud_config = preset;
         }
         if preview_hotkey {
-            self.onboarding_hotkey_preview_generation =
-                self.onboarding_hotkey_preview_generation.wrapping_add(1);
+            self.preferences.onboarding_hotkey_preview_generation = self
+                .preferences
+                .onboarding_hotkey_preview_generation
+                .wrapping_add(1);
         }
         if go_back {
-            self.onboarding_step -= 1;
+            self.preferences.onboarding_step -= 1;
         } else if go_next {
-            self.onboarding_step += 1;
+            self.preferences.onboarding_step += 1;
         }
         if finish {
-            self.onboarding_done = true;
-            self.status = t("Setup complete");
+            self.preferences.onboarding_done = true;
+            self.notifications.status = t("Setup complete");
         }
     }
 
     pub(crate) fn show_passthrough_notice(&mut self, ctx: &egui::Context) {
-        let Some(notice) = &self.passthrough_notice else {
+        let Some(notice) = &self.notifications.passthrough_notice else {
             return;
         };
         let now = Instant::now();
         if notice.shown_until <= now {
-            self.passthrough_notice = None;
+            self.notifications.passthrough_notice = None;
             return;
         }
         let enabled = notice.enabled;
         let shown_until = notice.shown_until;
-        let exit_duration =
-            Duration::from_secs_f32(motion::duration(self.reduce_motion, motion::dur::BASE));
+        let exit_duration = Duration::from_secs_f32(motion::duration(
+            self.preferences.reduce_motion,
+            motion::dur::BASE,
+        ));
         let fade_out_at = shown_until.checked_sub(exit_duration).unwrap_or(now);
         let fading_out = now >= fade_out_at;
         let opacity = if fading_out {
@@ -2251,7 +2240,7 @@ impl DpsApp {
                 "passthrough_notice_visibility",
                 false,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
                 motion::ease::exit,
             )
         } else {
@@ -2260,19 +2249,19 @@ impl DpsApp {
                 "passthrough_notice_visibility",
                 true,
                 motion::dur::FAST,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
                 motion::ease::entrance,
             )
         };
         let text = if enabled {
             tf(
                 "Passthrough enabled · press {} to restore control",
-                &[self.passthrough_hotkey.label()],
+                &[self.preferences.passthrough_hotkey.label()],
             )
         } else {
             tf(
                 "Edit mode enabled · press {} to return to passthrough",
-                &[self.passthrough_hotkey.label()],
+                &[self.preferences.passthrough_hotkey.label()],
             )
         };
         egui::Area::new(egui::Id::new("passthrough_notice"))
@@ -2311,33 +2300,36 @@ impl DpsApp {
         undo: Option<UndoState>,
     ) {
         let now = Instant::now();
-        let id = self.next_toast_id;
-        self.next_toast_id = self.next_toast_id.wrapping_add(1).max(1);
+        let id = self.notifications.allocate_toast_id();
         if let Some(undo) = undo {
-            self.undo_states.insert(id, undo);
+            self.notifications.undo_states.insert(id, undo);
         }
-        let undo_id = self.undo_states.contains_key(&id).then_some(id);
+        let undo_id = self
+            .notifications
+            .undo_states
+            .contains_key(&id)
+            .then_some(id);
         // The global island (its own overlay window) receives every notice
         // while enabled; the per-viewport toasts are the fallback path.
-        if self.island_enabled {
-            self.island.push(IslandNotice {
+        if self.notifications.island_enabled {
+            self.notifications.island.push(IslandNotice {
                 id,
                 text,
                 tone,
                 duration,
                 undo_id,
             });
-            for dropped in self.island.take_dropped() {
-                self.undo_states.remove(&dropped);
+            for dropped in self.notifications.island.take_dropped() {
+                self.notifications.undo_states.remove(&dropped);
             }
             return;
         }
-        while self.status_toasts.len() >= 5 {
-            if let Some(toast) = self.status_toasts.pop_front() {
-                self.undo_states.remove(&toast.id);
+        while self.notifications.status_toasts.len() >= 5 {
+            if let Some(toast) = self.notifications.status_toasts.pop_front() {
+                self.notifications.undo_states.remove(&toast.id);
             }
         }
-        self.status_toasts.push_back(StatusToast {
+        self.notifications.status_toasts.push_back(StatusToast {
             id,
             text,
             tone,
@@ -2351,9 +2343,11 @@ impl DpsApp {
     }
 
     fn dismiss_toast(&mut self, id: u64) {
-        self.status_toasts.retain(|toast| toast.id != id);
-        self.island.remove(id);
-        self.undo_states.remove(&id);
+        self.notifications
+            .status_toasts
+            .retain(|toast| toast.id != id);
+        self.notifications.island.remove(id);
+        self.notifications.undo_states.remove(&id);
     }
 
     pub(crate) fn push_undo_toast(
@@ -2362,7 +2356,7 @@ impl DpsApp {
         text: String,
         undo: UndoState,
     ) {
-        self.last_status_toast = self.status.clone();
+        self.notifications.last_status_toast = self.notifications.status.clone();
         self.push_status_toast(
             viewport,
             text,
@@ -2374,12 +2368,16 @@ impl DpsApp {
 
     pub(crate) fn undo_latest(&mut self, viewport: egui::ViewportId) {
         let Some(id) = newest_undo_id(
-            self.status_toasts.iter().filter_map(|toast| toast.undo_id),
-            self.island
+            self.notifications
+                .status_toasts
+                .iter()
+                .filter_map(|toast| toast.undo_id),
+            self.notifications
+                .island
                 .notices_newest_first()
                 .filter_map(|notice| notice.undo_id),
         ) else {
-            self.status = t("Nothing to undo");
+            self.notifications.status = t("Nothing to undo");
             return;
         };
         self.apply_undo(id, viewport);
@@ -2387,32 +2385,47 @@ impl DpsApp {
 
     fn latest_combat_undo_id(&self) -> Option<u64> {
         newest_undo_id(
-            self.status_toasts
+            self.notifications
+                .status_toasts
                 .iter()
                 .filter_map(|toast| toast.undo_id)
-                .filter(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_)))),
-            self.island
+                .filter(|id| {
+                    matches!(
+                        self.notifications.undo_states.get(id),
+                        Some(UndoState::CombatSession(_))
+                    )
+                }),
+            self.notifications
+                .island
                 .notices_newest_first()
                 .filter_map(|notice| notice.undo_id)
-                .filter(|id| matches!(self.undo_states.get(id), Some(UndoState::CombatSession(_)))),
+                .filter(|id| {
+                    matches!(
+                        self.notifications.undo_states.get(id),
+                        Some(UndoState::CombatSession(_))
+                    )
+                }),
         )
     }
 
     pub(crate) fn apply_undo(&mut self, id: u64, viewport: egui::ViewportId) {
-        let Some(undo) = self.undo_states.remove(&id) else {
+        let Some(undo) = self.notifications.undo_states.remove(&id) else {
             return;
         };
         match undo {
             UndoState::CombatSession(snapshot) => {
-                self.status_toasts.retain(|toast| toast.id != id);
-                self.island.remove(id);
+                self.notifications
+                    .status_toasts
+                    .retain(|toast| toast.id != id);
+                self.notifications.island.remove(id);
                 if self.has_session_data() || self.capture.is_some() || self.replay_thread.is_some()
                 {
-                    self.status = t("Cannot restore the previous session after new data arrives");
-                    self.last_status_toast = self.status.clone();
+                    self.notifications.status =
+                        t("Cannot restore the previous session after new data arrives");
+                    self.notifications.last_status_toast = self.notifications.status.clone();
                     self.push_status_toast(
                         viewport,
-                        self.status.clone(),
+                        self.notifications.status.clone(),
                         ToastTone::Warning,
                         STATUS_TOAST_DURATION,
                         None,
@@ -2423,25 +2436,28 @@ impl DpsApp {
                 self.state = snapshot.state;
                 self.session_epoch = self.session_epoch.wrapping_add(1);
                 self.reset_combat_view_state();
-                self.capture_quality_source = snapshot.capture_quality_source;
+                self.capture_ui.capture_quality_source = snapshot.capture_quality_source;
                 self.timeline_view = snapshot.timeline_view;
                 self.hidden_character_ids = snapshot.hidden_character_ids;
                 self.selected_abyss_half = snapshot.selected_abyss_half;
                 self.abyss_compact_mode = snapshot.abyss_compact_mode;
-                self.status = t("Session reset undone");
+                self.notifications.status = t("Session reset undone");
             }
             UndoState::HistoryRecord(record) => match history::restore_record(&record) {
                 Ok(()) => {
-                    self.status_toasts.retain(|toast| toast.id != id);
-                    self.island.remove(id);
+                    self.notifications
+                        .status_toasts
+                        .retain(|toast| toast.id != id);
+                    self.notifications.island.remove(id);
                     let record_id = record.id.clone();
                     self.history.reload();
                     self.history.selected_id = Some(record_id);
                     self.history.ensure_selection();
-                    self.status = t("History deletion undone");
+                    self.notifications.status = t("History deletion undone");
                 }
                 Err(error) => {
-                    self.undo_states
+                    self.notifications
+                        .undo_states
                         .insert(id, UndoState::HistoryRecord(record));
                     self.set_last_error_for(
                         viewport,
@@ -2454,6 +2470,10 @@ impl DpsApp {
     }
 
     pub(crate) fn export_capture_info(&mut self, ctx: &egui::Context) {
+        if self.background_tasks.pending_capture_export.is_some() {
+            self.set_last_error_in(ctx, t("Capture info export is already running"), None);
+            return;
+        }
         self.drain_pending_events();
         if self.state.hits.is_empty()
             && self.state.packets.is_empty()
@@ -2487,7 +2507,12 @@ impl DpsApp {
         });
     }
 
-    fn finish_capture_info_export(&mut self, viewport: egui::ViewportId, path: &Path) {
+    fn finish_capture_info_export(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
+        path: PathBuf,
+    ) {
         // The UI stayed live while the dialog was open, so re-check that no
         // capture or replay started in the meantime.
         if self.capture.is_some() || self.replay_thread.is_some() {
@@ -2498,19 +2523,78 @@ impl DpsApp {
             );
             return;
         }
-        match atomic_write_file(path, |writer| {
-            let mut out = IoFmtWriter::new(writer);
-            self.write_capture_export_json(&mut out);
-            out.finish()
-        }) {
+        if self.background_tasks.pending_capture_export.is_some() {
+            self.set_last_error_for(viewport, t("Capture info export is already running"), None);
+            return;
+        }
+
+        let game_network =
+            self.capture_ui
+                .game_network
+                .as_ref()
+                .map(|network| CaptureExportNetwork {
+                    pid: network.pid,
+                    local_ip: network.local_ip.to_string(),
+                    remote_ip: network.remote_ip.to_string(),
+                    remote_port: network.remote_port,
+                });
+        let document = CaptureExportDocument::snapshot(
+            &self.state,
+            CaptureExportOptions {
+                filter: self.capture_ui.filter.clone(),
+                include_incoming: self.capture_ui.include_incoming,
+                game_network,
+                dps_time_mode: DpsTimeBasis::from_subtract_time_stop(
+                    self.subtract_time_stop_for_dps(),
+                ),
+            },
+        );
+        let (sender, receiver) = unbounded();
+        let waker = ctx.clone();
+        let thread = thread::spawn(move || {
+            let result = write_capture_export(&path, &document);
+            let _ = sender.send(result);
+            waker.request_repaint();
+        });
+        self.background_tasks.pending_capture_export = Some(PendingCaptureExport {
+            viewport,
+            receiver,
+            thread: Some(thread),
+        });
+        self.notifications.status = t("Exporting capture info...");
+        self.clear_last_error();
+        ctx.request_repaint();
+    }
+
+    pub(crate) fn poll_capture_info_export(&mut self, ctx: &egui::Context) {
+        let Some(pending) = &self.background_tasks.pending_capture_export else {
+            return;
+        };
+        let result = match pending.receiver.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(200));
+                return;
+            }
+            Err(TryRecvError::Disconnected) => {
+                Err("background capture export task ended unexpectedly".to_owned())
+            }
+        };
+        let Some(mut pending) = self.background_tasks.pending_capture_export.take() else {
+            return;
+        };
+        if let Some(thread) = pending.thread.take() {
+            let _ = thread.join();
+        }
+        match result {
             Ok(()) => {
-                self.status = t("Capture info exported");
+                self.notifications.status = t("Capture info exported");
                 self.clear_last_error();
             }
             Err(error) => {
                 self.set_last_error_for(
-                    viewport,
-                    tf("Failed to export capture info: {}", &[&error.to_string()]),
+                    pending.viewport,
+                    tf("Failed to export capture info: {}", &[&error]),
                     None,
                 );
             }
@@ -2565,7 +2649,7 @@ impl DpsApp {
                     .and_then(|name| name.to_str())
                     .map(|name| name.to_owned())
                     .unwrap_or_else(|| t("PCAPNG file"));
-                self.status = tf(
+                self.notifications.status = tf(
                     "Saved the full capture to {} ({} packets, {} bytes)",
                     &[
                         &file_name,
@@ -2585,480 +2669,6 @@ impl DpsApp {
         }
     }
 
-    pub(crate) fn write_capture_export_json(&self, mut out: &mut dyn std::fmt::Write) {
-        let subtract_time_stop = self.subtract_time_stop_for_dps();
-        let duration = self.state_duration_for_current_mode().max(0.001);
-        let packet_count = self.state.packets.len();
-        let hit_count = self.state.hits.len();
-        let started_at = self.state.started_at;
-        let ended_at = self
-            .state
-            .hits
-            .iter()
-            .map(|hit| hit.timestamp)
-            .chain(self.state.packets.iter().map(|packet| packet.timestamp))
-            .max_by(|left, right| left.total_cmp(right));
-
-        let mut rows: Vec<_> = self.state.stats.values().collect();
-        rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
-
-        writeln!(&mut out, "{{").ok();
-        writeln!(
-            &mut out,
-            "  \"exported_at\": {},",
-            json_string(&Local::now().format("%Y-%m-%d %H:%M:%S").to_string())
-        )
-        .ok();
-        writeln!(&mut out, "  \"filter\": {},", json_string(&self.filter)).ok();
-        writeln!(
-            &mut out,
-            "  \"include_incoming\": {},",
-            self.include_incoming
-        )
-        .ok();
-        if let Some(network) = &self.game_network {
-            writeln!(&mut out, "  \"game_network\": {{").ok();
-            writeln!(&mut out, "    \"pid\": {},", network.pid).ok();
-            writeln!(
-                &mut out,
-                "    \"local_ip\": {},",
-                json_string(&network.local_ip.to_string())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "    \"remote_ip\": {},",
-                json_string(&network.remote_ip.to_string())
-            )
-            .ok();
-            writeln!(&mut out, "    \"remote_port\": {}", network.remote_port).ok();
-            writeln!(&mut out, "  }},").ok();
-        } else {
-            writeln!(&mut out, "  \"game_network\": null,").ok();
-        }
-        writeln!(&mut out, "  \"summary\": {{").ok();
-        writeln!(&mut out, "    \"hits\": {},", hit_count).ok();
-        writeln!(&mut out, "    \"packets\": {},", packet_count).ok();
-        writeln!(
-            &mut out,
-            "    \"total_damage\": {},",
-            json_f64(self.state.total_damage)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"dps\": {},",
-            json_f64(self.state_dps_for_current_mode())
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"duration_seconds\": {},",
-            json_f64(duration)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"dps_time_mode\": {},",
-            json_string(self.dps_time_mode.label())
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"started_at_unix\": {},",
-            json_option_f64(started_at)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"started_at_local\": {},",
-            json_option_time(started_at)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"ended_at_unix\": {},",
-            json_option_f64(ended_at)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"ended_at_local\": {}",
-            json_option_time(ended_at)
-        )
-        .ok();
-        writeln!(&mut out, "  }},").ok();
-
-        writeln!(&mut out, "  \"party\": [").ok();
-        for (index, row) in rows.iter().enumerate() {
-            let share = if self.state.total_damage > 0.0 {
-                row.damage / self.state.total_damage * 100.0
-            } else {
-                0.0
-            };
-            let row_duration = self
-                .state
-                .character_duration_with_time_stop(row, subtract_time_stop);
-            let row_dps = self
-                .state
-                .character_dps_with_time_stop(row, subtract_time_stop);
-            writeln!(&mut out, "    {{").ok();
-            writeln!(&mut out, "      \"char_id\": {},", row.char_id).ok();
-            writeln!(&mut out, "      \"name\": {},", json_string(&row.name)).ok();
-            writeln!(&mut out, "      \"hits\": {},", row.hits).ok();
-            writeln!(&mut out, "      \"damage\": {},", json_f64(row.damage)).ok();
-            writeln!(&mut out, "      \"dps\": {},", json_f64(row_dps)).ok();
-            writeln!(
-                &mut out,
-                "      \"duration_seconds\": {},",
-                json_f64(row_duration)
-            )
-            .ok();
-            writeln!(&mut out, "      \"share_percent\": {}", json_f64(share)).ok();
-            writeln!(
-                &mut out,
-                "    }}{}",
-                if index + 1 == rows.len() { "" } else { "," }
-            )
-            .ok();
-        }
-        writeln!(&mut out, "  ],").ok();
-
-        writeln!(&mut out, "  \"abyss\": {{").ok();
-        writeln!(
-            &mut out,
-            "    \"detected\": {},",
-            self.state.abyss.is_active()
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"floor\": {},",
-            self.state
-                .abyss
-                .floor
-                .map_or_else(|| "null".to_owned(), |floor| floor.to_string())
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"active_half\": {},",
-            self.state
-                .abyss
-                .active_half
-                .map(|half| json_string(half.label()))
-                .unwrap_or_else(|| "null".to_owned())
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"success_at_unix\": {},",
-            json_option_f64(self.state.abyss.success_at)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"first_half_at_unix\": {},",
-            json_option_f64(self.state.abyss.first_half_at)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"second_half_at_unix\": {},",
-            json_option_f64(self.state.abyss.second_half_at)
-        )
-        .ok();
-        writeln!(
-            &mut out,
-            "    \"exited_at_unix\": {},",
-            json_option_f64(self.state.abyss.exited_at)
-        )
-        .ok();
-        write_abyss_half_json(
-            &mut out,
-            "first_half",
-            &self.state.abyss.first_half,
-            subtract_time_stop,
-            true,
-        );
-        write_abyss_half_json(
-            &mut out,
-            "second_half",
-            &self.state.abyss.second_half,
-            subtract_time_stop,
-            false,
-        );
-        writeln!(&mut out, "  }},").ok();
-
-        let empty_curtain = serde_json::to_string(&self.state.empty_curtain)
-            .expect("validated Console equipment snapshot must serialize");
-        writeln!(&mut out, "  \"empty_curtain\": {empty_curtain},").ok();
-        let empty_curtain_characters = serde_json::to_string(&self.state.empty_curtain_characters)
-            .expect("validated Console character mapping must serialize");
-        writeln!(
-            &mut out,
-            "  \"empty_curtain_characters\": {empty_curtain_characters},"
-        )
-        .ok();
-
-        writeln!(&mut out, "  \"hits\": [").ok();
-        for (index, hit) in self.state.hits.iter().enumerate() {
-            writeln!(&mut out, "    {{").ok();
-            writeln!(
-                &mut out,
-                "      \"timestamp_unix\": {},",
-                json_f64(hit.timestamp)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"time_local\": {},",
-                json_string(&format_time(hit.timestamp))
-            )
-            .ok();
-            writeln!(&mut out, "      \"char_id\": {},", hit.char_id).ok();
-            writeln!(
-                &mut out,
-                "      \"char_name\": {},",
-                json_string(&hit.char_name)
-            )
-            .ok();
-            writeln!(&mut out, "      \"damage\": {},", json_f64(hit.damage)).ok();
-            writeln!(
-                &mut out,
-                "      \"attack_type\": {},",
-                hit.attack_type
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"gameplay_effect_index\": {},",
-                hit.gameplay_effect_index
-                    .map_or_else(|| "null".to_owned(), |value| value.to_string())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"gameplay_effect_name\": {},",
-                hit.gameplay_effect_name
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"ability_name\": {},",
-                hit.ability_name
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"damage_name\": {},",
-                hit.damage_name
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"damage_attribute\": {},",
-                hit.damage_attribute
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"follow_up_damage\": {},",
-                json_f64(hit.follow_up_damage)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"follow_up_timestamp\": {},",
-                hit.follow_up_timestamp
-                    .map_or_else(|| "null".to_owned(), json_f64)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"follow_up_damage_name\": {},",
-                hit.follow_up_damage_name
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"follow_up_attack_type\": {},",
-                hit.follow_up_attack_type
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"follow_up_damage_attribute\": {},",
-                hit.follow_up_damage_attribute
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"direction\": {},",
-                json_string(&hit.direction)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"target_hp_before\": {},",
-                json_f64(hit.target_hp_before)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"target_hp_after\": {},",
-                json_f64(hit.target_hp_after)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"target_max_hp\": {},",
-                json_f64(hit.target_max_hp)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"target_hp_percent\": {},",
-                json_f64(hit.target_hp_percent)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"target_id\": {},",
-                hit.target_id
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"target_name\": {},",
-                hit.target_name
-                    .as_deref()
-                    .map(json_string)
-                    .unwrap_or_else(|| "null".to_owned())
-            )
-            .ok();
-            writeln!(&mut out, "      \"target_context\": [").ok();
-            for (context_index, value) in hit.target_context.iter().enumerate() {
-                writeln!(
-                    &mut out,
-                    "        {}{}",
-                    json_string(value),
-                    if context_index + 1 == hit.target_context.len() {
-                        ""
-                    } else {
-                        ","
-                    }
-                )
-                .ok();
-            }
-            writeln!(&mut out, "      ]").ok();
-            writeln!(
-                &mut out,
-                "    }}{}",
-                if index + 1 == hit_count { "" } else { "," }
-            )
-            .ok();
-        }
-        writeln!(&mut out, "  ],").ok();
-
-        writeln!(&mut out, "  \"packets\": [").ok();
-        for (index, packet) in self.state.packets.iter().enumerate() {
-            writeln!(&mut out, "    {{").ok();
-            writeln!(
-                &mut out,
-                "      \"timestamp_unix\": {},",
-                json_f64(packet.timestamp)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"time_local\": {},",
-                json_string(&format_time(packet.timestamp))
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"source\": {},",
-                json_string(&packet.source.to_string())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"destination\": {},",
-                json_string(&packet.destination.to_string())
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"direction\": {},",
-                json_string(&packet.direction)
-            )
-            .ok();
-            writeln!(&mut out, "      \"payload_len\": {},", packet.payload_len).ok();
-            writeln!(
-                &mut out,
-                "      \"declared_ids\": {},",
-                serde_json::to_string(&packet.declared_ids).unwrap_or_else(|_| "[]".to_owned())
-            )
-            .ok();
-            writeln!(&mut out, "      \"parsed_hits\": {},", packet.parsed_hits).ok();
-            writeln!(&mut out, "      \"note\": {},", json_string(&packet.note)).ok();
-            writeln!(
-                &mut out,
-                "      \"payload_preview\": {},",
-                json_string(&packet.payload_preview)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"payload_hex\": {},",
-                json_string(&packet.payload_hex)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "      \"decoded_text\": {}",
-                json_string(&packet.decoded_text)
-            )
-            .ok();
-            writeln!(
-                &mut out,
-                "    }}{}",
-                if index + 1 == packet_count { "" } else { "," }
-            )
-            .ok();
-        }
-        writeln!(&mut out, "  ]").ok();
-        writeln!(&mut out, "}}").ok();
-    }
-
     pub(crate) fn selected_party_state(&self) -> Option<&PartyCombatState> {
         self.state
             .abyss
@@ -3067,7 +2677,7 @@ impl DpsApp {
     }
 
     pub(crate) fn subtract_time_stop_for_dps(&self) -> bool {
-        matches!(self.dps_time_mode, DpsTimeMode::TimeStopAdjusted)
+        matches!(self.capture_ui.dps_time_mode, DpsTimeMode::TimeStopAdjusted)
     }
 
     pub(crate) fn party_duration_for_current_mode(&self, party: &PartyCombatState) -> f64 {
@@ -3123,7 +2733,8 @@ impl DpsApp {
         let scrolling = ctx.input(|input| {
             input.is_scrolling()
                 || input.smooth_scroll_delta() != egui::Vec2::ZERO
-                || ((self.hit_detail_char_id.is_some() || self.team_hit_detail_open)
+                || ((self.windows.hit_detail_char_id.is_some()
+                    || self.windows.team_hit_detail_open)
                     && input.pointer.primary_down())
         });
         if scrolling {
@@ -3136,7 +2747,7 @@ impl DpsApp {
             .is_some_and(|last| last.elapsed() < DETAIL_CACHE_REFRESH_DELAY)
     }
 
-    pub(crate) fn cached_skill_summaries(&mut self, char_id: u32) -> Vec<SkillDamageSummary> {
+    pub(crate) fn cached_skill_summaries(&mut self, char_id: u32) -> Arc<Vec<SkillDamageSummary>> {
         let (source, generation) = self.detail_source();
         let key = SkillSummaryCacheKey {
             source,
@@ -3166,19 +2777,20 @@ impl DpsApp {
             );
             self.skill_summary_cache = SkillSummaryCache {
                 key: Some(key),
-                rows,
+                rows: Arc::new(rows),
                 dirty_since: None,
             };
         }
-        self.skill_summary_cache.rows.clone()
+        Arc::clone(&self.skill_summary_cache.rows)
     }
 
-    pub(crate) fn cached_timeline_series(&mut self) -> TimelineSeries {
+    pub(crate) fn cached_timeline_series(&mut self) -> Arc<TimelineSeries> {
         let (source, generation) = self.detail_source();
         let subtract_time_stop = self.subtract_time_stop_for_dps();
-        let bucket_seconds = config::sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
-        if (bucket_seconds - self.timeline_bucket_seconds).abs() > f32::EPSILON {
-            self.timeline_bucket_seconds = bucket_seconds;
+        let bucket_seconds =
+            config::sanitize_timeline_bucket_seconds(self.capture_ui.timeline_bucket_seconds);
+        if (bucket_seconds - self.capture_ui.timeline_bucket_seconds).abs() > f32::EPSILON {
+            self.capture_ui.timeline_bucket_seconds = bucket_seconds;
         }
         let key = TimelineCacheKey {
             source,
@@ -3204,10 +2816,10 @@ impl DpsApp {
             };
             self.timeline_cache = TimelineCache {
                 key: Some(key),
-                series,
+                series: Arc::new(series),
             };
         }
-        self.timeline_cache.series.clone()
+        Arc::clone(&self.timeline_cache.series)
     }
 
     pub(crate) fn abyss_half_timeline_series(
@@ -3227,7 +2839,7 @@ impl DpsApp {
         series
     }
 
-    pub(crate) fn cached_skill_breakdown(&mut self, char_id: Option<u32>) -> SkillBreakdown {
+    pub(crate) fn cached_skill_breakdown(&mut self, char_id: Option<u32>) -> Arc<SkillBreakdown> {
         let (source, generation) = self.detail_source();
         let key = SkillBreakdownCacheKey {
             source,
@@ -3241,15 +2853,15 @@ impl DpsApp {
             );
             self.skill_breakdown_cache = SkillBreakdownCache {
                 key: Some(key),
-                breakdown,
+                breakdown: Arc::new(breakdown),
             };
         }
-        self.skill_breakdown_cache.breakdown.clone()
+        Arc::clone(&self.skill_breakdown_cache.breakdown)
     }
 
     pub(crate) fn current_quality_summary(&self) -> CaptureQualitySummary {
         self.state
-            .capture_quality_summary(self.capture_quality_source)
+            .capture_quality_summary(self.capture_ui.capture_quality_source)
     }
 
     pub(crate) fn request_resource_audit(&mut self) {
@@ -3258,8 +2870,8 @@ impl DpsApp {
         }
         self.resource_audit.loading = true;
         self.resource_audit.message = t("Checking runtime resources...");
-        let sender = self.resource_audit_sender.clone();
-        self.resource_audit_thread = Some(thread::spawn(move || {
+        let sender = self.background_tasks.resource_audit_sender.clone();
+        self.background_tasks.resource_audit_thread = Some(thread::spawn(move || {
             let summary = audit_runtime_resources();
             let _ = sender.send(summary);
         }));
@@ -3269,7 +2881,7 @@ impl DpsApp {
     /// into the live maps. Until a set arrives its map stays empty and draw-sites
     /// fall back gracefully, so this never blocks the first paint.
     pub(crate) fn drain_texture_loads(&mut self) {
-        while let Ok(load) = self.texture_load_receiver.try_recv() {
+        while let Ok(load) = self.background_tasks.texture_load_receiver.try_recv() {
             match load {
                 TextureLoad::Avatars(map) => self.avatar_textures = map,
                 TextureLoad::Attributes(map) => self.attribute_textures = map,
@@ -3285,41 +2897,45 @@ impl DpsApp {
     /// background thread. Guarded so a late result never overwrites a capture/replay
     /// already in flight or a device list a user-initiated refresh has populated.
     pub(crate) fn drain_device_detection(&mut self) {
-        if !self.awaiting_device_detection {
+        if !self.background_tasks.awaiting_device_detection {
             return;
         }
-        let Ok(detection) = self.device_detection_receiver.try_recv() else {
+        let Ok(detection) = self.background_tasks.device_detection_receiver.try_recv() else {
             return;
         };
-        self.awaiting_device_detection = false;
+        self.background_tasks.awaiting_device_detection = false;
         if self.capture.is_some() || self.replay_thread.is_some() {
             return;
         }
-        self.devices = detection.devices;
-        self.selected_device = detection.selected_device;
-        self.game_process_detected = detection.game_process_detected;
-        self.game_network = detection.game_network;
-        self.local_ip = detection.local_ip;
-        self.status = detection.status;
-        self.diagnostic = detection.diagnostic;
+        self.capture_ui.devices = detection.devices;
+        self.capture_ui.selected_device = detection.selected_device;
+        self.capture_ui.game_process_detected = detection.game_process_detected;
+        self.capture_ui.game_network = detection.game_network;
+        self.capture_ui.local_ip = detection.local_ip;
+        self.notifications.status = detection.status;
+        self.notifications.diagnostic = detection.diagnostic;
     }
 
     pub(crate) fn drain_game_process_monitor(&mut self) {
-        while let Ok(result) = self.game_process_monitor_receiver.try_recv() {
+        while let Ok(result) = self
+            .background_tasks
+            .game_process_monitor_receiver
+            .try_recv()
+        {
             match result {
                 Ok(detected) => {
-                    self.game_process_detected = detected;
-                    self.game_process_monitor_error = None;
+                    self.capture_ui.game_process_detected = detected;
+                    self.background_tasks.game_process_monitor_error = None;
                 }
                 Err(error) => {
-                    self.game_process_monitor_error = Some(error);
+                    self.background_tasks.game_process_monitor_error = Some(error);
                 }
             }
         }
     }
 
     pub(crate) fn drain_resource_audit(&mut self) {
-        while let Ok(summary) = self.resource_audit_receiver.try_recv() {
+        while let Ok(summary) = self.background_tasks.resource_audit_receiver.try_recv() {
             let error_count = summary.error_count();
             let warning_count = summary.warning_count();
             self.resource_audit.summary = Some(summary);
@@ -3328,36 +2944,36 @@ impl DpsApp {
                 "Resource check complete: {} errors, {} warnings",
                 &[&error_count.to_string(), &warning_count.to_string()],
             );
-            if let Some(thread) = self.resource_audit_thread.take() {
+            if let Some(thread) = self.background_tasks.resource_audit_thread.take() {
                 let _ = thread.join();
             }
         }
     }
 
     pub(crate) fn request_capture_diagnostics(&mut self) {
-        if self.diagnostics_running {
+        if self.background_tasks.diagnostics_running {
             return;
         }
-        self.diagnostics_running = true;
-        let sender = self.diagnostics_sender.clone();
+        self.background_tasks.diagnostics_running = true;
+        let sender = self.background_tasks.diagnostics_sender.clone();
         let snapshot = self.diagnostic_snapshot();
-        self.diagnostics_thread = Some(thread::spawn(move || {
+        self.background_tasks.diagnostics_thread = Some(thread::spawn(move || {
             let report = run_capture_diagnostics(snapshot);
             let _ = sender.send(report);
         }));
     }
 
     pub(crate) fn drain_capture_diagnostics(&mut self) {
-        while let Ok(report) = self.diagnostics_receiver.try_recv() {
+        while let Ok(report) = self.background_tasks.diagnostics_receiver.try_recv() {
             let failed = report.failed_count();
             let warnings = report.warning_count();
             self.diagnostics_report = Some(report);
-            self.diagnostics_running = false;
-            self.status = tf(
+            self.background_tasks.diagnostics_running = false;
+            self.notifications.status = tf(
                 "Diagnostics complete: {} failed, {} warnings",
                 &[&failed.to_string(), &warnings.to_string()],
             );
-            if let Some(thread) = self.diagnostics_thread.take() {
+            if let Some(thread) = self.background_tasks.diagnostics_thread.take() {
                 let _ = thread.join();
             }
         }
@@ -3367,16 +2983,16 @@ impl DpsApp {
         DiagnosticSnapshot {
             capture_running: self.capture.is_some(),
             replay_running: self.replay_thread.is_some(),
-            active_capture_filter: self.active_capture_filter.clone(),
+            active_capture_filter: self.capture_ui.active_capture_filter.clone(),
             raw_packet_count: self
                 .raw_capture
                 .as_ref()
                 .map_or(0, RawCaptureBuffer::packet_count),
             parsed_packet_count: self.state.packets.len(),
             hit_count: self.state.hits.len(),
-            include_incoming: self.include_incoming,
-            server_damage_calibration: self.server_damage_calibration,
-            last_diagnostic: self.diagnostic.clone(),
+            include_incoming: self.capture_ui.include_incoming,
+            server_damage_calibration: self.capture_ui.server_damage_calibration,
+            last_diagnostic: self.notifications.diagnostic.clone(),
         }
     }
 }

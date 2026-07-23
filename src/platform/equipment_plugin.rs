@@ -826,6 +826,103 @@ fn file_system_error(error: io::Error) -> EquipmentPluginDeploymentError {
 mod tests {
     use super::*;
 
+    const NATIVE_IPC_HEADER: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-equipment-plugin/include/nte_equipment_ipc.h"
+    ));
+
+    fn native_define(name: &str) -> u64 {
+        let prefix = format!("#define {name} ");
+        let value = NATIVE_IPC_HEADER
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(&prefix))
+            .unwrap_or_else(|| panic!("native IPC header is missing {name}"))
+            .trim_end_matches(['u', 'U']);
+        if let Some(hex) = value.strip_prefix("0x") {
+            u64::from_str_radix(hex, 16).expect("native IPC hexadecimal define must be valid")
+        } else {
+            value
+                .parse()
+                .expect("native IPC decimal define must be valid")
+        }
+    }
+
+    fn native_enum(name: &str) -> u64 {
+        let prefix = format!("{name} = ");
+        NATIVE_IPC_HEADER
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(&prefix))
+            .map(|value| value.trim_end_matches(','))
+            .unwrap_or_else(|| panic!("native IPC header is missing {name}"))
+            .parse()
+            .expect("native IPC enum value must be valid")
+    }
+
+    #[test]
+    fn rust_wire_constants_match_the_native_ipc_header() {
+        assert_eq!(native_define("NTE_EQUIPMENT_IPC_MAGIC"), IPC_MAGIC as u64);
+        assert_eq!(
+            native_define("NTE_EQUIPMENT_IPC_VERSION"),
+            IPC_VERSION as u64
+        );
+        assert_eq!(
+            native_define("NTE_EQUIPMENT_MAX_PLACEMENTS"),
+            MAX_PLACEMENTS as u64
+        );
+        assert_eq!(
+            native_define("NTE_EQUIPMENT_IPC_REQUEST_SIZE"),
+            REQUEST_SIZE as u64
+        );
+        assert_eq!(
+            native_define("NTE_EQUIPMENT_IPC_RESPONSE_SIZE"),
+            RESPONSE_SIZE as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_EQUIP_MODULE"),
+            IPC_EQUIP_MODULE as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_EQUIP_CORE"),
+            IPC_EQUIP_CORE as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_UNEQUIP_MODULE"),
+            IPC_UNEQUIP_MODULE as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_UNEQUIP_CORE"),
+            IPC_UNEQUIP_CORE as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_UNEQUIP_ALL"),
+            IPC_UNEQUIP_ALL as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_EQUIP_ONE_KEY"),
+            IPC_EQUIP_ONE_KEY as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_MOVE_MODULE_TO_CHARACTER"),
+            IPC_MOVE_MODULE_TO_CHARACTER as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_MOVE_CORE_TO_CHARACTER"),
+            IPC_MOVE_CORE_TO_CHARACTER as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_SET_ITEM_DISCARDED"),
+            IPC_SET_ITEM_DISCARDED as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_SET_ITEM_LOCKED"),
+            IPC_SET_ITEM_LOCKED as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_STATUS_INVALID_BOOLEAN_VALUE"),
+            MAX_PLUGIN_STATUS as u64
+        );
+    }
+
     #[test]
     fn module_request_uses_the_stable_little_endian_wire_layout() {
         let bytes = encode_request(&EquipmentPluginRequest {

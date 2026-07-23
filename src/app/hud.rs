@@ -108,8 +108,10 @@ pub(crate) fn is_party_member_row(
 }
 
 pub(crate) fn hit_specific_type(hit: &crate::engine::model::Hit) -> &str {
-    hit.damage_name
+    hit.ability_name
         .as_deref()
+        .or(hit.gameplay_effect_name.as_deref())
+        .or(hit.damage_name.as_deref())
         .or(hit.attack_type.as_deref())
         .unwrap_or("未知招式")
 }
@@ -118,10 +120,10 @@ pub(crate) fn hit_specific_type(hit: &crate::engine::model::Hit) -> &str {
 /// [`crate::storage::i18n::t`] at the display site; the raw move-name branch is left
 /// untranslated so it keeps its original value and stays comparable to skill filters.
 pub(crate) fn hit_type_label(hit: &crate::engine::model::Hit) -> &str {
-    match hit.direction.as_str() {
-        "incoming" => "Incoming",
-        "unknown" => "Candidate Output",
-        _ => hit_specific_type(hit),
+    match hit.direction {
+        HitDirection::Incoming => "Incoming",
+        HitDirection::Unknown => "Candidate Output",
+        HitDirection::Outgoing => hit_specific_type(hit),
     }
 }
 
@@ -178,29 +180,44 @@ pub(crate) fn translate_reaction_label(label: &str) -> String {
     label.to_owned()
 }
 
+/// Resolves a stable ability/GE identity in the active UI language. The legacy
+/// damage name keeps old capture JSON and history files displayable.
+pub(crate) fn skill_name_display_text(
+    ability_name: Option<&str>,
+    gameplay_effect_name: Option<&str>,
+    legacy_damage_name: Option<&str>,
+    stable_name: &str,
+) -> String {
+    ability_name
+        .and_then(crate::storage::ability_names::resolve_ability_name)
+        .or_else(|| {
+            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
+        })
+        .or_else(|| legacy_damage_name.map(str::to_owned))
+        .unwrap_or_else(|| translate_reaction_label(stable_name))
+}
+
 /// "类型·名称": the broad attack-type category joined with the resolved skill
 /// name, e.g. "普攻·酸甜口味的制裁". Since [`crate::engine::parser::load_ability_tip_names`]
 /// resolves one name per ability rather than per combo hit, several hits under
 /// the same skill can share an identical name; the leading attack type keeps
 /// them distinguishable from other categories using the same name. Falls back
 /// to whichever half is available, and drops the join when both halves match.
-///
-/// The skill name is re-resolved from `gameplay_effect_name` through
-/// [`crate::storage::ability_names`] rather than read straight off
-/// `hit.damage_name`, which was baked in at capture time in whatever language
-/// was active then; falls back to that stored value when live resolution
-/// misses (e.g. reaction-only effects have no ability-tip entry).
 pub(crate) fn hit_type_display_text(hit: &crate::engine::model::Hit) -> String {
     let attack_type = hit.attack_type.as_deref().filter(|value| !value.is_empty());
-    let live_name = hit
-        .gameplay_effect_name
-        .as_deref()
-        .and_then(crate::storage::ability_names::resolve_damage_name);
-    let name = live_name
-        .as_deref()
-        .or(hit.damage_name.as_deref())
-        .filter(|value| !value.is_empty());
-    match (attack_type, name) {
+    let stable_name = hit_specific_type(hit);
+    let name = (hit.ability_name.is_some()
+        || hit.gameplay_effect_name.is_some()
+        || hit.damage_name.is_some())
+    .then(|| {
+        skill_name_display_text(
+            hit.ability_name.as_deref(),
+            hit.gameplay_effect_name.as_deref(),
+            hit.damage_name.as_deref(),
+            stable_name,
+        )
+    });
+    match (attack_type, name.as_deref()) {
         (Some(attack_type), Some(name)) if attack_type != name => {
             format!("{}·{name}", translate_reaction_label(attack_type))
         }

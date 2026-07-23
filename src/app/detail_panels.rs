@@ -55,7 +55,7 @@ impl DpsApp {
         let filters_active = filter != HitDetailFilter::All || !skill_filter.is_empty();
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
-        let layout = character_hit_layout(content_width, self.hit_detail_columns);
+        let layout = character_hit_layout(content_width, self.preferences.hit_detail_columns);
         let (source, generation) = self.detail_source();
         let key = HitDetailCacheKey {
             source,
@@ -87,7 +87,7 @@ impl DpsApp {
         let filtered_count = self.character_hit_cache.filtered_count;
         let max_damage = self.character_hit_cache.max_damage;
         show_detail_limit_notice(ui, filtered_count);
-        draw_character_hit_header(ui, layout, &mut self.hit_detail_columns);
+        draw_character_hit_header(ui, layout, &mut self.preferences.hit_detail_columns);
         let hit_count = self.character_hit_cache.rows.len();
         if hit_count == 0 {
             let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
@@ -104,7 +104,7 @@ impl DpsApp {
             }
             return;
         }
-        let row_height = density_tokens(self.density).detail_row_height;
+        let row_height = density_tokens(self.preferences.density).detail_row_height;
         let output = egui::ScrollArea::vertical()
             .id_salt(("character_hits", char_id))
             .max_height(ui.available_height())
@@ -156,7 +156,7 @@ impl DpsApp {
         let filters_active = filter != HitDetailFilter::All;
         let scrollbar_width = ui.style().spacing.scroll.allocated_width().max(10.0);
         let content_width = (ui.available_width() - scrollbar_width - 4.0).max(0.0);
-        let layout = team_hit_layout(content_width, self.hit_detail_columns);
+        let layout = team_hit_layout(content_width, self.preferences.hit_detail_columns);
         let (source, generation) = self.detail_source();
         let key = HitDetailCacheKey {
             source,
@@ -188,7 +188,7 @@ impl DpsApp {
         let filtered_count = self.team_hit_cache.filtered_count;
         let max_damage = self.team_hit_cache.max_damage;
         show_detail_limit_notice(ui, filtered_count);
-        draw_team_hit_header(ui, layout, &mut self.hit_detail_columns);
+        draw_team_hit_header(ui, layout, &mut self.preferences.hit_detail_columns);
         if self.team_hit_cache.rows.is_empty() {
             let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
             match hit_empty_state(ui, self.theme(), filters_active, capture_idle) {
@@ -204,7 +204,7 @@ impl DpsApp {
             return;
         }
         let hit_count = self.team_hit_cache.rows.len();
-        let row_height = density_tokens(self.density).detail_row_height;
+        let row_height = density_tokens(self.preferences.density).detail_row_height;
         let output = egui::ScrollArea::vertical()
             .id_salt((
                 "team_hits",
@@ -226,8 +226,13 @@ impl DpsApp {
                         continue;
                     };
                     let color = readable_accent(
-                        character_color(hit.char_id, &self.characters, 0, self.dark_mode),
-                        self.dark_mode,
+                        character_color(
+                            hit.char_id,
+                            &self.characters,
+                            0,
+                            self.preferences.dark_mode,
+                        ),
+                        self.preferences.dark_mode,
                     );
                     let avatar_texture = self
                         .characters
@@ -327,17 +332,17 @@ impl DpsApp {
             viewport_id,
             secondary_viewport_builder(
                 &title,
-                self.team_hit_detail_window_size,
+                self.windows.team_hit_detail_window_size,
                 config::TEAM_HIT_DETAIL_WINDOW_MIN_SIZE,
-                self.team_hit_detail_geometry,
-                self.team_hit_detail_corner_applied,
+                self.windows.team_hit_detail_geometry,
+                self.windows.team_hit_detail_corner_applied,
             ),
             |ctx, _class| {
                 self.handle_local_hotkeys(ctx.ctx());
-                let opening = !self.team_hit_detail_corner_applied;
+                let opening = !self.windows.team_hit_detail_corner_applied;
                 if opening {
                     apply_rounding_to_process_windows();
-                    self.team_hit_detail_corner_applied = true;
+                    self.windows.team_hit_detail_corner_applied = true;
                 }
                 let close_clicked = secondary_title_panel(ctx, &title);
                 egui::CentralPanel::default()
@@ -351,7 +356,7 @@ impl DpsApp {
                             ui,
                             "team_hit_detail",
                             opening,
-                            self.reduce_motion,
+                            self.preferences.reduce_motion,
                         );
                         egui::Frame::new()
                             .fill(self.theme().card)
@@ -388,7 +393,7 @@ impl DpsApp {
                                         (
                                             label_taken.as_str(),
                                             format_number(total_damage_taken),
-                                            semantic_danger(self.dark_mode),
+                                            semantic_danger(self.preferences.dark_mode),
                                         ),
                                         (
                                             label_time.as_str(),
@@ -443,8 +448,8 @@ impl DpsApp {
                     });
                 track_secondary_viewport_geometry(
                     ctx,
-                    &mut self.team_hit_detail_window_size,
-                    &mut self.team_hit_detail_geometry,
+                    &mut self.windows.team_hit_detail_window_size,
+                    &mut self.windows.team_hit_detail_geometry,
                 );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
@@ -454,8 +459,8 @@ impl DpsApp {
             },
         );
         if close_requested {
-            self.team_hit_detail_open = false;
-            self.team_hit_detail_corner_applied = false;
+            self.windows.team_hit_detail_open = false;
+            self.windows.team_hit_detail_corner_applied = false;
             self.retarget_dialogs(viewport_id, egui::ViewportId::ROOT);
         }
     }
@@ -466,17 +471,17 @@ impl DpsApp {
             viewport_id,
             secondary_viewport_builder(
                 t("Abyss Monster Stats"),
-                self.abyss_window_size,
+                self.windows.abyss_window_size,
                 config::ABYSS_WINDOW_MIN_SIZE,
-                self.abyss_overview_geometry,
-                self.abyss_overview_corner_applied,
+                self.windows.abyss_overview_geometry,
+                self.windows.abyss_overview_corner_applied,
             ),
             |ctx, _class| {
                 self.handle_local_hotkeys(ctx.ctx());
-                let opening = !self.abyss_overview_corner_applied;
+                let opening = !self.windows.abyss_overview_corner_applied;
                 if opening {
                     apply_rounding_to_process_windows();
-                    self.abyss_overview_corner_applied = true;
+                    self.windows.abyss_overview_corner_applied = true;
                 }
                 let close_clicked = secondary_title_panel(ctx, &t("Abyss Monster Stats"));
                 egui::CentralPanel::default()
@@ -490,14 +495,14 @@ impl DpsApp {
                             ui,
                             "abyss_overview",
                             opening,
-                            self.reduce_motion,
+                            self.preferences.reduce_motion,
                         );
                         self.abyss_overview_contents(ui);
                     });
                 track_secondary_viewport_geometry(
                     ctx,
-                    &mut self.abyss_window_size,
-                    &mut self.abyss_overview_geometry,
+                    &mut self.windows.abyss_window_size,
+                    &mut self.windows.abyss_overview_geometry,
                 );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
@@ -507,8 +512,8 @@ impl DpsApp {
             },
         );
         if close_requested {
-            self.abyss_overview_open = false;
-            self.abyss_overview_corner_applied = false;
+            self.windows.abyss_overview_open = false;
+            self.windows.abyss_overview_corner_applied = false;
             self.retarget_dialogs(viewport_id, egui::ViewportId::ROOT);
         }
     }
@@ -524,7 +529,7 @@ impl DpsApp {
                         RichText::new(t("Abyss monster stats table not loaded"))
                             .size(18.0)
                             .strong()
-                            .color(semantic_danger(self.dark_mode)),
+                            .color(semantic_danger(self.preferences.dark_mode)),
                     );
                     if let Some(error) = &self.abyss_overview.load_error {
                         ui.add_space(6.0);
@@ -795,7 +800,7 @@ impl DpsApp {
         if lower.is_some() {
             self.abyss_overview.lower_team = lower;
         }
-        self.status = t("Imported DPS team data");
+        self.notifications.status = t("Imported DPS team data");
         self.clear_last_error();
     }
 
@@ -845,7 +850,7 @@ impl DpsApp {
     ) {
         match atomic_write_text(path, json) {
             Ok(()) => {
-                self.status = t("Team data exported");
+                self.notifications.status = t("Team data exported");
                 self.clear_last_error();
             }
             Err(error) => self.set_last_error_for(
@@ -858,9 +863,8 @@ impl DpsApp {
 
     pub(crate) fn save_current_history_summary(&mut self, ctx: &egui::Context) {
         let Some(summary) = self.state.session_summary(
-            self.capture_quality_source,
-            self.dps_time_mode.label(),
-            self.subtract_time_stop_for_dps(),
+            self.capture_ui.capture_quality_source,
+            DpsTimeBasis::from_subtract_time_stop(self.subtract_time_stop_for_dps()),
         ) else {
             self.set_last_error_in(
                 ctx,
@@ -875,7 +879,7 @@ impl DpsApp {
                 self.history.selected_id = Some(record.id);
                 self.history.ensure_selection();
                 self.history.message = t("This summary saved");
-                self.status = t("History summary saved");
+                self.notifications.status = t("History summary saved");
                 self.clear_last_error();
             }
             Err(error) => {
@@ -903,7 +907,7 @@ impl DpsApp {
             Ok(true) => {
                 self.history.reload();
                 self.history.message = t("History summary deleted");
-                self.status = t("History summary deleted");
+                self.notifications.status = t("History summary deleted");
                 self.clear_last_error();
                 if let Some(record) = record {
                     self.push_undo_toast(
@@ -1020,7 +1024,7 @@ impl DpsApp {
                     selected_pack_id.as_deref(),
                     &mut self.abyss_overview.selected_monster_pack_id,
                     &self.monster_textures,
-                    self.dark_mode,
+                    self.preferences.dark_mode,
                     Some(LinePredictionView {
                         team: upper_team.as_ref(),
                         line_hp: abyss_line_hp_total(upper_line.iter().copied()),
@@ -1043,7 +1047,7 @@ impl DpsApp {
                     selected_pack_id.as_deref(),
                     &mut self.abyss_overview.selected_monster_pack_id,
                     &self.monster_textures,
-                    self.dark_mode,
+                    self.preferences.dark_mode,
                     Some(LinePredictionView {
                         team: lower_team.as_ref(),
                         line_hp: abyss_line_hp_total(lower_line.iter().copied()),
@@ -1072,7 +1076,7 @@ impl DpsApp {
                     selected_pack_id.as_deref(),
                     &mut self.abyss_overview.selected_monster_pack_id,
                     &self.monster_textures,
-                    self.dark_mode,
+                    self.preferences.dark_mode,
                     None,
                     &[],
                 );
@@ -1089,7 +1093,7 @@ impl DpsApp {
                 ui,
                 monster,
                 monster_texture(&self.monster_textures, &monster.monster_id),
-                self.dark_mode,
+                self.preferences.dark_mode,
                 ui.available_height(),
                 &self.abyss_overview.stat_display_names,
             );
@@ -1115,8 +1119,8 @@ impl DpsApp {
             self.state.stats.get(&char_id).cloned()
         };
         let Some(mut stats) = stats else {
-            self.hit_detail_char_id = None;
-            self.hit_detail_corner_applied = false;
+            self.windows.hit_detail_char_id = None;
+            self.windows.hit_detail_corner_applied = false;
             return;
         };
         // Display the character's name in the active UI language (window title + header).
@@ -1153,25 +1157,25 @@ impl DpsApp {
             .and_then(|avatar| self.avatar_textures.get(avatar))
             .cloned();
         let character_color = readable_accent(
-            character_color(char_id, &self.characters, 0, self.dark_mode),
-            self.dark_mode,
+            character_color(char_id, &self.characters, 0, self.preferences.dark_mode),
+            self.preferences.dark_mode,
         );
         let title = tf("{} - Combat Details", &[&stats.name]);
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
             secondary_viewport_builder(
                 &title,
-                self.hit_detail_window_size,
+                self.windows.hit_detail_window_size,
                 config::HIT_DETAIL_WINDOW_MIN_SIZE,
-                self.hit_detail_geometry,
-                self.hit_detail_corner_applied,
+                self.windows.hit_detail_geometry,
+                self.windows.hit_detail_corner_applied,
             ),
             |ctx, _class| {
                 self.handle_local_hotkeys(ctx.ctx());
-                let opening = !self.hit_detail_corner_applied;
+                let opening = !self.windows.hit_detail_corner_applied;
                 if opening {
                     apply_rounding_to_process_windows();
-                    self.hit_detail_corner_applied = true;
+                    self.windows.hit_detail_corner_applied = true;
                 }
                 let close_clicked = secondary_title_panel(ctx, &title);
                 egui::CentralPanel::default()
@@ -1185,7 +1189,7 @@ impl DpsApp {
                             ui,
                             "hit_detail",
                             opening,
-                            self.reduce_motion,
+                            self.preferences.reduce_motion,
                         );
                         egui::Frame::new()
                             .fill(self.theme().card)
@@ -1241,7 +1245,7 @@ impl DpsApp {
                                                                 .size(20.0)
                                                                 .strong()
                                                                 .color(shadcn_foreground(
-                                                                    self.dark_mode,
+                                                                    self.preferences.dark_mode,
                                                                 )),
                                                         )
                                                         .truncate(),
@@ -1297,7 +1301,9 @@ impl DpsApp {
                                                         (
                                                             label_taken.as_str(),
                                                             format_number(stats.damage_taken),
-                                                            semantic_danger(self.dark_mode),
+                                                            semantic_danger(
+                                                                self.preferences.dark_mode,
+                                                            ),
                                                         ),
                                                         (
                                                             label_time.as_str(),
@@ -1362,7 +1368,13 @@ impl DpsApp {
                                     .selected_text(if self.hit_detail_skill_filter.is_empty() {
                                         t("All moves")
                                     } else {
-                                        self.hit_detail_skill_filter.clone()
+                                        skill_summaries
+                                            .iter()
+                                            .find(|summary| {
+                                                summary.name == self.hit_detail_skill_filter
+                                            })
+                                            .map(skill_summary_display_text)
+                                            .unwrap_or_else(|| self.hit_detail_skill_filter.clone())
                                     })
                                     .show_ui(ui, |ui| {
                                         stable_popup_selectable_value(
@@ -1371,14 +1383,14 @@ impl DpsApp {
                                             String::new(),
                                             t("All moves"),
                                         );
-                                        for summary in &skill_summaries {
+                                        for summary in skill_summaries.iter() {
                                             stable_popup_selectable_value(
                                                 ui,
                                                 &mut self.hit_detail_skill_filter,
                                                 summary.name.clone(),
                                                 format!(
                                                     "{}  {}",
-                                                    summary.name,
+                                                    skill_summary_display_text(summary),
                                                     tf("{} hits", &[&summary.hits.to_string()])
                                                 ),
                                             );
@@ -1399,7 +1411,7 @@ impl DpsApp {
                             &skill_summaries,
                             stats.damage,
                             &mut self.hit_detail_skill_filter,
-                            self.dark_mode,
+                            self.preferences.dark_mode,
                         );
                         ui.add_space(4.0);
                         ui.separator();
@@ -1413,8 +1425,8 @@ impl DpsApp {
                     });
                 track_secondary_viewport_geometry(
                     ctx,
-                    &mut self.hit_detail_window_size,
-                    &mut self.hit_detail_geometry,
+                    &mut self.windows.hit_detail_window_size,
+                    &mut self.windows.hit_detail_geometry,
                 );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
@@ -1424,8 +1436,8 @@ impl DpsApp {
             },
         );
         if close_requested {
-            self.hit_detail_char_id = None;
-            self.hit_detail_corner_applied = false;
+            self.windows.hit_detail_char_id = None;
+            self.windows.hit_detail_corner_applied = false;
             self.retarget_dialogs(viewport_id, egui::ViewportId::ROOT);
         }
     }

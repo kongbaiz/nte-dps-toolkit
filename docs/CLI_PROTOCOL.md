@@ -366,7 +366,10 @@ the GUI. The result is null before any combat or abyss data exists. Otherwise it
 contains total duration, damage, DPS, damage taken, hit count, character rows,
 skill rows, both abyss halves, and the redacted parse-quality counters. Stable
 `dps_time_mode` values are `subtract_time_stop` and `wall_clock`; quality source
-values are `live`, `pcapng_replay`, `json_replay`, and `unknown`.
+values are `live`, `pcapng_replay`, `json_replay`, and `unknown`. Each skill row's
+`name` prefers a stable ability or GameplayEffect grouping key over a localized
+UI snapshot; optional `ability_name` and `gameplay_effect_name` fields expose the
+stable GA/GE identifiers when available.
 
 The external battle DTO is an explicit field-by-field mapping from the internal
 `CombatSessionSummary`; internal Rust serialization is not exposed as the API.
