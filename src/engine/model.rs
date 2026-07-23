@@ -1729,9 +1729,6 @@ impl CombatState {
     }
 
     pub fn push_packet(&mut self, packet: PacketDebug) {
-        self.observe_packet(PacketObservation {
-            parsed_hits: packet.parsed_hits,
-        });
         self.packets.push_back(packet);
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
@@ -2899,6 +2896,7 @@ mod tests {
     fn capture_quality_summary_is_redacted() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
+        state.observe_packet(PacketObservation { parsed_hits: 1 });
         state.push_packet(PacketDebug {
             timestamp: 1.0,
             source: "192.0.2.1:1111".to_owned(),

@@ -206,7 +206,7 @@ mod tests {
         let signal = apply_engine_event(&mut state, EngineEvent::Packet(Box::new(test_packet())));
         assert_eq!(signal, CoreSignal::DebugPacket);
         assert_eq!(state.packets.len(), 1);
-        assert_eq!(state.packet_count, 1);
+        assert_eq!(state.packet_count, 0);
     }
 
     #[test]
@@ -218,6 +218,20 @@ mod tests {
         );
         assert_eq!(signal, CoreSignal::PacketObserved);
         assert!(state.packets.is_empty());
+        assert_eq!(state.packet_count, 1);
+        assert_eq!(state.packets_with_hits, 1);
+    }
+
+    #[test]
+    fn packet_observation_and_debug_payload_count_once() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::PacketObservation(PacketObservation { parsed_hits: 1 }),
+        );
+        apply_engine_event(&mut state, EngineEvent::Packet(Box::new(test_packet())));
+
+        assert_eq!(state.packets.len(), 1);
         assert_eq!(state.packet_count, 1);
         assert_eq!(state.packets_with_hits, 1);
     }

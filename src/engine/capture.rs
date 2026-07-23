@@ -1908,11 +1908,17 @@ fn ultra_damage_time_stop_char_id(
     .then_some(hit.char_id)
 }
 
-fn send_packet_events(sender: &EngineEventSink, packet: PacketDebug) {
+fn send_packet_events(
+    sender: &EngineEventSink,
+    packet: PacketDebug,
+) -> Result<(), EngineEventSendError> {
     for event in abyss_events_from_text(packet.timestamp, &packet.decoded_text) {
-        let _ = sender.send(EngineEvent::Abyss(event));
+        sender.send(EngineEvent::Abyss(event))?;
     }
-    let _ = sender.send(EngineEvent::Packet(Box::new(packet)));
+    sender.send(EngineEvent::PacketObservation(PacketObservation {
+        parsed_hits: packet.parsed_hits,
+    }))?;
+    sender.send(EngineEvent::Packet(Box::new(packet)))
 }
 
 const MAX_PENDING_FOLLOW_UP_HITS: usize = 256;
@@ -4030,7 +4036,7 @@ impl PacketDecoder {
                 );
             }
         }
-        send_packet_events(
+        let _ = send_packet_events(
             sender,
             PacketDebug {
                 timestamp,
@@ -5019,14 +5025,7 @@ fn send_export_packet(
         payload_hex: packet.payload_hex,
         decoded_text,
     };
-    for event in abyss_events_from_text(packet.timestamp, &packet.decoded_text) {
-        sender
-            .send(EngineEvent::Abyss(event))
-            .map_err(|error| error.to_string())?;
-    }
-    sender
-        .send(EngineEvent::Packet(Box::new(packet)))
-        .map_err(|error| error.to_string())?;
+    send_packet_events(sender, packet).map_err(|error| error.to_string())?;
     Ok(true)
 }
 
@@ -5138,6 +5137,26 @@ mod tests {
         }
     }
 
+    fn receive_observed_debug_packet(
+        receiver: &Receiver<EngineEvent>,
+        expected_hits: usize,
+    ) -> Box<PacketDebug> {
+        assert!(matches!(
+            receiver
+                .try_recv()
+                .expect("packet observation should be emitted"),
+            EngineEvent::PacketObservation(PacketObservation { parsed_hits })
+                if parsed_hits == expected_hits
+        ));
+        let EngineEvent::Packet(packet) = receiver
+            .try_recv()
+            .expect("debug packet payload should be emitted")
+        else {
+            panic!("expected debug packet payload");
+        };
+        packet
+    }
+
     #[test]
     fn split_event_sink_bounds_debug_without_dropping_reliable_events() {
         let (reliable_sender, reliable_receiver) = bounded(2);
@@ -5168,6 +5187,29 @@ mod tests {
         assert_eq!(packet.note, "kept");
         assert_eq!(sink.take_dropped_debug_packets(), 1);
         assert_eq!(sink.take_dropped_debug_packets(), 0);
+    }
+
+    #[test]
+    fn full_debug_emits_observation_when_debug_payload_is_dropped() {
+        let (reliable_sender, reliable_receiver) = bounded(1);
+        let (debug_sender, debug_receiver) = bounded(1);
+        let sink = EngineEventSink::split(reliable_sender, debug_sender);
+        sink.send(EngineEvent::Packet(Box::new(debug_packet("retained"))))
+            .unwrap();
+        let mut dropped = debug_packet("dropped");
+        dropped.parsed_hits = 3;
+
+        send_packet_events(&sink, dropped).unwrap();
+
+        assert!(matches!(
+            reliable_receiver.try_recv().unwrap(),
+            EngineEvent::PacketObservation(PacketObservation { parsed_hits: 3 })
+        ));
+        let EngineEvent::Packet(packet) = debug_receiver.try_recv().unwrap() else {
+            panic!("debug lane must retain its existing packet");
+        };
+        assert_eq!(packet.note, "retained");
+        assert_eq!(sink.take_dropped_debug_packets(), 1);
     }
 
     #[test]
@@ -7093,13 +7135,9 @@ mod tests {
             )
             .is_ok()
         );
-        match receiver.try_recv().expect("packet event should be emitted") {
-            EngineEvent::Packet(packet) => {
-                assert_eq!(packet.declared_ids, [1076]);
-                assert!(packet.decoded_text.contains("ft_character_1076"));
-            }
-            _ => panic!("expected packet event"),
-        }
+        let packet = receive_observed_debug_packet(&receiver, 0);
+        assert_eq!(packet.declared_ids, [1076]);
+        assert!(packet.decoded_text.contains("ft_character_1076"));
         assert!(receiver.try_recv().is_err());
     }
 
@@ -7132,13 +7170,9 @@ mod tests {
             )
             .is_ok()
         );
-        match receiver.try_recv().expect("packet event should be emitted") {
-            EngineEvent::Packet(packet) => {
-                assert_eq!(packet.payload_hex, String::new());
-                assert_eq!(packet.payload_len, 0);
-            }
-            _ => panic!("expected packet event"),
-        }
+        let packet = receive_observed_debug_packet(&receiver, 0);
+        assert_eq!(packet.payload_hex, String::new());
+        assert_eq!(packet.payload_len, 0);
         assert!(receiver.try_recv().is_err());
     }
 
@@ -7172,13 +7206,9 @@ mod tests {
             )
             .is_ok()
         );
-        match receiver.try_recv().expect("packet event should be emitted") {
-            EngineEvent::Packet(packet) => {
-                assert_eq!(packet.decoded_text, "导出时的协议文本");
-                assert_eq!(packet.payload_hex, "0000");
-            }
-            _ => panic!("expected packet event"),
-        }
+        let packet = receive_observed_debug_packet(&receiver, 1);
+        assert_eq!(packet.decoded_text, "导出时的协议文本");
+        assert_eq!(packet.payload_hex, "0000");
         assert!(receiver.try_recv().is_err());
     }
 
@@ -7222,10 +7252,7 @@ mod tests {
             )
             .unwrap()
         );
-        assert!(matches!(
-            receiver.try_recv().expect("debug packet should be emitted"),
-            EngineEvent::Packet(_)
-        ));
+        receive_observed_debug_packet(&receiver, 0);
         assert_eq!(tracker.pending_casts.len(), 1);
         assert!(tracker.pending_casts[0].from_time_actor);
 
@@ -8514,10 +8541,7 @@ mod tests {
             &characters,
             &sender,
         );
-        assert!(matches!(
-            receiver.try_recv().expect("debug packet should be emitted"),
-            EngineEvent::Packet(_)
-        ));
+        receive_observed_debug_packet(&receiver, 0);
 
         decoder.process_ethernet_frame(
             &udp_ipv4_packet(&[0, 0, 0, 0], remote_ip, 7_777, local_ip, 50_000),

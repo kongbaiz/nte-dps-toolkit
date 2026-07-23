@@ -362,6 +362,25 @@ pub(crate) fn skill_display_name(row: &CombatSessionSkillSummary) -> String {
     }
 }
 
+pub(crate) fn comparison_skill_display_name(
+    row: &crate::storage::history::HistorySkillDelta,
+) -> String {
+    let ability_name = row
+        .ability_name
+        .as_deref()
+        .or_else(|| row.name.starts_with("GA_").then_some(row.name.as_str()));
+    let gameplay_effect_name = row
+        .gameplay_effect_name
+        .as_deref()
+        .or_else(|| row.name.starts_with("GE_").then_some(row.name.as_str()));
+    ability_name
+        .and_then(crate::storage::ability_names::resolve_ability_name)
+        .or_else(|| {
+            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
+        })
+        .unwrap_or_else(|| row.name.clone())
+}
+
 pub(crate) fn contains_cjk(text: &str) -> bool {
     text.chars().any(|ch| {
         matches!(
