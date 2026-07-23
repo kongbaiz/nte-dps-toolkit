@@ -72,6 +72,12 @@ pub(crate) struct CommandPaletteState {
 }
 
 impl DpsApp {
+    pub(crate) fn toggle_processing_pause(&mut self) {
+        if toggle_processing_state(&mut self.capture_ui.paused) {
+            self.discard_queued_debug_packets();
+        }
+    }
+
     pub(crate) fn command_specs(&self) -> Vec<CommandSpec> {
         let mut commands = vec![
             command(
@@ -328,7 +334,7 @@ impl DpsApp {
             AppAction::ToggleHud => self.set_hud_mode(ctx, !self.windows.hud_mode),
             AppAction::TogglePassthrough => self.toggle_mouse_passthrough(ctx),
             AppAction::TogglePause => {
-                self.capture_ui.paused = !self.capture_ui.paused;
+                self.toggle_processing_pause();
                 self.notifications.status = if self.capture_ui.paused {
                     t("Processing paused")
                 } else {
@@ -689,6 +695,11 @@ impl DpsApp {
     }
 }
 
+fn toggle_processing_state(paused: &mut bool) -> bool {
+    *paused = !*paused;
+    !*paused
+}
+
 fn command(
     id: &'static str,
     title_key: &'static str,
@@ -805,5 +816,15 @@ mod tests {
         assert!(command_matches(&spec, "review"));
         assert!(command_matches(&spec, "时间轴"));
         assert!(!command_matches(&spec, "unrelated"));
+    }
+
+    #[test]
+    fn processing_pause_toggle_discards_debug_queue_only_on_resume() {
+        let mut paused = false;
+
+        assert!(!toggle_processing_state(&mut paused));
+        assert!(paused);
+        assert!(toggle_processing_state(&mut paused));
+        assert!(!paused);
     }
 }

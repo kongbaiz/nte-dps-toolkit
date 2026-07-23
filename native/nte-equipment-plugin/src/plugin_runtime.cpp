@@ -1,5 +1,6 @@
 #include "plugin_runtime.hpp"
 
+#include "equipment_rpc.hpp"
 #include "ipc_transport.hpp"
 #include "memory_access.hpp"
 #include "obfuscated_string.hpp"
@@ -197,6 +198,11 @@ namespace nte::equipment
 				return;
 			}
 
+			if (!IsEquipmentRpcCacheReady())
+			{
+				const EquipmentContext context{ ResolvePlayerState(viewport) };
+				PrepareEquipmentRpcCache(&context);
+			}
 			PumpLiveIpc(viewport, ResolvePlayerState);
 			ipc_dispatch_in_progress = false;
 		}

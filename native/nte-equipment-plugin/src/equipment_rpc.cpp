@@ -125,9 +125,42 @@ namespace nte::equipment
 			uint8_t padding[3];
 		};
 
+		enum class EquipmentFunction : size_t
+		{
+			EquipOneKey,
+			UnequipAll,
+			EquipModule,
+			UnequipModule,
+			EquipCore,
+			UnequipCore,
+			MoveModuleToCharacter,
+			MoveCoreToCharacter,
+			SetItemDiscarded,
+			SetItemLocked,
+			Count,
+		};
+
+		struct DecodedUeName
+		{
+			wchar_t buffer[256];
+			int32_t first;
+			int32_t length;
+		};
+
+		struct EquipmentFunctionCache
+		{
+			UeClass* player_state_class;
+			std::array<
+				UeFunction*,
+				static_cast<size_t>(EquipmentFunction::Count)> functions;
+			bool initialized;
+		};
+
 		using AppendName = void(__fastcall*)(const UeName*, UeStringBuffer&);
 		using ProcessEvent = void(__fastcall*)(
 			const UeObject*, UeFunction*, void*);
+
+		constinit EquipmentFunctionCache function_cache{};
 
 		static_assert(sizeof(EquipmentContext) == 8);
 		static_assert(sizeof(NteEquipmentStatus) == 4);
@@ -200,10 +233,13 @@ namespace nte::equipment
 			return NTE_EQUIPMENT_STATUS_DRY_RUN_OK;
 		}
 
-		bool NameEquals(const UeName& name, const char* expected)
+		bool DecodeName(const UeName& name, DecodedUeName& decoded)
 		{
-			wchar_t buffer[256]{};
-			UeStringBuffer output{ buffer, 0, static_cast<int32_t>(_countof(buffer)) };
+			decoded = {};
+			UeStringBuffer output{
+				decoded.buffer,
+				0,
+				static_cast<int32_t>(_countof(decoded.buffer)) };
 			const auto* resolved = offsets::Get();
 			if (resolved == nullptr)
 				return false;
@@ -216,35 +252,102 @@ namespace nte::equipment
 			if (output.count < 0 || output.count > output.capacity)
 				return false;
 
-			int32_t length = output.count;
-			if (length > 0 && buffer[length - 1] == L'\0')
-				--length;
-			int32_t first = 0;
-			for (int32_t index = 0; index < length; ++index)
+			decoded.length = output.count;
+			if (decoded.length > 0 &&
+				decoded.buffer[decoded.length - 1] == L'\0')
+				--decoded.length;
+			for (int32_t index = 0; index < decoded.length; ++index)
 			{
-				if (buffer[index] == L'/')
-					first = index + 1;
+				if (decoded.buffer[index] == L'/')
+					decoded.first = index + 1;
 			}
+			return true;
+		}
 
-			int32_t index = first;
-			while (*expected != '\0' && index < length)
+		bool DecodedNameEquals(
+			const DecodedUeName& decoded,
+			const char* expected)
+		{
+			int32_t index = decoded.first;
+			while (*expected != '\0' && index < decoded.length)
 			{
-				if (buffer[index] != static_cast<unsigned char>(*expected))
+				if (decoded.buffer[index] !=
+					static_cast<unsigned char>(*expected))
 					return false;
 				++index;
 				++expected;
 			}
-			return *expected == '\0' && index == length;
+			return *expected == '\0' && index == decoded.length;
 		}
 
-		UeFunction* FindFunction(UeClass* object_class, const char* function_name)
+		bool NameEquals(const UeName& name, const char* expected)
 		{
+			DecodedUeName decoded{};
+			return DecodeName(name, decoded) &&
+				DecodedNameEquals(decoded, expected);
+		}
+
+		EquipmentFunction IdentifyEquipmentFunction(const UeName& name)
+		{
+			DecodedUeName decoded{};
+			if (!DecodeName(name, decoded))
+				return EquipmentFunction::Count;
+
+			const auto one_key =
+				NTE_OBFUSCATE_STRING("ServerEquipmentInlayOneKey");
+			if (DecodedNameEquals(decoded, one_key.c_str()))
+				return EquipmentFunction::EquipOneKey;
+			const auto unequip_all =
+				NTE_OBFUSCATE_STRING("ServerEquipmentClear");
+			if (DecodedNameEquals(decoded, unequip_all.c_str()))
+				return EquipmentFunction::UnequipAll;
+			const auto equip_module =
+				NTE_OBFUSCATE_STRING("ServerEquipmentInlay");
+			if (DecodedNameEquals(decoded, equip_module.c_str()))
+				return EquipmentFunction::EquipModule;
+			const auto unequip_module =
+				NTE_OBFUSCATE_STRING("ServerEquipmentErase");
+			if (DecodedNameEquals(decoded, unequip_module.c_str()))
+				return EquipmentFunction::UnequipModule;
+			const auto equip_core =
+				NTE_OBFUSCATE_STRING("ServerEquipmentInlayCore");
+			if (DecodedNameEquals(decoded, equip_core.c_str()))
+				return EquipmentFunction::EquipCore;
+			const auto unequip_core =
+				NTE_OBFUSCATE_STRING("ServerEquipmentEraseCore");
+			if (DecodedNameEquals(decoded, unequip_core.c_str()))
+				return EquipmentFunction::UnequipCore;
+			const auto move_module = NTE_OBFUSCATE_STRING(
+				"ServerEquipmentEraseAndInlayToOther");
+			if (DecodedNameEquals(decoded, move_module.c_str()))
+				return EquipmentFunction::MoveModuleToCharacter;
+			const auto move_core = NTE_OBFUSCATE_STRING(
+				"ServerEquipmentCoreEraseAndInlayToOther");
+			if (DecodedNameEquals(decoded, move_core.c_str()))
+				return EquipmentFunction::MoveCoreToCharacter;
+			const auto set_discarded =
+				NTE_OBFUSCATE_STRING("ServerEquipmentItemDiscard");
+			if (DecodedNameEquals(decoded, set_discarded.c_str()))
+				return EquipmentFunction::SetItemDiscarded;
+			const auto set_locked =
+				NTE_OBFUSCATE_STRING("ServerEquipmentItemLocked");
+			if (DecodedNameEquals(decoded, set_locked.c_str()))
+				return EquipmentFunction::SetItemLocked;
+			return EquipmentFunction::Count;
+		}
+
+		bool BuildFunctionCache(UeClass* object_class)
+		{
+			EquipmentFunctionCache candidate{};
+			candidate.player_state_class = object_class;
+			size_t function_count = 0;
+
 			for (auto* current = static_cast<UeStruct*>(object_class);
 				current != nullptr;
 				current = current->super)
 			{
 				if (!memory::IsReadableRange(current, sizeof(UeStruct)))
-					return nullptr;
+					return false;
 				if (!NameEquals(
 					current->name,
 					NTE_OBFUSCATE_STRING("HTPlayerState").c_str()))
@@ -255,7 +358,7 @@ namespace nte::equipment
 					field = field->next)
 				{
 					if (!memory::IsReadableRange(field, sizeof(UeField)))
-						return nullptr;
+						return false;
 
 					uint64_t cast_flags = 0;
 					if (!memory::ReadValue(
@@ -264,11 +367,40 @@ namespace nte::equipment
 						cast_flags) ||
 						(cast_flags & FUNCTION_CAST_FLAG) == 0)
 						continue;
-					if (NameEquals(field->name, function_name))
-						return reinterpret_cast<UeFunction*>(field);
+
+					const EquipmentFunction function =
+						IdentifyEquipmentFunction(field->name);
+					if (function == EquipmentFunction::Count)
+						continue;
+
+					auto& cached = candidate.functions[
+						static_cast<size_t>(function)];
+					if (cached == nullptr)
+					{
+						cached = reinterpret_cast<UeFunction*>(field);
+						if (++function_count == candidate.functions.size())
+							break;
+					}
 				}
+				break;
 			}
-			return nullptr;
+
+			candidate.initialized = true;
+			function_cache = candidate;
+			return true;
+		}
+
+		UeFunction* ResolveFunction(
+			UeClass* object_class,
+			EquipmentFunction function)
+		{
+			if (!function_cache.initialized ||
+				function_cache.player_state_class != object_class)
+			{
+				if (!BuildFunctionCache(object_class))
+					return nullptr;
+			}
+			return function_cache.functions[static_cast<size_t>(function)];
 		}
 
 		UeItemNetId ToUeItemId(const NteItemNetId& item)
@@ -278,7 +410,7 @@ namespace nte::equipment
 
 		NteEquipmentStatus Dispatch(
 			const EquipmentContext& context,
-			const char* function_name,
+			EquipmentFunction function_id,
 			void* params)
 		{
 			auto* player_state = static_cast<UeObject*>(context.player_state);
@@ -289,8 +421,8 @@ namespace nte::equipment
 					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
 				return NTE_EQUIPMENT_STATUS_INVALID_PLAYER_STATE;
 
-			UeFunction* function = FindFunction(
-				player_state->object_class, function_name);
+			UeFunction* function = ResolveFunction(
+				player_state->object_class, function_id);
 			if (function == nullptr)
 				return NTE_EQUIPMENT_STATUS_FUNCTION_NOT_FOUND;
 			if (!memory::IsReadableRange(
@@ -310,6 +442,26 @@ namespace nte::equipment
 			return NTE_EQUIPMENT_STATUS_RPC_DISPATCHED;
 		}
 	} // namespace
+
+	bool IsEquipmentRpcCacheReady()
+	{
+		return function_cache.initialized;
+	}
+
+	void PrepareEquipmentRpcCache(const EquipmentContext* context)
+	{
+		if (ValidateContext(context) != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+			return;
+
+		auto* player_state = static_cast<UeObject*>(context->player_state);
+		if (!memory::IsReadableRange(player_state, sizeof(UeObject)) ||
+			player_state->object_class == nullptr)
+			return;
+
+		if (!function_cache.initialized ||
+			function_cache.player_state_class != player_state->object_class)
+			BuildFunctionCache(player_state->object_class);
+	}
 
 	NteEquipmentStatus EquipOneKey(
 		const EquipmentContext* context,
@@ -355,7 +507,7 @@ namespace nte::equipment
 
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentInlayOneKey").c_str(),
+			EquipmentFunction::EquipOneKey,
 			&params);
 	}
 
@@ -371,7 +523,7 @@ namespace nte::equipment
 		params.item = ToUeItemId(*character);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentClear").c_str(),
+			EquipmentFunction::UnequipAll,
 			&params);
 	}
 
@@ -397,7 +549,7 @@ namespace nte::equipment
 		params.column = column;
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentInlay").c_str(),
+			EquipmentFunction::EquipModule,
 			&params);
 	}
 
@@ -417,7 +569,7 @@ namespace nte::equipment
 		params.second = ToUeItemId(*equipment);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentErase").c_str(),
+			EquipmentFunction::UnequipModule,
 			&params);
 	}
 
@@ -437,7 +589,7 @@ namespace nte::equipment
 		params.second = ToUeItemId(*core);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentInlayCore").c_str(),
+			EquipmentFunction::EquipCore,
 			&params);
 	}
 
@@ -457,7 +609,7 @@ namespace nte::equipment
 		params.second = ToUeItemId(*core);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentEraseCore").c_str(),
+			EquipmentFunction::UnequipCore,
 			&params);
 	}
 
@@ -483,8 +635,7 @@ namespace nte::equipment
 		params.column = column;
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING(
-				"ServerEquipmentEraseAndInlayToOther").c_str(),
+			EquipmentFunction::MoveModuleToCharacter,
 			&params);
 	}
 
@@ -504,8 +655,7 @@ namespace nte::equipment
 		params.second = ToUeItemId(*core);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING(
-				"ServerEquipmentCoreEraseAndInlayToOther").c_str(),
+			EquipmentFunction::MoveCoreToCharacter,
 			&params);
 	}
 
@@ -525,7 +675,7 @@ namespace nte::equipment
 		params.state = static_cast<uint8_t>(discarded);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentItemDiscard").c_str(),
+			EquipmentFunction::SetItemDiscarded,
 			&params);
 	}
 
@@ -545,7 +695,7 @@ namespace nte::equipment
 		params.state = static_cast<uint8_t>(locked);
 		return Dispatch(
 			*context,
-			NTE_OBFUSCATE_STRING("ServerEquipmentItemLocked").c_str(),
+			EquipmentFunction::SetItemLocked,
 			&params);
 	}
 } // namespace nte::equipment

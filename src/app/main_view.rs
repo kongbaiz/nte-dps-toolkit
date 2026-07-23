@@ -453,10 +453,7 @@ impl DpsApp {
             ))
             .clicked();
         if clicked {
-            self.capture_ui.paused = !self.capture_ui.paused;
-            if !self.capture_ui.paused {
-                self.discard_queued_debug_packets();
-            }
+            self.toggle_processing_pause();
         }
         clicked
     }
