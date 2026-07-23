@@ -199,7 +199,10 @@ cargo check
 cargo test
 cargo check --bin nte-core --no-default-features --features cli
 cargo test --no-default-features --features cli
+pwsh -NoProfile -File scripts/verify_architecture.ps1
 ```
+
+最后一条命令校验 GUI/CLI Feature、两个 Binary 的启用条件、GUI 可选依赖归属及 CLI 依赖树隔离。
 
 依赖真实抓包的诊断测试默认忽略。需要运行时设置 `NTE_TEST_CAPTURE=<pcapng-path>`，再执行：
 

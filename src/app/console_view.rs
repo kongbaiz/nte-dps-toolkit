@@ -3,28 +3,29 @@ use super::*;
 impl DpsApp {
     pub(crate) fn console_panel(&mut self, ctx: &egui::Context) {
         let viewport_id = console_viewport_id();
-        let recording_hotkey = self.recording_hotkey.is_some();
+        let recording_hotkey = self.preferences.recording_hotkey.is_some();
         let close_requested = ctx.show_viewport_immediate(
             viewport_id,
             secondary_viewport_builder(
                 t("NTE Console"),
-                self.console_window_size,
+                self.windows.console_window_size,
                 config::CONSOLE_WINDOW_MIN_SIZE,
-                self.console_geometry,
-                self.console_corner_applied,
+                self.windows.console_geometry,
+                self.windows.console_corner_applied,
             ),
             |ctx, _class| {
-                if self.recording_hotkey.is_some()
+                if self.preferences.recording_hotkey.is_some()
                     && ctx.input(|input| input.viewport().focused == Some(false))
                 {
                     self.set_recording_hotkey(None);
-                    self.status = t("Shortcut recording canceled when Console lost focus");
+                    self.notifications.status =
+                        t("Shortcut recording canceled when Console lost focus");
                 }
                 self.handle_local_hotkeys(ctx.ctx());
-                let opening = !self.console_corner_applied;
+                let opening = !self.windows.console_corner_applied;
                 if opening {
                     apply_rounding_to_process_windows();
-                    self.console_corner_applied = true;
+                    self.windows.console_corner_applied = true;
                 }
                 let close_clicked = secondary_title_panel(ctx, &t("NTE Console"));
                 egui::CentralPanel::default()
@@ -34,13 +35,18 @@ impl DpsApp {
                             .inner_margin(egui::Margin::same(10)),
                     )
                     .show_inside(ctx, |ui| {
-                        motion::apply_viewport_entrance(ui, "console", opening, self.reduce_motion);
+                        motion::apply_viewport_entrance(
+                            ui,
+                            "console",
+                            opening,
+                            self.preferences.reduce_motion,
+                        );
                         self.console_contents(ui);
                     });
                 track_secondary_viewport_geometry(
                     ctx,
-                    &mut self.console_window_size,
-                    &mut self.console_geometry,
+                    &mut self.windows.console_window_size,
+                    &mut self.windows.console_geometry,
                 );
                 window_resize_grips(ctx);
                 self.show_status_toast(ctx.ctx());
@@ -58,15 +64,15 @@ impl DpsApp {
             },
         );
         if close_requested {
-            self.console_open = false;
-            self.console_corner_applied = false;
+            self.windows.console_open = false;
+            self.windows.console_corner_applied = false;
             self.set_recording_hotkey(None);
             self.retarget_dialogs(viewport_id, egui::ViewportId::ROOT);
         }
     }
 
     pub(crate) fn console_contents(&mut self, ui: &mut egui::Ui) {
-        if !self.console_sidebar_migration_seen {
+        if !self.preferences.console_sidebar_migration_seen {
             let theme = self.theme();
             egui::Frame::new()
                 .fill(theme.card)
@@ -79,7 +85,7 @@ impl DpsApp {
                             "Console pages are now grouped in the left sidebar for faster access.",
                         ));
                         if ui.button(t("Got it")).clicked() {
-                            self.console_sidebar_migration_seen = true;
+                            self.preferences.console_sidebar_migration_seen = true;
                         }
                     });
                 });
@@ -105,13 +111,13 @@ impl DpsApp {
         }
 
         let auto_collapsed = console_sidebar_collapsed(ui.available_width());
-        let collapsed = auto_collapsed || self.console_sidebar_manually_collapsed;
+        let collapsed = auto_collapsed || self.preferences.console_sidebar_manually_collapsed;
         let collapse_progress = motion::animate_bool(
             ui.ctx(),
             "console_sidebar_collapse",
             collapsed,
             motion::dur::BASE,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
             motion::ease::standard,
         );
         ui.horizontal_top(|ui| {
@@ -123,7 +129,7 @@ impl DpsApp {
                     ui,
                     "console_tab_content",
                     self.console_tab as u64,
-                    self.reduce_motion,
+                    self.preferences.reduce_motion,
                 );
                 match self.console_tab {
                     ConsoleTab::Settings => self.settings_contents(ui),
@@ -173,7 +179,7 @@ impl DpsApp {
                             "console_sidebar_toggle_hover",
                             response.hovered(),
                             motion::dur::FAST,
-                            self.reduce_motion,
+                            self.preferences.reduce_motion,
                             motion::ease::standard,
                         );
                         let button_rect = rect.shrink2(egui::vec2(4.0, 1.0));
@@ -214,8 +220,8 @@ impl DpsApp {
                         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip.clone())
                     });
                     if response.on_hover_text(tooltip).clicked() {
-                        self.console_sidebar_manually_collapsed =
-                            !self.console_sidebar_manually_collapsed;
+                        self.preferences.console_sidebar_manually_collapsed =
+                            !self.preferences.console_sidebar_manually_collapsed;
                     }
                     ui.add_space(4.0);
                 }
@@ -285,7 +291,7 @@ impl DpsApp {
                 ("console_sidebar_hover", tab as u64),
                 response.hovered() && !selected,
                 motion::dur::FAST,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
                 motion::ease::standard,
             );
             let select_t = motion::animate_bool(
@@ -293,7 +299,7 @@ impl DpsApp {
                 ("console_sidebar_selected", tab as u64),
                 selected,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
                 motion::ease::standard,
             );
             let rest = theme.muted.gamma_multiply(hover * 0.9);
@@ -346,7 +352,7 @@ impl DpsApp {
                 ui.visuals().weak_text_color(),
             ));
             let mut bucket_seconds =
-                config::sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
+                config::sanitize_timeline_bucket_seconds(self.capture_ui.timeline_bucket_seconds);
             let changed = ui
                 .add_sized(
                     egui::vec2(220.0, INLINE_CONTROL_HEIGHT),
@@ -363,7 +369,7 @@ impl DpsApp {
                 ))
                 .changed();
             if changed {
-                self.timeline_bucket_seconds =
+                self.capture_ui.timeline_bucket_seconds =
                     config::sanitize_timeline_bucket_seconds(bucket_seconds);
                 self.timeline_cache = TimelineCache::default();
             }
@@ -372,7 +378,7 @@ impl DpsApp {
             for mode in TimelineDpsViewMode::all() {
                 stable_selectable_value(
                     ui,
-                    &mut self.timeline_dps_view_mode,
+                    &mut self.capture_ui.timeline_dps_view_mode,
                     *mode,
                     t(mode.label()),
                 );
@@ -398,16 +404,17 @@ impl DpsApp {
             .buckets
             .last()
             .map_or(0.0, |bucket| bucket.end_offset);
-        if !matches!(self.timeline_dps_view_mode, TimelineDpsViewMode::Characters)
-            || self.selected_timeline_char.is_some_and(|char_id| {
-                !timeline.buckets.iter().any(|bucket| {
-                    bucket
-                        .role_damage
-                        .iter()
-                        .any(|role| role.char_id == char_id)
-                })
+        if !matches!(
+            self.capture_ui.timeline_dps_view_mode,
+            TimelineDpsViewMode::Characters
+        ) || self.selected_timeline_char.is_some_and(|char_id| {
+            !timeline.buckets.iter().any(|bucket| {
+                bucket
+                    .role_damage
+                    .iter()
+                    .any(|role| role.char_id == char_id)
             })
-        {
+        }) {
             self.selected_timeline_char = None;
         }
         ui.columns(4, |columns| {
@@ -448,7 +455,7 @@ impl DpsApp {
         // the same timeline buckets the chart uses, so it never touches live state.
         let segments = summarize_combat_segments(&timeline, COMBAT_SEGMENT_GAP_SECONDS);
         if segments.len() > 1 {
-            let dark_mode = self.dark_mode;
+            let dark_mode = self.preferences.dark_mode;
             ui.horizontal_wrapped(|ui| {
                 ui.label(inline_text(
                     tf(
@@ -478,10 +485,10 @@ impl DpsApp {
         draw_timeline_chart(
             ui,
             &timeline,
-            self.timeline_dps_view_mode,
+            self.capture_ui.timeline_dps_view_mode,
             chart_height,
             &mut self.selected_timeline_char,
-            self.dark_mode,
+            self.preferences.dark_mode,
             &self.characters,
             &mut self.timeline_view,
         );
@@ -572,7 +579,7 @@ impl DpsApp {
                                         row.char_id,
                                         &self.characters,
                                         index,
-                                        self.dark_mode,
+                                        self.preferences.dark_mode,
                                     );
                                 }
                             });
@@ -609,7 +616,7 @@ impl DpsApp {
                                 false,
                             );
                             let unmapped_color = if breakdown.unknown.unmapped_skill_hits > 0 {
-                                semantic_warning(self.dark_mode)
+                                semantic_warning(self.preferences.dark_mode)
                             } else {
                                 columns[2].visuals().text_color()
                             };
@@ -621,7 +628,7 @@ impl DpsApp {
                                 false,
                             );
                             let candidate_color = if breakdown.unknown.unknown_direction_hits > 0 {
-                                semantic_warning(self.dark_mode)
+                                semantic_warning(self.preferences.dark_mode)
                             } else {
                                 columns[3].visuals().text_color()
                             };
@@ -643,12 +650,12 @@ impl DpsApp {
                             &visible_rows,
                             visible_total,
                             row_list_height,
-                            self.dark_mode,
+                            self.preferences.dark_mode,
                             &self.characters,
                         );
                         if show_diagnostics {
                             ui.add_space(8.0);
-                            draw_unknown_attribution(ui, &breakdown, self.dark_mode);
+                            draw_unknown_attribution(ui, &breakdown, self.preferences.dark_mode);
                         }
                     },
                 );
@@ -679,7 +686,7 @@ impl DpsApp {
                         "Skipped {} corrupt files",
                         &[&self.history.skipped_files.to_string()],
                     ))
-                    .color(semantic_warning(self.dark_mode)),
+                    .color(semantic_warning(self.preferences.dark_mode)),
                 );
             }
             if !self.history.message.is_empty() {
@@ -828,7 +835,7 @@ impl DpsApp {
                                     if ui
                                         .button(
                                             RichText::new(t("Delete"))
-                                                .color(semantic_danger(self.dark_mode)),
+                                                .color(semantic_danger(self.preferences.dark_mode)),
                                         )
                                         .clicked()
                                     {
@@ -942,7 +949,7 @@ impl DpsApp {
     ) {
         match atomic_write_text(path, json) {
             Ok(()) => {
-                self.status = t("History summary exported");
+                self.notifications.status = t("History summary exported");
                 self.clear_last_error();
             }
             Err(error) => self.set_last_error_for(
@@ -1000,7 +1007,7 @@ impl DpsApp {
             ui.label(
                 RichText::new(format!(
                     "· {}",
-                    localized_dps_time_mode(&record.summary.dps_time_mode)
+                    localized_dps_time_mode(record.summary.dps_time_mode)
                 ))
                 .color(ui.visuals().weak_text_color()),
             );
@@ -1070,7 +1077,7 @@ impl DpsApp {
         if record.summary.abyss.first_half.is_some() || record.summary.abyss.second_half.is_some() {
             if let Some(half) = &record.summary.abyss.first_half {
                 let visual = HistoryVisualContext {
-                    dark_mode: self.dark_mode,
+                    dark_mode: self.preferences.dark_mode,
                     characters: &self.characters,
                     avatar_textures: &self.avatar_textures,
                 };
@@ -1085,7 +1092,7 @@ impl DpsApp {
             }
             if let Some(half) = &record.summary.abyss.second_half {
                 let visual = HistoryVisualContext {
-                    dark_mode: self.dark_mode,
+                    dark_mode: self.preferences.dark_mode,
                     characters: &self.characters,
                     avatar_textures: &self.avatar_textures,
                 };
@@ -1099,7 +1106,7 @@ impl DpsApp {
                 &t("Skill"),
                 &record.summary.skills,
                 HistoryVisualContext {
-                    dark_mode: self.dark_mode,
+                    dark_mode: self.preferences.dark_mode,
                     characters: &self.characters,
                     avatar_textures: &self.avatar_textures,
                 },
@@ -1162,7 +1169,7 @@ impl DpsApp {
                 RichText::new(t(
                     "The two records use different DPS time bases; compare with care",
                 ))
-                .color(semantic_warning(self.dark_mode)),
+                .color(semantic_warning(self.preferences.dark_mode)),
             );
         }
         ui.columns(3, |columns| {
@@ -1170,19 +1177,19 @@ impl DpsApp {
                 &mut columns[0],
                 &t("Total DPS Δ"),
                 comparison.total_dps_delta,
-                self.dark_mode,
+                self.preferences.dark_mode,
             );
             delta_metric(
                 &mut columns[1],
                 &t("Total Damage Δ"),
                 comparison.total_damage_delta,
-                self.dark_mode,
+                self.preferences.dark_mode,
             );
             delta_metric(
                 &mut columns[2],
                 &t("Time Δ"),
                 comparison.duration_delta,
-                self.dark_mode,
+                self.preferences.dark_mode,
             );
         });
         ui.add_space(6.0);
@@ -1201,7 +1208,10 @@ impl DpsApp {
                 ui.label(RichText::new(t("Skill Δ")).color(ui.visuals().weak_text_color()));
                 for row in &comparison.skill_deltas {
                     ui.horizontal(|ui| {
-                        ui.add_sized([190.0, 20.0], egui::Label::new(&row.name).truncate());
+                        ui.add_sized(
+                            [190.0, 20.0],
+                            egui::Label::new(comparison_skill_display_name(row)).truncate(),
+                        );
                         ui.monospace(format_signed_number(row.delta_damage));
                     });
                 }
@@ -1328,7 +1338,7 @@ impl DpsApp {
         if !self.encrypted_ini_editor.message.is_empty() {
             ui.label(
                 RichText::new(&self.encrypted_ini_editor.message)
-                    .color(semantic_warning(self.dark_mode)),
+                    .color(semantic_warning(self.preferences.dark_mode)),
             );
         }
         ui.separator();
@@ -1342,8 +1352,8 @@ impl DpsApp {
         let current_cursor_range = current_match_byte.and_then(|byte_index| {
             encrypted_ini_match_cursor_range(&editor.plaintext, &editor.search, byte_index)
         });
-        let dark_mode = self.dark_mode;
-        let accent = self.accent;
+        let dark_mode = self.preferences.dark_mode;
+        let accent = self.preferences.accent;
         let search = &editor.search;
         let layout_cache = &mut editor.layout_cache;
         let plaintext = &mut editor.plaintext;
@@ -1479,7 +1489,7 @@ impl DpsApp {
                 &t(self.encrypted_ini_editor.key.label()),
             ],
         );
-        self.status = t("Encrypted INI saved");
+        self.notifications.status = t("Encrypted INI saved");
         self.clear_last_error();
     }
 
@@ -1489,14 +1499,14 @@ impl DpsApp {
     /// on the next capture.
     pub(crate) fn capture_device_selector(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            if self.devices.is_empty() {
+            if self.capture_ui.devices.is_empty() {
                 let mut unchecked = false;
                 ui.add_enabled(
                     false,
                     egui::Checkbox::new(&mut unchecked, t("Pin capture NIC (VPN fallback)")),
                 );
                 ui.colored_label(
-                    semantic_warning(self.dark_mode),
+                    semantic_warning(self.preferences.dark_mode),
                     t("No usable NIC found; confirm Npcap is installed, then click refresh"),
                 );
                 if ui.button(t("Refresh NIC List")).clicked() {
@@ -1505,7 +1515,7 @@ impl DpsApp {
                 return;
             }
 
-            let mut manual = self.manual_capture_device.is_some();
+            let mut manual = self.capture_ui.manual_capture_device.is_some();
             if ui
                 .checkbox(&mut manual, t("Pin capture NIC"))
                 .on_hover_text(t(
@@ -1515,32 +1525,32 @@ impl DpsApp {
             {
                 // A non-empty device list guarantees a default, so manual mode is never left
                 // checked-but-empty.
-                self.manual_capture_device = manual
+                self.capture_ui.manual_capture_device = manual
                     .then(|| {
-                        self.devices
-                            .get(self.selected_device)
-                            .or_else(|| self.devices.first())
+                        self.capture_ui.devices
+                            .get(self.capture_ui.selected_device)
+                            .or_else(|| self.capture_ui.devices.first())
                             .map(|device| device.name.clone())
                     })
                     .flatten();
                 let _ = self.refresh_game_network();
             }
 
-            if self.manual_capture_device.is_none() {
+            if self.capture_ui.manual_capture_device.is_none() {
                 return;
             }
 
-            let mut chosen = self.manual_capture_device.clone();
+            let mut chosen = self.capture_ui.manual_capture_device.clone();
             let selected_text = chosen
                 .as_deref()
-                .and_then(|name| self.devices.iter().find(|device| device.name == name))
+                .and_then(|name| self.capture_ui.devices.iter().find(|device| device.name == name))
                 .map_or_else(|| t("Select a NIC"), capture_device_label);
             egui::ComboBox::from_id_salt("manual_capture_device")
                 .width(300.0)
                 .selected_text(selected_text)
                 .show_ui(ui, |ui| {
                     ui.set_min_width(300.0);
-                    for device in &self.devices {
+                    for device in &self.capture_ui.devices {
                         ui.selectable_value(
                             &mut chosen,
                             Some(device.name.clone()),
@@ -1548,8 +1558,8 @@ impl DpsApp {
                         );
                     }
                 });
-            if chosen != self.manual_capture_device {
-                self.manual_capture_device = chosen;
+            if chosen != self.capture_ui.manual_capture_device {
+                self.capture_ui.manual_capture_device = chosen;
                 let _ = self.refresh_game_network();
             }
 
@@ -1563,15 +1573,16 @@ impl DpsApp {
 
             // Self-contained status hint, independent of the shared diagnostic field.
             let resolved = self
+                .capture_ui
                 .manual_capture_device
                 .as_deref()
-                .is_some_and(|name| self.devices.iter().any(|device| device.name == name));
+                .is_some_and(|name| self.capture_ui.devices.iter().any(|device| device.name == name));
             if !resolved {
                 ui.colored_label(
-                    semantic_warning(self.dark_mode),
+                    semantic_warning(self.preferences.dark_mode),
                     t("The selected NIC is currently unavailable; reselect or click refresh"),
                 );
-            } else if self.game_network.is_none() {
+            } else if self.capture_ui.game_network.is_none() {
                 ui.weak(t("No game connection detected; parsing by public/private direction heuristics"));
             }
         });
@@ -1587,7 +1598,7 @@ impl DpsApp {
     const SETTINGS_TWO_COLUMN_MIN_WIDTH: f32 = 900.0;
 
     pub(crate) fn settings_contents(&mut self, ui: &mut egui::Ui) {
-        let previous_hud_config = self.hud_config.clone();
+        let previous_hud_config = self.preferences.hud_config.clone();
         // Two balanced columns when wide (interface/parse/hotkeys left, the
         // lighter HUD/team/capture/abyss cards right), single column when the
         // console is too narrow to split without clipping a localized row.
@@ -1622,9 +1633,9 @@ impl DpsApp {
                     self.settings_abyss_section(ui);
                 }
             });
-        self.hud_config = self.hud_config.clone().sanitized();
-        if self.hud_config != previous_hud_config {
-            self.hud_size_key = None;
+        self.preferences.hud_config = self.preferences.hud_config.clone().sanitized();
+        if self.preferences.hud_config != previous_hud_config {
+            self.windows.hud_size_key = None;
         }
     }
 
@@ -1638,7 +1649,7 @@ impl DpsApp {
                 .spacing([14.0, 6.0])
                 .show(ui, |ui| {
                     ui.label(t("Language"));
-                    let mut language = self.language;
+                    let mut language = self.preferences.language;
                     egui::ComboBox::from_id_salt("ui_language")
                         .width(settings_value_width(ui))
                         .selected_text(language.native_name())
@@ -1653,13 +1664,13 @@ impl DpsApp {
                                 );
                             }
                         });
-                    if language != self.language {
+                    if language != self.preferences.language {
                         self.set_language(ui.ctx(), language);
                     }
                     ui.end_row();
 
                     ui.label(t("Theme Preset"));
-                    let mut theme_preset = self.theme_preset;
+                    let mut theme_preset = self.preferences.theme_preset;
                     egui::ComboBox::from_id_salt("ui_theme_preset")
                         .width(settings_value_width(ui))
                         .selected_text(t(theme_preset.label()))
@@ -1673,13 +1684,13 @@ impl DpsApp {
                                 );
                             }
                         });
-                    if theme_preset != self.theme_preset {
+                    if theme_preset != self.preferences.theme_preset {
                         self.set_theme_preset(ui.ctx(), theme_preset);
                     }
                     ui.end_row();
 
                     ui.label(t("Accent"));
-                    let mut accent = self.accent;
+                    let mut accent = self.preferences.accent;
                     egui::ComboBox::from_id_salt("ui_accent")
                         .width(settings_value_width(ui))
                         .selected_text(t(accent.label()))
@@ -1687,8 +1698,8 @@ impl DpsApp {
                             ui.set_min_width(150.0);
                             for option in AccentColor::all() {
                                 let color = theme_tokens_for_preset(
-                                    self.theme_preset,
-                                    self.dark_mode,
+                                    self.preferences.theme_preset,
+                                    self.preferences.dark_mode,
                                     *option,
                                 )
                                 .accent;
@@ -1707,11 +1718,11 @@ impl DpsApp {
                                 });
                             }
                         });
-                    self.accent = accent;
+                    self.preferences.accent = accent;
                     ui.end_row();
 
                     ui.label(t("Density"));
-                    let mut density = self.density;
+                    let mut density = self.preferences.density;
                     egui::ComboBox::from_id_salt("ui_density")
                         .width(settings_value_width(ui))
                         .selected_text(t(density.label()))
@@ -1726,11 +1737,11 @@ impl DpsApp {
                                 );
                             }
                         });
-                    self.density = density;
+                    self.preferences.density = density;
                     ui.end_row();
 
                     ui.label(t("Motion"));
-                    ui.checkbox(&mut self.reduce_motion, t("Reduce motion"))
+                    ui.checkbox(&mut self.preferences.reduce_motion, t("Reduce motion"))
                         .on_hover_text(t(
                             "Complete interface transitions instantly and reduce idle redraws",
                         ));
@@ -1738,13 +1749,13 @@ impl DpsApp {
 
                     ui.label(t("Notifications"));
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut self.island_enabled, t("Floating island notifications"))
+                        ui.checkbox(&mut self.notifications.island_enabled, t("Floating island notifications"))
                             .on_hover_text(t(
                                 "Show notifications in a capsule floating above all windows; off falls back to in-window toasts",
                             ));
-                        if self.island_enabled {
+                        if self.notifications.island_enabled {
                             ui.add(
-                                egui::DragValue::new(&mut self.island_offset_x)
+                                egui::DragValue::new(&mut self.notifications.island_offset_x)
                                     .speed(2)
                                     .range(-4000.0..=4000.0)
                                     .suffix(" px"),
@@ -1765,7 +1776,7 @@ impl DpsApp {
                     .show(ui, |ui| {
                         ui.label(t("BPF Filter"));
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.filter)
+                            egui::TextEdit::singleline(&mut self.capture_ui.filter)
                                 .desired_width(settings_value_width(ui)),
                         )
                             .on_hover_text(t("Capture filter expression; takes effect on the next capture"));
@@ -1775,7 +1786,7 @@ impl DpsApp {
                         ui.end_row();
                         ui.label(t("Damage Source"));
                         ui.checkbox(
-                            &mut self.server_damage_calibration,
+                            &mut self.capture_ui.server_damage_calibration,
                             t("Calibrate with server-side HP deltas"),
                         )
                         .on_hover_text(t(
@@ -1783,7 +1794,7 @@ impl DpsApp {
                         ));
                         ui.end_row();
                         ui.label(t("DPS Time"));
-                        let mut dps_time_mode = self.dps_time_mode;
+                        let mut dps_time_mode = self.capture_ui.dps_time_mode;
                         egui::ComboBox::from_id_salt("dps_time_mode")
                             .width(settings_value_width(ui))
                             .selected_text(t(dps_time_mode.label()))
@@ -1800,14 +1811,14 @@ impl DpsApp {
                             })
                             .response
                             .on_hover_text(t(dps_time_mode.description()));
-                        if dps_time_mode != self.dps_time_mode {
-                            self.dps_time_mode = dps_time_mode;
+                        if dps_time_mode != self.capture_ui.dps_time_mode {
+                            self.capture_ui.dps_time_mode = dps_time_mode;
                             self.character_hit_cache = HitDetailCache::default();
                             self.team_hit_cache = HitDetailCache::default();
                         }
                         ui.end_row();
                         ui.label(t("Passthrough Hotkey"));
-                        let mut hotkey = self.passthrough_hotkey;
+                        let mut hotkey = self.preferences.passthrough_hotkey;
                         egui::ComboBox::from_id_salt("passthrough_hotkey")
                             .width(settings_value_width(ui))
                             .selected_text(hotkey.label())
@@ -1822,7 +1833,7 @@ impl DpsApp {
                                     );
                                 }
                             });
-                        if hotkey != self.passthrough_hotkey {
+                        if hotkey != self.preferences.passthrough_hotkey {
                             self.set_passthrough_hotkey(hotkey);
                         }
                         ui.end_row();
@@ -1837,59 +1848,68 @@ impl DpsApp {
             // is narrow. The leading label acts as the row heading.
             ui.horizontal_wrapped(|ui| {
                 ui.label(t("Top"));
-                ui.checkbox(&mut self.hud_config.show_title, t("Title"));
-                ui.checkbox(&mut self.hud_config.show_team_dps, t("DPS"));
-                ui.checkbox(&mut self.hud_config.show_duration, t("Time"));
-                ui.checkbox(&mut self.hud_config.show_total_damage, t("Total Damage"));
-                ui.checkbox(&mut self.hud_config.show_damage_taken, t("Damage Taken"));
+                ui.checkbox(&mut self.preferences.hud_config.show_title, t("Title"));
+                ui.checkbox(&mut self.preferences.hud_config.show_team_dps, t("DPS"));
+                ui.checkbox(&mut self.preferences.hud_config.show_duration, t("Time"));
+                ui.checkbox(
+                    &mut self.preferences.hud_config.show_total_damage,
+                    t("Total Damage"),
+                );
+                ui.checkbox(
+                    &mut self.preferences.hud_config.show_damage_taken,
+                    t("Damage Taken"),
+                );
             });
             ui.horizontal_wrapped(|ui| {
                 ui.label(t("Modules"));
                 ui.checkbox(
-                    &mut self.hud_config.show_character_rows,
+                    &mut self.preferences.hud_config.show_character_rows,
                     t("Character Ranking"),
                 );
-                ui.checkbox(&mut self.hud_config.show_abyss_half, t("Abyss"));
+                ui.checkbox(&mut self.preferences.hud_config.show_abyss_half, t("Abyss"));
                 ui.checkbox(
-                    &mut self.hud_config.show_passthrough_state,
+                    &mut self.preferences.hud_config.show_passthrough_state,
                     t("Passthrough"),
                 );
-                ui.checkbox(&mut self.hud_config.show_mini_timeline, t("Curve"));
+                ui.checkbox(
+                    &mut self.preferences.hud_config.show_mini_timeline,
+                    t("Curve"),
+                );
             });
             ui.horizontal_wrapped(|ui| {
                 ui.label(t("Presets"));
                 if ui.button(t("Minimal")).clicked() {
                     let mut preset = HudConfig::minimal();
-                    preset.width = self.hud_config.width;
-                    preset.module_order = self.hud_config.module_order.clone();
-                    self.hud_config = preset;
+                    preset.width = self.preferences.hud_config.width;
+                    preset.module_order = self.preferences.hud_config.module_order.clone();
+                    self.preferences.hud_config = preset;
                 }
                 if ui.button(t("Standard")).clicked() {
-                    self.hud_config = HudConfig {
-                        width: self.hud_config.width,
-                        module_order: self.hud_config.module_order.clone(),
+                    self.preferences.hud_config = HudConfig {
+                        width: self.preferences.hud_config.width,
+                        module_order: self.preferences.hud_config.module_order.clone(),
                         ..HudConfig::default()
                     };
                 }
                 if ui.button(t("Detailed")).clicked() {
                     let mut preset = HudConfig::detailed();
-                    preset.width = self.hud_config.width;
-                    preset.module_order = self.hud_config.module_order.clone();
-                    self.hud_config = preset;
+                    preset.width = self.preferences.hud_config.width;
+                    preset.module_order = self.preferences.hud_config.module_order.clone();
+                    self.preferences.hud_config = preset;
                 }
             });
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 ui.label(t("HUD Width"));
                 ui.add(
-                    egui::DragValue::new(&mut self.hud_config.width)
+                    egui::DragValue::new(&mut self.preferences.hud_config.width)
                         .range(HUD_WIDTH_MIN..=HUD_WIDTH_MAX)
                         .speed(4.0)
                         .suffix(" px"),
                 );
                 if ui.button(t("Open HUD Editor")).clicked() {
-                    self.console_open = false;
-                    self.console_corner_applied = false;
+                    self.windows.console_open = false;
+                    self.windows.console_corner_applied = false;
                     ui.ctx()
                         .send_viewport_cmd_to(console_viewport_id(), egui::ViewportCommand::Close);
                     self.set_hud_mode(ui.ctx(), true);
@@ -1903,7 +1923,7 @@ impl DpsApp {
                     .size(11.0)
                     .color(ui.visuals().weak_text_color()),
             );
-            let order = self.hud_config.module_order.clone();
+            let order = self.preferences.hud_config.module_order.clone();
             let mut reorder = None;
             let mut move_request = None;
             let mut hide_request = None;
@@ -1911,14 +1931,14 @@ impl DpsApp {
                 egui::DragAndDrop::payload::<HudModule>(ui.ctx()).map(|item| *item);
             let theme = self.theme();
             for (index, module) in order.iter().copied().enumerate() {
-                let mut visible = self.hud_config.module_visible(module);
+                let mut visible = self.preferences.hud_config.module_visible(module);
                 let target_slot = index as f32;
                 let animated_slot = motion::animate_value(
                     ui.ctx(),
                     ("settings_hud_module_slot", module),
                     target_slot,
                     motion::dur::BASE,
-                    self.reduce_motion,
+                    self.preferences.reduce_motion,
                 );
                 let row_stride = ui.spacing().interact_size.y + 8.0 + ui.spacing().item_spacing.y;
                 let transformed = ui.with_visual_transform(
@@ -1985,8 +2005,10 @@ impl DpsApp {
                     .pointer_interact_pos()
                     .map_or(drop_zone.response.rect.center().y, |pointer| pointer.y);
                 let insert_after = pointer_y >= drop_zone.response.rect.center().y;
-                if visible != self.hud_config.module_visible(module) {
-                    self.hud_config.set_module_visible(module, visible);
+                if visible != self.preferences.hud_config.module_visible(module) {
+                    self.preferences
+                        .hud_config
+                        .set_module_visible(module, visible);
                 }
                 drop_zone.inner.response.context_menu(|ui| {
                     if ui.button(t("Hide module")).clicked() {
@@ -2022,17 +2044,21 @@ impl DpsApp {
                     ui.ctx(),
                     pointer,
                     module,
-                    self.hud_config.module_visible(module),
+                    self.preferences.hud_config.module_visible(module),
                     theme,
                 );
             }
             if let Some((from, to)) = move_request {
-                self.hud_config.module_order.swap(from, to);
+                self.preferences.hud_config.module_order.swap(from, to);
             } else if let Some((dragged, target, insert_after)) = reorder {
-                self.hud_config.move_module(dragged, target, insert_after);
+                self.preferences
+                    .hud_config
+                    .move_module(dragged, target, insert_after);
             }
             if let Some(module) = hide_request {
-                self.hud_config.set_module_visible(module, false);
+                self.preferences
+                    .hud_config
+                    .set_module_visible(module, false);
             }
         });
     }
@@ -2084,10 +2110,10 @@ impl DpsApp {
 
     fn settings_capture_logs_section(&mut self, ui: &mut egui::Ui) {
         settings_section(ui, self.theme(), "Capture Files", |ui| {
-            if self.capture_log_stats.is_none() {
+            if self.capture_ui.capture_log_stats.is_none() {
                 self.refresh_capture_log_stats();
             }
-            let stats = self.capture_log_stats.unwrap_or_default();
+            let stats = self.capture_ui.capture_log_stats.unwrap_or_default();
             ui.horizontal(|ui| {
                 ui.label(tf(
                     "Raw captures: {} · {}",
@@ -2122,7 +2148,7 @@ impl DpsApp {
                 ))
                 .clicked()
             {
-                self.abyss_overview_open = true;
+                self.windows.abyss_overview_open = true;
                 self.abyss_overview.ensure_selection();
             }
         });
@@ -2178,14 +2204,14 @@ impl DpsApp {
                 &mut columns[0],
                 &t("Errors"),
                 summary.error_count().to_string(),
-                semantic_danger(self.dark_mode),
+                semantic_danger(self.preferences.dark_mode),
                 true,
             );
             compact_metric(
                 &mut columns[1],
                 &t("Warnings"),
                 summary.warning_count().to_string(),
-                semantic_warning(self.dark_mode),
+                semantic_warning(self.preferences.dark_mode),
                 true,
             );
             compact_metric(
@@ -2283,7 +2309,7 @@ impl DpsApp {
             .auto_shrink([false, false])
             .show_rows(ui, 44.0, filtered.len(), |ui, visible_rows| {
                 for item in &filtered[visible_rows] {
-                    draw_resource_audit_row(ui, item, self.dark_mode);
+                    draw_resource_audit_row(ui, item, self.preferences.dark_mode);
                 }
             });
     }
@@ -2308,8 +2334,9 @@ impl DpsApp {
                 .show(ui, |ui| {
                     ui.label(t("NIC"));
                     let device_label = self
+                        .capture_ui
                         .devices
-                        .get(self.selected_device)
+                        .get(self.capture_ui.selected_device)
                         .map(|device| {
                             if device.description.is_empty() {
                                 device.name.clone()
@@ -2318,7 +2345,7 @@ impl DpsApp {
                             }
                         })
                         .unwrap_or_else(|| t("Not detected"));
-                    let mode_suffix = if self.manual_capture_device.is_some() {
+                    let mode_suffix = if self.capture_ui.manual_capture_device.is_some() {
                         t("(manual)")
                     } else {
                         t("(auto)")
@@ -2326,14 +2353,14 @@ impl DpsApp {
                     ui.monospace(format!("{device_label}{mode_suffix}"));
                     ui.end_row();
                     ui.label(t("Local IP"));
-                    ui.monospace(if self.local_ip.is_empty() {
+                    ui.monospace(if self.capture_ui.local_ip.is_empty() {
                         t("Not detected")
                     } else {
-                        self.local_ip.clone()
+                        self.capture_ui.local_ip.clone()
                     });
                     ui.end_row();
                     ui.label(t("Game Connection"));
-                    if let Some(network) = &self.game_network {
+                    if let Some(network) = &self.capture_ui.game_network {
                         ui.monospace(format!(
                             "PID {}  {} -> {}:{}",
                             network.pid, network.local_ip, network.remote_ip, network.remote_port
@@ -2343,16 +2370,26 @@ impl DpsApp {
                     }
                     ui.end_row();
                     ui.label(t("Diagnostics"));
-                    ui.monospace(self.diagnostic.clone().unwrap_or_else(|| t("Normal")));
+                    ui.monospace(
+                        self.notifications
+                            .diagnostic
+                            .clone()
+                            .unwrap_or_else(|| t("Normal")),
+                    );
                     ui.end_row();
                     ui.label(t("Actual BPF"));
-                    ui.monospace(self.active_capture_filter.clone().unwrap_or_else(|| {
-                        if self.capture.is_some() {
-                            t("Determining")
-                        } else {
-                            t("Not started")
-                        }
-                    }));
+                    ui.monospace(
+                        self.capture_ui
+                            .active_capture_filter
+                            .clone()
+                            .unwrap_or_else(|| {
+                                if self.capture.is_some() {
+                                    t("Determining")
+                                } else {
+                                    t("Not started")
+                                }
+                            }),
+                    );
                     ui.end_row();
                     ui.label(t("Raw Capture"));
                     let raw_capture_label = self.raw_capture.as_ref().map_or_else(
@@ -2421,14 +2458,14 @@ impl DpsApp {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
-                        !self.diagnostics_running,
+                        !self.background_tasks.diagnostics_running,
                         egui::Button::new(t("Run Diagnostics")),
                     )
                     .clicked()
                 {
                     self.request_capture_diagnostics();
                 }
-                if self.diagnostics_running {
+                if self.background_tasks.diagnostics_running {
                     ui.add(egui::Spinner::new().size(16.0));
                     ui.label(t(
                         "Checking Npcap, the game connection and the current capture state",
@@ -2442,7 +2479,7 @@ impl DpsApp {
             });
             ui.add_space(4.0);
             if let Some(report) = &self.diagnostics_report {
-                draw_diagnostic_report(ui, report, self.dark_mode);
+                draw_diagnostic_report(ui, report, self.preferences.dark_mode);
             } else {
                 ui.label(
                         RichText::new(t("After you click Run Diagnostics, it checks the capture environment step by step and suggests next steps"))
@@ -2470,7 +2507,7 @@ impl DpsApp {
                 "events={} packets={} queued={}",
                 self.state.hits.len(),
                 self.state.packets.len(),
-                self.receiver.len()
+                self.receiver.len() + self.debug_receiver.len()
             ));
         });
         ui.separator();
@@ -2535,7 +2572,8 @@ impl DpsApp {
                     .body(|ui| {
                         if !packet.note.is_empty() {
                             ui.label(
-                                RichText::new(&packet.note).color(semantic_warning(self.dark_mode)),
+                                RichText::new(&packet.note)
+                                    .color(semantic_warning(self.preferences.dark_mode)),
                             );
                         }
                         ui.label(
@@ -2573,7 +2611,7 @@ impl DpsApp {
                 match CharacterEditorState::load(&path) {
                     Ok(editor) => {
                         self.character_editor = editor;
-                        self.status = t("Reloaded characters.json");
+                        self.notifications.status = t("Reloaded characters.json");
                     }
                     Err(error) => self.character_editor.message = error,
                 }
@@ -2587,7 +2625,7 @@ impl DpsApp {
         if !self.character_editor.message.is_empty() {
             ui.label(
                 RichText::new(&self.character_editor.message)
-                    .color(semantic_warning(self.dark_mode)),
+                    .color(semantic_warning(self.preferences.dark_mode)),
             );
         }
         ui.separator();
@@ -2641,10 +2679,10 @@ impl DpsApp {
                                 id.parse::<u32>().unwrap_or_default(),
                                 self.characters.as_ref(),
                                 0,
-                                self.dark_mode,
+                                self.preferences.dark_mode,
                             )
                         });
-                        let dark_mode = self.dark_mode;
+                        let dark_mode = self.preferences.dark_mode;
                         let fallback_color = readable_accent(fallback_color, dark_mode);
                         let clicked = {
                             let avatar_texture =
@@ -2849,7 +2887,7 @@ impl DpsApp {
                     "ID {} saved and reloaded; the live-capture mapping updates on next startup",
                     &[&id],
                 );
-                self.status = t("characters.json saved");
+                self.notifications.status = t("characters.json saved");
                 self.clear_last_error();
             }
             Err(error) => {
@@ -2867,10 +2905,10 @@ impl DpsApp {
     }
 
     pub(crate) fn show_confirmation_dialog(&mut self, ctx: &egui::Context) {
-        let Some(action) = self.pending_confirmation.as_ref() else {
+        let Some(action) = self.notifications.pending_confirmation.as_ref() else {
             return;
         };
-        if self.pending_confirmation_viewport != ctx.viewport_id() {
+        if self.notifications.pending_confirmation_viewport != ctx.viewport_id() {
             return;
         }
         let (title, message, confirm_label) = confirmation_content(action);
@@ -2895,22 +2933,22 @@ impl DpsApp {
                 });
             });
         if confirmed {
-            if let Some(action) = self.pending_confirmation.take() {
+            if let Some(action) = self.notifications.pending_confirmation.take() {
                 self.run_confirmation_action_for(action, ctx.viewport_id());
             }
         } else if cancelled {
-            self.pending_confirmation = None;
+            self.notifications.pending_confirmation = None;
         }
     }
 
     pub(crate) fn show_error_window(&mut self, ctx: &egui::Context) {
-        let Some(error) = self.last_error.clone() else {
+        let Some(error) = self.notifications.last_error.clone() else {
             return;
         };
-        if self.last_error_viewport != ctx.viewport_id() {
+        if self.notifications.last_error_viewport != ctx.viewport_id() {
             return;
         }
-        let action = self.last_error_action;
+        let action = self.notifications.last_error_action;
         let mut run_action = None;
         let mut close = false;
         egui::Window::new(t("Error"))
@@ -2955,20 +2993,23 @@ impl DpsApp {
             }
             ErrorAction::OpenTeamDpsImport => self.import_team_dps(ctx),
             ErrorAction::OpenConsole => {
-                self.console_open = true;
-                self.console_corner_applied = false;
+                self.windows.console_open = true;
+                self.windows.console_corner_applied = false;
             }
         }
     }
 
     pub(crate) fn retarget_dialogs(&mut self, from: egui::ViewportId, to: egui::ViewportId) {
-        if self.last_error.is_some() && self.last_error_viewport == from {
-            self.last_error_viewport = to;
+        if self.notifications.last_error.is_some() && self.notifications.last_error_viewport == from
+        {
+            self.notifications.last_error_viewport = to;
         }
-        if self.pending_confirmation.is_some() && self.pending_confirmation_viewport == from {
-            self.pending_confirmation_viewport = to;
+        if self.notifications.pending_confirmation.is_some()
+            && self.notifications.pending_confirmation_viewport == from
+        {
+            self.notifications.pending_confirmation_viewport = to;
         }
-        if let Some(pending) = &mut self.pending_file_dialog
+        if let Some(pending) = &mut self.background_tasks.pending_file_dialog
             && pending.viewport == from
         {
             pending.viewport = to;
@@ -2983,7 +3024,7 @@ impl DpsApp {
         }
         self.retarget_equipment_plugin_dialog(from, to);
         self.close_command_palette_for(from);
-        for toast in &mut self.status_toasts {
+        for toast in &mut self.notifications.status_toasts {
             if toast.viewport == from {
                 toast.viewport = to;
             }
@@ -3172,7 +3213,7 @@ impl DpsApp {
     fn settings_hotkeys_section(&mut self, ui: &mut egui::Ui) {
         self.capture_recorded_hotkey(ui.ctx());
         settings_section(ui, self.theme(), "Hotkeys", |ui| {
-            let mut hotkeys = self.global_hotkeys;
+            let mut hotkeys = self.preferences.global_hotkeys;
             if ui
                 .checkbox(&mut hotkeys.enabled, t("Enable global hotkeys"))
                 .changed()
@@ -3186,11 +3227,12 @@ impl DpsApp {
                 .show(ui, |ui| {
                     for action in GlobalHotkeyAction::all() {
                         ui.label(t(action.label()));
-                        let recording = self.recording_hotkey == Some(*action);
+                        let recording = self.preferences.recording_hotkey == Some(*action);
                         let label = if recording {
                             t("Press a shortcut...")
                         } else {
-                            self.global_hotkeys
+                            self.preferences
+                                .global_hotkeys
                                 .binding(*action)
                                 .map(HotkeyBinding::label)
                                 .unwrap_or_else(|| t("Disabled"))
@@ -3209,12 +3251,12 @@ impl DpsApp {
                         }
                         if ui
                             .add_enabled(
-                                self.global_hotkeys.binding(*action).is_some(),
+                                self.preferences.global_hotkeys.binding(*action).is_some(),
                                 egui::Button::new(t("Disable")),
                             )
                             .clicked()
                         {
-                            let mut hotkeys = self.global_hotkeys;
+                            let mut hotkeys = self.preferences.global_hotkeys;
                             hotkeys.set_binding(*action, None);
                             self.set_global_hotkeys(hotkeys);
                             self.set_recording_hotkey(None);
@@ -3230,7 +3272,7 @@ impl DpsApp {
     }
 
     fn capture_recorded_hotkey(&mut self, ctx: &egui::Context) {
-        let Some(action) = self.recording_hotkey else {
+        let Some(action) = self.preferences.recording_hotkey else {
             return;
         };
         let event = ctx.input(|input| {
@@ -3253,39 +3295,37 @@ impl DpsApp {
             return;
         }
         if key == egui::Key::Backspace || key == egui::Key::Delete {
-            let mut hotkeys = self.global_hotkeys;
+            let mut hotkeys = self.preferences.global_hotkeys;
             hotkeys.set_binding(action, None);
             self.set_global_hotkeys(hotkeys);
             self.set_recording_hotkey(None);
             return;
         }
         let Some(key) = hotkey_key_from_egui(key) else {
-            self.status = t("Use an F1-F12 key for global shortcuts");
+            self.notifications.status = t("Use an F1-F12 key for global shortcuts");
             return;
         };
         if !modifiers.ctrl && !modifiers.alt && !modifiers.shift {
-            self.status = t("Global shortcuts require Ctrl, Alt, or Shift");
+            self.notifications.status = t("Global shortcuts require Ctrl, Alt, or Shift");
             return;
         }
         let binding = HotkeyBinding::new(modifiers.ctrl, modifiers.alt, modifiers.shift, key);
         if binding.is_reserved() {
-            self.status = t("This shortcut is reserved by Windows");
+            self.notifications.status = t("This shortcut is reserved by Windows");
             self.set_recording_hotkey(None);
             return;
         }
-        if GlobalHotkeyAction::all()
-            .iter()
-            .copied()
-            .any(|other| other != action && self.global_hotkeys.binding(other) == Some(binding))
-        {
-            self.status = t("This shortcut is already assigned");
+        if GlobalHotkeyAction::all().iter().copied().any(|other| {
+            other != action && self.preferences.global_hotkeys.binding(other) == Some(binding)
+        }) {
+            self.notifications.status = t("This shortcut is already assigned");
             return;
         }
-        let mut hotkeys = self.global_hotkeys;
+        let mut hotkeys = self.preferences.global_hotkeys;
         hotkeys.set_binding(action, Some(binding));
         self.set_global_hotkeys(hotkeys);
         self.set_recording_hotkey(None);
-        self.status = tf(
+        self.notifications.status = tf(
             "{} shortcut switched to {}",
             &[&t(action.label()), &binding.label()],
         );

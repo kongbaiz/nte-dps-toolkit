@@ -289,7 +289,7 @@ stdout 永远不会输出 `PacketDebug`、payload preview、payload hex、decode
 }
 ```
 
-`subtract_time_stop` 必填，选择与 GUI 相同的计时口径。尚无战斗或深渊数据时 result 为 null；否则包含总时长、伤害、DPS、承伤、命中数、角色行、技能行、深渊上下半和脱敏解析质量计数。稳定的 `dps_time_mode` 值为 `subtract_time_stop` 与 `wall_clock`；quality source 值为 `live`、`pcapng_replay`、`json_replay` 和 `unknown`。
+`subtract_time_stop` 必填，选择与 GUI 相同的计时口径。尚无战斗或深渊数据时 result 为 null；否则包含总时长、伤害、DPS、承伤、命中数、角色行、技能行、深渊上下半和脱敏解析质量计数。稳定的 `dps_time_mode` 值为 `subtract_time_stop` 与 `wall_clock`；quality source 值为 `live`、`pcapng_replay`、`json_replay` 和 `unknown`。技能行的 `name` 优先采用与界面语言无关的 Ability 或 GameplayEffect 分组键；存在对应身份时，附加的可选字段 `ability_name` 与 `gameplay_effect_name` 提供稳定 GA/GE 标识。
 
 外部战斗 DTO 由内部 `CombatSessionSummary` 显式逐字段映射，不直接暴露内部 Rust 序列化结构。所有数值都来自已验证的战斗状态，并保证是有限 JSON 数字。
 

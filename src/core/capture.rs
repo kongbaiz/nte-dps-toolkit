@@ -8,13 +8,13 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crossbeam_channel::Sender;
-
 use super::{CoreError, CoreErrorCode};
 use crate::engine::capture::{
-    CaptureDevice, CaptureHandle, CaptureOutput, PacketEmissionMode, list_devices, start_capture,
+    CaptureDevice, CaptureHandle, CaptureOutput, CaptureResources, EngineEventSink,
+    PacketEmissionMode, list_devices, start_capture,
 };
-use crate::engine::model::{CharacterInfo, EngineEvent};
+use crate::engine::model::CharacterInfo;
+use crate::engine::parser::AbilityCatalog;
 use crate::platform::network::{
     GameNetwork, detect_game_device, detect_game_network, game_process_is_running,
 };
@@ -185,7 +185,8 @@ impl CaptureController {
         &mut self,
         options: CaptureControllerOptions,
         characters: Arc<HashMap<u32, CharacterInfo>>,
-        sender: Sender<EngineEvent>,
+        ability_catalog: Arc<AbilityCatalog>,
+        sender: impl Into<EngineEventSink>,
     ) -> Result<(), CoreError> {
         if self.capture.is_some() {
             return Err(CoreError::new(
@@ -216,11 +217,14 @@ impl CaptureController {
             filter,
             options.include_incoming,
             options.server_damage_calibration,
-            characters,
+            CaptureResources {
+                characters,
+                ability_catalog,
+            },
             CaptureOutput {
                 raw_capture_directory,
                 packet_emission: options.packet_emission,
-                sender,
+                sender: sender.into(),
             },
         );
         self.capture = Some(capture);
@@ -270,7 +274,8 @@ pub fn raw_capture_directory(mode: RawCaptureMode, directory: &Path) -> Option<P
 pub fn start(
     options: CaptureStartOptions,
     characters: Arc<HashMap<u32, CharacterInfo>>,
-    sender: Sender<EngineEvent>,
+    ability_catalog: Arc<AbilityCatalog>,
+    sender: impl Into<EngineEventSink>,
 ) -> CaptureHandle {
     start_capture(
         options.device,
@@ -278,11 +283,14 @@ pub fn start(
         options.filter,
         options.include_incoming,
         options.server_damage_calibration,
-        characters,
+        CaptureResources {
+            characters,
+            ability_catalog,
+        },
         CaptureOutput {
             raw_capture_directory: raw_capture_directory(options.raw_capture, &capture_log_dir()),
             packet_emission: options.packet_emission,
-            sender,
+            sender: sender.into(),
         },
     )
 }

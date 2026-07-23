@@ -205,7 +205,10 @@ cargo check
 cargo test
 cargo check --bin nte-core --no-default-features --features cli
 cargo test --no-default-features --features cli
+pwsh -NoProfile -File scripts/verify_architecture.ps1
 ```
+
+The final command verifies the GUI/CLI features, binary feature gates, ownership of optional GUI dependencies, and CLI dependency isolation.
 
 Diagnostics tests that depend on real captures are ignored by default. To run them, set `NTE_TEST_CAPTURE=<pcapng-path>` and run:
 

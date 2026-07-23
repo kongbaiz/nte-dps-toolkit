@@ -236,6 +236,10 @@ pub struct BattleSkillDto {
     pub char_name: String,
     pub name: String,
     pub category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ability_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gameplay_effect_name: Option<String>,
     pub hits: u64,
     pub damage: f64,
     pub damage_share_percent: f64,
@@ -249,6 +253,8 @@ impl From<&CombatSessionSkillSummary> for BattleSkillDto {
             char_name: summary.char_name.clone(),
             name: summary.name.clone(),
             category: summary.category.clone(),
+            ability_name: summary.ability_name.clone(),
+            gameplay_effect_name: summary.gameplay_effect_name.clone(),
             hits: summary.hits,
             damage: summary.damage,
             damage_share_percent: summary.damage_share_percent,
@@ -270,7 +276,7 @@ pub struct BattleAbyssHalfDto {
 impl From<&CombatSessionAbyssHalfSummary> for BattleAbyssHalfDto {
     fn from(summary: &CombatSessionAbyssHalfSummary) -> Self {
         Self {
-            half: summary.half.clone(),
+            half: summary.half.label().to_owned(),
             duration_seconds: summary.duration_seconds,
             total_damage: summary.total_damage,
             total_dps: summary.total_dps,
@@ -299,7 +305,7 @@ impl From<&CombatSessionAbyssSummary> for BattleAbyssDto {
         Self {
             detected: summary.detected,
             floor: summary.floor,
-            active_half: summary.active_half.clone(),
+            active_half: summary.active_half.map(|half| half.label().to_owned()),
             success: summary.success,
             first_half: summary.first_half.as_ref().map(BattleAbyssHalfDto::from),
             second_half: summary.second_half.as_ref().map(BattleAbyssHalfDto::from),
@@ -379,7 +385,7 @@ impl From<&CombatSessionSummary> for BattleSummaryDto {
     fn from(summary: &CombatSessionSummary) -> Self {
         Self {
             duration_seconds: summary.duration_seconds,
-            dps_time_mode: summary.dps_time_mode.clone(),
+            dps_time_mode: summary.dps_time_mode.protocol_code().to_owned(),
             total_damage: summary.total_damage,
             total_dps: summary.total_dps,
             total_damage_taken: summary.total_damage_taken,
@@ -406,6 +412,7 @@ pub struct BattleSummaryEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::model::{AbyssHalf, DpsTimeBasis};
 
     #[test]
     fn inventory_uid_serializes_slot_without_internal_typo() {
@@ -418,7 +425,7 @@ mod tests {
     fn battle_summary_mapping_is_independent_and_uses_stable_source_codes() {
         let summary = CombatSessionSummary {
             duration_seconds: 10.0,
-            dps_time_mode: "subtract_time_stop".to_owned(),
+            dps_time_mode: DpsTimeBasis::SubtractTimeStop,
             total_damage: 1_000.0,
             total_dps: 100.0,
             total_damage_taken: 25.0,
@@ -438,6 +445,9 @@ mod tests {
                 char_name: "Character".to_owned(),
                 name: "Skill".to_owned(),
                 category: "normal".to_owned(),
+                ability_name: Some("GA_Test_Skill".to_owned()),
+                gameplay_effect_name: Some("GE_Test_Skill_Damage".to_owned()),
+                damage_name: Some("Skill".to_owned()),
                 hits: 4,
                 damage: 1_000.0,
                 damage_share_percent: 100.0,
@@ -456,7 +466,31 @@ mod tests {
         assert_eq!(json["dps_time_mode"], "subtract_time_stop");
         assert_eq!(json["characters"][0]["char_id"], 7);
         assert_eq!(json["skills"][0]["name"], "Skill");
+        assert_eq!(json["skills"][0]["ability_name"], "GA_Test_Skill");
         assert_eq!(json["quality"]["source"], "live");
         assert_eq!(json["quality"]["packet_count"], 8);
+    }
+
+    #[test]
+    fn battle_abyss_mapping_preserves_protocol_labels() {
+        let summary = CombatSessionAbyssSummary {
+            detected: true,
+            active_half: Some(AbyssHalf::Second),
+            first_half: Some(CombatSessionAbyssHalfSummary {
+                half: AbyssHalf::First,
+                ..Default::default()
+            }),
+            second_half: Some(CombatSessionAbyssHalfSummary {
+                half: AbyssHalf::Second,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let json = serde_json::to_value(BattleAbyssDto::from(&summary)).unwrap();
+
+        assert_eq!(json["active_half"], "Descending Line");
+        assert_eq!(json["first_half"]["half"], "Ascending Line");
+        assert_eq!(json["second_half"]["half"], "Descending Line");
     }
 }

@@ -76,6 +76,9 @@ impl DpsApp {
         if !self.state.abyss.is_active() {
             return;
         }
+        if self.abyss_compact_mode {
+            ui.add_space(ui.spacing().item_spacing.y);
+        }
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), 28.0),
             egui::Layout::left_to_right(egui::Align::Center),
@@ -111,7 +114,7 @@ impl DpsApp {
                     ui.separator();
                     ui.label(
                         RichText::new(t("Challenge Cleared"))
-                            .color(semantic_success(self.dark_mode)),
+                            .color(semantic_success(self.preferences.dark_mode)),
                     );
                 }
                 if self.abyss_compact_mode {
@@ -154,7 +157,7 @@ impl DpsApp {
                 second_half,
             ),
             dps,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
         let dps = motion::rolling_value(
             ui.ctx(),
@@ -166,7 +169,7 @@ impl DpsApp {
             ),
             dps,
             motion::dur::BASE,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
         let total_damage = motion::rolling_value(
             ui.ctx(),
@@ -178,35 +181,16 @@ impl DpsApp {
             ),
             total_damage,
             motion::dur::BASE,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
-        let start_pulse = motion::bounce_envelope(motion::animate_generation(
-            ui.ctx(),
-            "combat_start_pulse",
-            self.combat_start_generation,
-            motion::dur::SLOW,
-            self.reduce_motion,
-        ));
         let end_bounce = motion::bounce_envelope(motion::animate_generation(
             ui.ctx(),
             "combat_end_bounce",
             self.combat_end_generation,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         ));
         let width_class = main_width_class(ui.available_width());
-        let summary_height = 38.0 * density_tokens(self.density).font_scale;
-        let summary_rect = egui::Rect::from_min_size(
-            ui.cursor().min,
-            egui::vec2(ui.available_width(), summary_height),
-        );
-        if start_pulse > 0.0 {
-            ui.painter().rect_filled(
-                summary_rect,
-                6.0,
-                self.theme().accent.gamma_multiply(start_pulse * 0.16),
-            );
-        }
         ui.spacing_mut().item_spacing.x = 6.0;
         let accent = self.theme().accent;
         let paint_primary_metrics = |columns: &mut [egui::Ui]| {
@@ -236,7 +220,7 @@ impl DpsApp {
                     &mut columns[2],
                     &t("Total Damage Taken"),
                     format_number(total_damage_taken),
-                    semantic_danger(self.dark_mode),
+                    semantic_danger(self.preferences.dark_mode),
                     false,
                 );
                 let time_color = columns[3].visuals().text_color();
@@ -250,24 +234,13 @@ impl DpsApp {
                 );
             }),
         }
-        if end_bounce > 0.0 {
-            ui.painter().rect_stroke(
-                summary_rect.expand(end_bounce * 2.0),
-                7.0,
-                Stroke::new(
-                    1.0_f32 + end_bounce,
-                    self.theme().accent.gamma_multiply(end_bounce * 0.8),
-                ),
-                egui::StrokeKind::Outside,
-            );
-        }
     }
 
     /// Live-combat toolbar: capture lifecycle plus the overlay-shrink toggle.
     /// Everything else (settings, team data, abyss tables, debug) moved into the
     /// console window — see [`Self::console_panel`] — to keep this bar uncrowded.
     fn controls(&mut self, ui: &mut egui::Ui, layout: MainToolbarLayout) {
-        let density = density_tokens(self.density);
+        let density = density_tokens(self.preferences.density);
         ui.spacing_mut().item_spacing.x = density.item_spacing.x;
         ui.spacing_mut().item_spacing.y = 0.0;
         ui.spacing_mut().button_padding = density.button_padding;
@@ -362,7 +335,7 @@ impl DpsApp {
     }
 
     fn toolbar_layout(&self, ui: &egui::Ui) -> MainToolbarLayout {
-        let density = density_tokens(self.density);
+        let density = density_tokens(self.preferences.density);
         let primary_labels = [
             if self.capture.is_none() && self.replay_thread.is_none() {
                 t("Start")
@@ -370,14 +343,18 @@ impl DpsApp {
                 t("Stop")
             },
             t("Reset"),
-            if self.paused { t("Resume") } else { t("Pause") },
+            if self.capture_ui.paused {
+                t("Resume")
+            } else {
+                t("Pause")
+            },
             t("Console"),
         ];
         let collapse_label = self.state.abyss.is_active().then(|| t("Collapse"));
         let hud_label = t("HUD");
         let overlay_labels = [
             t("Appearance"),
-            if self.mouse_passthrough {
+            if self.preferences.mouse_passthrough {
                 t("Passthrough on")
             } else {
                 t("Passthrough")
@@ -431,9 +408,12 @@ impl DpsApp {
                 egui::Button::new(
                     RichText::new(t("Stop"))
                         .strong()
-                        .color(semantic_danger(self.dark_mode)),
+                        .color(semantic_danger(self.preferences.dark_mode)),
                 )
-                .stroke(Stroke::new(1.0_f32, semantic_danger(self.dark_mode))),
+                .stroke(Stroke::new(
+                    1.0_f32,
+                    semantic_danger(self.preferences.dark_mode),
+                )),
             )
             .on_hover_text(t("Stop the current live capture or import replay"))
             .clicked()
@@ -459,8 +439,12 @@ impl DpsApp {
         let clicked = ui
             .add(
                 egui::Button::selectable(
-                    self.paused,
-                    if self.paused { t("Resume") } else { t("Pause") },
+                    self.capture_ui.paused,
+                    if self.capture_ui.paused {
+                        t("Resume")
+                    } else {
+                        t("Pause")
+                    },
                 )
                 .frame_when_inactive(true),
             )
@@ -469,7 +453,7 @@ impl DpsApp {
             ))
             .clicked();
         if clicked {
-            self.paused = !self.paused;
+            self.toggle_processing_pause();
         }
         clicked
     }
@@ -482,8 +466,8 @@ impl DpsApp {
             ))
             .clicked()
         {
-            self.console_open = true;
-            self.console_corner_applied = false;
+            self.windows.console_open = true;
+            self.windows.console_corner_applied = false;
         }
     }
 
@@ -498,19 +482,19 @@ impl DpsApp {
     }
 
     fn passthrough_button(&mut self, ui: &mut egui::Ui) -> bool {
-        let passthrough_label = if self.mouse_passthrough {
+        let passthrough_label = if self.preferences.mouse_passthrough {
             t("Passthrough on")
         } else {
             t("Passthrough")
         };
         let clicked = ui
             .add(
-                egui::Button::selectable(self.mouse_passthrough, passthrough_label)
+                egui::Button::selectable(self.preferences.mouse_passthrough, passthrough_label)
                     .frame_when_inactive(true),
             )
             .on_hover_text(tf(
                 "{} toggles mouse passthrough anytime",
-                &[self.passthrough_hotkey.label()],
+                &[self.preferences.passthrough_hotkey.label()],
             ))
             .clicked();
         if clicked {
@@ -521,7 +505,10 @@ impl DpsApp {
 
     fn pin_button(&mut self, ui: &mut egui::Ui) -> bool {
         let clicked = ui
-            .add(egui::Button::selectable(self.always_on_top, t("Pin")).frame_when_inactive(true))
+            .add(
+                egui::Button::selectable(self.preferences.always_on_top, t("Pin"))
+                    .frame_when_inactive(true),
+            )
             .on_hover_text(t("Keep the main window above the game"))
             .clicked();
         if clicked {
@@ -541,13 +528,13 @@ impl DpsApp {
             ui.horizontal(|ui| {
                 ui.label(t("Opacity"));
                 ui.add(
-                    egui::Slider::new(&mut self.opacity, 0.35..=1.0)
+                    egui::Slider::new(&mut self.preferences.opacity, 0.35..=1.0)
                         .show_value(true)
                         .custom_formatter(|value, _| format!("{:.0}%", value * 100.0)),
                 );
             });
             if ui
-                .button(if self.dark_mode {
+                .button(if self.preferences.dark_mode {
                     t("Switch to light")
                 } else {
                     t("Switch to dark")
@@ -560,7 +547,10 @@ impl DpsApp {
             ui.menu_button(t("Theme Preset"), |ui| {
                 for preset in ThemePreset::all() {
                     if ui
-                        .selectable_label(self.theme_preset == *preset, t(preset.label()))
+                        .selectable_label(
+                            self.preferences.theme_preset == *preset,
+                            t(preset.label()),
+                        )
                         .on_hover_text(t(preset.description()))
                         .clicked()
                     {
@@ -584,13 +574,13 @@ impl DpsApp {
             }
             if ui
                 .add(
-                    egui::Button::selectable(self.hud_mode, t("Combat HUD"))
+                    egui::Button::selectable(self.windows.hud_mode, t("Combat HUD"))
                         .frame_when_inactive(true),
                 )
                 .on_hover_text(t("Backing-less HUD, overlaid directly on the game"))
                 .clicked()
             {
-                self.set_hud_mode(ui.ctx(), !self.hud_mode);
+                self.set_hud_mode(ui.ctx(), !self.windows.hud_mode);
                 ui.close();
             }
             if self.passthrough_button(ui) {
@@ -621,7 +611,7 @@ impl DpsApp {
             "main_controls_expanded",
             expanded,
             motion::dur::BASE,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
             motion::ease::entrance,
         );
         if progress <= 0.001 {
@@ -658,7 +648,7 @@ impl DpsApp {
             "abyss_half_transition",
             if second_half { 1.0 } else { 0.0 },
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
         let visibility = if second_half { phase } else { 1.0 - phase };
         let direction = if second_half { 1.0 } else { -1.0 };
@@ -693,9 +683,9 @@ impl DpsApp {
                     )
                     .clicked()
                 {
-                    self.team_hit_detail_open = true;
+                    self.windows.team_hit_detail_open = true;
                     self.team_hit_detail_filter = HitDetailFilter::All;
-                    self.team_hit_detail_corner_applied = false;
+                    self.windows.team_hit_detail_corner_applied = false;
                 }
             });
         });
@@ -769,7 +759,7 @@ impl DpsApp {
         content.add_space(8.0);
         if content.button(t("Cancel Import")).clicked() {
             self.stop_engine();
-            self.status = t("Import canceled");
+            self.notifications.status = t("Import canceled");
         }
     }
 
@@ -782,7 +772,7 @@ impl DpsApp {
             "theme_transition_overlay",
             true,
             motion::dur::BASE,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
             motion::ease::entrance,
         );
         if progress >= 1.0 {
@@ -807,11 +797,11 @@ impl DpsApp {
             "theme_transition_overlay",
             false,
         );
-        self.dark_mode = !self.dark_mode;
+        self.preferences.dark_mode = !self.preferences.dark_mode;
     }
 
     pub(crate) fn set_theme_preset(&mut self, ctx: &egui::Context, preset: ThemePreset) {
-        if self.theme_preset == preset {
+        if self.preferences.theme_preset == preset {
             return;
         }
         self.theme_transition_from = Some(self.theme().bg);
@@ -821,7 +811,7 @@ impl DpsApp {
             "theme_transition_overlay",
             false,
         );
-        self.theme_preset = preset;
+        self.preferences.theme_preset = preset;
     }
 
     /// Party-member rows (damage desc) plus the team totals shared by the party
@@ -900,9 +890,9 @@ impl DpsApp {
     }
 
     pub(crate) fn hud_visible_row_count(&self) -> usize {
-        if self.hud_config.show_character_rows {
+        if self.preferences.hud_config.show_character_rows {
             let count = self.party_member_count().min(TEAM_DPS_MAX_MEMBERS);
-            if !self.mouse_passthrough && count == 0 {
+            if !self.preferences.mouse_passthrough && count == 0 {
                 let (_, total_damage, team_dps, _) = self.party_readout();
                 if total_damage <= 0.0 && team_dps <= 0.0 {
                     return HUD_PREVIEW_ROW_COUNT;
@@ -915,13 +905,13 @@ impl DpsApp {
     }
 
     pub(crate) fn hud_status_row_visible(&self) -> bool {
-        (self.hud_config.show_abyss_half && self.state.abyss.is_active())
-            || self.hud_config.show_passthrough_state
+        (self.preferences.hud_config.show_abyss_half && self.state.abyss.is_active())
+            || self.preferences.hud_config.show_passthrough_state
     }
 
     pub(crate) fn party_panel(&mut self, ui: &mut egui::Ui) {
         let (rows, total_damage, _, _) = self.party_readout();
-        let density_scale = density_tokens(self.density).font_scale;
+        let density_scale = density_tokens(self.preferences.density).font_scale;
         let available_height = ui.available_height();
         let row_height = (party_row_height(available_height, rows.len()) * density_scale)
             .min(available_height.max(38.0 * density_scale));
@@ -995,7 +985,7 @@ impl DpsApp {
                             animation_id,
                             target_y,
                             motion::dur::BASE,
-                            self.reduce_motion,
+                            self.preferences.reduce_motion,
                         )
                     };
                     let row_rect = egui::Rect::from_min_size(
@@ -1016,8 +1006,8 @@ impl DpsApp {
 
     fn main_empty_state(&mut self, ui: &mut egui::Ui) {
         let theme = self.theme();
-        let game_detected = self.game_process_detected;
-        let game_process_error = self.game_process_monitor_error.clone();
+        let game_detected = self.capture_ui.game_process_detected;
+        let game_process_error = self.background_tasks.game_process_monitor_error.clone();
         let capture_active = self.capture.is_some() || self.replay_thread.is_some();
         let has_damage = !self.state.hits.is_empty();
         let mut action = None;
@@ -1066,7 +1056,7 @@ impl DpsApp {
                             ui.add_space(10.0);
                             ui.horizontal_wrapped(|ui| {
                                 if !game_detected
-                                    && !self.awaiting_device_detection
+                                    && !self.background_tasks.awaiting_device_detection
                                     && ui.button(t("Re-detect")).clicked()
                                 {
                                     action = Some(MainEmptyAction::Detect);
@@ -1108,7 +1098,7 @@ impl DpsApp {
     /// horizontal damage-share board. Details stay in the normal window.
     pub(crate) fn hud_panel(&mut self, ui: &mut egui::Ui) {
         let hud_theme = self.theme().hud;
-        let editor = !self.mouse_passthrough;
+        let editor = !self.preferences.mouse_passthrough;
         let display_text = if editor {
             hud_theme.edit_text
         } else {
@@ -1119,7 +1109,7 @@ impl DpsApp {
         } else {
             hud_theme.muted
         };
-        let display_halo = if editor && !self.dark_mode {
+        let display_halo = if editor && !self.preferences.dark_mode {
             Color32::TRANSPARENT
         } else {
             hud_theme.halo
@@ -1130,8 +1120,10 @@ impl DpsApp {
             hud_theme.accent
         };
         let (mut rows, mut total_damage, mut team_dps, mut duration) = self.party_readout();
-        let preview =
-            !self.mouse_passthrough && rows.is_empty() && total_damage <= 0.0 && team_dps <= 0.0;
+        let preview = !self.preferences.mouse_passthrough
+            && rows.is_empty()
+            && total_damage <= 0.0
+            && team_dps <= 0.0;
         let mut damage_taken = self.current_damage_taken_for_hud();
         if preview {
             let preview_data = hud_preview_party_readout();
@@ -1141,7 +1133,7 @@ impl DpsApp {
             duration = preview_data.duration;
             damage_taken = preview_data.damage_taken;
         }
-        if self.hud_config.show_character_rows {
+        if self.preferences.hud_config.show_character_rows {
             rows.truncate(TEAM_DPS_MAX_MEMBERS);
         } else {
             rows.clear();
@@ -1150,7 +1142,7 @@ impl DpsApp {
         let horizontal_inset = 8.0;
         let left = area.left() + horizontal_inset;
         let width = (area.width() - horizontal_inset * 2.0)
-            .min(self.hud_config.width as f32 - horizontal_inset * 2.0);
+            .min(self.preferences.hud_config.width as f32 - horizontal_inset * 2.0);
         let right = left + width;
         let painter = ui.painter().clone();
         let colors = HudPaintColors {
@@ -1186,11 +1178,12 @@ impl DpsApp {
         let mut hide = None;
         let mut restore = None;
         let hidden_modules = self
+            .preferences
             .hud_config
             .module_order
             .iter()
             .copied()
-            .filter(|module| !self.hud_config.module_visible(*module))
+            .filter(|module| !self.preferences.hud_config.module_visible(*module))
             .collect::<Vec<_>>();
         if editor && !hidden_modules.is_empty() {
             let tray_height = hud_editor_hidden_tray_height(hidden_modules.len());
@@ -1256,7 +1249,7 @@ impl DpsApp {
         }
         let dragged_module = egui::DragAndDrop::payload::<HudModule>(ui.ctx()).map(|item| *item);
         let mut dragged_size = None;
-        for module in self.hud_config.module_order.clone() {
+        for module in self.preferences.hud_config.module_order.clone() {
             let target_module_top = top;
             let module_top = if editor {
                 motion::animate_value(
@@ -1264,7 +1257,7 @@ impl DpsApp {
                     ("hud_module_order_y", module),
                     target_module_top,
                     motion::dur::BASE,
-                    self.reduce_motion,
+                    self.preferences.reduce_motion,
                 )
             } else {
                 target_module_top
@@ -1282,24 +1275,25 @@ impl DpsApp {
                     0.0
                 };
             let rendered_height = match module {
-                HudModule::Title if self.hud_config.show_title => {
+                HudModule::Title if self.preferences.hud_config.show_title => {
                     self.hud_title_readout_row(&painter, left, content_top, width, colors)
                 }
-                HudModule::Summary if self.hud_config.has_summary_row() => self.hud_summary_row(
-                    &painter,
-                    egui::Rect::from_min_size(
-                        egui::pos2(left, content_top),
-                        egui::vec2(width, 50.0),
+                HudModule::Summary if self.preferences.hud_config.has_summary_row() => self
+                    .hud_summary_row(
+                        &painter,
+                        egui::Rect::from_min_size(
+                            egui::pos2(left, content_top),
+                            egui::vec2(width, 50.0),
+                        ),
+                        HudSummaryValues {
+                            total_damage,
+                            team_dps,
+                            duration,
+                            damage_taken,
+                        },
+                        &rows,
+                        colors,
                     ),
-                    HudSummaryValues {
-                        total_damage,
-                        team_dps,
-                        duration,
-                        damage_taken,
-                    },
-                    &rows,
-                    colors,
-                ),
                 HudModule::Status if self.hud_status_row_visible() => {
                     self.hud_status_row(&painter, left, content_top, width, colors)
                 }
@@ -1316,7 +1310,7 @@ impl DpsApp {
                     total_damage,
                     colors,
                 ),
-                HudModule::Timeline if self.hud_config.show_mini_timeline => {
+                HudModule::Timeline if self.preferences.hud_config.show_mini_timeline => {
                     self.hud_mini_timeline(&painter, left, content_top, width, preview, colors)
                 }
                 HudModule::Title
@@ -1394,13 +1388,17 @@ impl DpsApp {
         }
 
         if let Some((dragged, target, insert_after)) = reorder {
-            self.hud_config.move_module(dragged, target, insert_after);
+            self.preferences
+                .hud_config
+                .move_module(dragged, target, insert_after);
         }
         if let Some(module) = hide {
-            self.hud_config.set_module_visible(module, false);
+            self.preferences
+                .hud_config
+                .set_module_visible(module, false);
         }
         if let Some(module) = restore {
-            self.hud_config.set_module_visible(module, true);
+            self.preferences.hud_config.set_module_visible(module, true);
         }
 
         ui.allocate_rect(
@@ -1431,7 +1429,7 @@ impl DpsApp {
             painter,
             egui::pos2(rect.right(), rect.center().y),
             egui::Align2::RIGHT_CENTER,
-            t(self.dps_time_mode.label()),
+            t(self.capture_ui.dps_time_mode.label()),
             egui::FontId::proportional(10.5),
             colors.muted,
             colors.halo,
@@ -1453,14 +1451,14 @@ impl DpsApp {
             "combat_start_pulse",
             self.combat_start_generation,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         ));
         let end_bounce = motion::bounce_envelope(motion::animate_generation(
             painter.ctx(),
             "combat_end_bounce",
             self.combat_end_generation,
             motion::dur::SLOW,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         ));
         if start_pulse > 0.0 || end_bounce > 0.0 {
             painter.rect_stroke(
@@ -1478,7 +1476,7 @@ impl DpsApp {
         let duration_scale = 1.0 + end_bounce * 0.06;
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
         let abyss_active = self.state.abyss.is_active();
-        if self.hud_config.show_team_dps {
+        if self.preferences.hud_config.show_team_dps {
             let dps_trend = motion::trend_indicator(
                 painter.ctx(),
                 (
@@ -1488,7 +1486,7 @@ impl DpsApp {
                     second_half,
                 ),
                 values.team_dps,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             );
             let animated_dps = motion::rolling_value(
                 painter.ctx(),
@@ -1500,9 +1498,9 @@ impl DpsApp {
                 ),
                 values.team_dps,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             );
-            let label = if self.hud_config.show_duration {
+            let label = if self.preferences.hud_config.show_duration {
                 format!("{} · {:.1}s", t("Team DPS"), values.duration)
             } else {
                 t("Team DPS")
@@ -1538,7 +1536,7 @@ impl DpsApp {
                 dps_trend,
                 colors.accent,
             );
-        } else if self.hud_config.show_duration {
+        } else if self.preferences.hud_config.show_duration {
             paint_haloed(
                 painter,
                 egui::pos2(header.left(), header.center().y),
@@ -1550,7 +1548,7 @@ impl DpsApp {
             );
         }
 
-        let animated_total_damage = if self.hud_config.show_total_damage {
+        let animated_total_damage = if self.preferences.hud_config.show_total_damage {
             motion::rolling_value(
                 painter.ctx(),
                 (
@@ -1561,14 +1559,14 @@ impl DpsApp {
                 ),
                 values.total_damage,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             )
         } else {
             values.total_damage
         };
         let right_label = match (
-            self.hud_config.show_total_damage,
-            self.hud_config.show_damage_taken,
+            self.preferences.hud_config.show_total_damage,
+            self.preferences.hud_config.show_damage_taken,
         ) {
             (true, true) => Some((
                 t("Total Damage / Taken"),
@@ -1608,7 +1606,7 @@ impl DpsApp {
             egui::vec2(header.width(), 2.0),
         );
         painter.rect_filled(share_strip, 1.0, track_color);
-        if self.hud_config.show_character_rows && values.total_damage > 0.0 {
+        if self.preferences.hud_config.show_character_rows && values.total_damage > 0.0 {
             let mut seg_left = share_strip.left();
             for (index, row) in rows.iter().enumerate() {
                 let target = (row.damage / values.total_damage) as f32;
@@ -1622,7 +1620,7 @@ impl DpsApp {
                         row.char_id,
                     ),
                     target.clamp(0.0, 1.0),
-                    self.reduce_motion,
+                    self.preferences.reduce_motion,
                 );
                 let seg_width = (share_strip.width() * share.value)
                     .min((share_strip.right() - seg_left).max(0.0));
@@ -1630,7 +1628,12 @@ impl DpsApp {
                     seg_left += seg_width;
                     continue;
                 }
-                let color = character_color(row.char_id, &self.characters, index, self.dark_mode);
+                let color = character_color(
+                    row.char_id,
+                    &self.characters,
+                    index,
+                    self.preferences.dark_mode,
+                );
                 let seg = egui::Rect::from_min_size(
                     egui::pos2(seg_left, share_strip.top()),
                     egui::vec2(seg_width, share_strip.height()),
@@ -1658,7 +1661,7 @@ impl DpsApp {
         colors: HudPaintColors,
     ) -> f32 {
         let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 18.0));
-        if self.hud_config.show_abyss_half && self.state.abyss.is_active() {
+        if self.preferences.hud_config.show_abyss_half && self.state.abyss.is_active() {
             paint_haloed(
                 painter,
                 egui::pos2(rect.left(), rect.center().y),
@@ -1669,8 +1672,8 @@ impl DpsApp {
                 colors.halo,
             );
         }
-        if self.hud_config.show_passthrough_state {
-            let label = if self.mouse_passthrough {
+        if self.preferences.hud_config.show_passthrough_state {
+            let label = if self.preferences.mouse_passthrough {
                 t("Passthrough")
             } else {
                 t("Edit")
@@ -1714,7 +1717,12 @@ impl DpsApp {
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
         let abyss_active = self.state.abyss.is_active();
         for (index, row) in rows.iter().enumerate().rev() {
-            let color = character_color(row.char_id, &self.characters, index, self.dark_mode);
+            let color = character_color(
+                row.char_id,
+                &self.characters,
+                index,
+                self.preferences.dark_mode,
+            );
             let row_dps = self.character_dps_for_current_source(row);
             let target_y = index as f32 * stride;
             let animated_y = motion::animate_value(
@@ -1728,7 +1736,7 @@ impl DpsApp {
                 ),
                 target_y,
                 motion::dur::BASE,
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             );
             let row_rect = egui::Rect::from_min_size(
                 egui::pos2(layout.left, layout.top + animated_y),
@@ -1790,7 +1798,7 @@ impl DpsApp {
                     row.char_id,
                 ),
                 (share as f32 / 100.0).clamp(0.0, 1.0),
-                self.reduce_motion,
+                self.preferences.reduce_motion,
             );
             let fill_width = track.width() * share_animation.value;
             if fill_width > 0.5 {
@@ -1951,10 +1959,15 @@ impl DpsApp {
         total_damage: f64,
         row_height: f32,
     ) {
-        let density_scale = density_tokens(self.density).font_scale;
+        let density_scale = density_tokens(self.preferences.density).font_scale;
         let color = readable_accent(
-            character_color(row.char_id, &self.characters, index, self.dark_mode),
-            self.dark_mode,
+            character_color(
+                row.char_id,
+                &self.characters,
+                index,
+                self.preferences.dark_mode,
+            ),
+            self.preferences.dark_mode,
         );
         let avatar_texture = self
             .characters
@@ -1982,10 +1995,14 @@ impl DpsApp {
             ("party_row_hover", response.id),
             response.hovered(),
             motion::dur::FAST,
-            self.reduce_motion,
+            self.preferences.reduce_motion,
             motion::ease::standard,
         );
-        let card_fill = mix_color(self.theme().card, shadcn_card_hover(self.dark_mode), hover);
+        let card_fill = mix_color(
+            self.theme().card,
+            shadcn_card_hover(self.preferences.dark_mode),
+            hover,
+        );
         ui.painter().rect_filled(rect, 6.0, card_fill);
         ui.painter().rect_stroke(
             rect,
@@ -2012,7 +2029,7 @@ impl DpsApp {
                 row.char_id,
             ),
             (share as f32 / 100.0).clamp(0.0, 1.0),
-            self.reduce_motion,
+            self.preferences.reduce_motion,
         );
         ui.painter()
             .rect_filled(contribution_track, 1.0, self.theme().muted);
@@ -2169,10 +2186,10 @@ impl DpsApp {
             }
         });
         if response.clicked() || open_details {
-            self.hit_detail_char_id = Some(row.char_id);
+            self.windows.hit_detail_char_id = Some(row.char_id);
             self.hit_detail_filter = HitDetailFilter::All;
             self.hit_detail_skill_filter.clear();
-            self.hit_detail_corner_applied = false;
+            self.windows.hit_detail_corner_applied = false;
         }
     }
 }

@@ -491,6 +491,8 @@
   "No capture info to export": "エクスポートするキャプチャ情報がありません",
   "Stop capture or replay first, then export this capture info": "先にキャプチャまたは再生を停止してから、このキャプチャ情報をエクスポートしてください",
   "Capture info JSON": "キャプチャ情報 JSON",
+  "Capture info export is already running": "キャプチャ情報をエクスポート中です",
+  "Exporting capture info...": "キャプチャ情報をエクスポートしています...",
   "Capture info exported": "キャプチャ情報をエクスポートしました",
   "Capture logs folder opened": "キャプチャログフォルダーを開きました",
   "Failed to export capture info: {}": "キャプチャ情報のエクスポートに失敗しました：{}",

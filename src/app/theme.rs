@@ -395,7 +395,11 @@ fn zinc_theme_tokens(dark_mode: bool, accent: AccentColor) -> ThemeTokens {
 
 impl DpsApp {
     pub(crate) fn theme(&self) -> ThemeTokens {
-        theme_tokens_for_preset(self.theme_preset, self.dark_mode, self.accent)
+        theme_tokens_for_preset(
+            self.preferences.theme_preset,
+            self.preferences.dark_mode,
+            self.preferences.accent,
+        )
     }
 }
 

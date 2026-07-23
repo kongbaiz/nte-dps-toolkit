@@ -445,7 +445,7 @@ impl DpsApp {
                     equipment_textures: &self.equipment_textures,
                     characters: &self.characters,
                     avatar_textures: &self.avatar_textures,
-                    dark_mode: self.dark_mode,
+                    dark_mode: self.preferences.dark_mode,
                 },
             );
             if let Some(selection) = selection {
@@ -471,7 +471,7 @@ impl DpsApp {
                     equipment_textures: &self.equipment_textures,
                     characters: &self.characters,
                     avatar_textures: &self.avatar_textures,
-                    dark_mode: self.dark_mode,
+                    dark_mode: self.preferences.dark_mode,
                 },
                 &mut self.kongmu_ui,
             );
@@ -575,7 +575,7 @@ impl DpsApp {
         self.kongmu_ui.selected_plugin_region = selected_region;
 
         match (requested, selected_region) {
-            (Some(_), _) if self.game_process_detected => self.set_last_error_in(
+            (Some(_), _) if self.capture_ui.game_process_detected => self.set_last_error_in(
                 ui.ctx(),
                 t("Close HTGame.exe before changing the equipment plugin."),
                 None,
@@ -649,11 +649,11 @@ impl DpsApp {
                 match action {
                     PluginDeploymentAction::Inspect => {}
                     PluginDeploymentAction::Install(_) => {
-                        self.status = t("Equipment plugin enabled");
+                        self.notifications.status = t("Equipment plugin enabled");
                         self.clear_last_error();
                     }
                     PluginDeploymentAction::Remove(_) => {
-                        self.status = t("Equipment plugin removed");
+                        self.notifications.status = t("Equipment plugin removed");
                         self.clear_last_error();
                         self.start_plugin_deployment(ctx, PluginDeploymentAction::Inspect);
                     }
@@ -778,7 +778,7 @@ impl DpsApp {
         match self.equipment_plugin.submit(character, operation) {
             Ok(request_id) => {
                 self.kongmu_ui.plugin_request = Some(PendingPluginRequest { request_id });
-                self.status = t("Sending equipment request...");
+                self.notifications.status = t("Sending equipment request...");
                 self.clear_last_error();
                 ctx.request_repaint_after(Duration::from_millis(50));
             }
@@ -803,11 +803,12 @@ impl DpsApp {
         self.kongmu_ui.plugin_request = None;
         match response.status {
             Ok(0) => {
-                self.status = t("Equipment RPC dispatched; waiting for game synchronization");
+                self.notifications.status =
+                    t("Equipment RPC dispatched; waiting for game synchronization");
                 self.clear_last_error();
             }
             Ok(1) => {
-                self.status = t("Equipment request passed plugin dry-run validation");
+                self.notifications.status = t("Equipment request passed plugin dry-run validation");
                 self.clear_last_error();
             }
             Ok(status) => self.set_last_error_in(
@@ -943,7 +944,7 @@ impl DpsApp {
     ) {
         match atomic_write_text(path, json) {
             Ok(()) => {
-                self.status = t("Character loadout exported");
+                self.notifications.status = t("Character loadout exported");
                 self.clear_last_error();
             }
             Err(error) => self.set_last_error_for(
@@ -994,7 +995,7 @@ impl DpsApp {
     ) {
         match atomic_write_text(path, json) {
             Ok(()) => {
-                self.status = t("Console equipment exported");
+                self.notifications.status = t("Console equipment exported");
                 self.clear_last_error();
             }
             Err(error) => self.set_last_error_for(

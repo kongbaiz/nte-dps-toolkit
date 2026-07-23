@@ -60,7 +60,7 @@ pub(crate) fn draw_history_abyss_half(
     visual: HistoryVisualContext<'_>,
 ) {
     let dark_mode = visual.dark_mode;
-    let accent = history_half_accent(&half.half, dark_mode);
+    let accent = history_half_accent(half.half, dark_mode);
     egui::Frame::new()
         .fill(shadcn_card(dark_mode))
         .stroke(Stroke::new(1.0_f32, accent.gamma_multiply(0.55)))
@@ -73,7 +73,7 @@ pub(crate) fn draw_history_abyss_half(
                 ui.painter().circle_filled(dot_rect.center(), 5.0, accent);
                 ui.add_space(4.0);
                 ui.label(
-                    RichText::new(localized_abyss_half_label(&half.half))
+                    RichText::new(t(half.half.label()))
                         .size(18.0)
                         .strong()
                         .color(shadcn_foreground(dark_mode)),
@@ -107,37 +107,14 @@ pub(crate) fn draw_history_abyss_half(
     ui.add_space(2.0);
 }
 
-/// Localized DPS-time-mode label for a stored history record. New records persist the
-/// English key (`DpsTimeMode::label`); older records persisted the localized Chinese
-/// label, so those two are mapped back to their key first. Everything is then run
-/// through [`t`], so an English key localizes and an unknown value passes through.
-pub(crate) fn localized_dps_time_mode(mode: &str) -> String {
-    match mode {
-        "扣除时停" => t("Exclude Time Stop"),
-        "实时" => t("Real Time"),
-        other => t(other),
-    }
+pub(crate) fn localized_dps_time_mode(mode: DpsTimeBasis) -> String {
+    t(mode.label())
 }
 
-/// Localized abyss line label for a stored history record. Records persist the
-/// Chinese line name ("上行线"/"下行线"); map it to the same key the live abyss
-/// selector uses so English mode reads "Ascending/Descending Line". Unknown values
-/// pass through unchanged.
-pub(crate) fn localized_abyss_half_label(half: &str) -> String {
-    if half.contains('上') {
-        t("Ascending Line")
-    } else if half.contains('下') {
-        t("Descending Line")
-    } else {
-        half.to_owned()
-    }
-}
-
-pub(crate) fn history_half_accent(half: &str, dark_mode: bool) -> Color32 {
-    if half.contains('上') {
-        theme_tokens(dark_mode, AccentColor::Zinc).info
-    } else {
-        theme_tokens(dark_mode, AccentColor::Zinc).success
+pub(crate) fn history_half_accent(half: AbyssHalf, dark_mode: bool) -> Color32 {
+    match half {
+        AbyssHalf::First => theme_tokens(dark_mode, AccentColor::Zinc).info,
+        AbyssHalf::Second => theme_tokens(dark_mode, AccentColor::Zinc).success,
     }
 }
 
@@ -351,6 +328,28 @@ pub(crate) fn skill_row_color(
 }
 
 pub(crate) fn skill_display_name(row: &CombatSessionSkillSummary) -> String {
+    if row.is_follow_up {
+        return translate_reaction_label(&row.name);
+    }
+    let ability_name = row
+        .ability_name
+        .as_deref()
+        .or_else(|| row.name.starts_with("GA_").then_some(row.name.as_str()));
+    let gameplay_effect_name = row
+        .gameplay_effect_name
+        .as_deref()
+        .or_else(|| row.name.starts_with("GE_").then_some(row.name.as_str()));
+    if let Some(name) = ability_name
+        .and_then(crate::storage::ability_names::resolve_ability_name)
+        .or_else(|| {
+            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
+        })
+    {
+        return name;
+    }
+    if let Some(name) = row.damage_name.as_ref() {
+        return name.clone();
+    }
     if contains_cjk(&row.name) {
         return row.name.clone();
     }
@@ -361,6 +360,25 @@ pub(crate) fn skill_display_name(row: &CombatSessionSkillSummary) -> String {
     } else {
         skill_name
     }
+}
+
+pub(crate) fn comparison_skill_display_name(
+    row: &crate::storage::history::HistorySkillDelta,
+) -> String {
+    let ability_name = row
+        .ability_name
+        .as_deref()
+        .or_else(|| row.name.starts_with("GA_").then_some(row.name.as_str()));
+    let gameplay_effect_name = row
+        .gameplay_effect_name
+        .as_deref()
+        .or_else(|| row.name.starts_with("GE_").then_some(row.name.as_str()));
+    ability_name
+        .and_then(crate::storage::ability_names::resolve_ability_name)
+        .or_else(|| {
+            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
+        })
+        .unwrap_or_else(|| row.name.clone())
 }
 
 pub(crate) fn contains_cjk(text: &str) -> bool {
