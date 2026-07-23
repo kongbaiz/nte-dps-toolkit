@@ -1718,11 +1718,11 @@ mod tests {
         NotificationState, PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache,
         SkillDamageSummary, SkillSummaryCache, TimelineCache, UiConfigSavePlan, UiPreferences,
         WindowState, adjusted_cached_index, build_team_dps_export, cached_hit_row, character_color,
-        compare_cached_team_hits, damage_digit_key_for_hit, damage_digit_resource_path,
-        damage_number_digits_text, fill_missing_character_colors_from_avatars,
-        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
-        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
-        qte_type_filter_label, reaction_text_key_for_hit,
+        compare_cached_team_hits, comparison_skill_display_name, damage_digit_key_for_hit,
+        damage_digit_resource_path, damage_number_digits_text,
+        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
+        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
+        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
         summarize_qte_type_filters, translate_reaction_label,
@@ -2190,7 +2190,7 @@ mod tests {
     }
 
     #[test]
-    fn hit_type_display_text_prefers_live_resolved_name_over_stale_stored_one() {
+    fn live_skill_display_text_prefers_resolved_name_over_stored_values() {
         crate::storage::ability_names::set_for_test(
             std::collections::HashMap::from([(
                 "GE_Player_Sagiri_UltraSkill1_Damage".to_owned(),
@@ -2215,6 +2215,17 @@ mod tests {
         hit.gameplay_effect_name = Some("GE_Player_Sagiri_UltraSkill1_Damage".to_owned());
 
         assert_eq!(hit_type_display_text(&hit), "Ultimate·現在の言語での技名");
+
+        let comparison_row = crate::storage::history::HistorySkillDelta {
+            name: "GE_Player_Sagiri_UltraSkill1_Damage".to_owned(),
+            category: "Q技能".to_owned(),
+            gameplay_effect_name: Some("GE_Player_Sagiri_UltraSkill1_Damage".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(
+            comparison_skill_display_name(&comparison_row),
+            "現在の言語での技名"
+        );
     }
 
     #[test]

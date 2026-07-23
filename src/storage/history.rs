@@ -117,6 +117,8 @@ pub struct HistoryCharacterDelta {
 pub struct HistorySkillDelta {
     pub name: String,
     pub category: String,
+    pub ability_name: Option<String>,
+    pub gameplay_effect_name: Option<String>,
     pub left_damage: f64,
     pub right_damage: f64,
     pub delta_damage: f64,
@@ -380,6 +382,7 @@ fn compare_skills(
             category: row.category.clone(),
             ..Default::default()
         });
+        preserve_skill_delta_identity(entry, row);
         entry.left_damage += row.damage;
     }
     for row in right {
@@ -390,12 +393,27 @@ fn compare_skills(
             category: row.category.clone(),
             ..Default::default()
         });
+        preserve_skill_delta_identity(entry, row);
         entry.right_damage += row.damage;
     }
     for row in rows.values_mut() {
         row.delta_damage = row.right_damage - row.left_damage;
     }
     rows.into_values().collect()
+}
+
+fn preserve_skill_delta_identity(
+    delta: &mut HistorySkillDelta,
+    summary: &CombatSessionSkillSummary,
+) {
+    if delta.ability_name.is_none() {
+        delta.ability_name.clone_from(&summary.ability_name);
+    }
+    if delta.gameplay_effect_name.is_none() {
+        delta
+            .gameplay_effect_name
+            .clone_from(&summary.gameplay_effect_name);
+    }
 }
 
 fn skill_comparison_key(
@@ -657,6 +675,7 @@ mod tests {
         assert_eq!(comparison.skill_deltas.len(), 1);
         let delta = &comparison.skill_deltas[0];
         assert_eq!(delta.name, "Test Ultimate");
+        assert_eq!(delta.ability_name.as_deref(), Some("GA_Test_UltraSkill"));
         assert_eq!(delta.left_damage, 100.0);
         assert_eq!(delta.right_damage, 125.0);
         assert_eq!(delta.delta_damage, 25.0);
@@ -703,6 +722,33 @@ mod tests {
             .collect::<Vec<_>>();
         deltas.sort_by(f64::total_cmp);
         assert_eq!(deltas, vec![25.0, 50.0]);
+    }
+
+    #[test]
+    fn compare_records_preserves_gameplay_effect_identity_without_damage_name() {
+        let left = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![CombatSessionSkillSummary {
+                    name: "GE_Test_Skill_Damage".to_owned(),
+                    category: "E技能".to_owned(),
+                    gameplay_effect_name: Some("GE_Test_Skill_Damage".to_owned()),
+                    damage: 100.0,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &HistoryRecord::default());
+
+        assert_eq!(comparison.skill_deltas.len(), 1);
+        let delta = &comparison.skill_deltas[0];
+        assert_eq!(delta.name, "GE_Test_Skill_Damage");
+        assert_eq!(
+            delta.gameplay_effect_name.as_deref(),
+            Some("GE_Test_Skill_Damage")
+        );
     }
 
     fn temp_history_dir(name: &str) -> PathBuf {

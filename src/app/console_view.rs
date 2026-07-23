@@ -1208,7 +1208,10 @@ impl DpsApp {
                 ui.label(RichText::new(t("Skill Δ")).color(ui.visuals().weak_text_color()));
                 for row in &comparison.skill_deltas {
                     ui.horizontal(|ui| {
-                        ui.add_sized([190.0, 20.0], egui::Label::new(&row.name).truncate());
+                        ui.add_sized(
+                            [190.0, 20.0],
+                            egui::Label::new(comparison_skill_display_name(row)).truncate(),
+                        );
                         ui.monospace(format_signed_number(row.delta_damage));
                     });
                 }
