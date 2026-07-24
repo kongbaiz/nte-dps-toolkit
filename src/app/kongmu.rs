@@ -534,8 +534,10 @@ impl DpsApp {
         let source_available = deployment_status
             .and_then(|result| result.as_ref().ok())
             .is_some_and(|status| status.source_available);
-        let interactive =
-            pending_action.is_none() && selected_region.is_some() && (enabled || source_available);
+        let interactive = pending_action.is_none()
+            && !self.update_client.busy()
+            && selected_region.is_some()
+            && (enabled || source_available);
         let status_text =
             plugin_deployment_status_text(pending_action, deployment_status, selected_region);
         let mut requested = None;
@@ -628,6 +630,10 @@ impl DpsApp {
             repaint.request_repaint();
         });
         self.kongmu_ui.plugin_deployment = Some(PendingPluginDeployment { action, receiver });
+    }
+
+    pub(crate) fn equipment_plugin_deployment_idle(&self) -> bool {
+        self.kongmu_ui.plugin_deployment.is_none()
     }
 
     fn drain_plugin_deployment(&mut self, ctx: &egui::Context) {

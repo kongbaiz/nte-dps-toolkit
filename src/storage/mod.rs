@@ -10,3 +10,5 @@ pub mod i18n;
 pub mod io_util;
 pub mod paths;
 pub mod resource;
+#[cfg(feature = "gui")]
+pub mod update;

@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool"
-version = "0.3.4"
+version = "0.3.6"
 edition = "2024"
 description = "Local Windows DPS diagnostics tool for NTE."
 repository = "https://github.com/kongbaiz/nte-dps-toolkit"
@@ -9,11 +9,15 @@ license = "AGPL-3.0-or-later"
 [features]
 default = ["gui"]
 gui = [
+    "dep:ed25519-dalek",
     "dep:eframe",
     "dep:egui_material_icons",
     "dep:image",
     "dep:raw-window-handle",
     "dep:rfd",
+    "dep:semver",
+    "dep:sha2",
+    "dep:zip",
 ]
 cli = []
 external_resources = []
@@ -32,12 +36,18 @@ name = "nte-core"
 path = "src/bin/nte-core.rs"
 required-features = ["cli"]
 
+[[bin]]
+name = "nte-updater"
+path = "src/bin/nte-updater.rs"
+required-features = ["gui"]
+
 [dependencies]
 anyhow = "1.0"
 aes = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 crossbeam-channel = "0.5"
+ed25519-dalek = { version = "3.0", default-features = false, features = ["fast"], optional = true }
 eframe = { version = "0.34.3", features = ["accesskit", "default_fonts", "wgpu"], default-features = false, optional = true }
 egui_material_icons = { version = "=0.6.0", default-features = false, features = ["compressed", "outline"], optional = true }
 env_logger = "0.11"
@@ -47,8 +57,10 @@ libloading = "0.8"
 pcap-file = "2.0"
 raw-window-handle = { version = "0.6", optional = true }
 rfd = { version = "0.15", optional = true }
+semver = { version = "1.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = { version = "0.11", default-features = false, optional = true }
 windows-sys = { version = "0.60", features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -56,14 +68,17 @@ windows-sys = { version = "0.60", features = [
     "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",
+    "Win32_Networking_WinHttp",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Pipes",
     "Win32_System_Registry",
+    "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+zip = { version = "7.2", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 
 [profile.release]
 panic = "abort"

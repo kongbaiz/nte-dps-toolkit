@@ -12,4 +12,8 @@ pub mod hotkey;
 pub mod locale;
 pub mod network;
 #[cfg(feature = "gui")]
+pub mod update_http;
+#[cfg(feature = "gui")]
+pub mod update_install;
+#[cfg(feature = "gui")]
 pub mod window_attributes;
