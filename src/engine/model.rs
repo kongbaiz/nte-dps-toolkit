@@ -143,6 +143,8 @@ pub struct Hit {
     #[serde(default)]
     pub damage_name: Option<String>,
     #[serde(default)]
+    pub damage_component: Option<String>,
+    #[serde(default)]
     pub attack_type: Option<String>,
     #[serde(default)]
     pub damage_attribute: Option<String>,
@@ -842,10 +844,15 @@ impl SkillEntryRef {
             };
         }
 
+        let damage_name = hit
+            .damage_component
+            .clone()
+            .or_else(|| hit.damage_name.clone());
         Self {
             name: hit
-                .ability_name
+                .damage_component
                 .as_deref()
+                .or(hit.ability_name.as_deref())
                 .or(hit.gameplay_effect_name.as_deref())
                 .or(hit.damage_name.as_deref())
                 .or(hit.attack_type.as_deref())
@@ -856,7 +863,7 @@ impl SkillEntryRef {
                 .clone()
                 .unwrap_or_else(|| "未归类".to_owned()),
             ability_name: hit.ability_name.clone(),
-            damage_name: hit.damage_name.clone(),
+            damage_name,
             gameplay_effect_index: hit.gameplay_effect_index,
             gameplay_effect_name: hit.gameplay_effect_name.clone(),
             is_follow_up,
@@ -945,7 +952,10 @@ fn observe_unknown_skill(
 }
 
 fn is_hit_skill_unmapped(hit: &Hit) -> bool {
-    hit.damage_name.is_none() && hit.ability_name.is_none() && hit.gameplay_effect_name.is_none()
+    hit.damage_name.is_none()
+        && hit.damage_component.is_none()
+        && hit.ability_name.is_none()
+        && hit.gameplay_effect_name.is_none()
 }
 
 fn is_unmapped_skill_row(row: &SkillBreakdownRow) -> bool {
@@ -1457,6 +1467,18 @@ impl AbyssRunState {
                 allow_late_backfill: _,
             } => {
                 let starts_combat = cycle.is_some() || floor.is_some();
+                let floor_changed = self
+                    .floor
+                    .zip(floor)
+                    .is_some_and(|(current, next)| current != next);
+                if floor_changed {
+                    self.clear_restarted_floor();
+                    self.active_half = None;
+                    self.pending_restart_at = None;
+                    self.pending_restart_half = None;
+                    self.last_half_switch_at = None;
+                    self.last_half_switch_from = None;
+                }
                 if floor.is_some() {
                     self.floor = floor;
                 }
@@ -1464,7 +1486,7 @@ impl AbyssRunState {
                     self.last_half_switch_at = Some(timestamp);
                     self.last_half_switch_from = self.active_half;
                 }
-                if let Some(restart_at) = self.pending_restart_at.take() {
+                if !floor_changed && let Some(restart_at) = self.pending_restart_at.take() {
                     let restarted_half = self.pending_restart_half.take();
                     if restarted_half.is_some_and(|previous_half| {
                         previous_half != half
@@ -2528,6 +2550,7 @@ mod tests {
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: None,
+            damage_component: None,
             attack_type: None,
             damage_attribute: None,
             follow_up_damage: 0.0,
@@ -2868,6 +2891,38 @@ mod tests {
         );
         assert!(breakdown.rows[0].gameplay_effect_index.is_none());
         assert!(breakdown.rows[0].gameplay_effect_name.is_none());
+    }
+
+    #[test]
+    fn skill_breakdown_splits_exact_semantic_components_under_one_ability() {
+        let mut first = test_hit(1.0, 10, "outgoing", 100.0);
+        first.attack_type = Some("普攻".to_owned());
+        first.ability_name = Some("GA_Test_Melee".to_owned());
+        first.damage_component = Some("Fang Thrust (1 Stack)".to_owned());
+        first.gameplay_effect_index = Some(101);
+        first.gameplay_effect_name = Some("GE_Test_ShadowAtk_Damage".to_owned());
+
+        let mut second = test_hit(2.0, 10, "outgoing", 75.0);
+        second.attack_type = Some("普攻".to_owned());
+        second.ability_name = Some("GA_Test_Melee".to_owned());
+        second.damage_component = Some("Fang Thrust (2 Stacks)".to_owned());
+        second.gameplay_effect_index = Some(102);
+        second.gameplay_effect_name = Some("GE_Test_ShadowAtk1_Damage".to_owned());
+
+        let hits = Vec::from([first, second]);
+        let breakdown = summarize_skill_breakdown(hits.iter(), None);
+
+        assert_eq!(breakdown.rows.len(), 2);
+        assert!(breakdown.rows.iter().any(|row| {
+            row.name == "Fang Thrust (1 Stack)"
+                && row.damage_name.as_deref() == Some("Fang Thrust (1 Stack)")
+                && row.damage == 100.0
+        }));
+        assert!(breakdown.rows.iter().any(|row| {
+            row.name == "Fang Thrust (2 Stacks)"
+                && row.damage_name.as_deref() == Some("Fang Thrust (2 Stacks)")
+                && row.damage == 75.0
+        }));
     }
 
     #[test]
@@ -3630,6 +3685,89 @@ mod tests {
         assert!(state.abyss.first_half.hits.is_empty());
         assert_eq!(state.abyss.second_half.hits.len(), 1);
         assert_eq!(state.abyss.second_half.total_damage, 200.0);
+    }
+
+    #[test]
+    fn restart_from_second_to_first_clears_both_halves() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: Some(6),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(6),
+            floor: Some(12),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(4.0, 1052, "outgoing", 200.0));
+
+        state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 5.0 });
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 5.0,
+            cycle: None,
+            floor: None,
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+
+        assert_eq!(state.abyss.active_half, Some(AbyssHalf::First));
+        assert!(state.abyss.first_half.hits.is_empty());
+        assert!(state.abyss.second_half.hits.is_empty());
+        assert_eq!(state.abyss.first_half.total_damage, 0.0);
+        assert_eq!(state.abyss.second_half.total_damage, 0.0);
+
+        state.push_hit(test_hit(6.0, 1076, "outgoing", 300.0));
+        assert_eq!(state.abyss.first_half.total_damage, 300.0);
+        assert_eq!(state.abyss.second_half.total_damage, 0.0);
+    }
+
+    #[test]
+    fn next_floor_start_clears_previous_floor_after_long_transition() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: Some(6),
+            floor: Some(11),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(2.0, 1076, "outgoing", 100.0));
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 3.0,
+            cycle: Some(6),
+            floor: Some(11),
+            half: AbyssHalf::Second,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(4.0, 1052, "outgoing", 200.0));
+        state.apply_abyss_event(AbyssEvent::Success { timestamp: 5.0 });
+        state.apply_abyss_event(AbyssEvent::RestartDetected { timestamp: 6.0 });
+
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 25.0,
+            cycle: Some(6),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+
+        assert_eq!(state.abyss.floor, Some(12));
+        assert_eq!(state.abyss.active_half, Some(AbyssHalf::First));
+        assert!(state.abyss.first_half.hits.is_empty());
+        assert!(state.abyss.second_half.hits.is_empty());
+        assert_eq!(state.abyss.first_half.total_damage, 0.0);
+        assert_eq!(state.abyss.second_half.total_damage, 0.0);
+        assert_eq!(state.abyss.first_half.stage_started_at, Some(25.0));
+        assert_eq!(state.abyss.first_half_at, Some(25.0));
+        assert_eq!(state.abyss.success_at, None);
+        assert_eq!(state.abyss.pending_restart_at, None);
+        assert_eq!(state.abyss.pending_restart_half, None);
     }
 
     #[test]

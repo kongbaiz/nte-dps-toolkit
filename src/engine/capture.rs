@@ -32,16 +32,16 @@ use crate::engine::model::{
 };
 use crate::engine::parser::{
     AbilityCatalog, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
-    GAMEPLAY_EFFECT_MAPPING_PATH, GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot,
-    ParsedEquipmentSlot, ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH,
-    UltraTimeStopEntry, classify_attack_type, declared_character_ids_from_evidence, find_data_file,
-    find_declared_character_evidence, find_final_tower_character_evidence, load_equipment_catalog,
-    load_gameplay_effect_mapping, load_ultra_time_stops, matches_shifted_bytes_at,
-    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
-    parse_empty_curtain_character_owners, parse_empty_curtain_compact_module_placements,
-    parse_empty_curtain_equipment_snapshot, parse_empty_curtain_item_removals,
-    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
-    valid_item_net_id, validate_empty_curtain_snapshot,
+    GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH, GameplayEffectSkill,
+    ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot, ParsedGameplayEffect,
+    SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry, classify_attack_type,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    find_final_tower_character_evidence, load_equipment_catalog, load_gameplay_effect_mapping,
+    load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
+    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
+    parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
+    parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::storage::io_util::atomic_write_file;
 
@@ -1211,8 +1211,7 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
             half,
             allow_late_backfill: false,
         });
-    } else if !is_restart
-        && decoded_text.contains("FAbyssGamePlayData")
+    } else if decoded_text.contains("FAbyssGamePlayData")
         && (is_success || !decoded_text.contains("AbyssClone"))
     {
         let first = decoded_text.contains("EAbyssFightStage::FirstHalf");
@@ -1956,6 +1955,16 @@ const ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.02;
 const ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.5;
 const SHINKU_RAGE_ABILITY_TAG: &str = "Ability.Player.Shinku.Rage";
 const SHINKU_RAGE_GAMEPLAY_CUE_TAG: &str = "GameplayCue.Display.Shinku.Rage";
+/// The serialized GameplayEffect unique index precedes the first field of its
+/// paired damage record by this fixed distance.
+const GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS: usize = 1330;
+/// Compact FHTClientActiveGE data in the client fight-data wrapper follows its
+/// paired damage record by this fixed distance.
+const DAMAGE_RECORD_TO_COMPACT_GAMEPLAY_EFFECT_BITS: usize = 1255;
+/// The source character selected by reaction settlement brackets its damage
+/// record at these fixed offsets. Both copies must agree before attribution.
+const DAMAGE_RECORD_SOURCE_CHARACTER_BEFORE_BITS: usize = 769;
+const DAMAGE_RECORD_SOURCE_CHARACTER_AFTER_BITS: usize = 916;
 
 fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
     match hit.attack_type.as_deref() {
@@ -3020,12 +3029,19 @@ struct PreparedHits {
 impl Default for PacketDecoder {
     fn default() -> Self {
         let mut resource_warnings = Vec::new();
-        let ability_catalog = Arc::new(load_resource(
+        let mut ability_catalog = load_resource(
             SKILL_DAMAGE_DATA_PATH,
             &mut resource_warnings,
             AbilityCatalog::load,
-        ));
-        Self::with_ability_catalog_and_warnings(ability_catalog, false, resource_warnings)
+        );
+        if let Some(path) = find_data_file(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH)) {
+            if let Err(error) = ability_catalog.apply_semantics(&path) {
+                resource_warnings.push(format!("{}: {error}", path.display()));
+            }
+        } else {
+            resource_warnings.push(format!("missing resource {GAMEPLAY_EFFECT_SEMANTICS_PATH}"));
+        }
+        Self::with_ability_catalog_and_warnings(Arc::new(ability_catalog), false, resource_warnings)
     }
 }
 
@@ -3425,6 +3441,39 @@ fn character_id_at_evidence_location(
         .map(|(character_id, _, _)| *character_id)
 }
 
+fn damage_record_source_character(hit: &Hit, evidence: &[(u32, u8, usize)]) -> Option<u32> {
+    let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
+    let before_bit_offset =
+        hit_bit_offset.checked_sub(DAMAGE_RECORD_SOURCE_CHARACTER_BEFORE_BITS)?;
+    let after_bit_offset = hit_bit_offset.checked_add(DAMAGE_RECORD_SOURCE_CHARACTER_AFTER_BITS)?;
+    let character_at = |bit_offset: usize| {
+        evidence
+            .iter()
+            .find(|(_, shift, offset)| offset * 8 + usize::from(*shift) == bit_offset)
+            .map(|(character_id, _, _)| *character_id)
+    };
+    let before = character_at(before_bit_offset)?;
+    let after = character_at(after_bit_offset)?;
+    (before == after).then_some(before)
+}
+
+fn reattribute_creation_flower_from_damage_record(
+    hit: &mut Hit,
+    evidence: &[(u32, u8, usize)],
+    characters: &HashMap<u32, CharacterInfo>,
+) {
+    if hit.direction.is_incoming() || hit.attack_type.as_deref() != Some("创生花") {
+        return;
+    }
+    let Some(character_id) = damage_record_source_character(hit, evidence) else {
+        return;
+    };
+    if character_id != hit.char_id {
+        set_hit_character(hit, character_id, characters);
+    }
+    hit.char_source = HitCharacterSource::Packet;
+}
+
 fn character_debug_label(character_id: u32, characters: &HashMap<u32, CharacterInfo>) -> String {
     characters.get(&character_id).map_or_else(
         || character_id.to_string(),
@@ -3449,18 +3498,34 @@ fn character_debug_label(character_id: u32, characters: &HashMap<u32, CharacterI
 fn matching_gameplay_effect<'a>(
     hit: &Hit,
     effects: &'a [ParsedGameplayEffect],
+    previous_hit_bit_offset: Option<usize>,
 ) -> Option<&'a ParsedGameplayEffect> {
-    let mut aligned = effects
+    let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
+    let belongs_to_current_record = |effect: &ParsedGameplayEffect| {
+        let effect_bit_offset = effect.byte_offset * 8 + usize::from(effect.bit_shift);
+        effect_bit_offset < hit_bit_offset
+            && previous_hit_bit_offset.is_none_or(|previous| effect_bit_offset > previous)
+    };
+    effects
         .iter()
-        .filter(|effect| effect.bit_shift == hit.bit_shift);
-    let first = aligned.next();
-    if first.is_some() && aligned.next().is_none() {
-        first
-    } else if effects.len() == 1 {
-        effects.first()
-    } else {
-        None
-    }
+        .find(|effect| {
+            effect.byte_offset * 8 + usize::from(effect.bit_shift)
+                == hit_bit_offset + DAMAGE_RECORD_TO_COMPACT_GAMEPLAY_EFFECT_BITS
+        })
+        .or_else(|| {
+            effects.iter().find(|effect| {
+                belongs_to_current_record(effect)
+                    && effect.byte_offset * 8
+                        + usize::from(effect.bit_shift)
+                        + GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS
+                        == hit_bit_offset
+            })
+        })
+        .or_else(|| {
+            // A fragmented bunch can carry the GE in its head and the sole
+            // damage record in its tail, so their packet-local offsets differ.
+            (previous_hit_bit_offset.is_none() && effects.len() == 1).then(|| &effects[0])
+        })
 }
 
 fn enrich_hit_with_gameplay_effect(
@@ -3468,8 +3533,9 @@ fn enrich_hit_with_gameplay_effect(
     effects: &[ParsedGameplayEffect],
     names: &HashMap<u32, String>,
     ability_catalog: &AbilityCatalog,
+    previous_hit_bit_offset: Option<usize>,
 ) {
-    let Some(effect) = matching_gameplay_effect(hit, effects) else {
+    let Some(effect) = matching_gameplay_effect(hit, effects, previous_hit_bit_offset) else {
         return;
     };
     hit.gameplay_effect_index = Some(effect.unique_index);
@@ -3481,6 +3547,7 @@ fn enrich_hit_with_gameplay_effect(
     if let Some(skill) = skill {
         hit.ability_name = skill.ability_name.clone();
         hit.attack_type = Some(skill.attack_type.clone());
+        hit.damage_component = skill.damage_component.clone();
     } else {
         hit.attack_type = Some(classify_attack_type(None, effect_name, None));
     }
@@ -3495,6 +3562,29 @@ fn enrich_hit_with_gameplay_effect(
         hit.damage_attribute = Some("物理".to_owned());
         hit.attack_type = Some("载具伤害".to_owned());
     }
+}
+
+fn reattribute_hit_from_gameplay_effect_semantics(
+    hit: &mut Hit,
+    ability_catalog: &AbilityCatalog,
+    characters: &HashMap<u32, CharacterInfo>,
+) {
+    if hit.direction.is_incoming() {
+        return;
+    }
+    let Some(effect_name) = hit.gameplay_effect_name.as_deref() else {
+        return;
+    };
+    let Some(character_id) = ability_catalog
+        .skill(effect_name)
+        .and_then(|skill| skill.owner_character_id)
+    else {
+        return;
+    };
+    if character_id != hit.char_id {
+        set_hit_character(hit, character_id, characters);
+    }
+    hit.char_source = HitCharacterSource::GameplayEffect;
 }
 
 fn character_id_from_ability_name(
@@ -3530,7 +3620,7 @@ fn reattribute_hit_from_ability_name(
     can_override_packet_id: bool,
     characters: &HashMap<u32, CharacterInfo>,
 ) {
-    if hit.direction.is_incoming() {
+    if hit.direction.is_incoming() || hit.attack_type.as_deref() == Some("创生花") {
         return;
     }
     if hit.char_source == HitCharacterSource::Packet && !can_override_packet_id {
@@ -3551,7 +3641,7 @@ fn reattribute_hit_from_ability_name(
 
 fn is_known_outgoing_damage_effect(effect_name: &str, skill: Option<&GameplayEffectSkill>) -> bool {
     let effect_name_lower = effect_name.to_ascii_lowercase();
-    if effect_name_lower.starts_with("ge_mon_") {
+    if effect_name_lower.starts_with("ge_mon_") || effect_name_lower.starts_with("ge_boss_") {
         return false;
     }
     if effect_name.starts_with("GE_Player_") && effect_name.contains("_Damage") {
@@ -3580,7 +3670,7 @@ fn is_known_outgoing_damage_effect(effect_name: &str, skill: Option<&GameplayEff
 
 fn is_known_incoming_damage_effect(effect_name: &str) -> bool {
     let effect_name_lower = effect_name.to_ascii_lowercase();
-    effect_name_lower.starts_with("ge_mon_")
+    (effect_name_lower.starts_with("ge_mon_") || effect_name_lower.starts_with("ge_boss_"))
         && !effect_name_lower.contains("steal")
         && (effect_name_lower.contains("damage") || effect_name_lower.contains("_dmg"))
 }
@@ -3756,14 +3846,20 @@ impl PacketDecoder {
         let effective_gameplay_effects = inherited_gameplay_effect
             .as_ref()
             .map_or(gameplay_effects.as_slice(), std::slice::from_ref);
+        let mut previous_hit_bit_offset = None;
         for hit in &mut hits {
+            let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
             enrich_hit_with_gameplay_effect(
                 hit,
                 effective_gameplay_effects,
                 &self.gameplay_effect_names,
                 &self.ability_catalog,
+                previous_hit_bit_offset,
             );
+            previous_hit_bit_offset = Some(hit_bit_offset);
+            reattribute_hit_from_gameplay_effect_semantics(hit, &self.ability_catalog, characters);
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
+            reattribute_creation_flower_from_damage_record(hit, &evidence, characters);
             if hit
                 .attack_type
                 .as_deref()
@@ -4553,6 +4649,8 @@ struct ExportHit {
     #[serde(default)]
     damage_name: Option<String>,
     #[serde(default)]
+    damage_component: Option<String>,
+    #[serde(default)]
     attack_type: Option<String>,
     #[serde(default)]
     damage_attribute: Option<String>,
@@ -4668,6 +4766,7 @@ impl From<&Hit> for ExportHit {
             gameplay_effect_name: hit.gameplay_effect_name.clone(),
             ability_name: hit.ability_name.clone(),
             damage_name: hit.damage_name.clone(),
+            damage_component: hit.damage_component.clone(),
             attack_type: hit.attack_type.clone(),
             damage_attribute: hit.damage_attribute.clone(),
             follow_up_damage: hit.follow_up_damage,
@@ -5051,6 +5150,7 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         gameplay_effect_name: hit.gameplay_effect_name,
         ability_name: hit.ability_name,
         damage_name: hit.damage_name.map(|name| normalize_damage_name(&name)),
+        damage_component: hit.damage_component,
         attack_type: hit.attack_type.map(|attack_type| {
             if attack_type == "QTE" {
                 "环合".to_owned()
@@ -6590,6 +6690,7 @@ mod tests {
                     "gameplay_effect_name":"GE_Test_Damage",
                     "ability_name":"GA_Test",
                     "damage_name":"Test Move",
+                    "damage_component":"Exact Component",
                     "attack_type":"Q技能",
                     "damage_attribute":"灵",
                     "follow_up_damage":12.5,
@@ -6632,6 +6733,7 @@ mod tests {
         assert_eq!(hit.gameplay_effect_name.as_deref(), Some("GE_Test_Damage"));
         assert_eq!(hit.ability_name.as_deref(), Some("GA_Test"));
         assert_eq!(hit.damage_name.as_deref(), Some("Test Move"));
+        assert_eq!(hit.damage_component.as_deref(), Some("Exact Component"));
         assert_eq!(hit.attack_type.as_deref(), Some("Q技能"));
         assert_eq!(hit.damage_attribute.as_deref(), Some("灵"));
         assert_eq!(hit.follow_up_damage, 12.5);
@@ -6854,6 +6956,90 @@ mod tests {
         other.attack_type = Some("普攻".to_owned());
         reattribute_orphan_reaction(&mut other, &declarations, 10.001, &characters);
         assert_eq!(other.char_id, 1003);
+    }
+
+    #[test]
+    fn creation_flower_keeps_record_owner_across_different_reaction_partners() {
+        let characters = HashMap::from([
+            (1010, character_with_attribute("娜娜莉", "灵")),
+            (1051, character_with_attribute("「零」", "光")),
+            (1055, character_with_attribute("九原", "灵")),
+        ]);
+        let mut nanally_pair_flower = targetless_hit();
+        nanally_pair_flower.char_id = 1010;
+        nanally_pair_flower.char_name = "娜娜莉".to_owned();
+        nanally_pair_flower.char_source = HitCharacterSource::Session;
+        nanally_pair_flower.direction = HitDirection::Outgoing;
+        nanally_pair_flower.attack_type = Some("创生花".to_owned());
+        nanally_pair_flower.byte_offset = 253;
+        nanally_pair_flower.bit_shift = 6;
+        let nanally_pair_evidence = [(1051, 5, 157), (1051, 2, 368), (1010, 7, 640)];
+
+        reattribute_creation_flower_from_damage_record(
+            &mut nanally_pair_flower,
+            &nanally_pair_evidence,
+            &characters,
+        );
+
+        let mut kuhara_pair_flower = targetless_hit();
+        kuhara_pair_flower.char_id = 1055;
+        kuhara_pair_flower.char_name = "九原".to_owned();
+        kuhara_pair_flower.char_source = HitCharacterSource::Session;
+        kuhara_pair_flower.direction = HitDirection::Outgoing;
+        kuhara_pair_flower.attack_type = Some("创生花".to_owned());
+        kuhara_pair_flower.byte_offset = 244;
+        kuhara_pair_flower.bit_shift = 5;
+        let kuhara_pair_evidence = [(1051, 4, 148), (1051, 1, 359), (1055, 5, 529)];
+
+        reattribute_creation_flower_from_damage_record(
+            &mut kuhara_pair_flower,
+            &kuhara_pair_evidence,
+            &characters,
+        );
+
+        for hit in [nanally_pair_flower, kuhara_pair_flower] {
+            assert_eq!(hit.char_id, 1051);
+            assert_eq!(hit.char_name, "「零」");
+            assert_eq!(hit.char_source, HitCharacterSource::Packet);
+        }
+    }
+
+    #[test]
+    fn creation_flower_requires_matching_record_owner_on_both_sides() {
+        let characters = HashMap::from([
+            (1010, character_with_attribute("娜娜莉", "灵")),
+            (1051, character_with_attribute("「零」", "光")),
+            (1055, character_with_attribute("九原", "灵")),
+        ]);
+        let mut flower = targetless_hit();
+        flower.char_id = 1010;
+        flower.char_name = "娜娜莉".to_owned();
+        flower.char_source = HitCharacterSource::Session;
+        flower.direction = HitDirection::Outgoing;
+        flower.attack_type = Some("创生花".to_owned());
+        flower.byte_offset = 253;
+        flower.bit_shift = 6;
+
+        reattribute_creation_flower_from_damage_record(&mut flower, &[(1051, 5, 157)], &characters);
+        assert_eq!(flower.char_id, 1010);
+        assert_eq!(flower.char_source, HitCharacterSource::Session);
+
+        reattribute_creation_flower_from_damage_record(
+            &mut flower,
+            &[(1051, 5, 157), (1055, 2, 368)],
+            &characters,
+        );
+        assert_eq!(flower.char_id, 1010);
+        assert_eq!(flower.char_source, HitCharacterSource::Session);
+
+        flower.attack_type = Some("Passive Damage".to_owned());
+        reattribute_creation_flower_from_damage_record(
+            &mut flower,
+            &[(1051, 5, 157), (1051, 2, 368)],
+            &characters,
+        );
+        assert_eq!(flower.char_id, 1010);
+        assert_eq!(flower.char_source, HitCharacterSource::Session);
     }
 
     #[test]
@@ -8772,6 +8958,30 @@ mod tests {
     }
 
     #[test]
+    fn abyss_restart_packet_also_identifies_new_first_half_stage() {
+        let events = abyss_events_from_text(
+            40.0,
+            "EAbyssFightStage::FirstHalf\nEAbyssFightStage::None\nFAbyssGamePlayData\nAbyss_Battle_Born\nAbyss_6",
+        );
+
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            events[0],
+            AbyssEvent::RestartDetected { timestamp: 40.0 }
+        ));
+        assert!(matches!(
+            events[1],
+            AbyssEvent::Stage {
+                timestamp: 40.0,
+                cycle: None,
+                floor: None,
+                half: AbyssHalf::First,
+                allow_late_backfill: false,
+            }
+        ));
+    }
+
+    #[test]
     fn jin_packet_events_emit_extra_time_stop_interval_markers() {
         let mut tracker = UltraTimeStopTracker::default();
         let events = tracker.events_from_packet(
@@ -8809,7 +9019,13 @@ mod tests {
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("载具伤害"));
@@ -8827,7 +9043,13 @@ mod tests {
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("环合"));
@@ -8847,12 +9069,20 @@ mod tests {
                 damage_source_category: Some("A".to_owned()),
                 ability_name: Some("GA_Nanally_Melee".to_owned()),
                 attack_type: "普攻".to_owned(),
+                damage_component: None,
+                owner_character_id: None,
             },
         )]);
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::from(skills));
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::from(skills),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("普攻"));
@@ -8916,6 +9146,26 @@ mod tests {
     }
 
     #[test]
+    fn creation_flower_passive_keeps_reaction_settlement_owner() {
+        let characters = HashMap::from([
+            (1051, character_with_attribute("「零」", "光")),
+            (1075, character_with_attribute("伊洛伊", "灵")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1051;
+        hit.char_name = "「零」".to_owned();
+        hit.char_source = HitCharacterSource::Session;
+        hit.ability_name = Some("GA_Oneiroi_Passive_1".to_owned());
+        hit.attack_type = Some("创生花".to_owned());
+
+        reattribute_hit_from_ability_name(&mut hit, false, &characters);
+
+        assert_eq!(hit.char_id, 1051);
+        assert_eq!(hit.char_name, "「零」");
+        assert_eq!(hit.char_source, HitCharacterSource::Session);
+    }
+
+    #[test]
     fn reaction_damage_effect_overrides_incoming_direction() {
         let effects = [ParsedGameplayEffect {
             unique_index: 4010,
@@ -8926,10 +9176,268 @@ mod tests {
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("创生花"));
+    }
+
+    #[test]
+    fn multi_effect_packet_matches_each_damage_record_by_position() {
+        let effects = [
+            ParsedGameplayEffect {
+                unique_index: 52,
+                byte_offset: 78,
+                bit_shift: 3,
+            },
+            ParsedGameplayEffect {
+                unique_index: 3529,
+                byte_offset: 561,
+                bit_shift: 5,
+            },
+        ];
+        let names = HashMap::from([
+            (52, "GE_ActorReaction_1_Damage".to_owned()),
+            (3529, "GE_Player_Kuhara_SeedReaction_Damage".to_owned()),
+        ]);
+        let catalog = AbilityCatalog::from(HashMap::from([(
+            "GE_Player_Kuhara_SeedReaction_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("A".to_owned()),
+                ability_name: Some("GA_Kuhara_Passive_2".to_owned()),
+                attack_type: "Passive Damage".to_owned(),
+                damage_component: Some("Additional Settlement".to_owned()),
+                owner_character_id: Some(1055),
+            },
+        )]));
+        let mut creation_flower = targetless_hit();
+        creation_flower.byte_offset = 244;
+        creation_flower.bit_shift = 5;
+        let mut seed_reaction = targetless_hit();
+        seed_reaction.byte_offset = 727;
+        seed_reaction.bit_shift = 7;
+
+        enrich_hit_with_gameplay_effect(&mut creation_flower, &effects, &names, &catalog, None);
+        enrich_hit_with_gameplay_effect(
+            &mut seed_reaction,
+            &effects,
+            &names,
+            &catalog,
+            Some(creation_flower.byte_offset * 8 + usize::from(creation_flower.bit_shift)),
+        );
+        let characters = HashMap::from([(1055, character_with_attribute("无主幽灵", "暗"))]);
+        reattribute_hit_from_gameplay_effect_semantics(&mut seed_reaction, &catalog, &characters);
+
+        assert_eq!(creation_flower.gameplay_effect_index, Some(52));
+        assert_eq!(
+            creation_flower.gameplay_effect_name.as_deref(),
+            Some("GE_ActorReaction_1_Damage")
+        );
+        assert_eq!(creation_flower.attack_type.as_deref(), Some("创生花"));
+        assert_eq!(creation_flower.ability_name, None);
+        assert_eq!(seed_reaction.gameplay_effect_index, Some(3529));
+        assert_eq!(
+            seed_reaction.gameplay_effect_name.as_deref(),
+            Some("GE_Player_Kuhara_SeedReaction_Damage")
+        );
+        assert_eq!(
+            seed_reaction.ability_name.as_deref(),
+            Some("GA_Kuhara_Passive_2")
+        );
+        assert_eq!(
+            seed_reaction.damage_component.as_deref(),
+            Some("Additional Settlement")
+        );
+        assert_eq!(seed_reaction.attack_type.as_deref(), Some("Passive Damage"));
+        assert_eq!(seed_reaction.char_id, 1055);
+        assert_eq!(seed_reaction.char_name, "无主幽灵");
+        assert_eq!(
+            seed_reaction.char_source,
+            HitCharacterSource::GameplayEffect
+        );
+    }
+
+    #[test]
+    fn compact_gameplay_effect_records_classify_the_preceding_damage() {
+        let effects = [
+            ParsedGameplayEffect {
+                unique_index: 3983,
+                byte_offset: 78,
+                bit_shift: 6,
+            },
+            ParsedGameplayEffect {
+                unique_index: 3983,
+                byte_offset: 401,
+                bit_shift: 7,
+            },
+            ParsedGameplayEffect {
+                unique_index: 4579,
+                byte_offset: 711,
+                bit_shift: 6,
+            },
+        ];
+        let names = HashMap::from([
+            (3983, "GE_Player_Shinku_Skill1_2_Damage".to_owned()),
+            (4579, "GE_Player_Shinku_WatchEx_Damage".to_owned()),
+        ]);
+        let catalog = AbilityCatalog::from(HashMap::from([
+            (
+                "GE_Player_Shinku_Skill1_2_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Shinku_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                    damage_component: None,
+                    owner_character_id: None,
+                },
+            ),
+            (
+                "GE_Player_Shinku_WatchEx_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("A".to_owned()),
+                    ability_name: Some("GA_Shinku_Passive_3".to_owned()),
+                    attack_type: "Passive Damage".to_owned(),
+                    damage_component: Some("Instant Strike Bonus".to_owned()),
+                    owner_character_id: Some(1076),
+                },
+            ),
+        ]));
+        let mut first = targetless_hit();
+        first.byte_offset = 245;
+        let mut second = targetless_hit();
+        second.byte_offset = 554;
+        second.bit_shift = 7;
+        let mut third = targetless_hit();
+        third.byte_offset = 869;
+        third.bit_shift = 6;
+
+        enrich_hit_with_gameplay_effect(&mut first, &effects, &names, &catalog, None);
+        enrich_hit_with_gameplay_effect(
+            &mut second,
+            &effects,
+            &names,
+            &catalog,
+            Some(first.byte_offset * 8 + usize::from(first.bit_shift)),
+        );
+        enrich_hit_with_gameplay_effect(
+            &mut third,
+            &effects,
+            &names,
+            &catalog,
+            Some(second.byte_offset * 8 + usize::from(second.bit_shift)),
+        );
+
+        assert_eq!(first.gameplay_effect_index, Some(3983));
+        assert_eq!(second.gameplay_effect_index, Some(4579));
+        assert_eq!(third.gameplay_effect_index, None);
+        assert_eq!(
+            second.gameplay_effect_name.as_deref(),
+            Some("GE_Player_Shinku_WatchEx_Damage")
+        );
+        assert_eq!(second.ability_name.as_deref(), Some("GA_Shinku_Passive_3"));
+        assert_eq!(second.attack_type.as_deref(), Some("Passive Damage"));
+        assert_eq!(
+            second.damage_component.as_deref(),
+            Some("Instant Strike Bonus")
+        );
+    }
+
+    #[test]
+    fn repeated_watch_packets_match_each_trailing_compact_effect() {
+        let cases = [
+            (4072, (78, 6), (401, 7), 4579, (781, 6), (245, 0), (624, 7)),
+            (3981, (78, 3), (401, 4), 4083, (733, 3), (244, 5), (576, 4)),
+            (3917, (78, 3), (401, 4), 4083, (733, 3), (244, 5), (576, 4)),
+            (3917, (78, 3), (401, 4), 4083, (725, 3), (244, 5), (568, 4)),
+        ];
+
+        for (
+            main_index,
+            main_full,
+            main_compact,
+            watch_index,
+            watch_compact,
+            first_position,
+            second_position,
+        ) in cases
+        {
+            let effects = [
+                ParsedGameplayEffect {
+                    unique_index: main_index,
+                    byte_offset: main_full.0,
+                    bit_shift: main_full.1,
+                },
+                ParsedGameplayEffect {
+                    unique_index: main_index,
+                    byte_offset: main_compact.0,
+                    bit_shift: main_compact.1,
+                },
+                ParsedGameplayEffect {
+                    unique_index: watch_index,
+                    byte_offset: watch_compact.0,
+                    bit_shift: watch_compact.1,
+                },
+            ];
+            let mut first = targetless_hit();
+            first.byte_offset = first_position.0;
+            first.bit_shift = first_position.1;
+            let mut second = targetless_hit();
+            second.byte_offset = second_position.0;
+            second.bit_shift = second_position.1;
+
+            assert_eq!(
+                matching_gameplay_effect(&first, &effects, None).map(|effect| effect.unique_index),
+                Some(main_index)
+            );
+            assert_eq!(
+                matching_gameplay_effect(
+                    &second,
+                    &effects,
+                    Some(first.byte_offset * 8 + usize::from(first.bit_shift)),
+                )
+                .map(|effect| effect.unique_index),
+                Some(watch_index)
+            );
+        }
+    }
+
+    #[test]
+    fn damage_record_without_own_effect_does_not_reuse_previous_record_effect() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 3983,
+            byte_offset: 78,
+            bit_shift: 3,
+        }];
+        let names = HashMap::from([(3983, "GE_Player_Shinku_Skill1_2_Damage".to_owned())]);
+        let mut first = targetless_hit();
+        first.byte_offset = 244;
+        first.bit_shift = 5;
+        let mut second = targetless_hit();
+        second.byte_offset = 500;
+
+        enrich_hit_with_gameplay_effect(
+            &mut first,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+        enrich_hit_with_gameplay_effect(
+            &mut second,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            Some(first.byte_offset * 8 + usize::from(first.bit_shift)),
+        );
+
+        assert_eq!(first.gameplay_effect_index, Some(3983));
+        assert_eq!(second.gameplay_effect_index, None);
     }
 
     #[test]
@@ -8943,7 +9451,13 @@ mod tests {
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("黯星"));
@@ -8960,7 +9474,13 @@ mod tests {
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Incoming;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("倾陷伤害"));
@@ -8977,7 +9497,36 @@ mod tests {
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Outgoing;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::default());
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+
+        assert_eq!(hit.direction, HitDirection::Incoming);
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
+    }
+
+    #[test]
+    fn boss_damage_effect_overrides_outgoing_direction_to_incoming() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 4116,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(4116, "GE_boss_26_act16_Dmg02_BP".to_owned())]);
+        let mut hit = targetless_hit();
+        hit.direction = HitDirection::Outgoing;
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Incoming);
         assert_eq!(hit.attack_type.as_deref(), Some("其他"));
@@ -8997,12 +9546,20 @@ mod tests {
                 damage_source_category: Some("E".to_owned()),
                 ability_name: Some("GA_Lacrimosa_Skill".to_owned()),
                 attack_type: "E技能".to_owned(),
+                damage_component: None,
+                owner_character_id: None,
             },
         )]);
         let mut hit = targetless_hit();
         hit.direction = HitDirection::Outgoing;
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &AbilityCatalog::from(skills));
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::from(skills),
+            None,
+        );
 
         assert_eq!(hit.direction, HitDirection::Outgoing);
         assert_eq!(hit.attack_type.as_deref(), Some("E技能"));
@@ -9062,6 +9619,7 @@ mod tests {
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: None,
+            damage_component: None,
             attack_type: None,
             damage_attribute: None,
             follow_up_damage: 0.0,
@@ -9601,6 +10159,8 @@ mod tests {
                 damage_source_category: Some("E".to_owned()),
                 ability_name: Some("GA_Test_Skill".to_owned()),
                 attack_type: "E技能".to_owned(),
+                damage_component: None,
+                owner_character_id: None,
             },
         )]));
         let effects = [ParsedGameplayEffect {
@@ -9611,7 +10171,7 @@ mod tests {
         let names = HashMap::from([(42, "GE_Test_Skill1_Damage".to_owned())]);
         let mut hit = targetless_hit();
 
-        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &catalog);
+        enrich_hit_with_gameplay_effect(&mut hit, &effects, &names, &catalog, None);
 
         assert_eq!(hit.ability_name.as_deref(), Some("GA_Test_Skill"));
         assert_eq!(hit.attack_type.as_deref(), Some("E技能"));

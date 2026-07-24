@@ -38,7 +38,8 @@ use crate::engine::model::{
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog,
-    SKILL_DAMAGE_DATA_PATH, load_characters, load_equipment_catalog,
+    GAMEPLAY_EFFECT_SEMANTICS_PATH, SKILL_DAMAGE_DATA_PATH, load_characters,
+    load_equipment_catalog,
 };
 use crate::platform::equipment_plugin::{
     EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
@@ -126,9 +127,11 @@ struct RuntimeResources {
 
 impl RuntimeResources {
     fn load() -> anyhow::Result<Self> {
+        let mut ability_catalog = AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))?;
+        ability_catalog.apply_semantics(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))?;
         Ok(Self {
             characters: Arc::new(load_characters(Path::new(CHARACTER_DATA_PATH))?),
-            ability_catalog: Arc::new(AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))?),
+            ability_catalog: Arc::new(ability_catalog),
             equipment_catalog: load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))?,
         })
     }
@@ -1518,6 +1521,7 @@ mod tests {
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: Some("Skill".to_owned()),
+            damage_component: None,
             attack_type: Some("normal".to_owned()),
             damage_attribute: None,
             follow_up_damage: 0.0,

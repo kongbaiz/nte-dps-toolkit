@@ -1721,15 +1721,16 @@ mod tests {
         AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailFilter,
         NotificationState, PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache,
         SkillDamageSummary, SkillSummaryCache, TimelineCache, UiConfigSavePlan, UiPreferences,
-        WindowState, adjusted_cached_index, build_team_dps_export, cached_hit_row, character_color,
-        compare_cached_team_hits, comparison_skill_display_name, damage_digit_key_for_hit,
-        damage_digit_resource_path, damage_number_digits_text,
-        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
-        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
-        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
+        WindowState, adjusted_cached_index, aggregate_character_skill_damage,
+        build_team_dps_export, cached_hit_row, character_color, compare_cached_team_hits,
+        comparison_skill_display_name, damage_digit_key_for_hit, damage_digit_resource_path,
+        damage_number_digits_text, fill_missing_character_colors_from_avatars,
+        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
+        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
+        qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
-        resolve_cached_hit, skill_display_name, snapshot_team_from_stats,
-        summarize_qte_type_filters, translate_reaction_label,
+        resolve_cached_hit, skill_display_name, skill_summary_display_text,
+        snapshot_team_from_stats, summarize_qte_type_filters, translate_reaction_label,
     };
     use crate::engine::model::{
         CaptureQualitySource, CharacterInfo, CharacterStats, CombatSessionSkillSummary,
@@ -1995,6 +1996,9 @@ mod tests {
                     .map(|index| SkillDamageSummary {
                         name: format!("skill-{index}"),
                         category: format!("category-{}", index % 8),
+                        ability_name: None,
+                        gameplay_effect_name: None,
+                        damage_name: None,
                         hits: index as u64,
                         damage: index as f64 * 100.0,
                     })
@@ -2090,6 +2094,7 @@ mod tests {
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: Some("招式".to_owned()),
+            damage_component: None,
             attack_type: None,
             damage_attribute: None,
             follow_up_damage: 0.0,
@@ -2202,12 +2207,15 @@ mod tests {
                     damage_source_category: Some("Q".to_owned()),
                     ability_name: Some("GA_Sagiri_UltraSkill".to_owned()),
                     attack_type: "Q技能".to_owned(),
+                    damage_component: None,
+                    owner_character_id: None,
                 },
             )]),
             std::collections::HashMap::from([(
                 "GA_Sagiri_UltraSkill".to_owned(),
                 "現在の言語での技名".to_owned(),
             )]),
+            std::collections::HashMap::new(),
         );
 
         let mut hit = hit_with_direction("outgoing");
@@ -2229,6 +2237,45 @@ mod tests {
         assert_eq!(
             comparison_skill_display_name(&comparison_row),
             "現在の言語での技名"
+        );
+
+        crate::storage::ability_names::set_for_test(
+            std::collections::HashMap::from([(
+                "GE_Player_Sagiri_UltraSkill1_Damage".to_owned(),
+                crate::engine::parser::GameplayEffectSkill {
+                    damage_source_category: Some("Q".to_owned()),
+                    ability_name: Some("GA_Sagiri_UltraSkill".to_owned()),
+                    attack_type: "Passive Damage".to_owned(),
+                    damage_component: Some("Follow-up Attack".to_owned()),
+                    owner_character_id: None,
+                },
+            )]),
+            std::collections::HashMap::from([(
+                "GA_Sagiri_UltraSkill".to_owned(),
+                "現在の言語での技名".to_owned(),
+            )]),
+            std::collections::HashMap::from([(
+                "GE_Player_Sagiri_UltraSkill1_Damage".to_owned(),
+                ("追加攻撃".to_owned(), true),
+            )]),
+        );
+
+        assert_eq!(
+            hit_type_display_text(&hit),
+            "Ultimate·現在の言語での技名 · 追加攻撃"
+        );
+        assert_eq!(
+            comparison_skill_display_name(&comparison_row),
+            "現在の言語での技名 · 追加攻撃"
+        );
+
+        hit.damage_component = Some("Follow-up Attack".to_owned());
+        let summaries =
+            aggregate_character_skill_damage(&std::collections::VecDeque::from([hit]), 1);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(
+            skill_summary_display_text(&summaries[0]),
+            "現在の言語での技名 · 追加攻撃"
         );
     }
 
@@ -2258,6 +2305,15 @@ mod tests {
     }
 
     #[test]
+    fn hit_type_display_text_does_not_repeat_translated_category() {
+        let mut hit = hit_with_direction("outgoing");
+        hit.attack_type = Some("创生花".to_owned());
+        hit.damage_name = Some("Blossom Damage".to_owned());
+
+        assert_eq!(hit_type_display_text(&hit), "Blossom Damage");
+    }
+
+    #[test]
     fn translate_reaction_label_covers_conditions_and_qte_prefix() {
         assert_eq!(translate_reaction_label("创生花"), "Blossom Damage");
         assert_eq!(translate_reaction_label("覆纹"), "Hexed");
@@ -2268,6 +2324,12 @@ mod tests {
         assert_eq!(translate_reaction_label("环合·黯星"), "Esper Cycle · Nova");
         assert_eq!(translate_reaction_label("普攻"), "Basic Attack");
         assert_eq!(translate_reaction_label("Q技能"), "Ultimate");
+        assert_eq!(translate_reaction_label("Passive Damage"), "Passive Damage");
+        assert_eq!(translate_reaction_label("Special Damage"), "Special Damage");
+        assert_eq!(
+            translate_reaction_label("Awakening Damage"),
+            "Awakening Damage"
+        );
         // Move names have no category match, so they pass through unchanged.
         assert_eq!(translate_reaction_label("酸甜口味的制裁"), "酸甜口味的制裁");
     }

@@ -6,8 +6,12 @@ use crate::core::update::{
     AvailableComponentUpdate, MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
     verify_manifest,
 };
+use crate::platform::equipment_plugin::EquipmentPluginDeploymentError;
 use crate::platform::update_http;
-use crate::storage::update::{self as update_storage, PrepareUpdateError, PreparedUpdate};
+use crate::storage::update::{
+    self as update_storage, ComponentVersionError, InstallPluginUpdateError, PrepareUpdateError,
+    PreparedUpdate,
+};
 
 const PROGRESS_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -51,14 +55,23 @@ pub(crate) struct UpdateClientState {
 }
 
 enum UpdateWorkerEvent {
-    CheckFinished(Result<Vec<AvailableComponentUpdate>, String>),
+    CheckFinished(Result<Vec<AvailableComponentUpdate>, CheckUpdateError>),
     DownloadProgress {
         component: UpdateComponent,
         downloaded: u64,
         total: u64,
     },
     DownloadFinished(Result<PreparedUpdate, PrepareUpdateError>),
-    PluginInstallFinished(Result<(Version, Vec<AvailableComponentUpdate>), String>),
+    PluginInstallFinished(
+        Result<(Version, Vec<AvailableComponentUpdate>), InstallPluginUpdateError>,
+    ),
+}
+
+#[derive(Debug)]
+enum CheckUpdateError {
+    Download(update_http::HttpError),
+    ComponentState(ComponentVersionError),
+    Manifest(UpdateError),
 }
 
 impl UpdateClientState {
@@ -141,10 +154,10 @@ impl DpsApp {
                     self.update_client.prepared = None;
                     self.update_client.status = UpdateStatus::UpToDate;
                 }
-                UpdateWorkerEvent::CheckFinished(Err(detail)) => {
+                UpdateWorkerEvent::CheckFinished(Err(error)) => {
                     self.update_client.status = UpdateStatus::Failed {
                         stage: UpdateFailureStage::Check,
-                        detail,
+                        detail: update_check_error_detail(&error),
                     };
                 }
                 UpdateWorkerEvent::DownloadProgress {
@@ -189,10 +202,10 @@ impl DpsApp {
                         UpdateStatus::Available
                     };
                 }
-                UpdateWorkerEvent::PluginInstallFinished(Err(detail)) => {
+                UpdateWorkerEvent::PluginInstallFinished(Err(error)) => {
                     self.update_client.status = UpdateStatus::Failed {
                         stage: UpdateFailureStage::Install,
-                        detail,
+                        detail: plugin_update_error_detail(&error),
                     };
                 }
             }
@@ -233,7 +246,7 @@ impl DpsApp {
             Err(error) => {
                 self.update_client.status = UpdateStatus::Failed {
                     stage: UpdateFailureStage::Check,
-                    detail: error.to_string(),
+                    detail: update_manifest_error_detail(&error),
                 };
                 return;
             }
@@ -242,7 +255,7 @@ impl DpsApp {
         let sender = self.update_client.sender.clone();
         let repaint = ctx.clone();
         thread::spawn(move || {
-            let result = check_for_update(&endpoint).map_err(|error| error.to_string());
+            let result = check_for_update(&endpoint);
             let _ = sender.send(UpdateWorkerEvent::CheckFinished(result));
             repaint.request_repaint();
         });
@@ -313,7 +326,7 @@ impl DpsApp {
                     Err(error) => {
                         self.update_client.status = UpdateStatus::Failed {
                             stage: UpdateFailureStage::Install,
-                            detail: error.to_string(),
+                            detail: updater_launch_error_detail(&error),
                         };
                     }
                 }
@@ -333,8 +346,7 @@ impl DpsApp {
                 let repaint = ctx.clone();
                 thread::spawn(move || {
                     let result = update_storage::install_prepared_plugin_update(&prepared)
-                        .map(|()| (version, remaining))
-                        .map_err(|error| error.to_string());
+                        .map(|()| (version, remaining));
                     let _ = sender.send(UpdateWorkerEvent::PluginInstallFinished(result));
                     repaint.request_repaint();
                 });
@@ -345,34 +357,184 @@ impl DpsApp {
 
 fn check_for_update(
     endpoint: &UpdateEndpoint,
-) -> Result<Vec<AvailableComponentUpdate>, Box<dyn std::error::Error + Send + Sync>> {
-    let manifest = update_http::get_bytes(&endpoint.manifest_url, MAX_MANIFEST_BYTES)?;
+) -> Result<Vec<AvailableComponentUpdate>, CheckUpdateError> {
+    let manifest = update_http::get_bytes(&endpoint.manifest_url, MAX_MANIFEST_BYTES)
+        .map_err(CheckUpdateError::Download)?;
     let current_version = Version::parse(env!("CARGO_PKG_VERSION"))
         .expect("Cargo package version is valid semantic versioning");
-    let installed = update_storage::installed_component_versions(current_version)?;
-    Ok(verify_manifest(&manifest, endpoint, &installed)?)
+    let installed = update_storage::installed_component_versions(current_version)
+        .map_err(CheckUpdateError::ComponentState)?;
+    verify_manifest(&manifest, endpoint, &installed).map_err(CheckUpdateError::Manifest)
+}
+
+fn update_check_error_detail(error: &CheckUpdateError) -> String {
+    match error {
+        CheckUpdateError::Download(error) => update_http_error_detail(error),
+        CheckUpdateError::ComponentState(error) => component_version_error_detail(error),
+        CheckUpdateError::Manifest(error) => update_manifest_error_detail(error),
+    }
+}
+
+fn update_manifest_error_detail(error: &UpdateError) -> String {
+    match error {
+        UpdateError::ClientNotConfigured => {
+            t("The official update channel is not configured in this build")
+        }
+        UpdateError::InvalidCompiledPublicKey => {
+            t("This build contains an invalid update verification key")
+        }
+        UpdateError::ManifestTooLarge
+        | UpdateError::InvalidEnvelope
+        | UpdateError::MissingTrustedSignature
+        | UpdateError::InvalidSignature
+        | UpdateError::InvalidPayload
+        | UpdateError::UnsupportedSchema(_)
+        | UpdateError::WrongProduct
+        | UpdateError::WrongChannel
+        | UpdateError::InvalidReleaseId
+        | UpdateError::UnsupportedUpdaterProtocol(_)
+        | UpdateError::InvalidVersion
+        | UpdateError::InvalidVersionRequirement
+        | UpdateError::DuplicateComponent(_)
+        | UpdateError::InvalidArtifactUrl
+        | UpdateError::InvalidArtifactSize
+        | UpdateError::InvalidArtifactHash => {
+            t("The official update manifest is invalid or incompatible with this build")
+        }
+    }
+}
+
+fn update_http_error_detail(error: &update_http::HttpError) -> String {
+    match error {
+        update_http::HttpError::InvalidUrl(_) => t("The official update URL is invalid"),
+        update_http::HttpError::Transport { source, .. } => tf(
+            "The update server connection failed (system error {})",
+            &[&system_error_code(source)],
+        ),
+        update_http::HttpError::Status(status) => {
+            tf("The update server returned HTTP {}", &[&status.to_string()])
+        }
+        update_http::HttpError::ResponseTooLarge {
+            maximum,
+            received_at_least,
+        } => tf(
+            "The update response exceeds the allowed size: maximum {} bytes, received at least {} bytes",
+            &[&maximum.to_string(), &received_at_least.to_string()],
+        ),
+        update_http::HttpError::PackageLargerThanManifest {
+            expected,
+            received_at_least,
+        } => tf(
+            "The official update package is inconsistent with its signed manifest: the manifest declares {} bytes, but the server returned at least {} bytes. Please retry later or report this release.",
+            &[&expected.to_string(), &received_at_least.to_string()],
+        ),
+        update_http::HttpError::SizeMismatch { expected, actual } => tf(
+            "The official update package is incomplete: the signed manifest declares {} bytes, but the server returned {} bytes. Please retry later or report this release.",
+            &[&expected.to_string(), &actual.to_string()],
+        ),
+        update_http::HttpError::File(error) => tf(
+            "The update file operation failed (system error {})",
+            &[&system_error_code(error)],
+        ),
+    }
+}
+
+fn component_version_error_detail(error: &ComponentVersionError) -> String {
+    match error {
+        ComponentVersionError::File(error) => tf(
+            "The installed component state could not be read (system error {})",
+            &[&system_error_code(error)],
+        ),
+        ComponentVersionError::TooLarge | ComponentVersionError::Invalid(_) => {
+            t("The installed component version state is invalid")
+        }
+    }
 }
 
 fn update_download_error_detail(error: &PrepareUpdateError) -> String {
     match error {
-        PrepareUpdateError::Download(update_http::HttpError::PackageLargerThanManifest {
-            expected,
-            received_at_least,
-        }) => tf(
-            "The official update package is inconsistent with its signed manifest: the manifest declares {} bytes, but the server returned at least {} bytes. Please retry later or report this release.",
-            &[&expected.to_string(), &received_at_least.to_string()],
-        ),
-        PrepareUpdateError::Download(update_http::HttpError::SizeMismatch { expected, actual }) => {
-            tf(
-                "The official update package is incomplete: the signed manifest declares {} bytes, but the server returned {} bytes. Please retry later or report this release.",
-                &[&expected.to_string(), &actual.to_string()],
-            )
-        }
+        PrepareUpdateError::Download(error) => update_http_error_detail(error),
         PrepareUpdateError::HashMismatch => t(
             "The official update package SHA-256 does not match its signed manifest. Download it again; if the problem continues, report this release.",
         ),
-        _ => error.to_string(),
+        PrepareUpdateError::Archive(_)
+        | PrepareUpdateError::UnsafeArchivePath(_)
+        | PrepareUpdateError::UnsupportedArchivePath(_)
+        | PrepareUpdateError::TooManyArchiveEntries
+        | PrepareUpdateError::ArchiveTooLarge
+        | PrepareUpdateError::MissingApplication
+        | PrepareUpdateError::MissingUpdater
+        | PrepareUpdateError::MissingEquipmentPlugin
+        | PrepareUpdateError::UnexpectedPluginArchiveContents
+        | PrepareUpdateError::InvalidEquipmentPluginSize => {
+            t("The official update package has an invalid structure")
+        }
+        PrepareUpdateError::File(error) => tf(
+            "The update files could not be prepared (system error {})",
+            &[&system_error_code(error)],
+        ),
+        PrepareUpdateError::Transaction(_) => t("The update transaction could not be prepared"),
     }
+}
+
+fn updater_launch_error_detail(error: &std::io::Error) -> String {
+    tf(
+        "The updater process could not be started (system error {})",
+        &[&system_error_code(error)],
+    )
+}
+
+fn plugin_update_error_detail(error: &InstallPluginUpdateError) -> String {
+    match error {
+        InstallPluginUpdateError::WrongComponent => {
+            t("The prepared update component does not match")
+        }
+        InstallPluginUpdateError::HashMismatch => {
+            t("The prepared equipment plugin hash does not match")
+        }
+        InstallPluginUpdateError::File(error) => tf(
+            "The equipment plugin update file operation failed (system error {})",
+            &[&system_error_code(error)],
+        ),
+        InstallPluginUpdateError::State(_) | InstallPluginUpdateError::Rollback(_) => {
+            t("The equipment plugin update could not be completed")
+        }
+        InstallPluginUpdateError::Deployment(error) => equipment_plugin_update_error_detail(error),
+    }
+}
+
+fn equipment_plugin_update_error_detail(error: &EquipmentPluginDeploymentError) -> String {
+    match error {
+        EquipmentPluginDeploymentError::GameRunning => {
+            t("Close HTGame.exe before changing the equipment plugin.")
+        }
+        EquipmentPluginDeploymentError::GameProcessProbe(_) => {
+            t("Equipment plugin status check failed")
+        }
+        EquipmentPluginDeploymentError::GameInstallationNotFound => {
+            t("Game installation not detected")
+        }
+        EquipmentPluginDeploymentError::Registry(_) => t("Game installation not detected"),
+        EquipmentPluginDeploymentError::PluginSourceNotFound => {
+            t("Equipment plugin file plugins/dwmapi.dll was not found")
+        }
+        EquipmentPluginDeploymentError::ConflictingDwmapi => t(
+            "The game directory already contains a dwmapi.dll that is not managed by this tool. Remove the conflicting mod manually before enabling this plugin.",
+        ),
+        EquipmentPluginDeploymentError::InstalledPluginChanged => t(
+            "The installed dwmapi.dll or its ownership marker changed outside this tool. Check the game directory manually before trying again.",
+        ),
+        EquipmentPluginDeploymentError::FileSystem(_) => {
+            t("The equipment plugin files could not be updated")
+        }
+    }
+}
+
+fn system_error_code(error: &std::io::Error) -> String {
+    error
+        .raw_os_error()
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "-".to_owned())
 }
 
 #[cfg(test)]
@@ -417,5 +579,22 @@ mod tests {
         });
 
         assert!(!state.can_check());
+    }
+
+    #[test]
+    fn update_error_details_do_not_expose_internal_error_text() {
+        let manifest = update_manifest_error_detail(&UpdateError::DuplicateComponent(
+            "private-component".to_owned(),
+        ));
+        let archive = update_download_error_detail(&PrepareUpdateError::Archive(
+            "private-archive-detail".to_owned(),
+        ));
+        let plugin = plugin_update_error_detail(&InstallPluginUpdateError::State(
+            "private-state-detail".to_owned(),
+        ));
+
+        assert!(!manifest.contains("private-component"));
+        assert!(!archive.contains("private-archive-detail"));
+        assert!(!plugin.contains("private-state-detail"));
     }
 }
