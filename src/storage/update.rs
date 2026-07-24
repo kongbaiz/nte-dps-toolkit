@@ -5,6 +5,7 @@ use std::io::{self, Read, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::time::Duration;
 
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -28,7 +29,11 @@ const MAX_COMPONENT_STATE_BYTES: u64 = 64 * 1024;
 const MAX_EQUIPMENT_PLUGIN_BYTES: u64 = 64 * 1024 * 1024;
 const EQUIPMENT_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
 const EQUIPMENT_PLUGIN_BASELINE_VERSION_PATH: &str = "plugins/equipment-plugin.version";
-const EQUIPMENT_PLUGIN_STATE_FILE: &str = "components.json";
+const EQUIPMENT_PLUGIN_STATE_PATH: &str = "plugins/equipment-plugin.state.json";
+const LEGACY_EQUIPMENT_PLUGIN_STATE_PATH: &str = ".update/components.json";
+const COMPLETED_UPDATE_CLEANUP_DELAY: Duration = Duration::from_secs(1);
+const COMPLETED_UPDATE_CLEANUP_RETRY_INTERVAL: Duration = Duration::from_millis(250);
+const COMPLETED_UPDATE_CLEANUP_ATTEMPTS: usize = 40;
 
 #[derive(Clone, Debug)]
 pub enum PreparedUpdate {
@@ -408,6 +413,7 @@ pub fn install_prepared_plugin_update(
     }
     let _ = fs::remove_dir_all(backup_root);
     let _ = fs::remove_dir_all(staging_dir);
+    cleanup_completed_update_files(&install_dir);
     Ok(())
 }
 
@@ -427,13 +433,11 @@ fn read_recorded_plugin_version(
     install_dir: &Path,
     plugin_path: &Path,
 ) -> Result<Option<Version>, ComponentVersionError> {
-    let state_path = component_state_path(install_dir);
-    let state = match read_limited_text(&state_path, MAX_COMPONENT_STATE_BYTES) {
-        Ok(Some(text)) => serde_json::from_str::<ComponentStateDocument>(&text)
-            .map_err(|error| ComponentVersionError::Invalid(error.to_string()))?,
-        Ok(None) => return Ok(None),
-        Err(error) => return Err(error),
+    let Some(text) = read_component_state_text_raw(install_dir)? else {
+        return Ok(None);
     };
+    let state = serde_json::from_str::<ComponentStateDocument>(&text)
+        .map_err(|error| ComponentVersionError::Invalid(error.to_string()))?;
     if state.schema != COMPONENT_STATE_SCHEMA {
         return Err(ComponentVersionError::Invalid(format!(
             "unsupported schema {}",
@@ -475,19 +479,33 @@ fn decode_sha256(value: &str) -> Result<[u8; 32], ComponentVersionError> {
 }
 
 fn component_state_path(install_dir: &Path) -> PathBuf {
-    install_dir
-        .join(UPDATE_ROOT_DIRECTORY)
-        .join(EQUIPMENT_PLUGIN_STATE_FILE)
+    install_dir.join(EQUIPMENT_PLUGIN_STATE_PATH)
+}
+
+fn legacy_component_state_path(install_dir: &Path) -> PathBuf {
+    install_dir.join(LEGACY_EQUIPMENT_PLUGIN_STATE_PATH)
+}
+
+fn read_component_state_text_raw(
+    install_dir: &Path,
+) -> Result<Option<String>, ComponentVersionError> {
+    if let Some(text) = read_limited_text(
+        &component_state_path(install_dir),
+        MAX_COMPONENT_STATE_BYTES,
+    )? {
+        return Ok(Some(text));
+    }
+    read_limited_text(
+        &legacy_component_state_path(install_dir),
+        MAX_COMPONENT_STATE_BYTES,
+    )
 }
 
 fn read_component_state_text(
     install_dir: &Path,
 ) -> Result<Option<String>, InstallPluginUpdateError> {
-    read_limited_text(
-        &component_state_path(install_dir),
-        MAX_COMPONENT_STATE_BYTES,
-    )
-    .map_err(|error| InstallPluginUpdateError::State(error.to_string()))
+    read_component_state_text_raw(install_dir)
+        .map_err(|error| InstallPluginUpdateError::State(error.to_string()))
 }
 
 fn write_plugin_component_state(
@@ -546,46 +564,117 @@ fn copy_synced(source: &Path, destination: &Path) -> io::Result<()> {
     File::options().write(true).open(destination)?.sync_all()
 }
 
-pub fn mark_update_healthy_from_environment() -> io::Result<()> {
+pub fn mark_update_healthy_from_environment() -> io::Result<Option<PathBuf>> {
     let Some(marker) = std::env::var_os(UPDATE_HEALTH_MARKER_ENV).map(PathBuf::from) else {
-        return Ok(());
+        return Ok(None);
     };
     let allowed_root = paths::software_dir()
         .canonicalize()?
         .join(UPDATE_ROOT_DIRECTORY)
         .join("health");
-    if marker.parent() != Some(allowed_root.as_path()) {
+    if marker.parent() != Some(allowed_root.as_path())
+        || health_marker_transaction_id(&marker).is_none()
+    {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "update health marker is outside the managed directory",
         ));
     }
     fs::create_dir_all(&allowed_root)?;
-    let mut file = File::create(marker)?;
+    let mut file = File::create(&marker)?;
     file.write_all(b"healthy\n")?;
-    file.sync_all()
+    file.sync_all()?;
+    Ok(Some(marker))
 }
 
 pub fn cleanup_completed_update_staging() {
-    let update_root = paths::software_dir().join(UPDATE_ROOT_DIRECTORY);
-    let staging_root = update_root.join("staging");
-    let transactions_root = update_root.join("transactions");
-    let Ok(entries) = fs::read_dir(staging_root) else {
+    cleanup_completed_update_files(&paths::software_dir());
+}
+
+pub fn cleanup_completed_app_update(marker: PathBuf) {
+    let Some(transaction_id) = health_marker_transaction_id(&marker).map(str::to_owned) else {
         return;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
+    let Some(update_root) = marker.parent().and_then(Path::parent).map(Path::to_owned) else {
+        return;
+    };
+    std::thread::sleep(COMPLETED_UPDATE_CLEANUP_DELAY);
+    for _ in 0..COMPLETED_UPDATE_CLEANUP_ATTEMPTS {
+        cleanup_completed_transaction(&update_root, &transaction_id, &marker);
+        if !update_root.exists() {
+            return;
         }
-        let Some(id) = path.file_name() else {
-            continue;
-        };
-        let transaction = transactions_root.join(format!("{}.json", id.to_string_lossy()));
-        if !transaction.is_file() {
-            let _ = fs::remove_dir_all(path);
-        }
+        std::thread::sleep(COMPLETED_UPDATE_CLEANUP_RETRY_INTERVAL);
     }
+}
+
+fn cleanup_completed_update_root(update_root: &Path) {
+    if !update_root.is_dir() || has_pending_update_transaction(update_root) {
+        return;
+    }
+    let _ = fs::remove_dir_all(update_root);
+}
+
+fn cleanup_completed_update_files(install_dir: &Path) {
+    if let Err(error) = migrate_legacy_component_state(install_dir) {
+        eprintln!("Failed to migrate equipment plugin update state: {error}");
+        return;
+    }
+    cleanup_completed_update_root(&install_dir.join(UPDATE_ROOT_DIRECTORY));
+}
+
+fn migrate_legacy_component_state(install_dir: &Path) -> Result<(), String> {
+    let legacy_path = legacy_component_state_path(install_dir);
+    let Some(text) = read_limited_text(&legacy_path, MAX_COMPONENT_STATE_BYTES)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(());
+    };
+    let state_path = component_state_path(install_dir);
+    if !state_path.is_file() {
+        atomic_write_text(&state_path, &text)?;
+    }
+    Ok(())
+}
+
+fn has_pending_update_transaction(update_root: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(update_root.join("transactions")) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        entry
+            .path()
+            .extension()
+            .is_some_and(|extension| extension == "json")
+    })
+}
+
+fn cleanup_completed_transaction(update_root: &Path, transaction_id: &str, marker: &Path) {
+    let transactions_root = update_root.join("transactions");
+    if transactions_root
+        .join(format!("{transaction_id}.json"))
+        .is_file()
+    {
+        return;
+    }
+    let _ = fs::remove_dir_all(update_root.join("staging").join(transaction_id));
+    let _ = fs::remove_dir_all(update_root.join("backup").join(transaction_id));
+    let _ = fs::remove_file(transactions_root.join(format!("{transaction_id}.log")));
+    let _ = fs::remove_file(marker);
+    for directory in ["downloads", "staging", "transactions", "health", "backup"] {
+        let _ = fs::remove_dir(update_root.join(directory));
+    }
+    let _ = fs::remove_dir(update_root);
+}
+
+fn health_marker_transaction_id(marker: &Path) -> Option<&str> {
+    let transaction_id = marker.file_name()?.to_str()?.strip_suffix(".ok")?;
+    (!transaction_id.is_empty()
+        && transaction_id.len() <= 96
+        && transaction_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')))
+    .then_some(transaction_id)
 }
 
 fn sha256_file(path: &Path) -> Result<[u8; 32], PrepareUpdateError> {
@@ -719,6 +808,129 @@ mod tests {
         assert_eq!(
             release_path_key(Path::new("plugins/dwmapi.dll")),
             release_path_key(Path::new("PLUGINS/DWMAPI.DLL"))
+        );
+    }
+
+    #[test]
+    fn completed_update_cleanup_removes_the_managed_root() {
+        let root = update_test_directory("completed-cleanup");
+        let update_root = root.join(UPDATE_ROOT_DIRECTORY);
+        fs::create_dir_all(update_root.join("staging/app-0.3.6-hash")).unwrap();
+        fs::create_dir_all(update_root.join("transactions")).unwrap();
+        fs::create_dir_all(update_root.join("health")).unwrap();
+        fs::write(
+            update_root.join("transactions/app-0.3.6-hash.log"),
+            b"update completed\n",
+        )
+        .unwrap();
+        fs::write(update_root.join("health/app-0.3.6-hash.ok"), b"healthy\n").unwrap();
+
+        cleanup_completed_update_root(&update_root);
+
+        assert!(!update_root.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_update_cleanup_preserves_a_pending_transaction() {
+        let root = update_test_directory("pending-cleanup");
+        let update_root = root.join(UPDATE_ROOT_DIRECTORY);
+        let staging = update_root.join("staging/app-0.3.6-hash");
+        let transaction = update_root.join("transactions/app-0.3.6-hash.json");
+        fs::create_dir_all(&staging).unwrap();
+        fs::create_dir_all(transaction.parent().unwrap()).unwrap();
+        fs::write(&transaction, b"{}").unwrap();
+
+        cleanup_completed_update_root(&update_root);
+
+        assert!(staging.is_dir());
+        assert!(transaction.is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn completed_update_cleanup_migrates_plugin_state_out_of_update_root() {
+        let root = update_test_directory("state-migration");
+        let plugin_path = root.join(EQUIPMENT_PLUGIN_PATH);
+        fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+        fs::write(&plugin_path, b"plugin-v2").unwrap();
+        let plugin_hash = sha256_file_io(&plugin_path).unwrap();
+        let legacy_state = legacy_component_state_path(&root);
+        fs::create_dir_all(legacy_state.parent().unwrap()).unwrap();
+        fs::write(
+            &legacy_state,
+            serde_json::to_vec_pretty(&ComponentStateDocument {
+                schema: COMPONENT_STATE_SCHEMA,
+                equipment_plugin: Some(ComponentStateEntry {
+                    version: "0.3.7".to_owned(),
+                    sha256: hex::encode(plugin_hash),
+                }),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        cleanup_completed_update_files(&root);
+
+        assert!(!root.join(UPDATE_ROOT_DIRECTORY).exists());
+        assert!(component_state_path(&root).is_file());
+        assert_eq!(
+            read_recorded_plugin_version(&root, &plugin_path).unwrap(),
+            Some(Version::parse("0.3.7").unwrap())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transaction_cleanup_does_not_touch_another_active_update() {
+        let root = update_test_directory("transaction-cleanup");
+        let update_root = root.join(UPDATE_ROOT_DIRECTORY);
+        let completed_id = "app-0.3.6-hash";
+        let marker = update_root
+            .join("health")
+            .join(format!("{completed_id}.ok"));
+        fs::create_dir_all(update_root.join("staging").join(completed_id)).unwrap();
+        fs::create_dir_all(update_root.join("backup").join(completed_id)).unwrap();
+        fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        fs::create_dir_all(update_root.join("transactions")).unwrap();
+        fs::write(
+            update_root
+                .join("transactions")
+                .join(format!("{completed_id}.log")),
+            b"update completed\n",
+        )
+        .unwrap();
+        fs::write(&marker, b"healthy\n").unwrap();
+
+        let active_staging = update_root.join("staging/plugin-0.3.7-hash");
+        let active_download = update_root.join("downloads/plugin-0.3.7-hash.zip.part");
+        fs::create_dir_all(&active_staging).unwrap();
+        fs::create_dir_all(active_download.parent().unwrap()).unwrap();
+        fs::write(&active_download, b"partial package").unwrap();
+
+        cleanup_completed_transaction(&update_root, completed_id, &marker);
+
+        assert!(!update_root.join("staging").join(completed_id).exists());
+        assert!(!update_root.join("backup").join(completed_id).exists());
+        assert!(!marker.exists());
+        assert!(active_staging.is_dir());
+        assert!(active_download.is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn health_marker_transaction_id_rejects_unsafe_names() {
+        assert_eq!(
+            health_marker_transaction_id(Path::new("health/app-0.3.6-0123456789ab.ok")),
+            Some("app-0.3.6-0123456789ab")
+        );
+        assert_eq!(
+            health_marker_transaction_id(Path::new("health/app update.ok")),
+            None
+        );
+        assert_eq!(
+            health_marker_transaction_id(Path::new("health/app-0.3.6.json")),
+            None
         );
     }
 
