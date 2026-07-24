@@ -109,7 +109,7 @@ struct EmptyCurtainVisuals<'a> {
 struct EquipmentFilterCandidate<'a> {
     equipment: Option<&'a EquipmentFilterKey>,
     quality: Option<&'a str>,
-    character_id: Option<u32>,
+    character_uid: Option<HtItemNetId>,
     sub_stats: &'a [EquipmentStat],
 }
 
@@ -126,7 +126,7 @@ struct EmptyCurtainFilterCache {
 pub(crate) struct KongmuUiState {
     filter_open: bool,
     selected_equipment: HashSet<EquipmentFilterKey>,
-    selected_characters: HashSet<u32>,
+    selected_characters: HashSet<HtItemNetId>,
     selected_qualities: HashSet<String>,
     selected_substats: HashSet<String>,
     filter_revision: u64,
@@ -172,9 +172,9 @@ impl KongmuUiState {
         self.filter_revision = self.filter_revision.wrapping_add(1);
     }
 
-    fn toggle_character(&mut self, character_id: u32) {
-        if !self.selected_characters.remove(&character_id) {
-            self.selected_characters.insert(character_id);
+    fn toggle_character(&mut self, character_uid: HtItemNetId) {
+        if !self.selected_characters.remove(&character_uid) {
+            self.selected_characters.insert(character_uid);
         }
         self.filter_revision = self.filter_revision.wrapping_add(1);
     }
@@ -228,7 +228,7 @@ impl KongmuUiState {
                 EquipmentFilterCandidate {
                     equipment: item_key.as_ref(),
                     quality: item_quality,
-                    character_id: item.equipped_character_id,
+                    character_uid: item.character_net_id,
                     sub_stats: &item.sub_stats,
                 },
             ) {
@@ -466,6 +466,7 @@ impl DpsApp {
             show_empty_curtain_filter_window(
                 &ctx,
                 &self.state.empty_curtain,
+                &self.state.empty_curtain_characters,
                 &EmptyCurtainVisuals {
                     catalog: &self.equipment_catalog,
                     equipment_textures: &self.equipment_textures,
@@ -2078,7 +2079,7 @@ fn empty_curtain_filter_matches(
     selected_equipment: &HashSet<EquipmentFilterKey>,
     selected_qualities: &HashSet<String>,
     selected_substats: &HashSet<String>,
-    selected_characters: &HashSet<u32>,
+    selected_characters: &HashSet<HtItemNetId>,
     candidate: EquipmentFilterCandidate<'_>,
 ) -> bool {
     (selected_equipment.is_empty()
@@ -2091,8 +2092,8 @@ fn empty_curtain_filter_matches(
                 .is_some_and(|quality| selected_qualities.contains(quality)))
         && (selected_characters.is_empty()
             || candidate
-                .character_id
-                .is_some_and(|character_id| selected_characters.contains(&character_id)))
+                .character_uid
+                .is_some_and(|character_uid| selected_characters.contains(&character_uid)))
         && selected_substats.iter().all(|property| {
             candidate
                 .sub_stats
@@ -2172,32 +2173,33 @@ fn trailing_number(value: &str) -> u32 {
         .expect("validated equipment group id must end in a number")
 }
 
-fn parsed_character_filter_ids(
-    items: &[EmptyCurtainItem],
+fn captured_character_filter_options(
+    character_instances: &[EmptyCurtainCharacter],
     characters: &HashMap<u32, CharacterInfo>,
-) -> Vec<u32> {
-    let mut character_ids = items
-        .iter()
-        .filter_map(|item| item.equipped_character_id)
-        .filter(|character_id| characters.contains_key(character_id))
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    character_ids.sort_by(|left, right| {
-        character_display_name(characters, *left, &left.to_string())
-            .cmp(&character_display_name(
-                characters,
-                *right,
-                &right.to_string(),
-            ))
-            .then_with(|| left.cmp(right))
+) -> Vec<EmptyCurtainCharacter> {
+    let mut options = character_instances.to_vec();
+    options.sort_by(|left, right| {
+        character_display_name(
+            characters,
+            left.character_id,
+            &left.character_id.to_string(),
+        )
+        .cmp(&character_display_name(
+            characters,
+            right.character_id,
+            &right.character_id.to_string(),
+        ))
+        .then_with(|| left.character_id.cmp(&right.character_id))
+        .then_with(|| left.net_id.solt.cmp(&right.net_id.solt))
+        .then_with(|| left.net_id.serial.cmp(&right.net_id.serial))
     });
-    character_ids
+    options
 }
 
 fn show_empty_curtain_filter_window(
     ctx: &egui::Context,
     items: &[EmptyCurtainItem],
+    character_instances: &[EmptyCurtainCharacter],
     visuals: &EmptyCurtainVisuals<'_>,
     state: &mut KongmuUiState,
 ) {
@@ -2205,7 +2207,8 @@ fn show_empty_curtain_filter_window(
     let textures = visuals.equipment_textures;
     let dark_mode = visuals.dark_mode;
     let options = equipment_filter_options(catalog);
-    let character_ids = parsed_character_filter_ids(items, visuals.characters);
+    let character_options =
+        captured_character_filter_options(character_instances, visuals.characters);
     let mut substat_properties = items
         .iter()
         .flat_map(|item| item.sub_stats.iter().map(|stat| stat.property.clone()))
@@ -2234,7 +2237,7 @@ fn show_empty_curtain_filter_window(
                 .id_salt("empty_curtain_filter_options")
                 .max_height((ctx.content_rect().height() - 180.0).max(260.0))
                 .show(ui, |ui| {
-                    if !character_ids.is_empty() {
+                    if !character_options.is_empty() {
                         ui.label(
                             RichText::new(t("By Character"))
                                 .size(14.0)
@@ -2243,11 +2246,12 @@ fn show_empty_curtain_filter_window(
                         );
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
-                            for character_id in character_ids.iter().copied() {
-                                let selected = state.selected_characters.contains(&character_id);
+                            for character in character_options.iter().copied() {
+                                let selected =
+                                    state.selected_characters.contains(&character.net_id);
                                 if draw_character_filter_option(
                                     ui,
-                                    character_id,
+                                    character,
                                     visuals.characters,
                                     visuals.avatar_textures,
                                     selected,
@@ -2255,7 +2259,7 @@ fn show_empty_curtain_filter_window(
                                 )
                                 .clicked()
                                 {
-                                    state.toggle_character(character_id);
+                                    state.toggle_character(character.net_id);
                                 }
                             }
                         });
@@ -2446,7 +2450,7 @@ fn draw_filter_option(
 
 fn draw_character_filter_option(
     ui: &mut egui::Ui,
-    character_id: u32,
+    character: EmptyCurtainCharacter,
     characters: &HashMap<u32, CharacterInfo>,
     avatar_textures: &HashMap<String, egui::TextureHandle>,
     selected: bool,
@@ -2478,14 +2482,14 @@ fn draw_character_filter_option(
         egui::StrokeKind::Inside,
     );
 
-    let fallback = character_id.to_string();
-    let name = character_display_name(characters, character_id, &fallback);
+    let fallback = character.character_id.to_string();
+    let name = character_display_name(characters, character.character_id, &fallback);
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(rect.center().x, rect.top() + 8.0 + FILTER_ICON_SIZE * 0.5),
         egui::vec2(FILTER_ICON_SIZE, FILTER_ICON_SIZE),
     );
     let texture = characters
-        .get(&character_id)
+        .get(&character.character_id)
         .and_then(|character| character.avatar.as_deref())
         .and_then(|avatar| avatar_textures.get(avatar));
     if let Some(texture) = texture {
@@ -2493,7 +2497,7 @@ fn draw_character_filter_option(
             .corner_radius(8.0)
             .paint_at(ui, icon_rect);
     } else {
-        let color = character_color(character_id, characters, 0, dark_mode);
+        let color = character_color(character.character_id, characters, 0, dark_mode);
         ui.painter()
             .rect_filled(icon_rect, 8.0, color.gamma_multiply(0.85));
         ui.painter().text(
@@ -2840,14 +2844,21 @@ mod tests {
     fn filter_candidate<'a>(
         equipment: Option<&'a EquipmentFilterKey>,
         quality: Option<&'a str>,
-        character_id: Option<u32>,
+        character_uid: Option<HtItemNetId>,
         sub_stats: &'a [EquipmentStat],
     ) -> EquipmentFilterCandidate<'a> {
         EquipmentFilterCandidate {
             equipment,
             quality,
-            character_id,
+            character_uid,
             sub_stats,
+        }
+    }
+
+    fn character_uid(slot: u32) -> HtItemNetId {
+        HtItemNetId {
+            solt: slot,
+            serial: slot + 1,
         }
     }
 
@@ -3096,11 +3107,15 @@ mod tests {
     }
 
     #[test]
-    fn character_filter_options_only_include_parsed_known_characters() {
-        let mut known = item(1, "known", Vec::new(), Vec::new());
-        known.equipped_character_id = Some(1020);
-        let mut unknown = item(2, "unknown", Vec::new(), Vec::new());
-        unknown.equipped_character_id = Some(9999);
+    fn character_filter_options_include_every_captured_instance() {
+        let known = EmptyCurtainCharacter {
+            net_id: character_uid(20),
+            character_id: 1020,
+        };
+        let unknown = EmptyCurtainCharacter {
+            net_id: character_uid(30),
+            character_id: 9999,
+        };
         let characters = HashMap::from([(
             1020,
             CharacterInfo {
@@ -3113,8 +3128,8 @@ mod tests {
         )]);
 
         assert_eq!(
-            parsed_character_filter_ids(&[known, unknown], &characters),
-            [1020]
+            captured_character_filter_options(&[unknown, known], &characters),
+            [unknown, known]
         );
     }
 
@@ -3279,27 +3294,27 @@ mod tests {
 
     #[test]
     fn character_filter_is_or_within_and_across_dimensions() {
-        let characters = HashSet::from([1020, 1033]);
+        let selected = HashSet::from([character_uid(1020), character_uid(1033)]);
         assert!(empty_curtain_filter_matches(
             &HashSet::new(),
             &HashSet::new(),
             &HashSet::new(),
-            &characters,
-            filter_candidate(None, None, Some(1020), &[]),
+            &selected,
+            filter_candidate(None, None, Some(character_uid(1020)), &[]),
         ));
         assert!(!empty_curtain_filter_matches(
             &HashSet::new(),
             &HashSet::new(),
             &HashSet::new(),
-            &characters,
-            filter_candidate(None, None, Some(1010), &[]),
+            &selected,
+            filter_candidate(None, None, Some(character_uid(1010)), &[]),
         ));
         assert!(!empty_curtain_filter_matches(
             &HashSet::new(),
             &HashSet::from(["orange".to_owned()]),
             &HashSet::new(),
-            &characters,
-            filter_candidate(None, Some("blue"), Some(1033), &[]),
+            &selected,
+            filter_candidate(None, Some("blue"), Some(character_uid(1033)), &[]),
         ));
     }
 
