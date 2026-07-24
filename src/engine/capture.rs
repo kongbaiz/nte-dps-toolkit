@@ -2803,7 +2803,7 @@ impl EmptyCurtainDecoder {
             .collect();
         items_changed |= self.apply_item_updates(&connection, raw_items);
         items_changed |= self.apply_item_removals(&connection, raw_removals);
-        let snapshot = items_changed.then(|| {
+        let snapshot = (items_changed || characters_changed).then(|| {
             let mut items = self.items.values().cloned().collect::<Vec<_>>();
             items.sort_by(|left, right| {
                 left.item_id
@@ -5914,12 +5914,14 @@ mod tests {
         decoder
             .connections
             .insert(connection.clone(), InventoryConnectionState::default());
+        let item = inventory_test_item(None);
+        decoder.items.insert(item.id, item.clone());
 
         let result =
             decoder.process_packet(connection, &character_owner_packet(1020, owner_net_id));
 
         assert!(result.recognized);
-        assert!(result.snapshot.is_none());
+        assert_eq!(result.snapshot, Some(vec![item]));
         assert_eq!(
             result.characters,
             Some(vec![EmptyCurtainCharacter {
