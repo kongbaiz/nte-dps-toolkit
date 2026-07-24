@@ -1311,6 +1311,7 @@ pub struct DpsApp {
     debug_receiver: Receiver<EngineEvent>,
     diagnostics_report: Option<DiagnosticReport>,
     background_tasks: BackgroundTasks,
+    update_client: UpdateClientState,
     paused_events: VecDeque<EngineEvent>,
     notifications: NotificationState,
     console_tab: ConsoleTab,
@@ -1355,6 +1356,7 @@ mod motion;
 mod resources;
 mod theme;
 mod timeline;
+mod update;
 
 pub(crate) use abyss::*;
 pub(crate) use chrome::*;
@@ -1369,6 +1371,7 @@ pub(crate) use kongmu::*;
 pub(crate) use resources::*;
 pub(crate) use theme::*;
 pub(crate) use timeline::*;
+pub(crate) use update::*;
 
 impl eframe::App for DpsApp {
     /// Clear to transparent alpha. HUD mode relies on this so empty pixels
@@ -1434,6 +1437,7 @@ impl eframe::App for DpsApp {
         self.drain_device_detection();
         self.drain_game_process_monitor();
         self.drain_hotkeys(ctx);
+        self.poll_update_client(ctx);
         self.process_file_drops(ctx, frame);
         self.poll_file_dialog(ctx);
         self.poll_capture_info_export(ctx);

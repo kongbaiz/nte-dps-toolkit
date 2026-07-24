@@ -45,6 +45,9 @@ permissions:
 env:
   UPX_VERSION: 5.2.0
   UPX_SHA256: b471ebf1b7f20f4a89150264ed9a008a2a5bfd247f3c6d1184a75bb59ca08f5d
+  NTE_UPDATE_KEY_ID: ${{ vars.NTE_UPDATE_KEY_ID }}
+  NTE_UPDATE_PUBLIC_KEY_HEX: ${{ vars.NTE_UPDATE_PUBLIC_KEY_HEX }}
+  NTE_UPDATE_MANIFEST_URL: ${{ vars.NTE_UPDATE_MANIFEST_URL }}
 
 jobs:
   windows-release:
@@ -126,8 +129,10 @@ jobs:
         shell: pwsh
         run: |
           cargo build --release --bin nte-dps-tool --features gui
+          cargo build --release --bin nte-updater --features gui
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
           Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
+          Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-x64/
           Copy-Item plugins dist/nte-dps-tool-windows-x64/plugins -Recurse
 
           cargo build --release --bin nte-core --no-default-features --features cli
@@ -140,6 +145,7 @@ jobs:
           cargo build --release --bin nte-dps-tool --features "gui external_resources"
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
           Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
+          Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
           Copy-Item plugins dist/nte-dps-tool-windows-external-resources/plugins -Recurse
 
@@ -189,6 +195,7 @@ jobs:
 
           - Standard GUI release with F12, Packets, Resources, and Diagnostics available.
           - Runtime resources are embedded in the executable.
+          - Includes nte-updater.exe for official-channel updates.
           - The optional in-game equipment plugin is loaded from plugins/dwmapi.dll and is installed only after the timed risk confirmation.
           - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
@@ -206,6 +213,7 @@ jobs:
 
           - Standard GUI release with F12 and all diagnostics available.
           - Runtime resources are not embedded in the executable.
+          - Includes nte-updater.exe for official-channel updates.
           - The optional in-game equipment plugin is loaded from plugins/dwmapi.dll and is installed only after the timed risk confirmation.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
