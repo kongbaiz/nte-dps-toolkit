@@ -97,6 +97,12 @@ pub(crate) fn aggregate_character_skill_damage(
             .or_insert_with(|| SkillDamageSummary {
                 name,
                 category: hit.attack_type.clone().unwrap_or_else(|| "未知".to_owned()),
+                ability_name: hit.ability_name.clone(),
+                gameplay_effect_name: hit.gameplay_effect_name.clone(),
+                damage_name: hit
+                    .damage_component
+                    .clone()
+                    .or_else(|| hit.damage_name.clone()),
                 hits: 0,
                 damage: 0.0,
             });
@@ -115,15 +121,19 @@ pub(crate) fn aggregate_character_skill_damage(
 
 pub(crate) fn skill_summary_display_text(summary: &SkillDamageSummary) -> String {
     skill_name_display_text(
-        summary
-            .name
-            .starts_with("GA_")
-            .then_some(summary.name.as_str()),
-        summary
-            .name
-            .starts_with("GE_")
-            .then_some(summary.name.as_str()),
-        None,
+        summary.ability_name.as_deref().or_else(|| {
+            summary
+                .name
+                .starts_with("GA_")
+                .then_some(summary.name.as_str())
+        }),
+        summary.gameplay_effect_name.as_deref().or_else(|| {
+            summary
+                .name
+                .starts_with("GE_")
+                .then_some(summary.name.as_str())
+        }),
+        summary.damage_name.as_deref(),
         &summary.name,
     )
 }

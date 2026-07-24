@@ -107,6 +107,7 @@ mod tests {
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: None,
+            damage_component: None,
             attack_type: None,
             damage_attribute: None,
             follow_up_damage: 0.0,

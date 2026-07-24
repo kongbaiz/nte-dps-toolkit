@@ -109,15 +109,15 @@ impl std::error::Error for HttpError {}
 
 pub fn get_bytes(url: &str, maximum_size: usize) -> Result<Vec<u8>, HttpError> {
     let parsed = ParsedHttpsUrl::parse(url)?;
-    let mut last_transport_error = None;
+    let mut last_route_error = None;
     for mode in ProxyMode::ALL {
         match get_bytes_once(&parsed, mode, maximum_size) {
             Ok(bytes) => return Ok(bytes),
-            Err(error @ HttpError::Transport { .. }) => last_transport_error = Some(error),
+            Err(error) if is_route_error(&error) => last_route_error = Some(error),
             Err(error) => return Err(error),
         }
     }
-    Err(last_transport_error.expect("proxy mode list is not empty"))
+    Err(last_route_error.expect("proxy mode list is not empty"))
 }
 
 pub fn download_file(
@@ -130,15 +130,19 @@ pub fn download_file(
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(HttpError::File)?;
     }
-    let mut last_transport_error = None;
+    let mut last_route_error = None;
     for mode in ProxyMode::ALL {
         match download_file_once(&parsed, mode, destination, expected_size, &mut progress) {
             Ok(()) => return Ok(()),
-            Err(error @ HttpError::Transport { .. }) => last_transport_error = Some(error),
+            Err(error) if is_route_error(&error) => last_route_error = Some(error),
             Err(error) => return Err(error),
         }
     }
-    Err(last_transport_error.expect("proxy mode list is not empty"))
+    Err(last_route_error.expect("proxy mode list is not empty"))
+}
+
+fn is_route_error(error: &HttpError) -> bool {
+    matches!(error, HttpError::Transport { .. } | HttpError::Status(_))
 }
 
 fn get_bytes_once(
@@ -551,5 +555,15 @@ mod tests {
             error.to_string(),
             "update package size does not match the signed manifest: manifest declares 12937599 bytes, received 12000000 bytes"
         );
+    }
+
+    #[test]
+    fn http_status_uses_the_next_proxy_route() {
+        assert!(is_route_error(&HttpError::Status(407)));
+        assert!(is_route_error(&HttpError::Status(502)));
+        assert!(!is_route_error(&HttpError::ResponseTooLarge {
+            maximum: 1024,
+            received_at_least: 2048,
+        }));
     }
 }

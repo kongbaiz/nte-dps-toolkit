@@ -66,6 +66,27 @@ jobs:
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Validate official update channel
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NTE_UPDATE_KEY_ID)) {
+            throw "NTE_UPDATE_KEY_ID must be configured for an official build"
+          }
+          if ($env:NTE_UPDATE_PUBLIC_KEY_HEX -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw "NTE_UPDATE_PUBLIC_KEY_HEX must contain exactly 32 bytes of hexadecimal data"
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:NTE_UPDATE_MANIFEST_URL)) {
+            try {
+              $manifestUri = [Uri]$env:NTE_UPDATE_MANIFEST_URL
+            } catch {
+              throw "NTE_UPDATE_MANIFEST_URL must be an absolute HTTPS URL"
+            }
+            if (-not $manifestUri.IsAbsoluteUri -or $manifestUri.Scheme -ne "https") {
+              throw "NTE_UPDATE_MANIFEST_URL must be an absolute HTTPS URL"
+            }
+          }
+
       - name: Build native equipment plugin
         shell: pwsh
         run: |

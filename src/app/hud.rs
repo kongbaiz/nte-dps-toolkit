@@ -108,8 +108,9 @@ pub(crate) fn is_party_member_row(
 }
 
 pub(crate) fn hit_specific_type(hit: &crate::engine::model::Hit) -> &str {
-    hit.ability_name
+    hit.damage_component
         .as_deref()
+        .or(hit.ability_name.as_deref())
         .or(hit.gameplay_effect_name.as_deref())
         .or(hit.damage_name.as_deref())
         .or(hit.attack_type.as_deref())
@@ -161,6 +162,9 @@ fn attack_type_translation_key(label: &str) -> Option<&'static str> {
         "载具伤害" => Some("Vehicle Damage"),
         "深渊场地Buff" => Some("Abyss Field Buff"),
         "HP同步伤害" => Some("HP Sync Damage"),
+        "Passive Damage" => Some("Passive Damage"),
+        "Special Damage" => Some("Special Damage"),
+        "Awakening Damage" => Some("Awakening Damage"),
         _ => None,
     }
 }
@@ -188,11 +192,9 @@ pub(crate) fn skill_name_display_text(
     legacy_damage_name: Option<&str>,
     stable_name: &str,
 ) -> String {
-    ability_name
-        .and_then(crate::storage::ability_names::resolve_ability_name)
-        .or_else(|| {
-            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
-        })
+    gameplay_effect_name
+        .and_then(crate::storage::ability_names::resolve_damage_name)
+        .or_else(|| ability_name.and_then(crate::storage::ability_names::resolve_ability_name))
         .or_else(|| legacy_damage_name.map(str::to_owned))
         .unwrap_or_else(|| translate_reaction_label(stable_name))
 }
@@ -205,23 +207,29 @@ pub(crate) fn skill_name_display_text(
 /// to whichever half is available, and drops the join when both halves match.
 pub(crate) fn hit_type_display_text(hit: &crate::engine::model::Hit) -> String {
     let attack_type = hit.attack_type.as_deref().filter(|value| !value.is_empty());
+    let translated_attack_type = attack_type.map(translate_reaction_label);
     let stable_name = hit_specific_type(hit);
     let name = (hit.ability_name.is_some()
         || hit.gameplay_effect_name.is_some()
+        || hit.damage_component.is_some()
         || hit.damage_name.is_some())
     .then(|| {
         skill_name_display_text(
             hit.ability_name.as_deref(),
             hit.gameplay_effect_name.as_deref(),
-            hit.damage_name.as_deref(),
+            hit.damage_component
+                .as_deref()
+                .or(hit.damage_name.as_deref()),
             stable_name,
         )
     });
-    match (attack_type, name.as_deref()) {
-        (Some(attack_type), Some(name)) if attack_type != name => {
-            format!("{}·{name}", translate_reaction_label(attack_type))
+    match (translated_attack_type.as_deref(), name.as_deref()) {
+        (Some(attack_type), Some(name))
+            if hit.attack_type.as_deref() != Some(name) && attack_type != name =>
+        {
+            format!("{attack_type}·{name}")
         }
-        (Some(attack_type), _) => translate_reaction_label(attack_type),
+        (Some(attack_type), _) => attack_type.to_owned(),
         (None, Some(name)) => name.to_owned(),
         (None, None) => "未知招式".to_owned(),
     }

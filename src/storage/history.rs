@@ -420,13 +420,9 @@ fn skill_comparison_key(
     row: &CombatSessionSkillSummary,
     other: &[CombatSessionSkillSummary],
 ) -> (String, String) {
-    let Some(identity) = row
-        .ability_name
-        .as_deref()
-        .or(row.gameplay_effect_name.as_deref())
-    else {
+    if row.ability_name.is_none() && row.gameplay_effect_name.is_none() {
         return (format!("legacy:{}", row.name), row.category.clone());
-    };
+    }
     if let Some(display_name) = row.damage_name.as_deref()
         && other.iter().any(|candidate| {
             candidate.category == row.category
@@ -437,6 +433,25 @@ fn skill_comparison_key(
     {
         return (format!("legacy:{display_name}"), row.category.clone());
     }
+    let identity = match row.ability_name.as_deref() {
+        Some(ability_name) => {
+            if let Some(component_name) = row
+                .damage_name
+                .as_deref()
+                .filter(|damage_name| *damage_name == row.name && *damage_name != ability_name)
+            {
+                format!("ability:{ability_name}:component:{component_name}")
+            } else {
+                format!("ability:{ability_name}")
+            }
+        }
+        None => format!(
+            "effect:{}",
+            row.gameplay_effect_name
+                .as_deref()
+                .expect("skill comparison row has a stable effect identity")
+        ),
+    };
     (format!("stable:{identity}"), row.category.clone())
 }
 
@@ -749,6 +764,108 @@ mod tests {
             delta.gameplay_effect_name.as_deref(),
             Some("GE_Test_Skill_Damage")
         );
+    }
+
+    #[test]
+    fn compare_records_keeps_semantic_effects_under_one_ability_distinct() {
+        let semantic_skill =
+            |effect_name: &str, damage_name: &str, damage: f64| CombatSessionSkillSummary {
+                name: damage_name.to_owned(),
+                category: "Passive Damage".to_owned(),
+                ability_name: Some("GA_Test_Passive".to_owned()),
+                gameplay_effect_name: Some(effect_name.to_owned()),
+                damage_name: Some(damage_name.to_owned()),
+                damage,
+                ..Default::default()
+            };
+        let left = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![
+                    semantic_skill("GE_Test_Passive_First", "First Component", 100.0),
+                    semantic_skill("GE_Test_Passive_Second", "Second Component", 200.0),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &HistoryRecord::default());
+
+        assert_eq!(comparison.skill_deltas.len(), 2);
+        assert!(comparison.skill_deltas.iter().any(|row| {
+            row.gameplay_effect_name.as_deref() == Some("GE_Test_Passive_First")
+                && row.left_damage == 100.0
+        }));
+        assert!(comparison.skill_deltas.iter().any(|row| {
+            row.gameplay_effect_name.as_deref() == Some("GE_Test_Passive_Second")
+                && row.left_damage == 200.0
+        }));
+    }
+
+    #[test]
+    fn compare_records_matches_one_ability_across_effect_variants() {
+        let skill = |effect_name: Option<&str>, damage: f64| CombatSessionSkillSummary {
+            name: "GA_Test_UltraSkill".to_owned(),
+            category: "Q技能".to_owned(),
+            ability_name: Some("GA_Test_UltraSkill".to_owned()),
+            gameplay_effect_name: effect_name.map(str::to_owned),
+            damage_name: Some("Test Ultimate".to_owned()),
+            damage,
+            ..Default::default()
+        };
+        let left = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![skill(Some("GE_Test_UltraSkill1_Damage"), 100.0)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let right = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![skill(Some("GE_Test_UltraSkill2_Damage"), 125.0)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &right);
+
+        assert_eq!(comparison.skill_deltas.len(), 1);
+        assert_eq!(comparison.skill_deltas[0].left_damage, 100.0);
+        assert_eq!(comparison.skill_deltas[0].right_damage, 125.0);
+        assert_eq!(comparison.skill_deltas[0].delta_damage, 25.0);
+    }
+
+    #[test]
+    fn compare_records_matches_aggregated_and_single_effect_ability_rows() {
+        let skill = |effect_name: Option<&str>, damage: f64| CombatSessionSkillSummary {
+            name: "GA_Test_UltraSkill".to_owned(),
+            category: "Q技能".to_owned(),
+            ability_name: Some("GA_Test_UltraSkill".to_owned()),
+            gameplay_effect_name: effect_name.map(str::to_owned),
+            damage_name: Some("Test Ultimate".to_owned()),
+            damage,
+            ..Default::default()
+        };
+        let left = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![skill(None, 175.0)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let right = HistoryRecord {
+            summary: CombatSessionSummary {
+                skills: vec![skill(Some("GE_Test_UltraSkill1_Damage"), 200.0)],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let comparison = compare_records(&left, &right);
+
+        assert_eq!(comparison.skill_deltas.len(), 1);
+        assert_eq!(comparison.skill_deltas[0].delta_damage, 25.0);
     }
 
     fn temp_history_dir(name: &str) -> PathBuf {

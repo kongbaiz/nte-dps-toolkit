@@ -50,6 +50,7 @@ impl UpdateEndpoint {
             .ok_or(UpdateError::ClientNotConfigured)?;
         let public_key = decode_fixed_hex::<32>(public_key_hex)
             .map_err(|_| UpdateError::InvalidCompiledPublicKey)?;
+        VerifyingKey::from_bytes(&public_key).map_err(|_| UpdateError::InvalidCompiledPublicKey)?;
         let manifest_url = COMPILED_UPDATE_MANIFEST_URL
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(DEFAULT_MANIFEST_URL)
@@ -408,6 +409,22 @@ mod tests {
     use super::*;
     use ed25519_dalek::{Signer as _, SigningKey};
     use serde_json::json;
+
+    #[test]
+    fn configured_official_endpoint_is_valid() {
+        let has_compiled_configuration = [
+            COMPILED_UPDATE_KEY_ID,
+            COMPILED_UPDATE_PUBLIC_KEY_HEX,
+            COMPILED_UPDATE_MANIFEST_URL,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| !value.trim().is_empty());
+
+        if has_compiled_configuration {
+            UpdateEndpoint::official().expect("compiled official update configuration is valid");
+        }
+    }
 
     fn signed_manifest(payload: serde_json::Value) -> (Vec<u8>, UpdateEndpoint) {
         let signing_key = SigningKey::from_bytes(&[7_u8; 32]);
