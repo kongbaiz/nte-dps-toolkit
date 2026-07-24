@@ -59,7 +59,14 @@ pub enum HttpError {
         source: io::Error,
     },
     Status(u32),
-    ResponseTooLarge,
+    ResponseTooLarge {
+        maximum: u64,
+        received_at_least: u64,
+    },
+    PackageLargerThanManifest {
+        expected: u64,
+        received_at_least: u64,
+    },
     SizeMismatch {
         expected: u64,
         actual: u64,
@@ -75,10 +82,23 @@ impl fmt::Display for HttpError {
                 write!(formatter, "{mode} request failed: {source}")
             }
             Self::Status(status) => write!(formatter, "update server returned HTTP {status}"),
-            Self::ResponseTooLarge => formatter.write_str("update response exceeds the size limit"),
+            Self::ResponseTooLarge {
+                maximum,
+                received_at_least,
+            } => write!(
+                formatter,
+                "update response exceeds the allowed size: maximum {maximum} bytes, received at least {received_at_least} bytes"
+            ),
+            Self::PackageLargerThanManifest {
+                expected,
+                received_at_least,
+            } => write!(
+                formatter,
+                "update package is larger than the signed manifest: manifest declares {expected} bytes, received at least {received_at_least} bytes"
+            ),
             Self::SizeMismatch { expected, actual } => write!(
                 formatter,
-                "download size mismatch: expected {expected} bytes, received {actual} bytes"
+                "update package size does not match the signed manifest: manifest declares {expected} bytes, received {actual} bytes"
             ),
             Self::File(error) => write!(formatter, "update file operation failed: {error}"),
         }
@@ -137,12 +157,19 @@ fn get_bytes_once(
     }
     let mut bytes = Vec::new();
     request.read_chunks(mode, |chunk| {
-        let next_length = bytes
-            .len()
-            .checked_add(chunk.len())
-            .ok_or(HttpError::ResponseTooLarge)?;
+        let next_length =
+            bytes
+                .len()
+                .checked_add(chunk.len())
+                .ok_or(HttpError::ResponseTooLarge {
+                    maximum: maximum_size as u64,
+                    received_at_least: u64::MAX,
+                })?;
         if next_length > maximum_size {
-            return Err(HttpError::ResponseTooLarge);
+            return Err(HttpError::ResponseTooLarge {
+                maximum: maximum_size as u64,
+                received_at_least: next_length as u64,
+            });
         }
         bytes.extend_from_slice(chunk);
         Ok(())
@@ -188,11 +215,17 @@ fn download_file_once(
     let mut downloaded = if append { existing_size } else { 0 };
     progress(downloaded, expected_size);
     request.read_chunks(mode, |chunk| {
-        downloaded = downloaded
-            .checked_add(chunk.len() as u64)
-            .ok_or(HttpError::ResponseTooLarge)?;
+        downloaded = downloaded.checked_add(chunk.len() as u64).ok_or(
+            HttpError::PackageLargerThanManifest {
+                expected: expected_size,
+                received_at_least: u64::MAX,
+            },
+        )?;
         if downloaded > expected_size {
-            return Err(HttpError::ResponseTooLarge);
+            return Err(HttpError::PackageLargerThanManifest {
+                expected: expected_size,
+                received_at_least: downloaded,
+            });
         }
         file.write_all(chunk).map_err(HttpError::File)?;
         progress(downloaded, expected_size);
@@ -492,5 +525,31 @@ mod tests {
     #[test]
     fn rejects_non_https_url() {
         assert!(ParsedHttpsUrl::parse("http://updates.example.test/latest.json").is_err());
+    }
+
+    #[test]
+    fn oversized_package_error_identifies_manifest_mismatch() {
+        let error = HttpError::PackageLargerThanManifest {
+            expected: 12_937_599,
+            received_at_least: 12_976_128,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "update package is larger than the signed manifest: manifest declares 12937599 bytes, received at least 12976128 bytes"
+        );
+    }
+
+    #[test]
+    fn short_package_error_identifies_manifest_mismatch() {
+        let error = HttpError::SizeMismatch {
+            expected: 12_937_599,
+            actual: 12_000_000,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "update package size does not match the signed manifest: manifest declares 12937599 bytes, received 12000000 bytes"
+        );
     }
 }

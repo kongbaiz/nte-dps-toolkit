@@ -7,7 +7,7 @@ use crate::core::update::{
     verify_manifest,
 };
 use crate::platform::update_http;
-use crate::storage::update::{self as update_storage, PreparedUpdate};
+use crate::storage::update::{self as update_storage, PrepareUpdateError, PreparedUpdate};
 
 const PROGRESS_REPAINT_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -57,7 +57,7 @@ enum UpdateWorkerEvent {
         downloaded: u64,
         total: u64,
     },
-    DownloadFinished(Result<PreparedUpdate, String>),
+    DownloadFinished(Result<PreparedUpdate, PrepareUpdateError>),
     PluginInstallFinished(Result<(Version, Vec<AvailableComponentUpdate>), String>),
 }
 
@@ -100,8 +100,14 @@ impl UpdateClientState {
 impl DpsApp {
     pub(crate) fn poll_update_client(&mut self, ctx: &egui::Context) {
         if !self.update_client.health_reported {
-            if let Err(error) = update_storage::mark_update_healthy_from_environment() {
-                eprintln!("Failed to write update health marker: {error}");
+            match update_storage::mark_update_healthy_from_environment() {
+                Ok(Some(marker)) => {
+                    thread::spawn(move || {
+                        update_storage::cleanup_completed_app_update(marker);
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("Failed to write update health marker: {error}"),
             }
             self.update_client.health_reported = true;
         }
@@ -166,10 +172,10 @@ impl DpsApp {
                     self.update_client.prepared = Some(prepared);
                     self.update_client.status = UpdateStatus::Ready;
                 }
-                UpdateWorkerEvent::DownloadFinished(Err(detail)) => {
+                UpdateWorkerEvent::DownloadFinished(Err(error)) => {
                     self.update_client.status = UpdateStatus::Failed {
                         stage: UpdateFailureStage::Download,
-                        detail,
+                        detail: update_download_error_detail(&error),
                     };
                 }
                 UpdateWorkerEvent::PluginInstallFinished(Ok((version, remaining))) => {
@@ -281,8 +287,7 @@ impl DpsApp {
                     });
                     repaint.request_repaint();
                 }
-            })
-            .map_err(|error| error.to_string());
+            });
             let _ = sender.send(UpdateWorkerEvent::DownloadFinished(result));
             repaint.request_repaint();
         });
@@ -346,6 +351,28 @@ fn check_for_update(
         .expect("Cargo package version is valid semantic versioning");
     let installed = update_storage::installed_component_versions(current_version)?;
     Ok(verify_manifest(&manifest, endpoint, &installed)?)
+}
+
+fn update_download_error_detail(error: &PrepareUpdateError) -> String {
+    match error {
+        PrepareUpdateError::Download(update_http::HttpError::PackageLargerThanManifest {
+            expected,
+            received_at_least,
+        }) => tf(
+            "The official update package is inconsistent with its signed manifest: the manifest declares {} bytes, but the server returned at least {} bytes. Please retry later or report this release.",
+            &[&expected.to_string(), &received_at_least.to_string()],
+        ),
+        PrepareUpdateError::Download(update_http::HttpError::SizeMismatch { expected, actual }) => {
+            tf(
+                "The official update package is incomplete: the signed manifest declares {} bytes, but the server returned {} bytes. Please retry later or report this release.",
+                &[&expected.to_string(), &actual.to_string()],
+            )
+        }
+        PrepareUpdateError::HashMismatch => t(
+            "The official update package SHA-256 does not match its signed manifest. Download it again; if the problem continues, report this release.",
+        ),
+        _ => error.to_string(),
+    }
 }
 
 #[cfg(test)]
