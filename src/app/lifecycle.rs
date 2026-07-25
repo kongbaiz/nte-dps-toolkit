@@ -210,6 +210,7 @@ impl DpsApp {
             ),
         );
         let notifications = NotificationState::new(&ui_config, status, diagnostic, startup_error);
+        let update_client = UpdateClientState::new(&ui_config);
         Self {
             characters,
             ability_catalog,
@@ -258,6 +259,7 @@ impl DpsApp {
             debug_receiver,
             diagnostics_report: None,
             background_tasks,
+            update_client,
             paused_events: VecDeque::new(),
             notifications,
             console_tab: ConsoleTab::default(),
@@ -1321,6 +1323,8 @@ impl DpsApp {
             accent: self.preferences.accent,
             density: self.preferences.density,
             reduce_motion: self.preferences.reduce_motion,
+            auto_check_updates: self.update_client.auto_check,
+            auto_download_updates: self.update_client.auto_download,
             always_on_top: self.preferences.always_on_top,
             island_notifications: self.notifications.island_enabled,
             island_offset_x: self.notifications.island_offset_x,

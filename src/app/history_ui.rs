@@ -339,11 +339,9 @@ pub(crate) fn skill_display_name(row: &CombatSessionSkillSummary) -> String {
         .gameplay_effect_name
         .as_deref()
         .or_else(|| row.name.starts_with("GE_").then_some(row.name.as_str()));
-    if let Some(name) = ability_name
-        .and_then(crate::storage::ability_names::resolve_ability_name)
-        .or_else(|| {
-            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
-        })
+    if let Some(name) = gameplay_effect_name
+        .and_then(crate::storage::ability_names::resolve_damage_name)
+        .or_else(|| ability_name.and_then(crate::storage::ability_names::resolve_ability_name))
     {
         return name;
     }
@@ -373,11 +371,9 @@ pub(crate) fn comparison_skill_display_name(
         .gameplay_effect_name
         .as_deref()
         .or_else(|| row.name.starts_with("GE_").then_some(row.name.as_str()));
-    ability_name
-        .and_then(crate::storage::ability_names::resolve_ability_name)
-        .or_else(|| {
-            gameplay_effect_name.and_then(crate::storage::ability_names::resolve_damage_name)
-        })
+    gameplay_effect_name
+        .and_then(crate::storage::ability_names::resolve_damage_name)
+        .or_else(|| ability_name.and_then(crate::storage::ability_names::resolve_ability_name))
         .unwrap_or_else(|| row.name.clone())
 }
 

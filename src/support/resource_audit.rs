@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::engine::parser::{
-    CHARACTER_DATA_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, SKILL_DAMAGE_DATA_PATH,
-    WOODEN_DAMAGE_DESCRIPTIONS_PATH,
+    CHARACTER_DATA_PATH, GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH,
+    SKILL_DAMAGE_DATA_PATH,
 };
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists};
@@ -102,7 +102,7 @@ pub struct ResourceAuditCounts {
     pub characters: usize,
     pub skill_damage: usize,
     pub mapped_effects: usize,
-    pub wooden_names: usize,
+    pub semantic_effects: usize,
     pub abyss_monsters: usize,
     pub reactions: usize,
 }
@@ -132,11 +132,11 @@ impl ResourceAuditSummary {
         let mut text = String::new();
         text.push_str("NTE DPS TOOL 资源覆盖率报告\n");
         text.push_str(&format!(
-            "角色 {}，技能 {}，GE 映射 {}，中文名 {}，深渊怪物 {}，反应 {}\n",
+            "角色 {}，技能 {}，GE 映射 {}，GE 语义 {}，深渊怪物 {}，反应 {}\n",
             self.counts.characters,
             self.counts.skill_damage,
             self.counts.mapped_effects,
-            self.counts.wooden_names,
+            self.counts.semantic_effects,
             self.counts.abyss_monsters,
             self.counts.reactions
         ));
@@ -320,48 +320,61 @@ fn audit_characters(reader: &dyn ResourceReader, audit: &mut ResourceAuditSummar
 fn audit_skills(reader: &dyn ResourceReader, audit: &mut ResourceAuditSummary) {
     let mapped_effect_names = load_mapped_effect_names(reader, audit);
     let skill_rows = load_skill_rows(reader, audit);
-    let wooden_names = load_wooden_names(reader, audit);
+    let semantic_effects = load_semantic_effects(reader, audit);
     audit.counts.mapped_effects = mapped_effect_names.len();
     audit.counts.skill_damage = skill_rows.len();
-    audit.counts.wooden_names = wooden_names.len();
-    for (effect_name, row) in skill_rows {
-        if !mapped_effect_names.contains(&effect_name) {
+    audit.counts.semantic_effects = semantic_effects.len();
+    for (effect_name, row) in &skill_rows {
+        if !mapped_effect_names.contains(effect_name) {
             push_item(
                 audit,
                 ResourceAuditSeverity::Warning,
                 ResourceAuditCategory::GameplayEffect,
-                &effect_name,
-                &effect_name,
+                effect_name.as_str(),
+                effect_name.as_str(),
                 "技能表存在但 GE index 映射缺失",
                 GAMEPLAY_EFFECT_MAPPING_PATH,
             );
         }
-        if !wooden_names.contains(&effect_name) {
-            push_item(
-                audit,
-                ResourceAuditSeverity::Warning,
-                ResourceAuditCategory::Skill,
-                &effect_name,
-                &effect_name,
-                "缺少中文伤害名",
-                WOODEN_DAMAGE_DESCRIPTIONS_PATH,
-            );
-        }
-        let has_category = json_string(&row, "category")
-            .or_else(|| json_string(&row, "DamageSourceCategory"))
+        let has_category = json_string(row, "category")
+            .or_else(|| json_string(row, "DamageSourceCategory"))
             .is_some_and(|value| !value.trim().is_empty());
-        let has_ability = json_string(&row, "ability")
-            .or_else(|| json_string(&row, "GAName"))
+        let has_ability = json_string(row, "ability")
+            .or_else(|| json_string(row, "GAName"))
             .is_some_and(|value| !value.trim().is_empty() && value != "None");
         if !has_category && !has_ability {
             push_item(
                 audit,
                 ResourceAuditSeverity::Warning,
                 ResourceAuditCategory::Skill,
-                &effect_name,
-                &effect_name,
+                effect_name.as_str(),
+                effect_name.as_str(),
                 "缺少技能分类或能力名",
                 SKILL_DAMAGE_DATA_PATH,
+            );
+        }
+    }
+    for effect_name in semantic_effects {
+        if !skill_rows.contains_key(&effect_name) {
+            push_item(
+                audit,
+                ResourceAuditSeverity::Warning,
+                ResourceAuditCategory::GameplayEffect,
+                effect_name.as_str(),
+                effect_name.as_str(),
+                "GE 语义缺少技能表记录",
+                SKILL_DAMAGE_DATA_PATH,
+            );
+        }
+        if !mapped_effect_names.contains(&effect_name) {
+            push_item(
+                audit,
+                ResourceAuditSeverity::Warning,
+                ResourceAuditCategory::GameplayEffect,
+                effect_name.as_str(),
+                effect_name.as_str(),
+                "GE 语义缺少 GE index 映射",
+                GAMEPLAY_EFFECT_MAPPING_PATH,
             );
         }
     }
@@ -523,36 +536,17 @@ fn load_skill_rows(
         .unwrap_or_default()
 }
 
-fn load_wooden_names(
+fn load_semantic_effects(
     reader: &dyn ResourceReader,
     audit: &mut ResourceAuditSummary,
 ) -> HashSet<String> {
-    let Some(document) = read_json_object(reader, WOODEN_DAMAGE_DESCRIPTIONS_PATH, audit) else {
+    let Some(document) = read_json_object(reader, GAMEPLAY_EFFECT_SEMANTICS_PATH, audit) else {
         return HashSet::new();
     };
-    if let Some(names) = document.get("names").and_then(Value::as_object) {
-        return names
-            .iter()
-            .filter_map(|(name, value)| {
-                value
-                    .as_str()
-                    .filter(|label| !label.trim().is_empty())
-                    .map(|_| name.clone())
-            })
-            .collect();
-    }
-    data_table_rows(&document)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(|(name, row)| {
-                    row.get("Desc")
-                        .and_then(|desc| desc.get("CultureInvariantString"))
-                        .and_then(Value::as_str)
-                        .filter(|description| !description.trim().is_empty())
-                        .map(|_| name.clone())
-                })
-                .collect()
-        })
+    document
+        .get("effects")
+        .and_then(Value::as_object)
+        .map(|effects| effects.keys().cloned().collect())
         .unwrap_or_default()
 }
 
@@ -741,8 +735,8 @@ mod tests {
         );
         write(
             &root,
-            WOODEN_DAMAGE_DESCRIPTIONS_PATH,
-            r#"{"names":{"GE_Known":"已知"}}"#,
+            GAMEPLAY_EFFECT_SEMANTICS_PATH,
+            r#"{"effects":{"GE_SemanticMissing":{"damage_name_en":"Test","damage_name_zh":"测试","damage_name_ja":"テスト"}}}"#,
         );
         write(
             &root,
@@ -763,7 +757,9 @@ mod tests {
             item.category == ResourceAuditCategory::Character && item.message == "头像资源缺失"
         }));
         assert!(summary.items.iter().any(|item| {
-            item.category == ResourceAuditCategory::Skill && item.message == "缺少中文伤害名"
+            item.category == ResourceAuditCategory::GameplayEffect
+                && item.resource_id == "GE_SemanticMissing"
+                && item.message == "GE 语义缺少技能表记录"
         }));
         assert!(summary.items.iter().any(|item| {
             item.category == ResourceAuditCategory::GameplayEffect
@@ -830,19 +826,15 @@ mod tests {
         );
         write(
             &root,
-            WOODEN_DAMAGE_DESCRIPTIONS_PATH,
-            r#"[{"Rows":{"GE_Known":{"Desc":{"CultureInvariantString":"普攻1段"}}}}]"#,
+            GAMEPLAY_EFFECT_SEMANTICS_PATH,
+            r#"{"effects":{"GE_Known":{"damage_name_en":"Test","damage_name_zh":"测试","damage_name_ja":"テスト"}}}"#,
         );
 
         let summary = audit_resource_root(&root);
 
         assert_eq!(summary.counts.skill_damage, 2);
         assert_eq!(summary.counts.mapped_effects, 1);
-        assert!(summary.items.iter().any(|item| {
-            item.category == ResourceAuditCategory::Skill
-                && item.resource_id == "GE_Missing"
-                && item.message == "缺少中文伤害名"
-        }));
+        assert_eq!(summary.counts.semantic_effects, 1);
         assert!(summary.items.iter().any(|item| {
             item.category == ResourceAuditCategory::GameplayEffect
                 && item.resource_id == "GE_Missing"

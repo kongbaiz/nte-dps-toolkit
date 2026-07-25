@@ -24,6 +24,12 @@ const BOSS_HP_PREFIX_HEAD: [u8; 8] = [0x06, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 
 const ACTIVE_GAMEPLAY_EFFECT_ANCHOR: &[u8] = b"FHTClientActiveGE";
 const ACTIVE_GAMEPLAY_EFFECT_VALUE_OFFSET: usize = 5;
 const ACTIVE_GAMEPLAY_EFFECT_MARKER: u32 = 12;
+// Compact FHTClientActiveGE values omit the repeated property name and use
+// either `0c,index,0b,state` or `04,index,state` before the shared trailer.
+const COMPACT_GAMEPLAY_EFFECT_MARKER_WITH_FIELD: u8 = 12;
+const COMPACT_GAMEPLAY_EFFECT_MARKER: u8 = 4;
+const COMPACT_GAMEPLAY_EFFECT_FIELD: &[u8] = &[11, 0, 0, 0];
+const COMPACT_GAMEPLAY_EFFECT_TRAILER: &[u8] = &[59, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
 const EQUIPMENT_SLOT_STATE_ANCHOR: &[u8] = b"\x06\0\0\0State\0";
 const EMPTY_CURTAIN_CORE_SLOT_ANCHOR: &[u8] = b"FEquipmentSlotInfo";
 const EMPTY_CURTAIN_GRID_SIDE: i32 = 7;
@@ -40,9 +46,9 @@ pub const EMPTY_CURTAIN_MAX_STAT_ROWS: usize = 6;
 
 pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
+pub const GAMEPLAY_EFFECT_SEMANTICS_PATH: &str = "res/data/skills/gameplay_effect_semantics.json";
 pub const SKILL_DAMAGE_DATA_PATH: &str = "res/data/skills/skill_damage.json";
 pub const ULTRA_TIME_STOP_DATA_PATH: &str = "res/data/skills/ultra_time_stop.json";
-pub const WOODEN_DAMAGE_DESCRIPTIONS_PATH: &str = "res/data/skills/wooden_damage_descriptions.json";
 pub const ABILITY_TIPS_PATH: &str = "res/data/skills/ability_tips.json";
 pub const EQUIPMENT_CATALOG_PATH: &str = "res/data/equipment/equipment.json";
 
@@ -332,6 +338,8 @@ pub struct GameplayEffectSkill {
     pub damage_source_category: Option<String>,
     pub ability_name: Option<String>,
     pub attack_type: String,
+    pub damage_component: Option<String>,
+    pub owner_character_id: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -703,6 +711,31 @@ impl AbilityCatalog {
         load_gameplay_effect_skills(path).map(Self::from)
     }
 
+    pub fn apply_semantics(&mut self, path: &Path) -> Result<()> {
+        let semantics = load_gameplay_effect_semantics(path)?;
+        for effect_name in semantics.keys() {
+            ensure!(
+                self.skills.contains_key(effect_name),
+                "GE 语义表引用了技能表中不存在的 {effect_name}"
+            );
+        }
+        for (effect_name, semantic) in semantics {
+            let skill = self
+                .skills
+                .get_mut(&effect_name)
+                .expect("GE semantics keys were validated against the skill catalog");
+            if let Some(ability_name) = semantic.ability {
+                skill.ability_name = Some(ability_name);
+            }
+            if let Some(attack_type) = semantic.attack_type {
+                skill.attack_type = attack_type;
+            }
+            skill.damage_component = Some(semantic.damage_name_en);
+            skill.owner_character_id = semantic.owner_character_id;
+        }
+        Ok(())
+    }
+
     pub fn skill(&self, effect_name: &str) -> Option<&GameplayEffectSkill> {
         self.skills.get(effect_name)
     }
@@ -710,6 +743,99 @@ impl AbilityCatalog {
     pub fn ability_name(&self, effect_name: &str) -> Option<&str> {
         self.skill(effect_name)?.ability_name.as_deref()
     }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GameplayEffectSemanticDocument {
+    format_version: u32,
+    effects: HashMap<String, GameplayEffectSemantic>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct GameplayEffectSemantic {
+    #[serde(default)]
+    owner_character_id: Option<u32>,
+    #[serde(default)]
+    ability: Option<String>,
+    #[serde(default)]
+    attack_type: Option<String>,
+    #[serde(default = "default_show_parent_ability")]
+    show_parent_ability: bool,
+    damage_name_en: String,
+    damage_name_zh: String,
+    damage_name_ja: String,
+}
+
+const fn default_show_parent_ability() -> bool {
+    true
+}
+
+fn load_gameplay_effect_semantics(path: &Path) -> Result<HashMap<String, GameplayEffectSemantic>> {
+    let text = read_resource_text(path)
+        .with_context(|| format!("无法读取 GE 语义表 {}", path.display()))?;
+    let document: GameplayEffectSemanticDocument =
+        serde_json::from_str(&text).context("GE 语义表 JSON 无效")?;
+    ensure!(
+        document.format_version == 1,
+        "GE 语义表 format_version {} 暂未支持",
+        document.format_version
+    );
+    for (effect_name, semantic) in &document.effects {
+        ensure!(
+            effect_name.starts_with("GE_") || effect_name.starts_with("Buff_"),
+            "GE 语义表包含无效标识 {effect_name}"
+        );
+        ensure!(
+            semantic.owner_character_id != Some(0),
+            "GE 语义表 {effect_name} 的 owner_character_id 无效"
+        );
+        ensure!(
+            semantic
+                .ability
+                .as_deref()
+                .is_none_or(|ability| !ability.trim().is_empty()),
+            "GE 语义表 {effect_name} 的 ability 为空"
+        );
+        ensure!(
+            semantic
+                .ability
+                .as_deref()
+                .is_none_or(|ability| ability.starts_with("GA_")),
+            "GE 语义表 {effect_name} 的 ability 标识无效"
+        );
+        ensure!(
+            semantic
+                .attack_type
+                .as_deref()
+                .is_none_or(|attack_type| !attack_type.trim().is_empty()),
+            "GE 语义表 {effect_name} 的 attack_type 为空"
+        );
+        ensure!(
+            !semantic.damage_name_en.trim().is_empty()
+                && !semantic.damage_name_zh.trim().is_empty()
+                && !semantic.damage_name_ja.trim().is_empty(),
+            "GE 语义表 {effect_name} 缺少多语言伤害组件名"
+        );
+    }
+    Ok(document.effects)
+}
+
+pub fn load_gameplay_effect_semantic_names(
+    path: &Path,
+    language: Language,
+) -> Result<HashMap<String, (String, bool)>> {
+    let semantics = load_gameplay_effect_semantics(path)?;
+    Ok(semantics
+        .into_iter()
+        .map(|(effect_name, semantic)| {
+            let name = match language {
+                Language::SimplifiedChinese => semantic.damage_name_zh,
+                Language::English => semantic.damage_name_en,
+                Language::Japanese => semantic.damage_name_ja,
+            };
+            (effect_name, (name, semantic.show_parent_ability))
+        })
+        .collect())
 }
 
 impl From<HashMap<String, GameplayEffectSkill>> for AbilityCatalog {
@@ -748,6 +874,8 @@ pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, Gamepl
                         damage_source_category: category,
                         ability_name,
                         attack_type,
+                        damage_component: None,
+                        owner_character_id: None,
                     },
                 )
             })
@@ -781,6 +909,8 @@ pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, Gamepl
                     damage_source_category: category,
                     ability_name,
                     attack_type,
+                    damage_component: None,
+                    owner_character_id: None,
                 },
             )
         })
@@ -812,48 +942,8 @@ pub fn load_ultra_time_stops(path: &Path) -> Result<HashMap<u32, UltraTimeStopEn
         .collect())
 }
 
-// Superseded by ability_tips-based name resolution (load_ability_tip_names);
-// kept only as a regression test for the legacy wooden-dummy description
-// parsing below via loads_chinese_damage_names_from_wooden_assets /
-// loads_compact_wooden_damage_names.
-#[cfg(test)]
-fn load_wooden_damage_names(path: &Path) -> Result<HashMap<String, String>> {
-    let text = read_resource_text(path)
-        .with_context(|| format!("无法读取木桩伤害描述表 {}", path.display()))?;
-    let document: serde_json::Value =
-        serde_json::from_str(&text).context("木桩伤害描述表 JSON 无效")?;
-    if let Some(names) = document.get("names").and_then(serde_json::Value::as_object) {
-        return Ok(names
-            .iter()
-            .filter_map(|(effect_name, name)| {
-                name.as_str()
-                    .filter(|name| !name.trim().is_empty())
-                    .map(|name| (effect_name.clone(), name.to_owned()))
-            })
-            .collect());
-    }
-    let rows = document
-        .as_array()
-        .and_then(|entries| entries.first())
-        .and_then(|entry| entry.get("Rows"))
-        .and_then(serde_json::Value::as_object)
-        .context("木桩伤害描述表缺少 Rows")?;
-
-    Ok(rows
-        .iter()
-        .filter_map(|(effect_name, row)| {
-            row.get("Desc")
-                .and_then(|desc| desc.get("CultureInvariantString"))
-                .and_then(serde_json::Value::as_str)
-                .filter(|description| !description.trim().is_empty())
-                .map(|description| (effect_name.clone(), normalize_damage_name(description)))
-        })
-        .collect())
-}
-
 /// Maps GA_ ability names to their official in-game skill name, sourced from
-/// `DT_GameplayAbilityTipsData`. Unlike the wooden dummy descriptions this table is
-/// kept current with new characters, but it is keyed by ability rather than by
+/// `DT_GameplayAbilityTipsData`. This table is keyed by ability rather than by
 /// GameplayEffect, so callers join it through [`GameplayEffectSkill::ability_name`].
 ///
 /// Picks the field matching `language`, falling back through the other fields
@@ -992,20 +1082,6 @@ pub fn classify_attack_type(
         "E技能".to_owned()
     } else {
         "其他".to_owned()
-    }
-}
-
-pub fn classify_attack_type_from_description(description: &str) -> Option<String> {
-    if description.contains("QTE") || description.contains("环合") {
-        Some("环合".to_owned())
-    } else if description.contains("大招") {
-        Some("Q技能".to_owned())
-    } else if description.contains("普攻") {
-        Some("普攻".to_owned())
-    } else if description.contains("技能") {
-        Some("E技能".to_owned())
-    } else {
-        None
     }
 }
 
@@ -2200,6 +2276,41 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
                 bit_shift,
             });
         }
+        for marker_offset in 0..shifted.len() {
+            let trailer_offset = match shifted[marker_offset] {
+                COMPACT_GAMEPLAY_EFFECT_MARKER_WITH_FIELD
+                    if shifted
+                        .get(marker_offset + 5..marker_offset + 9)
+                        .is_some_and(|bytes| bytes == COMPACT_GAMEPLAY_EFFECT_FIELD) =>
+                {
+                    marker_offset + 13
+                }
+                COMPACT_GAMEPLAY_EFFECT_MARKER => marker_offset + 9,
+                _ => continue,
+            };
+            if !shifted
+                .get(trailer_offset..trailer_offset + COMPACT_GAMEPLAY_EFFECT_TRAILER.len())
+                .is_some_and(|bytes| bytes == COMPACT_GAMEPLAY_EFFECT_TRAILER)
+            {
+                continue;
+            }
+            let index_offset = marker_offset + 1;
+            let unique_index = u32::from_le_bytes(
+                shifted[index_offset..index_offset + 4]
+                    .try_into()
+                    .expect("Compact GameplayEffect index has a fixed four-byte length"),
+            );
+            if matches!(unique_index, 0 | u32::MAX)
+                || !seen.insert((unique_index, bit_shift, index_offset))
+            {
+                continue;
+            }
+            effects.push(ParsedGameplayEffect {
+                unique_index,
+                byte_offset: index_offset,
+                bit_shift,
+            });
+        }
     }
     effects
 }
@@ -2414,6 +2525,7 @@ pub fn parse_damage_payload(
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: None,
+            damage_component: None,
             attack_type: None,
             damage_attribute: None,
             follow_up_damage: 0.0,
@@ -2949,6 +3061,54 @@ mod character_tests {
     }
 
     #[test]
+    fn parses_shifted_compact_gameplay_effect_record() {
+        let mut record = vec![COMPACT_GAMEPLAY_EFFECT_MARKER_WITH_FIELD];
+        record.extend_from_slice(&4579_u32.to_le_bytes());
+        record.extend_from_slice(COMPACT_GAMEPLAY_EFFECT_FIELD);
+        record.extend_from_slice(&5_u32.to_le_bytes());
+        record.extend_from_slice(COMPACT_GAMEPLAY_EFFECT_TRAILER);
+        let mut payload = vec![0; 56];
+        write_shifted_bytes(&mut payload, 6, 20, &record);
+
+        assert_eq!(
+            parse_gameplay_effects(&payload),
+            vec![ParsedGameplayEffect {
+                unique_index: 4579,
+                byte_offset: 21,
+                bit_shift: 6,
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_compact_gameplay_effect_at_payload_boundary() {
+        let mut payload = vec![COMPACT_GAMEPLAY_EFFECT_MARKER];
+        payload.extend_from_slice(&3983_u32.to_le_bytes());
+        payload.extend_from_slice(&9_u32.to_le_bytes());
+        payload.extend_from_slice(COMPACT_GAMEPLAY_EFFECT_TRAILER);
+
+        assert_eq!(
+            parse_gameplay_effects(&payload),
+            vec![ParsedGameplayEffect {
+                unique_index: 3983,
+                byte_offset: 1,
+                bit_shift: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn ignores_compact_gameplay_effect_without_structural_tail() {
+        let mut payload = vec![COMPACT_GAMEPLAY_EFFECT_MARKER_WITH_FIELD];
+        payload.extend_from_slice(&4579_u32.to_le_bytes());
+        payload.extend_from_slice(COMPACT_GAMEPLAY_EFFECT_FIELD);
+        payload.extend_from_slice(&5_u32.to_le_bytes());
+        payload.extend_from_slice(&[58, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+
+        assert!(parse_gameplay_effects(&payload).is_empty());
+    }
+
+    #[test]
     fn loads_gameplay_effect_names_from_assets() {
         let mapping =
             load_gameplay_effect_mapping(Path::new(GAMEPLAY_EFFECT_MAPPING_PATH)).unwrap();
@@ -3086,49 +3246,133 @@ mod character_tests {
     }
 
     #[test]
+    fn exact_gameplay_effect_semantics_override_parent_and_component() {
+        let skills_path = write_temp_json(
+            "semantic_skill_damage.json",
+            r#"{"skills":{
+                "GE_Player_Test_Special_Damage":{"category":"A","ability":"GA_Test_Melee"},
+                "GE_Player_Test_Special_Damage_Adjacent":{"category":"A","ability":"GA_Test_Melee"}
+            }}"#,
+        );
+        let semantics_path = write_temp_json(
+            "semantic_effects.json",
+            r#"{"format_version":1,"effects":{"GE_Player_Test_Special_Damage":{
+                "owner_character_id":1055,
+                "ability":"GA_Test_Passive_2",
+                "attack_type":"Passive Damage",
+                "damage_name_en":"Additional Settlement",
+                "damage_name_zh":"追加清算",
+                "damage_name_ja":"追加清算"
+            }}}"#,
+        );
+        let mut catalog = AbilityCatalog::load(&skills_path).unwrap();
+
+        catalog.apply_semantics(&semantics_path).unwrap();
+
+        let skill = catalog.skill("GE_Player_Test_Special_Damage").unwrap();
+        assert_eq!(skill.ability_name.as_deref(), Some("GA_Test_Passive_2"));
+        assert_eq!(skill.attack_type, "Passive Damage");
+        assert_eq!(
+            skill.damage_component.as_deref(),
+            Some("Additional Settlement")
+        );
+        assert_eq!(skill.owner_character_id, Some(1055));
+        let adjacent = catalog
+            .skill("GE_Player_Test_Special_Damage_Adjacent")
+            .unwrap();
+        assert_eq!(adjacent.ability_name.as_deref(), Some("GA_Test_Melee"));
+        assert_eq!(adjacent.attack_type, "普攻");
+        assert_eq!(adjacent.damage_component, None);
+        assert_eq!(adjacent.owner_character_id, None);
+        let names =
+            load_gameplay_effect_semantic_names(&semantics_path, Language::SimplifiedChinese)
+                .unwrap();
+        assert_eq!(
+            names.get("GE_Player_Test_Special_Damage"),
+            Some(&("追加清算".to_owned(), true))
+        );
+    }
+
+    #[test]
+    fn gameplay_effect_semantics_reject_unknown_effect() {
+        let skills_path = write_temp_json(
+            "semantic_unknown_skill_damage.json",
+            r#"{"skills":{"GE_Player_Test_Damage":{"category":"E","ability":"GA_Test_Skill"}}}"#,
+        );
+        let semantics_path = write_temp_json(
+            "semantic_unknown_effect.json",
+            r#"{"format_version":1,"effects":{"GE_Player_Missing_Damage":{
+                "damage_name_en":"Missing",
+                "damage_name_zh":"缺失",
+                "damage_name_ja":"欠落"
+            }}}"#,
+        );
+        let mut catalog = AbilityCatalog::load(&skills_path).unwrap();
+
+        let error = catalog.apply_semantics(&semantics_path).unwrap_err();
+
+        assert!(error.to_string().contains("GE_Player_Missing_Damage"));
+    }
+
+    #[test]
+    fn loads_bundled_gameplay_effect_semantics() {
+        let mut catalog = AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH)).unwrap();
+        catalog
+            .apply_semantics(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))
+            .unwrap();
+
+        let additional_settlement = catalog
+            .skill("GE_Player_Kuhara_SeedReaction_Damage")
+            .unwrap();
+        assert_eq!(
+            additional_settlement.ability_name.as_deref(),
+            Some("GA_Kuhara_Passive_2")
+        );
+        assert_eq!(additional_settlement.attack_type, "Passive Damage");
+        assert_eq!(
+            additional_settlement.damage_component.as_deref(),
+            Some("Additional Settlement")
+        );
+        assert_eq!(additional_settlement.owner_character_id, Some(1055));
+
+        let blossom = catalog.skill("GE_ActorReaction_1_Damage").unwrap();
+        assert_eq!(blossom.ability_name, None);
+        assert_eq!(blossom.attack_type, "创生花");
+        assert_eq!(blossom.damage_component.as_deref(), Some("Blossom Damage"));
+        assert_eq!(blossom.owner_character_id, None);
+
+        let replica_blossom = catalog.skill("GE_ActorReaction_1_1019_Damage").unwrap();
+        assert_eq!(
+            replica_blossom.ability_name.as_deref(),
+            Some("GA_Oneiroi_Passive_1")
+        );
+        assert_eq!(replica_blossom.attack_type, "创生花");
+        assert_eq!(
+            replica_blossom.damage_component.as_deref(),
+            Some("Replica Vita Pistil")
+        );
+        assert_eq!(replica_blossom.owner_character_id, None);
+
+        let names = load_gameplay_effect_semantic_names(
+            Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH),
+            Language::SimplifiedChinese,
+        )
+        .unwrap();
+        assert_eq!(
+            names.get("GE_ActorReaction_1_Damage"),
+            Some(&("创生花".to_owned(), false))
+        );
+        assert_eq!(
+            names.get("GE_ActorReaction_1_1019_Damage"),
+            Some(&("复制创生花".to_owned(), true))
+        );
+    }
+
+    #[test]
     fn classifies_qte_as_utf8_huanhe() {
         assert_eq!(
             classify_attack_type(None, "GE_Player_Test_QTE_Damage", Some("GA_Test_QTE")),
             "环合"
-        );
-    }
-
-    #[test]
-    fn loads_chinese_damage_names_from_wooden_assets() {
-        let names = load_wooden_damage_names(Path::new(WOODEN_DAMAGE_DESCRIPTIONS_PATH)).unwrap();
-
-        assert_eq!(
-            names
-                .get("GE_Player_Sagiri_QTE1_Damage")
-                .map(String::as_str),
-            Some("早雾环合")
-        );
-        assert_eq!(
-            names
-                .get("GE_Player_Nanally_Melee1_Damage")
-                .map(String::as_str),
-            Some("娜娜莉普攻")
-        );
-        assert_eq!(
-            classify_attack_type_from_description("早雾大招1").as_deref(),
-            Some("Q技能")
-        );
-    }
-
-    #[test]
-    fn loads_compact_wooden_damage_names() {
-        let path = write_temp_json(
-            "compact_wooden_names.json",
-            r#"{"names":{"GE_Player_Sagiri_QTE1_Damage":"早雾环合"}}"#,
-        );
-
-        let names = load_wooden_damage_names(&path).unwrap();
-
-        assert_eq!(
-            names
-                .get("GE_Player_Sagiri_QTE1_Damage")
-                .map(String::as_str),
-            Some("早雾环合")
         );
     }
 
