@@ -350,15 +350,26 @@ pub struct InventoryItem {
     pub sub_stats: Vec<InventoryStat>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InventoryCharacter {
+    pub uid: ItemUid,
+    pub character_id: u32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct InventorySnapshot {
     pub generation: u64,
     pub observed_at_unix_ms: u64,
     pub complete: bool,
+    pub characters: Vec<InventoryCharacter>,
     pub items: Vec<InventoryItem>,
 }
 
 impl InventorySnapshot {
+    pub fn character_count(&self) -> usize {
+        self.characters.len()
+    }
+
     pub fn item_count(&self) -> usize {
         self.items.len()
     }
@@ -366,6 +377,7 @@ impl InventorySnapshot {
 
 pub fn inventory_snapshot(
     items: &[EmptyCurtainItem],
+    character_instances: &[EmptyCurtainCharacter],
     catalog: &EquipmentCatalog,
     characters: &HashMap<u32, CharacterInfo>,
     generation: u64,
@@ -375,6 +387,13 @@ pub fn inventory_snapshot(
         generation,
         observed_at_unix_ms,
         complete: true,
+        characters: character_instances
+            .iter()
+            .map(|character| InventoryCharacter {
+                uid: character.net_id.into(),
+                character_id: character.character_id,
+            })
+            .collect(),
         items: items
             .iter()
             .map(|item| inventory_item(item, catalog, characters))
@@ -732,8 +751,51 @@ mod tests {
             equipped_character_id: Some(1020),
             equipped_placement: None,
         };
-        let snapshot = inventory_snapshot(&[item], &catalog(), &characters(), 3, 1234);
+        let character_instances = [
+            EmptyCurtainCharacter {
+                net_id: HtItemNetId {
+                    solt: 11,
+                    serial: 13,
+                },
+                character_id: 1020,
+            },
+            EmptyCurtainCharacter {
+                net_id: HtItemNetId {
+                    solt: 17,
+                    serial: 19,
+                },
+                character_id: 1075,
+            },
+        ];
+        let snapshot = inventory_snapshot(
+            &[item],
+            &character_instances,
+            &catalog(),
+            &characters(),
+            3,
+            1234,
+        );
         let mapped = &snapshot.items[0];
+        assert_eq!(
+            snapshot.characters,
+            [
+                InventoryCharacter {
+                    uid: ItemUid {
+                        slot: 11,
+                        serial: 13
+                    },
+                    character_id: 1020,
+                },
+                InventoryCharacter {
+                    uid: ItemUid {
+                        slot: 17,
+                        serial: 19
+                    },
+                    character_id: 1075,
+                },
+            ]
+        );
+        assert_eq!(snapshot.character_count(), 2);
         assert_eq!(mapped.uid, ItemUid { slot: 7, serial: 9 });
         assert_eq!(mapped.kind, Some("core"));
         assert_eq!(mapped.suit_id.as_deref(), Some("Suit8"));
@@ -776,7 +838,7 @@ mod tests {
             equipped_character_id: Some(9999),
             equipped_placement: None,
         };
-        let snapshot = inventory_snapshot(&[item], &catalog(), &HashMap::new(), 1, 1);
+        let snapshot = inventory_snapshot(&[item], &[], &catalog(), &HashMap::new(), 1, 1);
         let mapped = &snapshot.items[0];
         assert_eq!(mapped.item_id, "unknown-item");
         assert_eq!(mapped.kind, None);

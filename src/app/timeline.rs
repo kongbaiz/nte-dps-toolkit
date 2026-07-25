@@ -4,6 +4,9 @@ use super::*;
 pub(crate) struct SkillDamageSummary {
     pub(crate) name: String,
     pub(crate) category: String,
+    pub(crate) ability_name: Option<String>,
+    pub(crate) gameplay_effect_name: Option<String>,
+    pub(crate) damage_name: Option<String>,
     pub(crate) hits: u64,
     pub(crate) damage: f64,
 }
@@ -1126,7 +1129,7 @@ pub(crate) fn draw_skill_breakdown_rows(
                     format!(
                         "{} · {}",
                         character_display_name(characters, row.char_id, &row.char_name),
-                        row.category
+                        translate_reaction_label(&row.category)
                     ),
                     egui::FontId::proportional(10.0),
                     ui.visuals().weak_text_color(),
@@ -1150,7 +1153,7 @@ pub(crate) fn draw_skill_breakdown_rows(
 pub(crate) fn skill_breakdown_hover_text(row: &SkillBreakdownRow) -> String {
     let mut lines = vec![
         tf("Character: {}", &[&row.char_name]),
-        tf("Category: {}", &[&row.category]),
+        tf("Category: {}", &[&translate_reaction_label(&row.category)]),
         tf("Damage: {}", &[&format_number(row.damage)]),
         tf("Hits: {}", &[&row.hits.to_string()]),
     ];

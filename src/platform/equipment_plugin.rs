@@ -8,15 +8,27 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 #[cfg(feature = "gui")]
+use std::fmt;
+#[cfg(feature = "gui")]
 use std::fs;
+#[cfg(feature = "gui")]
+use std::io::Write;
+#[cfg(feature = "gui")]
+use std::os::windows::ffi::OsStrExt;
 #[cfg(feature = "gui")]
 use std::path::{Path, PathBuf};
 #[cfg(feature = "gui")]
 use std::ptr;
+#[cfg(feature = "gui")]
+use std::sync::atomic::AtomicU64;
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 #[cfg(feature = "gui")]
 use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+#[cfg(feature = "gui")]
+use windows_sys::Win32::Storage::FileSystem::{
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+};
 use windows_sys::Win32::System::Pipes::CallNamedPipeW;
 #[cfg(feature = "gui")]
 use windows_sys::Win32::System::Registry::{
@@ -45,6 +57,8 @@ const PLACEMENT_SIZE: usize = 16;
 const REQUEST_SIZE: usize = REQUEST_HEADER_SIZE + MAX_PLACEMENTS * PLACEMENT_SIZE;
 const RESPONSE_SIZE: usize = 24;
 const MAX_PLUGIN_STATUS: u32 = 12;
+#[cfg(feature = "gui")]
+static PLUGIN_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[cfg(feature = "gui")]
 const GAME_INSTALL_REGISTRY_KEYS: [(EquipmentPluginGameRegion, &str); 2] = [
@@ -168,6 +182,32 @@ pub enum EquipmentPluginDeploymentError {
     ConflictingDwmapi,
     InstalledPluginChanged,
     FileSystem(String),
+}
+
+#[cfg(feature = "gui")]
+impl fmt::Display for EquipmentPluginDeploymentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GameRunning => formatter.write_str("HTGame.exe is running"),
+            Self::GameProcessProbe(error) => {
+                write!(formatter, "game process detection failed: {error}")
+            }
+            Self::GameInstallationNotFound => {
+                formatter.write_str("game installation was not found")
+            }
+            Self::Registry(error) => write!(formatter, "game registry lookup failed: {error}"),
+            Self::PluginSourceNotFound => {
+                formatter.write_str("equipment plugin source was not found")
+            }
+            Self::ConflictingDwmapi => {
+                formatter.write_str("game directory contains an unmanaged dwmapi.dll")
+            }
+            Self::InstalledPluginChanged => {
+                formatter.write_str("installed equipment plugin changed outside this tool")
+            }
+            Self::FileSystem(error) => write!(formatter, "equipment plugin file failed: {error}"),
+        }
+    }
 }
 
 enum WorkerCommand {
@@ -515,6 +555,34 @@ pub fn remove_equipment_plugin(
 }
 
 #[cfg(feature = "gui")]
+pub fn refresh_installed_equipment_plugins(
+    plugin: &[u8],
+) -> Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError> {
+    let installations = match game_installation_directories() {
+        Ok(installations) => installations,
+        Err(EquipmentPluginDeploymentError::GameInstallationNotFound) => {
+            return Ok(EquipmentPluginDeploymentStatus {
+                source_available: true,
+                ..Default::default()
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let managed_directories: Vec<_> = installations
+        .iter()
+        .map(|(_, directory)| directory)
+        .filter(|directory| directory.join(PLUGIN_MARKER_FILE_NAME).is_file())
+        .cloned()
+        .collect();
+    if managed_directories.is_empty() {
+        return inspect_game_installations(&installations, Some(plugin));
+    }
+    ensure_game_is_closed()?;
+    replace_managed_plugin_directories(&managed_directories, plugin)?;
+    inspect_game_installations(&installations, Some(plugin))
+}
+
+#[cfg(feature = "gui")]
 fn ensure_game_is_closed() -> Result<(), EquipmentPluginDeploymentError> {
     match super::network::game_process_is_running() {
         Ok(false) => Ok(()),
@@ -786,6 +854,115 @@ fn install_plugin_to_directories(
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "gui")]
+fn replace_managed_plugin_directories(
+    directories: &[PathBuf],
+    plugin: &[u8],
+) -> Result<(), EquipmentPluginDeploymentError> {
+    if plugin.is_empty() {
+        return Err(EquipmentPluginDeploymentError::FileSystem(
+            "equipment plugin file is empty".to_owned(),
+        ));
+    }
+    let mut backups = Vec::with_capacity(directories.len());
+    for directory in directories {
+        let plugin_path = directory.join(PLUGIN_FILE_NAME);
+        let marker_path = directory.join(PLUGIN_MARKER_FILE_NAME);
+        let marker_text = fs::read_to_string(&marker_path).map_err(file_system_error)?;
+        let marker = parse_plugin_marker(&marker_text)
+            .ok_or(EquipmentPluginDeploymentError::InstalledPluginChanged)?;
+        let existing = fs::read(&plugin_path)
+            .map_err(|_| EquipmentPluginDeploymentError::InstalledPluginChanged)?;
+        if plugin_marker(&existing) != marker {
+            return Err(EquipmentPluginDeploymentError::InstalledPluginChanged);
+        }
+        backups.push((plugin_path, marker_path, existing, marker_text));
+    }
+
+    let marker = encode_plugin_marker(plugin);
+    for (plugin_path, marker_path, _, _) in &backups {
+        let result = atomic_replace_bytes(plugin_path, plugin)
+            .and_then(|_| atomic_replace_bytes(marker_path, marker.as_bytes()));
+        if let Err(error) = result {
+            let rollback_failures = restore_managed_plugin_backups(&backups);
+            let detail = if rollback_failures.is_empty() {
+                error.to_string()
+            } else {
+                format!("{error}; rollback failed: {}", rollback_failures.join("; "))
+            };
+            return Err(EquipmentPluginDeploymentError::FileSystem(detail));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "gui")]
+fn restore_managed_plugin_backups(backups: &[(PathBuf, PathBuf, Vec<u8>, String)]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (plugin_path, marker_path, plugin, marker) in backups.iter().rev() {
+        if let Err(error) = atomic_replace_bytes(plugin_path, plugin) {
+            failures.push(format!("{}: {error}", plugin_path.display()));
+        }
+        if let Err(error) = atomic_replace_bytes(marker_path, marker.as_bytes()) {
+            failures.push(format!("{}: {error}", marker_path.display()));
+        }
+    }
+    failures
+}
+
+#[cfg(feature = "gui")]
+fn atomic_replace_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .expect("validated plugin path has a parent directory");
+    fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .expect("validated plugin path has a file name")
+        .to_string_lossy();
+    let sequence = PLUGIN_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(
+        ".{file_name}.{}.{sequence}.tmp",
+        std::process::id()
+    ));
+    if temporary.exists() {
+        fs::remove_file(&temporary)?;
+    }
+    let result = (|| {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        drop(file);
+        let temporary_wide = temporary
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let target_wide = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        // SAFETY: Both path buffers are null-terminated and remain alive for the call.
+        if unsafe {
+            MoveFileExW(
+                temporary_wide.as_ptr(),
+                target_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 #[cfg(feature = "gui")]
@@ -1225,5 +1402,27 @@ mod tests {
         assert!(directory.join(PLUGIN_FILE_NAME).exists());
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn managed_plugin_refresh_updates_only_enabled_directories() {
+        let enabled = deployment_test_directory("refresh-enabled");
+        let disabled = deployment_test_directory("refresh-disabled");
+        install_plugin_to_directories(std::slice::from_ref(&enabled), b"old plugin").unwrap();
+
+        replace_managed_plugin_directories(std::slice::from_ref(&enabled), b"new plugin").unwrap();
+
+        assert_eq!(
+            fs::read(enabled.join(PLUGIN_FILE_NAME)).unwrap(),
+            b"new plugin"
+        );
+        assert_eq!(
+            read_marker(&enabled.join(PLUGIN_MARKER_FILE_NAME)).unwrap(),
+            plugin_marker(b"new plugin")
+        );
+        assert!(!disabled.join(PLUGIN_FILE_NAME).exists());
+        fs::remove_dir_all(enabled).unwrap();
+        fs::remove_dir_all(disabled).unwrap();
     }
 }

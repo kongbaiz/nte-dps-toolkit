@@ -2,7 +2,8 @@ use serde::Serialize;
 
 use crate::core::capture::CaptureEnvironment;
 use crate::core::snapshot::{
-    InventoryItem, InventoryPlacement, InventorySnapshot, InventoryStat, ItemUid, LocalizedNames,
+    InventoryCharacter, InventoryItem, InventoryPlacement, InventorySnapshot, InventoryStat,
+    ItemUid, LocalizedNames,
 };
 use crate::engine::capture::CaptureDevice;
 use crate::engine::model::{
@@ -126,6 +127,21 @@ impl From<InventoryPlacement> for InventoryPlacementDto {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct InventoryCharacterDto {
+    pub uid: ItemUidDto,
+    pub character_id: u32,
+}
+
+impl From<InventoryCharacter> for InventoryCharacterDto {
+    fn from(character: InventoryCharacter) -> Self {
+        Self {
+            uid: character.uid.into(),
+            character_id: character.character_id,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct InventoryItemDto {
     pub uid: ItemUidDto,
@@ -180,6 +196,8 @@ pub struct InventorySnapshotDto {
     pub generation: u64,
     pub observed_at_unix_ms: u64,
     pub complete: bool,
+    pub character_count: usize,
+    pub characters: Vec<InventoryCharacterDto>,
     pub item_count: usize,
     pub items: Vec<InventoryItemDto>,
 }
@@ -190,6 +208,13 @@ impl From<&InventorySnapshot> for InventorySnapshotDto {
             generation: snapshot.generation,
             observed_at_unix_ms: snapshot.observed_at_unix_ms,
             complete: snapshot.complete,
+            character_count: snapshot.character_count(),
+            characters: snapshot
+                .characters
+                .iter()
+                .copied()
+                .map(InventoryCharacterDto::from)
+                .collect(),
             item_count: snapshot.item_count(),
             items: snapshot.items.iter().map(InventoryItemDto::from).collect(),
         }

@@ -7,6 +7,8 @@
 pub mod capture;
 pub mod reducer;
 pub mod snapshot;
+#[cfg(feature = "gui")]
+pub mod update;
 
 /// Stable machine-readable error category shared by both frontends. The GUI
 /// picks user-facing wording per code at its display boundary; the CLI maps

@@ -6,6 +6,7 @@
     "res/data/equipment/equipment.json",
     "res/data/skills/ability_tips.json",
     "res/data/skills/gameplay_effect_mapping.json",
+    "res/data/skills/gameplay_effect_semantics.json",
     "res/data/skills/skill_damage.json",
     "res/data/skills/ultra_time_stop.json"
   ]

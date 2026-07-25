@@ -256,8 +256,25 @@ writing a business inventory file. Before the first complete snapshot it returns
 `INVENTORY_NOT_READY`.
 
 Inventory results and `event.inventory.snapshot` contain `generation`,
-`observed_at_unix_ms`, `complete`, `item_count`, and `items`. Event notifications
-also contain the global event `sequence`. Internal item IDs are mapped as:
+`observed_at_unix_ms`, `complete`, `character_count`, `characters`, `item_count`,
+and `items`. Event notifications also contain the global event `sequence`.
+Captured character instances are mapped independently of equipment ownership:
+
+```json
+{
+  "uid":{"slot":3,"serial":4},
+  "character_id":1075
+}
+```
+
+`characters` includes every character instance resolved from the current
+inventory connection, including characters with no equipped Console items.
+Character UIDs are account- and connection-specific and must not be reused
+across another account or connection. After the first complete inventory
+snapshot, a character-list-only change publishes a new inventory generation
+even when `items` is unchanged.
+
+Internal item IDs are mapped as:
 
 ```json
 {
@@ -278,7 +295,8 @@ their stable IDs and values while optional metadata remains null.
 `equipped_character_id` is the stable character ID used as the key in
 `res/data/characters/characters.json`; it is null when the item is unequipped or
 the owner has not been resolved. `equipped_character_uid` remains the
-account-specific character item instance UID.
+account-specific character item instance UID and matches `characters[].uid` when
+the owner mapping is available.
 `equipped_placement` is the equipped module's 1-based anchor position. It is
 null for cores, unequipped modules, or when the module position has not been
 resolved yet.

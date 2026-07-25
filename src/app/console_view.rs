@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::update::UpdateComponent;
 
 impl DpsApp {
     pub(crate) fn console_panel(&mut self, ctx: &egui::Context) {
@@ -1614,6 +1615,7 @@ impl DpsApp {
                 if settings_uses_two_columns(ui.available_width()) {
                     ui.columns(2, |columns| {
                         self.settings_interface_section(&mut columns[0]);
+                        self.settings_update_section(&mut columns[0]);
                         self.settings_parse_section(&mut columns[0]);
                         self.settings_hotkeys_section(&mut columns[0]);
                         self.settings_hud_section(&mut columns[1]);
@@ -1624,6 +1626,7 @@ impl DpsApp {
                     });
                 } else {
                     self.settings_interface_section(ui);
+                    self.settings_update_section(ui);
                     self.settings_parse_section(ui);
                     self.settings_hotkeys_section(ui);
                     self.settings_hud_section(ui);
@@ -1838,6 +1841,215 @@ impl DpsApp {
                         }
                         ui.end_row();
                     });
+        });
+    }
+
+    fn settings_update_section(&mut self, ui: &mut egui::Ui) {
+        settings_section(ui, self.theme(), "Software Update", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(t("Current Version"));
+                ui.strong(env!("CARGO_PKG_VERSION"));
+            });
+
+            let mut auto_check = self.update_client.auto_check;
+            if ui
+                .checkbox(
+                    &mut auto_check,
+                    t("Automatically check for official updates"),
+                )
+                .changed()
+            {
+                self.set_auto_check_updates(auto_check);
+            }
+            ui.checkbox(
+                &mut self.update_client.auto_download,
+                t("Automatically download verified updates"),
+            );
+            ui.small(t(
+                "Update connections follow the Windows system proxy, automatic proxy script, and direct-connection fallback",
+            ));
+            ui.add_space(6.0);
+
+            match self.update_client.status.clone() {
+                UpdateStatus::Idle => {
+                    ui.weak(t("Updates have not been checked in this session"));
+                }
+                UpdateStatus::NotConfigured => {
+                    ui.colored_label(
+                        self.theme().warning,
+                        t("The official update channel is not configured in this build"),
+                    );
+                }
+                UpdateStatus::Checking => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(16.0));
+                        ui.label(t("Checking for updates..."));
+                    });
+                }
+                UpdateStatus::UpToDate => {
+                    ui.colored_label(
+                        self.theme().success,
+                        t("All available update components are up to date"),
+                    );
+                }
+                UpdateStatus::Available => {
+                    for update in &self.update_client.available {
+                        let message = match update.component {
+                            UpdateComponent::App => {
+                                tf("Version {} is available", &[&update.version.to_string()])
+                            }
+                            UpdateComponent::EquipmentPlugin => tf(
+                                "Equipment plugin version {} is available",
+                                &[&update.version.to_string()],
+                            ),
+                        };
+                        ui.colored_label(self.theme().accent, message);
+                    }
+                }
+                UpdateStatus::Downloading {
+                    component,
+                    downloaded,
+                    total,
+                } => {
+                    let progress = if total == 0 {
+                        0.0
+                    } else {
+                        (downloaded as f32 / total as f32).clamp(0.0, 1.0)
+                    };
+                    let text = match component {
+                        UpdateComponent::App => t("Downloading verified update..."),
+                        UpdateComponent::EquipmentPlugin => {
+                            t("Downloading verified equipment plugin...")
+                        }
+                    };
+                    ui.add(
+                        egui::ProgressBar::new(progress)
+                            .show_percentage()
+                            .text(text),
+                    );
+                }
+                UpdateStatus::InstallingPlugin => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new().size(16.0));
+                        ui.label(t("Installing equipment plugin update..."));
+                    });
+                }
+                UpdateStatus::Ready => {
+                    if let Some(prepared) = self.update_client.prepared.as_ref() {
+                        let message = match prepared.component() {
+                            UpdateComponent::App => tf(
+                                "Version {} is ready to install",
+                                &[&prepared.version().to_string()],
+                            ),
+                            UpdateComponent::EquipmentPlugin => tf(
+                                "Equipment plugin {} is ready to install",
+                                &[&prepared.version().to_string()],
+                            ),
+                        };
+                        ui.colored_label(self.theme().success, message);
+                    }
+                }
+                UpdateStatus::Failed { stage, detail } => {
+                    let message = match stage {
+                        UpdateFailureStage::Check => tf("Update check failed: {}", &[&detail]),
+                        UpdateFailureStage::Download => {
+                            tf("Update download failed: {}", &[&detail])
+                        }
+                        UpdateFailureStage::Install => {
+                            tf("Update installation could not start: {}", &[&detail])
+                        }
+                    };
+                    ui.colored_label(self.theme().danger, message);
+                }
+            }
+
+            if let Some(update) = self.update_client.available.first()
+                && !update.notes.trim().is_empty()
+            {
+                ui.add_space(4.0);
+                ui.label(update.notes.clone());
+            }
+
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                let can_check = self.update_client.can_check();
+                if ui
+                    .add_enabled(can_check, egui::Button::new(t("Check for updates")))
+                    .clicked()
+                {
+                    self.start_update_check(ui.ctx());
+                }
+                let can_download = matches!(self.update_client.status, UpdateStatus::Available)
+                    || matches!(
+                        self.update_client.status,
+                        UpdateStatus::Failed {
+                            stage: UpdateFailureStage::Download,
+                            ..
+                        }
+                    );
+                if can_download {
+                    let components: Vec<_> = self
+                        .update_client
+                        .available
+                        .iter()
+                        .map(|update| update.component)
+                        .collect();
+                    for component in components {
+                        let label = match component {
+                            UpdateComponent::App => t("Download application update"),
+                            UpdateComponent::EquipmentPlugin => {
+                                t("Download equipment plugin update")
+                            }
+                        };
+                        if ui.button(label).clicked() {
+                            self.start_component_update_download(ui.ctx(), component);
+                        }
+                    }
+                }
+                let can_install = matches!(self.update_client.status, UpdateStatus::Ready)
+                    || matches!(
+                        self.update_client.status,
+                        UpdateStatus::Failed {
+                            stage: UpdateFailureStage::Install,
+                            ..
+                        }
+                    );
+                if can_install {
+                    let prepared_component = self
+                        .update_client
+                        .prepared
+                        .as_ref()
+                        .map(|prepared| prepared.component())
+                        .expect("installable update status has a prepared component");
+                    let (install_enabled, label, disabled_text) = match prepared_component {
+                        UpdateComponent::App => (
+                            self.capture.is_none() && self.replay_thread.is_none(),
+                            t("Install and restart"),
+                            t("Stop capture or replay before installing the update"),
+                        ),
+                        UpdateComponent::EquipmentPlugin => {
+                            let deployment_idle = self.equipment_plugin_deployment_idle();
+                            let disabled_text = if deployment_idle {
+                                t("Close HTGame.exe before installing the equipment plugin update")
+                            } else {
+                                t("Wait for the current equipment plugin operation to finish")
+                            };
+                            (
+                                !self.capture_ui.game_process_detected && deployment_idle,
+                                t("Install equipment plugin update"),
+                                disabled_text,
+                            )
+                        }
+                    };
+                    if ui
+                        .add_enabled(install_enabled, egui::Button::new(label))
+                        .on_disabled_hover_text(disabled_text)
+                        .clicked()
+                    {
+                        self.install_prepared_update(ui.ctx());
+                    }
+                }
+            });
         });
     }
 

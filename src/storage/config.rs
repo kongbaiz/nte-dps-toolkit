@@ -728,6 +728,10 @@ pub struct UiConfig {
     pub density: UiDensity,
     #[serde(default)]
     pub reduce_motion: bool,
+    #[serde(default = "default_auto_check_updates")]
+    pub auto_check_updates: bool,
+    #[serde(default)]
+    pub auto_download_updates: bool,
     pub always_on_top: bool,
     /// Show notifications in the global "dynamic island" capsule floating
     /// above every window (its own overlay viewport). Off falls back to the
@@ -779,6 +783,8 @@ impl Default for UiConfig {
             accent: AccentColor::default(),
             density: UiDensity::default(),
             reduce_motion: false,
+            auto_check_updates: true,
+            auto_download_updates: false,
             always_on_top: true,
             island_notifications: true,
             island_offset_x: 0.0,
@@ -846,6 +852,10 @@ const fn default_onboarding_done() -> bool {
 }
 
 const fn default_island_notifications() -> bool {
+    true
+}
+
+const fn default_auto_check_updates() -> bool {
     true
 }
 
@@ -1270,6 +1280,8 @@ mod tests {
         assert_eq!(config.hud.module_order, HudModule::all());
         assert_eq!(config.hit_detail_columns, HitDetailColumnsConfig::default());
         assert!(!config.reduce_motion);
+        assert!(config.auto_check_updates);
+        assert!(!config.auto_download_updates);
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
         assert!(config.onboarding_done);
         assert!(!config.console_sidebar_migration_seen);

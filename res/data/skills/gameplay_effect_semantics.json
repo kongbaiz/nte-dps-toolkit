@@ -1,0 +1,174 @@
+{
+  "format_version": 1,
+  "effects": {
+    "GE_ActorReaction_1_Damage": {
+      "attack_type": "创生花",
+      "show_parent_ability": false,
+      "damage_name_en": "Blossom Damage",
+      "damage_name_zh": "创生花",
+      "damage_name_ja": "創生花"
+    },
+    "GE_ActorReaction_1_1019_Damage": {
+      "ability": "GA_Oneiroi_Passive_1",
+      "attack_type": "创生花",
+      "show_parent_ability": true,
+      "damage_name_en": "Replica Vita Pistil",
+      "damage_name_zh": "复制创生花",
+      "damage_name_ja": "複製創生花"
+    },
+    "GE_Nanally010_Lv1_Damage": {
+      "owner_character_id": 1010,
+      "ability": "GA_Nanally_Passive_2",
+      "attack_type": "Passive Damage",
+      "damage_name_en": "Esper Cycle Follow-up Attack",
+      "damage_name_zh": "异能环合追加攻击",
+      "damage_name_ja": "異能連環追加攻撃"
+    },
+    "GE_Nanally010_Lv3_Damage": {
+      "owner_character_id": 1010,
+      "attack_type": "Awakening Damage",
+      "show_parent_ability": false,
+      "damage_name_en": "Awakening Follow-up Attack",
+      "damage_name_zh": "觉醒追加攻击",
+      "damage_name_ja": "覚醒追加攻撃"
+    },
+    "GE_Player_Nanally_ExtraAtk1_Damage": {
+      "owner_character_id": 1010,
+      "show_parent_ability": false,
+      "damage_name_en": "Heavy Hitter (1st Instance, Hit 1)",
+      "damage_name_zh": "重拳出击（第1段·伤害1）",
+      "damage_name_ja": "渾身の一撃（1段目・ダメージ1）"
+    },
+    "GE_Player_Nanally_ExtraAtk2_Damage": {
+      "owner_character_id": 1010,
+      "show_parent_ability": false,
+      "damage_name_en": "Heavy Hitter (1st Instance, Hit 2)",
+      "damage_name_zh": "重拳出击（第1段·伤害2）",
+      "damage_name_ja": "渾身の一撃（1段目・ダメージ2）"
+    },
+    "GE_Player_Nanally_ExtraAtkIntro1_Damage": {
+      "owner_character_id": 1010,
+      "show_parent_ability": false,
+      "damage_name_en": "Heavy Hitter (2nd Instance, Hit 1)",
+      "damage_name_zh": "重拳出击（第2段·伤害1）",
+      "damage_name_ja": "渾身の一撃（2段目・ダメージ1）"
+    },
+    "GE_Player_Nanally_ExtraAtkIntro2_Damage": {
+      "owner_character_id": 1010,
+      "show_parent_ability": false,
+      "damage_name_en": "Heavy Hitter (2nd Instance, Hit 2)",
+      "damage_name_zh": "重拳出击（第2段·伤害2）",
+      "damage_name_ja": "渾身の一撃（2段目・ダメージ2）"
+    },
+    "GE_Player_Nanally_ExtraAtkOutro1_Damage": {
+      "owner_character_id": 1010,
+      "show_parent_ability": false,
+      "damage_name_en": "Heavy Hitter (3rd Instance)",
+      "damage_name_zh": "重拳出击（第3段）",
+      "damage_name_ja": "渾身の一撃（3段目）"
+    },
+    "GE_Player_Kuhara_BudBoom_Damage": {
+      "owner_character_id": 1055,
+      "attack_type": "Special Damage",
+      "show_parent_ability": false,
+      "damage_name_en": "Pact Settlement",
+      "damage_name_zh": "致约清算",
+      "damage_name_ja": "誓約の清算"
+    },
+    "GE_Player_Kuhara_BudEnd_Damage": {
+      "owner_character_id": 1055,
+      "attack_type": "Special Damage",
+      "show_parent_ability": false,
+      "damage_name_en": "Automatic Pact Settlement",
+      "damage_name_zh": "致约清算（自动）",
+      "damage_name_ja": "誓約の清算（自動）"
+    },
+    "GE_Player_Kuhara_Seed_Damage": {
+      "owner_character_id": 1055,
+      "attack_type": "Special Damage",
+      "show_parent_ability": false,
+      "damage_name_en": "Lethal Rose Pact Damage",
+      "damage_name_zh": "致命玫约持续伤害",
+      "damage_name_ja": "致命的な薔薇の誓約継続ダメージ"
+    },
+    "GE_Player_Kuhara_SeedReaction_Damage": {
+      "owner_character_id": 1055,
+      "ability": "GA_Kuhara_Passive_2",
+      "attack_type": "Passive Damage",
+      "damage_name_en": "Additional Settlement",
+      "damage_name_zh": "追加清算",
+      "damage_name_ja": "追加清算"
+    },
+    "GE_Player_Lacrimosa_B_Melee3_Explode_Damage": {
+      "damage_name_en": "Projectile Explosion",
+      "damage_name_zh": "子弹爆炸",
+      "damage_name_ja": "弾丸爆発"
+    },
+    "GE_Player_Lacrimosa_Blood_Damage": {
+      "ability": "GA_Lacrimosa_Melee",
+      "attack_type": "Special Damage",
+      "show_parent_ability": false,
+      "damage_name_en": "Nightmare DMG",
+      "damage_name_zh": "「噩梦」伤害",
+      "damage_name_ja": "「悪夢」ダメージ"
+    },
+    "GE_Player_Lacrimosa_Blood_Damage_LV6": {
+      "ability": "GA_Lacrimosa_Melee",
+      "attack_type": "Special Damage",
+      "show_parent_ability": false,
+      "damage_name_en": "Nightmare DMG",
+      "damage_name_zh": "「噩梦」伤害",
+      "damage_name_ja": "「悪夢」ダメージ"
+    },
+    "GE_Player_Shinku_ReactionAOE_Damage": {
+      "owner_character_id": 1076,
+      "ability": "GA_Shinku_Passive_1",
+      "attack_type": "Passive Damage",
+      "damage_name_en": "Charge Enhancement AoE",
+      "damage_name_zh": "盈蓄强化范围伤害",
+      "damage_name_ja": "充蓄強化範囲ダメージ"
+    },
+    "GE_Player_Shinku_WatchEx_Damage": {
+      "owner_character_id": 1076,
+      "ability": "GA_Shinku_Passive_3",
+      "attack_type": "Passive Damage",
+      "damage_name_en": "Instant Strike Bonus",
+      "damage_name_zh": "即瞬猛袭追加伤害",
+      "damage_name_ja": "刹那の猛撃追加ダメージ"
+    },
+    "GE_Player_Shinku_Watch_Damage": {
+      "owner_character_id": 1076,
+      "ability": "GA_Shinku_Passive_3",
+      "attack_type": "Passive Damage",
+      "damage_name_en": "Instant Strike",
+      "damage_name_zh": "即瞬猛袭",
+      "damage_name_ja": "刹那の猛撃"
+    },
+    "GE_Player_Skia_ShadowAtk1_Damage": {
+      "owner_character_id": 1008,
+      "damage_name_en": "Fang Thrust (2 Stacks)",
+      "damage_name_zh": "兽牙影刺（2层）",
+      "damage_name_ja": "影獣牙突（2スタック）"
+    },
+    "GE_Player_Skia_ShadowAtk2_Damage": {
+      "owner_character_id": 1008,
+      "damage_name_en": "Fang Thrust (3 Stacks)",
+      "damage_name_zh": "兽牙影刺（3层）",
+      "damage_name_ja": "影獣牙突（3スタック）"
+    },
+    "GE_Player_Skia_ShadowAtk_Damage": {
+      "owner_character_id": 1008,
+      "damage_name_en": "Fang Thrust (1 Stack)",
+      "damage_name_zh": "兽牙影刺（1层）",
+      "damage_name_ja": "影獣牙突（1スタック）"
+    },
+    "GE_Player_Zankou_DotDamage": {
+      "owner_character_id": 1070,
+      "ability": "GA_Zankou_Passive1",
+      "attack_type": "Passive Damage",
+      "damage_name_en": "Harmonics: Nova End Damage",
+      "damage_name_zh": "泛音·黯星结束伤害",
+      "damage_name_ja": "ハーモニクス・暗星終了ダメージ"
+    }
+  }
+}

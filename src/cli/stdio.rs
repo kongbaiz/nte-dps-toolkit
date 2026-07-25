@@ -38,7 +38,8 @@ use crate::engine::model::{
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog,
-    SKILL_DAMAGE_DATA_PATH, load_characters, load_equipment_catalog,
+    GAMEPLAY_EFFECT_SEMANTICS_PATH, SKILL_DAMAGE_DATA_PATH, load_characters,
+    load_equipment_catalog,
 };
 use crate::platform::equipment_plugin::{
     EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
@@ -126,9 +127,11 @@ struct RuntimeResources {
 
 impl RuntimeResources {
     fn load() -> anyhow::Result<Self> {
+        let mut ability_catalog = AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))?;
+        ability_catalog.apply_semantics(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))?;
         Ok(Self {
             characters: Arc::new(load_characters(Path::new(CHARACTER_DATA_PATH))?),
-            ability_catalog: Arc::new(AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))?),
+            ability_catalog: Arc::new(ability_catalog),
             equipment_catalog: load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))?,
         })
     }
@@ -208,6 +211,27 @@ impl Runtime {
             .checked_add(1)
             .expect("inventory generation cannot overflow during one process lifetime");
         self.inventory_generation
+    }
+
+    fn publish_inventory_snapshot(&mut self, outbound: &Sender<Value>) {
+        let generation = self.next_inventory_generation();
+        let snapshot = inventory_snapshot(
+            &self.state.empty_curtain,
+            &self.state.empty_curtain_characters,
+            &self.equipment_catalog,
+            &self.characters,
+            generation,
+            unix_time_ms(),
+        );
+        self.latest_inventory = Some(snapshot.clone());
+        let sequence = self.next_sequence();
+        let _ = outbound.send(notification(
+            "event.inventory.snapshot",
+            InventorySnapshotEvent {
+                sequence,
+                snapshot: InventorySnapshotDto::from(&snapshot),
+            },
+        ));
     }
 
     fn next_equipment_request_id(&mut self) -> u64 {
@@ -351,25 +375,7 @@ impl Runtime {
             CoreSignal::StateChanged => self.battle_summary_dirty = true,
             CoreSignal::DebugPacket | CoreSignal::PacketObserved => {}
             CoreSignal::InventoryCharactersReplaced => {}
-            CoreSignal::InventoryReplaced => {
-                let generation = self.next_inventory_generation();
-                let snapshot = inventory_snapshot(
-                    &self.state.empty_curtain,
-                    &self.equipment_catalog,
-                    &self.characters,
-                    generation,
-                    unix_time_ms(),
-                );
-                self.latest_inventory = Some(snapshot.clone());
-                let sequence = self.next_sequence();
-                let _ = outbound.send(notification(
-                    "event.inventory.snapshot",
-                    InventorySnapshotEvent {
-                        sequence,
-                        snapshot: InventorySnapshotDto::from(&snapshot),
-                    },
-                ));
-            }
+            CoreSignal::InventoryReplaced => self.publish_inventory_snapshot(outbound),
             CoreSignal::Status(_) => {
                 if self.capture.is_running() && !self.running_notified {
                     self.running_notified = true;
@@ -1044,8 +1050,8 @@ mod tests {
     use std::io::Cursor;
 
     use crate::engine::model::{
-        EmptyCurtainItem, EmptyCurtainPlacement, Hit, HitCharacterSource, HitDirection,
-        HtItemNetId, PacketDebug, TimeStopEvent,
+        EmptyCurtainCharacter, EmptyCurtainItem, EmptyCurtainPlacement, Hit, HitCharacterSource,
+        HitDirection, HtItemNetId, PacketDebug, TimeStopEvent,
     };
 
     #[test]
@@ -1092,6 +1098,18 @@ mod tests {
         );
         let (outbound, receiver) = bounded(4);
         engine_sender
+            .send(EngineEvent::EmptyCurtainCharacters(vec![
+                EmptyCurtainCharacter {
+                    net_id: HtItemNetId { solt: 6, serial: 7 },
+                    character_id: 1020,
+                },
+                EmptyCurtainCharacter {
+                    net_id: HtItemNetId { solt: 8, serial: 9 },
+                    character_id: 1075,
+                },
+            ]))
+            .unwrap();
+        engine_sender
             .send(EngineEvent::EmptyCurtain(vec![EmptyCurtainItem {
                 id: HtItemNetId { solt: 4, serial: 5 },
                 item_id: "cell2_style2_1_Orange".to_owned(),
@@ -1109,6 +1127,21 @@ mod tests {
         let inventory = receiver.recv().unwrap();
         assert_eq!(inventory["method"], "event.inventory.snapshot");
         assert_eq!(inventory["params"]["generation"], 1);
+        assert_eq!(inventory["params"]["character_count"], 2);
+        assert_eq!(
+            inventory["params"]["characters"][0],
+            serde_json::json!({
+                "uid": {"slot": 6, "serial": 7},
+                "character_id": 1020
+            })
+        );
+        assert_eq!(
+            inventory["params"]["characters"][1],
+            serde_json::json!({
+                "uid": {"slot": 8, "serial": 9},
+                "character_id": 1075
+            })
+        );
         assert_eq!(inventory["params"]["item_count"], 1);
         assert_eq!(inventory["params"]["items"][0]["uid"]["slot"], 4);
         assert_eq!(
@@ -1488,6 +1521,7 @@ mod tests {
             gameplay_effect_name: None,
             ability_name: None,
             damage_name: Some("Skill".to_owned()),
+            damage_component: None,
             attack_type: Some("normal".to_owned()),
             damage_attribute: None,
             follow_up_damage: 0.0,
