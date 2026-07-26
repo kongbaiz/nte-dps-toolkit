@@ -87,7 +87,7 @@
   "Parse Settings": "解析设置",
   "Exclude Time Stop": "扣除时停",
   "Real Time": "现实时间",
-  "Output time is not counted during ultimate/extra time-stop": "大招/额外时停期间不累计输出时间",
+  "Output time is not counted during the authoritative game pause": "游戏权威时停期间不累计输出时间",
   "Output time accrues over the capture time span": "按抓包时间跨度累计输出时间",
   "Whole Team": "整队",
   "By Character": "按角色",

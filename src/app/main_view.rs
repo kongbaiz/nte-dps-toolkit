@@ -71,6 +71,39 @@ fn hud_empty_state_text_key(capture_running: bool, replay_running: bool) -> &'st
     }
 }
 
+fn paint_haloed_colored_suffix(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    base: String,
+    suffix: String,
+    font: egui::FontId,
+    colors: [Color32; 3],
+) {
+    let [base_color, suffix_color, halo] = colors;
+    let base_width = painter
+        .layout_no_wrap(base.clone(), font.clone(), base_color)
+        .size()
+        .x;
+    paint_haloed(
+        painter,
+        pos,
+        egui::Align2::LEFT_CENTER,
+        base,
+        font.clone(),
+        base_color,
+        halo,
+    );
+    paint_haloed(
+        painter,
+        egui::pos2(pos.x + base_width, pos.y),
+        egui::Align2::LEFT_CENTER,
+        suffix,
+        font,
+        suffix_color,
+        halo,
+    );
+}
+
 impl DpsApp {
     pub(crate) fn abyss_selector(&mut self, ui: &mut egui::Ui) {
         if !self.state.abyss.is_active() {
@@ -130,22 +163,26 @@ impl DpsApp {
     }
 
     pub(crate) fn summary_bar(&mut self, ui: &mut egui::Ui) {
-        let (duration, dps, total_damage, total_damage_taken) =
+        let (duration, total_damage, total_damage_taken) =
             if let Some(party) = self.selected_party_state() {
                 (
                     self.party_duration_for_current_mode(party),
-                    self.party_dps_for_current_mode(party),
                     party.total_damage,
                     party.total_damage_taken,
                 )
             } else {
                 (
                     self.state_duration_for_current_mode(),
-                    self.state_dps_for_current_mode(),
                     self.state.total_damage,
                     self.state.total_damage_taken,
                 )
             };
+        let (duration, dps, deduction_seconds, needs_repaint) =
+            self.presented_combat_readout(duration, total_damage);
+        if needs_repaint {
+            ui.ctx()
+                .request_repaint_after(TIME_STOP_PRESENTATION_REFRESH);
+        }
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
         let abyss_active = self.state.abyss.is_active();
         let dps_trend = motion::trend_indicator(
@@ -224,11 +261,18 @@ impl DpsApp {
                     false,
                 );
                 let time_color = columns[3].visuals().text_color();
-                compact_metric_scaled(
+                let deduction_suffix = deduction_seconds.map(|deduction| {
+                    (
+                        format!("  −{deduction:.1}s"),
+                        semantic_danger(self.preferences.dark_mode),
+                    )
+                });
+                compact_metric_colored_suffix_scaled(
                     &mut columns[3],
                     &t("Time"),
                     tf("{}s", &[&format!("{duration:.1}")]),
                     time_color,
+                    deduction_suffix,
                     false,
                     1.0 + end_bounce * 0.06,
                 );
@@ -1125,6 +1169,7 @@ impl DpsApp {
             && total_damage <= 0.0
             && team_dps <= 0.0;
         let mut damage_taken = self.current_damage_taken_for_hud();
+        let mut deduction_seconds = None;
         if preview {
             let preview_data = hud_preview_party_readout();
             rows = preview_data.rows;
@@ -1132,6 +1177,15 @@ impl DpsApp {
             team_dps = preview_data.team_dps;
             duration = preview_data.duration;
             damage_taken = preview_data.damage_taken;
+        } else {
+            let presented = self.presented_combat_readout(duration, total_damage);
+            duration = presented.0;
+            team_dps = presented.1;
+            deduction_seconds = presented.2;
+            if presented.3 {
+                ui.ctx()
+                    .request_repaint_after(TIME_STOP_PRESENTATION_REFRESH);
+            }
         }
         if self.preferences.hud_config.show_character_rows {
             rows.truncate(TEAM_DPS_MAX_MEMBERS);
@@ -1289,6 +1343,7 @@ impl DpsApp {
                             total_damage,
                             team_dps,
                             duration,
+                            deduction_seconds,
                             damage_taken,
                         },
                         &rows,
@@ -1505,15 +1560,35 @@ impl DpsApp {
             } else {
                 t("Team DPS")
             };
-            paint_haloed(
-                painter,
-                egui::pos2(header.left(), header.top() + 12.0),
-                egui::Align2::LEFT_CENTER,
-                label,
-                egui::FontId::proportional(10.5 * duration_scale),
-                colors.muted,
-                colors.halo,
-            );
+            let label_pos = egui::pos2(header.left(), header.top() + 12.0);
+            let label_font = egui::FontId::proportional(10.5 * duration_scale);
+            if let Some(deduction) = values
+                .deduction_seconds
+                .filter(|_| self.preferences.hud_config.show_duration)
+            {
+                paint_haloed_colored_suffix(
+                    painter,
+                    label_pos,
+                    format!("{label} · "),
+                    format!("−{deduction:.1}s"),
+                    label_font,
+                    [
+                        colors.muted,
+                        semantic_danger(self.preferences.dark_mode),
+                        colors.halo,
+                    ],
+                );
+            } else {
+                paint_haloed(
+                    painter,
+                    label_pos,
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    label_font,
+                    colors.muted,
+                    colors.halo,
+                );
+            }
             let dps_text = format_number(animated_dps);
             let dps_font = egui::FontId::proportional(26.0);
             let dps_width = painter
@@ -1537,15 +1612,32 @@ impl DpsApp {
                 colors.accent,
             );
         } else if self.preferences.hud_config.show_duration {
-            paint_haloed(
-                painter,
-                egui::pos2(header.left(), header.center().y),
-                egui::Align2::LEFT_CENTER,
-                format!("{} {:.1}s", t("Time"), values.duration),
-                egui::FontId::monospace(14.0 * duration_scale),
-                colors.text,
-                colors.halo,
-            );
+            let time_pos = egui::pos2(header.left(), header.center().y);
+            let time_font = egui::FontId::monospace(14.0 * duration_scale);
+            if let Some(deduction) = values.deduction_seconds {
+                paint_haloed_colored_suffix(
+                    painter,
+                    time_pos,
+                    format!("{} {:.1}s  ", t("Time"), values.duration),
+                    format!("−{deduction:.1}s"),
+                    time_font,
+                    [
+                        colors.text,
+                        semantic_danger(self.preferences.dark_mode),
+                        colors.halo,
+                    ],
+                );
+            } else {
+                paint_haloed(
+                    painter,
+                    time_pos,
+                    egui::Align2::LEFT_CENTER,
+                    format!("{} {:.1}s", t("Time"), values.duration),
+                    time_font,
+                    colors.text,
+                    colors.halo,
+                );
+            }
         }
 
         let animated_total_damage = if self.preferences.hud_config.show_total_damage {

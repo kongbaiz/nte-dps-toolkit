@@ -31,7 +31,7 @@ use crate::engine::model::{
     CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState, DpsTimeBasis,
     EngineEvent, HitDirection, HitDirectionSummary, PartyCombatState, SkillBreakdown,
     SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport,
-    TeamDpsMember, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
+    TeamDpsMember, TimeStopEvent, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
     summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
@@ -86,6 +86,9 @@ const MAX_UI_EVENTS_WHILE_SCROLLING: usize = 256;
 const UI_EVENT_BUDGET: Duration = Duration::from_millis(4);
 const DETAIL_CACHE_REFRESH_DELAY: Duration = Duration::from_millis(200);
 const MAX_PAUSED_EVENTS: usize = 50_000;
+const TIME_STOP_CHAIN_WINDOW_SECONDS: f64 = 2.0;
+const TIME_STOP_DEDUCTION_VISIBLE_DURATION: Duration = Duration::from_millis(1_800);
+const TIME_STOP_PRESENTATION_REFRESH: Duration = Duration::from_millis(16);
 /// Semantic events are rare relative to raw packet diagnostics. This capacity
 /// absorbs long UI stalls without letting reliable event memory grow without a
 /// bound; a full lane backpressures the parser until the UI catches up.
@@ -416,6 +419,80 @@ struct TimelineCache {
     key: Option<TimelineCacheKey>,
     /// A long timeline can contain thousands of buckets and nested role rows.
     series: Arc<TimelineSeries>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveTimeStopPresentation {
+    timestamp: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimeStopDeductionCue {
+    received_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TimeStopPresentation {
+    active: Option<ActiveTimeStopPresentation>,
+    deduction: Option<TimeStopDeductionCue>,
+    total_deducted_seconds: f64,
+    last_pause_end_timestamp: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct TimeStopPresentationFrame {
+    deduction_seconds: Option<f64>,
+    needs_repaint: bool,
+}
+
+impl TimeStopPresentation {
+    fn observe(&mut self, event: &TimeStopEvent, now: Instant) {
+        match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. } => {
+                if self.active.is_none() {
+                    let continues_chain = self.last_pause_end_timestamp.is_some_and(|ended_at| {
+                        *timestamp >= ended_at
+                            && *timestamp - ended_at <= TIME_STOP_CHAIN_WINDOW_SECONDS
+                    });
+                    if !continues_chain {
+                        self.total_deducted_seconds = 0.0;
+                    }
+                    self.active = Some(ActiveTimeStopPresentation {
+                        timestamp: *timestamp,
+                    });
+                }
+                self.deduction = None;
+            }
+            TimeStopEvent::GamePauseEnded { timestamp, .. } => {
+                let Some(active) = self.active.take() else {
+                    return;
+                };
+                let seconds = *timestamp - active.timestamp;
+                if seconds.is_finite() && seconds > 0.0 {
+                    self.total_deducted_seconds += seconds;
+                    self.last_pause_end_timestamp = Some(*timestamp);
+                    self.deduction = Some(TimeStopDeductionCue { received_at: now });
+                }
+            }
+        }
+    }
+
+    fn frame(self, now: Instant) -> TimeStopPresentationFrame {
+        if self.active.is_some() {
+            return TimeStopPresentationFrame::default();
+        }
+        let Some(deduction) = self.deduction else {
+            return TimeStopPresentationFrame::default();
+        };
+        let elapsed = now.saturating_duration_since(deduction.received_at);
+        if elapsed >= TIME_STOP_DEDUCTION_VISIBLE_DURATION {
+            return TimeStopPresentationFrame::default();
+        }
+        TimeStopPresentationFrame {
+            deduction_seconds: Some(self.total_deducted_seconds),
+            needs_repaint: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -918,6 +995,7 @@ pub(crate) struct HudSummaryValues {
     total_damage: f64,
     team_dps: f64,
     duration: f64,
+    deduction_seconds: Option<f64>,
     damage_taken: f64,
 }
 
@@ -1294,6 +1372,7 @@ pub struct DpsApp {
     team_hit_cache: HitDetailCache,
     skill_summary_cache: SkillSummaryCache,
     timeline_cache: TimelineCache,
+    time_stop_presentation: TimeStopPresentation,
     timeline_view: TimelineViewState,
     skill_breakdown_cache: SkillBreakdownCache,
     selected_timeline_char: Option<u32>,
@@ -1720,14 +1799,14 @@ mod tests {
     use super::{
         AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailFilter,
         NotificationState, PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache,
-        SkillDamageSummary, SkillSummaryCache, TimelineCache, UiConfigSavePlan, UiPreferences,
-        WindowState, adjusted_cached_index, aggregate_character_skill_damage,
-        build_team_dps_export, cached_hit_row, character_color, compare_cached_team_hits,
-        comparison_skill_display_name, damage_digit_key_for_hit, damage_digit_resource_path,
-        damage_number_digits_text, fill_missing_character_colors_from_avatars,
-        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
-        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
-        qte_type_filter_label, reaction_text_key_for_hit,
+        SkillDamageSummary, SkillSummaryCache, TimeStopPresentation, TimelineCache,
+        UiConfigSavePlan, UiPreferences, WindowState, adjusted_cached_index,
+        aggregate_character_skill_damage, build_team_dps_export, cached_hit_row, character_color,
+        compare_cached_team_hits, comparison_skill_display_name, damage_digit_key_for_hit,
+        damage_digit_resource_path, damage_number_digits_text,
+        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
+        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
+        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, skill_summary_display_text,
         snapshot_team_from_stats, summarize_qte_type_filters, translate_reaction_label,
@@ -1735,7 +1814,7 @@ mod tests {
     use crate::engine::model::{
         CaptureQualitySource, CharacterInfo, CharacterStats, CombatSessionSkillSummary,
         CombatState, Hit, HitCharacterSource, HitDirection, SkillBreakdown, SkillBreakdownRow,
-        TeamDps, TeamDpsMember, TimelineBucket, TimelineRoleBucket, TimelineSeries,
+        TeamDps, TeamDpsMember, TimeStopEvent, TimelineBucket, TimelineRoleBucket, TimelineSeries,
         UNBALANCE_ATTACK_TYPE,
     };
     use crate::storage::config::{
@@ -1754,6 +1833,71 @@ mod tests {
     use std::collections::{HashMap, VecDeque};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn time_stop_presentation_accumulates_only_within_two_seconds() {
+        let started_at = Instant::now();
+        let mut presentation = TimeStopPresentation::default();
+        presentation.observe(
+            &TimeStopEvent::GamePauseStarted {
+                timestamp: 100.0,
+                pause_type_mask: 1 << 2,
+            },
+            started_at,
+        );
+
+        let active = presentation.frame(started_at + Duration::from_millis(500));
+        assert_eq!(active, Default::default());
+
+        let ended_at = started_at + Duration::from_secs(3);
+        presentation.observe(
+            &TimeStopEvent::GamePauseEnded {
+                timestamp: 103.0,
+                pause_type_mask: 1 << 2,
+            },
+            ended_at,
+        );
+        let deduction = presentation.frame(ended_at);
+        assert_eq!(deduction.deduction_seconds, Some(3.0));
+        assert!(deduction.needs_repaint);
+
+        presentation.observe(
+            &TimeStopEvent::GamePauseStarted {
+                timestamp: 105.0,
+                pause_type_mask: 1 << 3,
+            },
+            ended_at + Duration::from_millis(200),
+        );
+        presentation.observe(
+            &TimeStopEvent::GamePauseEnded {
+                timestamp: 107.0,
+                pause_type_mask: 1 << 3,
+            },
+            ended_at + Duration::from_millis(400),
+        );
+        let cumulative = presentation.frame(ended_at + Duration::from_millis(400));
+        assert_eq!(cumulative.deduction_seconds, Some(5.0));
+
+        presentation.observe(
+            &TimeStopEvent::GamePauseStarted {
+                timestamp: 110.0,
+                pause_type_mask: 1 << 4,
+            },
+            ended_at + Duration::from_secs(3),
+        );
+        presentation.observe(
+            &TimeStopEvent::GamePauseEnded {
+                timestamp: 114.0,
+                pause_type_mask: 1 << 4,
+            },
+            ended_at + Duration::from_secs(7),
+        );
+        let new_chain = presentation.frame(ended_at + Duration::from_secs(7));
+        assert_eq!(new_chain.deduction_seconds, Some(4.0));
+
+        let expired = presentation.frame(ended_at + Duration::from_millis(8_800));
+        assert_eq!(expired, Default::default());
+    }
 
     #[test]
     fn console_always_exposes_capture_diagnostics() {

@@ -4,9 +4,10 @@
 
 use std::io;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
+use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 #[cfg(feature = "gui")]
 use std::fmt;
 #[cfg(feature = "gui")]
@@ -19,10 +20,6 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "gui")]
 use std::ptr;
-#[cfg(feature = "gui")]
-use std::sync::atomic::AtomicU64;
-
-use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 #[cfg(feature = "gui")]
 use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 #[cfg(feature = "gui")]
@@ -37,9 +34,9 @@ use windows_sys::Win32::System::Registry::{
 
 use crate::engine::model::HtItemNetId;
 
-const PIPE_NAME: &str = r"\\.\pipe\nte-equipment-plugin-v3";
+const PIPE_NAME: &str = r"\\.\pipe\nte-equipment-plugin-v6";
 const IPC_MAGIC: u32 = 0x5145_544e;
-const IPC_VERSION: u16 = 3;
+const IPC_VERSION: u16 = 6;
 const IPC_EQUIP_MODULE: u16 = 1;
 const IPC_EQUIP_CORE: u16 = 2;
 const IPC_UNEQUIP_MODULE: u16 = 3;
@@ -50,13 +47,21 @@ const IPC_MOVE_MODULE_TO_CHARACTER: u16 = 7;
 const IPC_MOVE_CORE_TO_CHARACTER: u16 = 8;
 const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
+const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_TIMEOUT_MS: u32 = 1_500;
 const MAX_PLACEMENTS: usize = 64;
 const REQUEST_HEADER_SIZE: usize = 56;
 const PLACEMENT_SIZE: usize = 16;
 const REQUEST_SIZE: usize = REQUEST_HEADER_SIZE + MAX_PLACEMENTS * PLACEMENT_SIZE;
-const RESPONSE_SIZE: usize = 24;
+const RESPONSE_HEADER_SIZE: usize = 24;
+const COMBAT_CLOCK_TRANSITION_SIZE: usize = 32;
+const COMBAT_CLOCK_HISTORY_SIZE: usize = 64;
+const RESPONSE_SIZE: usize =
+    RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
+const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
 const MAX_PLUGIN_STATUS: u32 = 12;
+const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
+static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "gui")]
 static PLUGIN_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -139,6 +144,15 @@ pub struct EquipmentPluginRequest {
 pub struct EquipmentPluginResponse {
     pub request_id: u64,
     pub status: Result<u32, String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CombatClockTransitionSnapshot {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub pause_type_mask: u32,
+    pub reserved_value: i32,
+    pub state_flags: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -339,6 +353,25 @@ impl Drop for EquipmentPluginClient {
 
 pub(crate) fn call_plugin(request: &EquipmentPluginRequest) -> Result<u32, String> {
     let request_bytes = encode_request(request);
+    let response = call_plugin_request(&request_bytes)?;
+    decode_response(&response, request.request_id)
+}
+
+pub(crate) fn query_combat_clock_transitions() -> Result<Vec<CombatClockTransitionSnapshot>, String>
+{
+    let request_id = COMBAT_CLOCK_QUERY_SEQUENCE
+        .fetch_add(1, Ordering::Relaxed)
+        .max(1);
+    let mut request = [0_u8; REQUEST_SIZE];
+    request[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+    request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+    request[6..8].copy_from_slice(&IPC_QUERY_COMBAT_CLOCK_TRANSITIONS.to_le_bytes());
+    request[8..16].copy_from_slice(&request_id.to_le_bytes());
+    let response = call_plugin_request(&request)?;
+    decode_combat_clock_transitions(&response, request_id)
+}
+
+fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
     let mut response = [0_u8; RESPONSE_SIZE];
     let mut bytes_read = 0;
     let mut pipe_name = PIPE_NAME.encode_utf16().collect::<Vec<_>>();
@@ -349,7 +382,7 @@ pub(crate) fn call_plugin(request: &EquipmentPluginRequest) -> Result<u32, Strin
     let succeeded = unsafe {
         CallNamedPipeW(
             pipe_name.as_ptr(),
-            request_bytes.as_ptr().cast(),
+            request.as_ptr().cast(),
             REQUEST_SIZE as u32,
             response.as_mut_ptr().cast(),
             RESPONSE_SIZE as u32,
@@ -365,7 +398,7 @@ pub(crate) fn call_plugin(request: &EquipmentPluginRequest) -> Result<u32, Strin
             "equipment plugin returned {bytes_read} bytes; expected {RESPONSE_SIZE}"
         ));
     }
-    decode_response(&response, request.request_id)
+    Ok(response)
 }
 
 fn encode_request(request: &EquipmentPluginRequest) -> [u8; REQUEST_SIZE] {
@@ -504,23 +537,95 @@ fn encode_request(request: &EquipmentPluginRequest) -> [u8; REQUEST_SIZE] {
 }
 
 fn decode_response(bytes: &[u8; RESPONSE_SIZE], request_id: u64) -> Result<u32, String> {
+    let (status, record_count) = decode_response_header(bytes, request_id)?;
+    if record_count != 0 {
+        return Err(
+            "equipment plugin returned combat clock transitions for an equipment request"
+                .to_owned(),
+        );
+    }
+    Ok(status)
+}
+
+fn decode_response_header(
+    bytes: &[u8; RESPONSE_SIZE],
+    request_id: u64,
+) -> Result<(u32, u32), String> {
     let magic = u32::from_le_bytes(bytes[0..4].try_into().expect("fixed response magic"));
     let version = u16::from_le_bytes(bytes[4..6].try_into().expect("fixed response version"));
     let reserved = u16::from_le_bytes(bytes[6..8].try_into().expect("fixed response reserved"));
     let response_id =
         u64::from_le_bytes(bytes[8..16].try_into().expect("fixed response request id"));
     let status = u32::from_le_bytes(bytes[16..20].try_into().expect("fixed response status"));
-    let reserved2 = u32::from_le_bytes(bytes[20..24].try_into().expect("fixed response reserved2"));
+    let record_count = u32::from_le_bytes(bytes[20..24].try_into().expect("fixed record count"));
     if magic != IPC_MAGIC
         || version != IPC_VERSION
         || reserved != 0
-        || reserved2 != 0
         || response_id != request_id
         || status > MAX_PLUGIN_STATUS
     {
         return Err("equipment plugin returned an invalid IPC response".to_owned());
     }
-    Ok(status)
+    Ok((status, record_count))
+}
+
+fn decode_combat_clock_transitions(
+    bytes: &[u8; RESPONSE_SIZE],
+    request_id: u64,
+) -> Result<Vec<CombatClockTransitionSnapshot>, String> {
+    let (status, transition_count) = decode_response_header(bytes, request_id)?;
+    if status != PLUGIN_STATUS_DRY_RUN_OK || transition_count as usize > COMBAT_CLOCK_HISTORY_SIZE {
+        return Err("equipment plugin returned invalid combat clock history".to_owned());
+    }
+
+    let mut transitions = Vec::with_capacity(transition_count as usize);
+    for index in 0..transition_count as usize {
+        let offset = RESPONSE_HEADER_SIZE + index * COMBAT_CLOCK_TRANSITION_SIZE;
+        let state_flags = u32::from_le_bytes(
+            bytes[offset + 24..offset + 28]
+                .try_into()
+                .expect("fixed combat clock flags"),
+        );
+        let reserved = u32::from_le_bytes(
+            bytes[offset + 28..offset + 32]
+                .try_into()
+                .expect("fixed transition reserved"),
+        );
+        let pause_type_mask = u32::from_le_bytes(
+            bytes[offset + 16..offset + 20]
+                .try_into()
+                .expect("fixed pause type mask"),
+        );
+        let reserved_value = i32::from_le_bytes(
+            bytes[offset + 20..offset + 24]
+                .try_into()
+                .expect("fixed transition reserved value"),
+        );
+        if reserved != 0
+            || reserved_value != 0
+            || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
+            || pause_type_mask & !0x1c != 0
+            || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
+        {
+            return Err("equipment plugin returned invalid combat clock history".to_owned());
+        }
+        transitions.push(CombatClockTransitionSnapshot {
+            sequence: u64::from_le_bytes(
+                bytes[offset..offset + 8]
+                    .try_into()
+                    .expect("fixed transition sequence"),
+            ),
+            timestamp_100ns: u64::from_le_bytes(
+                bytes[offset + 8..offset + 16]
+                    .try_into()
+                    .expect("fixed transition timestamp"),
+            ),
+            pause_type_mask,
+            reserved_value,
+            state_flags,
+        });
+    }
+    Ok(transitions)
 }
 
 #[cfg(feature = "gui")]
@@ -1055,6 +1160,10 @@ mod tests {
             RESPONSE_SIZE as u64
         );
         assert_eq!(
+            native_define("NTE_COMBAT_CLOCK_HISTORY_SIZE"),
+            COMBAT_CLOCK_HISTORY_SIZE as u64
+        );
+        assert_eq!(
             native_enum("NTE_EQUIPMENT_IPC_EQUIP_MODULE"),
             IPC_EQUIP_MODULE as u64
         );
@@ -1093,6 +1202,10 @@ mod tests {
         assert_eq!(
             native_enum("NTE_EQUIPMENT_IPC_SET_ITEM_LOCKED"),
             IPC_SET_ITEM_LOCKED as u64
+        );
+        assert_eq!(
+            native_enum("NTE_EQUIPMENT_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS"),
+            IPC_QUERY_COMBAT_CLOCK_TRANSITIONS as u64
         );
         assert_eq!(
             native_enum("NTE_EQUIPMENT_STATUS_INVALID_BOOLEAN_VALUE"),
@@ -1144,7 +1257,7 @@ mod tests {
     }
 
     #[test]
-    fn new_v3_operations_encode_state_and_move_fields() {
+    fn v6_operations_encode_state_and_move_fields() {
         let moved = encode_request(&EquipmentPluginRequest {
             request_id: 12,
             character: HtItemNetId { solt: 1, serial: 2 },
@@ -1154,7 +1267,10 @@ mod tests {
                 column: 5,
             },
         });
-        assert_eq!(u16::from_le_bytes(moved[4..6].try_into().unwrap()), 3);
+        assert_eq!(
+            u16::from_le_bytes(moved[4..6].try_into().unwrap()),
+            IPC_VERSION
+        );
         assert_eq!(u16::from_le_bytes(moved[6..8].try_into().unwrap()), 7);
         assert_eq!(u32::from_le_bytes(moved[16..20].try_into().unwrap()), 1);
         assert_eq!(u32::from_le_bytes(moved[24..28].try_into().unwrap()), 3);
@@ -1227,6 +1343,63 @@ mod tests {
         bytes[8..16].copy_from_slice(&9_u64.to_le_bytes());
         bytes[16..20].copy_from_slice(&12_u32.to_le_bytes());
         assert_eq!(decode_response(&bytes, 9), Ok(12));
+    }
+
+    #[test]
+    fn combat_clock_response_uses_the_v6_transition_layout() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
+        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
+        bytes[40..44].copy_from_slice(&(1_u32 << 2).to_le_bytes());
+        bytes[48..52].copy_from_slice(&COMBAT_CLOCK_PAUSE_VALID.to_le_bytes());
+
+        assert_eq!(
+            decode_combat_clock_transitions(&bytes, 19),
+            Ok(vec![CombatClockTransitionSnapshot {
+                sequence: 7,
+                timestamp_100ns: 133_000_000_000_000_000,
+                pause_type_mask: 1 << 2,
+                reserved_value: 0,
+                state_flags: COMBAT_CLOCK_PAUSE_VALID,
+            }])
+        );
+    }
+
+    #[test]
+    fn combat_clock_response_rejects_legacy_timer_payloads() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
+        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
+        bytes[44..48].copy_from_slice(&87_i32.to_le_bytes());
+        bytes[48..52].copy_from_slice(&2_u32.to_le_bytes());
+
+        assert!(decode_combat_clock_transitions(&bytes, 19).is_err());
+    }
+
+    #[test]
+    fn combat_clock_response_rejects_non_authoritative_pause_types() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&19_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[24..32].copy_from_slice(&7_u64.to_le_bytes());
+        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
+        bytes[40..44].copy_from_slice(&(1_u32 << 1).to_le_bytes());
+        bytes[48..52].copy_from_slice(&COMBAT_CLOCK_PAUSE_VALID.to_le_bytes());
+
+        assert!(decode_combat_clock_transitions(&bytes, 19).is_err());
     }
 
     #[test]

@@ -9,10 +9,15 @@ namespace nte::equipment
 	struct EquipmentContext
 	{
 		void* player_state;
+		void* player_controller;
 	};
 
 	bool IsEquipmentRpcCacheReady();
 	void PrepareEquipmentRpcCache(const EquipmentContext* context);
+	void ObserveCombatClockState(const EquipmentContext* context);
+	uint32_t CopyCombatClockTransitions(
+		NteCombatClockTransition* output,
+		uint32_t capacity);
 
 	NteEquipmentStatus EquipOneKey(
 		const EquipmentContext* context,

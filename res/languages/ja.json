@@ -87,7 +87,7 @@
   "Parse Settings": "解析設定",
   "Exclude Time Stop": "時間停止を除外",
   "Real Time": "実時間",
-  "Output time is not counted during ultimate/extra time-stop": "アルティメット/追加時間停止中は出力時間を計上しない",
+  "Output time is not counted during the authoritative game pause": "ゲーム内の時間停止中は出力時間を計上しない",
   "Output time accrues over the capture time span": "キャプチャ時間の範囲で出力時間を積算する",
   "Whole Team": "チーム全体",
   "By Character": "キャラ別",

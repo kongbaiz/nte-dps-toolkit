@@ -5,11 +5,13 @@
 #define NTE_EQUIPMENT_GRID_MIN 1
 #define NTE_EQUIPMENT_GRID_MAX 5
 #define NTE_EQUIPMENT_MAX_PLACEMENTS 64u
-#define NTE_EQUIPMENT_IPC_VERSION 3u
-#define NTE_EQUIPMENT_PIPE_NAME L"\\\\.\\pipe\\nte-equipment-plugin-v3"
+#define NTE_COMBAT_CLOCK_HISTORY_SIZE 64u
+#define NTE_EQUIPMENT_IPC_VERSION 6u
+#define NTE_EQUIPMENT_PIPE_NAME L"\\\\.\\pipe\\nte-equipment-plugin-v6"
 #define NTE_EQUIPMENT_IPC_MAGIC 0x5145544Eu
 #define NTE_EQUIPMENT_IPC_REQUEST_SIZE 1080u
-#define NTE_EQUIPMENT_IPC_RESPONSE_SIZE 24u
+#define NTE_EQUIPMENT_IPC_RESPONSE_SIZE 2072u
+#define NTE_COMBAT_CLOCK_PAUSE_VALID 0x1u
 
 typedef enum NteEquipmentStatus
 {
@@ -40,6 +42,7 @@ typedef enum NteEquipmentIpcOperation
     NTE_EQUIPMENT_IPC_MOVE_CORE_TO_CHARACTER = 8,
     NTE_EQUIPMENT_IPC_SET_ITEM_DISCARDED = 9,
     NTE_EQUIPMENT_IPC_SET_ITEM_LOCKED = 10,
+    NTE_EQUIPMENT_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS = 11,
 } NteEquipmentIpcOperation;
 
 typedef struct NteItemNetId
@@ -71,6 +74,16 @@ typedef struct NteEquipmentIpcRequest
     NteEquipmentPlacement placements[NTE_EQUIPMENT_MAX_PLACEMENTS];
 } NteEquipmentIpcRequest;
 
+typedef struct NteCombatClockTransition
+{
+    uint64_t sequence;
+    uint64_t timestamp_100ns;
+    uint32_t pause_type_mask;
+    int32_t reserved_value;
+    uint32_t state_flags;
+    uint32_t reserved;
+} NteCombatClockTransition;
+
 typedef struct NteEquipmentIpcResponse
 {
     uint32_t magic;
@@ -78,12 +91,15 @@ typedef struct NteEquipmentIpcResponse
     uint16_t reserved;
     uint64_t request_id;
     uint32_t status;
-    uint32_t reserved2;
+    uint32_t combat_clock_transition_count;
+    NteCombatClockTransition
+        combat_clock_transitions[NTE_COMBAT_CLOCK_HISTORY_SIZE];
 } NteEquipmentIpcResponse;
 
 #if defined(__cplusplus)
 static_assert(sizeof(NteItemNetId) == 8);
 static_assert(sizeof(NteEquipmentPlacement) == 16);
+static_assert(sizeof(NteCombatClockTransition) == 32);
 static_assert(sizeof(NteEquipmentIpcRequest) == NTE_EQUIPMENT_IPC_REQUEST_SIZE);
 static_assert(sizeof(NteEquipmentIpcResponse) == NTE_EQUIPMENT_IPC_RESPONSE_SIZE);
 #endif

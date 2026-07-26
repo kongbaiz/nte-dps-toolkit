@@ -17,6 +17,9 @@ namespace nte::equipment
 		constexpr uint32_t NATIVE_FUNCTION_FLAG = 0x400;
 		constexpr size_t PROCESS_EVENT_INDEX = 0x4C;
 		constexpr uint64_t FUNCTION_CAST_FLAG = 0x0000000000080000;
+		constexpr uint8_t PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO = 2;
+		constexpr uint8_t PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT = 3;
+		constexpr uint8_t PAUSED_GAME_TYPE_JIN_EFFECT = 4;
 
 		struct UeName
 		{
@@ -156,13 +159,36 @@ namespace nte::equipment
 			bool initialized;
 		};
 
+		struct GamePauseFunctionCache
+		{
+			UeClass* player_controller_class;
+			UeFunction* is_game_paused_by_type;
+		};
+
+		struct IsGamePausedByTypeParams
+		{
+			uint8_t paused_type;
+			uint8_t return_value;
+		};
+
 		using AppendName = void(__fastcall*)(const UeName*, UeStringBuffer&);
 		using ProcessEvent = void(__fastcall*)(
 			const UeObject*, UeFunction*, void*);
 
 		constinit EquipmentFunctionCache function_cache{};
+		constinit GamePauseFunctionCache game_pause_function_cache{};
+		constinit std::array<
+			NteCombatClockTransition,
+			NTE_COMBAT_CLOCK_HISTORY_SIZE> combat_clock_history{};
+		constinit uint32_t combat_clock_history_count = 0;
+		constinit uint32_t combat_clock_history_next = 0;
+		constinit uint64_t next_combat_clock_sequence = 1;
+		constinit void* observed_player_controller = nullptr;
+		constinit uint32_t observed_pause_type_mask = 0;
+		constinit uint32_t observed_combat_clock_flags = 0;
+		constinit bool combat_clock_state_initialized = false;
 
-		static_assert(sizeof(EquipmentContext) == 8);
+		static_assert(sizeof(EquipmentContext) == 16);
 		static_assert(sizeof(NteEquipmentStatus) == 4);
 		static_assert(sizeof(UeName) == 8);
 		static_assert(sizeof(UeObject) == 0x28);
@@ -182,6 +208,15 @@ namespace nte::equipment
 		static_assert(sizeof(PositionedItemParams) == 24);
 		static_assert(sizeof(OneKeyParams) == 32);
 		static_assert(sizeof(ItemBooleanParams) == 12);
+		static_assert(sizeof(IsGamePausedByTypeParams) == 2);
+
+		uint64_t CurrentFileTime100ns()
+		{
+			FILETIME timestamp{};
+			GetSystemTimePreciseAsFileTime(&timestamp);
+			return (static_cast<uint64_t>(timestamp.dwHighDateTime) << 32) |
+				timestamp.dwLowDateTime;
+		}
 
 		bool IsValidItemId(const NteItemNetId* item)
 		{
@@ -285,6 +320,133 @@ namespace nte::equipment
 			DecodedUeName decoded{};
 			return DecodeName(name, decoded) &&
 				DecodedNameEquals(decoded, expected);
+		}
+
+		UeFunction* FindFunction(
+			UeClass* object_class,
+			const char* owner_class_name,
+			const char* function_name)
+		{
+			for (auto* current = static_cast<UeStruct*>(object_class);
+				current != nullptr;
+				current = current->super)
+			{
+				if (!memory::IsReadableRange(current, sizeof(UeStruct)))
+					return nullptr;
+				if (!NameEquals(current->name, owner_class_name))
+					continue;
+
+				for (UeField* field = current->children;
+					field != nullptr;
+					field = field->next)
+				{
+					if (!memory::IsReadableRange(field, sizeof(UeField)))
+						return nullptr;
+
+					uint64_t cast_flags = 0;
+					if (!memory::ReadValue(
+						field->object_class,
+						offsetof(UeClass, cast_flags),
+						cast_flags) ||
+						(cast_flags & FUNCTION_CAST_FLAG) == 0)
+						continue;
+					if (NameEquals(field->name, function_name))
+						return reinterpret_cast<UeFunction*>(field);
+				}
+				return nullptr;
+			}
+			return nullptr;
+		}
+
+		void ResolveGamePauseFunctions(UeClass* object_class)
+		{
+			if (game_pause_function_cache.player_controller_class == object_class)
+				return;
+
+			game_pause_function_cache = {
+				object_class,
+				FindFunction(
+					object_class,
+					NTE_OBFUSCATE_STRING("HTPlayerController").c_str(),
+					NTE_OBFUSCATE_STRING("IsGamePausedByType").c_str()),
+			};
+		}
+
+		bool QueryGamePausedByType(
+			UeObject* player_controller,
+			ProcessEvent process_event,
+			uint8_t paused_type,
+			bool& paused)
+		{
+			if (game_pause_function_cache.is_game_paused_by_type == nullptr)
+				return false;
+
+			IsGamePausedByTypeParams params{ paused_type, 0 };
+			process_event(
+				player_controller,
+				game_pause_function_cache.is_game_paused_by_type,
+				&params);
+			paused = params.return_value != 0;
+			return true;
+		}
+
+		bool ReadRelevantGamePauseMask(
+			UeObject* player_controller,
+			uint32_t& pause_type_mask)
+		{
+			if (!memory::IsReadableRange(player_controller, sizeof(UeObject)) ||
+				player_controller->object_class == nullptr ||
+				!memory::IsReadableRange(
+					player_controller->vtable,
+					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
+				return false;
+
+			ResolveGamePauseFunctions(player_controller->object_class);
+			if (game_pause_function_cache.is_game_paused_by_type == nullptr)
+				return false;
+
+			const auto process_event = reinterpret_cast<ProcessEvent>(
+				player_controller->vtable[PROCESS_EVENT_INDEX]);
+			if (!memory::IsExecutableAddress(
+				reinterpret_cast<const void*>(process_event)))
+				return false;
+
+			pause_type_mask = 0;
+			constexpr std::array<uint8_t, 3> PAUSE_TYPES{
+				PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO,
+				PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT,
+				PAUSED_GAME_TYPE_JIN_EFFECT,
+			};
+			for (const uint8_t paused_type : PAUSE_TYPES)
+			{
+				bool paused = false;
+				if (!QueryGamePausedByType(
+					player_controller, process_event, paused_type, paused))
+					return false;
+				if (paused)
+					pause_type_mask |= 1u << paused_type;
+			}
+			return true;
+		}
+
+		void RecordCombatClockTransition(
+			uint32_t pause_type_mask,
+			uint32_t state_flags)
+		{
+			NteCombatClockTransition& transition =
+				combat_clock_history[combat_clock_history_next];
+			transition = {
+				next_combat_clock_sequence++,
+				CurrentFileTime100ns(),
+				pause_type_mask,
+				0,
+				state_flags,
+				0,
+			};
+			combat_clock_history_next =
+				(combat_clock_history_next + 1) % NTE_COMBAT_CLOCK_HISTORY_SIZE;
+			if (combat_clock_history_count < NTE_COMBAT_CLOCK_HISTORY_SIZE)
+				++combat_clock_history_count;
 		}
 
 		EquipmentFunction IdentifyEquipmentFunction(const UeName& name)
@@ -461,6 +623,55 @@ namespace nte::equipment
 		if (!function_cache.initialized ||
 			function_cache.player_state_class != player_state->object_class)
 			BuildFunctionCache(player_state->object_class);
+	}
+
+	void ObserveCombatClockState(const EquipmentContext* context)
+	{
+		if (context == nullptr)
+			return;
+
+		uint32_t pause_type_mask = 0;
+		uint32_t state_flags = 0;
+		auto* player_controller =
+			static_cast<UeObject*>(context->player_controller);
+		if (player_controller != nullptr &&
+			ReadRelevantGamePauseMask(player_controller, pause_type_mask))
+			state_flags |= NTE_COMBAT_CLOCK_PAUSE_VALID;
+
+		if (combat_clock_state_initialized &&
+			observed_player_controller == player_controller &&
+			observed_pause_type_mask == pause_type_mask &&
+			observed_combat_clock_flags == state_flags)
+			return;
+
+		observed_player_controller = player_controller;
+		observed_pause_type_mask = pause_type_mask;
+		observed_combat_clock_flags = state_flags;
+		combat_clock_state_initialized = true;
+		RecordCombatClockTransition(pause_type_mask, state_flags);
+	}
+
+	uint32_t CopyCombatClockTransitions(
+		NteCombatClockTransition* output,
+		uint32_t capacity)
+	{
+		if (output == nullptr || capacity == 0)
+			return 0;
+
+		const uint32_t copy_count =
+			capacity < combat_clock_history_count
+				? capacity
+				: combat_clock_history_count;
+		const uint32_t first =
+			(combat_clock_history_next +
+				NTE_COMBAT_CLOCK_HISTORY_SIZE - copy_count) %
+			NTE_COMBAT_CLOCK_HISTORY_SIZE;
+		for (uint32_t index = 0; index < copy_count; ++index)
+		{
+			output[index] = combat_clock_history[
+				(first + index) % NTE_COMBAT_CLOCK_HISTORY_SIZE];
+		}
+		return copy_count;
 	}
 
 	NteEquipmentStatus EquipOneKey(
