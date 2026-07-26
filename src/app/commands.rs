@@ -748,6 +748,7 @@ fn console_command_metadata(tab: ConsoleTab) -> (&'static str, &'static str) {
         ConsoleTab::Timeline => ("console.timeline", "Open Timeline"),
         ConsoleTab::Skills => ("console.skills", "Open Skills"),
         ConsoleTab::EmptyCurtain => ("console.loadout", "Open Console Loadout"),
+        ConsoleTab::Mods => ("console.mods", "Open Mod Studio"),
         ConsoleTab::History => ("console.history", "Open History"),
         ConsoleTab::Characters => ("console.characters", "Open Character Data"),
         ConsoleTab::EncryptedIni => ("console.ini", "Open Encrypted INI"),

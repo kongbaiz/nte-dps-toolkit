@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace nte::equipment::offsets
+namespace nte::mods::offsets
 {
 	namespace
 	{
@@ -459,4 +459,4 @@ namespace nte::equipment::offsets
 	{
 		return resolution_succeeded ? &resolved_offsets : nullptr;
 	}
-} // namespace nte::equipment::offsets
+} // namespace nte::mods::offsets

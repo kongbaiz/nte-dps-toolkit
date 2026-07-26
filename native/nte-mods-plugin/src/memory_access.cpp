@@ -2,7 +2,7 @@
 
 #include <Windows.h>
 
-namespace nte::equipment::memory
+namespace nte::mods::memory
 {
 	namespace
 	{
@@ -74,4 +74,4 @@ namespace nte::equipment::memory
 		CopyBytes(destination, address, size);
 		return true;
 	}
-} // namespace nte::equipment::memory
+} // namespace nte::mods::memory

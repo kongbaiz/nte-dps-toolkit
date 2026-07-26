@@ -288,10 +288,39 @@ pub struct CharacterStats {
     pub name: String,
     pub hits: u64,
     pub damage: f64,
+    pub attributed_hits: u64,
+    pub attributed_damage: f64,
+    pub attributed_first_hit: Option<f64>,
+    pub attributed_last_hit: Option<f64>,
+    pub direct_hits: u64,
+    pub direct_damage: f64,
+    pub direct_first_hit: Option<f64>,
+    pub direct_last_hit: Option<f64>,
     pub hits_taken: u64,
     pub damage_taken: f64,
     pub first_hit: f64,
     pub last_hit: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DamageAttributionSummary {
+    pub total_damage: f64,
+    pub character_direct_damage: f64,
+    pub character_reaction_damage: f64,
+    pub shared_damage: f64,
+    pub unattributed_damage: f64,
+}
+
+impl DamageAttributionSummary {
+    pub fn character_damage(self, separate_reaction_damage: bool) -> f64 {
+        self.character_direct_damage
+            + if separate_reaction_damage {
+                0.0
+            } else {
+                self.character_reaction_damage
+            }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -536,6 +565,8 @@ pub struct CombatSessionSummary {
     pub total_dps: f64,
     pub total_damage_taken: f64,
     pub total_hits: u64,
+    pub reaction_damage_separated: bool,
+    pub damage_attribution: DamageAttributionSummary,
     pub characters: Vec<CombatSessionCharacterSummary>,
     pub skills: Vec<CombatSessionSkillSummary>,
     pub abyss: CombatSessionAbyssSummary,
@@ -643,6 +674,7 @@ pub struct CombatSessionAbyssHalfSummary {
     pub duration_seconds: f64,
     pub total_damage: f64,
     pub total_dps: f64,
+    pub damage_attribution: DamageAttributionSummary,
     pub characters: Vec<CombatSessionCharacterSummary>,
     pub skills: Vec<CombatSessionSkillSummary>,
 }
@@ -973,6 +1005,75 @@ impl CharacterStats {
             0.0
         }
     }
+
+    pub fn for_reaction_damage_policy(&self, separate_reaction_damage: bool) -> Self {
+        let mut projected = self.clone();
+        let (hits, damage, first_hit, last_hit) = if separate_reaction_damage {
+            (
+                self.direct_hits,
+                self.direct_damage,
+                self.direct_first_hit,
+                self.direct_last_hit,
+            )
+        } else {
+            (
+                self.attributed_hits,
+                self.attributed_damage,
+                self.attributed_first_hit,
+                self.attributed_last_hit,
+            )
+        };
+        projected.hits = hits;
+        projected.damage = damage;
+        projected.first_hit = if hits == 0 {
+            0.0
+        } else {
+            first_hit.expect("a projected character hit requires its first timestamp")
+        };
+        projected.last_hit = if hits == 0 {
+            0.0
+        } else {
+            last_hit.expect("a projected character hit requires its last timestamp")
+        };
+        projected
+    }
+}
+
+pub const REACTION_DAMAGE_TYPES: [&str; 8] = [
+    "创生花",
+    "覆纹",
+    "延滞",
+    "黯星",
+    "浊燃",
+    "浸染",
+    "盈蓄",
+    "失谐",
+];
+
+pub fn is_reaction_damage_type(attack_type: &str) -> bool {
+    REACTION_DAMAGE_TYPES.contains(&attack_type)
+}
+
+pub fn reaction_damage_for_hit(hit: &Hit) -> f64 {
+    let primary = if hit
+        .attack_type
+        .as_deref()
+        .is_some_and(is_reaction_damage_type)
+    {
+        hit.damage
+    } else {
+        0.0
+    };
+    let follow_up = if hit
+        .follow_up_attack_type
+        .as_deref()
+        .is_some_and(is_reaction_damage_type)
+    {
+        hit.follow_up_damage
+    } else {
+        0.0
+    };
+    primary + follow_up
 }
 
 /// The `attack_type` classification used for "倾陷伤害" (Unbalance/Tenacity
@@ -991,6 +1092,27 @@ pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
             .damage_name
             .as_deref()
             .is_some_and(|damage_name| damage_name.contains("倾陷"))
+}
+
+fn summarize_damage_attribution<'a>(
+    total_damage: f64,
+    rows: impl IntoIterator<Item = &'a CharacterStats>,
+) -> DamageAttributionSummary {
+    let mut retained_character_damage = 0.0;
+    let mut attributed_damage = 0.0;
+    let mut direct_damage = 0.0;
+    for row in rows {
+        retained_character_damage += row.damage;
+        attributed_damage += row.attributed_damage;
+        direct_damage += row.direct_damage;
+    }
+    DamageAttributionSummary {
+        total_damage,
+        character_direct_damage: direct_damage,
+        character_reaction_damage: (attributed_damage - direct_damage).max(0.0),
+        shared_damage: (total_damage - retained_character_damage).max(0.0),
+        unattributed_damage: (retained_character_damage - attributed_damage).max(0.0),
+    }
 }
 
 fn update_combat_totals(
@@ -1032,6 +1154,42 @@ fn update_combat_totals(
     }
     row.hits += 1;
     row.damage += damage;
+    if matches!(hit.direction, HitDirection::Outgoing) && hit.char_known {
+        if row.attributed_hits == 0 {
+            row.attributed_first_hit = Some(hit.timestamp);
+            row.attributed_last_hit = Some(hit.timestamp);
+        } else {
+            let first_hit = row
+                .attributed_first_hit
+                .expect("attributed hits require a first timestamp");
+            let last_hit = row
+                .attributed_last_hit
+                .expect("attributed hits require a last timestamp");
+            row.attributed_first_hit = Some(first_hit.min(hit.timestamp));
+            row.attributed_last_hit = Some(last_hit.max(hit.timestamp));
+        }
+        row.attributed_hits += 1;
+        row.attributed_damage += damage;
+
+        let direct_damage = (damage - reaction_damage_for_hit(hit)).max(0.0);
+        if direct_damage > 0.0 {
+            if row.direct_hits == 0 {
+                row.direct_first_hit = Some(hit.timestamp);
+                row.direct_last_hit = Some(hit.timestamp);
+            } else {
+                let first_hit = row
+                    .direct_first_hit
+                    .expect("direct hits require a first timestamp");
+                let last_hit = row
+                    .direct_last_hit
+                    .expect("direct hits require a last timestamp");
+                row.direct_first_hit = Some(first_hit.min(hit.timestamp));
+                row.direct_last_hit = Some(last_hit.max(hit.timestamp));
+            }
+            row.direct_hits += 1;
+            row.direct_damage += direct_damage;
+        }
+    }
 }
 
 fn rebuild_combat_totals(
@@ -1329,6 +1487,10 @@ impl PartyCombatState {
 
     pub fn dps_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         self.total_damage / self.duration_with_time_stop(subtract_time_stop).max(1.0)
+    }
+
+    pub fn damage_attribution_summary(&self) -> DamageAttributionSummary {
+        summarize_damage_attribution(self.total_damage, self.stats.values())
     }
 
     pub fn character_duration_with_time_stop(
@@ -1760,6 +1922,10 @@ impl CombatState {
         self.total_damage / self.duration_with_time_stop(subtract_time_stop).max(1.0)
     }
 
+    pub fn damage_attribution_summary(&self) -> DamageAttributionSummary {
+        summarize_damage_attribution(self.total_damage, self.stats.values())
+    }
+
     pub fn character_duration_with_time_stop(
         &self,
         row: &CharacterStats,
@@ -1829,6 +1995,34 @@ impl CombatState {
         self.time_stop_events.push(event);
     }
 
+    pub fn rebuild_global_from_abyss(&mut self) {
+        let mut hits = self
+            .abyss
+            .first_half
+            .hits
+            .iter()
+            .chain(self.abyss.second_half.hits.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            left.timestamp
+                .total_cmp(&right.timestamp)
+                .then_with(|| left.byte_offset.cmp(&right.byte_offset))
+                .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+        });
+        self.hits = hits.into();
+        self.hits_generation = self.hits_generation.wrapping_add(1);
+        rebuild_combat_totals(
+            &self.hits,
+            &mut self.stats,
+            &mut self.started_at,
+            &mut self.ended_at,
+            &mut self.total_damage,
+            &mut self.total_damage_taken,
+        );
+        self.sync_clock_with_time_stops();
+    }
+
     fn sync_clock_with_time_stops(&mut self) {
         sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
     }
@@ -1896,6 +2090,7 @@ impl CombatState {
         &self,
         source: CaptureQualitySource,
         dps_time_mode: DpsTimeBasis,
+        separate_reaction_damage: bool,
     ) -> Option<CombatSessionSummary> {
         if self.hits.is_empty() && self.stats.is_empty() && !self.abyss.is_active() {
             return None;
@@ -1903,6 +2098,11 @@ impl CombatState {
         let subtract_time_stop = dps_time_mode.subtracts_time_stop();
         let duration = self.duration_with_time_stop(subtract_time_stop);
         let skills = summarize_session_skills(self.skill_breakdown(None).rows);
+        let characters = self
+            .stats
+            .values()
+            .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+            .collect::<Vec<_>>();
         Some(CombatSessionSummary {
             duration_seconds: duration,
             dps_time_mode,
@@ -1914,13 +2114,17 @@ impl CombatState {
                 .iter()
                 .filter(|hit| !hit.direction.is_incoming())
                 .count() as u64,
-            characters: summarize_session_characters(
-                self.stats.values(),
-                self.total_damage,
-                |row| self.character_dps_with_time_stop(row, subtract_time_stop),
-            ),
+            reaction_damage_separated: separate_reaction_damage,
+            damage_attribution: self.damage_attribution_summary(),
+            characters: summarize_session_characters(characters.iter(), self.total_damage, |row| {
+                self.character_dps_with_time_stop(row, subtract_time_stop)
+            }),
             skills,
-            abyss: summarize_session_abyss(&self.abyss, subtract_time_stop),
+            abyss: summarize_session_abyss(
+                &self.abyss,
+                subtract_time_stop,
+                separate_reaction_damage,
+            ),
             quality: self.capture_quality_summary(source),
         })
     }
@@ -1943,6 +2147,7 @@ impl CombatState {
 fn summarize_session_abyss(
     abyss: &AbyssRunState,
     subtract_time_stop: bool,
+    separate_reaction_damage: bool,
 ) -> CombatSessionAbyssSummary {
     CombatSessionAbyssSummary {
         detected: abyss.is_active(),
@@ -1953,11 +2158,13 @@ fn summarize_session_abyss(
             AbyssHalf::First,
             &abyss.first_half,
             subtract_time_stop,
+            separate_reaction_damage,
         ),
         second_half: summarize_session_abyss_half(
             AbyssHalf::Second,
             &abyss.second_half,
             subtract_time_stop,
+            separate_reaction_damage,
         ),
     }
 }
@@ -1966,16 +2173,23 @@ fn summarize_session_abyss_half(
     half: AbyssHalf,
     party: &PartyCombatState,
     subtract_time_stop: bool,
+    separate_reaction_damage: bool,
 ) -> Option<CombatSessionAbyssHalfSummary> {
     if party.hits.is_empty() && party.stats.is_empty() {
         return None;
     }
+    let characters = party
+        .stats
+        .values()
+        .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+        .collect::<Vec<_>>();
     Some(CombatSessionAbyssHalfSummary {
         half,
         duration_seconds: party.duration_with_time_stop(subtract_time_stop),
         total_damage: party.total_damage,
         total_dps: party.dps_with_time_stop(subtract_time_stop),
-        characters: summarize_session_characters(party.stats.values(), party.total_damage, |row| {
+        damage_attribution: party.damage_attribution_summary(),
+        characters: summarize_session_characters(characters.iter(), party.total_damage, |row| {
             party.character_dps_with_time_stop(row, subtract_time_stop)
         }),
         skills: summarize_session_skills(summarize_skill_breakdown(&party.hits, None).rows),
@@ -2210,6 +2424,49 @@ fn sort_timeline_markers(markers: &mut [TimelineMarker]) {
     });
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModScriptEventPhase {
+    Event,
+    Preprocess,
+    Postprocess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModScriptEvent {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub mod_id: String,
+    pub phase: ModScriptEventPhase,
+    pub name: String,
+    pub values: Vec<u64>,
+}
+
+impl ModScriptEvent {
+    pub fn from_bridge(
+        sequence: u64,
+        timestamp_100ns: u64,
+        mod_id: String,
+        name: String,
+        values: Vec<u64>,
+    ) -> Self {
+        let (phase, name) = if let Some(name) = name.strip_prefix("pre.") {
+            (ModScriptEventPhase::Preprocess, name.to_owned())
+        } else if let Some(name) = name.strip_prefix("post.") {
+            (ModScriptEventPhase::Postprocess, name.to_owned())
+        } else {
+            (ModScriptEventPhase::Event, name)
+        };
+        Self {
+            sequence,
+            timestamp_100ns,
+            mod_id,
+            phase,
+            name,
+            values,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Box<Hit>),
@@ -2221,6 +2478,7 @@ pub enum EngineEvent {
     TimeStop(TimeStopEvent),
     EmptyCurtain(Vec<EmptyCurtainItem>),
     EmptyCurtainCharacters(Vec<EmptyCurtainCharacter>),
+    ModScript(ModScriptEvent),
     Status(String),
     Warning(String),
     Error(String),
@@ -2341,6 +2599,31 @@ fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrect
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mod_script_bridge_classifies_preprocess_and_postprocess_names() {
+        for (wire_name, phase, name) in [
+            ("pre.hit", ModScriptEventPhase::Preprocess, "hit"),
+            ("post.summary", ModScriptEventPhase::Postprocess, "summary"),
+            (
+                "character.health",
+                ModScriptEventPhase::Event,
+                "character.health",
+            ),
+        ] {
+            let event = ModScriptEvent::from_bridge(
+                7,
+                11,
+                "example".to_owned(),
+                wire_name.to_owned(),
+                vec![1, 2],
+            );
+
+            assert_eq!(event.phase, phase);
+            assert_eq!(event.name, name);
+            assert_eq!(event.values, vec![1, 2]);
+        }
+    }
 
     #[test]
     fn team_dps_export_is_compact_and_roundtrips() {
@@ -2965,6 +3248,7 @@ mod tests {
             .session_summary(
                 CaptureQualitySource::JsonReplay,
                 DpsTimeBasis::SubtractTimeStop,
+                false,
             )
             .expect("summary should exist");
 
@@ -3006,6 +3290,7 @@ mod tests {
             .session_summary(
                 CaptureQualitySource::JsonReplay,
                 DpsTimeBasis::SubtractTimeStop,
+                false,
             )
             .expect("summary should exist");
         let first_half = summary.abyss.first_half.expect("first half summary");
@@ -3241,6 +3526,103 @@ mod tests {
     }
 
     #[test]
+    fn reaction_damage_types_only_include_confirmed_follow_up_damage() {
+        for attack_type in REACTION_DAMAGE_TYPES {
+            assert!(is_reaction_damage_type(attack_type));
+        }
+        for attack_type in ["环合·创生", "普攻", UNBALANCE_ATTACK_TYPE] {
+            assert!(!is_reaction_damage_type(attack_type));
+        }
+    }
+
+    #[test]
+    fn damage_attribution_closes_team_total_and_projects_character_policy() {
+        let mut state = CombatState::default();
+
+        let mut direct = test_hit(1.0, 1, "outgoing", 100.0);
+        direct.attack_type = Some("普攻".to_owned());
+        direct.follow_up_damage = 20.0;
+        direct.follow_up_attack_type = Some("创生花".to_owned());
+        state.push_hit(direct);
+
+        let mut reaction = test_hit(2.0, 1, "outgoing", 25.0);
+        reaction.attack_type = Some("覆纹".to_owned());
+        state.push_hit(reaction);
+
+        let mut shared = test_hit(3.0, 1, "outgoing", 30.0);
+        shared.attack_type = Some(UNBALANCE_ATTACK_TYPE.to_owned());
+        state.push_hit(shared);
+
+        let mut unknown_character = test_hit(4.0, 900_001, "outgoing", 40.0);
+        unknown_character.char_known = false;
+        state.push_hit(unknown_character);
+
+        state.push_hit(test_hit(5.0, 1, "unknown", 50.0));
+
+        let attribution = state.damage_attribution_summary();
+        assert_eq!(attribution.total_damage, 265.0);
+        assert_eq!(attribution.character_direct_damage, 100.0);
+        assert_eq!(attribution.character_reaction_damage, 45.0);
+        assert_eq!(attribution.shared_damage, 30.0);
+        assert_eq!(attribution.unattributed_damage, 90.0);
+        assert_eq!(
+            attribution.character_damage(false)
+                + attribution.shared_damage
+                + attribution.unattributed_damage,
+            attribution.total_damage
+        );
+        assert_eq!(
+            attribution.character_damage(true)
+                + attribution.character_reaction_damage
+                + attribution.shared_damage
+                + attribution.unattributed_damage,
+            attribution.total_damage
+        );
+
+        let row = state.stats.get(&1).expect("known character row");
+        let included = row.for_reaction_damage_policy(false);
+        let separated = row.for_reaction_damage_policy(true);
+        assert_eq!((included.hits, included.damage), (2, 145.0));
+        assert_eq!((separated.hits, separated.damage), (1, 100.0));
+        assert_eq!((included.first_hit, included.last_hit), (1.0, 2.0));
+        assert_eq!((separated.first_hit, separated.last_hit), (1.0, 1.0));
+    }
+
+    #[test]
+    fn session_summary_records_reaction_damage_policy_without_changing_team_total() {
+        let mut state = CombatState::default();
+        let mut direct = test_hit(1.0, 1, "outgoing", 100.0);
+        direct.attack_type = Some("普攻".to_owned());
+        state.push_hit(direct);
+        let mut reaction = test_hit(2.0, 1, "outgoing", 25.0);
+        reaction.attack_type = Some("创生花".to_owned());
+        state.push_hit(reaction);
+
+        let included = state
+            .session_summary(
+                CaptureQualitySource::JsonReplay,
+                DpsTimeBasis::WallClock,
+                false,
+            )
+            .expect("included summary");
+        let separated = state
+            .session_summary(
+                CaptureQualitySource::JsonReplay,
+                DpsTimeBasis::WallClock,
+                true,
+            )
+            .expect("separated summary");
+
+        assert_eq!(included.total_damage, separated.total_damage);
+        assert_eq!(included.total_damage, 125.0);
+        assert_eq!(included.characters[0].damage, 125.0);
+        assert_eq!(separated.characters[0].damage, 100.0);
+        assert!(!included.reaction_damage_separated);
+        assert!(separated.reaction_damage_separated);
+        assert_eq!(included.damage_attribution, separated.damage_attribution);
+    }
+
+    #[test]
     fn combat_duration_uses_observed_game_pause_boundaries() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
@@ -3405,10 +3787,15 @@ mod tests {
             .session_summary(
                 CaptureQualitySource::Unknown,
                 DpsTimeBasis::SubtractTimeStop,
+                false,
             )
             .expect("adjusted summary should exist");
         let wall_clock = state
-            .session_summary(CaptureQualitySource::Unknown, DpsTimeBasis::WallClock)
+            .session_summary(
+                CaptureQualitySource::Unknown,
+                DpsTimeBasis::WallClock,
+                false,
+            )
             .expect("wall-clock summary should exist");
 
         assert_eq!(adjusted.dps_time_mode, DpsTimeBasis::SubtractTimeStop);

@@ -3,7 +3,7 @@
 //! [`apply_engine_event`]; neither frontend may keep its own full match over
 //! `EngineEvent` domain-state updates.
 
-use crate::engine::model::{CombatState, EngineEvent};
+use crate::engine::model::{CombatState, EngineEvent, ModScriptEvent};
 
 /// What the caller still has to do after the domain state was updated.
 /// Frontend-only side effects (toasts, cache invalidation, thread cleanup,
@@ -21,6 +21,8 @@ pub enum CoreSignal {
     /// A lightweight packet observation updated quality counters without
     /// retaining debug payload fields.
     PacketObserved,
+    /// A typed script bridge message for frontend pre/post-processing.
+    ModScript(ModScriptEvent),
     /// Engine status line to surface to the user.
     Status(String),
     /// Non-fatal degradation (e.g. resource load failure).
@@ -69,6 +71,7 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             state.replace_empty_curtain_characters(characters);
             CoreSignal::InventoryCharactersReplaced
         }
+        EngineEvent::ModScript(event) => CoreSignal::ModScript(event),
         EngineEvent::Status(status) => CoreSignal::Status(status),
         EngineEvent::Warning(warning) => CoreSignal::Warning(warning),
         EngineEvent::Error(error) => CoreSignal::Error(error),
@@ -144,6 +147,24 @@ mod tests {
         assert_eq!(signal, CoreSignal::StateChanged);
         assert_eq!(state.hits.len(), 1);
         assert_eq!(state.total_damage, 100.0);
+    }
+
+    #[test]
+    fn mod_script_event_is_forwarded_without_changing_combat_state() {
+        let mut state = CombatState::default();
+        let event = ModScriptEvent::from_bridge(
+            4,
+            9,
+            "example".to_owned(),
+            "pre.hit".to_owned(),
+            vec![7, 8],
+        );
+
+        let signal = apply_engine_event(&mut state, EngineEvent::ModScript(event.clone()));
+
+        assert_eq!(signal, CoreSignal::ModScript(event));
+        assert!(state.hits.is_empty());
+        assert_eq!(state.total_damage, 0.0);
     }
 
     #[test]

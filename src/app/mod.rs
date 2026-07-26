@@ -28,25 +28,25 @@ use crate::engine::capture::{
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CaptureQualitySource, CaptureQualitySummary,
     CharacterInfo, CharacterStats, CombatSegment, CombatSessionAbyssHalfSummary,
-    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState, DpsTimeBasis,
-    EngineEvent, HitDirection, HitDirectionSummary, PartyCombatState, SkillBreakdown,
-    SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport,
-    TeamDpsMember, TimeStopEvent, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
-    summarize_combat_segments, summarize_hit_directions,
+    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState,
+    DamageAttributionSummary, DpsTimeBasis, EngineEvent, HitDirection, HitDirectionSummary,
+    PartyCombatState, SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION,
+    TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember, TimeStopEvent, TimelineMarkerKind,
+    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_reaction_damage_type, is_unbalance_damage_hit,
+    reaction_damage_for_hit, summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file,
     load_characters, load_equipment_catalog,
 };
-use crate::platform::equipment_plugin::{
-    EquipmentPluginClient, EquipmentPluginDeploymentError, EquipmentPluginDeploymentStatus,
-    EquipmentPluginGameRegion, EquipmentPluginOperation, EquipmentPluginPlacement,
-    EquipmentPluginSubmitError,
-};
 use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{
     HotkeyEvent, HotkeyHandle, hotkey_binding_matches_egui, hotkey_key_to_egui,
     passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
+};
+use crate::platform::mods_plugin::{
+    ModsPluginClient, ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
+    ModsPluginModTarget, ModsPluginOperation, ModsPluginPlacement, ModsPluginSubmitError,
 };
 use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
@@ -61,11 +61,16 @@ use crate::storage::config::{
     HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
     ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
 };
-use crate::storage::history::{self, HistoryComparison, HistoryRecord};
+use crate::storage::history::{self, HistoryCombatDetails, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
 use crate::storage::io_util::atomic_write_text;
+use crate::storage::mod_scripts::{
+    MAX_MOD_SOURCE_BYTES, ModScriptDocument, ModScriptError, ModScriptWorkspace,
+    load_mod_script_workspace, new_mod_script_template, save_mod_script, set_mod_enabled,
+    validate_mod_source,
+};
 use crate::storage::paths;
-use crate::storage::resource::{read_equipment_plugin, read_resource_bytes, read_resource_text};
+use crate::storage::resource::{read_mods_plugin, read_resource_bytes, read_resource_text};
 use crate::support::character_editor::{
     CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
 };
@@ -217,6 +222,7 @@ pub(crate) enum ConsoleTab {
     Timeline,
     Skills,
     EmptyCurtain,
+    Mods,
     History,
     Characters,
     EncryptedIni,
@@ -250,6 +256,7 @@ impl ConsoleTab {
             ConsoleTab::Timeline,
             ConsoleTab::Skills,
             ConsoleTab::EmptyCurtain,
+            ConsoleTab::Mods,
             ConsoleTab::Characters,
             ConsoleTab::EncryptedIni,
             ConsoleTab::Packets,
@@ -265,6 +272,7 @@ impl ConsoleTab {
             Self::Timeline => "Timeline",
             Self::Skills => "Skills",
             Self::EmptyCurtain => "Console Loadout",
+            Self::Mods => "Mod Studio",
             Self::History => "History",
             Self::Characters => "Character Data",
             Self::EncryptedIni => "Encrypted INI",
@@ -277,8 +285,8 @@ impl ConsoleTab {
     /// Material icon rendered with the dedicated font installed in `chrome.rs`.
     fn icon(self) -> egui_material_icons::MaterialIcon {
         use egui_material_icons::icons::{
-            ICON_AUTO_AWESOME, ICON_BACKPACK, ICON_FOLDER, ICON_HISTORY, ICON_LOCK, ICON_PERSON,
-            ICON_SENSORS, ICON_SETTINGS, ICON_TIMELINE, ICON_TROUBLESHOOT,
+            ICON_AUTO_AWESOME, ICON_BACKPACK, ICON_EXTENSION, ICON_FOLDER, ICON_HISTORY, ICON_LOCK,
+            ICON_PERSON, ICON_SENSORS, ICON_SETTINGS, ICON_TIMELINE, ICON_TROUBLESHOOT,
         };
 
         match self {
@@ -286,6 +294,7 @@ impl ConsoleTab {
             Self::Timeline => ICON_TIMELINE,
             Self::Skills => ICON_AUTO_AWESOME,
             Self::EmptyCurtain => ICON_BACKPACK,
+            Self::Mods => ICON_EXTENSION,
             Self::History => ICON_HISTORY,
             Self::Characters => ICON_PERSON,
             Self::EncryptedIni => ICON_LOCK,
@@ -298,7 +307,7 @@ impl ConsoleTab {
     fn group(self) -> ConsoleGroup {
         match self {
             Self::Settings | Self::History => ConsoleGroup::Common,
-            Self::Timeline | Self::Skills | Self::EmptyCurtain => ConsoleGroup::Review,
+            Self::Timeline | Self::Skills | Self::EmptyCurtain | Self::Mods => ConsoleGroup::Review,
             Self::Characters
             | Self::EncryptedIni
             | Self::Packets
@@ -324,6 +333,11 @@ pub(crate) enum HitDetailFilter {
     All,
     Outgoing,
     Incoming,
+    CharacterAttributed,
+    CharacterDirect,
+    ReactionDamage,
+    SharedMechanics,
+    Unattributed,
     QteType(String),
 }
 
@@ -333,6 +347,24 @@ impl HitDetailFilter {
             Self::All => true,
             Self::Outgoing => !hit.direction.is_incoming(),
             Self::Incoming => hit.direction.is_incoming(),
+            Self::CharacterAttributed => {
+                hit.direction.is_outgoing() && hit.char_known && !is_unbalance_damage_hit(hit)
+            }
+            Self::CharacterDirect => {
+                hit.direction.is_outgoing()
+                    && hit.char_known
+                    && !is_unbalance_damage_hit(hit)
+                    && hit.total_damage() > reaction_damage_for_hit(hit)
+            }
+            Self::ReactionDamage => {
+                hit.direction.is_outgoing() && hit.char_known && reaction_damage_for_hit(hit) > 0.0
+            }
+            Self::SharedMechanics => !hit.direction.is_incoming() && is_unbalance_damage_hit(hit),
+            Self::Unattributed => {
+                !hit.direction.is_incoming()
+                    && !is_unbalance_damage_hit(hit)
+                    && !(hit.direction.is_outgoing() && hit.char_known)
+            }
             Self::QteType(attack_type) => {
                 !hit.direction.is_incoming()
                     && (hit.attack_type.as_deref() == Some(attack_type)
@@ -862,6 +894,20 @@ impl HistoryState {
         self.records.iter().find(|record| record.id == selected_id)
     }
 
+    fn insert_record(&mut self, record: HistoryRecord) {
+        let selected_id = self.selected_id.clone();
+        self.records.push(record);
+        self.records.sort_by(|left, right| {
+            right
+                .saved_at
+                .cmp(&left.saved_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        self.records.truncate(history::MAX_HISTORY_RECORDS);
+        self.selected_id = selected_id;
+        self.ensure_selection();
+    }
+
     fn compare_records(&self) -> Option<(&HistoryRecord, &HistoryRecord, HistoryComparison)> {
         let left_id = self.compare_left_id.as_deref()?;
         let right_id = self.compare_right_id.as_deref()?;
@@ -1187,6 +1233,7 @@ struct UiPreferences {
     console_sidebar_manually_collapsed: bool,
     opacity: f32,
     hit_detail_columns: HitDetailColumnsConfig,
+    separate_reaction_damage: bool,
 }
 
 impl UiPreferences {
@@ -1212,8 +1259,16 @@ impl UiPreferences {
             console_sidebar_manually_collapsed: false,
             opacity: config.opacity,
             hit_detail_columns: config.hit_detail_columns,
+            separate_reaction_damage: config.separate_reaction_damage,
         }
     }
+}
+
+struct HistoryArchiveJob {
+    details: HistoryCombatDetails,
+    source: CaptureQualitySource,
+    dps_time_mode: DpsTimeBasis,
+    separate_reaction_damage: bool,
 }
 
 struct BackgroundTasks {
@@ -1231,6 +1286,9 @@ struct BackgroundTasks {
     game_process_monitor_stop: Sender<()>,
     game_process_monitor_thread: Option<thread::JoinHandle<()>>,
     game_process_monitor_error: Option<String>,
+    history_archive_sender: Option<Sender<HistoryArchiveJob>>,
+    history_archive_receiver: Receiver<Result<HistoryRecord, String>>,
+    history_archive_thread: Option<thread::JoinHandle<()>>,
     pending_file_dialog: Option<PendingFileDialog>,
     pending_capture_export: Option<PendingCaptureExport>,
 }
@@ -1251,6 +1309,22 @@ impl BackgroundTasks {
         let (diagnostics_sender, diagnostics_receiver) = diagnostics;
         let (game_process_monitor_receiver, game_process_monitor_stop, game_process_monitor_thread) =
             game_process_monitor;
+        let (history_archive_sender, history_archive_job_receiver) =
+            unbounded::<HistoryArchiveJob>();
+        let (history_archive_result_sender, history_archive_receiver) =
+            unbounded::<Result<HistoryRecord, String>>();
+        let history_archive_thread = thread::spawn(move || {
+            while let Ok(job) = history_archive_job_receiver.recv() {
+                let state = job.details.to_combat_state();
+                let result = state
+                    .session_summary(job.source, job.dps_time_mode, job.separate_reaction_damage)
+                    .ok_or_else(|| "Archived combat round has no summary".to_owned())
+                    .and_then(|summary| history::save_summary_with_details(summary, job.details));
+                if history_archive_result_sender.send(result).is_err() {
+                    break;
+                }
+            }
+        });
         Self {
             resource_audit_sender,
             resource_audit_receiver,
@@ -1266,6 +1340,9 @@ impl BackgroundTasks {
             game_process_monitor_stop,
             game_process_monitor_thread: Some(game_process_monitor_thread),
             game_process_monitor_error: None,
+            history_archive_sender: Some(history_archive_sender),
+            history_archive_receiver,
+            history_archive_thread: Some(history_archive_thread),
             pending_file_dialog: None,
             pending_capture_export: None,
         }
@@ -1282,6 +1359,13 @@ impl BackgroundTasks {
         if let Some(mut pending) = self.pending_capture_export.take()
             && let Some(thread) = pending.thread.take()
         {
+            let _ = thread.join();
+        }
+    }
+
+    fn stop_history_archive(&mut self) {
+        self.history_archive_sender.take();
+        if let Some(thread) = self.history_archive_thread.take() {
             let _ = thread.join();
         }
     }
@@ -1351,8 +1435,9 @@ pub struct DpsApp {
     reaction_textures: HashMap<u8, Vec<egui::TextureHandle>>,
     equipment_catalog: Arc<EquipmentCatalog>,
     equipment_textures: HashMap<String, egui::TextureHandle>,
-    equipment_plugin: EquipmentPluginClient,
+    mods_plugin: ModsPluginClient,
     kongmu_ui: KongmuUiState,
+    mod_editor: ModEditorState,
     state: CombatState,
     combat_active: bool,
     last_combat_timestamp: Option<f64>,
@@ -1364,6 +1449,9 @@ pub struct DpsApp {
     abyss_compact_mode: bool,
     abyss_overview: AbyssOverviewState,
     history: HistoryState,
+    presented_history_id: Option<String>,
+    presented_history_state: Option<Box<CombatState>>,
+    last_auto_archive_hits_generation: u64,
     resource_audit: ResourceAuditState,
     hit_detail_filter: HitDetailFilter,
     hit_detail_skill_filter: String,
@@ -1431,6 +1519,7 @@ mod island;
 mod kongmu;
 mod lifecycle;
 mod main_view;
+mod mod_editor;
 mod motion;
 mod resources;
 mod theme;
@@ -1447,6 +1536,7 @@ pub(crate) use hit_detail::*;
 pub(crate) use hud::*;
 pub(crate) use island::*;
 pub(crate) use kongmu::*;
+pub(crate) use mod_editor::*;
 pub(crate) use resources::*;
 pub(crate) use theme::*;
 pub(crate) use timeline::*;
@@ -1509,6 +1599,7 @@ impl eframe::App for DpsApp {
         );
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
+        self.drain_history_archives();
         self.update_combat_visual();
         self.drain_resource_audit();
         self.drain_capture_diagnostics();
@@ -1681,7 +1772,8 @@ impl eframe::App for DpsApp {
                     if self.replay_thread.is_some() {
                         self.import_loading_content(ui);
                     } else {
-                        if self.state.abyss.is_active() {
+                        self.round_history_selector(ui);
+                        if self.presented_state().abyss.is_active() {
                             self.abyss_selector(ui);
                         }
                         self.animated_party_content(ui);
@@ -1790,6 +1882,7 @@ impl Drop for DpsApp {
         self.background_tasks.stop_game_process_monitor();
         self.persist_ui_config_on_shutdown();
         self.stop_engine();
+        self.background_tasks.stop_history_archive();
         self.background_tasks.join_pending_capture_export();
     }
 }
@@ -1902,6 +1995,7 @@ mod tests {
     #[test]
     fn console_always_exposes_capture_diagnostics() {
         let tabs = ConsoleTab::visible_tabs();
+        assert!(tabs.contains(&ConsoleTab::Mods));
         assert!(tabs.contains(&ConsoleTab::Packets));
         assert!(tabs.contains(&ConsoleTab::Resources));
         assert!(tabs.contains(&ConsoleTab::Diagnostics));
@@ -2112,6 +2206,8 @@ mod tests {
         assert!(tasks.awaiting_device_detection);
         assert!(tasks.game_process_monitor_thread.is_some());
         assert!(tasks.game_process_monitor_error.is_none());
+        assert!(tasks.history_archive_sender.is_some());
+        assert!(tasks.history_archive_thread.is_some());
         assert!(tasks.pending_file_dialog.is_none());
         assert!(tasks.pending_capture_export.is_none());
 
@@ -2122,9 +2218,12 @@ mod tests {
             thread: Some(std::thread::spawn(|| {})),
         });
         tasks.stop_game_process_monitor();
+        tasks.stop_history_archive();
         tasks.join_pending_capture_export();
 
         assert!(tasks.game_process_monitor_thread.is_none());
+        assert!(tasks.history_archive_sender.is_none());
+        assert!(tasks.history_archive_thread.is_none());
         assert!(tasks.pending_capture_export.is_none());
     }
 
@@ -2611,6 +2710,48 @@ mod tests {
     }
 
     #[test]
+    fn damage_attribution_filters_locate_their_matching_hit_records() {
+        let mut direct = hit_with_direction("outgoing");
+        direct.attack_type = Some("普攻".to_owned());
+        direct.damage = 100.0;
+
+        let mut reaction = hit_with_direction("outgoing");
+        reaction.attack_type = Some("覆纹".to_owned());
+        reaction.damage = 25.0;
+
+        let mut mixed = hit_with_direction("outgoing");
+        mixed.attack_type = Some("普攻".to_owned());
+        mixed.damage = 100.0;
+        mixed.follow_up_damage = 20.0;
+        mixed.follow_up_attack_type = Some("创生花".to_owned());
+
+        let mut shared = hit_with_direction("outgoing");
+        shared.attack_type = Some(UNBALANCE_ATTACK_TYPE.to_owned());
+
+        let mut unknown_character = hit_with_direction("outgoing");
+        unknown_character.char_known = false;
+
+        let unknown_direction = hit_with_direction("unknown");
+
+        assert!(HitDetailFilter::CharacterAttributed.matches(&direct));
+        assert!(HitDetailFilter::CharacterDirect.matches(&direct));
+        assert!(!HitDetailFilter::ReactionDamage.matches(&direct));
+
+        assert!(HitDetailFilter::CharacterAttributed.matches(&reaction));
+        assert!(!HitDetailFilter::CharacterDirect.matches(&reaction));
+        assert!(HitDetailFilter::ReactionDamage.matches(&reaction));
+
+        assert!(HitDetailFilter::CharacterDirect.matches(&mixed));
+        assert!(HitDetailFilter::ReactionDamage.matches(&mixed));
+
+        assert!(HitDetailFilter::SharedMechanics.matches(&shared));
+        assert!(!HitDetailFilter::CharacterAttributed.matches(&shared));
+
+        assert!(HitDetailFilter::Unattributed.matches(&unknown_character));
+        assert!(HitDetailFilter::Unattributed.matches(&unknown_direction));
+    }
+
+    #[test]
     fn qte_type_filter_label_shows_damage_and_share() {
         let summary = QteTypeFilterSummary {
             attack_type: "覆纹".to_owned(),
@@ -2864,7 +3005,7 @@ mod tests {
             ..AbyssOverviewState::default()
         };
 
-        let export = build_team_dps_export(&state, &overview, true).unwrap();
+        let export = build_team_dps_export(&state, &overview, true, false).unwrap();
 
         assert!(export.single.is_none());
         assert_eq!(export.upper.unwrap().members[0].id, 10);

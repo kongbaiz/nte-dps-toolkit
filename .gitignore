@@ -14,6 +14,7 @@ __pycache__/
 /NTE-Drive-Calculator/
 /tests/
 /plugins/*.dll
+/plugins/mods-plugin.state.json
 /plugins/equipment-plugin.state.json
 
 # C# / MSBuild build artifacts (contain local user paths)

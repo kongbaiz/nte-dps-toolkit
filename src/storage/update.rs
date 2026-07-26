@@ -17,7 +17,7 @@ use crate::core::update::{
     AvailableComponentUpdate, InstalledComponentVersions, UPDATE_HEALTH_MARKER_ENV,
     UPDATE_SCHEMA_VERSION, UpdateComponent, UpdateTransaction, safe_managed_release_path,
 };
-use crate::platform::{equipment_plugin, update_http, update_install};
+use crate::platform::{mods_plugin, update_http, update_install};
 use crate::storage::io_util::atomic_write_text;
 use crate::storage::paths;
 
@@ -26,11 +26,13 @@ const MAX_EXTRACTED_BYTES: u64 = 1024 * 1024 * 1024;
 const UPDATE_ROOT_DIRECTORY: &str = ".update";
 const COMPONENT_STATE_SCHEMA: u32 = 1;
 const MAX_COMPONENT_STATE_BYTES: u64 = 64 * 1024;
-const MAX_EQUIPMENT_PLUGIN_BYTES: u64 = 64 * 1024 * 1024;
-const EQUIPMENT_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
-const EQUIPMENT_PLUGIN_BASELINE_VERSION_PATH: &str = "plugins/equipment-plugin.version";
-const EQUIPMENT_PLUGIN_STATE_PATH: &str = "plugins/equipment-plugin.state.json";
-const LEGACY_EQUIPMENT_PLUGIN_STATE_PATH: &str = ".update/components.json";
+const MAX_MODS_PLUGIN_BYTES: u64 = 64 * 1024 * 1024;
+const MODS_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
+const MODS_PLUGIN_BASELINE_VERSION_PATH: &str = "plugins/mods-plugin.version";
+const MODS_PLUGIN_STATE_PATH: &str = "plugins/mods-plugin.state.json";
+const LEGACY_MODS_PLUGIN_BASELINE_VERSION_PATH: &str = "plugins/equipment-plugin.version";
+const LEGACY_MODS_PLUGIN_STATE_PATH: &str = "plugins/equipment-plugin.state.json";
+const OLDER_COMPONENT_STATE_PATH: &str = ".update/components.json";
 const COMPLETED_UPDATE_CLEANUP_DELAY: Duration = Duration::from_secs(1);
 const COMPLETED_UPDATE_CLEANUP_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const COMPLETED_UPDATE_CLEANUP_ATTEMPTS: usize = 40;
@@ -42,7 +44,7 @@ pub enum PreparedUpdate {
         transaction_path: PathBuf,
         updater_path: PathBuf,
     },
-    EquipmentPlugin {
+    ModsPlugin {
         version: Version,
         transaction_id: String,
         staging_dir: PathBuf,
@@ -55,13 +57,13 @@ impl PreparedUpdate {
     pub const fn component(&self) -> UpdateComponent {
         match self {
             Self::App { .. } => UpdateComponent::App,
-            Self::EquipmentPlugin { .. } => UpdateComponent::EquipmentPlugin,
+            Self::ModsPlugin { .. } => UpdateComponent::ModsPlugin,
         }
     }
 
     pub fn version(&self) -> &Version {
         match self {
-            Self::App { version, .. } | Self::EquipmentPlugin { version, .. } => version,
+            Self::App { version, .. } | Self::ModsPlugin { version, .. } => version,
         }
     }
 }
@@ -77,9 +79,9 @@ pub enum PrepareUpdateError {
     ArchiveTooLarge,
     MissingApplication,
     MissingUpdater,
-    MissingEquipmentPlugin,
+    MissingModsPlugin,
     UnexpectedPluginArchiveContents,
-    InvalidEquipmentPluginSize,
+    InvalidModsPluginSize,
     File(io::Error),
     Transaction(String),
 }
@@ -111,14 +113,14 @@ impl fmt::Display for PrepareUpdateError {
             Self::MissingUpdater => {
                 formatter.write_str("update archive is missing nte-updater.exe")
             }
-            Self::MissingEquipmentPlugin => {
+            Self::MissingModsPlugin => {
                 formatter.write_str("plugin update archive is missing plugins/dwmapi.dll")
             }
             Self::UnexpectedPluginArchiveContents => {
                 formatter.write_str("plugin update archive contains unsupported files")
             }
-            Self::InvalidEquipmentPluginSize => {
-                formatter.write_str("equipment plugin file has an invalid size")
+            Self::InvalidModsPluginSize => {
+                formatter.write_str("Mod loader file has an invalid size")
             }
             Self::File(error) => write!(formatter, "update file operation failed: {error}"),
             Self::Transaction(error) => write!(formatter, "update transaction is invalid: {error}"),
@@ -153,7 +155,7 @@ pub enum InstallPluginUpdateError {
     HashMismatch,
     File(io::Error),
     State(String),
-    Deployment(equipment_plugin::EquipmentPluginDeploymentError),
+    Deployment(mods_plugin::ModsPluginDeploymentError),
     Rollback(String),
 }
 
@@ -161,9 +163,7 @@ impl fmt::Display for InstallPluginUpdateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::WrongComponent => formatter.write_str("prepared update is not a plugin update"),
-            Self::HashMismatch => {
-                formatter.write_str("prepared equipment plugin hash does not match")
-            }
+            Self::HashMismatch => formatter.write_str("prepared Mod loader hash does not match"),
             Self::File(error) => write!(formatter, "plugin update file operation failed: {error}"),
             Self::State(error) => write!(formatter, "plugin update state failed: {error}"),
             Self::Deployment(error) => write!(formatter, "{error}"),
@@ -177,8 +177,8 @@ impl std::error::Error for InstallPluginUpdateError {}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ComponentStateDocument {
     schema: u32,
-    #[serde(default)]
-    equipment_plugin: Option<ComponentStateEntry>,
+    #[serde(default, alias = "equipment_plugin")]
+    mods_plugin: Option<ComponentStateEntry>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -191,8 +191,8 @@ pub fn installed_component_versions(
     app: Version,
 ) -> Result<InstalledComponentVersions, ComponentVersionError> {
     let install_dir = paths::software_dir();
-    let plugin_path = install_dir.join(EQUIPMENT_PLUGIN_PATH);
-    let equipment_plugin = if plugin_path.is_file() {
+    let plugin_path = install_dir.join(MODS_PLUGIN_PATH);
+    let mods_plugin = if plugin_path.is_file() {
         match read_recorded_plugin_version(&install_dir, &plugin_path)? {
             Some(version) => Some(version),
             None => read_plugin_baseline_version(&install_dir)?.or(Some(app.clone())),
@@ -200,10 +200,7 @@ pub fn installed_component_versions(
     } else {
         None
     };
-    Ok(InstalledComponentVersions {
-        app,
-        equipment_plugin,
-    })
+    Ok(InstalledComponentVersions { app, mods_plugin })
 }
 
 pub fn prepare_update(
@@ -212,7 +209,7 @@ pub fn prepare_update(
 ) -> Result<PreparedUpdate, PrepareUpdateError> {
     match update.component {
         UpdateComponent::App => prepare_app_update(update, progress),
-        UpdateComponent::EquipmentPlugin => prepare_equipment_plugin_update(update, progress),
+        UpdateComponent::ModsPlugin => prepare_mods_plugin_update(update, progress),
     }
 }
 
@@ -290,7 +287,7 @@ fn prepare_app_update(
     })
 }
 
-fn prepare_equipment_plugin_update(
+fn prepare_mods_plugin_update(
     update: &AvailableComponentUpdate,
     progress: impl FnMut(u64, u64),
 ) -> Result<PreparedUpdate, PrepareUpdateError> {
@@ -321,9 +318,9 @@ fn prepare_equipment_plugin_update(
     }
     fs::create_dir_all(&staging_dir).map_err(PrepareUpdateError::File)?;
     let files = extract_release_archive(&package_path, &staging_dir)?;
-    let plugin_relative = Path::new(EQUIPMENT_PLUGIN_PATH);
+    let plugin_relative = Path::new(MODS_PLUGIN_PATH);
     if !files.iter().any(|path| path == plugin_relative) {
-        return Err(PrepareUpdateError::MissingEquipmentPlugin);
+        return Err(PrepareUpdateError::MissingModsPlugin);
     }
     if files.len() != 1 {
         return Err(PrepareUpdateError::UnexpectedPluginArchiveContents);
@@ -333,12 +330,12 @@ fn prepare_equipment_plugin_update(
         .metadata()
         .map_err(PrepareUpdateError::File)?
         .len();
-    if plugin_size == 0 || plugin_size > MAX_EQUIPMENT_PLUGIN_BYTES {
-        return Err(PrepareUpdateError::InvalidEquipmentPluginSize);
+    if plugin_size == 0 || plugin_size > MAX_MODS_PLUGIN_BYTES {
+        return Err(PrepareUpdateError::InvalidModsPluginSize);
     }
     let plugin_sha256 = sha256_file(&plugin_path)?;
     let _ = fs::remove_file(package_path);
-    Ok(PreparedUpdate::EquipmentPlugin {
+    Ok(PreparedUpdate::ModsPlugin {
         version: update.version.clone(),
         transaction_id,
         staging_dir,
@@ -370,7 +367,7 @@ pub fn launch_prepared_app_update(update: &PreparedUpdate) -> io::Result<Child> 
 pub fn install_prepared_plugin_update(
     update: &PreparedUpdate,
 ) -> Result<(), InstallPluginUpdateError> {
-    let PreparedUpdate::EquipmentPlugin {
+    let PreparedUpdate::ModsPlugin {
         version,
         transaction_id,
         staging_dir,
@@ -387,12 +384,12 @@ pub fn install_prepared_plugin_update(
         return Err(InstallPluginUpdateError::HashMismatch);
     }
     let plugin = fs::read(plugin_path).map_err(InstallPluginUpdateError::File)?;
-    let target = install_dir.join(EQUIPMENT_PLUGIN_PATH);
+    let target = install_dir.join(MODS_PLUGIN_PATH);
     let backup_root = install_dir
         .join(UPDATE_ROOT_DIRECTORY)
         .join("backup")
         .join(transaction_id);
-    let backup = backup_root.join(EQUIPMENT_PLUGIN_PATH);
+    let backup = backup_root.join(MODS_PLUGIN_PATH);
     let previous_state = read_component_state_text(&install_dir)?;
     let target_existed = target.is_file();
     if target_existed {
@@ -406,7 +403,7 @@ pub fn install_prepared_plugin_update(
         restore_component_state(&install_dir, previous_state.as_deref())?;
         return Err(InstallPluginUpdateError::File(error));
     }
-    if let Err(error) = equipment_plugin::refresh_installed_equipment_plugins(&plugin) {
+    if let Err(error) = mods_plugin::refresh_installed_mods_plugins(&plugin) {
         rollback_plugin_source(&target, &backup, target_existed, transaction_id)?;
         restore_component_state(&install_dir, previous_state.as_deref())?;
         return Err(InstallPluginUpdateError::Deployment(error));
@@ -420,9 +417,15 @@ pub fn install_prepared_plugin_update(
 fn read_plugin_baseline_version(
     install_dir: &Path,
 ) -> Result<Option<Version>, ComponentVersionError> {
-    let path = install_dir.join(EQUIPMENT_PLUGIN_BASELINE_VERSION_PATH);
-    let Some(text) = read_limited_text(&path, 128)? else {
-        return Ok(None);
+    let text = match read_limited_text(&install_dir.join(MODS_PLUGIN_BASELINE_VERSION_PATH), 128)? {
+        Some(text) => text,
+        None => {
+            let legacy_path = install_dir.join(LEGACY_MODS_PLUGIN_BASELINE_VERSION_PATH);
+            let Some(text) = read_limited_text(&legacy_path, 128)? else {
+                return Ok(None);
+            };
+            text
+        }
     };
     Version::parse(text.trim())
         .map(Some)
@@ -444,7 +447,7 @@ fn read_recorded_plugin_version(
             state.schema
         )));
     }
-    let Some(plugin) = state.equipment_plugin else {
+    let Some(plugin) = state.mods_plugin else {
         return Ok(None);
     };
     let version = Version::parse(&plugin.version)
@@ -479,26 +482,30 @@ fn decode_sha256(value: &str) -> Result<[u8; 32], ComponentVersionError> {
 }
 
 fn component_state_path(install_dir: &Path) -> PathBuf {
-    install_dir.join(EQUIPMENT_PLUGIN_STATE_PATH)
+    install_dir.join(MODS_PLUGIN_STATE_PATH)
 }
 
-fn legacy_component_state_path(install_dir: &Path) -> PathBuf {
-    install_dir.join(LEGACY_EQUIPMENT_PLUGIN_STATE_PATH)
+fn legacy_mods_plugin_state_path(install_dir: &Path) -> PathBuf {
+    install_dir.join(LEGACY_MODS_PLUGIN_STATE_PATH)
+}
+
+fn older_component_state_path(install_dir: &Path) -> PathBuf {
+    install_dir.join(OLDER_COMPONENT_STATE_PATH)
 }
 
 fn read_component_state_text_raw(
     install_dir: &Path,
 ) -> Result<Option<String>, ComponentVersionError> {
-    if let Some(text) = read_limited_text(
-        &component_state_path(install_dir),
-        MAX_COMPONENT_STATE_BYTES,
-    )? {
-        return Ok(Some(text));
+    for path in [
+        component_state_path(install_dir),
+        legacy_mods_plugin_state_path(install_dir),
+        older_component_state_path(install_dir),
+    ] {
+        if let Some(text) = read_limited_text(&path, MAX_COMPONENT_STATE_BYTES)? {
+            return Ok(Some(text));
+        }
     }
-    read_limited_text(
-        &legacy_component_state_path(install_dir),
-        MAX_COMPONENT_STATE_BYTES,
-    )
+    Ok(None)
 }
 
 fn read_component_state_text(
@@ -515,7 +522,7 @@ fn write_plugin_component_state(
 ) -> Result<(), InstallPluginUpdateError> {
     let document = ComponentStateDocument {
         schema: COMPONENT_STATE_SCHEMA,
-        equipment_plugin: Some(ComponentStateEntry {
+        mods_plugin: Some(ComponentStateEntry {
             version: version.to_string(),
             sha256: hex::encode(sha256),
         }),
@@ -616,23 +623,53 @@ fn cleanup_completed_update_root(update_root: &Path) {
 }
 
 fn cleanup_completed_update_files(install_dir: &Path) {
-    if let Err(error) = migrate_legacy_component_state(install_dir) {
-        eprintln!("Failed to migrate equipment plugin update state: {error}");
+    if let Err(error) = migrate_legacy_plugin_metadata(install_dir) {
+        eprintln!("Failed to migrate Mod loader update state: {error}");
         return;
     }
     cleanup_completed_update_root(&install_dir.join(UPDATE_ROOT_DIRECTORY));
 }
 
-fn migrate_legacy_component_state(install_dir: &Path) -> Result<(), String> {
-    let legacy_path = legacy_component_state_path(install_dir);
-    let Some(text) = read_limited_text(&legacy_path, MAX_COMPONENT_STATE_BYTES)
-        .map_err(|error| error.to_string())?
-    else {
-        return Ok(());
-    };
+fn migrate_legacy_plugin_metadata(install_dir: &Path) -> Result<(), String> {
     let state_path = component_state_path(install_dir);
     if !state_path.is_file() {
-        atomic_write_text(&state_path, &text)?;
+        for legacy_path in [
+            legacy_mods_plugin_state_path(install_dir),
+            older_component_state_path(install_dir),
+        ] {
+            let Some(text) = read_limited_text(&legacy_path, MAX_COMPONENT_STATE_BYTES)
+                .map_err(|error| error.to_string())?
+            else {
+                continue;
+            };
+            let document: ComponentStateDocument =
+                serde_json::from_str(&text).map_err(|error| error.to_string())?;
+            if document.schema != COMPONENT_STATE_SCHEMA {
+                return Err(format!("unsupported schema {}", document.schema));
+            }
+            let normalized =
+                serde_json::to_string_pretty(&document).map_err(|error| error.to_string())?;
+            atomic_write_text(&state_path, &normalized)?;
+            break;
+        }
+    }
+
+    let legacy_state_path = legacy_mods_plugin_state_path(install_dir);
+    if legacy_state_path.is_file() {
+        fs::remove_file(&legacy_state_path).map_err(|error| error.to_string())?;
+    }
+
+    let baseline_path = install_dir.join(MODS_PLUGIN_BASELINE_VERSION_PATH);
+    let legacy_baseline_path = install_dir.join(LEGACY_MODS_PLUGIN_BASELINE_VERSION_PATH);
+    if !baseline_path.is_file()
+        && let Some(text) =
+            read_limited_text(&legacy_baseline_path, 128).map_err(|error| error.to_string())?
+    {
+        Version::parse(text.trim()).map_err(|error| error.to_string())?;
+        atomic_write_text(&baseline_path, &text)?;
+    }
+    if legacy_baseline_path.is_file() {
+        fs::remove_file(legacy_baseline_path).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -851,17 +888,17 @@ mod tests {
     #[test]
     fn completed_update_cleanup_migrates_plugin_state_out_of_update_root() {
         let root = update_test_directory("state-migration");
-        let plugin_path = root.join(EQUIPMENT_PLUGIN_PATH);
+        let plugin_path = root.join(MODS_PLUGIN_PATH);
         fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
         fs::write(&plugin_path, b"plugin-v2").unwrap();
         let plugin_hash = sha256_file_io(&plugin_path).unwrap();
-        let legacy_state = legacy_component_state_path(&root);
+        let legacy_state = older_component_state_path(&root);
         fs::create_dir_all(legacy_state.parent().unwrap()).unwrap();
         fs::write(
             &legacy_state,
             serde_json::to_vec_pretty(&ComponentStateDocument {
                 schema: COMPONENT_STATE_SCHEMA,
-                equipment_plugin: Some(ComponentStateEntry {
+                mods_plugin: Some(ComponentStateEntry {
                     version: "0.3.7".to_owned(),
                     sha256: hex::encode(plugin_hash),
                 }),
@@ -874,6 +911,38 @@ mod tests {
 
         assert!(!root.join(UPDATE_ROOT_DIRECTORY).exists());
         assert!(component_state_path(&root).is_file());
+        assert_eq!(
+            read_recorded_plugin_version(&root, &plugin_path).unwrap(),
+            Some(Version::parse("0.3.7").unwrap())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retired_plugin_metadata_names_migrate_to_mods_plugin_names() {
+        let root = update_test_directory("retired-plugin-metadata");
+        let plugin_path = root.join(MODS_PLUGIN_PATH);
+        fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
+        fs::write(&plugin_path, b"plugin-v2").unwrap();
+        let plugin_hash = sha256_file_io(&plugin_path).unwrap();
+        let legacy_state = legacy_mods_plugin_state_path(&root);
+        fs::write(
+            &legacy_state,
+            format!(
+                "{{\"schema\":1,\"equipment_plugin\":{{\"version\":\"0.3.7\",\"sha256\":\"{}\"}}}}",
+                hex::encode(plugin_hash)
+            ),
+        )
+        .unwrap();
+        let legacy_baseline = root.join(LEGACY_MODS_PLUGIN_BASELINE_VERSION_PATH);
+        fs::write(&legacy_baseline, b"0.3.7\n").unwrap();
+
+        cleanup_completed_update_files(&root);
+
+        assert!(!legacy_state.exists());
+        assert!(!legacy_baseline.exists());
+        assert!(component_state_path(&root).is_file());
+        assert!(root.join(MODS_PLUGIN_BASELINE_VERSION_PATH).is_file());
         assert_eq!(
             read_recorded_plugin_version(&root, &plugin_path).unwrap(),
             Some(Version::parse("0.3.7").unwrap())
@@ -937,7 +1006,7 @@ mod tests {
     #[test]
     fn recorded_plugin_version_requires_the_matching_plugin_hash() {
         let root = update_test_directory("plugin-version");
-        let plugin_path = root.join(EQUIPMENT_PLUGIN_PATH);
+        let plugin_path = root.join(MODS_PLUGIN_PATH);
         fs::create_dir_all(plugin_path.parent().unwrap()).unwrap();
         fs::write(&plugin_path, b"plugin-v2").unwrap();
         let hash = sha256_file_io(&plugin_path).unwrap();
@@ -960,7 +1029,7 @@ mod tests {
     #[test]
     fn bundled_plugin_baseline_version_is_read_from_the_release_sidecar() {
         let root = update_test_directory("plugin-baseline");
-        let version_path = root.join(EQUIPMENT_PLUGIN_BASELINE_VERSION_PATH);
+        let version_path = root.join(MODS_PLUGIN_BASELINE_VERSION_PATH);
         fs::create_dir_all(version_path.parent().unwrap()).unwrap();
         fs::write(&version_path, b"1.4.2\n").unwrap();
 

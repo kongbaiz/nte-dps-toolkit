@@ -1,4 +1,4 @@
-#include "equipment_rpc.hpp"
+#include "host_api.hpp"
 
 #include "memory_access.hpp"
 #include "obfuscated_string.hpp"
@@ -10,7 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace nte::equipment
+namespace nte::mods
 {
 	namespace
 	{
@@ -20,6 +20,10 @@ namespace nte::equipment
 		constexpr uint8_t PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO = 2;
 		constexpr uint8_t PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT = 3;
 		constexpr uint8_t PAUSED_GAME_TYPE_JIN_EFFECT = 4;
+		constexpr uint32_t COMBAT_CLOCK_RELEVANT_PAUSE_MASK =
+			(1u << PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO) |
+			(1u << PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT) |
+			(1u << PAUSED_GAME_TYPE_JIN_EFFECT);
 
 		struct UeName
 		{
@@ -165,10 +169,43 @@ namespace nte::equipment
 			UeFunction* is_game_paused_by_type;
 		};
 
+		struct SdkFunctionCache
+		{
+			UeClass* object_class;
+			std::array<UeFunction*, 12> functions;
+		};
+
 		struct IsGamePausedByTypeParams
 		{
 			uint8_t paused_type;
 			uint8_t return_value;
+		};
+
+		struct PointerReturnParams
+		{
+			void* return_value;
+		};
+
+		struct BoolReturnParams
+		{
+			uint8_t return_value;
+		};
+
+		struct Int32ReturnParams
+		{
+			int32_t return_value;
+		};
+
+		struct FloatReturnParams
+		{
+			float return_value;
+		};
+
+		struct BoolFloatReturnParams
+		{
+			uint8_t argument;
+			uint8_t padding[3];
+			float return_value;
 		};
 
 		using AppendName = void(__fastcall*)(const UeName*, UeStringBuffer&);
@@ -177,19 +214,17 @@ namespace nte::equipment
 
 		constinit EquipmentFunctionCache function_cache{};
 		constinit GamePauseFunctionCache game_pause_function_cache{};
+		constinit SdkFunctionCache player_controller_sdk_cache{};
+		constinit SdkFunctionCache ability_character_sdk_cache{};
 		constinit std::array<
 			NteCombatClockTransition,
 			NTE_COMBAT_CLOCK_HISTORY_SIZE> combat_clock_history{};
 		constinit uint32_t combat_clock_history_count = 0;
 		constinit uint32_t combat_clock_history_next = 0;
 		constinit uint64_t next_combat_clock_sequence = 1;
-		constinit void* observed_player_controller = nullptr;
-		constinit uint32_t observed_pause_type_mask = 0;
-		constinit uint32_t observed_combat_clock_flags = 0;
-		constinit bool combat_clock_state_initialized = false;
 
-		static_assert(sizeof(EquipmentContext) == 16);
-		static_assert(sizeof(NteEquipmentStatus) == 4);
+		static_assert(sizeof(PluginContext) == 16);
+		static_assert(sizeof(NteModsStatus) == 4);
 		static_assert(sizeof(UeName) == 8);
 		static_assert(sizeof(UeObject) == 0x28);
 		static_assert(offsetof(UeObject, object_class) == 0x10);
@@ -209,6 +244,12 @@ namespace nte::equipment
 		static_assert(sizeof(OneKeyParams) == 32);
 		static_assert(sizeof(ItemBooleanParams) == 12);
 		static_assert(sizeof(IsGamePausedByTypeParams) == 2);
+		static_assert(sizeof(PointerReturnParams) == 8);
+		static_assert(sizeof(BoolReturnParams) == 1);
+		static_assert(sizeof(Int32ReturnParams) == 4);
+		static_assert(sizeof(FloatReturnParams) == 4);
+		static_assert(sizeof(BoolFloatReturnParams) == 8);
+		static_assert(static_cast<size_t>(SdkReadApi::CharacterSlomoMilli) + 1 == 12);
 
 		uint64_t CurrentFileTime100ns()
 		{
@@ -229,43 +270,43 @@ namespace nte::equipment
 				column >= NTE_EQUIPMENT_GRID_MIN && column <= NTE_EQUIPMENT_GRID_MAX;
 		}
 
-		NteEquipmentStatus ValidateContext(const EquipmentContext* context)
+		NteModsStatus ValidateContext(const PluginContext* context)
 		{
 			if (context == nullptr)
-				return NTE_EQUIPMENT_STATUS_INVALID_CONTEXT;
+				return NTE_MODS_STATUS_INVALID_CONTEXT;
 
 			if (context->player_state == nullptr)
-				return NTE_EQUIPMENT_STATUS_INVALID_PLAYER_STATE;
+				return NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 
-			return NTE_EQUIPMENT_STATUS_DRY_RUN_OK;
+			return NTE_MODS_STATUS_DRY_RUN_OK;
 		}
 
-		NteEquipmentStatus ValidateCharacterArgument(
-			const EquipmentContext* context,
+		NteModsStatus ValidateCharacterArgument(
+			const PluginContext* context,
 			const NteItemNetId* character)
 		{
-			const NteEquipmentStatus context_status = ValidateContext(context);
-			if (context_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+			const NteModsStatus context_status = ValidateContext(context);
+			if (context_status != NTE_MODS_STATUS_DRY_RUN_OK)
 				return context_status;
 
 			if (!IsValidItemId(character))
-				return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+				return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
-			return NTE_EQUIPMENT_STATUS_DRY_RUN_OK;
+			return NTE_MODS_STATUS_DRY_RUN_OK;
 		}
 
-		NteEquipmentStatus ValidateItemArgument(
-			const EquipmentContext* context,
+		NteModsStatus ValidateItemArgument(
+			const PluginContext* context,
 			const NteItemNetId* item)
 		{
-			const NteEquipmentStatus context_status = ValidateContext(context);
-			if (context_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+			const NteModsStatus context_status = ValidateContext(context);
+			if (context_status != NTE_MODS_STATUS_DRY_RUN_OK)
 				return context_status;
 
 			if (!IsValidItemId(item))
-				return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+				return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
-			return NTE_EQUIPMENT_STATUS_DRY_RUN_OK;
+			return NTE_MODS_STATUS_DRY_RUN_OK;
 		}
 
 		bool DecodeName(const UeName& name, DecodedUeName& decoded)
@@ -429,6 +470,168 @@ namespace nte::equipment
 			return true;
 		}
 
+		bool IsPlayerControllerApi(SdkReadApi api)
+		{
+			return api == SdkReadApi::PlayerCharacter ||
+				api == SdkReadApi::PlayerState ||
+				api == SdkReadApi::GamePaused;
+		}
+
+		UeFunction* FindSdkFunctionWithName(
+			UeClass* object_class,
+			SdkReadApi api,
+			const char* function_name)
+		{
+			if (IsPlayerControllerApi(api))
+			{
+				const auto owner_name =
+					NTE_OBFUSCATE_STRING("HTPlayerController");
+				return FindFunction(
+					object_class, owner_name.c_str(), function_name);
+			}
+			const auto owner_name =
+				NTE_OBFUSCATE_STRING("HTAbilityCharacter");
+			return FindFunction(object_class, owner_name.c_str(), function_name);
+		}
+
+		UeFunction* FindSdkFunction(UeClass* object_class, SdkReadApi api)
+		{
+			switch (api)
+			{
+			case SdkReadApi::PlayerCharacter:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetPlayerCharacter");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::PlayerState:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetHTPlayerState");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::GamePaused:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("IsGamePaused");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::AttackTarget:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetAttackTarget");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CurrentWeapon:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetCurrentWeapon");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterLevel:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetCharacterLevel");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterHpMilli:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetHP");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterHpMaxMilli:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetHPMax");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterIsAlive:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("CharacterIsAlive");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterIsDead:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetIsDead");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterIsControlled:
+			{
+				const auto name =
+					NTE_OBFUSCATE_STRING("GetIsControlledCharacter");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			case SdkReadApi::CharacterSlomoMilli:
+			{
+				const auto name = NTE_OBFUSCATE_STRING("GetSlomoValue");
+				return FindSdkFunctionWithName(
+					object_class, api, name.c_str());
+			}
+			}
+			return nullptr;
+		}
+
+		UeFunction* ResolveSdkFunction(UeClass* object_class, SdkReadApi api)
+		{
+			SdkFunctionCache& cache = IsPlayerControllerApi(api)
+				? player_controller_sdk_cache
+				: ability_character_sdk_cache;
+			if (cache.object_class != object_class)
+				cache = { object_class, {} };
+
+			const size_t index = static_cast<size_t>(api);
+			if (cache.functions[index] == nullptr)
+				cache.functions[index] = FindSdkFunction(object_class, api);
+			return cache.functions[index];
+		}
+
+		bool InvokeSdkFunction(
+			UeObject* object,
+			SdkReadApi api,
+			void* params)
+		{
+			if (!memory::IsReadableRange(object, sizeof(UeObject)) ||
+				object->object_class == nullptr ||
+				!memory::IsReadableRange(
+					object->vtable,
+					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
+				return false;
+
+			UeFunction* function = ResolveSdkFunction(object->object_class, api);
+			if (function == nullptr ||
+				!memory::IsReadableRange(
+					function,
+					offsetof(UeFunction, function_flags) + sizeof(uint32_t)))
+				return false;
+
+			const auto process_event = reinterpret_cast<ProcessEvent>(
+				object->vtable[PROCESS_EVENT_INDEX]);
+			if (!memory::IsExecutableAddress(
+				reinterpret_cast<const void*>(process_event)))
+				return false;
+
+			const uint32_t original_flags = function->function_flags;
+			function->function_flags |= NATIVE_FUNCTION_FLAG;
+			process_event(object, function, params);
+			function->function_flags = original_flags;
+			return true;
+		}
+
+		bool FloatToMilli(float value, uint64_t& output)
+		{
+			constexpr float MAX_MILLI_INPUT = 9.0e15f;
+			if (value != value ||
+				value < -MAX_MILLI_INPUT || value > MAX_MILLI_INPUT)
+				return false;
+			output = static_cast<uint64_t>(
+				static_cast<int64_t>(value * 1000.0f));
+			return true;
+		}
+
 		void RecordCombatClockTransition(
 			uint32_t pause_type_mask,
 			uint32_t state_flags)
@@ -570,8 +773,8 @@ namespace nte::equipment
 			return UeItemNetId{ item.slot, item.serial };
 		}
 
-		NteEquipmentStatus Dispatch(
-			const EquipmentContext& context,
+		NteModsStatus Dispatch(
+			const PluginContext& context,
 			EquipmentFunction function_id,
 			void* params)
 		{
@@ -581,27 +784,27 @@ namespace nte::equipment
 				!memory::IsReadableRange(
 					player_state->vtable,
 					(PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
-				return NTE_EQUIPMENT_STATUS_INVALID_PLAYER_STATE;
+				return NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 
 			UeFunction* function = ResolveFunction(
 				player_state->object_class, function_id);
 			if (function == nullptr)
-				return NTE_EQUIPMENT_STATUS_FUNCTION_NOT_FOUND;
+				return NTE_MODS_STATUS_FUNCTION_NOT_FOUND;
 			if (!memory::IsReadableRange(
 				function, offsetof(UeFunction, function_flags) + sizeof(uint32_t)))
-				return NTE_EQUIPMENT_STATUS_FUNCTION_NOT_FOUND;
+				return NTE_MODS_STATUS_FUNCTION_NOT_FOUND;
 
 			const auto process_event = reinterpret_cast<ProcessEvent>(
 				player_state->vtable[PROCESS_EVENT_INDEX]);
 			if (!memory::IsExecutableAddress(reinterpret_cast<const void*>(process_event)))
-				return NTE_EQUIPMENT_STATUS_INVALID_PLAYER_STATE;
+				return NTE_MODS_STATUS_INVALID_PLAYER_STATE;
 
 			const auto original_flags = function->function_flags;
 			function->function_flags |= NATIVE_FUNCTION_FLAG;
 			process_event(player_state, function, params);
 			function->function_flags = original_flags;
 
-			return NTE_EQUIPMENT_STATUS_RPC_DISPATCHED;
+			return NTE_MODS_STATUS_RPC_DISPATCHED;
 		}
 	} // namespace
 
@@ -610,9 +813,21 @@ namespace nte::equipment
 		return function_cache.initialized;
 	}
 
-	void PrepareEquipmentRpcCache(const EquipmentContext* context)
+	bool IsEquipmentRpcCacheReadyFor(const PluginContext* context)
 	{
-		if (ValidateContext(context) != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		if (ValidateContext(context) != NTE_MODS_STATUS_DRY_RUN_OK)
+			return false;
+
+		auto* player_state = static_cast<UeObject*>(context->player_state);
+		return memory::IsReadableRange(player_state, sizeof(UeObject)) &&
+			player_state->object_class != nullptr &&
+			function_cache.initialized &&
+			function_cache.player_state_class == player_state->object_class;
+	}
+
+	void PrepareEquipmentRpcCache(const PluginContext* context)
+	{
+		if (ValidateContext(context) != NTE_MODS_STATUS_DRY_RUN_OK)
 			return;
 
 		auto* player_state = static_cast<UeObject*>(context->player_state);
@@ -625,30 +840,98 @@ namespace nte::equipment
 			BuildFunctionCache(player_state->object_class);
 	}
 
-	void ObserveCombatClockState(const EquipmentContext* context)
+	uint64_t SampleCombatClockState(void* player_controller)
 	{
-		if (context == nullptr)
-			return;
-
 		uint32_t pause_type_mask = 0;
 		uint32_t state_flags = 0;
-		auto* player_controller =
-			static_cast<UeObject*>(context->player_controller);
 		if (player_controller != nullptr &&
-			ReadRelevantGamePauseMask(player_controller, pause_type_mask))
+			ReadRelevantGamePauseMask(
+				static_cast<UeObject*>(player_controller), pause_type_mask))
 			state_flags |= NTE_COMBAT_CLOCK_PAUSE_VALID;
+		return (static_cast<uint64_t>(state_flags) << 32) | pause_type_mask;
+	}
 
-		if (combat_clock_state_initialized &&
-			observed_player_controller == player_controller &&
-			observed_pause_type_mask == pause_type_mask &&
-			observed_combat_clock_flags == state_flags)
+	void ForwardCombatClockState(
+		uint32_t pause_type_mask,
+		uint32_t state_flags)
+	{
+		if ((pause_type_mask & ~COMBAT_CLOCK_RELEVANT_PAUSE_MASK) != 0 ||
+			(state_flags & ~NTE_COMBAT_CLOCK_PAUSE_VALID) != 0 ||
+			(state_flags == 0 && pause_type_mask != 0))
 			return;
-
-		observed_player_controller = player_controller;
-		observed_pause_type_mask = pause_type_mask;
-		observed_combat_clock_flags = state_flags;
-		combat_clock_state_initialized = true;
 		RecordCombatClockTransition(pause_type_mask, state_flags);
+	}
+
+	bool InvokeSdkReadApi(
+		void* object,
+		SdkReadApi api,
+		uint64_t argument,
+		uint64_t& result)
+	{
+		auto* ue_object = static_cast<UeObject*>(object);
+		result = 0;
+		switch (api)
+		{
+		case SdkReadApi::PlayerCharacter:
+		case SdkReadApi::PlayerState:
+		case SdkReadApi::AttackTarget:
+		case SdkReadApi::CurrentWeapon:
+		{
+			if (argument != 0)
+				return false;
+			PointerReturnParams params{};
+			if (!InvokeSdkFunction(ue_object, api, &params))
+				return false;
+			result = reinterpret_cast<uint64_t>(params.return_value);
+			return true;
+		}
+		case SdkReadApi::GamePaused:
+		case SdkReadApi::CharacterIsAlive:
+		case SdkReadApi::CharacterIsDead:
+		case SdkReadApi::CharacterIsControlled:
+		{
+			if (argument != 0)
+				return false;
+			BoolReturnParams params{};
+			if (!InvokeSdkFunction(ue_object, api, &params))
+				return false;
+			result = params.return_value != 0;
+			return true;
+		}
+		case SdkReadApi::CharacterLevel:
+		{
+			if (argument != 0)
+				return false;
+			Int32ReturnParams params{};
+			if (!InvokeSdkFunction(ue_object, api, &params))
+				return false;
+			result = static_cast<uint64_t>(
+				static_cast<int64_t>(params.return_value));
+			return true;
+		}
+		case SdkReadApi::CharacterHpMilli:
+		case SdkReadApi::CharacterSlomoMilli:
+		{
+			if (argument != 0)
+				return false;
+			FloatReturnParams params{};
+			return InvokeSdkFunction(ue_object, api, &params) &&
+				FloatToMilli(params.return_value, result);
+		}
+		case SdkReadApi::CharacterHpMaxMilli:
+		{
+			if (argument > 1)
+				return false;
+			BoolFloatReturnParams params{
+				static_cast<uint8_t>(argument),
+				{},
+				0.0f,
+			};
+			return InvokeSdkFunction(ue_object, api, &params) &&
+				FloatToMilli(params.return_value, result);
+		}
+		}
+		return false;
 	}
 
 	uint32_t CopyCombatClockTransitions(
@@ -674,25 +957,25 @@ namespace nte::equipment
 		return copy_count;
 	}
 
-	NteEquipmentStatus EquipOneKey(
-		const EquipmentContext* context,
+	NteModsStatus EquipOneKey(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteEquipmentPlacement* placements,
 		uint32_t placement_count,
 		const NteItemNetId* core)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 
 		if (placement_count > NTE_EQUIPMENT_MAX_PLACEMENTS)
-			return NTE_EQUIPMENT_STATUS_TOO_MANY_PLACEMENTS;
+			return NTE_MODS_STATUS_TOO_MANY_PLACEMENTS;
 		if (placement_count == 0)
-			return NTE_EQUIPMENT_STATUS_EMPTY_LOADOUT;
+			return NTE_MODS_STATUS_EMPTY_LOADOUT;
 		if (placements == nullptr)
-			return NTE_EQUIPMENT_STATUS_INVALID_PLACEMENT_BUFFER;
+			return NTE_MODS_STATUS_INVALID_PLACEMENT_BUFFER;
 		if (!IsValidItemId(core))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
 		std::array<UeEquipPlaceData, NTE_EQUIPMENT_MAX_PLACEMENTS>
 			sdk_placements{};
@@ -700,9 +983,9 @@ namespace nte::equipment
 		{
 			const NteEquipmentPlacement& placement = placements[index];
 			if (!IsValidItemId(&placement.equipment))
-				return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+				return NTE_MODS_STATUS_INVALID_ITEM_ID;
 			if (!IsValidGridPosition(placement.row, placement.column))
-				return NTE_EQUIPMENT_STATUS_INVALID_GRID_POSITION;
+				return NTE_MODS_STATUS_INVALID_GRID_POSITION;
 
 			sdk_placements[index] = UeEquipPlaceData{
 				ToUeItemId(placement.equipment), placement.row, placement.column };
@@ -722,12 +1005,12 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus UnequipAll(
-		const EquipmentContext* context,
+	NteModsStatus UnequipAll(
+		const PluginContext* context,
 		const NteItemNetId* character)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 
 		SingleItemParams params{};
@@ -738,20 +1021,20 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus EquipModule(
-		const EquipmentContext* context,
+	NteModsStatus EquipModule(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteItemNetId* equipment,
 		int32_t row,
 		int32_t column)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (!IsValidItemId(equipment))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 		if (!IsValidGridPosition(row, column))
-			return NTE_EQUIPMENT_STATUS_INVALID_GRID_POSITION;
+			return NTE_MODS_STATUS_INVALID_GRID_POSITION;
 
 		PositionedItemParams params{};
 		params.character = ToUeItemId(*character);
@@ -764,16 +1047,16 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus UnequipModule(
-		const EquipmentContext* context,
+	NteModsStatus UnequipModule(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteItemNetId* equipment)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (!IsValidItemId(equipment))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
 		TwoItemParams params{};
 		params.first = ToUeItemId(*character);
@@ -784,16 +1067,16 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus EquipCore(
-		const EquipmentContext* context,
+	NteModsStatus EquipCore(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteItemNetId* core)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (!IsValidItemId(core))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
 		TwoItemParams params{};
 		params.first = ToUeItemId(*character);
@@ -804,16 +1087,16 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus UnequipCore(
-		const EquipmentContext* context,
+	NteModsStatus UnequipCore(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteItemNetId* core)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (!IsValidItemId(core))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
 		TwoItemParams params{};
 		params.first = ToUeItemId(*character);
@@ -824,20 +1107,20 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus MoveModuleToCharacter(
-		const EquipmentContext* context,
+	NteModsStatus MoveModuleToCharacter(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteItemNetId* equipment,
 		int32_t row,
 		int32_t column)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (!IsValidItemId(equipment))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 		if (!IsValidGridPosition(row, column))
-			return NTE_EQUIPMENT_STATUS_INVALID_GRID_POSITION;
+			return NTE_MODS_STATUS_INVALID_GRID_POSITION;
 
 		PositionedItemParams params{};
 		params.character = ToUeItemId(*character);
@@ -850,16 +1133,16 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus MoveCoreToCharacter(
-		const EquipmentContext* context,
+	NteModsStatus MoveCoreToCharacter(
+		const PluginContext* context,
 		const NteItemNetId* character,
 		const NteItemNetId* core)
 	{
-		const NteEquipmentStatus argument_status = ValidateCharacterArgument(context, character);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateCharacterArgument(context, character);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (!IsValidItemId(core))
-			return NTE_EQUIPMENT_STATUS_INVALID_ITEM_ID;
+			return NTE_MODS_STATUS_INVALID_ITEM_ID;
 
 		TwoItemParams params{};
 		params.first = ToUeItemId(*character);
@@ -870,16 +1153,16 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus SetItemDiscarded(
-		const EquipmentContext* context,
+	NteModsStatus SetItemDiscarded(
+		const PluginContext* context,
 		const NteItemNetId* item,
 		uint32_t discarded)
 	{
-		const NteEquipmentStatus argument_status = ValidateItemArgument(context, item);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateItemArgument(context, item);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (discarded > 1)
-			return NTE_EQUIPMENT_STATUS_INVALID_BOOLEAN_VALUE;
+			return NTE_MODS_STATUS_INVALID_BOOLEAN_VALUE;
 
 		ItemBooleanParams params{};
 		params.item = ToUeItemId(*item);
@@ -890,16 +1173,16 @@ namespace nte::equipment
 			&params);
 	}
 
-	NteEquipmentStatus SetItemLocked(
-		const EquipmentContext* context,
+	NteModsStatus SetItemLocked(
+		const PluginContext* context,
 		const NteItemNetId* item,
 		uint32_t locked)
 	{
-		const NteEquipmentStatus argument_status = ValidateItemArgument(context, item);
-		if (argument_status != NTE_EQUIPMENT_STATUS_DRY_RUN_OK)
+		const NteModsStatus argument_status = ValidateItemArgument(context, item);
+		if (argument_status != NTE_MODS_STATUS_DRY_RUN_OK)
 			return argument_status;
 		if (locked > 1)
-			return NTE_EQUIPMENT_STATUS_INVALID_BOOLEAN_VALUE;
+			return NTE_MODS_STATUS_INVALID_BOOLEAN_VALUE;
 
 		ItemBooleanParams params{};
 		params.item = ToUeItemId(*item);
@@ -909,4 +1192,4 @@ namespace nte::equipment
 			EquipmentFunction::SetItemLocked,
 			&params);
 	}
-} // namespace nte::equipment
+} // namespace nte::mods

@@ -105,10 +105,97 @@ fn paint_haloed_colored_suffix(
 }
 
 impl DpsApp {
-    pub(crate) fn abyss_selector(&mut self, ui: &mut egui::Ui) {
-        if !self.state.abyss.is_active() {
+    pub(crate) fn round_history_selector(&mut self, ui: &mut egui::Ui) {
+        let mut rounds = Vec::with_capacity(self.history.records.len() + 1);
+        rounds.push((None, t("Live")));
+        rounds.extend(
+            self.history
+                .records
+                .iter()
+                .filter(|record| record.details.is_some())
+                .map(|record| {
+                    let round = record.summary.abyss.floor.map_or_else(
+                        || t("Archived round"),
+                        |floor| tf("Abyss Floor {}", &[&floor.to_string()]),
+                    );
+                    (
+                        Some(record.id.clone()),
+                        format!("{round} · {}", record.display_time()),
+                    )
+                }),
+        );
+        if rounds.len() == 1 {
             return;
         }
+        let current_index = self
+            .presented_history_id
+            .as_deref()
+            .and_then(|id| {
+                rounds
+                    .iter()
+                    .position(|(record_id, _)| record_id.as_deref() == Some(id))
+            })
+            .unwrap_or(0);
+        let selected_text = rounds[current_index].1.clone();
+        let mut selected = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new(t("Combat Round"))
+                    .size(13.0)
+                    .strong()
+                    .color(self.theme().fg_muted),
+            );
+            if ui
+                .add_enabled(
+                    current_index + 1 < rounds.len(),
+                    egui::Button::new("‹").min_size(egui::vec2(28.0, 28.0)),
+                )
+                .on_hover_text(t("Previous round"))
+                .clicked()
+            {
+                selected = Some(rounds[current_index + 1].0.clone());
+            }
+            egui::ComboBox::from_id_salt("main_combat_round")
+                .selected_text(selected_text)
+                .width(210.0)
+                .show_ui(ui, |ui| {
+                    for (record_id, label) in &rounds {
+                        if ui
+                            .selectable_label(
+                                self.presented_history_id.as_ref() == record_id.as_ref(),
+                                label,
+                            )
+                            .clicked()
+                        {
+                            selected = Some(record_id.clone());
+                            ui.close();
+                        }
+                    }
+                });
+            if ui
+                .add_enabled(
+                    current_index > 0,
+                    egui::Button::new("›").min_size(egui::vec2(28.0, 28.0)),
+                )
+                .on_hover_text(t("Next round"))
+                .clicked()
+            {
+                selected = Some(rounds[current_index - 1].0.clone());
+            }
+        });
+        if let Some(record_id) = selected {
+            self.select_presented_round(record_id);
+        }
+        ui.add_space(3.0);
+    }
+
+    pub(crate) fn abyss_selector(&mut self, ui: &mut egui::Ui) {
+        let state = self.presented_state();
+        if !state.abyss.is_active() {
+            return;
+        }
+        let floor = state.abyss.floor;
+        let challenge_cleared = state.abyss.success_at.is_some();
         if self.abyss_compact_mode {
             ui.add_space(ui.spacing().item_spacing.y);
         }
@@ -117,7 +204,7 @@ impl DpsApp {
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.spacing_mut().interact_size.y = 28.0;
-                let floor = self.state.abyss.floor.map_or_else(
+                let floor = floor.map_or_else(
                     || t("Abyss"),
                     |floor| tf("Abyss Floor {}", &[&floor.to_string()]),
                 );
@@ -143,7 +230,7 @@ impl DpsApp {
                     AbyssHalf::Second,
                     RichText::new(t(AbyssHalf::Second.label())).size(13.0),
                 );
-                if self.state.abyss.success_at.is_some() {
+                if challenge_cleared {
                     ui.separator();
                     ui.label(
                         RichText::new(t("Challenge Cleared"))
@@ -171,10 +258,11 @@ impl DpsApp {
                     party.total_damage_taken,
                 )
             } else {
+                let state = self.presented_state();
                 (
                     self.state_duration_for_current_mode(),
-                    self.state.total_damage,
-                    self.state.total_damage_taken,
+                    state.total_damage,
+                    state.total_damage_taken,
                 )
             };
         let (duration, dps, deduction_seconds, needs_repaint) =
@@ -184,7 +272,7 @@ impl DpsApp {
                 .request_repaint_after(TIME_STOP_PRESENTATION_REFRESH);
         }
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
-        let abyss_active = self.state.abyss.is_active();
+        let abyss_active = self.presented_state().abyss.is_active();
         let dps_trend = motion::trend_indicator(
             ui.ctx(),
             (
@@ -361,7 +449,7 @@ impl DpsApp {
     }
 
     fn context_buttons(&mut self, ui: &mut egui::Ui) {
-        if self.state.abyss.is_active()
+        if self.presented_state().abyss.is_active()
             && ui
                 .button(t("Collapse"))
                 .on_hover_text(t("Collapse the abyss line selector and toolbar"))
@@ -394,7 +482,11 @@ impl DpsApp {
             },
             t("Console"),
         ];
-        let collapse_label = self.state.abyss.is_active().then(|| t("Collapse"));
+        let collapse_label = self
+            .presented_state()
+            .abyss
+            .is_active()
+            .then(|| t("Collapse"));
         let hud_label = t("HUD");
         let overlay_labels = [
             t("Appearance"),
@@ -607,7 +699,7 @@ impl DpsApp {
             if self.processing_button(ui) {
                 ui.close();
             }
-            if self.state.abyss.is_active()
+            if self.presented_state().abyss.is_active()
                 && ui
                     .button(t("Collapse"))
                     .on_hover_text(t("Collapse the abyss line selector and toolbar"))
@@ -649,7 +741,7 @@ impl DpsApp {
     }
 
     pub(crate) fn animated_controls(&mut self, ui: &mut egui::Ui) {
-        let expanded = !self.abyss_compact_mode || !self.state.abyss.is_active();
+        let expanded = !self.abyss_compact_mode || !self.presented_state().abyss.is_active();
         let progress = motion::animate_bool(
             ui.ctx(),
             "main_controls_expanded",
@@ -869,6 +961,7 @@ impl DpsApp {
     }
 
     pub(crate) fn party_readout(&self) -> (Vec<CharacterStats>, f64, f64, f64) {
+        let separate_reaction_damage = self.preferences.separate_reaction_damage;
         let prep = |stats: &HashMap<u32, CharacterStats>,
                     hits: &VecDeque<crate::engine::model::Hit>,
                     total: f64,
@@ -880,7 +973,8 @@ impl DpsApp {
                     is_party_member_row(row, hits)
                         && !self.hidden_character_ids.contains(&row.char_id)
                 })
-                .cloned()
+                .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+                .filter(character_row_has_visible_totals)
                 .collect();
             rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
             (rows, total, dps, duration)
@@ -894,10 +988,11 @@ impl DpsApp {
                 self.party_duration_for_current_mode(party),
             )
         } else {
+            let state = self.presented_state();
             prep(
-                &self.state.stats,
-                &self.state.hits,
-                self.state.total_damage,
+                &state.stats,
+                &state.hits,
+                state.total_damage,
                 self.state_dps_for_current_mode(),
                 self.state_duration_for_current_mode(),
             )
@@ -910,8 +1005,16 @@ impl DpsApp {
         (rows, total, dps, duration)
     }
 
+    pub(crate) fn selected_damage_attribution(&self) -> DamageAttributionSummary {
+        self.selected_party_state().map_or_else(
+            || self.presented_state().damage_attribution_summary(),
+            PartyCombatState::damage_attribution_summary,
+        )
+    }
+
     /// Cheap count of party-member rows (no clone), for HUD window sizing.
     pub(crate) fn party_member_count(&self) -> usize {
+        let separate_reaction_damage = self.preferences.separate_reaction_damage;
         if let Some(party) = self.selected_party_state() {
             party
                 .stats
@@ -919,15 +1022,22 @@ impl DpsApp {
                 .filter(|row| {
                     is_party_member_row(row, &party.hits)
                         && !self.hidden_character_ids.contains(&row.char_id)
+                        && character_row_has_visible_totals(
+                            &row.for_reaction_damage_policy(separate_reaction_damage),
+                        )
                 })
                 .count()
         } else {
-            self.state
+            let state = self.presented_state();
+            state
                 .stats
                 .values()
                 .filter(|row| {
-                    is_party_member_row(row, &self.state.hits)
+                    is_party_member_row(row, &state.hits)
                         && !self.hidden_character_ids.contains(&row.char_id)
+                        && character_row_has_visible_totals(
+                            &row.for_reaction_damage_policy(separate_reaction_damage),
+                        )
                 })
                 .count()
         }
@@ -949,19 +1059,48 @@ impl DpsApp {
     }
 
     pub(crate) fn hud_status_row_visible(&self) -> bool {
-        (self.preferences.hud_config.show_abyss_half && self.state.abyss.is_active())
+        (self.preferences.hud_config.show_abyss_half && self.presented_state().abyss.is_active())
             || self.preferences.hud_config.show_passthrough_state
     }
 
     pub(crate) fn party_panel(&mut self, ui: &mut egui::Ui) {
         let (rows, total_damage, _, _) = self.party_readout();
+        let attribution = self.selected_damage_attribution();
+        if attribution.total_damage > 0.0 {
+            if let Some(filter) = draw_damage_attribution_strip(
+                ui,
+                attribution,
+                self.preferences.separate_reaction_damage,
+            ) {
+                self.team_hit_detail_filter = filter;
+                self.team_hit_cache = HitDetailCache::default();
+                self.windows.team_hit_detail_open = true;
+                self.windows.team_hit_detail_corner_applied = false;
+                ui.ctx().send_viewport_cmd_to(
+                    team_hit_detail_viewport_id(),
+                    egui::ViewportCommand::Focus,
+                );
+            }
+            ui.add_space(4.0);
+        }
         let density_scale = density_tokens(self.preferences.density).font_scale;
         let available_height = ui.available_height();
         let row_height = (party_row_height(available_height, rows.len()) * density_scale)
             .min(available_height.max(38.0 * density_scale));
         if rows.is_empty() {
             if self.hidden_character_ids.is_empty() {
-                self.main_empty_state(ui);
+                if total_damage > 0.0 {
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            RichText::new(t(
+                                "No character-attributed damage under the current accounting mode",
+                            ))
+                            .color(ui.visuals().weak_text_color()),
+                        );
+                    });
+                } else {
+                    self.main_empty_state(ui);
+                }
             } else {
                 ui.vertical_centered(|ui| {
                     ui.label(
@@ -1000,7 +1139,7 @@ impl DpsApp {
                 );
                 let stride = row_height + row_spacing;
                 let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
-                let abyss_active = self.state.abyss.is_active();
+                let abyss_active = self.presented_state().abyss.is_active();
                 let visible_rect = ui.clip_rect().intersect(container).expand(stride);
                 for (index, row) in rows.iter().enumerate().rev() {
                     let target_y = index as f32 * stride;
@@ -1530,7 +1669,7 @@ impl DpsApp {
         }
         let duration_scale = 1.0 + end_bounce * 0.06;
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
-        let abyss_active = self.state.abyss.is_active();
+        let abyss_active = self.presented_state().abyss.is_active();
         if self.preferences.hud_config.show_team_dps {
             let dps_trend = motion::trend_indicator(
                 painter.ctx(),
@@ -1753,7 +1892,7 @@ impl DpsApp {
         colors: HudPaintColors,
     ) -> f32 {
         let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, 18.0));
-        if self.preferences.hud_config.show_abyss_half && self.state.abyss.is_active() {
+        if self.preferences.hud_config.show_abyss_half && self.presented_state().abyss.is_active() {
             paint_haloed(
                 painter,
                 egui::pos2(rect.left(), rect.center().y),
@@ -1807,7 +1946,7 @@ impl DpsApp {
         let clipped_painter = painter.with_clip_rect(container);
         let painter = &clipped_painter;
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
-        let abyss_active = self.state.abyss.is_active();
+        let abyss_active = self.presented_state().abyss.is_active();
         for (index, row) in rows.iter().enumerate().rev() {
             let color = character_color(
                 row.char_id,
@@ -1998,7 +2137,7 @@ impl DpsApp {
 
     pub(crate) fn current_damage_taken_for_hud(&self) -> f64 {
         self.selected_party_state()
-            .map_or(self.state.total_damage_taken, |party| {
+            .map_or(self.presented_state().total_damage_taken, |party| {
                 party.total_damage_taken
             })
     }
@@ -2110,7 +2249,7 @@ impl DpsApp {
             egui::pos2(rect.right() - 7.0, rect.bottom() - 2.0),
         );
         let second_half = matches!(self.selected_abyss_half, AbyssHalf::Second);
-        let abyss_active = self.state.abyss.is_active();
+        let abyss_active = self.presented_state().abyss.is_active();
         let animated_share = motion::animate_share(
             ui.ctx(),
             (
@@ -2526,6 +2665,121 @@ fn hud_preview_party_readout() -> HudPreviewData {
         duration: 34.9,
         damage_taken: 2_834.0,
     }
+}
+
+fn character_row_has_visible_totals(row: &CharacterStats) -> bool {
+    row.hits > 0 || row.damage > 0.0 || row.hits_taken > 0 || row.damage_taken > 0.0
+}
+
+fn attribution_percent(damage: f64, total_damage: f64) -> f64 {
+    if total_damage > 0.0 {
+        damage / total_damage * 100.0
+    } else {
+        0.0
+    }
+}
+
+fn damage_attribution_button(ui: &mut egui::Ui, text: String, damage: f64) -> egui::Response {
+    ui.add_enabled(damage > 0.0, egui::Button::new(text).small())
+        .on_hover_text(tf(
+            "Open matching hits in team combat details · damage {}",
+            &[&format_number(damage)],
+        ))
+}
+
+fn draw_damage_attribution_strip(
+    ui: &mut egui::Ui,
+    summary: DamageAttributionSummary,
+    separate_reaction_damage: bool,
+) -> Option<HitDetailFilter> {
+    let mut requested_filter = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            RichText::new(t("Damage attribution"))
+                .strong()
+                .color(ui.visuals().weak_text_color()),
+        );
+        let character_damage = summary.character_damage(separate_reaction_damage);
+        let (character_label, character_filter) = if separate_reaction_damage {
+            ("Character direct", HitDetailFilter::CharacterDirect)
+        } else {
+            ("Character attributed", HitDetailFilter::CharacterAttributed)
+        };
+        if damage_attribution_button(
+            ui,
+            format!(
+                "{} {:.1}%",
+                t(character_label),
+                attribution_percent(character_damage, summary.total_damage)
+            ),
+            character_damage,
+        )
+        .clicked()
+        {
+            requested_filter = Some(character_filter);
+        }
+        if separate_reaction_damage {
+            if damage_attribution_button(
+                ui,
+                format!(
+                    "{} {:.1}%",
+                    t("Reaction Damage"),
+                    attribution_percent(summary.character_reaction_damage, summary.total_damage)
+                ),
+                summary.character_reaction_damage,
+            )
+            .clicked()
+            {
+                requested_filter = Some(HitDetailFilter::ReactionDamage);
+            }
+        } else if summary.character_reaction_damage > 0.0
+            && damage_attribution_button(
+                ui,
+                tf(
+                    "Includes reaction damage: {}%",
+                    &[&format!(
+                        "{:.1}",
+                        attribution_percent(
+                            summary.character_reaction_damage,
+                            summary.total_damage
+                        )
+                    )],
+                ),
+                summary.character_reaction_damage,
+            )
+            .clicked()
+        {
+            requested_filter = Some(HitDetailFilter::ReactionDamage);
+        }
+        if damage_attribution_button(
+            ui,
+            format!(
+                "{} {:.1}%",
+                t("Shared mechanics"),
+                attribution_percent(summary.shared_damage, summary.total_damage)
+            ),
+            summary.shared_damage,
+        )
+        .clicked()
+        {
+            requested_filter = Some(HitDetailFilter::SharedMechanics);
+        }
+        if damage_attribution_button(
+            ui,
+            format!(
+                "{} {:.1}%",
+                t("Unattributed"),
+                attribution_percent(summary.unattributed_damage, summary.total_damage)
+            ),
+            summary.unattributed_damage,
+        )
+        .clicked()
+        {
+            requested_filter = Some(HitDetailFilter::Unattributed);
+        }
+    });
+    requested_filter
 }
 
 fn toolbar_button_group_width<'a>(
