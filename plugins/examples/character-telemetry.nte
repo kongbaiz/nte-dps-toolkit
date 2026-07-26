@@ -1,0 +1,24 @@
+nte_mod(4)
+mod("character-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+state.last_hp = 0
+
+def on_viewport_tick(event):
+    character = game.player_character
+    if character != None:
+        hp = sdk.character_hp_milli(character)
+        if hp != state.last_hp:
+            max_hp = sdk.character_hp_max_milli(character, False)
+            level = sdk.character_level(character)
+            # Preprocess exposes the source fields before this Mod derives data.
+            ipc.emit("pre.character.health", hp, max_hp, level)
+            health_per_mille = 0
+            if max_hp > 0:
+                scaled_hp = hp * 1000
+                health_per_mille = scaled_hp / max_hp
+            # Postprocess publishes the stable value consumed by the desktop app.
+            ipc.emit("post.character.health", hp, max_hp, health_per_mille)
+            state.last_hp = hp

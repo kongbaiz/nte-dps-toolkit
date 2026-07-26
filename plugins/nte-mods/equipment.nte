@@ -1,0 +1,33 @@
+nte_mod(4)
+mod("equipment")
+requires("viewport.tick")
+requires("game.session")
+requires("equipment")
+requires("ipc")
+
+# The script owns PlayerState lifecycle, cache retry, and IPC activation.
+# game.player_state is a stable built-in; client offsets stay in the host.
+state.last_player_state = 0
+state.next_prepare_at = 0
+
+def on_viewport_tick(event):
+    player_state = game.player_state
+    now = time.now_ms()
+
+    if player_state != None:
+        # A new PlayerState starts a fresh cache lifecycle.
+        if player_state != state.last_player_state:
+            state.last_player_state = player_state
+            state.next_prepare_at = 0
+
+        cache_ready = equipment.cache_ready(player_state)
+        if cache_ready == False:
+            # Retry at most once per second while UE functions are unavailable.
+            if now >= state.next_prepare_at:
+                equipment.prepare(player_state)
+                state.next_prepare_at = now + 1000
+                cache_ready = equipment.cache_ready(player_state)
+
+        # Equipment IPC becomes actionable only after this Mod prepared it.
+        if cache_ready == True:
+            ipc.bind(player_state, None)

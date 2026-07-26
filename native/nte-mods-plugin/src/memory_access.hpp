@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace nte::equipment::memory
+namespace nte::mods::memory
 {
 	uintptr_t ImageBase();
 	bool IsReadableRange(const void* address, size_t size);
@@ -26,4 +26,4 @@ namespace nte::equipment::memory
 		T* value = nullptr;
 		return ReadValue(base, offset, value) ? value : nullptr;
 	}
-} // namespace nte::equipment::memory
+} // namespace nte::mods::memory

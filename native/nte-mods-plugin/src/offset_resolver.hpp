@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace nte::equipment::offsets
+namespace nte::mods::offsets
 {
 	struct ResolvedOffsets
 	{
@@ -32,4 +32,4 @@ namespace nte::equipment::offsets
 			size_t image_size,
 			ResolvedOffsets& result);
 	} // namespace detail
-} // namespace nte::equipment::offsets
+} // namespace nte::mods::offsets

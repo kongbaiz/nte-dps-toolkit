@@ -10,7 +10,7 @@
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{2E4EAD80-4B02-4DB0-9F49-9E3C3520C2A1}</ProjectGuid>
-    <RootNamespace>NteEquipmentPlugin</RootNamespace>
+    <RootNamespace>NteModsPlugin</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -62,18 +62,19 @@
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
       <EntryPointSymbol>DllMain</EntryPointSymbol>
-      <AdditionalDependencies>kernel32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;kernel32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/IGNORE:4104 %(AdditionalOptions)</AdditionalOptions>
       <ModuleDefinitionFile>src\dwmapi.def</ModuleDefinitionFile>
-      <ImportLibrary>$(OutDir)nte_equipment_plugin.lib</ImportLibrary>
+      <ImportLibrary>$(OutDir)nte_mods_plugin.lib</ImportLibrary>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="include\nte_equipment_ipc.h" />
+    <ClInclude Include="include\nte_mods_ipc.h" />
     <ClInclude Include="src\dwmapi_proxy.hpp" />
-    <ClInclude Include="src\equipment_rpc.hpp" />
+    <ClInclude Include="src\host_api.hpp" />
     <ClInclude Include="src\ipc_transport.hpp" />
     <ClInclude Include="src\memory_access.hpp" />
+    <ClInclude Include="src\mod_runtime.hpp" />
     <ClInclude Include="src\obfuscated_string.hpp" />
     <ClInclude Include="src\offset_resolver.hpp" />
     <ClInclude Include="src\plugin_runtime.hpp" />
@@ -82,13 +83,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\dwmapi_proxy.cpp" />
-    <ClCompile Include="src\equipment_rpc.cpp" />
+    <ClCompile Include="src\host_api.cpp" />
     <ClCompile Include="src\ipc_transport.cpp" />
     <ClCompile Include="src\memory_access.cpp" />
+    <ClCompile Include="src\mod_runtime.cpp" />
     <ClCompile Include="src\obfuscated_string.cpp" />
     <ClCompile Include="src\offset_resolver.cpp" />
     <ClCompile Include="src\shadow_vtable_hook.cpp" />
-    <ClCompile Include="src\nte_equipment_plugin.cpp" />
+    <ClCompile Include="src\nte_mods_plugin.cpp" />
     <ClCompile Include="src\plugin_runtime.cpp" />
   </ItemGroup>
   <ItemGroup>

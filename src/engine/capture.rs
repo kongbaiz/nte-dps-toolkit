@@ -44,8 +44,8 @@ use crate::engine::parser::{
     parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
     parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
 };
-use crate::platform::equipment_plugin::{
-    CombatClockTransitionSnapshot, query_combat_clock_transitions,
+use crate::platform::mods_plugin::{
+    CombatClockTransitionSnapshot, query_combat_clock_transitions, query_mod_events,
 };
 use crate::storage::io_util::atomic_write_file;
 
@@ -649,13 +649,14 @@ fn send_game_pause_transition(
     sender.send(EngineEvent::TimeStop(event))
 }
 
-fn run_combat_clock_monitor(
+fn run_plugin_monitor(
     stop: &AtomicBool,
     capture_started_100ns: u64,
     raw_capture: &RawCaptureBuffer,
     sender: &EngineEventSink,
 ) {
     let mut last_sequence = 0;
+    let mut last_mod_event_sequence = 0;
     let mut tracker = GamePauseIntervalTracker::default();
     let capture_started = filetime_100ns_to_unix_seconds(capture_started_100ns)
         .expect("capture FILETIME must be after Unix epoch");
@@ -735,6 +736,24 @@ fn run_combat_clock_monitor(
                         tracker.apply_transition(capture_started, previous_pause_type_mask)
                     && send_game_pause_transition(sender, event).is_err()
                 {
+                    return;
+                }
+            }
+        }
+        if let Ok(events) = query_mod_events() {
+            for event in events {
+                if event.sequence <= last_mod_event_sequence {
+                    continue;
+                }
+                last_mod_event_sequence = event.sequence;
+                let event = crate::engine::model::ModScriptEvent::from_bridge(
+                    event.sequence,
+                    event.timestamp_100ns,
+                    event.mod_id,
+                    event.name,
+                    event.values,
+                );
+                if sender.send(EngineEvent::ModScript(event)).is_err() {
                     return;
                 }
             }
@@ -3682,7 +3701,7 @@ pub fn start_capture(
             let sender = sender.clone();
             let capture_started_100ns = current_filetime_100ns();
             thread::spawn(move || {
-                run_combat_clock_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
+                run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
             })
         };
         let result = run_capture(CaptureRunConfig {

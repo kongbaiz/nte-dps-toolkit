@@ -6,14 +6,15 @@ use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::model::{
-    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary, TeamDps,
-    TeamDpsMember,
+    AbyssHalf, CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary,
+    CombatState, Hit, TeamDps, TeamDpsMember, TimeStopEvent,
 };
 use crate::storage::io_util::atomic_write_text;
 use crate::storage::paths::software_dir;
 
 pub const HISTORY_RECORD_VERSION: u32 = 1;
 pub const MAX_HISTORY_RECORDS: usize = 200;
+const MAX_HISTORY_DETAIL_HITS: usize = 100_000;
 
 static HISTORY_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -24,6 +25,7 @@ pub struct HistoryRecord {
     pub id: String,
     pub saved_at: DateTime<Utc>,
     pub summary: CombatSessionSummary,
+    pub details: Option<HistoryCombatDetails>,
 }
 
 impl Default for HistoryRecord {
@@ -33,6 +35,7 @@ impl Default for HistoryRecord {
             id: String::new(),
             saved_at: Utc::now(),
             summary: CombatSessionSummary::default(),
+            details: None,
         }
     }
 }
@@ -65,6 +68,132 @@ impl HistoryRecord {
             .as_ref()
             .and_then(|half| team_from_characters(half.total_dps, &half.characters))
             .or_else(|| self.to_team_dps())
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistoryCombatDetails {
+    pub floor: Option<u32>,
+    pub active_half: Option<AbyssHalf>,
+    pub first_half_at: Option<f64>,
+    pub second_half_at: Option<f64>,
+    pub success_at: Option<f64>,
+    pub exited_at: Option<f64>,
+    pub first_half_hits: Vec<Hit>,
+    pub second_half_hits: Vec<Hit>,
+    pub time_stop_events: Vec<TimeStopEvent>,
+}
+
+impl HistoryCombatDetails {
+    pub fn from_state(state: &CombatState) -> Option<Self> {
+        let abyss = &state.abyss;
+        let round_started_at = [
+            abyss.first_half_at,
+            abyss.second_half_at,
+            abyss.first_half.started_at,
+            abyss.second_half.started_at,
+        ]
+        .into_iter()
+        .flatten()
+        .min_by(f64::total_cmp);
+        let round_ended_at = [
+            abyss.first_half.ended_at,
+            abyss.second_half.ended_at,
+            abyss.success_at,
+            abyss.exited_at,
+        ]
+        .into_iter()
+        .flatten()
+        .max_by(f64::total_cmp);
+        (!abyss.first_half.hits.is_empty() || !abyss.second_half.hits.is_empty()).then(|| Self {
+            floor: abyss.floor,
+            active_half: abyss.active_half,
+            first_half_at: abyss.first_half_at,
+            second_half_at: abyss.second_half_at,
+            success_at: abyss.success_at,
+            exited_at: abyss.exited_at,
+            first_half_hits: abyss.first_half.hits.iter().cloned().collect(),
+            second_half_hits: abyss.second_half.hits.iter().cloned().collect(),
+            time_stop_events: state
+                .time_stop_events
+                .iter()
+                .filter(|event| {
+                    let timestamp = match event {
+                        TimeStopEvent::GamePauseStarted { timestamp, .. }
+                        | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+                    };
+                    round_started_at.is_none_or(|start| timestamp >= start)
+                        && round_ended_at.is_none_or(|end| timestamp <= end)
+                })
+                .cloned()
+                .collect(),
+        })
+    }
+
+    pub fn to_combat_state(&self) -> CombatState {
+        let mut state = CombatState::default();
+        state.abyss.floor = self.floor;
+        state.abyss.active_half = self.active_half;
+        state.abyss.first_half_at = self.first_half_at;
+        state.abyss.second_half_at = self.second_half_at;
+        state.abyss.success_at = self.success_at;
+        state.abyss.exited_at = self.exited_at;
+        for hit in &self.first_half_hits {
+            state.abyss.first_half.push_hit(hit.clone());
+        }
+        for hit in &self.second_half_hits {
+            state.abyss.second_half.push_hit(hit.clone());
+        }
+        for event in &self.time_stop_events {
+            state.apply_time_stop_event(event.clone());
+        }
+        state.rebuild_global_from_abyss();
+        state
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.first_half_hits.len() + self.second_half_hits.len() > MAX_HISTORY_DETAIL_HITS {
+            return Err("History detail hit count exceeds the supported limit".to_owned());
+        }
+        for timestamp in [
+            self.first_half_at,
+            self.second_half_at,
+            self.success_at,
+            self.exited_at,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !timestamp.is_finite() {
+                return Err("History detail contains an invalid timestamp".to_owned());
+            }
+        }
+        if self
+            .first_half_hits
+            .iter()
+            .chain(&self.second_half_hits)
+            .any(|hit| {
+                !hit.timestamp.is_finite()
+                    || !hit.damage.is_finite()
+                    || !hit.follow_up_damage.is_finite()
+                    || hit
+                        .follow_up_timestamp
+                        .is_some_and(|timestamp| !timestamp.is_finite())
+            })
+        {
+            return Err("History detail contains an invalid hit".to_owned());
+        }
+        if self.time_stop_events.iter().any(|event| {
+            let timestamp = match event {
+                TimeStopEvent::GamePauseStarted { timestamp, .. }
+                | TimeStopEvent::GamePauseEnded { timestamp, .. } => timestamp,
+            };
+            !timestamp.is_finite()
+        }) {
+            return Err("History detail contains an invalid time-stop event".to_owned());
+        }
+        Ok(())
     }
 }
 
@@ -158,9 +287,33 @@ pub fn save_summary(summary: CombatSessionSummary) -> Result<HistoryRecord, Stri
     save_summary_to_dir(&history_dir(), summary)
 }
 
+pub fn save_summary_with_details(
+    summary: CombatSessionSummary,
+    details: HistoryCombatDetails,
+) -> Result<HistoryRecord, String> {
+    save_summary_with_details_to_dir(&history_dir(), summary, details)
+}
+
 pub fn save_summary_to_dir(
     directory: &Path,
     summary: CombatSessionSummary,
+) -> Result<HistoryRecord, String> {
+    save_record_to_dir(directory, summary, None)
+}
+
+pub fn save_summary_with_details_to_dir(
+    directory: &Path,
+    summary: CombatSessionSummary,
+    details: HistoryCombatDetails,
+) -> Result<HistoryRecord, String> {
+    details.validate()?;
+    save_record_to_dir(directory, summary, Some(details))
+}
+
+fn save_record_to_dir(
+    directory: &Path,
+    summary: CombatSessionSummary,
+    details: Option<HistoryCombatDetails>,
 ) -> Result<HistoryRecord, String> {
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let saved_at = Utc::now();
@@ -170,6 +323,7 @@ pub fn save_summary_to_dir(
         id,
         saved_at,
         summary,
+        details,
     };
     let text = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
     atomic_write_text(&record_path(directory, &record), &format!("{text}\n"))?;
@@ -267,6 +421,9 @@ fn parse_history_record(text: &str, path: &Path) -> Result<HistoryRecord, String
     }
     if !valid_record_id(&record.id) {
         return Err("Invalid history record ID".to_owned());
+    }
+    if let Some(details) = &record.details {
+        details.validate()?;
     }
     Ok(record)
 }
@@ -460,7 +617,8 @@ mod tests {
     use super::*;
     use crate::engine::model::{
         AbyssHalf, CombatSessionAbyssHalfSummary, CombatSessionAbyssSummary,
-        CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis,
+        CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis, HitCharacterSource,
+        HitDirection,
     };
 
     #[test]
@@ -487,6 +645,57 @@ mod tests {
         assert_eq!(abyss.active_half, Some(AbyssHalf::First));
         assert_eq!(abyss.first_half.as_ref().unwrap().half, AbyssHalf::First);
         assert_eq!(abyss.second_half.as_ref().unwrap().half, AbyssHalf::Second);
+        assert!(result.records[0].details.is_none());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn detailed_abyss_record_roundtrips_and_rebuilds_both_halves() {
+        let directory = temp_history_dir("details");
+        let mut state = CombatState::default();
+        state.abyss.floor = Some(12);
+        state.abyss.active_half = Some(AbyssHalf::Second);
+        state.abyss.first_half_at = Some(10.0);
+        state.abyss.second_half_at = Some(20.0);
+        state.abyss.first_half.push_hit(history_hit(11.0, 1, 100.0));
+        state
+            .abyss
+            .second_half
+            .push_hit(history_hit(21.0, 2, 200.0));
+        state
+            .time_stop_events
+            .push(TimeStopEvent::GamePauseStarted {
+                timestamp: 1.0,
+                pause_type_mask: 1,
+            });
+        state.time_stop_events.push(TimeStopEvent::GamePauseEnded {
+            timestamp: 2.0,
+            pause_type_mask: 1,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 12.0,
+            pause_type_mask: 1,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 13.0,
+            pause_type_mask: 1,
+        });
+        state.rebuild_global_from_abyss();
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        assert_eq!(details.time_stop_events.len(), 2);
+
+        save_summary_with_details_to_dir(&directory, CombatSessionSummary::default(), details)
+            .unwrap();
+        let records = load_history_from_dir(&directory).records;
+        let restored = records[0].details.as_ref().unwrap().to_combat_state();
+
+        assert_eq!(restored.abyss.floor, Some(12));
+        assert_eq!(restored.abyss.active_half, Some(AbyssHalf::Second));
+        assert_eq!(restored.abyss.first_half.hits.len(), 1);
+        assert_eq!(restored.abyss.second_half.hits.len(), 1);
+        assert_eq!(restored.hits.len(), 2);
+        assert_eq!(restored.total_damage, 300.0);
+        assert_eq!(restored.time_stop_events.len(), 2);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -893,6 +1102,39 @@ mod tests {
             category: category.to_owned(),
             damage,
             ..Default::default()
+        }
+    }
+
+    fn history_hit(timestamp: f64, char_id: u32, damage: f64) -> Hit {
+        Hit {
+            timestamp,
+            char_id,
+            char_name: format!("角色{char_id}"),
+            char_known: true,
+            damage,
+            byte_offset: 0,
+            bit_shift: 0,
+            char_source: HitCharacterSource::Packet,
+            direction: HitDirection::Outgoing,
+            target_hp_before: 1_000.0,
+            target_hp_after: 1_000.0 - damage,
+            target_max_hp: 1_000.0,
+            target_hp_percent: (1_000.0 - damage) / 10.0,
+            target_id: None,
+            target_name: None,
+            target_context: Vec::new(),
+            gameplay_effect_index: None,
+            gameplay_effect_name: None,
+            ability_name: None,
+            damage_name: None,
+            damage_component: None,
+            attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 }

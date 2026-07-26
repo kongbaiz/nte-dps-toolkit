@@ -455,6 +455,8 @@ mod tests {
             total_dps: 100.0,
             total_damage_taken: 25.0,
             total_hits: 4,
+            reaction_damage_separated: false,
+            damage_attribution: Default::default(),
             characters: vec![CombatSessionCharacterSummary {
                 char_id: 7,
                 name: "Character".to_owned(),

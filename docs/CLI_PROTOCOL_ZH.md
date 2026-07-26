@@ -94,8 +94,8 @@ Core 领域错误使用 code `-32000`、message `Core error`，并提供稳定�
 - `CAPTURE_ALREADY_RUNNING`
 - `CAPTURE_NOT_RUNNING`
 - `INVENTORY_NOT_READY`
-- `EQUIPMENT_PLUGIN_UNAVAILABLE`
-- `EQUIPMENT_PLUGIN_BUSY`
+- `MODS_PLUGIN_UNAVAILABLE`
+- `MODS_PLUGIN_BUSY`
 - `EQUIPMENT_REQUEST_REJECTED`
 
 底层操作系统、Npcap、端点、payload 和文件系统技术细节不会复制到 stdout。
@@ -229,8 +229,8 @@ Core 领域错误使用 code `-32000`、message `Core error`，并提供稳定�
 
 ## 装备方法
 
-装备方法通过本机命名管道 `\\.\pipe\nte-equipment-plugin-v6` 调用
-`nte-equipment-plugin` ABI v4 / IPC v6。Core 不负责注入或加载插件；与当前
+装备方法通过本机命名管道 `\\.\pipe\nte-mods-plugin-v7` 调用
+`nte-mods-plugin` ABI v4 / IPC v7。Core 不负责注入或加载插件；与当前
 客户端匹配的插件必须已经由 `HTGame.exe` 加载。GUI 用户可在关闭游戏后，从
 “控制台 → 空幕”经过定时风险确认来安装或移除内嵌插件；stdio Core 本身始终
 不会修改游戏目录。角色与装备 UID 都使用背包
@@ -274,8 +274,8 @@ Core 领域错误使用 code `-32000`、message `Core error`，并提供稳定�
 成功结果为 `{"status":"rpc_dispatched"}`；备用值
 `{"status":"dry_run_ok"}` 只用于试运行插件宿主。派发成功仅代表 RPC 已提交，
 调用方必须等待之后抓包产生的 `event.inventory.snapshot` 确认游戏/服务器状态。
-管道缺失或超时返回 `EQUIPMENT_PLUGIN_UNAVAILABLE`；超过一个执行中请求和一个排队请求时
-返回 `EQUIPMENT_PLUGIN_BUSY`；插件校验返回派发/试运行
+管道缺失或超时返回 `MODS_PLUGIN_UNAVAILABLE`；超过一个执行中请求和一个排队请求时
+返回 `MODS_PLUGIN_BUSY`；插件校验返回派发/试运行
 以外状态时返回 `EQUIPMENT_REQUEST_REJECTED`。
 
 ## 抓包与背包事件

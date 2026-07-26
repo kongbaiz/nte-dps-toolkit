@@ -744,6 +744,8 @@ pub struct UiConfig {
     #[serde(default)]
     pub island_offset_x: f32,
     pub server_damage_calibration: bool,
+    #[serde(default)]
+    pub separate_reaction_damage: bool,
     /// Manual capture-NIC override (the Npcap device `name`, e.g. `\Device\NPF_{GUID}`). `None`
     /// keeps automatic detection; `Some(name)` pins capture to that interface as a VPN fallback.
     pub manual_capture_device: Option<String>,
@@ -791,6 +793,7 @@ impl Default for UiConfig {
             island_notifications: true,
             island_offset_x: 0.0,
             server_damage_calibration: false,
+            separate_reaction_damage: false,
             manual_capture_device: None,
             dps_time_mode: DpsTimeMode::default(),
             timeline_bucket_seconds: TIMELINE_BUCKET_SECONDS_DEFAULT,
@@ -1284,6 +1287,7 @@ mod tests {
         assert!(!config.reduce_motion);
         assert!(config.auto_check_updates);
         assert!(!config.auto_download_updates);
+        assert!(!config.separate_reaction_damage);
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
         assert!(config.onboarding_done);
         assert!(!config.console_sidebar_migration_seen);
