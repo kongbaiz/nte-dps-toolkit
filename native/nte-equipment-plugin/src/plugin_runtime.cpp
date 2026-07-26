@@ -137,15 +137,19 @@ namespace nte::equipment
 				: nullptr;
 		}
 
-		void* ResolvePlayerState(void* viewport)
+		void* ResolvePlayerController(void* viewport)
 		{
 			auto* game_instance = memory::ReadPointer<void>(
 				viewport, VIEWPORT_GAME_INSTANCE_OFFSET);
 			auto* local_player = ResolveLocalPlayer(game_instance);
-			auto* player_controller = memory::ReadPointer<void>(
-				local_player, LOCAL_PLAYER_CONTROLLER_OFFSET);
 			return memory::ReadPointer<void>(
-				player_controller, CONTROLLER_PLAYER_STATE_OFFSET);
+				local_player, LOCAL_PLAYER_CONTROLLER_OFFSET);
+		}
+
+		void* ResolvePlayerState(void* viewport)
+		{
+			return memory::ReadPointer<void>(
+				ResolvePlayerController(viewport), CONTROLLER_PLAYER_STATE_OFFSET);
 		}
 
 		bool IsExpectedViewportTick(const void* address)
@@ -200,10 +204,16 @@ namespace nte::equipment
 
 			if (!IsEquipmentRpcCacheReady())
 			{
-				const EquipmentContext context{ ResolvePlayerState(viewport) };
+				const EquipmentContext context{
+					ResolvePlayerState(viewport),
+					ResolvePlayerController(viewport),
+				};
 				PrepareEquipmentRpcCache(&context);
 			}
-			PumpLiveIpc(viewport, ResolvePlayerState);
+			PumpLiveIpc(
+				viewport,
+				ResolvePlayerState,
+				ResolvePlayerController);
 			ipc_dispatch_in_progress = false;
 		}
 

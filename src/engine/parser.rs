@@ -48,7 +48,6 @@ pub const CHARACTER_DATA_PATH: &str = "res/data/characters/characters.json";
 pub const GAMEPLAY_EFFECT_MAPPING_PATH: &str = "res/data/skills/gameplay_effect_mapping.json";
 pub const GAMEPLAY_EFFECT_SEMANTICS_PATH: &str = "res/data/skills/gameplay_effect_semantics.json";
 pub const SKILL_DAMAGE_DATA_PATH: &str = "res/data/skills/skill_damage.json";
-pub const ULTRA_TIME_STOP_DATA_PATH: &str = "res/data/skills/ultra_time_stop.json";
 pub const ABILITY_TIPS_PATH: &str = "res/data/skills/ability_tips.json";
 pub const EQUIPMENT_CATALOG_PATH: &str = "res/data/equipment/equipment.json";
 
@@ -340,38 +339,6 @@ pub struct GameplayEffectSkill {
     pub attack_type: String,
     pub damage_component: Option<String>,
     pub owner_character_id: Option<u32>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct UltraTimeStopEntry {
-    #[serde(default)]
-    pub ability_id: String,
-    #[serde(default)]
-    pub montage_asset: String,
-    #[serde(default)]
-    pub activation_cooldown_tags: Vec<String>,
-    #[serde(default)]
-    pub activation_evidence_tags: Vec<String>,
-    #[serde(default)]
-    pub end_ability_event_seconds: f64,
-    #[serde(default)]
-    pub extra_cooldowns: Vec<UltraTimeStopCooldown>,
-    #[serde(default)]
-    pub ignored_cooldown_tags: Vec<String>,
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub confidence: String,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
-pub struct UltraTimeStopCooldown {
-    #[serde(default)]
-    pub cooldown_tag: String,
-    #[serde(default)]
-    pub ability_id: String,
-    #[serde(default)]
-    pub duration_seconds: f64,
 }
 
 pub fn find_data_file(relative_path: &Path) -> Option<PathBuf> {
@@ -913,31 +880,6 @@ pub fn load_gameplay_effect_skills(path: &Path) -> Result<HashMap<String, Gamepl
                     owner_character_id: None,
                 },
             )
-        })
-        .collect())
-}
-
-#[derive(Deserialize)]
-struct UltraTimeStopDocument {
-    characters: HashMap<String, UltraTimeStopEntry>,
-}
-
-pub fn load_ultra_time_stops(path: &Path) -> Result<HashMap<u32, UltraTimeStopEntry>> {
-    let text = read_resource_text(path)
-        .with_context(|| format!("无法读取大招时停表 {}", path.display()))?;
-    let document: UltraTimeStopDocument =
-        serde_json::from_str(&text).context("大招时停表 JSON 无效")?;
-    Ok(document
-        .characters
-        .into_iter()
-        .filter_map(|(key, value)| {
-            key.parse::<u32>()
-                .ok()
-                .filter(|_| {
-                    value.end_ability_event_seconds.is_finite()
-                        && value.end_ability_event_seconds > 0.0
-                })
-                .map(|id| (id, value))
         })
         .collect())
 }
@@ -1996,6 +1938,52 @@ pub fn parse_empty_curtain_items(
     items
 }
 
+pub(crate) fn parse_empty_curtain_item_additions(
+    data: &[u8],
+    data_bit_len: usize,
+    catalog: &EquipmentCatalog,
+) -> Vec<EmptyCurtainItem> {
+    const NOTIFY_ITEM_ADD: u64 = 3;
+    const NOTIFICATION_HEADER_BITS: usize = 24;
+
+    if data_bit_len > data.len().saturating_mul(8) || data_bit_len < NOTIFICATION_HEADER_BITS {
+        return Vec::new();
+    }
+
+    let mut best = Vec::new();
+    for bit_offset in 0..=data_bit_len - NOTIFICATION_HEADER_BITS {
+        let Some(mut reader) = InventoryBitReader::at(data, data_bit_len, bit_offset) else {
+            break;
+        };
+        if reader.read_bits(7) != Some(NOTIFY_ITEM_ADD) {
+            continue;
+        }
+        let Some(item_count) = reader.read_bits(17).map(|count| count as usize) else {
+            continue;
+        };
+        if item_count == 0 || item_count > MAX_EMPTY_CURTAIN_ITEMS {
+            continue;
+        }
+
+        let mut additions = Vec::new();
+        for _ in 0..item_count {
+            let Some((item, next_offset)) = parse_empty_curtain_item_at(reader, catalog) else {
+                break;
+            };
+            additions.push(item);
+            reader = InventoryBitReader::at(data, data_bit_len, next_offset)
+                .expect("a parsed inventory item must end inside the packet");
+        }
+        if additions.len() == item_count {
+            return additions;
+        }
+        if additions.len() > best.len() {
+            best = additions;
+        }
+    }
+    best
+}
+
 pub(crate) fn parse_empty_curtain_item_removals(
     data: &[u8],
     data_bit_len: usize,
@@ -2031,7 +2019,7 @@ pub(crate) fn parse_empty_curtain_item_removals(
             reader = InventoryBitReader::at(data, data_bit_len, next_offset)
                 .expect("a parsed inventory item must end inside the packet");
         }
-        if !removals.is_empty() {
+        if removals.len() == item_count {
             return removals;
         }
     }
@@ -3667,53 +3655,6 @@ mod character_tests {
 
         assert!(find_final_tower_character_evidence(&payload).is_empty());
     }
-
-    #[test]
-    fn every_ultra_time_stop_entry_has_an_activation_cooldown_tag() {
-        let entries = load_ultra_time_stops(Path::new(ULTRA_TIME_STOP_DATA_PATH))
-            .expect("ultra time-stop resource should load");
-        let mut specific_tag_owners = HashMap::new();
-        let mut evidence_tag_owners = HashMap::new();
-
-        assert!(!entries.is_empty());
-        assert!(
-            entries
-                .get(&1020)
-                .expect("Haniel time-stop entry should exist")
-                .activation_evidence_tags
-                .iter()
-                .any(|tag| tag == "Buff_Haniel_UltraSkill_Earphone")
-        );
-        for (char_id, entry) in entries {
-            assert!(
-                !entry.activation_cooldown_tags.is_empty(),
-                "character {char_id} has no activation cooldown tag"
-            );
-            assert!(entry.activation_cooldown_tags.iter().all(|tag| {
-                tag == "CoolDown.Player.UltraSkill.F"
-                    || tag.starts_with("CoolDown.Player.UltraSkill.")
-            }));
-            for tag in entry
-                .activation_cooldown_tags
-                .iter()
-                .filter(|tag| tag.as_str() != "CoolDown.Player.UltraSkill.F")
-            {
-                assert_eq!(
-                    specific_tag_owners.insert(tag.clone(), char_id),
-                    None,
-                    "activation cooldown tag {tag} belongs to multiple characters"
-                );
-            }
-            for tag in &entry.activation_evidence_tags {
-                assert!(!tag.is_empty());
-                assert_eq!(
-                    evidence_tag_owners.insert(tag.clone(), char_id),
-                    None,
-                    "activation evidence tag {tag} belongs to multiple characters"
-                );
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -3977,7 +3918,7 @@ mod empty_curtain_tests {
         let mut writer = BitWriter::default();
         writer.push_bits(0x12ab, 13);
         writer.push_bits(2, 7);
-        writer.push_bits(5, 17);
+        writer.push_bits(2, 17);
         push_module_record(&mut writer, first_id, HtItemNetId::ZERO, false, false, 0, 1);
         push_module_record(
             &mut writer,
@@ -4003,6 +3944,51 @@ mod empty_curtain_tests {
         push_module_record(&mut writer, first_id, HtItemNetId::ZERO, false, false, 0, 1);
         assert!(
             parse_empty_curtain_item_removals(&writer.data, writer.bit_len, &catalog()).is_empty()
+        );
+
+        let mut writer = BitWriter::default();
+        writer.push_bits(2, 7);
+        writer.push_bits(3, 17);
+        push_module_record(&mut writer, first_id, HtItemNetId::ZERO, false, false, 0, 1);
+        assert!(
+            parse_empty_curtain_item_removals(&writer.data, writer.bit_len, &catalog()).is_empty(),
+            "a truncated removal batch must not delete the records parsed before its missing tail"
+        );
+    }
+
+    #[test]
+    fn parses_complete_prefix_of_a_truncated_add_notification() {
+        let first_id = HtItemNetId {
+            solt: 1_117_099_843,
+            serial: 211_541_362,
+        };
+        let second_id = HtItemNetId {
+            solt: 1_117_099_844,
+            serial: 211_541_363,
+        };
+        let mut writer = BitWriter::default();
+        writer.push_bits(3, 7);
+        writer.push_bits(3, 17);
+        push_module_record(&mut writer, first_id, HtItemNetId::ZERO, false, false, 0, 1);
+        push_module_record(
+            &mut writer,
+            second_id,
+            HtItemNetId::ZERO,
+            false,
+            false,
+            0,
+            1,
+        );
+
+        let additions =
+            parse_empty_curtain_item_additions(&writer.data, writer.bit_len, &catalog());
+
+        assert_eq!(
+            additions
+                .into_iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>(),
+            [first_id, second_id]
         );
     }
 

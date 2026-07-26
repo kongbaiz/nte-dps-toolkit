@@ -29,6 +29,11 @@ pub struct SingleBunch {
     pub data: Vec<u8>,
 }
 
+/// The scanned 13-bit prefix contains a 10-bit channel index and three header flags.
+pub(crate) fn reliable_bunch_channel(prefix: u16) -> u16 {
+    prefix & 0x03ff
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransportPacket {
     StatelessHandshake {
@@ -207,11 +212,15 @@ pub fn parse_inventory_bunches(
         return Vec::new();
     };
 
-    let mut channels = known_channels.iter().copied().collect::<HashSet<_>>();
+    let mut channels = known_channels
+        .iter()
+        .copied()
+        .map(reliable_bunch_channel)
+        .collect::<HashSet<_>>();
     let mut exact_tail = Vec::new();
     for bit_offset in 0..=last_start {
         if let Some(bunch) = parse_inventory_bunch_at(packet, bit_offset, true) {
-            channels.insert(bunch.prefix);
+            channels.insert(reliable_bunch_channel(bunch.prefix));
             exact_tail.push((bit_offset, bunch));
         }
     }
@@ -221,15 +230,16 @@ pub fn parse_inventory_bunches(
 
     let exact_keys = exact_tail
         .iter()
-        .map(|(_, bunch)| (bunch.prefix, bunch.sequence))
+        .map(|(_, bunch)| (reliable_bunch_channel(bunch.prefix), bunch.sequence))
         .collect::<HashSet<_>>();
     let mut candidates = exact_tail;
     for bit_offset in 0..=last_start {
         let Some(bunch) = parse_inventory_bunch_at(packet, bit_offset, false) else {
             continue;
         };
-        let key = (bunch.prefix, bunch.sequence);
-        if channels.contains(&bunch.prefix) && !exact_keys.contains(&key) {
+        let channel = reliable_bunch_channel(bunch.prefix);
+        let key = (channel, bunch.sequence);
+        if channels.contains(&channel) && !exact_keys.contains(&key) {
             candidates.push((bit_offset, bunch));
         }
     }
@@ -238,7 +248,10 @@ pub fn parse_inventory_bunches(
     let mut seen = HashSet::new();
     candidates
         .into_iter()
-        .filter_map(|(_, bunch)| seen.insert((bunch.prefix, bunch.sequence)).then_some(bunch))
+        .filter_map(|(_, bunch)| {
+            seen.insert((reliable_bunch_channel(bunch.prefix), bunch.sequence))
+                .then_some(bunch)
+        })
         .collect()
 }
 
@@ -429,7 +442,7 @@ mod tests {
         write_bunch(
             &mut payload,
             first_offset,
-            (4122, 100, INVENTORY_BUNCH_DESCRIPTOR, 0x09),
+            (5146, 100, INVENTORY_BUNCH_DESCRIPTOR, 0x09),
             &first_data,
             16,
         );
@@ -446,8 +459,10 @@ mod tests {
         let bunches = parse_inventory_bunches(&packet, &[]);
 
         assert_eq!(bunches.len(), 2);
+        assert_eq!(bunches[0].prefix, 5146);
         assert_eq!(bunches[0].sequence, 100);
         assert_eq!(bunches[0].data, first_data);
+        assert_eq!(bunches[1].prefix, 4122);
         assert_eq!(bunches[1].sequence, 101);
         assert_eq!(bunches[1].data_bit_len, 11);
         assert_eq!(bunches[1].data, second_data);
@@ -468,7 +483,7 @@ mod tests {
         let packet = sequenced_packet(payload, payload_bit_len);
 
         assert!(parse_inventory_bunches(&packet, &[]).is_empty());
-        assert_eq!(parse_inventory_bunches(&packet, &[4122]).len(), 1);
+        assert_eq!(parse_inventory_bunches(&packet, &[5146]).len(), 1);
     }
 
     #[test]

@@ -138,7 +138,9 @@ impl DpsTimeMode {
     /// English key; wrap with [`crate::storage::i18n::t`] at the display site.
     pub fn description(self) -> &'static str {
         match self {
-            Self::TimeStopAdjusted => "Output time is not counted during ultimate/extra time-stop",
+            Self::TimeStopAdjusted => {
+                "Output time is not counted during the authoritative game pause"
+            }
             Self::RealTime => "Output time accrues over the capture time span",
         }
     }

@@ -1224,11 +1224,16 @@ mod tests {
         runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))), &outbound);
         runtime.flush_battle_summary();
         runtime.process_engine_event(
-            EngineEvent::TimeStop(TimeStopEvent::UltraAnimation {
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted {
                 timestamp: 2.0,
-                char_id: 7,
-                ability_id: "test-ultra".to_owned(),
-                duration_seconds: 2.0,
+                pause_type_mask: 1 << 2,
+            }),
+            &outbound,
+        );
+        runtime.process_engine_event(
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseEnded {
+                timestamp: 4.0,
+                pause_type_mask: 1 << 2,
             }),
             &outbound,
         );

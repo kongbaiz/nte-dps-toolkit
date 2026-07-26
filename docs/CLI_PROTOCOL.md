@@ -303,8 +303,8 @@ resolved yet.
 
 ## Equipment methods
 
-Equipment methods call ABI v4 / IPC v3 of `nte-equipment-plugin` through the
-local `\\.\pipe\nte-equipment-plugin-v3` named pipe. They do not inject or load
+Equipment methods call ABI v4 / IPC v6 of `nte-equipment-plugin` through the
+local `\\.\pipe\nte-equipment-plugin-v6` named pipe. They do not inject or load
 the plugin; the matching plugin build must already be loaded by `HTGame.exe`.
 GUI users can install or remove the embedded plugin from **Console → Console
 Loadout** after closing the game and accepting the timed risk confirmation. The
@@ -388,6 +388,14 @@ values are `live`, `pcapng_replay`, `json_replay`, and `unknown`. Each skill row
 `name` prefers a stable ability or GameplayEffect grouping key over a localized
 UI snapshot; optional `ability_name` and `gameplay_effect_name` fields expose the
 stable GA/GE identifiers when available.
+
+In `subtract_time_stop` mode, the native plugin observes the authoritative
+`AHTPlayerController::IsGamePausedByType` state. A zero-to-nonzero transition
+starts a pause and the following nonzero-to-zero transition ends it. The core
+pairs those timestamped states and subtracts only the resulting interval clipped
+to the damage window. Character casts, character-specific duration tables, and
+the abyss countdown do not participate in this calculation; a settlement stage
+event is never used as a duration boundary.
 
 The external battle DTO is an explicit field-by-field mapping from the internal
 `CombatSessionSummary`; internal Rust serialization is not exposed as the API.

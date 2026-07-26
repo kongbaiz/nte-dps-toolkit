@@ -40,6 +40,67 @@ namespace nte::equipment
 		NteEquipmentIpcRequest ipc_request{};
 		NteEquipmentIpcResponse ipc_response{};
 
+		class PipeSecurityAttributes
+		{
+		public:
+			PipeSecurityAttributes() = default;
+			PipeSecurityAttributes(const PipeSecurityAttributes&) = delete;
+			PipeSecurityAttributes& operator=(const PipeSecurityAttributes&) = delete;
+
+			~PipeSecurityAttributes()
+			{
+				if (descriptor_ != nullptr)
+					LocalFree(descriptor_);
+				if (advapi_ != nullptr)
+					FreeLibrary(advapi_);
+			}
+
+			bool Initialize()
+			{
+				const auto library_name =
+					NTE_OBFUSCATE_STRING(L"advapi32.dll");
+				advapi_ = LoadLibraryW(library_name.c_str());
+				if (advapi_ == nullptr)
+					return false;
+
+				using ConvertSecurityDescriptor =
+					BOOL(WINAPI*)(LPCWSTR, DWORD, PSECURITY_DESCRIPTOR*, PULONG);
+				const auto function_name = NTE_OBFUSCATE_STRING(
+					"ConvertStringSecurityDescriptorToSecurityDescriptorW");
+				const auto convert = reinterpret_cast<ConvertSecurityDescriptor>(
+					GetProcAddress(advapi_, function_name.c_str()));
+				if (convert == nullptr)
+					return false;
+
+				// The game runs at high integrity while the desktop client normally
+				// runs at medium integrity. Keep the pipe local and grant access only
+				// to system, administrators, and the interactive desktop session.
+				const auto descriptor = NTE_OBFUSCATE_STRING(
+					L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;IU)"
+					L"S:(ML;;NW;;;ME)");
+				if (!convert(
+					descriptor.c_str(), 1, &descriptor_, nullptr))
+					return false;
+
+				attributes_ = {
+					sizeof(SECURITY_ATTRIBUTES),
+					descriptor_,
+					FALSE,
+				};
+				return true;
+			}
+
+			SECURITY_ATTRIBUTES* Get()
+			{
+				return &attributes_;
+			}
+
+		private:
+			HMODULE advapi_ = nullptr;
+			PSECURITY_DESCRIPTOR descriptor_ = nullptr;
+			SECURITY_ATTRIBUTES attributes_{};
+		};
+
 		bool IsZeroItemId(const NteItemNetId& item)
 		{
 			return item.slot == 0 && item.serial == 0;
@@ -150,12 +211,16 @@ namespace nte::equipment
 			if (ipc_pipe != INVALID_HANDLE_VALUE)
 				return true;
 
+			PipeSecurityAttributes security;
+			if (!security.Initialize())
+				return false;
+
 			ipc_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 			if (ipc_event == nullptr)
 				return false;
 
 			const auto pipe_name = NTE_OBFUSCATE_STRING(
-				L"\\\\.\\pipe\\nte-equipment-plugin-v3");
+				NTE_EQUIPMENT_PIPE_NAME);
 			ipc_pipe = CreateNamedPipeW(
 				pipe_name.c_str(),
 				PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
@@ -165,7 +230,7 @@ namespace nte::equipment
 				sizeof(NteEquipmentIpcResponse),
 				sizeof(NteEquipmentIpcRequest),
 				0,
-				nullptr);
+				security.Get());
 			if (ipc_pipe == INVALID_HANDLE_VALUE)
 			{
 				CloseIpcPipe();
@@ -241,7 +306,8 @@ namespace nte::equipment
 
 		NteEquipmentStatus DispatchIpcRequest(
 			const EquipmentContext* context,
-			const NteEquipmentIpcRequest& request)
+			const NteEquipmentIpcRequest& request,
+			NteEquipmentIpcResponse& response)
 		{
 			if (request.magic != NTE_EQUIPMENT_IPC_MAGIC ||
 				request.version != NTE_EQUIPMENT_IPC_VERSION ||
@@ -251,6 +317,18 @@ namespace nte::equipment
 
 			switch (request.operation)
 			{
+			case NTE_EQUIPMENT_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS:
+				if (!IsZeroItemId(request.character) ||
+					!IsZeroItemId(request.equipment) ||
+					!IsZeroItemId(request.core) || request.row != 0 ||
+					request.column != 0 || request.placement_count != 0 ||
+					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
+					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+				response.combat_clock_transition_count =
+					CopyCombatClockTransitions(
+						response.combat_clock_transitions,
+						NTE_COMBAT_CLOCK_HISTORY_SIZE);
+				return NTE_EQUIPMENT_STATUS_DRY_RUN_OK;
 			case NTE_EQUIPMENT_IPC_EQUIP_MODULE:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
@@ -339,15 +417,13 @@ namespace nte::equipment
 		IpcPumpResult CompleteIpcRequest(
 			const EquipmentContext* context)
 		{
-			const NteEquipmentStatus status = DispatchIpcRequest(context, ipc_request);
-			ipc_response = {
-				NTE_EQUIPMENT_IPC_MAGIC,
-				NTE_EQUIPMENT_IPC_VERSION,
-				0,
-				ipc_request.request_id,
-				static_cast<uint32_t>(status),
-				0,
-			};
+			ipc_response = {};
+			ipc_response.magic = NTE_EQUIPMENT_IPC_MAGIC;
+			ipc_response.version = NTE_EQUIPMENT_IPC_VERSION;
+			ipc_response.request_id = ipc_request.request_id;
+			const NteEquipmentStatus status = DispatchIpcRequest(
+				context, ipc_request, ipc_response);
+			ipc_response.status = static_cast<uint32_t>(status);
 
 			ResetIpcOverlapped();
 			DWORD bytes_written = 0;
@@ -386,17 +462,24 @@ namespace nte::equipment
 
 	IpcPumpResult PumpLiveIpc(
 		void* user_data,
-		PlayerStateResolver resolve_player_state)
+		PlayerStateResolver resolve_player_state,
+		PlayerControllerResolver resolve_player_controller)
 	{
+		if (resolve_player_state == nullptr ||
+			resolve_player_controller == nullptr)
+			return IpcPumpResult::Error;
+
+		const EquipmentContext context{
+			resolve_player_state(user_data),
+			resolve_player_controller(user_data),
+		};
+		ObserveCombatClockState(&context);
+
 		const IpcPollResult poll_result = PollIpcRequest();
 		if (poll_result == IpcPollResult::Error)
 			return IpcPumpResult::Error;
 		if (poll_result == IpcPollResult::Idle)
 			return IpcPumpResult::Idle;
-		if (resolve_player_state == nullptr)
-			return IpcPumpResult::Error;
-
-		const EquipmentContext context{ resolve_player_state(user_data) };
 		return CompleteIpcRequest(&context);
 	}
 

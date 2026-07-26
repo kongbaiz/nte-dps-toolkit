@@ -242,6 +242,7 @@ impl DpsApp {
             team_hit_cache: HitDetailCache::default(),
             skill_summary_cache: SkillSummaryCache::default(),
             timeline_cache: TimelineCache::default(),
+            time_stop_presentation: TimeStopPresentation::default(),
             timeline_view: TimelineViewState::default(),
             skill_breakdown_cache: SkillBreakdownCache::default(),
             selected_timeline_char: None,
@@ -330,6 +331,7 @@ impl DpsApp {
         self.team_hit_cache = HitDetailCache::default();
         self.skill_summary_cache = SkillSummaryCache::default();
         self.timeline_cache = TimelineCache::default();
+        self.time_stop_presentation = TimeStopPresentation::default();
         self.timeline_view = TimelineViewState::default();
         self.skill_breakdown_cache = SkillBreakdownCache::default();
         self.selected_timeline_char = None;
@@ -1695,7 +1697,20 @@ impl DpsApp {
                     self.finish_combat_visual();
                 }
             }
-            EngineEvent::TimeStop(_) => self.timeline_cache = TimelineCache::default(),
+            EngineEvent::TimeStop(time_stop) => {
+                self.timeline_cache = TimelineCache::default();
+                if self.capture.is_some() {
+                    let has_damage = self
+                        .selected_party_state()
+                        .map_or(self.state.total_damage > 0.0, |party| {
+                            party.total_damage > 0.0
+                        });
+                    if has_damage || matches!(time_stop, TimeStopEvent::GamePauseEnded { .. }) {
+                        self.time_stop_presentation
+                            .observe(time_stop, Instant::now());
+                    }
+                }
+            }
             _ => {}
         }
         match crate::core::reducer::apply_engine_event(&mut self.state, event) {
@@ -2700,6 +2715,23 @@ impl DpsApp {
     pub(crate) fn state_dps_for_current_mode(&self) -> f64 {
         self.state
             .dps_with_time_stop(self.subtract_time_stop_for_dps())
+    }
+
+    pub(crate) fn presented_combat_readout(
+        &self,
+        duration: f64,
+        total_damage: f64,
+    ) -> (f64, f64, Option<f64>, bool) {
+        if !self.subtract_time_stop_for_dps() {
+            return (duration, total_damage / duration.max(1.0), None, false);
+        }
+        let frame = self.time_stop_presentation.frame(Instant::now());
+        (
+            duration,
+            total_damage / duration.max(1.0),
+            frame.deduction_seconds,
+            frame.needs_repaint,
+        )
     }
 
     pub(crate) fn character_duration_for_current_source(&self, row: &CharacterStats) -> f64 {

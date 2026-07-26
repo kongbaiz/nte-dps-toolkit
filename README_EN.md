@@ -40,7 +40,7 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 
 - **Real-time DPS stats**: live total damage, DPS, hit count, taken-damage, and combat duration.
 - **Per-character analysis**: damage, share, hit count, DPS, taken-damage, skill categories, and filterable hit details per character.
-- **Two timing modes**: "time-stop deducted" and "real time" DPS bases; ultimate animation time-stop uses resource-table durations, and extra time-stops are merged and deducted by parsed intervals.
+- **Two timing modes**: "time-stop deducted" and "real time" DPS bases; time-stop deduction uses only the game's authoritative pause state observed by the native plugin.
 - **Target HP fields preserved**: `target_hp_before`, `target_hp_after`, `target_max_hp`, `target_hp_percent`.
 - **Skill & effect mapping**: parses and shows GameplayEffect mappings, skill categories, `ability_name`, `damage_name`, `attack_type`.
 - **Abyss up/down-line stats**: tracked independently, preserving restart, line-entry, clear, and exit event states, with an abyss monster stat-table viewer.

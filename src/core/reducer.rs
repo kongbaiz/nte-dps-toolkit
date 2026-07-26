@@ -252,9 +252,9 @@ mod tests {
         let mut state = CombatState::default();
         let signal = apply_engine_event(
             &mut state,
-            EngineEvent::TimeStop(TimeStopEvent::ExtraStart {
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted {
                 timestamp: 1.0,
-                reason: "test".to_owned(),
+                pause_type_mask: 1 << 2,
             }),
         );
         assert_eq!(signal, CoreSignal::StateChanged);

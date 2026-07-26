@@ -11,7 +11,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Local};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
@@ -21,8 +21,9 @@ use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketBlock;
 use pcap_file::pcapng::blocks::interface_description::{
     InterfaceDescriptionBlock, InterfaceDescriptionOption,
 };
+use pcap_file::pcapng::blocks::unknown::UnknownBlock;
 use pcap_file::pcapng::{Block, PcapNgReader, PcapNgWriter};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, CombatState, DpsTimeBasis, EmptyCurtainCharacter,
@@ -34,20 +35,23 @@ use crate::engine::parser::{
     AbilityCatalog, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
     GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH, GameplayEffectSkill,
     ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot, ParsedGameplayEffect,
-    SKILL_DAMAGE_DATA_PATH, ULTRA_TIME_STOP_DATA_PATH, UltraTimeStopEntry, classify_attack_type,
-    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
-    find_final_tower_character_evidence, load_equipment_catalog, load_gameplay_effect_mapping,
-    load_ultra_time_stops, matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
-    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
+    SKILL_DAMAGE_DATA_PATH, classify_attack_type, declared_character_ids_from_evidence,
+    find_data_file, find_declared_character_evidence, find_final_tower_character_evidence,
+    load_equipment_catalog, load_gameplay_effect_mapping, matches_shifted_bytes_at,
+    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
+    parse_empty_curtain_character_owners, parse_empty_curtain_compact_module_placements,
+    parse_empty_curtain_equipment_snapshot, parse_empty_curtain_item_additions,
     parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
     parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
+};
+use crate::platform::equipment_plugin::{
+    CombatClockTransitionSnapshot, query_combat_clock_transitions,
 };
 use crate::storage::io_util::atomic_write_file;
 
 use crate::engine::protocol::{
     SequencedPacket, SingleBunch, TransportPacket, parse_inventory_bunches, parse_single_bunch,
-    parse_transport_packet,
+    parse_transport_packet, reliable_bunch_channel,
 };
 
 const PCAP_ERRBUF_SIZE: usize = 256;
@@ -56,6 +60,13 @@ const MAX_IGNORABLE_BINARY_PACKET_LEN: usize = 96;
 const UNREADABLE_PROTOCOL_TEXT: &str = "未解析到可读协议文本";
 const CAPTURE_SNAPLEN: u32 = 65_535;
 const RAW_CAPTURE_FLUSH_INTERVAL: u64 = 256;
+const NTE_COMBAT_CLOCK_BLOCK_TYPE: u32 = 0x4e54_4543;
+const NTE_COMBAT_CLOCK_BLOCK_MAGIC: &[u8; 8] = b"NTECLK01";
+const NTE_COMBAT_CLOCK_BLOCK_SIZE: usize = 40;
+const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
+const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
+const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 /// Bounded queue between the acquisition thread and the parser thread. Large enough that realistic
 /// game traffic never fills it, so a parse latency spike no longer stalls `pcap_next_ex` (which
@@ -380,6 +391,19 @@ impl RawCaptureBuffer {
         }
     }
 
+    fn push_combat_clock_transition(&self, transition: &CombatClockTransitionSnapshot) {
+        if let Ok(mut capture) = self.inner.lock() {
+            let result = capture
+                .writer
+                .as_mut()
+                .map(|writer| writer.write_combat_clock_transition(transition));
+            if let Some(Err(error)) = result {
+                capture.write_error = Some(error);
+                capture.writer = None;
+            }
+        }
+    }
+
     pub fn packet_count(&self) -> usize {
         self.inner
             .lock()
@@ -510,12 +534,228 @@ impl RawCaptureWriter {
         Ok(())
     }
 
+    fn write_combat_clock_transition(
+        &mut self,
+        transition: &CombatClockTransitionSnapshot,
+    ) -> Result<(), String> {
+        let payload = encode_combat_clock_block(transition);
+        self.writer
+            .write_pcapng_block(UnknownBlock::new(NTE_COMBAT_CLOCK_BLOCK_TYPE, 0, &payload))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn finish(mut self) -> Result<(u64, u64), String> {
         self.writer
             .get_mut()
             .flush()
             .map_err(|error| error.to_string())?;
         Ok((self.packet_count, self.captured_bytes))
+    }
+}
+
+fn encode_combat_clock_block(
+    transition: &CombatClockTransitionSnapshot,
+) -> [u8; NTE_COMBAT_CLOCK_BLOCK_SIZE] {
+    let mut payload = [0_u8; NTE_COMBAT_CLOCK_BLOCK_SIZE];
+    payload[0..8].copy_from_slice(NTE_COMBAT_CLOCK_BLOCK_MAGIC);
+    payload[8..16].copy_from_slice(&transition.sequence.to_le_bytes());
+    payload[16..24].copy_from_slice(&transition.timestamp_100ns.to_le_bytes());
+    payload[24..28].copy_from_slice(&transition.pause_type_mask.to_le_bytes());
+    payload[28..32].copy_from_slice(&transition.reserved_value.to_le_bytes());
+    payload[32..36].copy_from_slice(&transition.state_flags.to_le_bytes());
+    payload
+}
+
+fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapshot> {
+    if value.len() != NTE_COMBAT_CLOCK_BLOCK_SIZE
+        || &value[0..8] != NTE_COMBAT_CLOCK_BLOCK_MAGIC
+        || value[36..40] != [0; 4]
+    {
+        return None;
+    }
+    let pause_type_mask =
+        u32::from_le_bytes(value[24..28].try_into().expect("fixed pause type mask"));
+    let reserved_value =
+        i32::from_le_bytes(value[28..32].try_into().expect("fixed reserved value"));
+    let state_flags =
+        u32::from_le_bytes(value[32..36].try_into().expect("fixed clock state flags"));
+    if reserved_value != 0
+        || state_flags & !COMBAT_CLOCK_PAUSE_VALID != 0
+        || pause_type_mask & !0x1c != 0
+        || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
+    {
+        return None;
+    }
+    Some(CombatClockTransitionSnapshot {
+        sequence: u64::from_le_bytes(value[8..16].try_into().expect("fixed transition sequence")),
+        timestamp_100ns: u64::from_le_bytes(
+            value[16..24]
+                .try_into()
+                .expect("fixed transition timestamp"),
+        ),
+        pause_type_mask,
+        reserved_value,
+        state_flags,
+    })
+}
+
+fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
+    let timestamp_ticks = timestamp_100ns.checked_sub(FILETIME_UNIX_EPOCH_100NS)?;
+    Some(timestamp_ticks as f64 / FILETIME_TICKS_PER_SECOND as f64)
+}
+
+fn current_filetime_100ns() -> u64 {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after the Unix epoch");
+    FILETIME_UNIX_EPOCH_100NS
+        + elapsed.as_secs() * FILETIME_TICKS_PER_SECOND
+        + u64::from(elapsed.subsec_nanos()) / 100
+}
+
+#[derive(Default)]
+struct GamePauseIntervalTracker {
+    active_type_mask: u32,
+    pause_type_mask: u32,
+}
+
+impl GamePauseIntervalTracker {
+    fn apply_transition(&mut self, timestamp: f64, pause_type_mask: u32) -> Option<TimeStopEvent> {
+        let event = if self.pause_type_mask == 0 && pause_type_mask != 0 {
+            self.active_type_mask = pause_type_mask;
+            Some(TimeStopEvent::GamePauseStarted {
+                timestamp,
+                pause_type_mask,
+            })
+        } else if self.pause_type_mask != 0 && pause_type_mask == 0 {
+            Some(TimeStopEvent::GamePauseEnded {
+                timestamp,
+                pause_type_mask: self.active_type_mask,
+            })
+        } else {
+            self.active_type_mask |= pause_type_mask;
+            None
+        };
+        self.pause_type_mask = pause_type_mask;
+        event
+    }
+}
+
+fn send_game_pause_transition(
+    sender: &EngineEventSink,
+    event: TimeStopEvent,
+) -> Result<(), EngineEventSendError> {
+    sender.send(EngineEvent::TimeStop(event))
+}
+
+fn run_combat_clock_monitor(
+    stop: &AtomicBool,
+    capture_started_100ns: u64,
+    raw_capture: &RawCaptureBuffer,
+    sender: &EngineEventSink,
+) {
+    let mut last_sequence = 0;
+    let mut tracker = GamePauseIntervalTracker::default();
+    let capture_started = filetime_100ns_to_unix_seconds(capture_started_100ns)
+        .expect("capture FILETIME must be after Unix epoch");
+    let mut initialized = false;
+    let mut pause_state_valid = false;
+    let mut previous_pause_type_mask = 0;
+    while !stop.load(Ordering::Relaxed) {
+        if let Ok(transitions) = query_combat_clock_transitions() {
+            let mut current = Vec::new();
+            for transition in transitions {
+                if transition.sequence <= last_sequence {
+                    continue;
+                }
+                last_sequence = transition.sequence;
+                current.push(transition);
+            }
+            for transition in current {
+                if transition.timestamp_100ns < capture_started_100ns {
+                    pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
+                    previous_pause_type_mask = if pause_state_valid {
+                        transition.pause_type_mask
+                    } else {
+                        0
+                    };
+                    continue;
+                }
+                if !initialized {
+                    initialized = true;
+                    raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
+                        sequence: 0,
+                        timestamp_100ns: capture_started_100ns,
+                        pause_type_mask: if pause_state_valid {
+                            previous_pause_type_mask
+                        } else {
+                            0
+                        },
+                        reserved_value: 0,
+                        state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
+                    });
+                    if pause_state_valid
+                        && let Some(event) =
+                            tracker.apply_transition(capture_started, previous_pause_type_mask)
+                        && send_game_pause_transition(sender, event).is_err()
+                    {
+                        return;
+                    }
+                }
+                raw_capture.push_combat_clock_transition(&transition);
+                let Some(timestamp) = filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
+                else {
+                    continue;
+                };
+                pause_state_valid = transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0;
+                if pause_state_valid
+                    && let Some(event) =
+                        tracker.apply_transition(timestamp, transition.pause_type_mask)
+                    && send_game_pause_transition(sender, event).is_err()
+                {
+                    return;
+                }
+            }
+            if !initialized {
+                initialized = true;
+                raw_capture.push_combat_clock_transition(&CombatClockTransitionSnapshot {
+                    sequence: 0,
+                    timestamp_100ns: capture_started_100ns,
+                    pause_type_mask: if pause_state_valid {
+                        previous_pause_type_mask
+                    } else {
+                        0
+                    },
+                    reserved_value: 0,
+                    state_flags: u32::from(pause_state_valid) * COMBAT_CLOCK_PAUSE_VALID,
+                });
+                if pause_state_valid
+                    && let Some(event) =
+                        tracker.apply_transition(capture_started, previous_pause_type_mask)
+                    && send_game_pause_transition(sender, event).is_err()
+                {
+                    return;
+                }
+            }
+        }
+        thread::sleep(COMBAT_CLOCK_POLL_INTERVAL);
+    }
+    if tracker.pause_type_mask != 0 {
+        let ended_100ns = current_filetime_100ns();
+        let transition = CombatClockTransitionSnapshot {
+            sequence: last_sequence.saturating_add(1),
+            timestamp_100ns: ended_100ns,
+            pause_type_mask: 0,
+            reserved_value: 0,
+            state_flags: COMBAT_CLOCK_PAUSE_VALID,
+        };
+        raw_capture.push_combat_clock_transition(&transition);
+        if let Some(timestamp) = filetime_100ns_to_unix_seconds(ended_100ns)
+            && let Some(event) = tracker.apply_transition(timestamp, 0)
+        {
+            let _ = send_game_pause_transition(sender, event);
+        }
     }
 }
 
@@ -637,6 +877,12 @@ fn parse_udp_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, u16, Ipv4Addr, u16, &[u8])
         destination_port,
         &udp[8..udp_len],
     ))
+}
+
+fn replay_frame_local_ip_hint(packet: &[u8], local_ip_hint: Option<Ipv4Addr>) -> Option<Ipv4Addr> {
+    let local_ip = local_ip_hint?;
+    let (source, _, destination, _, _) = parse_udp_ipv4(packet)?;
+    (source == local_ip || destination == local_ip).then_some(local_ip)
 }
 
 fn infer_outgoing(
@@ -822,141 +1068,15 @@ struct DecodedPayloadText {
     has_readable_text: bool,
 }
 
-fn ultra_montage_object(entry: &UltraTimeStopEntry) -> Option<&str> {
-    let (package, object) = entry.montage_asset.rsplit_once('.')?;
-    (package.rsplit('/').next()? == object).then_some(object)
-}
-
-fn ultra_montage_character_id(package: &str) -> Option<u32> {
-    let player_path = package.strip_prefix("/Game/Characters/Player/")?;
-    let (number, _) = player_path.split_once('_')?;
-    if number.len() != 3 {
-        return None;
-    }
-    number.parse::<u32>().ok()?.checked_add(1000)
-}
-
-fn text_contains_ultra_montage(
-    text: &str,
-    char_id: u32,
-    montage_object: &str,
-    allow_variant: bool,
-) -> bool {
-    text.lines().any(|line| {
-        line.match_indices("/Game/Characters/Player/")
-            .any(|(path_offset, _)| {
-                let player_path = &line[path_offset..];
-                if ultra_montage_character_id(player_path) != Some(char_id) {
-                    return false;
-                }
-                player_path
-                    .match_indices(montage_object)
-                    .any(|(object_offset, _)| {
-                        let bytes = player_path.as_bytes();
-                        let prefix_is_boundary =
-                            object_offset == 0 || matches!(bytes[object_offset - 1], b'/' | b'.');
-                        let suffix = bytes.get(object_offset + montage_object.len());
-                        prefix_is_boundary
-                            && (matches!(suffix, None | Some(b'.'))
-                                || allow_variant && suffix == Some(&b'_'))
-                    })
-            })
-    })
-}
-
-fn matching_ultra_montage_character_ids(
-    decoded_text: &str,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    allow_variant: bool,
-) -> Vec<u32> {
-    if !decoded_text.contains("/Game/Characters/Player/") {
-        return Vec::new();
-    }
-    let mut ids = Vec::new();
-    for (char_id, entry) in ultra_time_stops {
-        let Some(montage_object) = ultra_montage_object(entry) else {
-            continue;
-        };
-        if text_contains_ultra_montage(decoded_text, *char_id, montage_object, allow_variant)
-            && !ids.contains(char_id)
-        {
-            ids.push(*char_id);
-        }
-    }
-    ids
-}
-
-fn ultra_montage_character_ids(
-    decoded_text: &str,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-) -> Vec<u32> {
-    matching_ultra_montage_character_ids(decoded_text, ultra_time_stops, true)
-}
-
-fn exact_ultra_montage_character_ids(
-    decoded_text: &str,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-) -> Vec<u32> {
-    matching_ultra_montage_character_ids(decoded_text, ultra_time_stops, false)
-}
-
-fn ultra_activation_character_ids(
-    decoded_text: &str,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-) -> Vec<u32> {
-    let mut ids = Vec::new();
-    for (char_id, entry) in ultra_time_stops {
-        if entry
-            .activation_cooldown_tags
-            .iter()
-            .any(|tag| tag != ULTRA_COOLDOWN_TAG && text_has_exact_marker(decoded_text, tag))
-        {
-            ids.push(*char_id);
-        }
-    }
-    ids
-}
-
-fn ultra_activation_evidence_character_ids(
-    decoded_text: &str,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-) -> Vec<u32> {
-    let mut ids = Vec::new();
-    for (char_id, entry) in ultra_time_stops {
-        if entry
-            .activation_evidence_tags
-            .iter()
-            .any(|marker| !marker.is_empty() && decoded_text.contains(marker))
-        {
-            ids.push(*char_id);
-        }
-    }
-    ids
-}
-
 fn decode_payload_text(data: &[u8]) -> String {
     decode_payload_text_filtered(data, |_| true).text
 }
 
-fn decode_summary_payload_text(
-    data: &[u8],
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-) -> DecodedPayloadText {
+fn decode_summary_payload_text(data: &[u8]) -> DecodedPayloadText {
     decode_payload_text_filtered(data, |value| {
         value.contains("Abyss")
             || value.contains("ConditionState_Success")
             || value.contains("UltraSkill")
-            || !ultra_montage_character_ids(value, ultra_time_stops).is_empty()
-            || !ultra_activation_evidence_character_ids(value, ultra_time_stops).is_empty()
-            || ultra_time_stops.values().any(|entry| {
-                entry
-                    .ignored_cooldown_tags
-                    .iter()
-                    .any(|tag| !tag.is_empty() && value.contains(tag))
-                    || entry.extra_cooldowns.iter().any(|cooldown| {
-                        !cooldown.cooldown_tag.is_empty() && value.contains(&cooldown.cooldown_tag)
-                    })
-            })
     })
 }
 
@@ -1239,674 +1359,6 @@ fn abyss_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<AbyssEvent>
     events
 }
 
-fn fixed_ultra_time_stop_event(
-    timestamp: f64,
-    char_id: u32,
-    evidence: UltraTimeStopEvidence,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    recent_ultra_time_stops: &mut HashMap<u32, f64>,
-) -> Option<TimeStopEvent> {
-    let entry = ultra_time_stops.get(&char_id)?;
-    fixed_ultra_time_stop_event_with_duration(
-        timestamp,
-        char_id,
-        &entry.ability_id,
-        entry.end_ability_event_seconds,
-        evidence,
-        recent_ultra_time_stops,
-    )
-}
-
-fn fixed_ultra_time_stop_event_with_duration(
-    timestamp: f64,
-    char_id: u32,
-    ability_id: &str,
-    duration: f64,
-    evidence: UltraTimeStopEvidence,
-    recent_ultra_time_stops: &mut HashMap<u32, f64>,
-) -> Option<TimeStopEvent> {
-    if !duration.is_finite() || duration <= 0.0 {
-        return None;
-    }
-    let duplicate_window = match evidence {
-        UltraTimeStopEvidence::Strong => duration.max(1.0),
-        UltraTimeStopEvidence::Weak => ULTRA_WEAK_EVIDENCE_REARM_SECONDS,
-    };
-    if recent_ultra_time_stops
-        .get(&char_id)
-        .is_some_and(|previous| timestamp - previous < duplicate_window)
-    {
-        return None;
-    }
-    recent_ultra_time_stops.insert(char_id, timestamp);
-    recent_ultra_time_stops.retain(|_, previous| timestamp - *previous <= 30.0);
-    Some(TimeStopEvent::UltraAnimation {
-        timestamp,
-        char_id,
-        ability_id: ability_id.to_owned(),
-        duration_seconds: duration,
-    })
-}
-
-fn special_ultra_cooldown_events(
-    timestamp: f64,
-    decoded_text: &str,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    recent_ultra_time_stops: &mut HashMap<u32, f64>,
-) -> (Vec<TimeStopEvent>, bool) {
-    let mut events = Vec::new();
-    let mut handled_special_cooldown = false;
-    for (char_id, entry) in ultra_time_stops {
-        if entry
-            .ignored_cooldown_tags
-            .iter()
-            .any(|tag| !tag.is_empty() && decoded_text.contains(tag))
-        {
-            handled_special_cooldown = true;
-        }
-        for cooldown in &entry.extra_cooldowns {
-            if cooldown.cooldown_tag.is_empty() || !decoded_text.contains(&cooldown.cooldown_tag) {
-                continue;
-            }
-            handled_special_cooldown = true;
-            let ability_id = if cooldown.ability_id.is_empty() {
-                entry.ability_id.as_str()
-            } else {
-                cooldown.ability_id.as_str()
-            };
-            if let Some(event) = fixed_ultra_time_stop_event_with_duration(
-                timestamp,
-                *char_id,
-                ability_id,
-                cooldown.duration_seconds,
-                UltraTimeStopEvidence::Strong,
-                recent_ultra_time_stops,
-            ) {
-                events.push(event);
-            }
-        }
-    }
-    (events, handled_special_cooldown)
-}
-
-fn extra_time_stop_events_from_text(timestamp: f64, decoded_text: &str) -> Vec<TimeStopEvent> {
-    let mut events = Vec::new();
-    for line in decoded_text.lines() {
-        if line.contains(JIN_ENTER_TIME_STOP_TAG) {
-            events.push(TimeStopEvent::ExtraStart {
-                timestamp,
-                reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
-            });
-        }
-        if line.contains(JIN_CLEAR_TIME_STOP_TAG) {
-            events.push(TimeStopEvent::ExtraEnd {
-                timestamp,
-                reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
-            });
-        }
-    }
-    events
-}
-
-#[derive(Default)]
-struct UltraTimeStopTracker {
-    recent_emitted: HashMap<u32, f64>,
-    pending_casts: Vec<PendingUltraCast>,
-    recent_montages: Vec<RecentUltraMontage>,
-    recent_character_evidence: Vec<RecentUltraCharacterEvidence>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum UltraTimeStopEvidence {
-    Strong,
-    Weak,
-}
-
-struct PendingUltraCast {
-    timestamp: f64,
-    flow: Option<UltraTimeStopFlowKey>,
-    from_time_actor: bool,
-    cast_evidence: UltraTimeStopEvidence,
-}
-
-impl PendingUltraCast {
-    fn confirmed_evidence(
-        &self,
-        identity_evidence: UltraTimeStopEvidence,
-    ) -> UltraTimeStopEvidence {
-        if self.cast_evidence == UltraTimeStopEvidence::Strong
-            || identity_evidence == UltraTimeStopEvidence::Strong
-        {
-            UltraTimeStopEvidence::Strong
-        } else {
-            UltraTimeStopEvidence::Weak
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct UltraTimeStopFlowKey {
-    source: (Ipv4Addr, u16),
-    destination: (Ipv4Addr, u16),
-}
-
-impl UltraTimeStopFlowKey {
-    fn new(source: (Ipv4Addr, u16), destination: (Ipv4Addr, u16)) -> Self {
-        if source <= destination {
-            Self {
-                source,
-                destination,
-            }
-        } else {
-            Self {
-                source: destination,
-                destination: source,
-            }
-        }
-    }
-}
-
-struct RecentUltraMontage {
-    timestamp: f64,
-    char_id: u32,
-    flow: Option<UltraTimeStopFlowKey>,
-}
-
-struct RecentUltraCharacterEvidence {
-    timestamp: f64,
-    char_id: u32,
-    flow: Option<UltraTimeStopFlowKey>,
-}
-
-fn export_ultra_time_stop_flow_key(
-    source: &str,
-    destination: &str,
-) -> Option<UltraTimeStopFlowKey> {
-    fn endpoint(value: &str) -> Option<(Ipv4Addr, u16)> {
-        let (ip, port) = value.rsplit_once(':')?;
-        Some((ip.parse().ok()?, port.parse().ok()?))
-    }
-
-    Some(UltraTimeStopFlowKey::new(
-        endpoint(source)?,
-        endpoint(destination)?,
-    ))
-}
-
-impl UltraTimeStopTracker {
-    fn events_from_packet(
-        &mut self,
-        timestamp: f64,
-        decoded_text: &str,
-        _declared_ids: &[u32],
-        server_to_client: bool,
-        flow: Option<UltraTimeStopFlowKey>,
-        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    ) -> Vec<TimeStopEvent> {
-        let mut events = extra_time_stop_events_from_text(timestamp, decoded_text);
-        self.resolve_finished_casts(timestamp);
-        if is_ultra_cooldown_state_snapshot(decoded_text) {
-            return events;
-        }
-        self.observe_ultra_montages(
-            timestamp,
-            decoded_text,
-            server_to_client,
-            flow,
-            ultra_time_stops,
-        );
-        if server_to_client {
-            let montage_char_ids =
-                exact_ultra_montage_character_ids(decoded_text, ultra_time_stops);
-            if let [char_id] = montage_char_ids.as_slice()
-                && let Some(event) = fixed_ultra_time_stop_event(
-                    timestamp,
-                    *char_id,
-                    UltraTimeStopEvidence::Strong,
-                    ultra_time_stops,
-                    &mut self.recent_emitted,
-                )
-            {
-                self.consume_pending_cast(timestamp, flow);
-                events.push(event);
-            }
-        }
-        let character_evidence_ids =
-            ultra_activation_evidence_character_ids(decoded_text, ultra_time_stops);
-
-        if !server_to_client {
-            self.observe_character_evidence(timestamp, &character_evidence_ids, flow);
-            if let [char_id] = character_evidence_ids.as_slice()
-                && let Some(event) = self.resolve_cast_from_character_evidence(
-                    timestamp,
-                    *char_id,
-                    flow,
-                    ultra_time_stops,
-                )
-            {
-                events.push(event);
-            }
-            return events;
-        }
-
-        let (mut special_events, handled_special_cooldown) = special_ultra_cooldown_events(
-            timestamp,
-            decoded_text,
-            ultra_time_stops,
-            &mut self.recent_emitted,
-        );
-        events.append(&mut special_events);
-
-        if handled_special_cooldown {
-            return events;
-        }
-
-        let has_time_actor = text_has_exact_marker(decoded_text, ULTRA_TIME_ACTOR_TAG);
-        let activation_char_ids = ultra_activation_character_ids(decoded_text, ultra_time_stops);
-        let has_activation = text_has_exact_marker(decoded_text, ULTRA_COOLDOWN_TAG)
-            || !activation_char_ids.is_empty();
-        if has_time_actor && !has_activation {
-            self.start_time_actor(timestamp, flow);
-            return events;
-        }
-        if !has_activation || is_shinku_rage_cooldown_snapshot(decoded_text) {
-            return events;
-        }
-
-        let had_time_actor = self.take_time_actor(flow);
-        let cast_evidence = if had_time_actor {
-            UltraTimeStopEvidence::Strong
-        } else {
-            UltraTimeStopEvidence::Weak
-        };
-        let character_evidence_char_id = self.consume_recent_character_evidence(timestamp, flow);
-        let montage_char_id = self.consume_recent_ultra_montage(flow);
-        let resolved = match activation_char_ids.as_slice() {
-            [activation_id] => Some((*activation_id, UltraTimeStopEvidence::Strong)),
-            [] => {
-                if let Some(char_id) = character_evidence_char_id {
-                    Some((char_id, UltraTimeStopEvidence::Strong))
-                } else {
-                    montage_char_id.map(|char_id| (char_id, UltraTimeStopEvidence::Strong))
-                }
-            }
-            _ => None,
-        };
-        match resolved {
-            Some((char_id, evidence)) => {
-                let associated_cast = (evidence == UltraTimeStopEvidence::Strong)
-                    .then(|| self.recent_cast_index(timestamp, flow))
-                    .flatten();
-                let activation_timestamp = associated_cast
-                    .map(|index| self.pending_casts[index].timestamp)
-                    .unwrap_or(timestamp);
-                let evidence = associated_cast
-                    .map(|index| self.pending_casts[index].confirmed_evidence(evidence))
-                    .unwrap_or(evidence);
-                if let Some(event) = fixed_ultra_time_stop_event(
-                    activation_timestamp,
-                    char_id,
-                    evidence,
-                    ultra_time_stops,
-                    &mut self.recent_emitted,
-                ) {
-                    events.push(event);
-                } else if evidence == UltraTimeStopEvidence::Weak {
-                    self.queue_cast(timestamp, flow, cast_evidence);
-                }
-                if let Some(index) = associated_cast {
-                    self.pending_casts.swap_remove(index);
-                }
-            }
-            None => {
-                if !has_time_actor || had_time_actor {
-                    self.queue_cast(timestamp, flow, cast_evidence);
-                }
-            }
-        }
-        events
-    }
-
-    fn start_time_actor(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
-        if self
-            .pending_casts
-            .iter()
-            .any(|pending| pending.flow == flow && pending.from_time_actor)
-        {
-            return;
-        }
-        self.pending_casts.push(PendingUltraCast {
-            timestamp,
-            flow,
-            from_time_actor: true,
-            cast_evidence: UltraTimeStopEvidence::Strong,
-        });
-    }
-
-    fn take_time_actor(&mut self, flow: Option<UltraTimeStopFlowKey>) -> bool {
-        let Some(index) = self
-            .pending_casts
-            .iter()
-            .rposition(|pending| pending.flow == flow && pending.from_time_actor)
-        else {
-            return false;
-        };
-        self.pending_casts.swap_remove(index);
-        true
-    }
-
-    fn queue_cast(
-        &mut self,
-        timestamp: f64,
-        flow: Option<UltraTimeStopFlowKey>,
-        cast_evidence: UltraTimeStopEvidence,
-    ) {
-        if self.pending_casts.iter().any(|pending| {
-            pending.flow == flow && !pending.from_time_actor && pending.timestamp == timestamp
-        }) {
-            return;
-        }
-        self.pending_casts.push(PendingUltraCast {
-            timestamp,
-            flow,
-            from_time_actor: false,
-            cast_evidence,
-        });
-    }
-
-    fn consume_pending_cast(&mut self, timestamp: f64, flow: Option<UltraTimeStopFlowKey>) {
-        let Some((index, _)) = self
-            .pending_casts
-            .iter()
-            .enumerate()
-            .filter(|(_, pending)| {
-                let window = if pending.from_time_actor {
-                    ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
-                } else {
-                    ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
-                };
-                pending.flow == flow
-                    && timestamp >= pending.timestamp
-                    && timestamp - pending.timestamp <= window
-            })
-            .max_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp))
-        else {
-            return;
-        };
-        self.pending_casts.swap_remove(index);
-    }
-
-    fn observe_character_evidence(
-        &mut self,
-        timestamp: f64,
-        char_ids: &[u32],
-        flow: Option<UltraTimeStopFlowKey>,
-    ) {
-        self.recent_character_evidence.retain(|candidate| {
-            let age = timestamp - candidate.timestamp;
-            (0.0..=ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS).contains(&age)
-        });
-        for char_id in char_ids {
-            if !self
-                .recent_character_evidence
-                .iter()
-                .any(|candidate| candidate.char_id == *char_id && candidate.flow == flow)
-            {
-                self.recent_character_evidence
-                    .push(RecentUltraCharacterEvidence {
-                        timestamp,
-                        char_id: *char_id,
-                        flow,
-                    });
-            }
-        }
-    }
-
-    fn consume_recent_character_evidence(
-        &mut self,
-        timestamp: f64,
-        flow: Option<UltraTimeStopFlowKey>,
-    ) -> Option<u32> {
-        self.recent_character_evidence.retain(|candidate| {
-            let age = timestamp - candidate.timestamp;
-            (0.0..=ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS).contains(&age)
-        });
-        let mut char_id = None;
-        let mut ambiguous = false;
-        for candidate in self
-            .recent_character_evidence
-            .iter()
-            .filter(|candidate| candidate.flow == flow)
-        {
-            match char_id {
-                None => char_id = Some(candidate.char_id),
-                Some(existing) if existing == candidate.char_id => {}
-                Some(_) => ambiguous = true,
-            }
-        }
-        self.recent_character_evidence
-            .retain(|candidate| candidate.flow != flow);
-        if ambiguous { None } else { char_id }
-    }
-
-    fn resolve_cast_from_character_evidence(
-        &mut self,
-        timestamp: f64,
-        char_id: u32,
-        flow: Option<UltraTimeStopFlowKey>,
-        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    ) -> Option<TimeStopEvent> {
-        let index = self.recent_cast_index(timestamp, flow)?;
-        let event = fixed_ultra_time_stop_event(
-            self.pending_casts[index].timestamp,
-            char_id,
-            self.pending_casts[index].confirmed_evidence(UltraTimeStopEvidence::Strong),
-            ultra_time_stops,
-            &mut self.recent_emitted,
-        );
-        self.pending_casts.swap_remove(index);
-        self.recent_character_evidence
-            .retain(|candidate| candidate.flow != flow);
-        event
-    }
-
-    fn recent_cast_index(
-        &self,
-        timestamp: f64,
-        flow: Option<UltraTimeStopFlowKey>,
-    ) -> Option<usize> {
-        self.pending_casts
-            .iter()
-            .enumerate()
-            .filter(|(_, pending)| {
-                !pending.from_time_actor
-                    && pending.flow == flow
-                    && timestamp >= pending.timestamp
-                    && timestamp - pending.timestamp
-                        <= ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS
-            })
-            .max_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp))
-            .map(|(index, _)| index)
-    }
-
-    fn observe_ultra_montages(
-        &mut self,
-        timestamp: f64,
-        decoded_text: &str,
-        server_to_client: bool,
-        flow: Option<UltraTimeStopFlowKey>,
-        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    ) {
-        self.recent_montages.retain(|candidate| {
-            let age = timestamp - candidate.timestamp;
-            (0.0..=ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS).contains(&age)
-        });
-        if !server_to_client {
-            return;
-        }
-        for char_id in ultra_montage_character_ids(decoded_text, ultra_time_stops) {
-            if !self
-                .recent_montages
-                .iter()
-                .any(|candidate| candidate.char_id == char_id && candidate.flow == flow)
-            {
-                self.recent_montages.push(RecentUltraMontage {
-                    timestamp,
-                    char_id,
-                    flow,
-                });
-            }
-        }
-    }
-
-    fn consume_recent_ultra_montage(&mut self, flow: Option<UltraTimeStopFlowKey>) -> Option<u32> {
-        let mut char_id = None;
-        let mut ambiguous = false;
-        for candidate in self
-            .recent_montages
-            .iter()
-            .filter(|candidate| candidate.flow == flow)
-        {
-            match char_id {
-                None => char_id = Some(candidate.char_id),
-                Some(existing) if existing == candidate.char_id => {}
-                Some(_) => ambiguous = true,
-            }
-        }
-        self.recent_montages
-            .retain(|candidate| candidate.flow != flow);
-        if ambiguous { None } else { char_id }
-    }
-
-    fn events_from_hits(
-        &mut self,
-        hits: &[Hit],
-        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    ) -> Vec<TimeStopEvent> {
-        let mut events = Vec::new();
-        for hit in hits {
-            self.resolve_cooldown_from_hit(hit, ultra_time_stops, &mut events);
-        }
-        events
-    }
-
-    fn resolve_cooldown_from_hit(
-        &mut self,
-        hit: &Hit,
-        ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-        events: &mut Vec<TimeStopEvent>,
-    ) {
-        let Some(char_id) = ultra_damage_time_stop_char_id(hit, ultra_time_stops) else {
-            return;
-        };
-        let Some((index, _)) = self
-            .pending_casts
-            .iter()
-            .enumerate()
-            .filter(|(_, pending)| {
-                let window = if pending.from_time_actor {
-                    ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
-                } else {
-                    ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
-                };
-                hit.timestamp >= pending.timestamp && hit.timestamp - pending.timestamp <= window
-            })
-            .max_by(|(_, left), (_, right)| left.timestamp.total_cmp(&right.timestamp))
-        else {
-            return;
-        };
-        let pending = &self.pending_casts[index];
-        let activation_timestamp = if pending.from_time_actor {
-            hit.timestamp
-        } else {
-            pending.timestamp
-        };
-        let event = fixed_ultra_time_stop_event(
-            activation_timestamp,
-            char_id,
-            // An ultra damage tick identifies the owner, but it can be a residual tick from an
-            // earlier cast. Keep the cooldown's original evidence strength so a weak generic
-            // cooldown cannot bypass the longer duplicate window for the same character.
-            pending.cast_evidence,
-            ultra_time_stops,
-            &mut self.recent_emitted,
-        );
-        if event.is_none() && !pending.from_time_actor {
-            return;
-        }
-
-        self.pending_casts.swap_remove(index);
-        if let Some(event) = event {
-            events.push(event);
-        }
-    }
-
-    fn resolve_finished_casts(&mut self, timestamp: f64) {
-        let mut index = 0;
-        while index < self.pending_casts.len() {
-            let pending = &self.pending_casts[index];
-            let window = if pending.from_time_actor {
-                ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS
-            } else {
-                ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS
-            };
-            let expires_at = pending.timestamp + window;
-            let expired = timestamp > expires_at;
-            if !expired {
-                index += 1;
-                continue;
-            }
-            self.pending_casts.swap_remove(index);
-        }
-    }
-}
-
-fn text_has_exact_marker(decoded_text: &str, marker: &str) -> bool {
-    decoded_text.lines().any(|line| line.trim() == marker)
-}
-
-fn is_ultra_cooldown_state_snapshot(decoded_text: &str) -> bool {
-    if !decoded_text
-        .lines()
-        .any(|line| line.trim().starts_with("CoolDown.Player.UltraSkill"))
-    {
-        return false;
-    }
-    [
-        "State.Common.DeathCanBeAddedTag",
-        "State.Common.StaticBufferTag",
-        "State.Property.ForceEnterFight",
-        "UI.Buffer.AbyssCardStack",
-    ]
-    .into_iter()
-    .filter(|marker| text_has_exact_marker(decoded_text, marker))
-    .count()
-        >= 2
-}
-
-fn is_shinku_rage_cooldown_snapshot(decoded_text: &str) -> bool {
-    text_has_exact_marker(decoded_text, SHINKU_RAGE_ABILITY_TAG)
-        || text_has_exact_marker(decoded_text, SHINKU_RAGE_GAMEPLAY_CUE_TAG)
-}
-
-fn ultra_damage_time_stop_char_id(
-    hit: &Hit,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-) -> Option<u32> {
-    if hit.direction.is_incoming() {
-        return None;
-    }
-    let ability_name = hit.ability_name.as_deref()?;
-    let entry = ultra_time_stops.get(&hit.char_id)?;
-    (ability_name == entry.ability_id
-        && ability_name.contains("UltraSkill")
-        && hit
-            .attack_type
-            .as_deref()
-            .is_none_or(|attack_type| attack_type == "Q技能"))
-    .then_some(hit.char_id)
-}
-
 fn send_packet_events(
     sender: &EngineEventSink,
     packet: PacketDebug,
@@ -1943,18 +1395,6 @@ const RECENT_CONFIRMED_HIT_WINDOW_SECONDS: f64 = 0.75;
 const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
 const BOSS_HP_SYNC_WINDOW_SECONDS: f64 = 1.0;
 const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
-const JIN_EXTRA_TIME_STOP_REASON: &str = "Event.Montage.Player.UltraSkill.Jin";
-const JIN_ENTER_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop";
-const JIN_CLEAR_TIME_STOP_TAG: &str = "Event.Montage.Player.UltraSkill.Jin.ClearTimeStop";
-const ULTRA_COOLDOWN_TAG: &str = "CoolDown.Player.UltraSkill.F";
-const ULTRA_TIME_ACTOR_TAG: &str = "CoolDown.Player.UltraSkill.TimeActor";
-const ULTRA_TIME_STOP_PENDING_WINDOW_SECONDS: f64 = 4.5;
-const ULTRA_TIME_ACTOR_PENDING_WINDOW_SECONDS: f64 = 2.5;
-const ULTRA_WEAK_EVIDENCE_REARM_SECONDS: f64 = 30.0;
-const ULTRA_MONTAGE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.02;
-const ULTRA_CHARACTER_EVIDENCE_ASSOCIATION_WINDOW_SECONDS: f64 = 0.5;
-const SHINKU_RAGE_ABILITY_TAG: &str = "Ability.Player.Shinku.Rage";
-const SHINKU_RAGE_GAMEPLAY_CUE_TAG: &str = "GameplayCue.Display.Shinku.Rage";
 /// The serialized GameplayEffect unique index precedes the first field of its
 /// paired damage record by this fixed distance.
 const GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS: usize = 1330;
@@ -2293,11 +1733,18 @@ struct InventoryConnectionState {
 }
 
 impl InventoryConnectionState {
+    fn shares_character_identity(&self, other: &Self) -> bool {
+        self.character_ids
+            .iter()
+            .any(|(net_id, character_id)| other.character_ids.get(net_id) == Some(character_id))
+    }
+
     fn push_bunches(&mut self, bunches: Vec<SingleBunch>) -> Vec<InventoryBitPayload> {
         let mut added = false;
         for bunch in bunches {
-            self.known_channels.insert(bunch.prefix);
-            let key = (bunch.prefix, bunch.sequence);
+            let channel = reliable_bunch_channel(bunch.prefix);
+            self.known_channels.insert(channel);
+            let key = (channel, bunch.sequence);
             if self.fragments.get(&key) == Some(&bunch) {
                 continue;
             }
@@ -2305,9 +1752,9 @@ impl InventoryConnectionState {
                 // A partial start begins a new generation on its channel. Older unmatched
                 // continuations must not complete the new stream before its real tail arrives.
                 self.fragments
-                    .retain(|(channel, _), _| *channel != bunch.prefix);
+                    .retain(|(stored_channel, _), _| *stored_channel != channel);
                 self.fragment_order
-                    .retain(|(channel, _)| *channel != bunch.prefix);
+                    .retain(|(stored_channel, _)| *stored_channel != channel);
             } else if self.fragments.contains_key(&key) {
                 self.fragment_order.retain(|stored| *stored != key);
             }
@@ -2639,6 +2086,30 @@ impl EmptyCurtainDecoder {
                 .insert(connection.clone(), InventoryConnectionState::default());
         }
 
+        let raw_character_ids =
+            parse_empty_curtain_character_owners(&packet.payload, packet.payload_bit_len);
+        let raw_character_mapping_changed = {
+            let state = self
+                .connections
+                .get_mut(&connection)
+                .expect("new or existing inventory connection must be present");
+            let mut changed = false;
+            for (&net_id, &character_id) in &raw_character_ids {
+                if state.character_ids.insert(net_id, character_id) != Some(character_id) {
+                    changed = true;
+                }
+            }
+            changed
+        };
+        let initial_additions = if self.active_connection.is_none() {
+            parse_empty_curtain_item_additions(
+                &packet.payload,
+                packet.payload_bit_len,
+                &self.catalog,
+            )
+        } else {
+            Vec::new()
+        };
         let (raw_items, raw_removals) = if self.active_connection.as_ref() == Some(&connection) {
             (
                 parse_empty_curtain_items(&packet.payload, packet.payload_bit_len, &self.catalog),
@@ -2649,9 +2120,14 @@ impl EmptyCurtainDecoder {
                 ),
             )
         } else {
-            (Vec::new(), Vec::new())
+            (initial_additions, Vec::new())
         };
-        let raw_items_recognized = !raw_items.is_empty() || !raw_removals.is_empty();
+        let raw_records_recognized =
+            !raw_character_ids.is_empty() || !raw_items.is_empty() || !raw_removals.is_empty();
+        let activated_by_raw_items = self.active_connection.is_none() && !raw_items.is_empty();
+        if activated_by_raw_items {
+            self.active_connection = Some(connection.clone());
+        }
         let (streams, bunches_recognized) = {
             let state = self
                 .connections
@@ -2664,7 +2140,24 @@ impl EmptyCurtainDecoder {
         };
 
         let mut items_changed = false;
-        let mut characters_changed = false;
+        let mut characters_changed = activated_by_raw_items;
+        if raw_character_mapping_changed && self.active_connection.as_ref() == Some(&connection) {
+            characters_changed = true;
+            let character_ids = &self
+                .connections
+                .get(&connection)
+                .expect("active inventory connection must remain present")
+                .character_ids;
+            for item in self.items.values_mut() {
+                let character_id = item
+                    .character_net_id
+                    .and_then(|net_id| character_ids.get(&net_id).copied());
+                if item.equipped_character_id != character_id {
+                    item.equipped_character_id = character_id;
+                    items_changed = true;
+                }
+            }
+        }
         let mut completed_stream_removals = Vec::new();
         for stream in streams {
             let stream_character_ids =
@@ -2724,9 +2217,36 @@ impl EmptyCurtainDecoder {
                 changed
             };
             if !parsed.is_empty() && self.active_connection.as_ref() != Some(&connection) {
+                let shares_character_identity = self
+                    .active_connection
+                    .as_ref()
+                    .and_then(|active_connection| {
+                        let active_state = self.connections.get(active_connection)?;
+                        let next_state = self.connections.get(&connection)?;
+                        Some(active_state.shares_character_identity(next_state))
+                    })
+                    .unwrap_or(false);
                 self.active_connection = Some(connection.clone());
-                items_changed |= !self.items.is_empty();
-                self.items.clear();
+                characters_changed = true;
+                if shares_character_identity {
+                    let character_ids = &self
+                        .connections
+                        .get(&connection)
+                        .expect("active inventory connection must remain present")
+                        .character_ids;
+                    for item in self.items.values_mut() {
+                        let character_id = item
+                            .character_net_id
+                            .and_then(|net_id| character_ids.get(&net_id).copied());
+                        if item.equipped_character_id != character_id {
+                            item.equipped_character_id = character_id;
+                            items_changed = true;
+                        }
+                    }
+                } else {
+                    items_changed |= !self.items.is_empty();
+                    self.items.clear();
+                }
             }
             if self.active_connection.as_ref() != Some(&connection) {
                 continue;
@@ -2845,7 +2365,7 @@ impl EmptyCurtainDecoder {
             characters
         });
         InventoryPacketResult {
-            recognized: bunches_recognized || raw_items_recognized,
+            recognized: bunches_recognized || raw_records_recognized,
             snapshot,
             characters,
         }
@@ -2936,7 +2456,7 @@ impl GameplayEffectFragmentTracker {
         let key = GameplayEffectFragmentKey {
             source,
             destination,
-            channel: bunch.prefix,
+            channel: reliable_bunch_channel(bunch.prefix),
         };
         let own_effect = match effects {
             [effect] => Some(effect.clone()),
@@ -3004,12 +2524,10 @@ struct PacketDecoder {
     client_endpoints: HashSet<(Ipv4Addr, u16)>,
     gameplay_effect_names: HashMap<u32, String>,
     ability_catalog: Arc<AbilityCatalog>,
-    ultra_time_stops: HashMap<u32, UltraTimeStopEntry>,
     follow_up_damage: FollowUpDamageTracker,
     server_damage_calibration: ServerDamageCalibrationTracker,
     use_server_damage_calibration: bool,
     character_declarations: HashMap<u32, f64>,
-    ultra_time_stop: UltraTimeStopTracker,
     pending_ambiguous_hits: Vec<Hit>,
     recent_confirmed_hits: Vec<Hit>,
     empty_curtain: EmptyCurtainDecoder,
@@ -3067,11 +2585,6 @@ impl PacketDecoder {
             &mut resource_warnings,
             load_gameplay_effect_mapping,
         );
-        let ultra_time_stops = load_resource(
-            ULTRA_TIME_STOP_DATA_PATH,
-            &mut resource_warnings,
-            load_ultra_time_stops,
-        );
         let equipment_catalog = load_resource(
             EQUIPMENT_CATALOG_PATH,
             &mut resource_warnings,
@@ -3084,12 +2597,10 @@ impl PacketDecoder {
             client_endpoints: HashSet::new(),
             gameplay_effect_names,
             ability_catalog,
-            ultra_time_stops,
             follow_up_damage: FollowUpDamageTracker::default(),
             server_damage_calibration: ServerDamageCalibrationTracker::default(),
             use_server_damage_calibration,
             character_declarations: HashMap::new(),
-            ultra_time_stop: UltraTimeStopTracker::default(),
             pending_ambiguous_hits: Vec::new(),
             recent_confirmed_hits: Vec::new(),
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
@@ -3789,9 +3300,7 @@ impl PacketDecoder {
 
         let decoded_payload = match self.packet_emission {
             PacketEmissionMode::FullDebug => decode_payload_text_filtered(payload, |_| true),
-            PacketEmissionMode::SummaryOnly => {
-                decode_summary_payload_text(payload, &self.ultra_time_stops)
-            }
+            PacketEmissionMode::SummaryOnly => decode_summary_payload_text(payload),
         };
         let decoded_text = decoded_payload.text;
         let evidence = find_declared_character_evidence(payload);
@@ -3805,8 +3314,6 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
-        let ultra_time_stop_flow =
-            Some(UltraTimeStopFlowKey::new((src, src_port), (dst, dst_port)));
         let transport_packet = parse_transport_packet(payload);
         let single_bunch = match &transport_packet {
             Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
@@ -3890,18 +3397,6 @@ impl PacketDecoder {
             reattribute_orphan_reaction(hit, &self.character_declarations, timestamp, characters);
             self.follow_up_damage.observe_fuwen_trigger_hit(hit);
         }
-        let mut time_stop_events = self.ultra_time_stop.events_from_packet(
-            timestamp,
-            &decoded_text,
-            &ids,
-            !outgoing,
-            ultra_time_stop_flow,
-            &self.ultra_time_stops,
-        );
-        time_stop_events.extend(
-            self.ultra_time_stop
-                .events_from_hits(&hits, &self.ultra_time_stops),
-        );
         let prepared_hits =
             self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
         for character_id in &ids {
@@ -3968,9 +3463,6 @@ impl PacketDecoder {
                 previous_character_id,
                 characters,
             );
-        }
-        for event in time_stop_events {
-            let _ = sender.send(EngineEvent::TimeStop(event));
         }
         if current_hp_updates.is_empty()
             && boss_hp_updates.is_empty()
@@ -4183,6 +3675,16 @@ pub fn start_capture(
     let raw_capture = RawCaptureBuffer::new(device.clone(), raw_capture_directory.as_deref());
     let thread_raw_capture = raw_capture.clone();
     let thread = thread::spawn(move || {
+        let monitor_stop = Arc::new(AtomicBool::new(false));
+        let monitor_thread = {
+            let stop = Arc::clone(&monitor_stop);
+            let raw_capture = thread_raw_capture.clone();
+            let sender = sender.clone();
+            let capture_started_100ns = current_filetime_100ns();
+            thread::spawn(move || {
+                run_combat_clock_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
+            })
+        };
         let result = run_capture(CaptureRunConfig {
             device: &device,
             local_ip,
@@ -4195,6 +3697,8 @@ pub fn start_capture(
             raw_capture: &thread_raw_capture,
             packet_emission,
         });
+        monitor_stop.store(true, Ordering::Relaxed);
+        let _ = monitor_thread.join();
         thread_raw_capture.finish();
         let _ = sender.send(EngineEvent::CaptureStopped);
         if let Err(error) = result {
@@ -4421,6 +3925,7 @@ pub fn import_pcapng(
             let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+            let mut game_pause = GamePauseIntervalTracker::default();
             if let Some(warning) = decoder.resource_warning() {
                 let _ = sender.send(EngineEvent::Warning(warning));
             }
@@ -4433,6 +3938,19 @@ pub fn import_pcapng(
                 }
                 let block = block.map_err(|error| error.to_string())?;
                 let (interface_id, timestamp, data) = match block {
+                    Block::Unknown(block) if block.type_ == NTE_COMBAT_CLOCK_BLOCK_TYPE => {
+                        if let Some(transition) = decode_combat_clock_block(block.value.as_ref())
+                            && let Some(timestamp) =
+                                filetime_100ns_to_unix_seconds(transition.timestamp_100ns)
+                            && transition.state_flags & COMBAT_CLOCK_PAUSE_VALID != 0
+                            && let Some(event) =
+                                game_pause.apply_transition(timestamp, transition.pause_type_mask)
+                        {
+                            send_game_pause_transition(&sender, event)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        continue;
+                    }
                     Block::EnhancedPacket(packet) => (
                         packet.interface_id as usize,
                         FrameTimestamp::Known(packet.timestamp.as_secs_f64()),
@@ -4451,10 +3969,11 @@ pub fn import_pcapng(
                     continue;
                 }
                 supported_count += 1;
+                let frame_local_ip_hint = replay_frame_local_ip_hint(&data, local_ip_hint);
                 decoder.process_ethernet_frame(
                     &data,
                     timestamp,
-                    local_ip_hint,
+                    frame_local_ip_hint,
                     include_incoming,
                     &characters,
                     &sender,
@@ -4531,6 +4050,109 @@ pub struct CaptureExportDocument {
     hits: Vec<ExportHit>,
     #[serde(default)]
     packets: Vec<ExportPacket>,
+    #[serde(default, deserialize_with = "deserialize_time_stop_events")]
+    time_stop_events: Vec<TimeStopEvent>,
+}
+
+#[allow(dead_code)]
+#[derive(Deserialize)]
+enum CaptureTimeStopEvent {
+    GamePauseStarted {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
+    GamePauseEnded {
+        timestamp: f64,
+        pause_type_mask: u32,
+    },
+    GamePause {
+        start_timestamp: f64,
+        end_timestamp: f64,
+        pause_type_mask: u32,
+    },
+    GameTimerSample {
+        timestamp: f64,
+        remaining_seconds: i32,
+    },
+    UltraAnimation {
+        timestamp: f64,
+        char_id: u32,
+        ability_id: String,
+        duration_seconds: f64,
+    },
+    ExtraStart {
+        timestamp: f64,
+        reason: String,
+    },
+    ExtraEnd {
+        timestamp: f64,
+        reason: String,
+    },
+}
+
+fn deserialize_time_stop_events<'de, D>(deserializer: D) -> Result<Vec<TimeStopEvent>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let saved_events = Vec::<CaptureTimeStopEvent>::deserialize(deserializer)?;
+    let mut events = Vec::with_capacity(saved_events.len());
+    for event in saved_events {
+        match event {
+            CaptureTimeStopEvent::GamePauseStarted {
+                timestamp,
+                pause_type_mask,
+            } => {
+                validate_saved_pause_state(timestamp, pause_type_mask).map_err(D::Error::custom)?;
+                events.push(TimeStopEvent::GamePauseStarted {
+                    timestamp,
+                    pause_type_mask,
+                });
+            }
+            CaptureTimeStopEvent::GamePauseEnded {
+                timestamp,
+                pause_type_mask,
+            } => {
+                validate_saved_pause_state(timestamp, pause_type_mask).map_err(D::Error::custom)?;
+                events.push(TimeStopEvent::GamePauseEnded {
+                    timestamp,
+                    pause_type_mask,
+                });
+            }
+            CaptureTimeStopEvent::GamePause {
+                start_timestamp,
+                end_timestamp,
+                pause_type_mask,
+            } => {
+                validate_saved_pause_state(start_timestamp, pause_type_mask)
+                    .map_err(D::Error::custom)?;
+                validate_saved_pause_state(end_timestamp, pause_type_mask)
+                    .map_err(D::Error::custom)?;
+                if end_timestamp <= start_timestamp {
+                    return Err(D::Error::custom("invalid saved game pause interval"));
+                }
+                events.push(TimeStopEvent::GamePauseStarted {
+                    timestamp: start_timestamp,
+                    pause_type_mask,
+                });
+                events.push(TimeStopEvent::GamePauseEnded {
+                    timestamp: end_timestamp,
+                    pause_type_mask,
+                });
+            }
+            CaptureTimeStopEvent::GameTimerSample { .. }
+            | CaptureTimeStopEvent::UltraAnimation { .. }
+            | CaptureTimeStopEvent::ExtraStart { .. }
+            | CaptureTimeStopEvent::ExtraEnd { .. } => {}
+        }
+    }
+    Ok(events)
+}
+
+fn validate_saved_pause_state(timestamp: f64, pause_type_mask: u32) -> Result<(), &'static str> {
+    if !timestamp.is_finite() || pause_type_mask == 0 || pause_type_mask & !0x1c != 0 {
+        return Err("invalid saved game pause state");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -4742,6 +4364,7 @@ impl CaptureExportDocument {
             empty_curtain_characters: state.empty_curtain_characters.clone(),
             hits: state.hits.iter().map(ExportHit::from).collect(),
             packets: state.packets.iter().map(ExportPacket::from).collect(),
+            time_stop_events: state.time_stop_events.clone(),
         }
     }
 }
@@ -4880,6 +4503,7 @@ pub fn import_capture_json(
             let mut document = parse_capture_export(&text)?;
             drop(text);
             let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
+            let mut saved_time_stop_events = std::mem::take(&mut document.time_stop_events);
             let mut saved_empty_curtain_characters =
                 std::mem::take(&mut document.empty_curtain_characters);
             if saved_empty_curtain_characters.is_empty() {
@@ -4904,10 +4528,6 @@ pub fn import_capture_json(
             let saved_empty_curtain_characters =
                 validate_empty_curtain_characters(saved_empty_curtain_characters)
                     .ok_or_else(|| "invalid Console equipment snapshot".to_owned())?;
-            let ultra_time_stops = find_data_file(Path::new(ULTRA_TIME_STOP_DATA_PATH))
-                .and_then(|path| load_ultra_time_stops(&path).ok())
-                .unwrap_or_default();
-            let mut ultra_time_stop = UltraTimeStopTracker::default();
             let equipment_catalog = match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
                 Some(path) => match load_equipment_catalog(&path) {
                     Ok(catalog) => catalog,
@@ -4943,12 +4563,35 @@ pub fn import_capture_json(
             document
                 .hits
                 .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
+            saved_time_stop_events.sort_by(|left, right| {
+                time_stop_event_timestamp(left).total_cmp(&time_stop_event_timestamp(right))
+            });
             let mut packets = document.packets.into_iter().peekable();
             let mut hits = document.hits.into_iter().peekable();
+            let mut time_stop_events = saved_time_stop_events.into_iter().peekable();
 
-            while packets.peek().is_some() || hits.peek().is_some() {
+            while packets.peek().is_some()
+                || hits.peek().is_some()
+                || time_stop_events.peek().is_some()
+            {
                 if stop.load(Ordering::Relaxed) {
                     break;
+                }
+                let packet_timestamp = packets
+                    .peek()
+                    .map_or(f64::INFINITY, |packet| packet.timestamp_unix);
+                let hit_timestamp = hits.peek().map_or(f64::INFINITY, |hit| hit.timestamp_unix);
+                let time_stop_timestamp = time_stop_events
+                    .peek()
+                    .map_or(f64::INFINITY, time_stop_event_timestamp);
+                if time_stop_timestamp <= packet_timestamp && time_stop_timestamp <= hit_timestamp {
+                    let event = time_stop_events
+                        .next()
+                        .expect("peeked time-stop event must exist");
+                    sender
+                        .send(EngineEvent::TimeStop(event))
+                        .map_err(|error| error.to_string())?;
+                    continue;
                 }
                 let take_packet = match (packets.peek(), hits.peek()) {
                     (Some(packet), Some(hit)) => packet.timestamp_unix <= hit.timestamp_unix,
@@ -4958,27 +4601,12 @@ pub fn import_capture_json(
                 };
                 if take_packet {
                     let packet = packets.next().expect("peeked packet must exist");
-                    if send_export_packet(
-                        packet,
-                        &sender,
-                        &ultra_time_stops,
-                        &mut ultra_time_stop,
-                        &mut empty_curtain,
-                    )? {
+                    if send_export_packet(packet, &sender, &mut empty_curtain)? {
                         packet_count += 1;
                     }
                 } else {
                     let hit = hits.next().expect("peeked hit must exist");
                     let event = export_hit_event(hit);
-                    if let EngineEvent::Hit(hit) = &event {
-                        for time_stop in ultra_time_stop
-                            .events_from_hits(std::slice::from_ref(hit.as_ref()), &ultra_time_stops)
-                        {
-                            sender
-                                .send(EngineEvent::TimeStop(time_stop))
-                                .map_err(|error| error.to_string())?;
-                        }
-                    }
                     sender.send(event).map_err(|error| error.to_string())?;
                 }
             }
@@ -5032,8 +4660,6 @@ fn validate_empty_curtain_characters(
 fn send_export_packet(
     packet: ExportPacket,
     sender: &EngineEventSink,
-    ultra_time_stops: &HashMap<u32, UltraTimeStopEntry>,
-    ultra_time_stop: &mut UltraTimeStopTracker,
     empty_curtain: &mut EmptyCurtainDecoder,
 ) -> Result<bool, String> {
     let mut declared_ids = parse_export_ids(&packet.declared_ids);
@@ -5054,20 +4680,6 @@ fn send_export_packet(
     } else {
         packet.decoded_text
     };
-    let server_to_client = !packet.direction.eq_ignore_ascii_case("C2S");
-    let ultra_time_stop_flow = export_ultra_time_stop_flow_key(&packet.source, &packet.destination);
-    for event in ultra_time_stop.events_from_packet(
-        packet.timestamp_unix,
-        &decoded_text,
-        &declared_ids,
-        server_to_client,
-        ultra_time_stop_flow,
-        ultra_time_stops,
-    ) {
-        sender
-            .send(EngineEvent::TimeStop(event))
-            .map_err(|error| error.to_string())?;
-    }
     let equipment_slots = parse_equipment_slots(&payload);
     let inventory_result = if !packet.direction.eq_ignore_ascii_case("C2S") {
         match parse_transport_packet(&payload) {
@@ -5126,6 +4738,13 @@ fn send_export_packet(
     };
     send_packet_events(sender, packet).map_err(|error| error.to_string())?;
     Ok(true)
+}
+
+fn time_stop_event_timestamp(event: &TimeStopEvent) -> f64 {
+    match event {
+        TimeStopEvent::GamePauseStarted { timestamp, .. }
+        | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+    }
 }
 
 fn export_hit_event(hit: ExportHit) -> EngineEvent {
@@ -5217,9 +4836,94 @@ mod tests {
     use crossbeam_channel::unbounded;
 
     use crate::engine::parser::{
-        CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, UltraTimeStopCooldown,
-        load_characters,
+        CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, load_characters,
     };
+
+    #[test]
+    fn combat_clock_block_round_trips_authoritative_pause_state() {
+        let transition = CombatClockTransitionSnapshot {
+            sequence: 9,
+            timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 87 * FILETIME_TICKS_PER_SECOND,
+            pause_type_mask: 1 << 3,
+            reserved_value: 0,
+            state_flags: COMBAT_CLOCK_PAUSE_VALID,
+        };
+        let payload = encode_combat_clock_block(&transition);
+
+        assert_eq!(decode_combat_clock_block(&payload), Some(transition));
+        assert!(decode_combat_clock_block(&payload[..39]).is_none());
+
+        let mut invalid_reserved = payload;
+        invalid_reserved[28..32].copy_from_slice(&1_i32.to_le_bytes());
+        assert!(decode_combat_clock_block(&invalid_reserved).is_none());
+
+        let mut invalid_flags = payload;
+        invalid_flags[32..36].copy_from_slice(&2_u32.to_le_bytes());
+        assert!(decode_combat_clock_block(&invalid_flags).is_none());
+    }
+
+    #[test]
+    fn capture_export_migrates_only_legacy_authoritative_pause_intervals() {
+        let document: CaptureExportDocument = serde_json::from_str(
+            r#"{
+                "time_stop_events": [
+                    {"GamePause":{"start_timestamp":10.0,"end_timestamp":13.5,"pause_type_mask":4}},
+                    {"GameTimerSample":{"timestamp":11.0,"remaining_seconds":87}},
+                    {"UltraAnimation":{"timestamp":11.0,"char_id":1010,"ability_id":"GA_Test","duration_seconds":2.0}},
+                    {"ExtraStart":{"timestamp":11.0,"reason":"legacy"}},
+                    {"ExtraEnd":{"timestamp":12.0,"reason":"legacy"}}
+                ]
+            }"#,
+        )
+        .expect("legacy capture export should migrate at the JSON boundary");
+
+        assert_eq!(
+            document.time_stop_events,
+            vec![
+                TimeStopEvent::GamePauseStarted {
+                    timestamp: 10.0,
+                    pause_type_mask: 1 << 2,
+                },
+                TimeStopEvent::GamePauseEnded {
+                    timestamp: 13.5,
+                    pause_type_mask: 1 << 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn capture_export_rejects_invalid_saved_pause_state() {
+        let invalid_mask = r#"{
+            "time_stop_events": [
+                {"GamePauseStarted":{"timestamp":10.0,"pause_type_mask":2}}
+            ]
+        }"#;
+
+        assert!(serde_json::from_str::<CaptureExportDocument>(invalid_mask).is_err());
+    }
+
+    #[test]
+    fn game_pause_tracker_unions_nested_authoritative_pause_types() {
+        let mut tracker = GamePauseIntervalTracker::default();
+        assert_eq!(
+            tracker.apply_transition(10.0, 1 << 2),
+            Some(TimeStopEvent::GamePauseStarted {
+                timestamp: 10.0,
+                pause_type_mask: 1 << 2,
+            })
+        );
+        assert_eq!(tracker.apply_transition(11.0, (1 << 2) | (1 << 4)), None);
+        assert_eq!(tracker.apply_transition(12.0, 1 << 4), None);
+        assert_eq!(
+            tracker.apply_transition(13.0, 0),
+            Some(TimeStopEvent::GamePauseEnded {
+                timestamp: 13.0,
+                pause_type_mask: (1 << 2) | (1 << 4),
+            })
+        );
+        assert_eq!(tracker.apply_transition(14.0, 0), None);
+    }
 
     fn debug_packet(note: &str) -> PacketDebug {
         PacketDebug {
@@ -5361,9 +5065,9 @@ mod tests {
         assert_eq!(statuses, ["first", "second"]);
     }
 
-    fn inventory_bunch(sequence: u16, partial_flags: u8, data: u8) -> SingleBunch {
+    fn inventory_bunch_on(prefix: u16, sequence: u16, partial_flags: u8, data: u8) -> SingleBunch {
         SingleBunch {
-            prefix: 7,
+            prefix,
             sequence,
             descriptor: 0xcc,
             partial_flags,
@@ -5372,111 +5076,8 @@ mod tests {
         }
     }
 
-    fn ultra_entry(ability_id: &str, montage_asset: &str, duration: f64) -> UltraTimeStopEntry {
-        UltraTimeStopEntry {
-            ability_id: ability_id.to_owned(),
-            montage_asset: montage_asset.to_owned(),
-            end_ability_event_seconds: duration,
-            source: "test".to_owned(),
-            confidence: "high".to_owned(),
-            ..UltraTimeStopEntry::default()
-        }
-    }
-
-    fn ultra_entry_with_activation_tags(
-        ability_id: &str,
-        montage_asset: &str,
-        duration: f64,
-        activation_cooldown_tags: &[&str],
-    ) -> UltraTimeStopEntry {
-        UltraTimeStopEntry {
-            activation_cooldown_tags: activation_cooldown_tags
-                .iter()
-                .map(|tag| (*tag).to_owned())
-                .collect(),
-            ..ultra_entry(ability_id, montage_asset, duration)
-        }
-    }
-
-    fn ultra_test_flow(server_port: u16) -> UltraTimeStopFlowKey {
-        UltraTimeStopFlowKey::new(
-            (Ipv4Addr::new(10, 0, 0, 3), server_port),
-            (Ipv4Addr::new(10, 0, 0, 2), 50_000),
-        )
-    }
-
-    fn ultra_test_table() -> HashMap<u32, UltraTimeStopEntry> {
-        let female_montage = "/Game/Characters/Player/051_female/animation/Skill/char_f_skill_utraskill_Montage.char_f_skill_utraskill_Montage";
-        let haniel = UltraTimeStopEntry {
-            activation_evidence_tags: vec!["Buff_Haniel_UltraSkill_Earphone".to_owned()],
-            ..ultra_entry(
-                "GA_Haniel_UltraSkill",
-                "/Game/Characters/Player/020_haniel_1/animation/Skill/char_Haniel_skill_ultraskill_Montage.char_Haniel_skill_ultraskill_Montage",
-                4.237614,
-            )
-        };
-        HashMap::from([
-            (
-                1003,
-                ultra_entry_with_activation_tags(
-                    "GA_Sagiri_UltraSkill",
-                    "/Game/Characters/Player/003_sagiri_1/animation/Skill/Sagiri_UltralSkill.Sagiri_UltralSkill",
-                    3.533936,
-                    &["CoolDown.Player.UltraSkill.Sagiri"],
-                ),
-            ),
-            (
-                1004,
-                ultra_entry_with_activation_tags(
-                    "GA_Lacrimosa_UltraSkill",
-                    "/Game/Characters/Player/004_lacrimosa/animation/Skill/Lacrimosa_UltraSkill_ModB.Lacrimosa_UltraSkill_ModB",
-                    4.218461,
-                    &["CoolDown.Player.UltraSkill.Lacrimosa"],
-                ),
-            ),
-            (
-                1010,
-                ultra_entry(
-                    "GA_Nanally_UltraSkill",
-                    "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill.Nanally_UltralSkill",
-                    3.584608,
-                ),
-            ),
-            (1020, haniel),
-            (
-                1025,
-                ultra_entry(
-                    "GA_Hathor_UltraSkill",
-                    "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill.Hathor_UltraSkill",
-                    4.518597,
-                ),
-            ),
-            (
-                1036,
-                ultra_entry("GA_Zankou_UltraSkill", female_montage, 4.161653),
-            ),
-            (
-                1051,
-                ultra_entry("GA_Female051_UltraSkill", female_montage, 4.161653),
-            ),
-            (
-                1055,
-                ultra_entry_with_activation_tags(
-                    "GA_Kuhara_UltraSkill",
-                    "/Game/Characters/Player/055_kuhara/animation/skill/Kuhara_UltraSkill.Kuhara_UltraSkill",
-                    5.599441,
-                    &["CoolDown.Player.UltraSkill.Kuhara"],
-                ),
-            ),
-            (
-                1076,
-                ultra_entry(
-                    "GA_Shinku_UltraSkill",
-                    "/Game/Characters/Player/076_shinku/animation/skill/Shinku_UltraSkill.Shinku_UltraSkill",
-                    7.300015,
-                ),
-            ),
-        ])
+    fn inventory_bunch(sequence: u16, partial_flags: u8, data: u8) -> SingleBunch {
+        inventory_bunch_on(7, sequence, partial_flags, data)
     }
 
     #[derive(Default)]
@@ -5591,6 +5192,22 @@ mod tests {
         let mut record = InventoryTestBitWriter::default();
         push_character_owner_record(&mut record, character_id, net_id);
         inventory_stream_packet(record)
+    }
+
+    fn raw_character_owner_packet(character_id: u32, net_id: HtItemNetId) -> SequencedPacket {
+        let mut payload = InventoryTestBitWriter::default();
+        push_character_owner_record(&mut payload, character_id, net_id);
+        SequencedPacket {
+            handler_prefix: 0,
+            mode: 1,
+            header_flags: 0,
+            acknowledged_packet_id: 0,
+            packet_id: 0,
+            acknowledgment_history: 0,
+            packet_flags: 0,
+            payload_bit_len: payload.bit_len,
+            payload: payload.data,
+        }
     }
 
     fn compact_module_placement_packet(
@@ -5814,6 +5431,32 @@ mod tests {
     }
 
     #[test]
+    fn inventory_reassembly_uses_channel_index_across_prefix_flag_changes() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(vec![inventory_bunch_on(5146, 483, 0x09, 0xa1)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(vec![
+                    inventory_bunch_on(4122, 484, 0x08, 0xa2),
+                    inventory_bunch_on(4122, 485, 0x08, 0xa3),
+                    inventory_bunch_on(4122, 486, 0x08, 0xa4),
+                ])
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(vec![inventory_bunch_on(4122, 487, 0x0c, 0xa5)]);
+
+        assert_eq!(state.known_channels, HashSet::from([26]));
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4, 0xa5]);
+        assert_eq!(completed[0].bit_len, 40);
+    }
+
+    #[test]
     fn gameplay_effect_fragment_context_reaches_contiguous_tail() {
         let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
         let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
@@ -5828,17 +5471,27 @@ mod tests {
             tracker.observe(
                 source,
                 destination,
-                &inventory_bunch(647, 0x09, 1),
+                &inventory_bunch_on(5146, 647, 0x09, 1),
                 std::slice::from_ref(&effect),
             ),
             None
         );
         assert_eq!(
-            tracker.observe(source, destination, &inventory_bunch(648, 0x08, 2), &[],),
+            tracker.observe(
+                source,
+                destination,
+                &inventory_bunch_on(4122, 648, 0x08, 2),
+                &[],
+            ),
             Some(effect.clone())
         );
         assert_eq!(
-            tracker.observe(source, destination, &inventory_bunch(649, 0x0c, 3), &[],),
+            tracker.observe(
+                source,
+                destination,
+                &inventory_bunch_on(4122, 649, 0x0c, 3),
+                &[],
+            ),
             Some(effect)
         );
         assert!(tracker.pending.is_empty());
@@ -5931,6 +5584,145 @@ mod tests {
                 .get(&owner_net_id),
             Some(&1020)
         );
+    }
+
+    #[test]
+    fn raw_owner_record_is_cached_without_a_completed_inventory_stream() {
+        let active = InventoryConnectionKey::new("old:1".to_owned(), "client:1".to_owned());
+        let owner_only = InventoryConnectionKey::new("new:1".to_owned(), "client:1".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let item = inventory_test_item(None);
+        let mut decoder = EmptyCurtainDecoder::new(EquipmentCatalog::default());
+        decoder.active_connection = Some(active.clone());
+        decoder
+            .connections
+            .insert(active.clone(), InventoryConnectionState::default());
+        decoder.items.insert(item.id, item.clone());
+
+        let result = decoder.process_packet(
+            owner_only.clone(),
+            &raw_character_owner_packet(1020, owner_net_id),
+        );
+
+        assert!(result.recognized);
+        assert!(result.snapshot.is_none());
+        assert!(result.characters.is_none());
+        assert_eq!(decoder.active_connection, Some(active));
+        assert_eq!(decoder.items, HashMap::from([(item.id, item)]));
+        assert_eq!(
+            decoder.connections[&owner_only]
+                .character_ids
+                .get(&owner_net_id),
+            Some(&1020)
+        );
+    }
+
+    #[test]
+    fn same_account_connection_switch_preserves_existing_inventory() {
+        let active = InventoryConnectionKey::new("old:1".to_owned(), "client:1".to_owned());
+        let reconnect = InventoryConnectionKey::new("new:1".to_owned(), "client:2".to_owned());
+        let owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let existing_id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let new_id = HtItemNetId {
+            solt: 501,
+            serial: 601,
+        };
+        let item_id = "GetEfficiency_orange";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(active.clone());
+        decoder.connections.insert(
+            active,
+            InventoryConnectionState {
+                character_ids: HashMap::from([(owner_net_id, 1020)]),
+                ..InventoryConnectionState::default()
+            },
+        );
+        decoder.items.insert(
+            existing_id,
+            inventory_equipment_item(existing_id, item_id, Some(owner_net_id), Some(1020)),
+        );
+
+        decoder.process_packet(
+            reconnect.clone(),
+            &raw_character_owner_packet(1020, owner_net_id),
+        );
+        let result = decoder.process_packet(
+            reconnect.clone(),
+            &inventory_item_stream_packet(&decoder.catalog, new_id, item_id, owner_net_id),
+        );
+
+        let snapshot = result
+            .snapshot
+            .expect("same-account reconnect should publish the merged inventory");
+        assert_eq!(decoder.active_connection, Some(reconnect));
+        assert_eq!(snapshot.len(), 2);
+        assert!(snapshot.iter().any(|item| item.id == existing_id));
+        assert!(snapshot.iter().any(|item| item.id == new_id));
+    }
+
+    #[test]
+    fn different_account_connection_switch_replaces_existing_inventory() {
+        let active = InventoryConnectionKey::new("old:1".to_owned(), "client:1".to_owned());
+        let reconnect = InventoryConnectionKey::new("new:1".to_owned(), "client:2".to_owned());
+        let old_owner_net_id = HtItemNetId {
+            solt: 30,
+            serial: 40,
+        };
+        let new_owner_net_id = HtItemNetId {
+            solt: 31,
+            serial: 41,
+        };
+        let existing_id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let new_id = HtItemNetId {
+            solt: 501,
+            serial: 601,
+        };
+        let item_id = "GetEfficiency_orange";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+        decoder.active_connection = Some(active.clone());
+        decoder.connections.insert(
+            active,
+            InventoryConnectionState {
+                character_ids: HashMap::from([(old_owner_net_id, 1020)]),
+                ..InventoryConnectionState::default()
+            },
+        );
+        decoder.items.insert(
+            existing_id,
+            inventory_equipment_item(existing_id, item_id, Some(old_owner_net_id), Some(1020)),
+        );
+
+        decoder.process_packet(
+            reconnect.clone(),
+            &raw_character_owner_packet(1023, new_owner_net_id),
+        );
+        let result = decoder.process_packet(
+            reconnect.clone(),
+            &inventory_item_stream_packet(&decoder.catalog, new_id, item_id, new_owner_net_id),
+        );
+
+        let snapshot = result
+            .snapshot
+            .expect("different-account reconnect should publish the replacement inventory");
+        assert_eq!(decoder.active_connection, Some(reconnect));
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].id, new_id);
     }
 
     #[test]
@@ -6233,6 +6025,65 @@ mod tests {
     }
 
     #[test]
+    fn first_item_add_notification_activates_the_initial_inventory_connection() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let item_id = "GetEfficiency_orange";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let raw = raw_inventory_item_packet(&catalog, id, item_id, None, false, false);
+        let mut notification = InventoryTestBitWriter::default();
+        notification.push_bits(3, 7);
+        notification.push_bits(2, 17);
+        for index in 0..raw.payload_bit_len {
+            notification.push_bits(u64::from((raw.payload[index / 8] >> (index % 8)) & 1), 1);
+        }
+        let packet = SequencedPacket {
+            payload_bit_len: notification.bit_len,
+            payload: notification.data,
+            ..raw
+        };
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+
+        let result = decoder.process_packet(connection.clone(), &packet);
+
+        assert!(result.recognized);
+        assert_eq!(decoder.active_connection, Some(connection));
+        assert_eq!(
+            result
+                .snapshot
+                .expect("the first complete raw item should publish an inventory snapshot")
+                .len(),
+            1
+        );
+        assert_eq!(decoder.items[&id].item_id, item_id);
+    }
+
+    #[test]
+    fn unscoped_raw_item_does_not_activate_an_inventory_connection() {
+        let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
+        let id = HtItemNetId {
+            solt: 500,
+            serial: 600,
+        };
+        let item_id = "GetEfficiency_orange";
+        let catalog = load_equipment_catalog(Path::new(EQUIPMENT_CATALOG_PATH))
+            .expect("bundled equipment catalog should load");
+        let packet = raw_inventory_item_packet(&catalog, id, item_id, None, false, false);
+        let mut decoder = EmptyCurtainDecoder::new(catalog);
+
+        let result = decoder.process_packet(connection, &packet);
+
+        assert!(!result.recognized);
+        assert!(result.snapshot.is_none());
+        assert!(decoder.active_connection.is_none());
+        assert!(decoder.items.is_empty());
+    }
+
+    #[test]
     fn raw_remove_notification_deletes_matching_items_without_a_completed_stream() {
         let connection = InventoryConnectionKey::new("server:1".to_owned(), "client:1".to_owned());
         let removed = HtItemNetId {
@@ -6249,7 +6100,7 @@ mod tests {
         let raw = raw_inventory_item_packet(&catalog, removed, item_id, None, false, false);
         let mut notification = InventoryTestBitWriter::default();
         notification.push_bits(2, 7);
-        notification.push_bits(5, 17);
+        notification.push_bits(1, 17);
         for index in 0..raw.payload_bit_len {
             notification.push_bits(u64::from((raw.payload[index / 8] >> (index % 8)) & 1), 1);
         }
@@ -6343,13 +6194,11 @@ mod tests {
         ]);
 
         let start_result = decoder.process_packet(connection.clone(), &start);
-        assert_eq!(
-            start_result
-                .snapshot
-                .expect("first removal should publish")
-                .len(),
-            2
-        );
+        let start_snapshot = start_result
+            .snapshot
+            .expect("the raw item detail update should publish");
+        assert_eq!(start_snapshot.len(), 3);
+        assert!(decoder.items.contains_key(&first_removed));
 
         let tail_result = decoder.process_packet(connection, &tail);
         let snapshot = tail_result
@@ -6599,6 +6448,14 @@ mod tests {
         hit.follow_up_timestamp = Some(1.5);
         state.push_hit(hit);
         state.push_packet(debug_packet("round trip"));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 1.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 1.2,
+            pause_type_mask: 1 << 2,
+        });
 
         let document = CaptureExportDocument::snapshot(
             &state,
@@ -6630,6 +6487,7 @@ mod tests {
         assert_eq!(restored.hits[0].target_context, ["context-a", "context-b"]);
         assert_eq!(restored.packets[0].note, "round trip");
         assert_eq!(restored.packets[0].declared_ids, serde_json::json!([]));
+        assert_eq!(restored.time_stop_events, state.time_stop_events);
     }
 
     #[test]
@@ -7279,15 +7137,9 @@ mod tests {
             decoded_text: String::new(),
         };
         assert!(
-            send_export_packet(
-                packet,
-                &sender,
-                &HashMap::new(),
-                &mut UltraTimeStopTracker::default(),
-                &mut empty_curtain,
-            )
-            .unwrap_err()
-            .contains("payload_hex 无效")
+            send_export_packet(packet, &sender, &mut empty_curtain)
+                .unwrap_err()
+                .contains("payload_hex 无效")
         );
         assert!(receiver.try_recv().is_err());
     }
@@ -7313,16 +7165,7 @@ mod tests {
             decoded_text: String::new(),
         };
 
-        assert!(
-            send_export_packet(
-                packet,
-                &sender,
-                &HashMap::new(),
-                &mut UltraTimeStopTracker::default(),
-                &mut empty_curtain,
-            )
-            .is_ok()
-        );
+        assert!(send_export_packet(packet, &sender, &mut empty_curtain).is_ok());
         let packet = receive_observed_debug_packet(&receiver, 0);
         assert_eq!(packet.declared_ids, [1076]);
         assert!(packet.decoded_text.contains("ft_character_1076"));
@@ -7348,16 +7191,7 @@ mod tests {
             payload_hex: String::new(),
             decoded_text: "测试解码".to_owned(),
         };
-        assert!(
-            send_export_packet(
-                packet,
-                &sender,
-                &HashMap::new(),
-                &mut UltraTimeStopTracker::default(),
-                &mut empty_curtain,
-            )
-            .is_ok()
-        );
+        assert!(send_export_packet(packet, &sender, &mut empty_curtain).is_ok());
         let packet = receive_observed_debug_packet(&receiver, 0);
         assert_eq!(packet.payload_hex, String::new());
         assert_eq!(packet.payload_len, 0);
@@ -7384,16 +7218,7 @@ mod tests {
             decoded_text: "导出时的协议文本".to_owned(),
         };
 
-        assert!(
-            send_export_packet(
-                packet,
-                &sender,
-                &HashMap::new(),
-                &mut UltraTimeStopTracker::default(),
-                &mut empty_curtain,
-            )
-            .is_ok()
-        );
+        assert!(send_export_packet(packet, &sender, &mut empty_curtain).is_ok());
         let packet = receive_observed_debug_packet(&receiver, 1);
         assert_eq!(packet.decoded_text, "导出时的协议文本");
         assert_eq!(packet.payload_hex, "0000");
@@ -7401,1373 +7226,19 @@ mod tests {
     }
 
     #[test]
-    fn send_export_packet_keeps_time_actor_candidate_internal() {
-        let (sender, receiver) = unbounded();
-        let sender = EngineEventSink::reliable(sender);
-        let table = HashMap::from([(
-            1010,
-            UltraTimeStopEntry {
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                end_ability_event_seconds: 3.584608,
-                source: "test".to_owned(),
-                confidence: "high".to_owned(),
-                ..UltraTimeStopEntry::default()
-            },
-        )]);
-        let mut tracker = UltraTimeStopTracker::default();
-        let mut empty_curtain = EmptyCurtainDecoder::new(EquipmentCatalog::default());
-        let start_packet = ExportPacket {
-            timestamp_unix: 10.0,
-            time_local: String::new(),
-            source: "127.0.0.1:1234".to_owned(),
-            destination: "127.0.0.1:5678".to_owned(),
-            direction: "S2C".to_owned(),
-            payload_len: 0,
-            declared_ids: serde_json::json!([]),
-            parsed_hits: 0,
-            note: String::new(),
-            payload_preview: String::new(),
-            payload_hex: String::new(),
-            decoded_text: "CoolDown.Player.UltraSkill.TimeActor".to_owned(),
-        };
-        assert!(
-            send_export_packet(
-                start_packet,
-                &sender,
-                &table,
-                &mut tracker,
-                &mut empty_curtain,
-            )
-            .unwrap()
-        );
-        receive_observed_debug_packet(&receiver, 0);
-        assert_eq!(tracker.pending_casts.len(), 1);
-        assert!(tracker.pending_casts[0].from_time_actor);
-
-        let ignored_packet = ExportPacket {
-            timestamp_unix: 15.0,
-            time_local: String::new(),
-            source: "127.0.0.1:1234".to_owned(),
-            destination: "127.0.0.1:5678".to_owned(),
-            direction: "S2C".to_owned(),
-            payload_len: 4,
-            declared_ids: serde_json::json!([]),
-            parsed_hits: 0,
-            note: String::new(),
-            payload_preview: "00000000".to_owned(),
-            payload_hex: "00000000".to_owned(),
-            decoded_text: String::new(),
-        };
-        assert!(
-            !send_export_packet(
-                ignored_packet,
-                &sender,
-                &table,
-                &mut tracker,
-                &mut empty_curtain,
-            )
-            .unwrap()
-        );
-        assert!(receiver.try_recv().is_err());
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn generic_cooldown_declared_id_waits_for_matching_ultra_hit() {
-        let table = HashMap::from([(
-            1052,
-            UltraTimeStopEntry {
-                ability_id: "GA_Jin_UltraSkill".to_owned(),
-                end_ability_event_seconds: 2.183333,
-                source: "test".to_owned(),
-                confidence: "high".to_owned(),
-                ..UltraTimeStopEntry::default()
-            },
-        )]);
-        let mut tracker = UltraTimeStopTracker::default();
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[1052],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-
-        let mut hit = targetless_hit();
-        hit.timestamp = 11.0;
-        hit.char_id = 1052;
-        hit.ability_name = Some("GA_Jin_UltraSkill".to_owned());
-
-        assert_eq!(
-            tracker.events_from_hits(&[hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1052,
-                ability_id: "GA_Jin_UltraSkill".to_owned(),
-                duration_seconds: 2.183333,
-            }]
-        );
-    }
-
-    #[test]
-    fn time_actor_candidate_resolves_at_montage_activation() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.TimeActor",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                11.846596,
-                "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 11.846596,
-                char_id: 1025,
-                ability_id: "GA_Hathor_UltraSkill".to_owned(),
-                duration_seconds: 4.518597,
-            }]
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn time_actor_candidate_resolves_at_specific_activation_tag() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.TimeActor",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                11.877756,
-                "CoolDown.Player.UltraSkill.Sagiri",
-                &[1051],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 11.877756,
-                char_id: 1003,
-                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
-                duration_seconds: 3.533936,
-            }]
-        );
-    }
-
-    #[test]
-    fn specific_activation_tags_identify_every_non_f_test_character() {
-        let table = ultra_test_table();
-        for (tag, char_id, ability_id, duration_seconds) in [
-            (
-                "CoolDown.Player.UltraSkill.Sagiri",
-                1003,
-                "GA_Sagiri_UltraSkill",
-                3.533936,
-            ),
-            (
-                "CoolDown.Player.UltraSkill.Lacrimosa",
-                1004,
-                "GA_Lacrimosa_UltraSkill",
-                4.218461,
-            ),
-            (
-                "CoolDown.Player.UltraSkill.Kuhara",
-                1055,
-                "GA_Kuhara_UltraSkill",
-                5.599441,
-            ),
-        ] {
-            let mut tracker = UltraTimeStopTracker::default();
-            assert_eq!(
-                tracker.events_from_packet(10.0, tag, &[], true, None, &table),
-                vec![TimeStopEvent::UltraAnimation {
-                    timestamp: 10.0,
-                    char_id,
-                    ability_id: ability_id.to_owned(),
-                    duration_seconds,
-                }]
-            );
-        }
-    }
-
-    #[test]
-    fn exact_montage_and_specific_activation_tag_identify_their_own_casts() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                10.01,
-                "CoolDown.Player.UltraSkill.Sagiri",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.01,
-                char_id: 1003,
-                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
-                duration_seconds: 3.533936,
-            }]
-        );
-    }
-
-    #[test]
-    fn generic_cooldown_accepts_skin_montage_variant() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/004_lacrimosa_fashion2/animation/Skill/Lacrimosa_UltraSkill_ModB\nCoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                Some(ultra_test_flow(7_777)),
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1004,
-                ability_id: "GA_Lacrimosa_UltraSkill".to_owned(),
-                duration_seconds: 4.218461,
-            }]
-        );
-    }
-
-    #[test]
-    fn generic_cooldown_does_not_trust_single_declared_character() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[1010],
-                    true,
-                    Some(ultra_test_flow(7_777)),
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(tracker.recent_emitted.is_empty());
-        assert_eq!(tracker.pending_casts.len(), 1);
-    }
-
-    #[test]
-    fn weak_duplicate_character_keeps_candidate_for_later_ultra_hit() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-        let flow = Some(ultra_test_flow(7_777));
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1025,
-                ability_id: "GA_Hathor_UltraSkill".to_owned(),
-                duration_seconds: 4.518597,
-            }]
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    16.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[1025],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-        assert!(!tracker.pending_casts[0].from_time_actor);
-
-        let mut female_ultra_hit = targetless_hit();
-        female_ultra_hit.timestamp = 17.0;
-        female_ultra_hit.char_id = 1051;
-        female_ultra_hit.ability_name = Some("GA_Female051_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[female_ultra_hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 16.0,
-                char_id: 1051,
-                ability_id: "GA_Female051_UltraSkill".to_owned(),
-                duration_seconds: 4.161653,
-            }]
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn strong_montage_evidence_allows_a_real_second_cast() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-        let flow = Some(ultra_test_flow(7_777));
-        let activation = "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\nCoolDown.Player.UltraSkill.F";
-
-        assert_eq!(
-            tracker.events_from_packet(10.0, activation, &[], true, flow, &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-        assert_eq!(
-            tracker.events_from_packet(14.0, activation, &[], true, flow, &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 14.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-    }
-
-    #[test]
-    fn time_actor_candidate_preserves_strong_evidence_for_fast_recast() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1025,
-                ability_id: "GA_Hathor_UltraSkill".to_owned(),
-                duration_seconds: 4.518597,
-            }]
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    37.5,
-                    "CoolDown.Player.UltraSkill.TimeActor",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    39.3,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-        assert_eq!(
-            tracker.pending_casts[0].cast_evidence,
-            UltraTimeStopEvidence::Strong
-        );
-
-        let mut hit = targetless_hit();
-        hit.timestamp = 41.5;
-        hit.char_id = 1025;
-        hit.ability_name = Some("GA_Hathor_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 39.3,
-                char_id: 1025,
-                ability_id: "GA_Hathor_UltraSkill".to_owned(),
-                duration_seconds: 4.518597,
-            }]
-        );
-    }
-
-    #[test]
-    fn character_evidence_before_generic_cooldown_resolves_bidirectional_cast() {
-        let table = ultra_test_table();
-        let server = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
-        let client = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "/Game/Blueprints/Abilities/Player/Ability_020_haniel/Buff/Buff_Haniel_UltraSkill_Earphone",
-                    &[],
-                    false,
-                    Some(UltraTimeStopFlowKey::new(client, server)),
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                10.06,
-                "CoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                Some(UltraTimeStopFlowKey::new(server, client)),
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.06,
-                char_id: 1020,
-                ability_id: "GA_Haniel_UltraSkill".to_owned(),
-                duration_seconds: 4.237614,
-            }]
-        );
-    }
-
-    #[test]
-    fn strong_activation_evidence_consumes_the_matching_pending_cast() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                10.1,
-                "CoolDown.Player.UltraSkill.Sagiri",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1003,
-                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
-                duration_seconds: 3.533936,
-            }]
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn cooldown_state_snapshot_does_not_emit_duplicate_specific_cast() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "CoolDown.Player.UltraSkill.Sagiri",
-                &[],
-                true,
-                None,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1003,
-                ability_id: "GA_Sagiri_UltraSkill".to_owned(),
-                duration_seconds: 3.533936,
-            }]
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    21.5,
-                    "GameplayCue.Display.Haniel.UltraSkill.buff\nCoolDown.Player.UltraSkill.Sagiri\nState.Common.DeathCanBeAddedTag\nState.Common.StaticBufferTag\nState.Property.ForceEnterFight\nUI.Buffer.AbyssCardStack",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn consecutive_unresolved_cooldowns_keep_separate_cast_candidates() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        for timestamp in [10.0, 11.5] {
-            assert!(
-                tracker
-                    .events_from_packet(
-                        timestamp,
-                        "CoolDown.Player.UltraSkill.F",
-                        &[],
-                        true,
-                        flow,
-                        &table,
-                    )
-                    .is_empty()
-            );
-        }
-        assert_eq!(tracker.pending_casts.len(), 2);
-        assert!(
-            tracker
-                .pending_casts
-                .iter()
-                .any(|candidate| candidate.timestamp == 10.0)
-        );
-        assert!(
-            tracker
-                .pending_casts
-                .iter()
-                .any(|candidate| candidate.timestamp == 11.5)
-        );
-    }
-
-    #[test]
-    fn time_actor_declared_id_does_not_identify_character() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.TimeActor",
-                    &[1051],
-                    true,
-                    Some(ultra_test_flow(7_777)),
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(tracker.recent_emitted.is_empty());
-        assert_eq!(tracker.pending_casts.len(), 1);
-        assert!(tracker.pending_casts[0].from_time_actor);
-    }
-
-    #[test]
-    fn expired_time_actor_candidate_is_discarded_silently() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.TimeActor",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-        assert!(
-            tracker
-                .events_from_packet(30.0, "", &[], true, None, &table)
-                .is_empty()
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn mixed_time_actor_snapshot_does_not_open_public_pending() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.TimeActor\nCoolDown.Player.UltraSkill.F",
-                    &[1051],
-                    true,
-                    Some(ultra_test_flow(7_777)),
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn shinku_rage_repeated_f_does_not_open_or_claim_pending() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "GameplayCue.Display.Shinku.Rage\nCoolDown.Player.UltraSkill.F\nAbility.Player.Shinku.Rage",
-                    &[],
-                    true,
-                    Some(ultra_test_flow(7_777)),
-                    &table,
-                )
-                .is_empty()
-        );
-        let mut hit = targetless_hit();
-        hit.timestamp = 10.5;
-        hit.char_id = 1076;
-        hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
-        assert!(tracker.events_from_hits(&[hit], &table).is_empty());
-    }
-
-    #[test]
-    fn ultra_cooldown_same_packet_montage_identifies_empty_nanally_cast() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\nCoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                Some(ultra_test_flow(7_777)),
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-    }
-
-    #[test]
-    fn exact_ultra_montage_emits_without_cooldown_and_ignores_stale_ids() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/051_female/animation/Skill/char_f_skill_utraskill_Montage",
-                &[1025],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1051,
-                ability_id: "GA_Female051_UltraSkill".to_owned(),
-                duration_seconds: 4.161653,
-            }]
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.003,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[1025],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn normal_skill_montage_does_not_emit_ultra_time_stop() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "/Game/Characters/Player/003_sagiri_1/animation/Skill/Sagiri_Skill_001",
-                    &[1003],
-                    true,
-                    Some(ultra_test_flow(7_777)),
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn ultra_cooldown_accepts_character_montage_variant() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/076_shinku/animation/skill/Shinku_UltraSkill_Boss\nCoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                Some(ultra_test_flow(7_777)),
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1076,
-                ability_id: "GA_Shinku_UltraSkill".to_owned(),
-                duration_seconds: 7.300015,
-            }]
-        );
-    }
-
-    #[test]
-    fn exact_ultra_montage_ignores_c2s_and_is_flow_independent() {
-        let table = ultra_test_table();
-        let montage = "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill";
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(10.0, montage, &[], false, flow, &table)
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                10.005,
-                montage,
-                &[],
-                true,
-                Some(ultra_test_flow(8_888)),
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.005,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.01,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-    }
-
-    #[test]
-    fn ultra_cooldown_keeps_ambiguous_montages_pending() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\n/Game/Characters/Player/025_hathor_1/animation/Skill/Hathor_UltraSkill\nCoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    Some(ultra_test_flow(7_777)),
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-    }
-
-    #[test]
-    fn exact_ultra_montage_overrides_conflicting_declared_character() {
-        let table = ultra_test_table();
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert_eq!(
-            tracker.events_from_packet(
-                10.0,
-                "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill\nCoolDown.Player.UltraSkill.F",
-                &[1025],
-                true,
-                Some(ultra_test_flow(7_777)),
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-        assert!(tracker.pending_casts.is_empty());
-    }
-
-    #[test]
-    fn shinku_special_cooldowns_emit_two_distinct_time_stop_segments() {
-        let table = HashMap::from([(
-            1076,
-            UltraTimeStopEntry {
-                ability_id: "GA_Shinku_UltraSkill".to_owned(),
-                montage_asset: "/Game/Characters/Player/076_shinku/animation/skill/Shinku_UltraSkill.Shinku_UltraSkill".to_owned(),
-                activation_cooldown_tags: vec![
-                    "CoolDown.Player.UltraSkill.F".to_owned(),
-                ],
-                activation_evidence_tags: Vec::new(),
-                end_ability_event_seconds: 7.300015,
-                extra_cooldowns: vec![UltraTimeStopCooldown {
-                    cooldown_tag: "CoolDown.Player.UltraSkill.Shinku.UltraRage".to_owned(),
-                    ability_id: "GA_Shinku_UltraSkill_Rage".to_owned(),
-                    duration_seconds: 5.300056,
-                }],
-                ignored_cooldown_tags: vec![
-                    "CoolDown.Player.UltraSkill.Shinku.UltraPre".to_owned(),
-                ],
-                source: "test".to_owned(),
-                confidence: "high".to_owned(),
-            },
-        )]);
-        let mut tracker = UltraTimeStopTracker::default();
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-
-        let mut hit = targetless_hit();
-        hit.timestamp = 10.2;
-        hit.char_id = 1076;
-        hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1076,
-                ability_id: "GA_Shinku_UltraSkill".to_owned(),
-                duration_seconds: 7.300015,
-            }]
-        );
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    20.0,
-                    "CoolDown.Player.UltraSkill.Shinku.UltraPre",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                21.2,
-                "CoolDown.Player.UltraSkill.Shinku.UltraRage",
-                &[],
-                true,
-                None,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 21.2,
-                char_id: 1076,
-                ability_id: "GA_Shinku_UltraSkill_Rage".to_owned(),
-                duration_seconds: 5.300056,
-            }]
-        );
-    }
-
-    #[test]
-    fn pending_ultra_cooldown_is_claimed_by_later_ultra_damage_hit() {
-        let table = HashMap::from([(
-            1010,
-            UltraTimeStopEntry {
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                end_ability_event_seconds: 3.584608,
-                source: "test".to_owned(),
-                confidence: "high".to_owned(),
-                ..UltraTimeStopEntry::default()
-            },
-        )]);
-        let mut tracker = UltraTimeStopTracker::default();
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        let mut hit = targetless_hit();
-        hit.timestamp = 12.0;
-        hit.char_id = 1010;
-        hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
-        let events = tracker.events_from_hits(&[hit], &table);
-
-        assert_eq!(
-            events,
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-    }
-
-    #[test]
-    fn pending_ultra_cooldown_ignores_non_ultra_damage_before_claim() {
-        let table = HashMap::from([
-            (
-                1010,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 3.584608,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            ),
-            (
-                1052,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Jin_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 2.183333,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            ),
-        ]);
-        let mut tracker = UltraTimeStopTracker::default();
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        let mut jin_skill_hit = targetless_hit();
-        jin_skill_hit.timestamp = 10.5;
-        jin_skill_hit.char_id = 1052;
-        jin_skill_hit.ability_name = Some("GA_Jin_Skill".to_owned());
-        assert!(
-            tracker
-                .events_from_hits(&[jin_skill_hit], &table)
-                .is_empty()
-        );
-
-        let mut nanally_ultra_hit = targetless_hit();
-        nanally_ultra_hit.timestamp = 12.0;
-        nanally_ultra_hit.char_id = 1010;
-        nanally_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[nanally_ultra_hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-    }
-
-    #[test]
-    fn co_axis_cooldown_with_multiple_characters_waits_for_the_ultra_hit() {
-        let table = HashMap::from([
-            (
-                1010,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 3.584608,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            ),
-            (
-                1052,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Jin_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 2.183333,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            ),
-        ]);
-        let mut tracker = UltraTimeStopTracker::default();
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[1052, 1010],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(tracker.pending_casts.len(), 1);
-
-        let mut previous_character_hit = targetless_hit();
-        previous_character_hit.timestamp = 10.2;
-        previous_character_hit.char_id = 1052;
-        previous_character_hit.ability_name = Some("GA_Jin_Skill".to_owned());
-        assert!(
-            tracker
-                .events_from_hits(&[previous_character_hit], &table)
-                .is_empty()
-        );
-
-        let mut active_character_ultra_hit = targetless_hit();
-        active_character_ultra_hit.timestamp = 12.0;
-        active_character_ultra_hit.char_id = 1010;
-        active_character_ultra_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[active_character_ultra_hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.0,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-    }
-
-    #[test]
-    fn residual_ultra_hit_preserves_pending_new_cast() {
-        let table = HashMap::from([
-            (
-                1010,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 3.584608,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            ),
-            (
-                1076,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Shinku_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 7.300015,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            ),
-        ]);
-        let mut tracker = UltraTimeStopTracker::default();
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    11.5,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-
-        let mut hit = targetless_hit();
-        hit.timestamp = 12.0;
-        hit.char_id = 1010;
-        hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 11.5,
-                char_id: 1010,
-                ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                duration_seconds: 3.584608,
-            }]
-        );
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    16.0,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    None,
-                    &table,
-                )
-                .is_empty()
-        );
-        let mut repeated_hit = targetless_hit();
-        repeated_hit.timestamp = 16.5;
-        repeated_hit.char_id = 1010;
-        repeated_hit.ability_name = Some("GA_Nanally_UltraSkill".to_owned());
-        repeated_hit.attack_type = Some("普攻".to_owned());
-        assert!(tracker.events_from_hits(&[repeated_hit], &table).is_empty());
-        assert_eq!(tracker.pending_casts.len(), 1);
-
-        let mut new_cast_hit = targetless_hit();
-        new_cast_hit.timestamp = 17.5;
-        new_cast_hit.char_id = 1076;
-        new_cast_hit.ability_name = Some("GA_Shinku_UltraSkill".to_owned());
-        assert_eq!(
-            tracker.events_from_hits(&[new_cast_hit], &table),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 16.0,
-                char_id: 1076,
-                ability_id: "GA_Shinku_UltraSkill".to_owned(),
-                duration_seconds: 7.300015,
-            }]
-        );
-        assert!(tracker.pending_casts.is_empty());
-
-        assert!(
-            tracker
-                .events_from_packet(20.0, "", &[], true, None, &table)
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn residual_ultra_hit_does_not_confirm_same_character_weak_cooldown() {
-        let table = ultra_test_table();
-        let flow = Some(ultra_test_flow(7_777));
-        let mut tracker = UltraTimeStopTracker::default();
-
-        assert!(
-            tracker
-                .events_from_packet(
-                    10.0,
-                    "/Game/Blueprints/Abilities/Player/Ability_020_haniel/Buff/Buff_Haniel_UltraSkill_Earphone",
-                    &[],
-                    false,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-        assert_eq!(
-            tracker.events_from_packet(
-                10.1,
-                "CoolDown.Player.UltraSkill.F",
-                &[],
-                true,
-                flow,
-                &table,
-            ),
-            vec![TimeStopEvent::UltraAnimation {
-                timestamp: 10.1,
-                char_id: 1020,
-                ability_id: "GA_Haniel_UltraSkill".to_owned(),
-                duration_seconds: 4.237614,
-            }]
-        );
-        assert!(
-            tracker
-                .events_from_packet(
-                    21.6,
-                    "CoolDown.Player.UltraSkill.F",
-                    &[],
-                    true,
-                    flow,
-                    &table,
-                )
-                .is_empty()
-        );
-
-        let mut residual_hit = targetless_hit();
-        residual_hit.timestamp = 23.3;
-        residual_hit.char_id = 1020;
-        residual_hit.ability_name = Some("GA_Haniel_UltraSkill".to_owned());
-        residual_hit.attack_type = Some("Q技能".to_owned());
-
-        assert!(tracker.events_from_hits(&[residual_hit], &table).is_empty());
-        assert_eq!(tracker.pending_casts.len(), 1);
-    }
-
-    #[test]
-    fn ignored_packet_expires_time_actor_candidate_without_public_event() {
-        let (sender, receiver) = unbounded();
-        let sender = EngineEventSink::reliable(sender);
-        let mut decoder = PacketDecoder {
-            ultra_time_stops: HashMap::from([(
-                1010,
-                UltraTimeStopEntry {
-                    ability_id: "GA_Nanally_UltraSkill".to_owned(),
-                    end_ability_event_seconds: 3.584608,
-                    source: "test".to_owned(),
-                    confidence: "high".to_owned(),
-                    ..UltraTimeStopEntry::default()
-                },
-            )]),
-            ..PacketDecoder::default()
-        };
-        let characters = HashMap::new();
-        let local_ip = Ipv4Addr::new(10, 0, 0, 2);
-        let remote_ip = Ipv4Addr::new(10, 0, 0, 3);
-
-        decoder.process_ethernet_frame(
-            &udp_ipv4_packet(
-                b"CoolDown.Player.UltraSkill.TimeActor",
-                remote_ip,
-                7_777,
-                local_ip,
-                50_000,
-            ),
-            FrameTimestamp::Known(10.0),
-            Some(local_ip),
-            true,
-            &characters,
-            &sender,
-        );
-        receive_observed_debug_packet(&receiver, 0);
-
-        decoder.process_ethernet_frame(
-            &udp_ipv4_packet(&[0, 0, 0, 0], remote_ip, 7_777, local_ip, 50_000),
-            FrameTimestamp::Known(15.0),
-            Some(local_ip),
-            true,
-            &characters,
-            &sender,
-        );
-        assert!(receiver.try_recv().is_err());
-        assert!(decoder.ultra_time_stop.pending_casts.is_empty());
-    }
-
-    #[test]
     fn summary_payload_text_retains_only_runtime_markers() {
-        let irrelevant =
-            decode_summary_payload_text(b"Some.DebugProtocolIdentifier", &HashMap::new());
+        let irrelevant = decode_summary_payload_text(b"Some.DebugProtocolIdentifier");
         assert!(irrelevant.has_readable_text);
         assert_eq!(irrelevant.text, UNREADABLE_PROTOCOL_TEXT);
 
-        let abyss = decode_summary_payload_text(
-            b"FAbyssGamePlayData ConditionState_Success",
-            &HashMap::new(),
-        );
+        let abyss = decode_summary_payload_text(b"FAbyssGamePlayData ConditionState_Success");
         assert!(abyss.has_readable_text);
         assert!(abyss.text.contains("FAbyssGamePlayData"));
         assert!(abyss.text.contains("ConditionState_Success"));
-    }
 
-    #[test]
-    fn summary_payload_text_retains_registered_montage_with_nonstandard_spelling() {
-        let montage = "/Game/Characters/Player/010_nanally/animation/skill/Nanally_UltralSkill";
-        let table = ultra_test_table();
-
-        let decoded = decode_summary_payload_text(montage.as_bytes(), &table);
-
-        assert!(decoded.has_readable_text);
-        assert_eq!(decoded.text, montage);
+        let ultra = decode_summary_payload_text(b"Event.Montage.Player.UltraSkillB");
+        assert!(ultra.has_readable_text);
+        assert_eq!(ultra.text, "Event.Montage.Player.UltraSkillB");
     }
 
     #[test]
@@ -8979,33 +7450,6 @@ mod tests {
                 allow_late_backfill: false,
             }
         ));
-    }
-
-    #[test]
-    fn jin_packet_events_emit_extra_time_stop_interval_markers() {
-        let mut tracker = UltraTimeStopTracker::default();
-        let events = tracker.events_from_packet(
-            12.0,
-            "Event.Montage.Player.UltraSkill.Jin.EnterTimeStop\nEvent.Montage.Player.UltraSkill.Jin.ClearTimeStop",
-            &[],
-            true,
-            None,
-            &HashMap::new(),
-        );
-
-        assert_eq!(
-            events,
-            vec![
-                TimeStopEvent::ExtraStart {
-                    timestamp: 12.0,
-                    reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
-                },
-                TimeStopEvent::ExtraEnd {
-                    timestamp: 12.0,
-                    reason: JIN_EXTRA_TIME_STOP_REASON.to_owned(),
-                },
-            ]
-        );
     }
 
     #[test]
@@ -9597,6 +8041,23 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn replay_ignores_a_live_local_ip_hint_from_another_machine() {
+        let capture_local_ip = Ipv4Addr::new(192, 168, 1, 77);
+        let live_local_ip = Ipv4Addr::new(192, 168, 1, 99);
+        let remote_ip = Ipv4Addr::new(1, 1, 1, 1);
+        let packet = udp_ipv4_packet(&[], remote_ip, 7_777, capture_local_ip, 50_000);
+
+        assert_eq!(
+            replay_frame_local_ip_hint(&packet, Some(live_local_ip)),
+            None
+        );
+        assert_eq!(
+            replay_frame_local_ip_hint(&packet, Some(capture_local_ip)),
+            Some(capture_local_ip)
+        );
+    }
+
     fn targetless_hit() -> Hit {
         Hit {
             timestamp: 0.0,
@@ -10186,6 +8647,11 @@ mod tests {
     #[ignore = "set NTE_TEST_CAPTURE to a local pcapng path for capture diagnostics"]
     fn diagnose_empty_curtain_inventory() {
         let path = std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set");
+        let local_ip_hint = std::env::var("NTE_TEST_LOCAL_IP").ok().map(|value| {
+            value
+                .parse::<Ipv4Addr>()
+                .expect("NTE_TEST_LOCAL_IP must be an IPv4 address")
+        });
         let expected = std::env::var("NTE_EXPECT_EQUIPMENT").ok().map(|value| {
             value
                 .parse::<usize>()
@@ -10204,7 +8670,7 @@ mod tests {
                 characters,
                 ability_catalog: Arc::new(AbilityCatalog::default()),
             },
-            None,
+            local_ip_hint,
             true,
             true,
             sender,
@@ -10238,6 +8704,14 @@ mod tests {
             .iter()
             .filter(|item| item.equipped_character_id.is_some())
             .count();
+        if std::env::var_os("NTE_DIAG_INVENTORY_IDS").is_some() {
+            for item in &latest {
+                println!(
+                    "inventory item {} {}:{}",
+                    item.item_id, item.id.solt, item.id.serial
+                );
+            }
+        }
         println!(
             "parsed {} Console equipment items and {} character session IDs from {path}; identified {identified}/{equipped} equipped owners",
             latest.len(),
@@ -10271,14 +8745,33 @@ mod tests {
         handle.join().expect("pcapng import thread should finish");
 
         let mut shinku_hits = Vec::new();
+        let mut outgoing_hit_timestamps = Vec::new();
+        let mut abyss_events = Vec::new();
         let mut time_stops = Vec::new();
         let mut relevant_packets = Vec::new();
         let mut statuses = Vec::new();
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
+        let mut state = CombatState::default();
         for event in receiver.try_iter() {
             match event {
-                EngineEvent::Hit(hit) if hit.char_id == 1076 => shinku_hits.push(*hit),
+                EngineEvent::Hit(hit) => {
+                    if hit.direction == HitDirection::Outgoing {
+                        outgoing_hit_timestamps.push(hit.timestamp);
+                    }
+                    if hit.char_id == 1076 {
+                        shinku_hits.push((*hit).clone());
+                    }
+                    state.push_hit(*hit);
+                }
+                EngineEvent::Abyss(event) => {
+                    abyss_events.push(event.clone());
+                    state.apply_abyss_event(event);
+                }
+                EngineEvent::TimeStop(event) => {
+                    time_stops.push(event.clone());
+                    state.apply_time_stop_event(event);
+                }
                 EngineEvent::Packet(packet)
                     if packet.decoded_text.contains("Shinku")
                         || packet.decoded_text.contains("UltraSkill")
@@ -10286,7 +8779,6 @@ mod tests {
                 {
                     relevant_packets.push(*packet);
                 }
-                EngineEvent::TimeStop(event) => time_stops.push(event),
                 EngineEvent::Status(status) => statuses.push(status),
                 EngineEvent::Warning(warning) => warnings.push(warning),
                 EngineEvent::Error(error) => errors.push(error),
@@ -10297,6 +8789,25 @@ mod tests {
         println!("statuses: {statuses:#?}");
         println!("warnings: {warnings:#?}");
         println!("errors: {errors:#?}");
+        println!(
+            "outgoing hit count: {}, window: {:?}..{:?}, wall duration: {:.6}",
+            outgoing_hit_timestamps.len(),
+            outgoing_hit_timestamps.first(),
+            outgoing_hit_timestamps.last(),
+            outgoing_hit_timestamps
+                .first()
+                .zip(outgoing_hit_timestamps.last())
+                .map(|(start, end)| end - start)
+                .unwrap_or(0.0)
+        );
+        println!("abyss events: {abyss_events:#?}");
+        println!(
+            "abyss first duration: wall={:.6}, adjusted={:.6}; second duration: wall={:.6}, adjusted={:.6}",
+            state.abyss.first_half.duration_with_time_stop(false),
+            state.abyss.first_half.duration_with_time_stop(true),
+            state.abyss.second_half.duration_with_time_stop(false),
+            state.abyss.second_half.duration_with_time_stop(true),
+        );
         println!("shinku hit count: {}", shinku_hits.len());
         for hit in &shinku_hits {
             println!(
@@ -10308,7 +8819,11 @@ mod tests {
                 hit.attack_type
             );
         }
-        println!("time stop count: {}", time_stops.len());
+        let completed_time_stop_count = time_stops
+            .iter()
+            .filter(|event| matches!(event, TimeStopEvent::GamePauseEnded { .. }))
+            .count();
+        println!("time stop count: {completed_time_stop_count}");
         for event in &time_stops {
             println!("time stop: {event:?}");
         }

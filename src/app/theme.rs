@@ -511,6 +511,18 @@ pub(crate) fn compact_metric_scaled(
     prominent: bool,
     value_scale: f32,
 ) {
+    compact_metric_colored_suffix_scaled(ui, label, value, color, None, prominent, value_scale);
+}
+
+pub(crate) fn compact_metric_colored_suffix_scaled(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: String,
+    color: Color32,
+    colored_suffix: Option<(String, Color32)>,
+    prominent: bool,
+    value_scale: f32,
+) {
     let density_scale = ui_density_scale(ui);
     let id = ui.make_persistent_id(("compact_metric", label));
     let hovered = ui
@@ -546,12 +558,22 @@ pub(crate) fn compact_metric_scaled(
             ui.set_min_height(38.0 * density_scale);
             ui.vertical_centered(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(
-                    RichText::new(value)
-                        .size((if prominent { 17.0 } else { 15.0 }) * density_scale * value_scale)
-                        .strong()
-                        .color(color),
-                );
+                let value_size =
+                    (if prominent { 17.0 } else { 15.0 }) * density_scale * value_scale;
+                if let Some((suffix, suffix_color)) = colored_suffix {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(RichText::new(value).size(value_size).strong().color(color));
+                        ui.label(
+                            RichText::new(suffix)
+                                .size(value_size)
+                                .strong()
+                                .color(suffix_color),
+                        );
+                    });
+                } else {
+                    ui.label(RichText::new(value).size(value_size).strong().color(color));
+                }
                 ui.label(
                     RichText::new(label)
                         .size(9.5 * density_scale)

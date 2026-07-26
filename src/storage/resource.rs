@@ -186,7 +186,6 @@ mod tests {
             "res/data/skills/ability_tips.json",
             "res/data/skills/gameplay_effect_mapping.json",
             "res/data/skills/skill_damage.json",
-            "res/data/skills/ultra_time_stop.json",
         ] {
             assert!(
                 bundled_resource(path).is_some(),
