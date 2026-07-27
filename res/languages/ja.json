@@ -476,6 +476,7 @@
   "the selected file": "選択したファイル",
   "PCAPNG import failed: {}": "PCAPNG のインポートに失敗しました：{}",
   "Capture JSON import failed: {}": "キャプチャ JSON のインポートに失敗しました：{}",
+  "Capture parser stopped unexpectedly": "キャプチャ解析スレッドが予期せず停止しました",
   "Minimize": "最小化",
   "Maximize": "最大化",
   "Restore": "元に戻す",

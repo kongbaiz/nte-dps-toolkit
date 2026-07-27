@@ -69,10 +69,8 @@ const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 /// Bounded queue between the acquisition thread and the parser thread. Large enough that realistic
-/// game traffic never fills it, so a parse latency spike no longer stalls `pcap_next_ex` (which
-/// would let the Npcap kernel buffer overflow and drop frames). If it ever fills under pathological
-/// load the frame is dropped for live parsing only — the raw frame is already written to the
-/// PCAPNG and stays recoverable via Debug replay.
+/// game traffic does not fill it; if parsing falls behind, acquisition applies backpressure instead
+/// of silently diverging from the raw capture.
 const CAPTURE_FRAME_QUEUE_CAPACITY: usize = 16_384;
 
 struct CaptureFrame {
@@ -3780,6 +3778,12 @@ fn run_parser(
     decoder.emit_hits(pending_hits, &characters, &sender);
 }
 
+fn forward_capture_frame(sender: &Sender<CaptureFrame>, frame: CaptureFrame) -> Result<(), String> {
+    sender
+        .send(frame)
+        .map_err(|_| "capture parser thread stopped unexpectedly".to_owned())
+}
+
 fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
     let CaptureRunConfig {
         device,
@@ -3851,9 +3855,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             raw_capture_status
         )));
 
-        // Decode on a dedicated thread so a parse latency spike cannot stall the acquisition loop
-        // below. The acquisition thread only reads frames, writes the raw PCAPNG, and forwards a
-        // copy onto the bounded queue.
+        // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
+        // the bounded parser queue, which applies backpressure rather than dropping live-only data.
         let (frame_sender, frame_receiver) = bounded::<CaptureFrame>(CAPTURE_FRAME_QUEUE_CAPACITY);
         let parser_thread = {
             let resources = resources.clone();
@@ -3899,19 +3902,21 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
                 header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
             );
             raw_capture.push(raw_timestamp, header_ref.len, packet);
-            match frame_sender.try_send(CaptureFrame {
-                data: packet.to_vec(),
-                timestamp,
-            }) {
-                // Queue full: drop for live parsing only. The raw frame is already persisted above
-                // and remains recoverable via Debug replay, so acquisition keeps draining Npcap.
-                Ok(()) | Err(TrySendError::Full(_)) => {}
-                // Parser thread ended unexpectedly; nothing left to feed.
-                Err(TrySendError::Disconnected(_)) => break,
+            if let Err(error) = forward_capture_frame(
+                &frame_sender,
+                CaptureFrame {
+                    data: packet.to_vec(),
+                    timestamp,
+                },
+            ) {
+                loop_result = Err(error);
+                break;
             }
         }
         drop(frame_sender);
-        let _ = parser_thread.join();
+        if parser_thread.join().is_err() && loop_result.is_ok() {
+            loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
+        }
         loop_result?;
     }
     Ok(())
@@ -4857,6 +4862,44 @@ mod tests {
     use crate::engine::parser::{
         CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, load_characters,
     };
+
+    #[test]
+    fn capture_frame_queue_applies_backpressure_without_dropping_frames() {
+        let (sender, receiver) = bounded(1);
+        forward_capture_frame(
+            &sender,
+            CaptureFrame {
+                data: vec![1],
+                timestamp: 1.0,
+            },
+        )
+        .unwrap();
+        let (completed_sender, completed_receiver) = bounded(1);
+        let blocked_sender = sender.clone();
+        let blocked = thread::spawn(move || {
+            forward_capture_frame(
+                &blocked_sender,
+                CaptureFrame {
+                    data: vec![2],
+                    timestamp: 2.0,
+                },
+            )
+            .unwrap();
+            completed_sender.send(()).unwrap();
+        });
+
+        assert!(
+            completed_receiver
+                .recv_timeout(Duration::from_millis(20))
+                .is_err()
+        );
+        assert_eq!(receiver.recv().unwrap().timestamp, 1.0);
+        completed_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(receiver.recv().unwrap().timestamp, 2.0);
+        blocked.join().unwrap();
+    }
 
     #[test]
     fn combat_clock_block_round_trips_authoritative_pause_state() {

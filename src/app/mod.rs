@@ -1268,11 +1268,17 @@ impl UiPreferences {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HistoryArchiveCause {
     AbyssBoundary,
     Manual,
     Idle(u32),
+}
+
+impl HistoryArchiveCause {
+    fn starts_new_round(self) -> bool {
+        matches!(self, Self::Manual | Self::Idle(_))
+    }
 }
 
 struct HistoryArchiveJob {
@@ -1508,6 +1514,8 @@ pub struct DpsApp {
     presented_history_id: Option<String>,
     presented_history_state: Option<Box<CombatState>>,
     last_auto_archive_hits_generation: u64,
+    round_archive_pending: bool,
+    pending_round_events: VecDeque<EngineEvent>,
     resource_audit: ResourceAuditState,
     hit_detail_filter: HitDetailFilter,
     hit_detail_skill_filter: String,
