@@ -166,6 +166,320 @@ impl Hit {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DamageScenarioKind {
+    #[default]
+    Regular,
+    Creation,
+    Burning,
+    DarkStar,
+}
+
+impl DamageScenarioKind {
+    const CREATION_BASE_DAMAGE: [f64; 16] = [
+        80.0, 120.0, 200.0, 300.0, 400.0, 600.0, 800.0, 1_000.0, 1_700.0, 2_200.0, 3_600.0,
+        5_000.0, 6_000.0, 7_000.0, 8_000.0, 9_000.0,
+    ];
+    const BURNING_BASE_DAMAGE: [f64; 16] = [
+        20.0, 35.0, 60.0, 90.0, 120.0, 180.0, 240.0, 300.0, 510.0, 660.0, 1_080.0, 1_500.0,
+        1_800.0, 2_100.0, 2_400.0, 2_700.0,
+    ];
+    const DARK_STAR_BASE_DAMAGE: [f64; 16] = [
+        400.0, 600.0, 1_000.0, 1_500.0, 2_000.0, 3_000.0, 4_000.0, 5_000.0, 8_500.0, 11_000.0,
+        18_000.0, 25_000.0, 30_000.0, 35_000.0, 40_000.0, 45_000.0,
+    ];
+
+    fn base_damage(self, fusion_level: u8) -> f64 {
+        let index = usize::from(fusion_level - 1);
+        match self {
+            Self::Regular => 1.0,
+            Self::Creation => Self::CREATION_BASE_DAMAGE[index],
+            Self::Burning => Self::BURNING_BASE_DAMAGE[index],
+            Self::DarkStar => Self::DARK_STAR_BASE_DAMAGE[index],
+        }
+    }
+
+    fn critical_multiplier(self, critical_rate: f64, critical_damage: f64) -> f64 {
+        match self {
+            Self::Regular => 1.0 + critical_rate * critical_damage,
+            Self::Burning => 1.0 + 0.5 * critical_damage,
+            Self::Creation | Self::DarkStar => 1.0,
+        }
+    }
+
+    fn ignores_defense(self) -> bool {
+        matches!(self, Self::DarkStar)
+    }
+
+    fn uses_fusion_strength(self) -> bool {
+        !matches!(self, Self::Regular)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DamageScenarioFormula {
+    pub base_damage_percent: f64,
+    pub damage_bonus_percent: f64,
+    pub critical_rate_percent: f64,
+    pub critical_damage_percent: f64,
+    pub attacker_level: u8,
+    pub enemy_level: u8,
+    pub defense_reduction_percent: f64,
+    pub defense_ignore_percent: f64,
+    pub resistance_percent: f64,
+    pub resistance_ignore_percent: f64,
+    pub resistance_reduction_percent: f64,
+    pub fusion_level: u8,
+    pub fusion_strength: f64,
+    pub vulnerability_percent: f64,
+    pub final_damage_percent: f64,
+    pub special_multiplier_percent: [f64; 3],
+}
+
+impl Default for DamageScenarioFormula {
+    fn default() -> Self {
+        Self {
+            base_damage_percent: 100.0,
+            damage_bonus_percent: 0.0,
+            critical_rate_percent: 0.0,
+            critical_damage_percent: 0.0,
+            attacker_level: 80,
+            enemy_level: 80,
+            defense_reduction_percent: 0.0,
+            defense_ignore_percent: 0.0,
+            resistance_percent: 0.0,
+            resistance_ignore_percent: 0.0,
+            resistance_reduction_percent: 0.0,
+            fusion_level: 1,
+            fusion_strength: 0.0,
+            vulnerability_percent: 0.0,
+            final_damage_percent: 0.0,
+            special_multiplier_percent: [0.0; 3],
+        }
+    }
+}
+
+impl DamageScenarioFormula {
+    pub fn multiplier(self, kind: DamageScenarioKind) -> f64 {
+        let percent = |value: f64| value / 100.0;
+        let base_damage = percent(self.base_damage_percent) * kind.base_damage(self.fusion_level);
+        let damage_bonus = 1.0 + percent(self.damage_bonus_percent);
+        let critical = kind.critical_multiplier(
+            percent(self.critical_rate_percent),
+            percent(self.critical_damage_percent),
+        );
+        let defense = if kind.ignores_defense() {
+            1.0
+        } else {
+            self.defense_multiplier()
+        };
+        let resistance = self.resistance_multiplier();
+        let fusion_strength = if kind.uses_fusion_strength() {
+            1.0 + self.fusion_strength / 600.0
+        } else {
+            1.0
+        };
+        let vulnerability = 1.0 + percent(self.vulnerability_percent);
+        let final_damage = 1.0 + percent(self.final_damage_percent);
+        let special = self
+            .special_multiplier_percent
+            .into_iter()
+            .map(|value| 1.0 + percent(value))
+            .product::<f64>();
+        base_damage
+            * damage_bonus
+            * critical
+            * defense
+            * resistance
+            * fusion_strength
+            * vulnerability
+            * final_damage
+            * special
+    }
+
+    pub fn defense_multiplier(self) -> f64 {
+        let attacker = 100.0 + f64::from(self.attacker_level);
+        let enemy = 100.0 + f64::from(self.enemy_level);
+        let defense_reduction = 1.0 - self.defense_reduction_percent / 100.0;
+        let defense_ignore = 1.0 - self.defense_ignore_percent / 100.0;
+        attacker / (enemy * defense_reduction * defense_ignore + attacker)
+    }
+
+    pub fn effective_resistance_percent(self) -> f64 {
+        self.resistance_percent - self.resistance_ignore_percent - self.resistance_reduction_percent
+    }
+
+    pub fn resistance_multiplier(self) -> f64 {
+        let resistance = self.effective_resistance_percent() / 100.0;
+        if resistance >= 0.0 {
+            1.0 - resistance
+        } else {
+            1.0 - resistance / (1.0 - resistance)
+        }
+    }
+
+    pub fn fusion_coefficient(self) -> f64 {
+        0.2 * self.fusion_strength / (self.fusion_strength + 180.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DamageProjectionSummary {
+    pub raw_total_damage: f64,
+    pub projected_total_damage: f64,
+    pub affected_raw_damage: f64,
+    pub affected_projected_damage: f64,
+    pub affected_hits: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DamageTransformInput<'a> {
+    pub value: f64,
+    pub char_id: u32,
+    pub timestamp: f64,
+    pub damage_attribute: Option<&'a str>,
+    pub attack_type: Option<&'a str>,
+    pub skill_name: Option<&'a str>,
+    pub follow_up: bool,
+}
+
+pub fn summarize_damage_projection(
+    hits: &VecDeque<Hit>,
+    character_id: Option<u32>,
+    damage_attribute: Option<&str>,
+    attack_type: Option<&str>,
+    kind: DamageScenarioKind,
+    baseline: DamageScenarioFormula,
+    scenario: DamageScenarioFormula,
+) -> DamageProjectionSummary {
+    let ratio = scenario.multiplier(kind) / baseline.multiplier(kind);
+    let mut summary = DamageProjectionSummary::default();
+    for hit in hits.iter().filter(|hit| !hit.direction.is_incoming()) {
+        summary.raw_total_damage += hit.total_damage();
+        let primary_matches = damage_projection_component_matches(
+            hit,
+            hit.damage_attribute.as_deref(),
+            hit.attack_type.as_deref(),
+            character_id,
+            damage_attribute,
+            attack_type,
+        );
+        let follow_up_matches = damage_projection_component_matches(
+            hit,
+            hit.follow_up_damage_attribute.as_deref(),
+            hit.follow_up_attack_type.as_deref(),
+            character_id,
+            damage_attribute,
+            attack_type,
+        );
+
+        let mut affected = false;
+        if primary_matches {
+            let projected = hit.damage * ratio;
+            summary.affected_raw_damage += hit.damage;
+            summary.affected_projected_damage += projected;
+            summary.projected_total_damage += projected;
+            affected = true;
+        } else {
+            summary.projected_total_damage += hit.damage;
+        }
+        if follow_up_matches {
+            let projected = hit.follow_up_damage * ratio;
+            summary.affected_raw_damage += hit.follow_up_damage;
+            summary.affected_projected_damage += projected;
+            summary.projected_total_damage += projected;
+            affected |= hit.follow_up_damage != 0.0;
+        } else {
+            summary.projected_total_damage += hit.follow_up_damage;
+        }
+        summary.affected_hits += usize::from(affected);
+    }
+    summary
+}
+
+fn damage_projection_component_matches(
+    hit: &Hit,
+    component_attribute: Option<&str>,
+    component_attack_type: Option<&str>,
+    character_id: Option<u32>,
+    damage_attribute: Option<&str>,
+    attack_type: Option<&str>,
+) -> bool {
+    character_id.is_none_or(|char_id| hit.char_id == char_id)
+        && damage_attribute.is_none_or(|attribute| component_attribute == Some(attribute))
+        && attack_type.is_none_or(|source| component_attack_type == Some(source))
+}
+
+fn project_damage_in_hits(
+    hits: &mut VecDeque<Hit>,
+    character_id: Option<u32>,
+    damage_attribute: Option<&str>,
+    attack_type: Option<&str>,
+    ratio: f64,
+) {
+    for hit in hits.iter_mut().filter(|hit| !hit.direction.is_incoming()) {
+        if damage_projection_component_matches(
+            hit,
+            hit.damage_attribute.as_deref(),
+            hit.attack_type.as_deref(),
+            character_id,
+            damage_attribute,
+            attack_type,
+        ) {
+            hit.damage *= ratio;
+        }
+        if damage_projection_component_matches(
+            hit,
+            hit.follow_up_damage_attribute.as_deref(),
+            hit.follow_up_attack_type.as_deref(),
+            character_id,
+            damage_attribute,
+            attack_type,
+        ) {
+            hit.follow_up_damage *= ratio;
+        }
+    }
+}
+
+fn try_transform_damage_in_hits<E>(
+    hits: &mut VecDeque<Hit>,
+    transform: &mut impl FnMut(DamageTransformInput<'_>) -> Result<f64, E>,
+) -> Result<(), E> {
+    for hit in hits.iter_mut().filter(|hit| !hit.direction.is_incoming()) {
+        if hit.damage != 0.0 {
+            hit.damage = transform(DamageTransformInput {
+                value: hit.damage,
+                char_id: hit.char_id,
+                timestamp: hit.timestamp,
+                damage_attribute: hit.damage_attribute.as_deref(),
+                attack_type: hit.attack_type.as_deref(),
+                skill_name: hit
+                    .ability_name
+                    .as_deref()
+                    .or(hit.damage_name.as_deref())
+                    .or(hit.damage_component.as_deref()),
+                follow_up: false,
+            })?;
+        }
+        if hit.follow_up_damage != 0.0 {
+            hit.follow_up_damage = transform(DamageTransformInput {
+                value: hit.follow_up_damage,
+                char_id: hit.char_id,
+                timestamp: hit.timestamp,
+                damage_attribute: hit.follow_up_damage_attribute.as_deref(),
+                attack_type: hit.follow_up_attack_type.as_deref(),
+                skill_name: hit
+                    .follow_up_damage_name
+                    .as_deref()
+                    .or(hit.ability_name.as_deref())
+                    .or(hit.damage_component.as_deref()),
+                follow_up: true,
+            })?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HitFollowUp {
     pub source_timestamp: f64,
@@ -288,10 +602,39 @@ pub struct CharacterStats {
     pub name: String,
     pub hits: u64,
     pub damage: f64,
+    pub attributed_hits: u64,
+    pub attributed_damage: f64,
+    pub attributed_first_hit: Option<f64>,
+    pub attributed_last_hit: Option<f64>,
+    pub direct_hits: u64,
+    pub direct_damage: f64,
+    pub direct_first_hit: Option<f64>,
+    pub direct_last_hit: Option<f64>,
     pub hits_taken: u64,
     pub damage_taken: f64,
     pub first_hit: f64,
     pub last_hit: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DamageAttributionSummary {
+    pub total_damage: f64,
+    pub character_direct_damage: f64,
+    pub character_reaction_damage: f64,
+    pub shared_damage: f64,
+    pub unattributed_damage: f64,
+}
+
+impl DamageAttributionSummary {
+    pub fn character_damage(self, separate_reaction_damage: bool) -> f64 {
+        self.character_direct_damage
+            + if separate_reaction_damage {
+                0.0
+            } else {
+                self.character_reaction_damage
+            }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -536,6 +879,8 @@ pub struct CombatSessionSummary {
     pub total_dps: f64,
     pub total_damage_taken: f64,
     pub total_hits: u64,
+    pub reaction_damage_separated: bool,
+    pub damage_attribution: DamageAttributionSummary,
     pub characters: Vec<CombatSessionCharacterSummary>,
     pub skills: Vec<CombatSessionSkillSummary>,
     pub abyss: CombatSessionAbyssSummary,
@@ -643,6 +988,7 @@ pub struct CombatSessionAbyssHalfSummary {
     pub duration_seconds: f64,
     pub total_damage: f64,
     pub total_dps: f64,
+    pub damage_attribution: DamageAttributionSummary,
     pub characters: Vec<CombatSessionCharacterSummary>,
     pub skills: Vec<CombatSessionSkillSummary>,
 }
@@ -973,6 +1319,75 @@ impl CharacterStats {
             0.0
         }
     }
+
+    pub fn for_reaction_damage_policy(&self, separate_reaction_damage: bool) -> Self {
+        let mut projected = self.clone();
+        let (hits, damage, first_hit, last_hit) = if separate_reaction_damage {
+            (
+                self.direct_hits,
+                self.direct_damage,
+                self.direct_first_hit,
+                self.direct_last_hit,
+            )
+        } else {
+            (
+                self.attributed_hits,
+                self.attributed_damage,
+                self.attributed_first_hit,
+                self.attributed_last_hit,
+            )
+        };
+        projected.hits = hits;
+        projected.damage = damage;
+        projected.first_hit = if hits == 0 {
+            0.0
+        } else {
+            first_hit.expect("a projected character hit requires its first timestamp")
+        };
+        projected.last_hit = if hits == 0 {
+            0.0
+        } else {
+            last_hit.expect("a projected character hit requires its last timestamp")
+        };
+        projected
+    }
+}
+
+pub const REACTION_DAMAGE_TYPES: [&str; 8] = [
+    "创生花",
+    "覆纹",
+    "延滞",
+    "黯星",
+    "浊燃",
+    "浸染",
+    "盈蓄",
+    "失谐",
+];
+
+pub fn is_reaction_damage_type(attack_type: &str) -> bool {
+    REACTION_DAMAGE_TYPES.contains(&attack_type)
+}
+
+pub fn reaction_damage_for_hit(hit: &Hit) -> f64 {
+    let primary = if hit
+        .attack_type
+        .as_deref()
+        .is_some_and(is_reaction_damage_type)
+    {
+        hit.damage
+    } else {
+        0.0
+    };
+    let follow_up = if hit
+        .follow_up_attack_type
+        .as_deref()
+        .is_some_and(is_reaction_damage_type)
+    {
+        hit.follow_up_damage
+    } else {
+        0.0
+    };
+    primary + follow_up
 }
 
 /// The `attack_type` classification used for "倾陷伤害" (Unbalance/Tenacity
@@ -991,6 +1406,27 @@ pub fn is_unbalance_damage_hit(hit: &Hit) -> bool {
             .damage_name
             .as_deref()
             .is_some_and(|damage_name| damage_name.contains("倾陷"))
+}
+
+fn summarize_damage_attribution<'a>(
+    total_damage: f64,
+    rows: impl IntoIterator<Item = &'a CharacterStats>,
+) -> DamageAttributionSummary {
+    let mut retained_character_damage = 0.0;
+    let mut attributed_damage = 0.0;
+    let mut direct_damage = 0.0;
+    for row in rows {
+        retained_character_damage += row.damage;
+        attributed_damage += row.attributed_damage;
+        direct_damage += row.direct_damage;
+    }
+    DamageAttributionSummary {
+        total_damage,
+        character_direct_damage: direct_damage,
+        character_reaction_damage: (attributed_damage - direct_damage).max(0.0),
+        shared_damage: (total_damage - retained_character_damage).max(0.0),
+        unattributed_damage: (retained_character_damage - attributed_damage).max(0.0),
+    }
 }
 
 fn update_combat_totals(
@@ -1032,6 +1468,42 @@ fn update_combat_totals(
     }
     row.hits += 1;
     row.damage += damage;
+    if matches!(hit.direction, HitDirection::Outgoing) && hit.char_known {
+        if row.attributed_hits == 0 {
+            row.attributed_first_hit = Some(hit.timestamp);
+            row.attributed_last_hit = Some(hit.timestamp);
+        } else {
+            let first_hit = row
+                .attributed_first_hit
+                .expect("attributed hits require a first timestamp");
+            let last_hit = row
+                .attributed_last_hit
+                .expect("attributed hits require a last timestamp");
+            row.attributed_first_hit = Some(first_hit.min(hit.timestamp));
+            row.attributed_last_hit = Some(last_hit.max(hit.timestamp));
+        }
+        row.attributed_hits += 1;
+        row.attributed_damage += damage;
+
+        let direct_damage = (damage - reaction_damage_for_hit(hit)).max(0.0);
+        if direct_damage > 0.0 {
+            if row.direct_hits == 0 {
+                row.direct_first_hit = Some(hit.timestamp);
+                row.direct_last_hit = Some(hit.timestamp);
+            } else {
+                let first_hit = row
+                    .direct_first_hit
+                    .expect("direct hits require a first timestamp");
+                let last_hit = row
+                    .direct_last_hit
+                    .expect("direct hits require a last timestamp");
+                row.direct_first_hit = Some(first_hit.min(hit.timestamp));
+                row.direct_last_hit = Some(last_hit.max(hit.timestamp));
+            }
+            row.direct_hits += 1;
+            row.direct_damage += direct_damage;
+        }
+    }
 }
 
 fn rebuild_combat_totals(
@@ -1100,21 +1572,15 @@ pub enum AbyssEvent {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum TimeStopEvent {
-    UltraAnimation {
+    GamePauseStarted {
         timestamp: f64,
-        char_id: u32,
-        ability_id: String,
-        duration_seconds: f64,
+        pause_type_mask: u32,
     },
-    ExtraStart {
+    GamePauseEnded {
         timestamp: f64,
-        reason: String,
-    },
-    ExtraEnd {
-        timestamp: f64,
-        reason: String,
+        pause_type_mask: u32,
     },
 }
 
@@ -1127,38 +1593,49 @@ struct TimeStopInterval {
 #[derive(Clone, Debug, Default, PartialEq)]
 struct TimeStopTracker {
     intervals: Vec<TimeStopInterval>,
-    active_extra_starts: HashMap<String, f64>,
-    ultra_releases: HashMap<u32, f64>,
+    active_game_pause: Option<(f64, u32)>,
+    latest_game_pause_transition: Option<f64>,
     event_count: u64,
 }
 
 impl TimeStopTracker {
     fn apply_event(&mut self, event: &TimeStopEvent) {
-        self.event_count = self.event_count.saturating_add(1);
         match event {
-            TimeStopEvent::UltraAnimation {
+            TimeStopEvent::GamePauseStarted {
                 timestamp,
-                char_id,
-                duration_seconds,
-                ..
+                pause_type_mask,
             } => {
-                self.push_interval(*timestamp, *timestamp + duration_seconds);
-                if timestamp.is_finite() {
-                    self.ultra_releases
-                        .entry(*char_id)
-                        .and_modify(|value| *value = value.max(*timestamp))
-                        .or_insert(*timestamp);
+                if !timestamp.is_finite() {
+                    return;
                 }
+                match &mut self.active_game_pause {
+                    Some((start, active_mask)) => {
+                        *start = start.min(*timestamp);
+                        *active_mask |= *pause_type_mask;
+                    }
+                    None => {
+                        self.active_game_pause = Some((*timestamp, *pause_type_mask));
+                    }
+                }
+                self.record_game_pause_transition(*timestamp);
             }
-            TimeStopEvent::ExtraStart { timestamp, reason } => {
-                self.active_extra_starts.insert(reason.clone(), *timestamp);
-            }
-            TimeStopEvent::ExtraEnd { timestamp, reason } => {
-                let Some(start) = self.active_extra_starts.remove(reason) else {
+            TimeStopEvent::GamePauseEnded { timestamp, .. } => {
+                let Some((start, _)) = self.active_game_pause.take() else {
                     return;
                 };
+                self.event_count = self.event_count.saturating_add(1);
                 self.push_interval(start, *timestamp);
+                self.record_game_pause_transition(*timestamp);
             }
+        }
+    }
+
+    fn record_game_pause_transition(&mut self, timestamp: f64) {
+        if timestamp.is_finite() {
+            self.latest_game_pause_transition = Some(
+                self.latest_game_pause_transition
+                    .map_or(timestamp, |value| value.max(timestamp)),
+            );
         }
     }
 
@@ -1176,36 +1653,40 @@ impl TimeStopTracker {
             .sum()
     }
 
-    fn latest_ultra_release(&self) -> Option<f64> {
-        self.ultra_releases.values().copied().reduce(f64::max)
+    fn latest_game_pause_transition(&self) -> Option<f64> {
+        self.latest_game_pause_transition
     }
 
     fn intervals_between(&self, start: f64, end: f64) -> Vec<TimeStopInterval> {
         if !start.is_finite() || !end.is_finite() || end <= start {
             return Vec::new();
         }
-        let mut intervals = self
+        let intervals = self
             .intervals
             .iter()
             .copied()
             .chain(
-                self.active_extra_starts
-                    .values()
-                    .copied()
-                    .map(|active_start| TimeStopInterval {
+                self.active_game_pause
+                    .map(|(active_start, _)| TimeStopInterval {
                         start: active_start,
                         end,
                     }),
             )
-            .filter_map(|interval| {
-                let clipped_start = interval.start.max(start);
-                let clipped_end = interval.end.min(end);
-                (clipped_end > clipped_start).then_some(TimeStopInterval {
-                    start: clipped_start,
-                    end: clipped_end,
-                })
-            })
+            .filter_map(|interval| Self::clip_interval(interval, start, end))
             .collect::<Vec<_>>();
+        Self::merge_intervals(intervals)
+    }
+
+    fn clip_interval(interval: TimeStopInterval, start: f64, end: f64) -> Option<TimeStopInterval> {
+        let clipped_start = interval.start.max(start);
+        let clipped_end = interval.end.min(end);
+        (clipped_end > clipped_start).then_some(TimeStopInterval {
+            start: clipped_start,
+            end: clipped_end,
+        })
+    }
+
+    fn merge_intervals(mut intervals: Vec<TimeStopInterval>) -> Vec<TimeStopInterval> {
         intervals.sort_by(|left, right| left.start.total_cmp(&right.start));
 
         let mut merged_intervals = Vec::new();
@@ -1239,7 +1720,6 @@ pub struct PartyCombatState {
     pub ended_at: Option<f64>,
     pub total_damage: f64,
     pub total_damage_taken: f64,
-    stage_started_at: Option<f64>,
     time_stop: TimeStopTracker,
 }
 
@@ -1268,7 +1748,7 @@ impl PartyCombatState {
                 &mut self.total_damage_taken,
             );
         }
-        self.sync_clock_with_ultra_releases();
+        self.sync_clock_with_time_stops();
     }
 
     pub fn apply_follow_up(&mut self, follow_up: &HitFollowUp) -> bool {
@@ -1283,7 +1763,7 @@ impl PartyCombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
-            self.sync_clock_with_ultra_releases();
+            self.sync_clock_with_time_stops();
         }
         updated
     }
@@ -1300,7 +1780,7 @@ impl PartyCombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
-            self.sync_clock_with_ultra_releases();
+            self.sync_clock_with_time_stops();
         }
         updated
     }
@@ -1321,6 +1801,10 @@ impl PartyCombatState {
 
     pub fn dps_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         self.total_damage / self.duration_with_time_stop(subtract_time_stop).max(1.0)
+    }
+
+    pub fn damage_attribution_summary(&self) -> DamageAttributionSummary {
+        summarize_damage_attribution(self.total_damage, self.stats.values())
     }
 
     pub fn character_duration_with_time_stop(
@@ -1344,22 +1828,11 @@ impl PartyCombatState {
 
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
         self.time_stop.apply_event(event);
-        self.sync_clock_with_ultra_releases();
+        self.sync_clock_with_time_stops();
     }
 
-    fn sync_clock_with_ultra_releases(&mut self) {
-        if let Some(timestamp) = self.stage_started_at {
-            self.started_at = Some(
-                self.started_at
-                    .map_or(timestamp, |value| value.min(timestamp)),
-            );
-        }
-        sync_combat_clock_with_ultra_releases(
-            &mut self.stats,
-            self.started_at,
-            &mut self.ended_at,
-            &self.time_stop,
-        );
+    fn sync_clock_with_time_stops(&mut self) {
+        sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
     }
 
     #[allow(dead_code)]
@@ -1461,12 +1934,11 @@ impl AbyssRunState {
             }
             AbyssEvent::Stage {
                 timestamp,
-                cycle,
+                cycle: _,
                 floor,
                 half,
                 allow_late_backfill: _,
             } => {
-                let starts_combat = cycle.is_some() || floor.is_some();
                 let floor_changed = self
                     .floor
                     .zip(floor)
@@ -1499,15 +1971,6 @@ impl AbyssRunState {
                     }
                 }
                 self.active_half = Some(half);
-                if starts_combat {
-                    let party = self.half_mut(half);
-                    party.stage_started_at = Some(
-                        party
-                            .stage_started_at
-                            .map_or(timestamp, |value| value.min(timestamp)),
-                    );
-                    party.sync_clock_with_ultra_releases();
-                }
                 match half {
                     AbyssHalf::First => {
                         self.first_half_at = Some(
@@ -1551,39 +2014,27 @@ impl AbyssRunState {
     }
 
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
-        match event {
-            TimeStopEvent::UltraAnimation {
-                timestamp, char_id, ..
-            } => {
-                let half = if self
-                    .second_half_at
-                    .is_some_and(|started_at| *timestamp >= started_at)
-                {
-                    AbyssHalf::Second
-                } else if self
-                    .first_half_at
-                    .is_some_and(|started_at| *timestamp >= started_at)
-                {
-                    AbyssHalf::First
-                } else {
-                    let Some(active_half) = self.active_half else {
-                        return;
-                    };
-                    active_half
-                };
-                let half = *self.character_halves.entry(*char_id).or_insert(half);
-                self.half_mut(half).apply_time_stop_event(event);
-            }
-            TimeStopEvent::ExtraStart { .. } => {
-                if let Some(half) = self.active_half {
-                    self.half_mut(half).apply_time_stop_event(event);
-                }
-            }
-            TimeStopEvent::ExtraEnd { .. } => {
-                self.first_half.apply_time_stop_event(event);
-                self.second_half.apply_time_stop_event(event);
-            }
-        }
+        let timestamp = match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. }
+            | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
+        };
+        let half = if self
+            .second_half_at
+            .is_some_and(|started_at| timestamp >= started_at)
+        {
+            AbyssHalf::Second
+        } else if self
+            .first_half_at
+            .is_some_and(|started_at| timestamp >= started_at)
+        {
+            AbyssHalf::First
+        } else {
+            let Some(active_half) = self.active_half else {
+                return;
+            };
+            active_half
+        };
+        self.half_mut(half).apply_time_stop_event(event);
     }
 
     pub fn timeline_markers_for_half(
@@ -1664,7 +2115,7 @@ impl AbyssRunState {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct CombatState {
     pub hits: VecDeque<Hit>,
     pub hits_generation: u64,
@@ -1681,10 +2132,95 @@ pub struct CombatState {
     pub empty_curtain: Vec<EmptyCurtainItem>,
     pub empty_curtain_characters: Vec<EmptyCurtainCharacter>,
     pub empty_curtain_generation: u64,
+    pub time_stop_events: Vec<TimeStopEvent>,
     time_stop: TimeStopTracker,
 }
 
 impl CombatState {
+    pub fn try_transformed_damage_copy<E>(
+        &self,
+        mut transform: impl FnMut(DamageTransformInput<'_>) -> Result<f64, E>,
+    ) -> Result<Self, E> {
+        let mut transformed = self.clone();
+        try_transform_damage_in_hits(&mut transformed.hits, &mut transform)?;
+        rebuild_combat_totals(
+            &transformed.hits,
+            &mut transformed.stats,
+            &mut transformed.started_at,
+            &mut transformed.ended_at,
+            &mut transformed.total_damage,
+            &mut transformed.total_damage_taken,
+        );
+        transformed.sync_clock_with_time_stops();
+        for party in [
+            &mut transformed.abyss.first_half,
+            &mut transformed.abyss.second_half,
+        ] {
+            try_transform_damage_in_hits(&mut party.hits, &mut transform)?;
+            rebuild_combat_totals(
+                &party.hits,
+                &mut party.stats,
+                &mut party.started_at,
+                &mut party.ended_at,
+                &mut party.total_damage,
+                &mut party.total_damage_taken,
+            );
+            party.sync_clock_with_time_stops();
+        }
+        Ok(transformed)
+    }
+
+    pub fn projected_damage_copy(
+        &self,
+        character_id: Option<u32>,
+        damage_attribute: Option<&str>,
+        attack_type: Option<&str>,
+        kind: DamageScenarioKind,
+        baseline: DamageScenarioFormula,
+        scenario: DamageScenarioFormula,
+    ) -> Self {
+        let ratio = scenario.multiplier(kind) / baseline.multiplier(kind);
+        let mut projected = self.clone();
+        project_damage_in_hits(
+            &mut projected.hits,
+            character_id,
+            damage_attribute,
+            attack_type,
+            ratio,
+        );
+        rebuild_combat_totals(
+            &projected.hits,
+            &mut projected.stats,
+            &mut projected.started_at,
+            &mut projected.ended_at,
+            &mut projected.total_damage,
+            &mut projected.total_damage_taken,
+        );
+        projected.sync_clock_with_time_stops();
+        for party in [
+            &mut projected.abyss.first_half,
+            &mut projected.abyss.second_half,
+        ] {
+            project_damage_in_hits(
+                &mut party.hits,
+                character_id,
+                damage_attribute,
+                attack_type,
+                ratio,
+            );
+            rebuild_combat_totals(
+                &party.hits,
+                &mut party.stats,
+                &mut party.started_at,
+                &mut party.ended_at,
+                &mut party.total_damage,
+                &mut party.total_damage_taken,
+            );
+            party.sync_clock_with_time_stops();
+        }
+        projected
+    }
+
     pub fn push_hit(&mut self, hit: Hit) {
         self.abyss.push_hit(hit.clone());
         update_combat_totals(
@@ -1710,7 +2246,7 @@ impl CombatState {
                 &mut self.total_damage_taken,
             );
         }
-        self.sync_clock_with_ultra_releases();
+        self.sync_clock_with_time_stops();
     }
 
     pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) {
@@ -1725,7 +2261,7 @@ impl CombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
-            self.sync_clock_with_ultra_releases();
+            self.sync_clock_with_time_stops();
         }
         self.abyss.first_half.apply_follow_up(&follow_up);
         self.abyss.second_half.apply_follow_up(&follow_up);
@@ -1744,7 +2280,7 @@ impl CombatState {
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
             );
-            self.sync_clock_with_ultra_releases();
+            self.sync_clock_with_time_stops();
         }
         self.abyss.first_half.apply_damage_correction(&correction);
         self.abyss.second_half.apply_damage_correction(&correction);
@@ -1780,8 +2316,16 @@ impl CombatState {
         }
     }
 
+    pub fn active_elapsed_between(&self, start: f64, end: f64) -> f64 {
+        (end - start - self.time_stop.frozen_between(start, end)).max(0.0)
+    }
+
     pub fn dps_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         self.total_damage / self.duration_with_time_stop(subtract_time_stop).max(1.0)
+    }
+
+    pub fn damage_attribution_summary(&self) -> DamageAttributionSummary {
+        summarize_damage_attribution(self.total_damage, self.stats.values())
     }
 
     pub fn character_duration_with_time_stop(
@@ -1848,17 +2392,45 @@ impl CombatState {
 
     pub fn apply_time_stop_event(&mut self, event: TimeStopEvent) {
         self.time_stop.apply_event(&event);
-        self.sync_clock_with_ultra_releases();
+        self.sync_clock_with_time_stops();
         self.abyss.apply_time_stop_event(&event);
+        self.time_stop_events.push(event);
     }
 
-    fn sync_clock_with_ultra_releases(&mut self) {
-        sync_combat_clock_with_ultra_releases(
+    pub fn is_game_paused(&self) -> bool {
+        self.time_stop.active_game_pause.is_some()
+    }
+
+    pub fn rebuild_global_from_abyss(&mut self) {
+        let mut hits = self
+            .abyss
+            .first_half
+            .hits
+            .iter()
+            .chain(self.abyss.second_half.hits.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            left.timestamp
+                .total_cmp(&right.timestamp)
+                .then_with(|| left.byte_offset.cmp(&right.byte_offset))
+                .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+        });
+        self.hits = hits.into();
+        self.hits_generation = self.hits_generation.wrapping_add(1);
+        rebuild_combat_totals(
+            &self.hits,
             &mut self.stats,
-            self.started_at,
+            &mut self.started_at,
             &mut self.ended_at,
-            &self.time_stop,
+            &mut self.total_damage,
+            &mut self.total_damage_taken,
         );
+        self.sync_clock_with_time_stops();
+    }
+
+    fn sync_clock_with_time_stops(&mut self) {
+        sync_combat_clock_with_time_stops(self.started_at, &mut self.ended_at, &self.time_stop);
     }
 
     #[allow(dead_code)]
@@ -1924,6 +2496,7 @@ impl CombatState {
         &self,
         source: CaptureQualitySource,
         dps_time_mode: DpsTimeBasis,
+        separate_reaction_damage: bool,
     ) -> Option<CombatSessionSummary> {
         if self.hits.is_empty() && self.stats.is_empty() && !self.abyss.is_active() {
             return None;
@@ -1931,6 +2504,11 @@ impl CombatState {
         let subtract_time_stop = dps_time_mode.subtracts_time_stop();
         let duration = self.duration_with_time_stop(subtract_time_stop);
         let skills = summarize_session_skills(self.skill_breakdown(None).rows);
+        let characters = self
+            .stats
+            .values()
+            .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+            .collect::<Vec<_>>();
         Some(CombatSessionSummary {
             duration_seconds: duration,
             dps_time_mode,
@@ -1942,13 +2520,17 @@ impl CombatState {
                 .iter()
                 .filter(|hit| !hit.direction.is_incoming())
                 .count() as u64,
-            characters: summarize_session_characters(
-                self.stats.values(),
-                self.total_damage,
-                |row| self.character_dps_with_time_stop(row, subtract_time_stop),
-            ),
+            reaction_damage_separated: separate_reaction_damage,
+            damage_attribution: self.damage_attribution_summary(),
+            characters: summarize_session_characters(characters.iter(), self.total_damage, |row| {
+                self.character_dps_with_time_stop(row, subtract_time_stop)
+            }),
             skills,
-            abyss: summarize_session_abyss(&self.abyss, subtract_time_stop),
+            abyss: summarize_session_abyss(
+                &self.abyss,
+                subtract_time_stop,
+                separate_reaction_damage,
+            ),
             quality: self.capture_quality_summary(source),
         })
     }
@@ -1964,13 +2546,14 @@ impl CombatState {
             self.abyss.half_mut(half).push_hit(hit);
         }
         self.abyss.half_mut(half).time_stop = self.time_stop.clone();
-        self.abyss.half_mut(half).sync_clock_with_ultra_releases();
+        self.abyss.half_mut(half).sync_clock_with_time_stops();
     }
 }
 
 fn summarize_session_abyss(
     abyss: &AbyssRunState,
     subtract_time_stop: bool,
+    separate_reaction_damage: bool,
 ) -> CombatSessionAbyssSummary {
     CombatSessionAbyssSummary {
         detected: abyss.is_active(),
@@ -1981,11 +2564,13 @@ fn summarize_session_abyss(
             AbyssHalf::First,
             &abyss.first_half,
             subtract_time_stop,
+            separate_reaction_damage,
         ),
         second_half: summarize_session_abyss_half(
             AbyssHalf::Second,
             &abyss.second_half,
             subtract_time_stop,
+            separate_reaction_damage,
         ),
     }
 }
@@ -1994,16 +2579,23 @@ fn summarize_session_abyss_half(
     half: AbyssHalf,
     party: &PartyCombatState,
     subtract_time_stop: bool,
+    separate_reaction_damage: bool,
 ) -> Option<CombatSessionAbyssHalfSummary> {
     if party.hits.is_empty() && party.stats.is_empty() {
         return None;
     }
+    let characters = party
+        .stats
+        .values()
+        .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+        .collect::<Vec<_>>();
     Some(CombatSessionAbyssHalfSummary {
         half,
         duration_seconds: party.duration_with_time_stop(subtract_time_stop),
         total_damage: party.total_damage,
         total_dps: party.dps_with_time_stop(subtract_time_stop),
-        characters: summarize_session_characters(party.stats.values(), party.total_damage, |row| {
+        damage_attribution: party.damage_attribution_summary(),
+        characters: summarize_session_characters(characters.iter(), party.total_damage, |row| {
             party.character_dps_with_time_stop(row, subtract_time_stop)
         }),
         skills: summarize_session_skills(summarize_skill_breakdown(&party.hits, None).rows),
@@ -2080,8 +2672,7 @@ fn character_duration_after_time_stop(
     (raw - time_stop.frozen_between(row.first_hit, row.last_hit)).max(0.001)
 }
 
-fn sync_combat_clock_with_ultra_releases(
-    stats: &mut HashMap<u32, CharacterStats>,
+fn sync_combat_clock_with_time_stops(
     started_at: Option<f64>,
     ended_at: &mut Option<f64>,
     time_stop: &TimeStopTracker,
@@ -2089,20 +2680,10 @@ fn sync_combat_clock_with_ultra_releases(
     let Some(started_at) = started_at else {
         return;
     };
-    if let Some(timestamp) = time_stop.latest_ultra_release()
+    if let Some(timestamp) = time_stop.latest_game_pause_transition()
         && timestamp >= started_at
     {
         *ended_at = Some(ended_at.map_or(timestamp, |value| value.max(timestamp)));
-    }
-    for (char_id, timestamp) in &time_stop.ultra_releases {
-        if *timestamp < started_at {
-            continue;
-        }
-        if let Some(row) = stats.get_mut(char_id)
-            && row.hits > 0
-        {
-            row.last_hit = row.last_hit.max(*timestamp);
-        }
     }
 }
 
@@ -2249,6 +2830,49 @@ fn sort_timeline_markers(markers: &mut [TimelineMarker]) {
     });
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModScriptEventPhase {
+    Event,
+    Preprocess,
+    Postprocess,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModScriptEvent {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub mod_id: String,
+    pub phase: ModScriptEventPhase,
+    pub name: String,
+    pub values: Vec<u64>,
+}
+
+impl ModScriptEvent {
+    pub fn from_bridge(
+        sequence: u64,
+        timestamp_100ns: u64,
+        mod_id: String,
+        name: String,
+        values: Vec<u64>,
+    ) -> Self {
+        let (phase, name) = if let Some(name) = name.strip_prefix("pre.") {
+            (ModScriptEventPhase::Preprocess, name.to_owned())
+        } else if let Some(name) = name.strip_prefix("post.") {
+            (ModScriptEventPhase::Postprocess, name.to_owned())
+        } else {
+            (ModScriptEventPhase::Event, name)
+        };
+        Self {
+            sequence,
+            timestamp_100ns,
+            mod_id,
+            phase,
+            name,
+            values,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     Hit(Box<Hit>),
@@ -2260,6 +2884,7 @@ pub enum EngineEvent {
     TimeStop(TimeStopEvent),
     EmptyCurtain(Vec<EmptyCurtainItem>),
     EmptyCurtainCharacters(Vec<EmptyCurtainCharacter>),
+    ModScript(ModScriptEvent),
     Status(String),
     Warning(String),
     Error(String),
@@ -2380,6 +3005,31 @@ fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrect
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mod_script_bridge_classifies_preprocess_and_postprocess_names() {
+        for (wire_name, phase, name) in [
+            ("pre.hit", ModScriptEventPhase::Preprocess, "hit"),
+            ("post.summary", ModScriptEventPhase::Postprocess, "summary"),
+            (
+                "character.health",
+                ModScriptEventPhase::Event,
+                "character.health",
+            ),
+        ] {
+            let event = ModScriptEvent::from_bridge(
+                7,
+                11,
+                "example".to_owned(),
+                wire_name.to_owned(),
+                vec![1, 2],
+            );
+
+            assert_eq!(event.phase, phase);
+            assert_eq!(event.name, name);
+            assert_eq!(event.values, vec![1, 2]);
+        }
+    }
 
     #[test]
     fn team_dps_export_is_compact_and_roundtrips() {
@@ -2562,6 +3212,149 @@ mod tests {
     }
 
     #[test]
+    fn damage_scenario_uses_piecewise_resistance_formula() {
+        let positive = DamageScenarioFormula {
+            resistance_percent: 20.0,
+            ..Default::default()
+        };
+        assert!((positive.resistance_multiplier() - 0.8).abs() < 1e-9);
+
+        let negative = DamageScenarioFormula {
+            resistance_percent: 10.0,
+            resistance_reduction_percent: 30.0,
+            ..Default::default()
+        };
+        assert!((negative.effective_resistance_percent() + 20.0).abs() < 1e-9);
+        assert!((negative.resistance_multiplier() - (1.0 + 0.2 / 1.2)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn damage_scenario_uses_reaction_base_damage_and_critical_rules() {
+        let formula = DamageScenarioFormula {
+            fusion_level: 16,
+            fusion_strength: 600.0,
+            critical_rate_percent: 100.0,
+            critical_damage_percent: 100.0,
+            ..Default::default()
+        };
+        let common_without_defense =
+            formula.resistance_multiplier() * (1.0 + formula.fusion_strength / 600.0);
+        let creation = formula.multiplier(DamageScenarioKind::Creation);
+        let burning = formula.multiplier(DamageScenarioKind::Burning);
+        let dark_star = formula.multiplier(DamageScenarioKind::DarkStar);
+
+        assert!(
+            (creation - 9_000.0 * formula.defense_multiplier() * common_without_defense).abs()
+                < 1e-9
+        );
+        assert!(
+            (burning - 2_700.0 * 1.5 * formula.defense_multiplier() * common_without_defense).abs()
+                < 1e-9
+        );
+        assert!((dark_star - 45_000.0 * common_without_defense).abs() < 1e-9);
+    }
+
+    #[test]
+    fn damage_projection_can_target_primary_and_follow_up_damage_independently() {
+        let mut primary = test_hit(1.0, 7, "outgoing", 100.0);
+        primary.damage_attribute = Some("光".to_owned());
+        primary.attack_type = Some("普通攻击".to_owned());
+        primary.follow_up_damage = 50.0;
+        primary.follow_up_damage_attribute = Some("灵".to_owned());
+        primary.follow_up_attack_type = Some("覆纹".to_owned());
+        let unaffected = test_hit(2.0, 8, "outgoing", 200.0);
+        let incoming = test_hit(3.0, 7, "incoming", 500.0);
+        let hits = VecDeque::from([primary, unaffected, incoming]);
+        let baseline = DamageScenarioFormula::default();
+        let scenario = DamageScenarioFormula {
+            resistance_percent: 20.0,
+            ..Default::default()
+        };
+
+        let summary = summarize_damage_projection(
+            &hits,
+            Some(7),
+            Some("光"),
+            Some("普通攻击"),
+            DamageScenarioKind::Regular,
+            baseline,
+            scenario,
+        );
+
+        assert_eq!(summary.raw_total_damage, 350.0);
+        assert_eq!(summary.affected_raw_damage, 100.0);
+        assert_eq!(summary.affected_projected_damage, 80.0);
+        assert_eq!(summary.projected_total_damage, 330.0);
+        assert_eq!(summary.affected_hits, 1);
+    }
+
+    #[test]
+    fn projected_combat_state_changes_the_copy_and_preserves_the_source() {
+        let mut state = CombatState::default();
+        let mut hit = test_hit(1.0, 7, "outgoing", 100.0);
+        hit.damage_attribute = Some("光".to_owned());
+        state.push_hit(hit);
+        state.push_hit(test_hit(2.0, 8, "outgoing", 200.0));
+        let projected = state.projected_damage_copy(
+            Some(7),
+            Some("光"),
+            None,
+            DamageScenarioKind::Regular,
+            DamageScenarioFormula::default(),
+            DamageScenarioFormula {
+                resistance_percent: 20.0,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(state.total_damage, 300.0);
+        assert_eq!(state.hits[0].damage, 100.0);
+        assert_eq!(projected.total_damage, 280.0);
+        assert_eq!(projected.hits[0].damage, 80.0);
+        assert_eq!(projected.stats[&7].damage, 80.0);
+        assert_eq!(projected.stats[&8].damage, 200.0);
+    }
+
+    #[test]
+    fn low_code_transform_rebuilds_the_copy_and_preserves_the_source() {
+        let mut state = CombatState::default();
+        let mut skill_hit = test_hit(1.0, 7, "outgoing", 100.0);
+        skill_hit.ability_name = Some("技能甲".to_owned());
+        state.push_hit(skill_hit);
+        state.push_hit(test_hit(2.0, 8, "outgoing", 200.0));
+
+        let transformed = state
+            .try_transformed_damage_copy(|input| {
+                Ok::<_, ()>(if input.char_id == 7 {
+                    assert_eq!(input.skill_name, Some("技能甲"));
+                    input.value * 0.5
+                } else {
+                    assert_eq!(input.skill_name, None);
+                    input.value
+                })
+            })
+            .unwrap();
+
+        assert_eq!(state.total_damage, 300.0);
+        assert_eq!(state.hits[0].damage, 100.0);
+        assert_eq!(transformed.total_damage, 250.0);
+        assert_eq!(transformed.hits[0].damage, 50.0);
+        assert_eq!(transformed.stats[&7].damage, 50.0);
+        assert_eq!(transformed.stats[&8].damage, 200.0);
+    }
+
+    fn apply_test_pause(state: &mut CombatState, start: f64, end: f64) {
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: start,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: end,
+            pause_type_mask: 1 << 2,
+        });
+    }
+
+    #[test]
     fn only_full_debug_packets_are_droppable_under_backpressure() {
         let packet = PacketDebug {
             timestamp: 1.0,
@@ -2735,12 +3528,7 @@ mod tests {
     fn timeline_marks_time_stop_without_inflating_bucket_dps() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(0.0, 1, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 0.25,
-            char_id: 1,
-            ability_id: "GA_Test_UltraSkill".to_owned(),
-            duration_seconds: 0.5,
-        });
+        apply_test_pause(&mut state, 0.25, 0.75);
         state.push_hit(test_hit(1.0, 1, "outgoing", 100.0));
 
         let timeline = state.timeline(1.0, true);
@@ -2998,6 +3786,7 @@ mod tests {
             .session_summary(
                 CaptureQualitySource::JsonReplay,
                 DpsTimeBasis::SubtractTimeStop,
+                false,
             )
             .expect("summary should exist");
 
@@ -3039,6 +3828,7 @@ mod tests {
             .session_summary(
                 CaptureQualitySource::JsonReplay,
                 DpsTimeBasis::SubtractTimeStop,
+                false,
             )
             .expect("summary should exist");
         let first_half = summary.abyss.first_half.expect("first half summary");
@@ -3274,15 +4064,147 @@ mod tests {
     }
 
     #[test]
-    fn combat_duration_subtracts_ultra_animation_time_stop() {
+    fn reaction_damage_types_only_include_confirmed_follow_up_damage() {
+        for attack_type in REACTION_DAMAGE_TYPES {
+            assert!(is_reaction_damage_type(attack_type));
+        }
+        for attack_type in ["环合·创生", "普攻", UNBALANCE_ATTACK_TYPE] {
+            assert!(!is_reaction_damage_type(attack_type));
+        }
+    }
+
+    #[test]
+    fn damage_attribution_closes_team_total_and_projects_character_policy() {
+        let mut state = CombatState::default();
+
+        let mut direct = test_hit(1.0, 1, "outgoing", 100.0);
+        direct.attack_type = Some("普攻".to_owned());
+        direct.follow_up_damage = 20.0;
+        direct.follow_up_attack_type = Some("创生花".to_owned());
+        state.push_hit(direct);
+
+        let mut reaction = test_hit(2.0, 1, "outgoing", 25.0);
+        reaction.attack_type = Some("覆纹".to_owned());
+        state.push_hit(reaction);
+
+        let mut shared = test_hit(3.0, 1, "outgoing", 30.0);
+        shared.attack_type = Some(UNBALANCE_ATTACK_TYPE.to_owned());
+        state.push_hit(shared);
+
+        let mut unknown_character = test_hit(4.0, 900_001, "outgoing", 40.0);
+        unknown_character.char_known = false;
+        state.push_hit(unknown_character);
+
+        state.push_hit(test_hit(5.0, 1, "unknown", 50.0));
+
+        let attribution = state.damage_attribution_summary();
+        assert_eq!(attribution.total_damage, 265.0);
+        assert_eq!(attribution.character_direct_damage, 100.0);
+        assert_eq!(attribution.character_reaction_damage, 45.0);
+        assert_eq!(attribution.shared_damage, 30.0);
+        assert_eq!(attribution.unattributed_damage, 90.0);
+        assert_eq!(
+            attribution.character_damage(false)
+                + attribution.shared_damage
+                + attribution.unattributed_damage,
+            attribution.total_damage
+        );
+        assert_eq!(
+            attribution.character_damage(true)
+                + attribution.character_reaction_damage
+                + attribution.shared_damage
+                + attribution.unattributed_damage,
+            attribution.total_damage
+        );
+
+        let row = state.stats.get(&1).expect("known character row");
+        let included = row.for_reaction_damage_policy(false);
+        let separated = row.for_reaction_damage_policy(true);
+        assert_eq!((included.hits, included.damage), (2, 145.0));
+        assert_eq!((separated.hits, separated.damage), (1, 100.0));
+        assert_eq!((included.first_hit, included.last_hit), (1.0, 2.0));
+        assert_eq!((separated.first_hit, separated.last_hit), (1.0, 1.0));
+    }
+
+    #[test]
+    fn session_summary_records_reaction_damage_policy_without_changing_team_total() {
+        let mut state = CombatState::default();
+        let mut direct = test_hit(1.0, 1, "outgoing", 100.0);
+        direct.attack_type = Some("普攻".to_owned());
+        state.push_hit(direct);
+        let mut reaction = test_hit(2.0, 1, "outgoing", 25.0);
+        reaction.attack_type = Some("创生花".to_owned());
+        state.push_hit(reaction);
+
+        let included = state
+            .session_summary(
+                CaptureQualitySource::JsonReplay,
+                DpsTimeBasis::WallClock,
+                false,
+            )
+            .expect("included summary");
+        let separated = state
+            .session_summary(
+                CaptureQualitySource::JsonReplay,
+                DpsTimeBasis::WallClock,
+                true,
+            )
+            .expect("separated summary");
+
+        assert_eq!(included.total_damage, separated.total_damage);
+        assert_eq!(included.total_damage, 125.0);
+        assert_eq!(included.characters[0].damage, 125.0);
+        assert_eq!(separated.characters[0].damage, 100.0);
+        assert!(!included.reaction_damage_separated);
+        assert!(separated.reaction_damage_separated);
+        assert_eq!(included.damage_attribution, separated.damage_attribution);
+    }
+
+    #[test]
+    fn combat_duration_uses_observed_game_pause_boundaries() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 11.0,
-            char_id: 1021,
-            ability_id: "GA_Edgar_UltraSkill".to_owned(),
-            duration_seconds: 3.0,
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 12.25,
+            pause_type_mask: 1 << 2,
         });
+        assert!(state.is_game_paused());
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 15.75,
+            pause_type_mask: 1 << 2,
+        });
+        assert!(!state.is_game_paused());
+        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+
+        assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 6.5).abs() < 1e-9);
+        assert!((state.active_elapsed_between(10.0, 20.0) - 6.5).abs() < 1e-9);
+        assert!((state.dps_with_time_stop(true) - (300.0 / 6.5)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn observed_game_pause_end_advances_the_combat_clock_without_inflating_active_time() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 20.0,
+            pause_type_mask: 1 << 3,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 23.0,
+            pause_type_mask: 1 << 3,
+        });
+
+        assert!((state.duration_with_time_stop(false) - 13.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn combat_duration_subtracts_authoritative_pause_interval() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+        apply_test_pause(&mut state, 11.0, 14.0);
         state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
 
         assert!((state.duration_with_time_stop(true) - 7.0).abs() < 1e-9);
@@ -3290,25 +4212,131 @@ mod tests {
     }
 
     #[test]
+    fn combat_duration_only_subtracts_the_part_after_the_first_hit() {
+        let mut state = CombatState::default();
+        apply_test_pause(&mut state, 10.0, 14.0);
+        state.push_hit(test_hit(13.0, 1021, "outgoing", 100.0));
+        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+
+        assert!((state.duration_with_time_stop(false) - 7.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+
+        let mut completed_before_combat = CombatState::default();
+        apply_test_pause(&mut completed_before_combat, 5.0, 9.0);
+        completed_before_combat.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+        completed_before_combat.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+
+        assert!((completed_before_combat.duration_with_time_stop(true) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn early_support_pause_without_damage_does_not_deduct_precombat_time() {
+        let mut state = CombatState::default();
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(test_hit(13.0, 1021, "outgoing", 100.0));
+        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+
+        assert!((state.duration_with_time_stop(false) - 7.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pause_start_and_end_edges_control_the_clock_immediately() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 12.0,
+            pause_type_mask: 1 << 2,
+        });
+        assert!((state.duration_with_time_stop(false) - 2.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 2.0).abs() < 1e-9);
+
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 16.0,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
+
+        assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
+        assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn abyss_duration_uses_authoritative_pause_state_edges() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 10.0,
+            cycle: Some(6),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(13.7, 1021, "outgoing", 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 15.0,
+            pause_type_mask: 1 << 3,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 20.0,
+            pause_type_mask: 1 << 3,
+        });
+        state.push_hit(test_hit(66.1, 1021, "outgoing", 200.0));
+
+        assert!((state.abyss.first_half.duration_with_time_stop(false) - 52.4).abs() < 1e-9);
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 47.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn settlement_stage_never_becomes_the_duration() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 10.0,
+            cycle: Some(6),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(test_hit(13.7, 1021, "outgoing", 100.0));
+        state.push_hit(test_hit(63.0, 1021, "outgoing", 200.0));
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 66.183,
+            cycle: None,
+            floor: None,
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+
+        assert!((state.abyss.first_half.duration_with_time_stop(false) - 49.3).abs() < 1e-9);
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 49.3).abs() < 1e-9);
+    }
+
+    #[test]
     fn session_summary_time_basis_controls_duration_and_dps() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 11.0,
-            char_id: 1021,
-            ability_id: "GA_Edgar_UltraSkill".to_owned(),
-            duration_seconds: 3.0,
-        });
+        apply_test_pause(&mut state, 11.0, 14.0);
         state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
 
         let adjusted = state
             .session_summary(
                 CaptureQualitySource::Unknown,
                 DpsTimeBasis::SubtractTimeStop,
+                false,
             )
             .expect("adjusted summary should exist");
         let wall_clock = state
-            .session_summary(CaptureQualitySource::Unknown, DpsTimeBasis::WallClock)
+            .session_summary(
+                CaptureQualitySource::Unknown,
+                DpsTimeBasis::WallClock,
+                false,
+            )
             .expect("wall-clock summary should exist");
 
         assert_eq!(adjusted.dps_time_mode, DpsTimeBasis::SubtractTimeStop);
@@ -3320,85 +4348,10 @@ mod tests {
     }
 
     #[test]
-    fn ultra_release_advances_global_and_abyss_clocks_immediately() {
-        let mut state = CombatState::default();
-        state.apply_abyss_event(AbyssEvent::Stage {
-            timestamp: 0.0,
-            cycle: Some(1),
-            floor: Some(12),
-            half: AbyssHalf::First,
-            allow_late_backfill: false,
-        });
-        state.push_hit(test_hit(0.0, 1010, "outgoing", 100.0));
-        let mut last_hit = test_hit(15.0, 1010, "outgoing", 200.0);
-        last_hit.target_hp_before = 1_000.0;
-        last_hit.target_hp_after = 800.0;
-        last_hit.target_max_hp = 1_000.0;
-        last_hit.gameplay_effect_index = Some(42);
-        state.push_hit(last_hit);
-
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 20.0,
-            char_id: 1010,
-            ability_id: "GA_Nanally_UltraSkill".to_owned(),
-            duration_seconds: 5.0,
-        });
-
-        assert_eq!(state.ended_at, Some(20.0));
-        assert_eq!(state.stats.get(&1010).unwrap().last_hit, 20.0);
-        assert!((state.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
-        assert!(
-            (state.character_duration_with_time_stop(state.stats.get(&1010).unwrap(), true) - 20.0)
-                .abs()
-                < 1e-9
-        );
-        assert_eq!(state.abyss.first_half.ended_at, Some(20.0));
-        assert_eq!(
-            state.abyss.first_half.stats.get(&1010).unwrap().last_hit,
-            20.0
-        );
-        assert!((state.abyss.first_half.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
-        assert!(state.abyss.second_half.ended_at.is_none());
-
-        state.apply_damage_correction(HitDamageCorrection {
-            source_timestamp: 15.0,
-            source_char_id: 1010,
-            source_damage: 200.0,
-            source_target_hp_before: 1_000.0,
-            source_target_hp_after: 800.0,
-            source_target_max_hp: 1_000.0,
-            source_gameplay_effect_index: Some(42),
-            damage: 250.0,
-            target_hp_before: 1_050.0,
-            target_hp_after: 800.0,
-            target_hp_percent: 80.0,
-        });
-
-        assert_eq!(state.ended_at, Some(20.0));
-        assert_eq!(state.stats.get(&1010).unwrap().last_hit, 20.0);
-        assert_eq!(state.abyss.first_half.ended_at, Some(20.0));
-        assert_eq!(
-            state.abyss.first_half.stats.get(&1010).unwrap().last_hit,
-            20.0
-        );
-
-        state.push_hit(test_hit(25.0, 1010, "outgoing", 100.0));
-
-        assert!((state.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
-        assert!((state.duration_with_time_stop(false) - 25.0).abs() < 1e-9);
-        assert!((state.abyss.first_half.duration_with_time_stop(true) - 20.0).abs() < 1e-9);
-    }
-
-    #[test]
     fn character_duration_subtracts_time_stop() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(10.0, 1021, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 11.0,
-            char_id: 1021,
-            ability_id: "GA_Edgar_UltraSkill".to_owned(),
-            duration_seconds: 3.0,
-        });
+        apply_test_pause(&mut state, 11.0, 14.0);
         state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
 
         let row = state.stats.get(&1021).unwrap();
@@ -3412,63 +4365,6 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_animation_and_extra_time_stop_are_unioned() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(0.0, 1052, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 1.0,
-            char_id: 1052,
-            ability_id: "GA_Jin_UltraSkill".to_owned(),
-            duration_seconds: 2.0,
-        });
-        state.apply_time_stop_event(TimeStopEvent::ExtraStart {
-            timestamp: 2.0,
-            reason: "Event.Montage.Player.UltraSkill.Jin".to_owned(),
-        });
-        state.apply_time_stop_event(TimeStopEvent::ExtraEnd {
-            timestamp: 5.0,
-            reason: "Event.Montage.Player.UltraSkill.Jin".to_owned(),
-        });
-        state.push_hit(test_hit(10.0, 1052, "outgoing", 100.0));
-
-        assert!((state.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn open_extra_time_stop_is_clipped_to_combat_end() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(0.0, 1052, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::ExtraStart {
-            timestamp: 4.0,
-            reason: "Event.Montage.Player.UltraSkill.Jin".to_owned(),
-        });
-        state.push_hit(test_hit(10.0, 1052, "outgoing", 100.0));
-
-        assert!((state.duration_with_time_stop(true) - 4.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn repeated_extra_time_stop_start_replaces_stale_start() {
-        let mut state = CombatState::default();
-        state.push_hit(test_hit(0.0, 1052, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::ExtraStart {
-            timestamp: 1.0,
-            reason: "Event.Montage.Player.UltraSkill.Jin".to_owned(),
-        });
-        state.apply_time_stop_event(TimeStopEvent::ExtraStart {
-            timestamp: 10.0,
-            reason: "Event.Montage.Player.UltraSkill.Jin".to_owned(),
-        });
-        state.apply_time_stop_event(TimeStopEvent::ExtraEnd {
-            timestamp: 12.0,
-            reason: "Event.Montage.Player.UltraSkill.Jin".to_owned(),
-        });
-        state.push_hit(test_hit(20.0, 1052, "outgoing", 100.0));
-
-        assert!((state.duration_with_time_stop(true) - 18.0).abs() < 1e-9);
-    }
-
-    #[test]
     fn abyss_active_half_duration_subtracts_time_stop() {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
@@ -3479,16 +4375,11 @@ mod tests {
             allow_late_backfill: false,
         });
         state.push_hit(test_hit(1.0, 1010, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 2.0,
-            char_id: 1010,
-            ability_id: "GA_Nanally_UltraSkill".to_owned(),
-            duration_seconds: 2.0,
-        });
+        apply_test_pause(&mut state, 2.0, 4.0);
         state.push_hit(test_hit(6.0, 1010, "outgoing", 100.0));
 
-        assert_eq!(state.abyss.first_half.started_at, Some(0.0));
-        assert!((state.abyss.first_half.duration_with_time_stop(true) - 4.0).abs() < 1e-9);
+        assert_eq!(state.abyss.first_half.started_at, Some(1.0));
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
         let row = state.abyss.first_half.stats.get(&1010).unwrap();
         assert!(
             (state
@@ -3502,7 +4393,7 @@ mod tests {
     }
 
     #[test]
-    fn authoritative_stage_starts_half_clock_before_first_hit() {
+    fn authoritative_stage_assigns_half_without_starting_damage_clock() {
         let mut state = CombatState::default();
         state.apply_abyss_event(AbyssEvent::Stage {
             timestamp: 1.0,
@@ -3540,20 +4431,34 @@ mod tests {
             target_hp_percent: 90.0,
         });
 
-        assert_eq!(state.abyss.first_half.started_at, Some(3.0));
-        assert!((state.abyss.first_half.duration_with_time_stop(true) - 7.0).abs() < 1e-9);
+        assert_eq!(state.abyss.first_half.started_at, Some(4.0));
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn abyss_half_clips_pause_to_the_damage_window() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 1.0,
+            cycle: Some(5),
+            floor: Some(12),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        apply_test_pause(&mut state, 2.0, 6.0);
+        state.push_hit(test_hit(5.0, 1010, "outgoing", 100.0));
+        state.push_hit(test_hit(10.0, 1010, "outgoing", 200.0));
+
+        assert_eq!(state.abyss.first_half.started_at, Some(5.0));
+        assert!((state.abyss.first_half.duration_with_time_stop(false) - 5.0).abs() < 1e-9);
+        assert!((state.abyss.first_half.duration_with_time_stop(true) - 4.0).abs() < 1e-9);
     }
 
     #[test]
     fn late_detected_second_half_backfills_existing_global_hits() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(10.0, 1010, "outgoing", 100.0));
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 11.0,
-            char_id: 1010,
-            ability_id: "GA_Nanally_UltraSkill".to_owned(),
-            duration_seconds: 2.0,
-        });
+        apply_test_pause(&mut state, 11.0, 13.0);
         state.push_hit(test_hit(15.0, 1010, "outgoing", 200.0));
 
         state.apply_abyss_event(AbyssEvent::Stage {
@@ -3573,7 +4478,7 @@ mod tests {
     }
 
     #[test]
-    fn late_backfilled_half_accepts_delayed_ultra_before_stage_timestamp() {
+    fn late_backfilled_half_accepts_delayed_pause_before_stage_timestamp() {
         let mut state = CombatState::default();
         state.push_hit(test_hit(10.0, 1010, "outgoing", 100.0));
         state.push_hit(test_hit(15.0, 1010, "outgoing", 200.0));
@@ -3585,12 +4490,7 @@ mod tests {
             half: AbyssHalf::Second,
             allow_late_backfill: true,
         });
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 11.0,
-            char_id: 1010,
-            ability_id: "GA_Nanally_UltraSkill".to_owned(),
-            duration_seconds: 2.0,
-        });
+        apply_test_pause(&mut state, 11.0, 13.0);
 
         assert!((state.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
         assert!((state.abyss.second_half.duration_with_time_stop(true) - 3.0).abs() < 1e-9);
@@ -3625,40 +4525,6 @@ mod tests {
         assert_eq!(state.abyss.second_half.total_damage, 200.0);
         assert!(state.abyss.second_half.stats.contains_key(&1052));
         assert!(!state.abyss.second_half.stats.contains_key(&1076));
-    }
-
-    #[test]
-    fn delayed_ultra_uses_activation_half_before_first_hit() {
-        let mut state = CombatState::default();
-        state.apply_abyss_event(AbyssEvent::Stage {
-            timestamp: 1.0,
-            cycle: None,
-            floor: Some(12),
-            half: AbyssHalf::First,
-            allow_late_backfill: false,
-        });
-        state.apply_abyss_event(AbyssEvent::Stage {
-            timestamp: 3.0,
-            cycle: None,
-            floor: Some(12),
-            half: AbyssHalf::Second,
-            allow_late_backfill: false,
-        });
-        state.apply_time_stop_event(TimeStopEvent::UltraAnimation {
-            timestamp: 2.0,
-            char_id: 1010,
-            ability_id: "GA_Nanally_UltraSkill".to_owned(),
-            duration_seconds: 2.0,
-        });
-        state.push_hit(test_hit(3.5, 1010, "outgoing", 100.0));
-        state.push_hit(test_hit(3.6, 1052, "outgoing", 200.0));
-
-        assert_eq!(state.abyss.first_half.hits.len(), 1);
-        assert_eq!(state.abyss.first_half.total_damage, 100.0);
-        assert_eq!(state.abyss.first_half.time_stop.intervals.len(), 1);
-        assert_eq!(state.abyss.second_half.hits.len(), 1);
-        assert_eq!(state.abyss.second_half.total_damage, 200.0);
-        assert!(state.abyss.second_half.time_stop.intervals.is_empty());
     }
 
     #[test]
@@ -3763,7 +4629,6 @@ mod tests {
         assert!(state.abyss.second_half.hits.is_empty());
         assert_eq!(state.abyss.first_half.total_damage, 0.0);
         assert_eq!(state.abyss.second_half.total_damage, 0.0);
-        assert_eq!(state.abyss.first_half.stage_started_at, Some(25.0));
         assert_eq!(state.abyss.first_half_at, Some(25.0));
         assert_eq!(state.abyss.success_at, None);
         assert_eq!(state.abyss.pending_restart_at, None);

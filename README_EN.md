@@ -40,7 +40,7 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 
 - **Real-time DPS stats**: live total damage, DPS, hit count, taken-damage, and combat duration.
 - **Per-character analysis**: damage, share, hit count, DPS, taken-damage, skill categories, and filterable hit details per character.
-- **Two timing modes**: "time-stop deducted" and "real time" DPS bases; ultimate animation time-stop uses resource-table durations, and extra time-stops are merged and deducted by parsed intervals.
+- **Two timing modes**: "time-stop deducted" and "real time" DPS bases; time-stop deduction uses only the game's authoritative pause state observed by the native plugin.
 - **Target HP fields preserved**: `target_hp_before`, `target_hp_after`, `target_max_hp`, `target_hp_percent`.
 - **Skill & effect mapping**: parses and shows GameplayEffect mappings, skill categories, `ability_name`, `damage_name`, `attack_type`.
 - **Abyss up/down-line stats**: tracked independently, preserving restart, line-entry, clear, and exit event states, with an abyss monster stat-table viewer.
@@ -87,32 +87,46 @@ cargo test
 cargo run --release --bin nte-dps-tool --features gui
 ```
 
-### Optional native equipment module
+### Optional native NTE Mods Plugin
 
-`native/nte-equipment-plugin` is a standalone Windows x64 submodule in this
-repository. It contains only the runtime core, the stable IPC header, and the
-Visual Studio project, with no vcpkg or client SDK dependency. After installing
+`native/nte-mods-plugin` is a standalone Windows x64 submodule in this
+repository. It contains a single-DLL restricted script loader, the stable IPC
+header, and the Visual Studio project, with no vcpkg or client SDK dependency. After installing
 the Visual Studio 2022 "Desktop development with C++" workload, run this from
 the repository root:
 
 ```powershell
 # Run in "Developer PowerShell for VS 2022"
-msbuild .\native\nte-equipment-plugin\nte-equipment-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
+msbuild .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
 ```
 
-The original output is `native/nte-equipment-plugin/x64/Release/dwmapi.dll`.
+The original output is `native/nte-mods-plugin/x64/Release/dwmapi.dll`.
 After each build it is staged automatically as `plugins/dwmapi.dll`, the single
 runtime location read by the app. See
-[`native/nte-equipment-plugin/README.md`](native/nte-equipment-plugin/README.md)
+[`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)
 for module details.
 
-GUI release archives place `plugins/` beside `nte-dps-tool.exe`. Open
-**Console → Empty Curtain** and enable **Enable in-game equipment plugin** to review the
+GUI release archives place `plugins/` beside `nte-dps-tool.exe`. `dwmapi.dll`
+is the only custom Windows module; `nte-mods/*.nte` use NTE Script v4,
+interpreted directly by that DLL. External programs can use variables,
+persistent state, arithmetic and bit operations, `if/elif/else`, bounded
+`for range`, typed read-only memory, character APIs shared by the inspected
+China/Global SDKs, stable `game.*` session values that hide client offsets, and
+custom IPC events. Live capture routes `pre.*`, `post.*`, and ordinary script
+events through the app's shared event pipeline. The DLL retains the compiler,
+VM, shared hook, boundary validation, and capability whitelist. Open
+**Console → Mod Workshop** and enable **Enable in-game Mod loader** to review the
 third-party-mod risks and loading mechanism. Enable stays locked for five
-seconds, while Cancel and `Esc` close the dialog immediately. After confirmation, the app installs `dwmapi.dll` beside
-`HTGame.exe` in the selected client, where the game loads it on its next launch.
+seconds, while Cancel and `Esc` close the dialog immediately. After confirmation,
+the app installs only `dwmapi.dll` beside `HTGame.exe` in the selected client.
+The enabled set and scripts remain under `plugins/` beside the software. The
+DLL resolves that registered workspace and watches saved source and enable
+changes while the game is running. Edit `nte-mods.enabled` to load only
+`equipment` or `combat-clock`. Leaving only `nte_mod_set 1` removes the
+Viewport hook and closes IPC.
 When both China and Global clients are installed, choose the client to manage
-first. Close the game before changing this option. Turning it off removes the
+first. Close the game before changing the DLL installation state; Mod scripts
+can be enabled or disabled at runtime. Turning it off removes the
 copy installed by this tool from the selected client. If another `dwmapi.dll`
 is already present there, the app preserves it and reports a conflict instead
 of overwriting or deleting another mod.
@@ -123,9 +137,9 @@ of overwriting or deleting another mod.
 
 Official Windows artifacts are:
 
-- `nte-dps-tool-windows-x64.zip`: standard GUI with embedded resources, `plugins/dwmapi.dll`, and the full F12 diagnostics toolset;
+- `nte-dps-tool-windows-x64.zip`: standard GUI with embedded resources, `plugins/dwmapi.dll`, restricted mod scripts, and the full F12 diagnostics toolset;
 - `nte-core-windows-x64.zip`: GUI-free local sidecar for third-party integrations;
-- `nte-dps-tool-windows-external-resources.zip`: full GUI with an external `res/` directory and `plugins/dwmapi.dll`.
+- `nte-dps-tool-windows-external-resources.zip`: full GUI with an external `res/` directory, `plugins/dwmapi.dll`, and restricted mod scripts.
 
 The automated `master` build runs formatting, compilation, tests, Clippy, and the GUI/CLI dependency-boundary check. After all three distribution directories are built, every `.exe` is compressed with `upx -9` from a pinned UPX release and verified with `upx -t` before the ZIP archives are created; the downloaded official UPX archive is also checked against its SHA-256 digest. GitHub Release titles come from the `Cargo.toml` version (for example, `v0.3.0`), while tags retain the build number and short commit SHA so the same version can be rebuilt. The release changelog lists every non-merge commit for the current version since the previous version's build tag, in chronological order, instead of showing only the last push.
 

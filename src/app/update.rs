@@ -6,7 +6,7 @@ use crate::core::update::{
     AvailableComponentUpdate, MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
     verify_manifest,
 };
-use crate::platform::equipment_plugin::EquipmentPluginDeploymentError;
+use crate::platform::mods_plugin::ModsPluginDeploymentError;
 use crate::platform::update_http;
 use crate::storage::update::{
     self as update_storage, ComponentVersionError, InstallPluginUpdateError, PrepareUpdateError,
@@ -137,7 +137,7 @@ impl DpsApp {
                             tf("Version {} is available", &[&app.version.to_string()]);
                     } else if let Some(plugin) = updates.first() {
                         self.notifications.status = tf(
-                            "Equipment plugin version {} is available",
+                            "Mod loader version {} is available",
                             &[&plugin.version.to_string()],
                         );
                     }
@@ -177,8 +177,8 @@ impl DpsApp {
                             "Version {} is ready to install",
                             &[&prepared.version().to_string()],
                         ),
-                        UpdateComponent::EquipmentPlugin => tf(
-                            "Equipment plugin {} is ready to install",
+                        UpdateComponent::ModsPlugin => tf(
+                            "Mod loader {} is ready to install",
                             &[&prepared.version().to_string()],
                         ),
                     };
@@ -193,7 +193,7 @@ impl DpsApp {
                 }
                 UpdateWorkerEvent::PluginInstallFinished(Ok((version, remaining))) => {
                     self.notifications.status =
-                        tf("Equipment plugin {} was installed", &[&version.to_string()]);
+                        tf("Mod loader {} was installed", &[&version.to_string()]);
                     self.update_client.available = remaining;
                     self.update_client.prepared = None;
                     self.update_client.status = if self.update_client.available.is_empty() {
@@ -331,13 +331,13 @@ impl DpsApp {
                     }
                 }
             }
-            UpdateComponent::EquipmentPlugin => {
+            UpdateComponent::ModsPlugin => {
                 let prepared = prepared.clone();
                 let remaining: Vec<_> = self
                     .update_client
                     .available
                     .iter()
-                    .filter(|update| update.component != UpdateComponent::EquipmentPlugin)
+                    .filter(|update| update.component != UpdateComponent::ModsPlugin)
                     .cloned()
                     .collect();
                 let version = prepared.version().clone();
@@ -464,9 +464,9 @@ fn update_download_error_detail(error: &PrepareUpdateError) -> String {
         | PrepareUpdateError::ArchiveTooLarge
         | PrepareUpdateError::MissingApplication
         | PrepareUpdateError::MissingUpdater
-        | PrepareUpdateError::MissingEquipmentPlugin
+        | PrepareUpdateError::MissingModsPlugin
         | PrepareUpdateError::UnexpectedPluginArchiveContents
-        | PrepareUpdateError::InvalidEquipmentPluginSize => {
+        | PrepareUpdateError::InvalidModsPluginSize => {
             t("The official update package has an invalid structure")
         }
         PrepareUpdateError::File(error) => tf(
@@ -489,44 +489,36 @@ fn plugin_update_error_detail(error: &InstallPluginUpdateError) -> String {
         InstallPluginUpdateError::WrongComponent => {
             t("The prepared update component does not match")
         }
-        InstallPluginUpdateError::HashMismatch => {
-            t("The prepared equipment plugin hash does not match")
-        }
+        InstallPluginUpdateError::HashMismatch => t("The prepared Mod loader hash does not match"),
         InstallPluginUpdateError::File(error) => tf(
-            "The equipment plugin update file operation failed (system error {})",
+            "The Mod loader update file operation failed (system error {})",
             &[&system_error_code(error)],
         ),
         InstallPluginUpdateError::State(_) | InstallPluginUpdateError::Rollback(_) => {
-            t("The equipment plugin update could not be completed")
+            t("The Mod loader update could not be completed")
         }
-        InstallPluginUpdateError::Deployment(error) => equipment_plugin_update_error_detail(error),
+        InstallPluginUpdateError::Deployment(error) => mods_plugin_update_error_detail(error),
     }
 }
 
-fn equipment_plugin_update_error_detail(error: &EquipmentPluginDeploymentError) -> String {
+fn mods_plugin_update_error_detail(error: &ModsPluginDeploymentError) -> String {
     match error {
-        EquipmentPluginDeploymentError::GameRunning => {
-            t("Close HTGame.exe before changing the equipment plugin.")
+        ModsPluginDeploymentError::GameRunning => {
+            t("Close HTGame.exe before changing the Mod loader.")
         }
-        EquipmentPluginDeploymentError::GameProcessProbe(_) => {
-            t("Equipment plugin status check failed")
+        ModsPluginDeploymentError::GameProcessProbe(_) => t("Mod loader status check failed"),
+        ModsPluginDeploymentError::GameInstallationNotFound => t("Game installation not detected"),
+        ModsPluginDeploymentError::Registry(_) => t("Game installation not detected"),
+        ModsPluginDeploymentError::PluginSourceNotFound => {
+            t("Mod loader file plugins/dwmapi.dll was not found")
         }
-        EquipmentPluginDeploymentError::GameInstallationNotFound => {
-            t("Game installation not detected")
-        }
-        EquipmentPluginDeploymentError::Registry(_) => t("Game installation not detected"),
-        EquipmentPluginDeploymentError::PluginSourceNotFound => {
-            t("Equipment plugin file plugins/dwmapi.dll was not found")
-        }
-        EquipmentPluginDeploymentError::ConflictingDwmapi => t(
+        ModsPluginDeploymentError::ConflictingDwmapi => t(
             "The game directory already contains a dwmapi.dll that is not managed by this tool. Remove the conflicting mod manually before enabling this plugin.",
         ),
-        EquipmentPluginDeploymentError::InstalledPluginChanged => t(
-            "The installed dwmapi.dll or its ownership marker changed outside this tool. Check the game directory manually before trying again.",
+        ModsPluginDeploymentError::InstalledPluginChanged => t(
+            "The installed dwmapi.dll was replaced outside this tool. Check the game directory manually before trying again.",
         ),
-        EquipmentPluginDeploymentError::FileSystem(_) => {
-            t("The equipment plugin files could not be updated")
-        }
+        ModsPluginDeploymentError::FileSystem(_) => t("The Mod loader files could not be updated"),
     }
 }
 
@@ -570,7 +562,7 @@ mod tests {
             stage: UpdateFailureStage::Install,
             detail: "test failure".to_owned(),
         };
-        state.prepared = Some(PreparedUpdate::EquipmentPlugin {
+        state.prepared = Some(PreparedUpdate::ModsPlugin {
             version: Version::parse("0.3.6").unwrap(),
             transaction_id: "plugin-0.3.6-test".to_owned(),
             staging_dir: PathBuf::from("staging"),

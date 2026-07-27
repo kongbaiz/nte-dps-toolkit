@@ -18,7 +18,8 @@ pub const UPDATE_VARIANT: &str = "standard";
 #[cfg(feature = "external_resources")]
 pub const UPDATE_VARIANT: &str = "external-resources";
 pub const APP_COMPONENT_ID: &str = "app";
-pub const EQUIPMENT_PLUGIN_COMPONENT_ID: &str = "equipment-plugin";
+pub const MODS_PLUGIN_COMPONENT_ID: &str = "mods-plugin";
+const LEGACY_MODS_PLUGIN_COMPONENT_ID: &str = "equipment-plugin";
 pub const UPDATE_HEALTH_MARKER_ENV: &str = "NTE_UPDATE_HEALTH_MARKER";
 pub const MAX_MANIFEST_BYTES: usize = 128 * 1024;
 pub const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
@@ -110,13 +111,13 @@ struct UpdateArtifact {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UpdateComponent {
     App,
-    EquipmentPlugin,
+    ModsPlugin,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstalledComponentVersions {
     pub app: Version,
-    pub equipment_plugin: Option<Version>,
+    pub mods_plugin: Option<Version>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -267,15 +268,15 @@ fn validate_manifest(
     }
     let mut updates = Vec::new();
     let mut seen_app = false;
-    let mut seen_equipment_plugin = false;
+    let mut seen_mods_plugin = false;
     for component in manifest.components {
         if component.platform != UPDATE_PLATFORM || component.variant != UPDATE_VARIANT {
             continue;
         }
         let (kind, seen) = match component.id.as_str() {
             APP_COMPONENT_ID => (UpdateComponent::App, &mut seen_app),
-            EQUIPMENT_PLUGIN_COMPONENT_ID => {
-                (UpdateComponent::EquipmentPlugin, &mut seen_equipment_plugin)
+            MODS_PLUGIN_COMPONENT_ID | LEGACY_MODS_PLUGIN_COMPONENT_ID => {
+                (UpdateComponent::ModsPlugin, &mut seen_mods_plugin)
             }
             _ => continue,
         };
@@ -304,7 +305,7 @@ fn validate_manifest(
         }
         let current = match kind {
             UpdateComponent::App => Some(&installed.app),
-            UpdateComponent::EquipmentPlugin => installed.equipment_plugin.as_ref(),
+            UpdateComponent::ModsPlugin => installed.mods_plugin.as_ref(),
         };
         if current.is_some_and(|current| version <= *current) {
             continue;
@@ -322,7 +323,7 @@ fn validate_manifest(
     }
     updates.sort_by_key(|update| match update.component {
         UpdateComponent::App => 0,
-        UpdateComponent::EquipmentPlugin => 1,
+        UpdateComponent::ModsPlugin => 1,
     });
     Ok(updates)
 }
@@ -479,7 +480,7 @@ mod tests {
             &endpoint,
             &InstalledComponentVersions {
                 app: Version::parse("0.3.5").unwrap(),
-                equipment_plugin: Some(Version::parse("0.3.5").unwrap()),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
             },
         )
         .unwrap();
@@ -496,7 +497,7 @@ mod tests {
             &endpoint,
             &InstalledComponentVersions {
                 app: Version::parse("0.3.5").unwrap(),
-                equipment_plugin: Some(Version::parse("0.3.5").unwrap()),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
             },
         )
         .unwrap();
@@ -511,13 +512,13 @@ mod tests {
             .as_array_mut()
             .expect("components should be an array")
             .push(json!({
-                "id": EQUIPMENT_PLUGIN_COMPONENT_ID,
+                "id": MODS_PLUGIN_COMPONENT_ID,
                 "version": "0.3.6",
                 "platform": "windows-x86_64",
                 "variant": UPDATE_VARIANT,
                 "requires_app": ">=0.3.5,<0.4.0",
                 "artifact": {
-                    "url": "https://updates.example.test/releases/0.3.6/equipment-plugin.zip",
+                    "url": "https://updates.example.test/releases/0.3.6/mods-plugin.zip",
                     "size": 512,
                     "sha256": "22".repeat(32),
                 }
@@ -529,14 +530,48 @@ mod tests {
             &endpoint,
             &InstalledComponentVersions {
                 app: Version::parse("0.3.5").unwrap(),
-                equipment_plugin: Some(Version::parse("0.3.5").unwrap()),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
             },
         )
         .unwrap();
 
         assert_eq!(updates.len(), 1);
-        assert_eq!(updates[0].component, UpdateComponent::EquipmentPlugin);
+        assert_eq!(updates[0].component, UpdateComponent::ModsPlugin);
         assert_eq!(updates[0].version, Version::parse("0.3.6").unwrap());
+    }
+
+    #[test]
+    fn accepts_retired_plugin_component_id_during_channel_migration() {
+        let mut document = payload("0.3.5");
+        document["components"]
+            .as_array_mut()
+            .expect("components should be an array")
+            .push(json!({
+                "id": LEGACY_MODS_PLUGIN_COMPONENT_ID,
+                "version": "0.3.6",
+                "platform": "windows-x86_64",
+                "variant": UPDATE_VARIANT,
+                "requires_app": ">=0.3.5,<0.4.0",
+                "artifact": {
+                    "url": "https://updates.example.test/releases/0.3.6/mods-plugin.zip",
+                    "size": 512,
+                    "sha256": "22".repeat(32),
+                }
+            }));
+        let (bytes, endpoint) = signed_manifest(document);
+
+        let updates = verify_manifest(
+            &bytes,
+            &endpoint,
+            &InstalledComponentVersions {
+                app: Version::parse("0.3.5").unwrap(),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].component, UpdateComponent::ModsPlugin);
     }
 
     #[test]
@@ -546,13 +581,13 @@ mod tests {
             .as_array_mut()
             .expect("components should be an array")
             .push(json!({
-                "id": EQUIPMENT_PLUGIN_COMPONENT_ID,
+                "id": MODS_PLUGIN_COMPONENT_ID,
                 "version": "0.3.6",
                 "platform": "windows-x86_64",
                 "variant": UPDATE_VARIANT,
                 "requires_app": ">=0.4.0",
                 "artifact": {
-                    "url": "https://updates.example.test/releases/0.3.6/equipment-plugin.zip",
+                    "url": "https://updates.example.test/releases/0.3.6/mods-plugin.zip",
                     "size": 512,
                     "sha256": "22".repeat(32),
                 }
@@ -564,7 +599,7 @@ mod tests {
             &endpoint,
             &InstalledComponentVersions {
                 app: Version::parse("0.3.5").unwrap(),
-                equipment_plugin: Some(Version::parse("0.3.5").unwrap()),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
             },
         )
         .unwrap();
@@ -583,7 +618,7 @@ mod tests {
             &endpoint,
             &InstalledComponentVersions {
                 app: Version::parse("0.3.5").unwrap(),
-                equipment_plugin: Some(Version::parse("0.3.5").unwrap()),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
             },
         )
         .unwrap_err();
@@ -603,7 +638,7 @@ mod tests {
             &endpoint,
             &InstalledComponentVersions {
                 app: Version::parse("0.3.5").unwrap(),
-                equipment_plugin: Some(Version::parse("0.3.5").unwrap()),
+                mods_plugin: Some(Version::parse("0.3.5").unwrap()),
             },
         )
         .unwrap_err();

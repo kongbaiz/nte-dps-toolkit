@@ -1,10 +1,7 @@
 use super::*;
 
 pub(crate) fn is_qte_follow_up_damage_type(attack_type: &str) -> bool {
-    matches!(
-        attack_type,
-        "创生花" | "覆纹" | "延滞" | "黯星" | "浊燃" | "浸染" | "盈蓄" | "失谐"
-    )
+    is_reaction_damage_type(attack_type)
 }
 
 pub(crate) fn is_qte_follow_up_damage_hit(hit: &crate::engine::model::Hit) -> bool {
@@ -206,6 +203,64 @@ pub(crate) fn hit_detail_filter_available(
     }
 }
 
+pub(crate) fn draw_damage_attribution_filters(
+    ui: &mut egui::Ui,
+    summary: DamageAttributionSummary,
+    separate_reaction_damage: bool,
+    selected: &mut HitDetailFilter,
+) {
+    if summary.total_damage <= 0.0 {
+        return;
+    }
+    let character_filter = if separate_reaction_damage {
+        HitDetailFilter::CharacterDirect
+    } else {
+        HitDetailFilter::CharacterAttributed
+    };
+    let entries = [
+        (
+            character_filter,
+            if separate_reaction_damage {
+                "Character direct"
+            } else {
+                "Character attributed"
+            },
+            summary.character_damage(separate_reaction_damage),
+        ),
+        (
+            HitDetailFilter::ReactionDamage,
+            "Reaction Damage",
+            summary.character_reaction_damage,
+        ),
+        (
+            HitDetailFilter::SharedMechanics,
+            "Shared mechanics",
+            summary.shared_damage,
+        ),
+        (
+            HitDetailFilter::Unattributed,
+            "Unattributed",
+            summary.unattributed_damage,
+        ),
+    ];
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.add(
+            egui::Label::new(
+                RichText::new(t("Damage attribution"))
+                    .strong()
+                    .color(ui.visuals().weak_text_color()),
+            )
+            .selectable(false),
+        );
+        for (filter, label, damage) in entries {
+            let share = damage / summary.total_damage * 100.0;
+            stable_selectable_value(ui, selected, filter, format!("{} {share:.1}%", t(label)))
+                .on_hover_text(t("Show only matching hits"));
+        }
+    });
+}
+
 #[cfg(test)]
 pub(crate) fn qte_type_filter_label(summary: &QteTypeFilterSummary, total_damage: f64) -> String {
     let share = if total_damage > 0.0 {
@@ -360,17 +415,13 @@ pub(crate) fn build_hit_detail_cache(
     generation: u64,
     key: HitDetailCacheKey,
 ) -> HitDetailCache {
-    let mut filtered_count = 0;
-    let mut rows = Vec::with_capacity(key.limit.min(hits.len()));
+    let mut rows = Vec::with_capacity(hits.len());
     for (index, hit) in hits.iter().enumerate().rev().filter(|(_, hit)| {
         key.char_id.is_none_or(|char_id| hit.char_id == char_id)
             && key.filter.matches(hit)
             && (key.skill_filter.is_empty() || hit_specific_type(hit) == key.skill_filter.as_str())
     }) {
-        filtered_count += 1;
-        if rows.len() < key.limit {
-            rows.push(cached_hit_row(index, hit));
-        }
+        rows.push(cached_hit_row(index, hit));
     }
 
     if key.char_id.is_some() {
@@ -386,7 +437,6 @@ pub(crate) fn build_hit_detail_cache(
         generation,
         source_len: hits.len(),
         rows,
-        filtered_count,
         max_damage,
         dirty_since: None,
         last_scroll_offset: None,

@@ -511,6 +511,18 @@ pub(crate) fn compact_metric_scaled(
     prominent: bool,
     value_scale: f32,
 ) {
+    compact_metric_colored_suffix_scaled(ui, label, value, color, None, prominent, value_scale);
+}
+
+pub(crate) fn compact_metric_colored_suffix_scaled(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: String,
+    color: Color32,
+    colored_suffix: Option<(String, Color32)>,
+    prominent: bool,
+    value_scale: f32,
+) {
     let density_scale = ui_density_scale(ui);
     let id = ui.make_persistent_id(("compact_metric", label));
     let hovered = ui
@@ -546,12 +558,35 @@ pub(crate) fn compact_metric_scaled(
             ui.set_min_height(38.0 * density_scale);
             ui.vertical_centered(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(
-                    RichText::new(value)
-                        .size((if prominent { 17.0 } else { 15.0 }) * density_scale * value_scale)
-                        .strong()
-                        .color(color),
-                );
+                let value_size =
+                    (if prominent { 17.0 } else { 15.0 }) * density_scale * value_scale;
+                if let Some((suffix, suffix_color)) = colored_suffix {
+                    // Keep the changing base and deduction suffix in one widget so egui
+                    // measures their complete width before centering the value row.
+                    let mut job = egui::text::LayoutJob::default();
+                    job.wrap.max_width = f32::INFINITY;
+                    job.append(
+                        &value,
+                        0.0,
+                        egui::text::TextFormat {
+                            font_id: egui::FontId::proportional(value_size),
+                            color,
+                            ..Default::default()
+                        },
+                    );
+                    job.append(
+                        &suffix,
+                        0.0,
+                        egui::text::TextFormat {
+                            font_id: egui::FontId::proportional(value_size),
+                            color: suffix_color,
+                            ..Default::default()
+                        },
+                    );
+                    ui.label(job);
+                } else {
+                    ui.label(RichText::new(value).size(value_size).strong().color(color));
+                }
                 ui.label(
                     RichText::new(label)
                         .size(9.5 * density_scale)
@@ -761,23 +796,6 @@ pub(crate) fn format_short_time(timestamp: f64) -> String {
     DateTime::<Local>::from(std::time::UNIX_EPOCH + Duration::from_secs_f64(timestamp.max(0.0)))
         .format("%H:%M:%S")
         .to_string()
-}
-
-pub(crate) fn show_detail_limit_notice(ui: &mut egui::Ui, filtered_count: usize) {
-    if filtered_count > MAX_DETAIL_HITS {
-        ui.label(
-            RichText::new(tf(
-                "Showing the latest {} of {} matching rows; stats within the full retained range are already counted in the summary above.",
-                &[
-                    &format_number(MAX_DETAIL_HITS as f64),
-                    &format_number(filtered_count as f64),
-                ],
-            ))
-            .size(11.0)
-            .color(ui.visuals().weak_text_color()),
-        );
-        ui.add_space(4.0);
-    }
 }
 
 pub(crate) fn character_color(

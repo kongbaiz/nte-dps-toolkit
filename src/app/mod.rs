@@ -28,25 +28,26 @@ use crate::engine::capture::{
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CaptureQualitySource, CaptureQualitySummary,
     CharacterInfo, CharacterStats, CombatSegment, CombatSessionAbyssHalfSummary,
-    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState, DpsTimeBasis,
-    EngineEvent, HitDirection, HitDirectionSummary, PartyCombatState, SkillBreakdown,
-    SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport,
-    TeamDpsMember, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
+    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState,
+    DamageAttributionSummary, DamageTransformInput, DpsTimeBasis, EngineEvent, HitDirection,
+    HitDirectionSummary, PartyCombatState, SkillBreakdown, SkillBreakdownRow,
+    TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember,
+    TimeStopEvent, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
+    is_reaction_damage_type, is_unbalance_damage_hit, reaction_damage_for_hit,
     summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file,
     load_characters, load_equipment_catalog,
 };
-use crate::platform::equipment_plugin::{
-    EquipmentPluginClient, EquipmentPluginDeploymentError, EquipmentPluginDeploymentStatus,
-    EquipmentPluginGameRegion, EquipmentPluginOperation, EquipmentPluginPlacement,
-    EquipmentPluginSubmitError,
-};
 use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{
     HotkeyEvent, HotkeyHandle, hotkey_binding_matches_egui, hotkey_key_to_egui,
     passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
+};
+use crate::platform::mods_plugin::{
+    ModsPluginClient, ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
+    ModsPluginGameStatus, ModsPluginOperation, ModsPluginPlacement, ModsPluginSubmitError,
 };
 use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
@@ -56,16 +57,22 @@ use crate::platform::window_attributes::{
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
-    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
-    HUD_WIDTH_MIN, HitDetailColumn, HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig,
-    HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
-    ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+    self, AUTO_ROUND_IDLE_SECONDS_MAX, AUTO_ROUND_IDLE_SECONDS_MIN, AccentColor, DpsTimeMode,
+    GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX, HUD_WIDTH_MIN, HitDetailColumn,
+    HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig, HudModule, PassthroughHotkey,
+    TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN, ThemePreset, TimelineDpsViewMode,
+    UiConfig, UiDensity,
 };
-use crate::storage::history::{self, HistoryComparison, HistoryRecord};
+use crate::storage::history::{self, HistoryCombatDetails, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
 use crate::storage::io_util::atomic_write_text;
+use crate::storage::mod_scripts::{
+    MAX_MOD_SOURCE_BYTES, ModScriptBlueprint, ModScriptBlueprintNode, ModScriptDocument,
+    ModScriptError, ModScriptWorkspace, load_mod_script_workspace, new_mod_script_template,
+    save_mod_script, set_mod_enabled, validate_mod_source,
+};
 use crate::storage::paths;
-use crate::storage::resource::{read_equipment_plugin, read_resource_bytes, read_resource_text};
+use crate::storage::resource::{read_mods_plugin, read_resource_bytes, read_resource_text};
 use crate::support::character_editor::{
     CHARACTER_ATTRIBUTES, CharacterEditForm, CharacterEditorState, json_string_field,
 };
@@ -86,6 +93,9 @@ const MAX_UI_EVENTS_WHILE_SCROLLING: usize = 256;
 const UI_EVENT_BUDGET: Duration = Duration::from_millis(4);
 const DETAIL_CACHE_REFRESH_DELAY: Duration = Duration::from_millis(200);
 const MAX_PAUSED_EVENTS: usize = 50_000;
+const TIME_STOP_CHAIN_WINDOW_SECONDS: f64 = 2.0;
+const TIME_STOP_DEDUCTION_VISIBLE_DURATION: Duration = Duration::from_millis(1_800);
+const TIME_STOP_PRESENTATION_REFRESH: Duration = Duration::from_millis(16);
 /// Semantic events are rare relative to raw packet diagnostics. This capacity
 /// absorbs long UI stalls without letting reliable event memory grow without a
 /// bound; a full lane backpressures the parser until the UI catches up.
@@ -93,7 +103,6 @@ const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
 /// Full PacketDebug records contain payload hex/text, so keep their producer
 /// queue small and discard excess records before allocating more queued state.
 const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
-const MAX_DETAIL_HITS: usize = 10_000;
 const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
 const MAIN_TITLE_BAR_HEIGHT: f32 = 40.0;
 const MAIN_CONTROLS_SINGLE_ROW_HEIGHT: f32 = 34.0;
@@ -153,6 +162,7 @@ pub(crate) enum FileDialogPurpose {
     TeamDpsImportAll,
     TeamDpsImportLine { upper: bool },
     TeamDpsExport { json: String },
+    HistoryImport,
     HistoryExport { json: String },
     EmptyCurtainExport { json: String },
     CharacterLoadoutImport,
@@ -214,6 +224,7 @@ pub(crate) enum ConsoleTab {
     Timeline,
     Skills,
     EmptyCurtain,
+    Mods,
     History,
     Characters,
     EncryptedIni,
@@ -247,6 +258,7 @@ impl ConsoleTab {
             ConsoleTab::Timeline,
             ConsoleTab::Skills,
             ConsoleTab::EmptyCurtain,
+            ConsoleTab::Mods,
             ConsoleTab::Characters,
             ConsoleTab::EncryptedIni,
             ConsoleTab::Packets,
@@ -262,6 +274,7 @@ impl ConsoleTab {
             Self::Timeline => "Timeline",
             Self::Skills => "Skills",
             Self::EmptyCurtain => "Console Loadout",
+            Self::Mods => "Mod Studio",
             Self::History => "History",
             Self::Characters => "Character Data",
             Self::EncryptedIni => "Encrypted INI",
@@ -274,8 +287,8 @@ impl ConsoleTab {
     /// Material icon rendered with the dedicated font installed in `chrome.rs`.
     fn icon(self) -> egui_material_icons::MaterialIcon {
         use egui_material_icons::icons::{
-            ICON_AUTO_AWESOME, ICON_BACKPACK, ICON_FOLDER, ICON_HISTORY, ICON_LOCK, ICON_PERSON,
-            ICON_SENSORS, ICON_SETTINGS, ICON_TIMELINE, ICON_TROUBLESHOOT,
+            ICON_AUTO_AWESOME, ICON_BACKPACK, ICON_EXTENSION, ICON_FOLDER, ICON_HISTORY, ICON_LOCK,
+            ICON_PERSON, ICON_SENSORS, ICON_SETTINGS, ICON_TIMELINE, ICON_TROUBLESHOOT,
         };
 
         match self {
@@ -283,6 +296,7 @@ impl ConsoleTab {
             Self::Timeline => ICON_TIMELINE,
             Self::Skills => ICON_AUTO_AWESOME,
             Self::EmptyCurtain => ICON_BACKPACK,
+            Self::Mods => ICON_EXTENSION,
             Self::History => ICON_HISTORY,
             Self::Characters => ICON_PERSON,
             Self::EncryptedIni => ICON_LOCK,
@@ -295,7 +309,7 @@ impl ConsoleTab {
     fn group(self) -> ConsoleGroup {
         match self {
             Self::Settings | Self::History => ConsoleGroup::Common,
-            Self::Timeline | Self::Skills | Self::EmptyCurtain => ConsoleGroup::Review,
+            Self::Timeline | Self::Skills | Self::EmptyCurtain | Self::Mods => ConsoleGroup::Review,
             Self::Characters
             | Self::EncryptedIni
             | Self::Packets
@@ -321,6 +335,11 @@ pub(crate) enum HitDetailFilter {
     All,
     Outgoing,
     Incoming,
+    CharacterAttributed,
+    CharacterDirect,
+    ReactionDamage,
+    SharedMechanics,
+    Unattributed,
     QteType(String),
 }
 
@@ -330,6 +349,24 @@ impl HitDetailFilter {
             Self::All => true,
             Self::Outgoing => !hit.direction.is_incoming(),
             Self::Incoming => hit.direction.is_incoming(),
+            Self::CharacterAttributed => {
+                hit.direction.is_outgoing() && hit.char_known && !is_unbalance_damage_hit(hit)
+            }
+            Self::CharacterDirect => {
+                hit.direction.is_outgoing()
+                    && hit.char_known
+                    && !is_unbalance_damage_hit(hit)
+                    && hit.total_damage() > reaction_damage_for_hit(hit)
+            }
+            Self::ReactionDamage => {
+                hit.direction.is_outgoing() && hit.char_known && reaction_damage_for_hit(hit) > 0.0
+            }
+            Self::SharedMechanics => !hit.direction.is_incoming() && is_unbalance_damage_hit(hit),
+            Self::Unattributed => {
+                !hit.direction.is_incoming()
+                    && !is_unbalance_damage_hit(hit)
+                    && !(hit.direction.is_outgoing() && hit.char_known)
+            }
             Self::QteType(attack_type) => {
                 !hit.direction.is_incoming()
                     && (hit.attack_type.as_deref() == Some(attack_type)
@@ -359,7 +396,6 @@ pub(crate) struct HitDetailCacheKey {
     char_id: Option<u32>,
     filter: HitDetailFilter,
     skill_filter: String,
-    limit: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -382,7 +418,6 @@ pub(crate) struct HitDetailCache {
     generation: u64,
     source_len: usize,
     rows: Vec<CachedHitRow>,
-    filtered_count: usize,
     max_damage: f64,
     dirty_since: Option<Instant>,
     last_scroll_offset: Option<f32>,
@@ -416,6 +451,80 @@ struct TimelineCache {
     key: Option<TimelineCacheKey>,
     /// A long timeline can contain thousands of buckets and nested role rows.
     series: Arc<TimelineSeries>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveTimeStopPresentation {
+    timestamp: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TimeStopDeductionCue {
+    received_at: Instant,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TimeStopPresentation {
+    active: Option<ActiveTimeStopPresentation>,
+    deduction: Option<TimeStopDeductionCue>,
+    total_deducted_seconds: f64,
+    last_pause_end_timestamp: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct TimeStopPresentationFrame {
+    deduction_seconds: Option<f64>,
+    needs_repaint: bool,
+}
+
+impl TimeStopPresentation {
+    fn observe(&mut self, event: &TimeStopEvent, now: Instant) {
+        match event {
+            TimeStopEvent::GamePauseStarted { timestamp, .. } => {
+                if self.active.is_none() {
+                    let continues_chain = self.last_pause_end_timestamp.is_some_and(|ended_at| {
+                        *timestamp >= ended_at
+                            && *timestamp - ended_at <= TIME_STOP_CHAIN_WINDOW_SECONDS
+                    });
+                    if !continues_chain {
+                        self.total_deducted_seconds = 0.0;
+                    }
+                    self.active = Some(ActiveTimeStopPresentation {
+                        timestamp: *timestamp,
+                    });
+                }
+                self.deduction = None;
+            }
+            TimeStopEvent::GamePauseEnded { timestamp, .. } => {
+                let Some(active) = self.active.take() else {
+                    return;
+                };
+                let seconds = *timestamp - active.timestamp;
+                if seconds.is_finite() && seconds > 0.0 {
+                    self.total_deducted_seconds += seconds;
+                    self.last_pause_end_timestamp = Some(*timestamp);
+                    self.deduction = Some(TimeStopDeductionCue { received_at: now });
+                }
+            }
+        }
+    }
+
+    fn frame(self, now: Instant) -> TimeStopPresentationFrame {
+        if self.active.is_some() {
+            return TimeStopPresentationFrame::default();
+        }
+        let Some(deduction) = self.deduction else {
+            return TimeStopPresentationFrame::default();
+        };
+        let elapsed = now.saturating_duration_since(deduction.received_at);
+        if elapsed >= TIME_STOP_DEDUCTION_VISIBLE_DURATION {
+            return TimeStopPresentationFrame::default();
+        }
+        TimeStopPresentationFrame {
+            deduction_seconds: Some(self.total_deducted_seconds),
+            needs_repaint: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -785,6 +894,20 @@ impl HistoryState {
         self.records.iter().find(|record| record.id == selected_id)
     }
 
+    fn insert_record(&mut self, record: HistoryRecord) {
+        let selected_id = self.selected_id.clone();
+        self.records.push(record);
+        self.records.sort_by(|left, right| {
+            right
+                .saved_at
+                .cmp(&left.saved_at)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        self.records.truncate(history::MAX_HISTORY_RECORDS);
+        self.selected_id = selected_id;
+        self.ensure_selection();
+    }
+
     fn compare_records(&self) -> Option<(&HistoryRecord, &HistoryRecord, HistoryComparison)> {
         let left_id = self.compare_left_id.as_deref()?;
         let right_id = self.compare_right_id.as_deref()?;
@@ -918,6 +1041,7 @@ pub(crate) struct HudSummaryValues {
     total_damage: f64,
     team_dps: f64,
     duration: f64,
+    deduction_seconds: Option<f64>,
     damage_taken: f64,
 }
 
@@ -977,6 +1101,8 @@ struct CaptureUiState {
     capture_quality_source: CaptureQualitySource,
     include_incoming: bool,
     server_damage_calibration: bool,
+    auto_round_after_idle: bool,
+    auto_round_idle_seconds: u32,
     dps_time_mode: DpsTimeMode,
     timeline_bucket_seconds: f32,
     timeline_dps_view_mode: TimelineDpsViewMode,
@@ -1000,6 +1126,8 @@ impl CaptureUiState {
             capture_quality_source: CaptureQualitySource::Unknown,
             include_incoming: true,
             server_damage_calibration: config.server_damage_calibration,
+            auto_round_after_idle: config.auto_round_after_idle,
+            auto_round_idle_seconds: config.auto_round_idle_seconds,
             dps_time_mode: config.dps_time_mode,
             timeline_bucket_seconds: config.timeline_bucket_seconds,
             timeline_dps_view_mode: config.timeline_dps_view_mode,
@@ -1109,6 +1237,7 @@ struct UiPreferences {
     console_sidebar_manually_collapsed: bool,
     opacity: f32,
     hit_detail_columns: HitDetailColumnsConfig,
+    separate_reaction_damage: bool,
 }
 
 impl UiPreferences {
@@ -1134,8 +1263,48 @@ impl UiPreferences {
             console_sidebar_manually_collapsed: false,
             opacity: config.opacity,
             hit_detail_columns: config.hit_detail_columns,
+            separate_reaction_damage: config.separate_reaction_damage,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryArchiveCause {
+    AbyssBoundary,
+    Manual,
+    Idle(u32),
+}
+
+impl HistoryArchiveCause {
+    fn starts_new_round(self) -> bool {
+        matches!(self, Self::Manual | Self::Idle(_))
+    }
+}
+
+struct HistoryArchiveJob {
+    details: HistoryCombatDetails,
+    source: CaptureQualitySource,
+    dps_time_mode: DpsTimeBasis,
+    separate_reaction_damage: bool,
+    cause: HistoryArchiveCause,
+}
+
+struct HistoryArchiveResult {
+    cause: HistoryArchiveCause,
+    result: Result<HistoryRecord, String>,
+}
+
+enum HistoryWorkerJob {
+    Archive(HistoryArchiveJob),
+    Import {
+        path: PathBuf,
+        repaint: egui::Context,
+    },
+}
+
+enum HistoryWorkerResult {
+    Archive(HistoryArchiveResult),
+    Import(Result<HistoryRecord, String>),
 }
 
 struct BackgroundTasks {
@@ -1153,6 +1322,10 @@ struct BackgroundTasks {
     game_process_monitor_stop: Sender<()>,
     game_process_monitor_thread: Option<thread::JoinHandle<()>>,
     game_process_monitor_error: Option<String>,
+    history_worker_sender: Option<Sender<HistoryWorkerJob>>,
+    history_worker_receiver: Receiver<HistoryWorkerResult>,
+    history_worker_thread: Option<thread::JoinHandle<()>>,
+    pending_history_import_viewport: Option<egui::ViewportId>,
     pending_file_dialog: Option<PendingFileDialog>,
     pending_capture_export: Option<PendingCaptureExport>,
 }
@@ -1173,6 +1346,43 @@ impl BackgroundTasks {
         let (diagnostics_sender, diagnostics_receiver) = diagnostics;
         let (game_process_monitor_receiver, game_process_monitor_stop, game_process_monitor_thread) =
             game_process_monitor;
+        let (history_worker_sender, history_worker_job_receiver) = unbounded::<HistoryWorkerJob>();
+        let (history_worker_result_sender, history_worker_receiver) =
+            unbounded::<HistoryWorkerResult>();
+        let history_worker_thread = thread::spawn(move || {
+            while let Ok(job) = history_worker_job_receiver.recv() {
+                let (result, repaint) = match job {
+                    HistoryWorkerJob::Archive(job) => {
+                        let cause = job.cause;
+                        let state = job.details.to_combat_state();
+                        let result = state
+                            .session_summary(
+                                job.source,
+                                job.dps_time_mode,
+                                job.separate_reaction_damage,
+                            )
+                            .ok_or_else(|| "Archived combat round has no summary".to_owned())
+                            .and_then(|summary| {
+                                history::save_summary_with_details(summary, job.details)
+                            });
+                        (
+                            HistoryWorkerResult::Archive(HistoryArchiveResult { cause, result }),
+                            None,
+                        )
+                    }
+                    HistoryWorkerJob::Import { path, repaint } => (
+                        HistoryWorkerResult::Import(history::import_record(&path)),
+                        Some(repaint),
+                    ),
+                };
+                if history_worker_result_sender.send(result).is_err() {
+                    break;
+                }
+                if let Some(repaint) = repaint {
+                    repaint.request_repaint();
+                }
+            }
+        });
         Self {
             resource_audit_sender,
             resource_audit_receiver,
@@ -1188,6 +1398,10 @@ impl BackgroundTasks {
             game_process_monitor_stop,
             game_process_monitor_thread: Some(game_process_monitor_thread),
             game_process_monitor_error: None,
+            history_worker_sender: Some(history_worker_sender),
+            history_worker_receiver,
+            history_worker_thread: Some(history_worker_thread),
+            pending_history_import_viewport: None,
             pending_file_dialog: None,
             pending_capture_export: None,
         }
@@ -1204,6 +1418,13 @@ impl BackgroundTasks {
         if let Some(mut pending) = self.pending_capture_export.take()
             && let Some(thread) = pending.thread.take()
         {
+            let _ = thread.join();
+        }
+    }
+
+    fn stop_history_worker(&mut self) {
+        self.history_worker_sender.take();
+        if let Some(thread) = self.history_worker_thread.take() {
             let _ = thread.join();
         }
     }
@@ -1273,9 +1494,13 @@ pub struct DpsApp {
     reaction_textures: HashMap<u8, Vec<egui::TextureHandle>>,
     equipment_catalog: Arc<EquipmentCatalog>,
     equipment_textures: HashMap<String, egui::TextureHandle>,
-    equipment_plugin: EquipmentPluginClient,
+    mods_plugin: ModsPluginClient,
     kongmu_ui: KongmuUiState,
+    mod_editor: ModEditorState,
     state: CombatState,
+    projected_state: Option<Box<CombatState>>,
+    mod_projection_dirty: bool,
+    mod_projection_last_refresh: Option<Instant>,
     combat_active: bool,
     last_combat_timestamp: Option<f64>,
     last_combat_activity: Option<Instant>,
@@ -1286,6 +1511,11 @@ pub struct DpsApp {
     abyss_compact_mode: bool,
     abyss_overview: AbyssOverviewState,
     history: HistoryState,
+    presented_history_id: Option<String>,
+    presented_history_state: Option<Box<CombatState>>,
+    last_auto_archive_hits_generation: u64,
+    round_archive_pending: bool,
+    pending_round_events: VecDeque<EngineEvent>,
     resource_audit: ResourceAuditState,
     hit_detail_filter: HitDetailFilter,
     hit_detail_skill_filter: String,
@@ -1294,6 +1524,7 @@ pub struct DpsApp {
     team_hit_cache: HitDetailCache,
     skill_summary_cache: SkillSummaryCache,
     timeline_cache: TimelineCache,
+    time_stop_presentation: TimeStopPresentation,
     timeline_view: TimelineViewState,
     skill_breakdown_cache: SkillBreakdownCache,
     selected_timeline_char: Option<u32>,
@@ -1352,6 +1583,7 @@ mod island;
 mod kongmu;
 mod lifecycle;
 mod main_view;
+mod mod_editor;
 mod motion;
 mod resources;
 mod theme;
@@ -1368,6 +1600,7 @@ pub(crate) use hit_detail::*;
 pub(crate) use hud::*;
 pub(crate) use island::*;
 pub(crate) use kongmu::*;
+pub(crate) use mod_editor::*;
 pub(crate) use resources::*;
 pub(crate) use theme::*;
 pub(crate) use timeline::*;
@@ -1430,6 +1663,8 @@ impl eframe::App for DpsApp {
         );
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
+        self.refresh_applied_mod_projection(false);
+        self.drain_history_worker_results();
         self.update_combat_visual();
         self.drain_resource_audit();
         self.drain_capture_diagnostics();
@@ -1602,7 +1837,8 @@ impl eframe::App for DpsApp {
                     if self.replay_thread.is_some() {
                         self.import_loading_content(ui);
                     } else {
-                        if self.state.abyss.is_active() {
+                        self.round_history_selector(ui);
+                        if self.presented_state().abyss.is_active() {
                             self.abyss_selector(ui);
                         }
                         self.animated_party_content(ui);
@@ -1711,6 +1947,7 @@ impl Drop for DpsApp {
         self.background_tasks.stop_game_process_monitor();
         self.persist_ui_config_on_shutdown();
         self.stop_engine();
+        self.background_tasks.stop_history_worker();
         self.background_tasks.join_pending_capture_export();
     }
 }
@@ -1718,10 +1955,11 @@ impl Drop for DpsApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailFilter,
-        NotificationState, PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache,
-        SkillDamageSummary, SkillSummaryCache, TimelineCache, UiConfigSavePlan, UiPreferences,
-        WindowState, adjusted_cached_index, aggregate_character_skill_damage,
+        AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailCacheKey,
+        HitDetailFilter, HitDetailSource, NotificationState, PendingCaptureExport,
+        QteTypeFilterSummary, SkillBreakdownCache, SkillDamageSummary, SkillSummaryCache,
+        TimeStopPresentation, TimelineCache, UiConfigSavePlan, UiPreferences, WindowState,
+        adjusted_cached_index, aggregate_character_skill_damage, build_hit_detail_cache,
         build_team_dps_export, cached_hit_row, character_color, compare_cached_team_hits,
         comparison_skill_display_name, damage_digit_key_for_hit, damage_digit_resource_path,
         damage_number_digits_text, fill_missing_character_colors_from_avatars,
@@ -1735,7 +1973,7 @@ mod tests {
     use crate::engine::model::{
         CaptureQualitySource, CharacterInfo, CharacterStats, CombatSessionSkillSummary,
         CombatState, Hit, HitCharacterSource, HitDirection, SkillBreakdown, SkillBreakdownRow,
-        TeamDps, TeamDpsMember, TimelineBucket, TimelineRoleBucket, TimelineSeries,
+        TeamDps, TeamDpsMember, TimeStopEvent, TimelineBucket, TimelineRoleBucket, TimelineSeries,
         UNBALANCE_ATTACK_TYPE,
     };
     use crate::storage::config::{
@@ -1756,8 +1994,74 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn time_stop_presentation_accumulates_only_within_two_seconds() {
+        let started_at = Instant::now();
+        let mut presentation = TimeStopPresentation::default();
+        presentation.observe(
+            &TimeStopEvent::GamePauseStarted {
+                timestamp: 100.0,
+                pause_type_mask: 1 << 2,
+            },
+            started_at,
+        );
+
+        let active = presentation.frame(started_at + Duration::from_millis(500));
+        assert_eq!(active, Default::default());
+
+        let ended_at = started_at + Duration::from_secs(3);
+        presentation.observe(
+            &TimeStopEvent::GamePauseEnded {
+                timestamp: 103.0,
+                pause_type_mask: 1 << 2,
+            },
+            ended_at,
+        );
+        let deduction = presentation.frame(ended_at);
+        assert_eq!(deduction.deduction_seconds, Some(3.0));
+        assert!(deduction.needs_repaint);
+
+        presentation.observe(
+            &TimeStopEvent::GamePauseStarted {
+                timestamp: 105.0,
+                pause_type_mask: 1 << 3,
+            },
+            ended_at + Duration::from_millis(200),
+        );
+        presentation.observe(
+            &TimeStopEvent::GamePauseEnded {
+                timestamp: 107.0,
+                pause_type_mask: 1 << 3,
+            },
+            ended_at + Duration::from_millis(400),
+        );
+        let cumulative = presentation.frame(ended_at + Duration::from_millis(400));
+        assert_eq!(cumulative.deduction_seconds, Some(5.0));
+
+        presentation.observe(
+            &TimeStopEvent::GamePauseStarted {
+                timestamp: 110.0,
+                pause_type_mask: 1 << 4,
+            },
+            ended_at + Duration::from_secs(3),
+        );
+        presentation.observe(
+            &TimeStopEvent::GamePauseEnded {
+                timestamp: 114.0,
+                pause_type_mask: 1 << 4,
+            },
+            ended_at + Duration::from_secs(7),
+        );
+        let new_chain = presentation.frame(ended_at + Duration::from_secs(7));
+        assert_eq!(new_chain.deduction_seconds, Some(4.0));
+
+        let expired = presentation.frame(ended_at + Duration::from_millis(8_800));
+        assert_eq!(expired, Default::default());
+    }
+
+    #[test]
     fn console_always_exposes_capture_diagnostics() {
         let tabs = ConsoleTab::visible_tabs();
+        assert!(tabs.contains(&ConsoleTab::Mods));
         assert!(tabs.contains(&ConsoleTab::Packets));
         assert!(tabs.contains(&ConsoleTab::Resources));
         assert!(tabs.contains(&ConsoleTab::Diagnostics));
@@ -1768,6 +2072,8 @@ mod tests {
         let config = UiConfig {
             manual_capture_device: Some("capture-device".to_owned()),
             server_damage_calibration: false,
+            auto_round_after_idle: true,
+            auto_round_idle_seconds: 45,
             dps_time_mode: DpsTimeMode::RealTime,
             timeline_bucket_seconds: 2.5,
             timeline_dps_view_mode: TimelineDpsViewMode::Characters,
@@ -1781,6 +2087,8 @@ mod tests {
             Some("capture-device")
         );
         assert!(!state.server_damage_calibration);
+        assert!(state.auto_round_after_idle);
+        assert_eq!(state.auto_round_idle_seconds, 45);
         assert_eq!(state.dps_time_mode, DpsTimeMode::RealTime);
         assert_eq!(state.timeline_bucket_seconds, 2.5);
         assert_eq!(
@@ -1968,6 +2276,9 @@ mod tests {
         assert!(tasks.awaiting_device_detection);
         assert!(tasks.game_process_monitor_thread.is_some());
         assert!(tasks.game_process_monitor_error.is_none());
+        assert!(tasks.history_worker_sender.is_some());
+        assert!(tasks.history_worker_thread.is_some());
+        assert!(tasks.pending_history_import_viewport.is_none());
         assert!(tasks.pending_file_dialog.is_none());
         assert!(tasks.pending_capture_export.is_none());
 
@@ -1978,9 +2289,12 @@ mod tests {
             thread: Some(std::thread::spawn(|| {})),
         });
         tasks.stop_game_process_monitor();
+        tasks.stop_history_worker();
         tasks.join_pending_capture_export();
 
         assert!(tasks.game_process_monitor_thread.is_none());
+        assert!(tasks.history_worker_sender.is_none());
+        assert!(tasks.history_worker_thread.is_none());
         assert!(tasks.pending_capture_export.is_none());
     }
 
@@ -2128,6 +2442,28 @@ mod tests {
         let resolved = resolve_cached_hit(&hits, &row, 1, 1)
             .expect("same-index hit should resolve after in-place follow-up update");
         assert_eq!(resolved.follow_up_damage, 921.0);
+    }
+
+    #[test]
+    fn hit_detail_cache_keeps_more_than_ten_thousand_matching_rows() {
+        let hits = (0..10_001)
+            .map(|index| {
+                let mut hit = hit_with_direction("outgoing");
+                hit.timestamp = index as f64;
+                hit.byte_offset = index;
+                hit
+            })
+            .collect::<VecDeque<_>>();
+        let key = HitDetailCacheKey {
+            source: HitDetailSource::Global,
+            char_id: None,
+            filter: HitDetailFilter::All,
+            skill_filter: String::new(),
+        };
+
+        let cache = build_hit_detail_cache(&hits, 1, key);
+
+        assert_eq!(cache.rows.len(), 10_001);
     }
 
     #[test]
@@ -2467,6 +2803,48 @@ mod tests {
     }
 
     #[test]
+    fn damage_attribution_filters_locate_their_matching_hit_records() {
+        let mut direct = hit_with_direction("outgoing");
+        direct.attack_type = Some("普攻".to_owned());
+        direct.damage = 100.0;
+
+        let mut reaction = hit_with_direction("outgoing");
+        reaction.attack_type = Some("覆纹".to_owned());
+        reaction.damage = 25.0;
+
+        let mut mixed = hit_with_direction("outgoing");
+        mixed.attack_type = Some("普攻".to_owned());
+        mixed.damage = 100.0;
+        mixed.follow_up_damage = 20.0;
+        mixed.follow_up_attack_type = Some("创生花".to_owned());
+
+        let mut shared = hit_with_direction("outgoing");
+        shared.attack_type = Some(UNBALANCE_ATTACK_TYPE.to_owned());
+
+        let mut unknown_character = hit_with_direction("outgoing");
+        unknown_character.char_known = false;
+
+        let unknown_direction = hit_with_direction("unknown");
+
+        assert!(HitDetailFilter::CharacterAttributed.matches(&direct));
+        assert!(HitDetailFilter::CharacterDirect.matches(&direct));
+        assert!(!HitDetailFilter::ReactionDamage.matches(&direct));
+
+        assert!(HitDetailFilter::CharacterAttributed.matches(&reaction));
+        assert!(!HitDetailFilter::CharacterDirect.matches(&reaction));
+        assert!(HitDetailFilter::ReactionDamage.matches(&reaction));
+
+        assert!(HitDetailFilter::CharacterDirect.matches(&mixed));
+        assert!(HitDetailFilter::ReactionDamage.matches(&mixed));
+
+        assert!(HitDetailFilter::SharedMechanics.matches(&shared));
+        assert!(!HitDetailFilter::CharacterAttributed.matches(&shared));
+
+        assert!(HitDetailFilter::Unattributed.matches(&unknown_character));
+        assert!(HitDetailFilter::Unattributed.matches(&unknown_direction));
+    }
+
+    #[test]
     fn qte_type_filter_label_shows_damage_and_share() {
         let summary = QteTypeFilterSummary {
             attack_type: "覆纹".to_owned(),
@@ -2720,7 +3098,7 @@ mod tests {
             ..AbyssOverviewState::default()
         };
 
-        let export = build_team_dps_export(&state, &overview, true).unwrap();
+        let export = build_team_dps_export(&state, &overview, true, false).unwrap();
 
         assert!(export.single.is_none());
         assert_eq!(export.upper.unwrap().members[0].id, 10);

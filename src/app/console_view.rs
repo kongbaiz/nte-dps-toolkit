@@ -137,6 +137,7 @@ impl DpsApp {
                     ConsoleTab::Timeline => self.timeline_contents(ui),
                     ConsoleTab::Skills => self.skills_contents(ui),
                     ConsoleTab::EmptyCurtain => self.empty_curtain_contents(ui),
+                    ConsoleTab::Mods => self.mod_editor_contents(ui),
                     ConsoleTab::History => self.history_contents(ui),
                     ConsoleTab::Characters => self.debug_characters_contents(ui),
                     ConsoleTab::EncryptedIni => self.debug_encrypted_ini_contents(ui),
@@ -673,8 +674,20 @@ impl DpsApp {
             {
                 self.save_current_history_summary(ui.ctx());
             }
+            if ui
+                .add_enabled(
+                    self.background_tasks
+                        .pending_history_import_viewport
+                        .is_none(),
+                    egui::Button::new(t("Import record JSON")),
+                )
+                .on_hover_text(t("Import a previously exported history record"))
+                .clicked()
+            {
+                self.request_history_record_import(ui.ctx());
+            }
             if ui.button(t("Reload")).clicked() {
-                self.history.reload();
+                self.reload_history_records();
                 self.history.message = t("History list refreshed");
             }
             ui.label(
@@ -901,6 +914,82 @@ impl DpsApp {
         });
     }
 
+    fn request_history_record_import(&mut self, ctx: &egui::Context) {
+        let filter = t("NTE history summary");
+        self.spawn_file_dialog(ctx, FileDialogPurpose::HistoryImport, move |owner| {
+            with_owner(rfd::FileDialog::new().add_filter(filter, &["json"]), owner).pick_file()
+        });
+    }
+
+    pub(crate) fn start_history_record_import(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
+        path: PathBuf,
+    ) {
+        if self
+            .background_tasks
+            .pending_history_import_viewport
+            .is_some()
+        {
+            self.set_last_error_for(
+                viewport,
+                t("History summary import is already running"),
+                None,
+            );
+            return;
+        }
+        let job = HistoryWorkerJob::Import {
+            path,
+            repaint: ctx.clone(),
+        };
+        if self
+            .background_tasks
+            .history_worker_sender
+            .as_ref()
+            .expect("history worker lives for the app lifetime")
+            .send(job)
+            .is_err()
+        {
+            self.set_last_error_for(
+                viewport,
+                t("History summary import task stopped unexpectedly"),
+                None,
+            );
+            return;
+        }
+        self.background_tasks.pending_history_import_viewport = Some(viewport);
+        self.notifications.status = t("Importing history summary...");
+        self.clear_last_error();
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    pub(crate) fn finish_history_record_import(
+        &mut self,
+        viewport: egui::ViewportId,
+        result: Result<HistoryRecord, String>,
+    ) {
+        match result {
+            Ok(record) => {
+                let record_id = record.id.clone();
+                let has_details = record.details.is_some();
+                self.history.selected_id = Some(record_id.clone());
+                self.reload_history_records();
+                if has_details {
+                    self.select_presented_round(Some(record_id));
+                }
+                self.history.message = t("History summary imported");
+                self.notifications.status = t("History summary imported");
+                self.clear_last_error();
+            }
+            Err(error) => self.set_last_error_for(
+                viewport,
+                tf("Failed to import history summary: {}", &[&error]),
+                None,
+            ),
+        }
+    }
+
     fn export_history_record(&mut self, ctx: &egui::Context, record_id: &str) {
         let Some(record) = self
             .history
@@ -1034,6 +1123,15 @@ impl DpsApp {
                 }
             });
         });
+        ui.label(
+            RichText::new(t(if record.summary.reaction_damage_separated {
+                "Reactions separated from character damage"
+            } else {
+                "Reactions included in character damage"
+            }))
+            .small()
+            .color(ui.visuals().weak_text_color()),
+        );
         ui.add_space(6.0);
         ui.columns(4, |columns| {
             let damage_color = columns[1].visuals().text_color();
@@ -1169,6 +1267,14 @@ impl DpsApp {
             ui.label(
                 RichText::new(t(
                     "The two records use different DPS time bases; compare with care",
+                ))
+                .color(semantic_warning(self.preferences.dark_mode)),
+            );
+        }
+        if left.summary.reaction_damage_separated != right.summary.reaction_damage_separated {
+            ui.label(
+                RichText::new(t(
+                    "The two records use different reaction damage accounting; compare with care",
                 ))
                 .color(semantic_warning(self.preferences.dark_mode)),
             );
@@ -1796,6 +1902,39 @@ impl DpsApp {
                             "Takes effect after re-capturing or re-importing; only overrides damage when a server HP sync can be unambiguously paired to a single hit",
                         ));
                         ui.end_row();
+                        ui.label(t("Character Damage"));
+                        ui.checkbox(
+                            &mut self.preferences.separate_reaction_damage,
+                            t("Separate reaction damage from character damage"),
+                        )
+                        .on_hover_text(t(
+                            "When enabled, confirmed reaction damage is shown separately instead of being added to the attributed character; team total damage is unchanged.",
+                        ));
+                        ui.end_row();
+                        ui.label(t("Combat Rounds"));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.checkbox(
+                                &mut self.capture_ui.auto_round_after_idle,
+                                t("Auto start a new round after idle"),
+                            );
+                            if self.capture_ui.auto_round_after_idle {
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut self.capture_ui.auto_round_idle_seconds,
+                                    )
+                                    .range(
+                                        AUTO_ROUND_IDLE_SECONDS_MIN
+                                            ..=AUTO_ROUND_IDLE_SECONDS_MAX,
+                                    )
+                                    .suffix(" s"),
+                                );
+                            }
+                        })
+                        .response
+                        .on_hover_text(t(
+                            "Outside abyss, archive the current round and clear live combat stats after the configured idle time",
+                        ));
+                        ui.end_row();
                         ui.label(t("DPS Time"));
                         let mut dps_time_mode = self.capture_ui.dps_time_mode;
                         egui::ComboBox::from_id_salt("dps_time_mode")
@@ -1898,8 +2037,8 @@ impl DpsApp {
                             UpdateComponent::App => {
                                 tf("Version {} is available", &[&update.version.to_string()])
                             }
-                            UpdateComponent::EquipmentPlugin => tf(
-                                "Equipment plugin version {} is available",
+                            UpdateComponent::ModsPlugin => tf(
+                                "Mod loader version {} is available",
                                 &[&update.version.to_string()],
                             ),
                         };
@@ -1918,9 +2057,7 @@ impl DpsApp {
                     };
                     let text = match component {
                         UpdateComponent::App => t("Downloading verified update..."),
-                        UpdateComponent::EquipmentPlugin => {
-                            t("Downloading verified equipment plugin...")
-                        }
+                        UpdateComponent::ModsPlugin => t("Downloading verified Mod loader..."),
                     };
                     ui.add(
                         egui::ProgressBar::new(progress)
@@ -1931,7 +2068,7 @@ impl DpsApp {
                 UpdateStatus::InstallingPlugin => {
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new().size(16.0));
-                        ui.label(t("Installing equipment plugin update..."));
+                        ui.label(t("Installing Mod loader update..."));
                     });
                 }
                 UpdateStatus::Ready => {
@@ -1941,8 +2078,8 @@ impl DpsApp {
                                 "Version {} is ready to install",
                                 &[&prepared.version().to_string()],
                             ),
-                            UpdateComponent::EquipmentPlugin => tf(
-                                "Equipment plugin {} is ready to install",
+                            UpdateComponent::ModsPlugin => tf(
+                                "Mod loader {} is ready to install",
                                 &[&prepared.version().to_string()],
                             ),
                         };
@@ -1997,9 +2134,7 @@ impl DpsApp {
                     for component in components {
                         let label = match component {
                             UpdateComponent::App => t("Download application update"),
-                            UpdateComponent::EquipmentPlugin => {
-                                t("Download equipment plugin update")
-                            }
+                            UpdateComponent::ModsPlugin => t("Download Mod loader update"),
                         };
                         if ui.button(label).clicked() {
                             self.start_component_update_download(ui.ctx(), component);
@@ -2027,16 +2162,16 @@ impl DpsApp {
                             t("Install and restart"),
                             t("Stop capture or replay before installing the update"),
                         ),
-                        UpdateComponent::EquipmentPlugin => {
-                            let deployment_idle = self.equipment_plugin_deployment_idle();
+                        UpdateComponent::ModsPlugin => {
+                            let deployment_idle = self.mods_plugin_deployment_idle();
                             let disabled_text = if deployment_idle {
-                                t("Close HTGame.exe before installing the equipment plugin update")
+                                t("Close HTGame.exe before installing the Mod loader update")
                             } else {
-                                t("Wait for the current equipment plugin operation to finish")
+                                t("Wait for the current Mod loader operation to finish")
                             };
                             (
                                 !self.capture_ui.game_process_detected && deployment_idle,
-                                t("Install equipment plugin update"),
+                                t("Install Mod loader update"),
                                 disabled_text,
                             )
                         }
@@ -3113,7 +3248,7 @@ impl DpsApp {
     pub(crate) fn show_viewport_dialogs(&mut self, ctx: &egui::Context) {
         self.show_confirmation_dialog(ctx);
         self.show_error_window(ctx);
-        self.show_equipment_plugin_risk_dialog(ctx);
+        self.show_mods_plugin_risk_dialog(ctx);
     }
 
     pub(crate) fn show_confirmation_dialog(&mut self, ctx: &egui::Context) {
@@ -3234,7 +3369,7 @@ impl DpsApp {
         if self.engine_task_viewport == Some(from) {
             self.engine_task_viewport = Some(to);
         }
-        self.retarget_equipment_plugin_dialog(from, to);
+        self.retarget_mods_plugin_dialog(from, to);
         self.close_command_palette_for(from);
         for toast in &mut self.notifications.status_toasts {
             if toast.viewport == from {

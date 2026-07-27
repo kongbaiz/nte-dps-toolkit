@@ -4,6 +4,8 @@
 #include <Windows.h>
 
 extern "C" int _fltused = 0;
+extern "C" __declspec(dllexport) const char NteModsPluginSignature[] =
+	"NTE_DPS_TOOL_MODS_PLUGIN_V1";
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved)
 {
@@ -12,11 +14,11 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved)
 		if (!InitializeDwmapiProxy())
 			return FALSE;
 		DisableThreadLibraryCalls(module);
-		nte::equipment::StartPluginRuntime();
+		nte::mods::StartPluginRuntime(module);
 	}
 	else if (reason == DLL_PROCESS_DETACH && reserved == nullptr)
 	{
-		nte::equipment::StopPluginRuntime();
+		nte::mods::StopPluginRuntime();
 		ShutdownDwmapiProxy();
 	}
 

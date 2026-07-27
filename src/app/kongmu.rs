@@ -24,7 +24,7 @@ const EQUIPPED_CHARACTER_AVATAR_SIZE: f32 = 28.0;
 const FILTER_TILE_WIDTH: f32 = 104.0;
 const FILTER_TILE_HEIGHT: f32 = 88.0;
 const FILTER_ICON_SIZE: f32 = 48.0;
-const EQUIPMENT_PLUGIN_RISK_LOCK_DURATION: Duration = Duration::from_secs(5);
+const MODS_PLUGIN_RISK_LOCK_DURATION: Duration = Duration::from_secs(5);
 
 // Modules and cassettes share the same closed set of rarity tiers, ordered from
 // lowest to highest. The parser rejects any other value, so this list is total.
@@ -42,7 +42,7 @@ enum EquipmentEquipSelection {
     Module(PendingModulePlacement),
     Submit {
         character: HtItemNetId,
-        operation: EquipmentPluginOperation,
+        operation: ModsPluginOperation,
     },
 }
 
@@ -61,20 +61,20 @@ struct PendingPluginRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PluginDeploymentAction {
     Inspect,
-    Install(EquipmentPluginGameRegion),
-    Remove(EquipmentPluginGameRegion),
+    Install(ModsPluginGameRegion),
+    Remove(ModsPluginGameRegion),
 }
 
 struct PendingPluginDeployment {
     action: PluginDeploymentAction,
-    receiver: Receiver<Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError>>,
+    receiver: Receiver<Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError>>,
 }
 
 #[derive(Clone, Copy)]
 struct PluginRiskConfirmation {
     opened_at: Instant,
     viewport: egui::ViewportId,
-    region: EquipmentPluginGameRegion,
+    region: ModsPluginGameRegion,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,11 +133,10 @@ pub(crate) struct KongmuUiState {
     filter_cache: EmptyCurtainFilterCache,
     pending_module_placement: Option<PendingModulePlacement>,
     plugin_request: Option<PendingPluginRequest>,
-    plugin_deployment_status:
-        Option<Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError>>,
+    plugin_deployment_status: Option<Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError>>,
     plugin_deployment: Option<PendingPluginDeployment>,
     plugin_risk_confirmation: Option<PluginRiskConfirmation>,
-    selected_plugin_region: Option<EquipmentPluginGameRegion>,
+    selected_plugin_region: Option<ModsPluginGameRegion>,
 }
 
 impl KongmuUiState {
@@ -244,15 +243,7 @@ impl KongmuUiState {
 
 impl DpsApp {
     pub(crate) fn empty_curtain_contents(&mut self, ui: &mut egui::Ui) {
-        self.drain_equipment_plugin_response(ui.ctx());
-        self.drain_plugin_deployment(ui.ctx());
-        if self.kongmu_ui.plugin_deployment_status.is_none()
-            && self.kongmu_ui.plugin_deployment.is_none()
-        {
-            self.start_plugin_deployment(ui.ctx(), PluginDeploymentAction::Inspect);
-        }
-        self.plugin_deployment_controls(ui);
-        ui.add_space(8.0);
+        self.drain_mods_plugin_response(ui.ctx());
         self.kongmu_ui.refresh_filter_cache(
             &self.state.empty_curtain,
             self.state.empty_curtain_generation,
@@ -298,7 +289,7 @@ impl DpsApp {
                 ui.separator();
                 ui.menu_button(t("Character Equipment"), |ui| {
                     if self.kongmu_ui.plugin_request.is_some() {
-                        ui.label(t("Waiting for the equipment plugin..."));
+                        ui.label(t("Waiting for the Mod loader..."));
                         return;
                     }
                     if ui
@@ -381,11 +372,9 @@ impl DpsApp {
                         &self.state.empty_curtain,
                         &self.equipment_catalog,
                     ) {
-                        Ok(operation) => self.submit_equipment_plugin_request(
-                            ui.ctx(),
-                            character.net_id,
-                            operation,
-                        ),
+                        Ok(operation) => {
+                            self.submit_mods_plugin_request(ui.ctx(), character.net_id, operation)
+                        }
                         Err(OneKeyPlanError::MissingTemplate) => self.set_last_error_in(
                             ui.ctx(),
                             t("No character equipment template is available"),
@@ -399,10 +388,10 @@ impl DpsApp {
                     }
                 }
                 CharacterEquipmentAction::UnequipAll(character) => {
-                    self.submit_equipment_plugin_request(
+                    self.submit_mods_plugin_request(
                         ui.ctx(),
                         character.net_id,
-                        EquipmentPluginOperation::UnequipAll,
+                        ModsPluginOperation::UnequipAll,
                     );
                 }
             }
@@ -456,7 +445,7 @@ impl DpsApp {
                     EquipmentEquipSelection::Submit {
                         character,
                         operation,
-                    } => self.submit_equipment_plugin_request(ui.ctx(), character, operation),
+                    } => self.submit_mods_plugin_request(ui.ctx(), character, operation),
                 }
             }
         }
@@ -485,26 +474,43 @@ impl DpsApp {
             &self.equipment_catalog,
         ) {
             let operation = if placement.move_from_other_character {
-                EquipmentPluginOperation::MoveModuleToCharacter {
+                ModsPluginOperation::MoveModuleToCharacter {
                     equipment: placement.equipment,
                     row,
                     column,
                 }
             } else {
-                EquipmentPluginOperation::EquipModule {
+                ModsPluginOperation::EquipModule {
                     equipment: placement.equipment,
                     row,
                     column,
                 }
             };
-            self.submit_equipment_plugin_request(ui.ctx(), placement.character.net_id, operation);
+            self.submit_mods_plugin_request(ui.ctx(), placement.character.net_id, operation);
         }
         if self.kongmu_ui.plugin_request.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
     }
 
-    fn plugin_deployment_controls(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn mod_loader_management_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        selected_region: Option<ModsPluginGameRegion>,
+        allow_change: bool,
+    ) -> bool {
+        self.kongmu_ui.selected_plugin_region = selected_region;
+        let deployment_changed = self.drain_plugin_deployment(ui.ctx());
+        if self.kongmu_ui.plugin_deployment_status.is_none()
+            && self.kongmu_ui.plugin_deployment.is_none()
+        {
+            self.start_plugin_deployment(ui.ctx(), PluginDeploymentAction::Inspect);
+        }
+        self.plugin_deployment_controls(ui, allow_change);
+        deployment_changed
+    }
+
+    fn plugin_deployment_controls(&mut self, ui: &mut egui::Ui, allow_change: bool) {
         let theme = self.theme();
         let pending_action = self
             .kongmu_ui
@@ -516,17 +522,7 @@ impl DpsApp {
             .and_then(|result| result.as_ref().ok())
             .map(|status| status.games.as_slice())
             .unwrap_or_default();
-        let mut selected_region = self
-            .kongmu_ui
-            .selected_plugin_region
-            .filter(|selected| games.iter().any(|game| game.region == *selected))
-            .or_else(|| {
-                games
-                    .iter()
-                    .find(|game| game.installed)
-                    .or_else(|| games.first())
-                    .map(|game| game.region)
-            });
+        let selected_region = selected_plugin_region(self.kongmu_ui.selected_plugin_region, games);
         let mut enabled = selected_region.is_some_and(|selected| {
             games
                 .iter()
@@ -537,6 +533,7 @@ impl DpsApp {
             .is_some_and(|status| status.source_available);
         let interactive = pending_action.is_none()
             && !self.update_client.busy()
+            && allow_change
             && selected_region.is_some()
             && (enabled || source_available);
         let status_text =
@@ -548,23 +545,7 @@ impl DpsApp {
                 .on_hover_text(t(
                     "This is a third-party mod loaded by the game process. Read the risk warning before enabling it.",
                 ));
-            ui.label(RichText::new(t("In-game Equipment Plugin")).strong());
-            if let Some(region) = &mut selected_region {
-                ui.add_enabled_ui(pending_action.is_none(), |ui| {
-                    egui::ComboBox::from_id_salt("equipment_plugin_game_region")
-                        .width(132.0)
-                        .selected_text(t(plugin_game_region_label(*region)))
-                        .show_ui(ui, |ui| {
-                            for game in games {
-                                ui.selectable_value(
-                                    region,
-                                    game.region,
-                                    t(plugin_game_region_label(game.region)),
-                                );
-                            }
-                        });
-                });
-            }
+            ui.label(RichText::new(t("In-game Mod Loader")).strong());
             ui.label(RichText::new(status_text).color(theme.fg_muted));
             let response = ui.add_enabled(
                 interactive,
@@ -580,7 +561,7 @@ impl DpsApp {
         match (requested, selected_region) {
             (Some(_), _) if self.capture_ui.game_process_detected => self.set_last_error_in(
                 ui.ctx(),
-                t("Close HTGame.exe before changing the equipment plugin."),
+                t("Close HTGame.exe before changing the Mod loader."),
                 None,
             ),
             (Some(true), Some(region)) => {
@@ -608,23 +589,23 @@ impl DpsApp {
             let plugin = if matches!(action, PluginDeploymentAction::Remove(_)) {
                 Ok(None)
             } else {
-                read_equipment_plugin()
-                    .map_err(|error| EquipmentPluginDeploymentError::FileSystem(error.to_string()))
+                read_mods_plugin()
+                    .map_err(|error| ModsPluginDeploymentError::FileSystem(error.to_string()))
             };
             let result = plugin.and_then(|plugin| match action {
                 PluginDeploymentAction::Inspect => {
-                    crate::platform::equipment_plugin::inspect_plugin_deployment(plugin.as_deref())
+                    crate::platform::mods_plugin::inspect_plugin_deployment(plugin.as_deref())
                 }
                 PluginDeploymentAction::Install(region) => {
-                    crate::platform::equipment_plugin::install_equipment_plugin(
+                    crate::platform::mods_plugin::install_mods_plugin(
                         region,
                         plugin
                             .as_deref()
-                            .ok_or(EquipmentPluginDeploymentError::PluginSourceNotFound)?,
+                            .ok_or(ModsPluginDeploymentError::PluginSourceNotFound)?,
                     )
                 }
                 PluginDeploymentAction::Remove(region) => {
-                    crate::platform::equipment_plugin::remove_equipment_plugin(region)
+                    crate::platform::mods_plugin::remove_mods_plugin(region)
                 }
             });
             let _ = sender.send(result);
@@ -633,22 +614,24 @@ impl DpsApp {
         self.kongmu_ui.plugin_deployment = Some(PendingPluginDeployment { action, receiver });
     }
 
-    pub(crate) fn equipment_plugin_deployment_idle(&self) -> bool {
+    pub(crate) fn mods_plugin_deployment_idle(&self) -> bool {
         self.kongmu_ui.plugin_deployment.is_none()
     }
 
-    fn drain_plugin_deployment(&mut self, ctx: &egui::Context) {
+    fn drain_plugin_deployment(&mut self, ctx: &egui::Context) -> bool {
         let Some(pending) = self.kongmu_ui.plugin_deployment.as_ref() else {
-            return;
+            return false;
         };
         let result = match pending.receiver.try_recv() {
             Ok(result) => result,
-            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Empty) => return false,
             Err(TryRecvError::Disconnected) => {
-                panic!("equipment plugin deployment worker must return a result")
+                panic!("Mod loader deployment worker must return a result")
             }
         };
         let action = pending.action;
+        let deployment_changed =
+            !matches!(action, PluginDeploymentAction::Inspect) && result.is_ok();
         self.kongmu_ui.plugin_deployment = None;
         match result {
             Ok(status) => {
@@ -656,11 +639,11 @@ impl DpsApp {
                 match action {
                     PluginDeploymentAction::Inspect => {}
                     PluginDeploymentAction::Install(_) => {
-                        self.notifications.status = t("Equipment plugin enabled");
+                        self.notifications.status = t("Mod loader installed");
                         self.clear_last_error();
                     }
                     PluginDeploymentAction::Remove(_) => {
-                        self.notifications.status = t("Equipment plugin removed");
+                        self.notifications.status = t("Mod loader removed");
                         self.clear_last_error();
                         self.start_plugin_deployment(ctx, PluginDeploymentAction::Inspect);
                     }
@@ -676,9 +659,10 @@ impl DpsApp {
                 }
             }
         }
+        deployment_changed
     }
 
-    pub(crate) fn show_equipment_plugin_risk_dialog(&mut self, ctx: &egui::Context) {
+    pub(crate) fn show_mods_plugin_risk_dialog(&mut self, ctx: &egui::Context) {
         let Some(confirmation) = self.kongmu_ui.plugin_risk_confirmation else {
             return;
         };
@@ -698,7 +682,7 @@ impl DpsApp {
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
         }
         let theme = self.theme();
-        egui::Modal::new(egui::Id::new("equipment_plugin_risk_confirmation"))
+        egui::Modal::new(egui::Id::new("mods_plugin_risk_confirmation"))
             .backdrop_color(theme.modal_backdrop)
             .frame(
                 egui::Frame::popup(&ctx.global_style())
@@ -719,14 +703,14 @@ impl DpsApp {
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(t(
-                            "This plugin lets the tool equip, move, unequip, lock, discard, and apply one-key equipment plans in the game. Leave it disabled if you do not use these features.",
+                            "This loader runs only the restricted equipment and combat-clock mods listed in nte-mods.enabled. Keep only the mods you use enabled.",
                         ))
                         .strong()
                         .color(theme.success),
                     );
                     for message in [
                         "Enabling this option installs a third-party mod into the game directory.",
-                        "It copies dwmapi.dll beside HTGame.exe. The game loads the proxy at startup, and the proxy exposes a local named pipe used for equipment operations.",
+                        "It installs only dwmapi.dll beside HTGame.exe. The DLL reads restricted Python-style .nte programs from the software plugins directory and watches saved enable or source changes at runtime. With no enabled Mod, it removes its hook and closes IPC.",
                         "Changing the game directory may trigger integrity or anti-cheat checks and may cause client or account risk. Enable it only after accepting these risks.",
                     ] {
                         ui.label(RichText::new(t(message)).color(theme.danger));
@@ -764,7 +748,7 @@ impl DpsApp {
         }
     }
 
-    pub(crate) fn retarget_equipment_plugin_dialog(
+    pub(crate) fn retarget_mods_plugin_dialog(
         &mut self,
         from: egui::ViewportId,
         to: egui::ViewportId,
@@ -776,27 +760,27 @@ impl DpsApp {
         }
     }
 
-    fn submit_equipment_plugin_request(
+    fn submit_mods_plugin_request(
         &mut self,
         ctx: &egui::Context,
         character: HtItemNetId,
-        operation: EquipmentPluginOperation,
+        operation: ModsPluginOperation,
     ) {
-        match self.equipment_plugin.submit(character, operation) {
+        match self.mods_plugin.submit(character, operation) {
             Ok(request_id) => {
                 self.kongmu_ui.plugin_request = Some(PendingPluginRequest { request_id });
                 self.notifications.status = t("Sending equipment request...");
                 self.clear_last_error();
                 ctx.request_repaint_after(Duration::from_millis(50));
             }
-            Err(EquipmentPluginSubmitError::Busy) => {
-                self.set_last_error_in(ctx, t("Equipment plugin is busy; try again shortly"), None)
+            Err(ModsPluginSubmitError::Busy) => {
+                self.set_last_error_in(ctx, t("Mod loader is busy; try again shortly"), None)
             }
         }
     }
 
-    fn drain_equipment_plugin_response(&mut self, ctx: &egui::Context) {
-        let Some(response) = self.equipment_plugin.try_recv() else {
+    fn drain_mods_plugin_response(&mut self, ctx: &egui::Context) {
+        let Some(response) = self.mods_plugin.try_recv() else {
             return;
         };
         if self
@@ -821,16 +805,14 @@ impl DpsApp {
             Ok(status) => self.set_last_error_in(
                 ctx,
                 tf(
-                    "Equipment plugin rejected the request (status {})",
+                    "Mod loader rejected the request (status {})",
                     &[&status.to_string()],
                 ),
                 None,
             ),
-            Err(error) => self.set_last_error_in(
-                ctx,
-                tf("Equipment plugin is unavailable: {}", &[&error]),
-                None,
-            ),
+            Err(error) => {
+                self.set_last_error_in(ctx, tf("Mod loader is unavailable: {}", &[&error]), None)
+            }
         }
     }
 
@@ -940,7 +922,7 @@ impl DpsApp {
             }
         };
         let operation = character_loadout_plugin_operation(&loadout);
-        self.submit_equipment_plugin_request(ctx, loadout.character.net_id, operation);
+        self.submit_mods_plugin_request(ctx, loadout.character.net_id, operation);
     }
 
     pub(crate) fn finish_character_loadout_export(
@@ -1019,14 +1001,14 @@ impl DpsApp {
 
 fn plugin_deployment_status_text(
     pending: Option<PluginDeploymentAction>,
-    status: Option<&Result<EquipmentPluginDeploymentStatus, EquipmentPluginDeploymentError>>,
-    selected_region: Option<EquipmentPluginGameRegion>,
+    status: Option<&Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError>>,
+    selected_region: Option<ModsPluginGameRegion>,
 ) -> String {
     if let Some(action) = pending {
         return match action {
-            PluginDeploymentAction::Inspect => t("Checking equipment plugin status..."),
-            PluginDeploymentAction::Install(_) => t("Installing equipment plugin..."),
-            PluginDeploymentAction::Remove(_) => t("Removing equipment plugin..."),
+            PluginDeploymentAction::Inspect => t("Checking Mod loader status..."),
+            PluginDeploymentAction::Install(_) => t("Installing Mod loader..."),
+            PluginDeploymentAction::Remove(_) => t("Removing Mod loader..."),
         };
     }
     let selected_game = status
@@ -1039,76 +1021,80 @@ fn plugin_deployment_status_text(
         .and_then(|result| result.as_ref().ok())
         .is_some_and(|status| status.source_available);
     match (status, selected_game) {
-        (_, Some(_)) if !source_available => {
-            t("Equipment plugin file plugins/dwmapi.dll was not found")
-        }
-        (_, Some(game)) if !game.installed => t("Equipment plugin is disabled"),
+        (Some(Ok(status)), _) if status.installations == 0 => t("Game installation not detected"),
+        (Some(Ok(_)), None) => t("Game installation not detected"),
+        (_, Some(_)) if !source_available => t("Mod loader file plugins/dwmapi.dll was not found"),
+        (_, Some(game)) if !game.installed => t("Mod loader is not installed"),
         (_, Some(game)) if !game.current => {
-            t("Equipment plugin is enabled, but the installed copy differs from this app version")
+            t("Mod loader is installed, but the installed copy differs from this app version")
         }
-        (_, Some(_)) => t("Equipment plugin is enabled for the selected game client"),
-        (Some(Err(EquipmentPluginDeploymentError::GameInstallationNotFound)), _) => {
+        (_, Some(_)) => t("Mod loader is installed for the selected game client"),
+        (Some(Err(ModsPluginDeploymentError::GameInstallationNotFound)), _) => {
             t("Game installation not detected")
         }
-        (Some(Err(_)), _) => t("Equipment plugin status check failed"),
-        _ => t("Checking equipment plugin status..."),
+        (Some(Err(_)), _) => t("Mod loader status check failed"),
+        _ => t("Checking Mod loader status..."),
     }
 }
 
-fn plugin_game_region_label(region: EquipmentPluginGameRegion) -> &'static str {
-    match region {
-        EquipmentPluginGameRegion::China => "China client",
-        EquipmentPluginGameRegion::Global => "Global client",
-    }
+fn selected_plugin_region(
+    preferred: Option<ModsPluginGameRegion>,
+    games: &[ModsPluginGameStatus],
+) -> Option<ModsPluginGameRegion> {
+    preferred.or_else(|| {
+        games
+            .iter()
+            .find(|game| game.installed)
+            .or_else(|| games.first())
+            .map(|game| game.region)
+    })
 }
 
 fn plugin_risk_confirmation_remaining(opened_at: Instant, now: Instant) -> Duration {
-    EQUIPMENT_PLUGIN_RISK_LOCK_DURATION.saturating_sub(now.saturating_duration_since(opened_at))
+    MODS_PLUGIN_RISK_LOCK_DURATION.saturating_sub(now.saturating_duration_since(opened_at))
 }
 
-fn plugin_deployment_error_text(error: &EquipmentPluginDeploymentError) -> String {
+pub(crate) fn plugin_deployment_error_text(error: &ModsPluginDeploymentError) -> String {
     match error {
-        EquipmentPluginDeploymentError::GameRunning => {
-            t("Close HTGame.exe before changing the equipment plugin.")
+        ModsPluginDeploymentError::GameRunning => {
+            t("Close HTGame.exe before changing the Mod loader.")
         }
-        EquipmentPluginDeploymentError::GameProcessProbe(error) => tf(
+        ModsPluginDeploymentError::GameProcessProbe(error) => tf(
             "Failed to check whether HTGame.exe is running: {}",
             &[error],
         ),
-        EquipmentPluginDeploymentError::GameInstallationNotFound => t(
+        ModsPluginDeploymentError::GameInstallationNotFound => t(
             "No supported game installation was found. Repair or reinstall the official launcher registration, then try again.",
         ),
-        EquipmentPluginDeploymentError::Registry(error) => tf(
+        ModsPluginDeploymentError::Registry(error) => tf(
             "Failed to locate the game installation from the registry: {}",
             &[error],
         ),
-        EquipmentPluginDeploymentError::PluginSourceNotFound => {
-            t("Equipment plugin file plugins/dwmapi.dll was not found")
+        ModsPluginDeploymentError::PluginSourceNotFound => {
+            t("Mod loader file plugins/dwmapi.dll was not found")
         }
-        EquipmentPluginDeploymentError::ConflictingDwmapi => t(
-            "The game directory already contains a dwmapi.dll that is not managed by this tool. Remove the conflicting mod manually before enabling this plugin.",
+        ModsPluginDeploymentError::ConflictingDwmapi => t(
+            "The game directory already contains a dwmapi.dll that is not managed by this tool. Remove the conflicting mod manually before installing the Mod loader.",
         ),
-        EquipmentPluginDeploymentError::InstalledPluginChanged => t(
-            "The installed dwmapi.dll or its ownership marker changed outside this tool. Check the game directory manually before trying again.",
+        ModsPluginDeploymentError::InstalledPluginChanged => t(
+            "The installed dwmapi.dll was replaced outside this tool. Check the game directory manually before trying again.",
         ),
-        EquipmentPluginDeploymentError::FileSystem(error) => {
-            tf("Failed to update the equipment plugin files: {}", &[error])
+        ModsPluginDeploymentError::FileSystem(error) => {
+            tf("Failed to update the Mod loader files: {}", &[error])
         }
     }
 }
 
-fn character_loadout_plugin_operation(
-    loadout: &ValidatedCharacterLoadout,
-) -> EquipmentPluginOperation {
+fn character_loadout_plugin_operation(loadout: &ValidatedCharacterLoadout) -> ModsPluginOperation {
     let mut placements = Vec::with_capacity(loadout.placements.len());
     for placement in &loadout.placements {
-        placements.push(EquipmentPluginPlacement {
+        placements.push(ModsPluginPlacement {
             equipment: placement.equipment,
             row: placement.row,
             column: placement.column,
         });
     }
-    EquipmentPluginOperation::EquipOneKey {
+    ModsPluginOperation::EquipOneKey {
         placements,
         core: loadout.core,
     }
@@ -1480,7 +1466,7 @@ fn equipment_card_context_menu(
 ) {
     response.context_menu(|ui| {
         if request_pending {
-            ui.label(t("Waiting for the equipment plugin..."));
+            ui.label(t("Waiting for the Mod loader..."));
             return;
         }
         let locked = !item.locked;
@@ -1490,7 +1476,7 @@ fn equipment_card_context_menu(
         {
             *selection = Some(EquipmentEquipSelection::Submit {
                 character: HtItemNetId::ZERO,
-                operation: EquipmentPluginOperation::SetItemLocked {
+                operation: ModsPluginOperation::SetItemLocked {
                     equipment: item.id,
                     locked,
                 },
@@ -1509,7 +1495,7 @@ fn equipment_card_context_menu(
         {
             *selection = Some(EquipmentEquipSelection::Submit {
                 character: HtItemNetId::ZERO,
-                operation: EquipmentPluginOperation::SetItemDiscarded {
+                operation: ModsPluginOperation::SetItemDiscarded {
                     equipment: item.id,
                     discarded,
                 },
@@ -1526,11 +1512,9 @@ fn equipment_card_context_menu(
             if ui.button(t("Unequip")).clicked() {
                 let operation = match kind {
                     EquipmentKind::Module => {
-                        EquipmentPluginOperation::UnequipModule { equipment: item.id }
+                        ModsPluginOperation::UnequipModule { equipment: item.id }
                     }
-                    EquipmentKind::Core => {
-                        EquipmentPluginOperation::UnequipCore { equipment: item.id }
-                    }
+                    EquipmentKind::Core => ModsPluginOperation::UnequipCore { equipment: item.id },
                 };
                 *selection = Some(EquipmentEquipSelection::Submit {
                     character,
@@ -1563,7 +1547,7 @@ fn equipment_card_context_menu(
                                 }
                                 EquipmentKind::Core => EquipmentEquipSelection::Submit {
                                     character: target.net_id,
-                                    operation: EquipmentPluginOperation::MoveCoreToCharacter {
+                                    operation: ModsPluginOperation::MoveCoreToCharacter {
                                         equipment: item.id,
                                     },
                                 },
@@ -1599,7 +1583,7 @@ fn equipment_card_context_menu(
                         }
                         EquipmentKind::Core => EquipmentEquipSelection::Submit {
                             character: character.net_id,
-                            operation: EquipmentPluginOperation::EquipCore { equipment: item.id },
+                            operation: ModsPluginOperation::EquipCore { equipment: item.id },
                         },
                     });
                     ui.close();
@@ -1613,7 +1597,7 @@ fn build_one_key_plan(
     character: EmptyCurtainCharacter,
     items: &[EmptyCurtainItem],
     catalog: &EquipmentCatalog,
-) -> Result<EquipmentPluginOperation, OneKeyPlanError> {
+) -> Result<ModsPluginOperation, OneKeyPlanError> {
     let plan = catalog
         .plans
         .get(&character.character_id)
@@ -1652,7 +1636,7 @@ fn build_one_key_plan(
             })
             .ok_or(OneKeyPlanError::MissingEquipment)?;
         selected.insert(item.id);
-        placements.push(EquipmentPluginPlacement {
+        placements.push(ModsPluginPlacement {
             equipment: item.id,
             row: planned.row,
             column: planned.column,
@@ -1687,7 +1671,7 @@ fn build_one_key_plan(
             )
         })
         .ok_or(OneKeyPlanError::MissingEquipment)?;
-    Ok(EquipmentPluginOperation::EquipOneKey {
+    Ok(ModsPluginOperation::EquipOneKey {
         placements,
         core: core.id,
     })
@@ -1715,7 +1699,7 @@ fn show_module_placement_window(
     let mut open = true;
     let mut selected = None;
     egui::Window::new(t("Choose Drive Module Position"))
-        .id(egui::Id::new("equipment_plugin_module_position"))
+        .id(egui::Id::new("mods_plugin_module_position"))
         .collapsible(false)
         .resizable(false)
         .open(&mut open)
@@ -2821,7 +2805,7 @@ mod tests {
     }
 
     #[test]
-    fn equipment_plugin_risk_dialog_unlocks_only_after_five_seconds() {
+    fn mods_plugin_risk_dialog_unlocks_only_after_five_seconds() {
         let opened_at = Instant::now();
 
         assert_eq!(
@@ -2831,6 +2815,31 @@ mod tests {
         assert_eq!(
             plugin_risk_confirmation_remaining(opened_at, opened_at + Duration::from_secs(5)),
             Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn mod_loader_keeps_the_editor_region_without_a_game_installation() {
+        assert_eq!(
+            selected_plugin_region(Some(ModsPluginGameRegion::China), &[]),
+            Some(ModsPluginGameRegion::China)
+        );
+        let china = ModsPluginGameStatus {
+            region: ModsPluginGameRegion::China,
+            installed: true,
+            current: true,
+        };
+        assert_eq!(
+            selected_plugin_region(Some(ModsPluginGameRegion::Global), &[china]),
+            Some(ModsPluginGameRegion::Global)
+        );
+        let status = Ok(ModsPluginDeploymentStatus {
+            source_available: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            plugin_deployment_status_text(None, Some(&status), Some(ModsPluginGameRegion::China)),
+            t("Game installation not detected")
         );
     }
 
@@ -2893,7 +2902,7 @@ mod tests {
 
         let operation = build_one_key_plan(character, &items, &catalog)
             .expect("complete inventory must produce a one-key plan");
-        let EquipmentPluginOperation::EquipOneKey { placements, core } = operation else {
+        let ModsPluginOperation::EquipOneKey { placements, core } = operation else {
             panic!("one-key planning must use the native batch operation")
         };
         assert_eq!(placements.len(), plan.recommended_modules.len());
@@ -2936,14 +2945,14 @@ mod tests {
 
         assert_eq!(
             operation,
-            EquipmentPluginOperation::EquipOneKey {
+            ModsPluginOperation::EquipOneKey {
                 placements: vec![
-                    EquipmentPluginPlacement {
+                    ModsPluginPlacement {
                         equipment: first,
                         row: 1,
                         column: 2,
                     },
-                    EquipmentPluginPlacement {
+                    ModsPluginPlacement {
                         equipment: second,
                         row: 4,
                         column: 5,

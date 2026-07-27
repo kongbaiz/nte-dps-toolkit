@@ -87,7 +87,7 @@ jobs:
             }
           }
 
-      - name: Build native equipment plugin
+      - name: Build native NTE Mods Plugin
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -102,7 +102,7 @@ jobs:
 
           $msbuild = Join-Path $installation "MSBuild\Current\Bin\MSBuild.exe"
           & $msbuild `
-            native/nte-equipment-plugin/nte-equipment-plugin.sln `
+            native/nte-mods-plugin/nte-mods-plugin.sln `
             /t:Clean,Build `
             /p:Configuration=Release `
             /p:Platform=x64 `
@@ -112,6 +112,38 @@ jobs:
           }
           if (-not (Test-Path -LiteralPath plugins/dwmapi.dll -PathType Leaf)) {
             throw "Native build did not stage plugins/dwmapi.dll"
+          }
+          $pluginText = [Text.Encoding]::ASCII.GetString(
+            [IO.File]::ReadAllBytes("plugins/dwmapi.dll")
+          )
+          foreach ($requiredApi in @(
+            "NTE_DPS_TOOL_MODS_PLUGIN_V1",
+            "game.session",
+            "game.player_controller",
+            "game.player_state",
+            "combat_clock.pause_mask",
+            "combat_clock.state_flags"
+          )) {
+            if (-not $pluginText.Contains($requiredApi)) {
+              throw "NTE Mods Plugin is missing the bundled-script API: $requiredApi"
+            }
+          }
+          foreach ($script in @(
+            "plugins/nte-mods.enabled",
+            "plugins/nte-mods/equipment.nte",
+            "plugins/nte-mods/combat-clock.nte"
+          )) {
+            if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+              throw "NTE Mods Plugin script is missing: $script"
+            }
+          }
+          foreach ($program in @(
+            "plugins/nte-mods/equipment.nte",
+            "plugins/nte-mods/combat-clock.nte"
+          )) {
+            if (-not (Get-Content -LiteralPath $program -Raw).StartsWith("nte_mod(4)")) {
+              throw "NTE Mods Plugin program is not Python-style DSL v4: $program"
+            }
           }
 
       - name: Check formatting
@@ -217,7 +249,7 @@ jobs:
           - Standard GUI release with F12, Packets, Resources, and Diagnostics available.
           - Runtime resources are embedded in the executable.
           - Includes nte-updater.exe for official-channel updates.
-          - The optional in-game equipment plugin is loaded from plugins/dwmapi.dll and is installed only after the timed risk confirmation.
+          - The optional in-game mod loader uses plugins/dwmapi.dll plus bounded Python-style programs under plugins/nte-mods and is installed only after the timed risk confirmation.
           - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
@@ -235,7 +267,7 @@ jobs:
           - Standard GUI release with F12 and all diagnostics available.
           - Runtime resources are not embedded in the executable.
           - Includes nte-updater.exe for official-channel updates.
-          - The optional in-game equipment plugin is loaded from plugins/dwmapi.dll and is installed only after the timed risk confirmation.
+          - The optional in-game mod loader uses plugins/dwmapi.dll plus bounded Python-style programs under plugins/nte-mods and is installed only after the timed risk confirmation.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
@@ -304,9 +336,9 @@ jobs:
             $commitLines
             ""
             "构建产物："
-            "- nte-dps-tool-windows-x64.zip：完整 GUI，资源内嵌，包含 plugins/dwmapi.dll、F12 与诊断工具。"
+            "- nte-dps-tool-windows-x64.zip：完整 GUI，资源内嵌，包含 plugins/dwmapi.dll、Python 风格受限 Mod 程序、F12 与诊断工具。"
             "- nte-core-windows-x64.zip：本地 stdio Sidecar，供第三方本机工具集成。"
-            "- nte-dps-tool-windows-external-resources.zip：完整 GUI，资源外置，包含 plugins/dwmapi.dll，需保持 res、plugins 目录与 exe 同级。"
+            "- nte-dps-tool-windows-external-resources.zip：完整 GUI，资源外置，包含 plugins/dwmapi.dll 与 Python 风格受限 Mod 程序，需保持 res、plugins 目录与 exe 同级。"
           ) -join "`n"
           gh release create $releaseTag `
             nte-dps-tool-windows-x64.zip `

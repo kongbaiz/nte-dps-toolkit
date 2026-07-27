@@ -167,6 +167,9 @@ pub(crate) fn humanize_engine_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
     const PCAPNG_PREFIX: &str = "pcapng import failed:";
     const JSON_PREFIX: &str = "json import failed:";
+    if lower == "capture parser thread stopped unexpectedly" {
+        return t("Capture parser stopped unexpectedly");
+    }
     if lower.starts_with(PCAPNG_PREFIX) {
         let reason = error[PCAPNG_PREFIX.len()..].trim();
         return tf("PCAPNG import failed: {}", &[reason.trim()]);
@@ -182,6 +185,17 @@ pub(crate) fn humanize_engine_error(error: &str) -> String {
         return tf("Capture JSON import failed: {}", &[reason.trim()]);
     }
     error.to_owned()
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn capture_parser_failure_uses_a_localized_display_key() {
+        let raw = "capture parser thread stopped unexpectedly";
+        assert_ne!(humanize_engine_error(raw), raw);
+    }
 }
 
 /// System CJK fonts tried in order. The whole UI is Chinese, so without a CJK face every label
