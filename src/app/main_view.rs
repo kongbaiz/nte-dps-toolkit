@@ -396,6 +396,7 @@ impl DpsApp {
                     |ui| {
                         self.capture_lifecycle_button(ui);
                         self.reset_session_button(ui);
+                        self.new_round_button(ui);
                         self.processing_button(ui);
                         self.console_button(ui);
                     },
@@ -418,6 +419,7 @@ impl DpsApp {
                     |ui| {
                         self.capture_lifecycle_button(ui);
                         self.reset_session_button(ui);
+                        self.new_round_button(ui);
                         self.processing_button(ui);
                         self.console_button(ui);
                     },
@@ -448,6 +450,7 @@ impl DpsApp {
     fn lifecycle_buttons(&mut self, ui: &mut egui::Ui) {
         self.capture_lifecycle_button(ui);
         self.reset_session_button(ui);
+        self.new_round_button(ui);
         self.processing_button(ui);
         self.context_buttons(ui);
         self.console_button(ui);
@@ -480,6 +483,7 @@ impl DpsApp {
                 t("Stop")
             },
             t("Reset"),
+            t("New Round"),
             if self.capture_ui.paused {
                 t("Resume")
             } else {
@@ -573,6 +577,25 @@ impl DpsApp {
             .clicked()
         {
             self.request_reset_combat_session(ui.ctx());
+        }
+    }
+
+    fn new_round_button(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .add_enabled(
+                self.capture.is_some()
+                    && !self.capture_ui.paused
+                    && !self.state.abyss.is_active()
+                    && !self.state.is_game_paused()
+                    && !self.state.hits.is_empty(),
+                egui::Button::new(t("New Round")),
+            )
+            .on_hover_text(t(
+                "Archive current combat and start a new round without stopping capture",
+            ))
+            .clicked()
+        {
+            self.start_new_combat_round();
         }
     }
 

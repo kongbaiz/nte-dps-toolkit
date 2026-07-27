@@ -415,17 +415,13 @@ pub(crate) fn build_hit_detail_cache(
     generation: u64,
     key: HitDetailCacheKey,
 ) -> HitDetailCache {
-    let mut filtered_count = 0;
-    let mut rows = Vec::with_capacity(key.limit.min(hits.len()));
+    let mut rows = Vec::with_capacity(hits.len());
     for (index, hit) in hits.iter().enumerate().rev().filter(|(_, hit)| {
         key.char_id.is_none_or(|char_id| hit.char_id == char_id)
             && key.filter.matches(hit)
             && (key.skill_filter.is_empty() || hit_specific_type(hit) == key.skill_filter.as_str())
     }) {
-        filtered_count += 1;
-        if rows.len() < key.limit {
-            rows.push(cached_hit_row(index, hit));
-        }
+        rows.push(cached_hit_row(index, hit));
     }
 
     if key.char_id.is_some() {
@@ -441,7 +437,6 @@ pub(crate) fn build_hit_detail_cache(
         generation,
         source_len: hits.len(),
         rows,
-        filtered_count,
         max_damage,
         dirty_since: None,
         last_scroll_offset: None,

@@ -62,7 +62,6 @@ impl DpsApp {
             char_id: Some(char_id),
             filter,
             skill_filter: skill_filter.to_owned(),
-            limit: MAX_DETAIL_HITS,
         };
         let structural_change = self.character_hit_cache.key.as_ref() != Some(&key);
         let generation_changed = self.character_hit_cache.generation != generation;
@@ -88,9 +87,7 @@ impl DpsApp {
             );
         }
         let hits = detail_hits_for_source(display_state, source);
-        let filtered_count = self.character_hit_cache.filtered_count;
         let max_damage = self.character_hit_cache.max_damage;
-        show_detail_limit_notice(ui, filtered_count);
         draw_character_hit_header(ui, layout, &mut self.preferences.hit_detail_columns);
         let hit_count = self.character_hit_cache.rows.len();
         if hit_count == 0 {
@@ -167,7 +164,6 @@ impl DpsApp {
             char_id: None,
             filter,
             skill_filter: String::new(),
-            limit: MAX_DETAIL_HITS,
         };
         let structural_change = self.team_hit_cache.key.as_ref() != Some(&key);
         let generation_changed = self.team_hit_cache.generation != generation;
@@ -193,9 +189,7 @@ impl DpsApp {
             );
         }
         let hits = detail_hits_for_source(display_state, source);
-        let filtered_count = self.team_hit_cache.filtered_count;
         let max_damage = self.team_hit_cache.max_damage;
-        show_detail_limit_notice(ui, filtered_count);
         draw_team_hit_header(ui, layout, &mut self.preferences.hit_detail_columns);
         if self.team_hit_cache.rows.is_empty() {
             let capture_idle = self.capture.is_none() && self.replay_thread.is_none();

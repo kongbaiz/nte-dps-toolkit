@@ -23,6 +23,9 @@ const WINDOW_SIZE_MAX: f32 = 6000.0;
 pub const TIMELINE_BUCKET_SECONDS_DEFAULT: f32 = 1.0;
 pub const TIMELINE_BUCKET_SECONDS_MIN: f32 = 0.2;
 pub const TIMELINE_BUCKET_SECONDS_MAX: f32 = 10.0;
+pub const AUTO_ROUND_IDLE_SECONDS_DEFAULT: u32 = 30;
+pub const AUTO_ROUND_IDLE_SECONDS_MIN: u32 = 5;
+pub const AUTO_ROUND_IDLE_SECONDS_MAX: u32 = 600;
 pub const HUD_WIDTH_DEFAULT: u16 = 380;
 pub const HUD_WIDTH_MIN: u16 = 280;
 /// Covers a full-width 4K workspace at 1x while preventing an invalid config
@@ -746,6 +749,10 @@ pub struct UiConfig {
     pub server_damage_calibration: bool,
     #[serde(default)]
     pub separate_reaction_damage: bool,
+    #[serde(default)]
+    pub auto_round_after_idle: bool,
+    #[serde(default = "default_auto_round_idle_seconds")]
+    pub auto_round_idle_seconds: u32,
     /// Manual capture-NIC override (the Npcap device `name`, e.g. `\Device\NPF_{GUID}`). `None`
     /// keeps automatic detection; `Some(name)` pins capture to that interface as a VPN fallback.
     pub manual_capture_device: Option<String>,
@@ -794,6 +801,8 @@ impl Default for UiConfig {
             island_offset_x: 0.0,
             server_damage_calibration: false,
             separate_reaction_damage: false,
+            auto_round_after_idle: false,
+            auto_round_idle_seconds: AUTO_ROUND_IDLE_SECONDS_DEFAULT,
             manual_capture_device: None,
             dps_time_mode: DpsTimeMode::default(),
             timeline_bucket_seconds: TIMELINE_BUCKET_SECONDS_DEFAULT,
@@ -838,6 +847,9 @@ impl UiConfig {
             sanitize_window_size(self.console_window_size, CONSOLE_WINDOW_MIN_SIZE);
         self.timeline_bucket_seconds =
             sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
+        self.auto_round_idle_seconds = self
+            .auto_round_idle_seconds
+            .clamp(AUTO_ROUND_IDLE_SECONDS_MIN, AUTO_ROUND_IDLE_SECONDS_MAX);
         self.manual_capture_device = self
             .manual_capture_device
             .take()
@@ -862,6 +874,10 @@ const fn default_island_notifications() -> bool {
 
 const fn default_auto_check_updates() -> bool {
     true
+}
+
+const fn default_auto_round_idle_seconds() -> u32 {
+    AUTO_ROUND_IDLE_SECONDS_DEFAULT
 }
 
 fn new_install_config() -> UiConfig {
@@ -1288,6 +1304,11 @@ mod tests {
         assert!(config.auto_check_updates);
         assert!(!config.auto_download_updates);
         assert!(!config.separate_reaction_damage);
+        assert!(!config.auto_round_after_idle);
+        assert_eq!(
+            config.auto_round_idle_seconds,
+            AUTO_ROUND_IDLE_SECONDS_DEFAULT
+        );
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
         assert!(config.onboarding_done);
         assert!(!config.console_sidebar_migration_seen);
@@ -1299,6 +1320,23 @@ mod tests {
             f9_config.sanitized().global_hotkeys.capture,
             GlobalHotkeys::default().capture
         );
+    }
+
+    #[test]
+    fn auto_round_idle_seconds_are_bounded() {
+        let minimum = UiConfig {
+            auto_round_idle_seconds: 0,
+            ..UiConfig::default()
+        }
+        .sanitized();
+        let maximum = UiConfig {
+            auto_round_idle_seconds: u32::MAX,
+            ..UiConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(minimum.auto_round_idle_seconds, AUTO_ROUND_IDLE_SECONDS_MIN);
+        assert_eq!(maximum.auto_round_idle_seconds, AUTO_ROUND_IDLE_SECONDS_MAX);
     }
 
     #[test]

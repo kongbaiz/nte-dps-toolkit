@@ -674,6 +674,18 @@ impl DpsApp {
             {
                 self.save_current_history_summary(ui.ctx());
             }
+            if ui
+                .add_enabled(
+                    self.background_tasks
+                        .pending_history_import_viewport
+                        .is_none(),
+                    egui::Button::new(t("Import record JSON")),
+                )
+                .on_hover_text(t("Import a previously exported history record"))
+                .clicked()
+            {
+                self.request_history_record_import(ui.ctx());
+            }
             if ui.button(t("Reload")).clicked() {
                 self.reload_history_records();
                 self.history.message = t("History list refreshed");
@@ -900,6 +912,82 @@ impl DpsApp {
                 self.request_debug_import(ui.ctx(), DebugImportKind::CaptureJson);
             }
         });
+    }
+
+    fn request_history_record_import(&mut self, ctx: &egui::Context) {
+        let filter = t("NTE history summary");
+        self.spawn_file_dialog(ctx, FileDialogPurpose::HistoryImport, move |owner| {
+            with_owner(rfd::FileDialog::new().add_filter(filter, &["json"]), owner).pick_file()
+        });
+    }
+
+    pub(crate) fn start_history_record_import(
+        &mut self,
+        ctx: &egui::Context,
+        viewport: egui::ViewportId,
+        path: PathBuf,
+    ) {
+        if self
+            .background_tasks
+            .pending_history_import_viewport
+            .is_some()
+        {
+            self.set_last_error_for(
+                viewport,
+                t("History summary import is already running"),
+                None,
+            );
+            return;
+        }
+        let job = HistoryWorkerJob::Import {
+            path,
+            repaint: ctx.clone(),
+        };
+        if self
+            .background_tasks
+            .history_worker_sender
+            .as_ref()
+            .expect("history worker lives for the app lifetime")
+            .send(job)
+            .is_err()
+        {
+            self.set_last_error_for(
+                viewport,
+                t("History summary import task stopped unexpectedly"),
+                None,
+            );
+            return;
+        }
+        self.background_tasks.pending_history_import_viewport = Some(viewport);
+        self.notifications.status = t("Importing history summary...");
+        self.clear_last_error();
+        ctx.request_repaint_after(Duration::from_millis(200));
+    }
+
+    pub(crate) fn finish_history_record_import(
+        &mut self,
+        viewport: egui::ViewportId,
+        result: Result<HistoryRecord, String>,
+    ) {
+        match result {
+            Ok(record) => {
+                let record_id = record.id.clone();
+                let has_details = record.details.is_some();
+                self.history.selected_id = Some(record_id.clone());
+                self.reload_history_records();
+                if has_details {
+                    self.select_presented_round(Some(record_id));
+                }
+                self.history.message = t("History summary imported");
+                self.notifications.status = t("History summary imported");
+                self.clear_last_error();
+            }
+            Err(error) => self.set_last_error_for(
+                viewport,
+                tf("Failed to import history summary: {}", &[&error]),
+                None,
+            ),
+        }
     }
 
     fn export_history_record(&mut self, ctx: &egui::Context, record_id: &str) {
@@ -1821,6 +1909,30 @@ impl DpsApp {
                         )
                         .on_hover_text(t(
                             "When enabled, confirmed reaction damage is shown separately instead of being added to the attributed character; team total damage is unchanged.",
+                        ));
+                        ui.end_row();
+                        ui.label(t("Combat Rounds"));
+                        ui.horizontal_wrapped(|ui| {
+                            ui.checkbox(
+                                &mut self.capture_ui.auto_round_after_idle,
+                                t("Auto start a new round after idle"),
+                            );
+                            if self.capture_ui.auto_round_after_idle {
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut self.capture_ui.auto_round_idle_seconds,
+                                    )
+                                    .range(
+                                        AUTO_ROUND_IDLE_SECONDS_MIN
+                                            ..=AUTO_ROUND_IDLE_SECONDS_MAX,
+                                    )
+                                    .suffix(" s"),
+                                );
+                            }
+                        })
+                        .response
+                        .on_hover_text(t(
+                            "Outside abyss, archive the current round and clear live combat stats after the configured idle time",
                         ));
                         ui.end_row();
                         ui.label(t("DPS Time"));

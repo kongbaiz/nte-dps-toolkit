@@ -57,10 +57,11 @@ use crate::platform::window_attributes::{
 };
 use crate::storage::capture_logs::{self, CaptureLogStats};
 use crate::storage::config::{
-    self, AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
-    HUD_WIDTH_MIN, HitDetailColumn, HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig,
-    HudModule, PassthroughHotkey, TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN,
-    ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+    self, AUTO_ROUND_IDLE_SECONDS_MAX, AUTO_ROUND_IDLE_SECONDS_MIN, AccentColor, DpsTimeMode,
+    GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX, HUD_WIDTH_MIN, HitDetailColumn,
+    HitDetailColumnsConfig, HotkeyBinding, HotkeyKey, HudConfig, HudModule, PassthroughHotkey,
+    TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN, ThemePreset, TimelineDpsViewMode,
+    UiConfig, UiDensity,
 };
 use crate::storage::history::{self, HistoryCombatDetails, HistoryComparison, HistoryRecord};
 use crate::storage::i18n::{self, Language, t, tf};
@@ -102,7 +103,6 @@ const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
 /// Full PacketDebug records contain payload hex/text, so keep their producer
 /// queue small and discard excess records before allocating more queued state.
 const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
-const MAX_DETAIL_HITS: usize = 10_000;
 const DETAIL_HIT_ROW_HEIGHT: f32 = 40.0;
 const MAIN_TITLE_BAR_HEIGHT: f32 = 40.0;
 const MAIN_CONTROLS_SINGLE_ROW_HEIGHT: f32 = 34.0;
@@ -162,6 +162,7 @@ pub(crate) enum FileDialogPurpose {
     TeamDpsImportAll,
     TeamDpsImportLine { upper: bool },
     TeamDpsExport { json: String },
+    HistoryImport,
     HistoryExport { json: String },
     EmptyCurtainExport { json: String },
     CharacterLoadoutImport,
@@ -395,7 +396,6 @@ pub(crate) struct HitDetailCacheKey {
     char_id: Option<u32>,
     filter: HitDetailFilter,
     skill_filter: String,
-    limit: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -418,7 +418,6 @@ pub(crate) struct HitDetailCache {
     generation: u64,
     source_len: usize,
     rows: Vec<CachedHitRow>,
-    filtered_count: usize,
     max_damage: f64,
     dirty_since: Option<Instant>,
     last_scroll_offset: Option<f32>,
@@ -1102,6 +1101,8 @@ struct CaptureUiState {
     capture_quality_source: CaptureQualitySource,
     include_incoming: bool,
     server_damage_calibration: bool,
+    auto_round_after_idle: bool,
+    auto_round_idle_seconds: u32,
     dps_time_mode: DpsTimeMode,
     timeline_bucket_seconds: f32,
     timeline_dps_view_mode: TimelineDpsViewMode,
@@ -1125,6 +1126,8 @@ impl CaptureUiState {
             capture_quality_source: CaptureQualitySource::Unknown,
             include_incoming: true,
             server_damage_calibration: config.server_damage_calibration,
+            auto_round_after_idle: config.auto_round_after_idle,
+            auto_round_idle_seconds: config.auto_round_idle_seconds,
             dps_time_mode: config.dps_time_mode,
             timeline_bucket_seconds: config.timeline_bucket_seconds,
             timeline_dps_view_mode: config.timeline_dps_view_mode,
@@ -1265,11 +1268,37 @@ impl UiPreferences {
     }
 }
 
+#[derive(Clone, Copy)]
+enum HistoryArchiveCause {
+    AbyssBoundary,
+    Manual,
+    Idle(u32),
+}
+
 struct HistoryArchiveJob {
     details: HistoryCombatDetails,
     source: CaptureQualitySource,
     dps_time_mode: DpsTimeBasis,
     separate_reaction_damage: bool,
+    cause: HistoryArchiveCause,
+}
+
+struct HistoryArchiveResult {
+    cause: HistoryArchiveCause,
+    result: Result<HistoryRecord, String>,
+}
+
+enum HistoryWorkerJob {
+    Archive(HistoryArchiveJob),
+    Import {
+        path: PathBuf,
+        repaint: egui::Context,
+    },
+}
+
+enum HistoryWorkerResult {
+    Archive(HistoryArchiveResult),
+    Import(Result<HistoryRecord, String>),
 }
 
 struct BackgroundTasks {
@@ -1287,9 +1316,10 @@ struct BackgroundTasks {
     game_process_monitor_stop: Sender<()>,
     game_process_monitor_thread: Option<thread::JoinHandle<()>>,
     game_process_monitor_error: Option<String>,
-    history_archive_sender: Option<Sender<HistoryArchiveJob>>,
-    history_archive_receiver: Receiver<Result<HistoryRecord, String>>,
-    history_archive_thread: Option<thread::JoinHandle<()>>,
+    history_worker_sender: Option<Sender<HistoryWorkerJob>>,
+    history_worker_receiver: Receiver<HistoryWorkerResult>,
+    history_worker_thread: Option<thread::JoinHandle<()>>,
+    pending_history_import_viewport: Option<egui::ViewportId>,
     pending_file_dialog: Option<PendingFileDialog>,
     pending_capture_export: Option<PendingCaptureExport>,
 }
@@ -1310,19 +1340,40 @@ impl BackgroundTasks {
         let (diagnostics_sender, diagnostics_receiver) = diagnostics;
         let (game_process_monitor_receiver, game_process_monitor_stop, game_process_monitor_thread) =
             game_process_monitor;
-        let (history_archive_sender, history_archive_job_receiver) =
-            unbounded::<HistoryArchiveJob>();
-        let (history_archive_result_sender, history_archive_receiver) =
-            unbounded::<Result<HistoryRecord, String>>();
-        let history_archive_thread = thread::spawn(move || {
-            while let Ok(job) = history_archive_job_receiver.recv() {
-                let state = job.details.to_combat_state();
-                let result = state
-                    .session_summary(job.source, job.dps_time_mode, job.separate_reaction_damage)
-                    .ok_or_else(|| "Archived combat round has no summary".to_owned())
-                    .and_then(|summary| history::save_summary_with_details(summary, job.details));
-                if history_archive_result_sender.send(result).is_err() {
+        let (history_worker_sender, history_worker_job_receiver) = unbounded::<HistoryWorkerJob>();
+        let (history_worker_result_sender, history_worker_receiver) =
+            unbounded::<HistoryWorkerResult>();
+        let history_worker_thread = thread::spawn(move || {
+            while let Ok(job) = history_worker_job_receiver.recv() {
+                let (result, repaint) = match job {
+                    HistoryWorkerJob::Archive(job) => {
+                        let cause = job.cause;
+                        let state = job.details.to_combat_state();
+                        let result = state
+                            .session_summary(
+                                job.source,
+                                job.dps_time_mode,
+                                job.separate_reaction_damage,
+                            )
+                            .ok_or_else(|| "Archived combat round has no summary".to_owned())
+                            .and_then(|summary| {
+                                history::save_summary_with_details(summary, job.details)
+                            });
+                        (
+                            HistoryWorkerResult::Archive(HistoryArchiveResult { cause, result }),
+                            None,
+                        )
+                    }
+                    HistoryWorkerJob::Import { path, repaint } => (
+                        HistoryWorkerResult::Import(history::import_record(&path)),
+                        Some(repaint),
+                    ),
+                };
+                if history_worker_result_sender.send(result).is_err() {
                     break;
+                }
+                if let Some(repaint) = repaint {
+                    repaint.request_repaint();
                 }
             }
         });
@@ -1341,9 +1392,10 @@ impl BackgroundTasks {
             game_process_monitor_stop,
             game_process_monitor_thread: Some(game_process_monitor_thread),
             game_process_monitor_error: None,
-            history_archive_sender: Some(history_archive_sender),
-            history_archive_receiver,
-            history_archive_thread: Some(history_archive_thread),
+            history_worker_sender: Some(history_worker_sender),
+            history_worker_receiver,
+            history_worker_thread: Some(history_worker_thread),
+            pending_history_import_viewport: None,
             pending_file_dialog: None,
             pending_capture_export: None,
         }
@@ -1364,9 +1416,9 @@ impl BackgroundTasks {
         }
     }
 
-    fn stop_history_archive(&mut self) {
-        self.history_archive_sender.take();
-        if let Some(thread) = self.history_archive_thread.take() {
+    fn stop_history_worker(&mut self) {
+        self.history_worker_sender.take();
+        if let Some(thread) = self.history_worker_thread.take() {
             let _ = thread.join();
         }
     }
@@ -1604,7 +1656,7 @@ impl eframe::App for DpsApp {
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
         self.refresh_applied_mod_projection(false);
-        self.drain_history_archives();
+        self.drain_history_worker_results();
         self.update_combat_visual();
         self.drain_resource_audit();
         self.drain_capture_diagnostics();
@@ -1887,7 +1939,7 @@ impl Drop for DpsApp {
         self.background_tasks.stop_game_process_monitor();
         self.persist_ui_config_on_shutdown();
         self.stop_engine();
-        self.background_tasks.stop_history_archive();
+        self.background_tasks.stop_history_worker();
         self.background_tasks.join_pending_capture_export();
     }
 }
@@ -1895,16 +1947,17 @@ impl Drop for DpsApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailFilter,
-        NotificationState, PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache,
-        SkillDamageSummary, SkillSummaryCache, TimeStopPresentation, TimelineCache,
-        UiConfigSavePlan, UiPreferences, WindowState, adjusted_cached_index,
-        aggregate_character_skill_damage, build_team_dps_export, cached_hit_row, character_color,
-        compare_cached_team_hits, comparison_skill_display_name, damage_digit_key_for_hit,
-        damage_digit_resource_path, damage_number_digits_text,
-        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
-        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
-        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
+        AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailCacheKey,
+        HitDetailFilter, HitDetailSource, NotificationState, PendingCaptureExport,
+        QteTypeFilterSummary, SkillBreakdownCache, SkillDamageSummary, SkillSummaryCache,
+        TimeStopPresentation, TimelineCache, UiConfigSavePlan, UiPreferences, WindowState,
+        adjusted_cached_index, aggregate_character_skill_damage, build_hit_detail_cache,
+        build_team_dps_export, cached_hit_row, character_color, compare_cached_team_hits,
+        comparison_skill_display_name, damage_digit_key_for_hit, damage_digit_resource_path,
+        damage_number_digits_text, fill_missing_character_colors_from_avatars,
+        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
+        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
+        qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, skill_summary_display_text,
         snapshot_team_from_stats, summarize_qte_type_filters, translate_reaction_label,
@@ -2011,6 +2064,8 @@ mod tests {
         let config = UiConfig {
             manual_capture_device: Some("capture-device".to_owned()),
             server_damage_calibration: false,
+            auto_round_after_idle: true,
+            auto_round_idle_seconds: 45,
             dps_time_mode: DpsTimeMode::RealTime,
             timeline_bucket_seconds: 2.5,
             timeline_dps_view_mode: TimelineDpsViewMode::Characters,
@@ -2024,6 +2079,8 @@ mod tests {
             Some("capture-device")
         );
         assert!(!state.server_damage_calibration);
+        assert!(state.auto_round_after_idle);
+        assert_eq!(state.auto_round_idle_seconds, 45);
         assert_eq!(state.dps_time_mode, DpsTimeMode::RealTime);
         assert_eq!(state.timeline_bucket_seconds, 2.5);
         assert_eq!(
@@ -2211,8 +2268,9 @@ mod tests {
         assert!(tasks.awaiting_device_detection);
         assert!(tasks.game_process_monitor_thread.is_some());
         assert!(tasks.game_process_monitor_error.is_none());
-        assert!(tasks.history_archive_sender.is_some());
-        assert!(tasks.history_archive_thread.is_some());
+        assert!(tasks.history_worker_sender.is_some());
+        assert!(tasks.history_worker_thread.is_some());
+        assert!(tasks.pending_history_import_viewport.is_none());
         assert!(tasks.pending_file_dialog.is_none());
         assert!(tasks.pending_capture_export.is_none());
 
@@ -2223,12 +2281,12 @@ mod tests {
             thread: Some(std::thread::spawn(|| {})),
         });
         tasks.stop_game_process_monitor();
-        tasks.stop_history_archive();
+        tasks.stop_history_worker();
         tasks.join_pending_capture_export();
 
         assert!(tasks.game_process_monitor_thread.is_none());
-        assert!(tasks.history_archive_sender.is_none());
-        assert!(tasks.history_archive_thread.is_none());
+        assert!(tasks.history_worker_sender.is_none());
+        assert!(tasks.history_worker_thread.is_none());
         assert!(tasks.pending_capture_export.is_none());
     }
 
@@ -2376,6 +2434,28 @@ mod tests {
         let resolved = resolve_cached_hit(&hits, &row, 1, 1)
             .expect("same-index hit should resolve after in-place follow-up update");
         assert_eq!(resolved.follow_up_damage, 921.0);
+    }
+
+    #[test]
+    fn hit_detail_cache_keeps_more_than_ten_thousand_matching_rows() {
+        let hits = (0..10_001)
+            .map(|index| {
+                let mut hit = hit_with_direction("outgoing");
+                hit.timestamp = index as f64;
+                hit.byte_offset = index;
+                hit
+            })
+            .collect::<VecDeque<_>>();
+        let key = HitDetailCacheKey {
+            source: HitDetailSource::Global,
+            char_id: None,
+            filter: HitDetailFilter::All,
+            skill_filter: String::new(),
+        };
+
+        let cache = build_hit_detail_cache(&hits, 1, key);
+
+        assert_eq!(cache.rows.len(), 10_001);
     }
 
     #[test]
