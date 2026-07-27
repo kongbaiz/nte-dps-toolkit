@@ -2316,6 +2316,10 @@ impl CombatState {
         }
     }
 
+    pub fn active_elapsed_between(&self, start: f64, end: f64) -> f64 {
+        (end - start - self.time_stop.frozen_between(start, end)).max(0.0)
+    }
+
     pub fn dps_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         self.total_damage / self.duration_with_time_stop(subtract_time_stop).max(1.0)
     }
@@ -2391,6 +2395,10 @@ impl CombatState {
         self.sync_clock_with_time_stops();
         self.abyss.apply_time_stop_event(&event);
         self.time_stop_events.push(event);
+    }
+
+    pub fn is_game_paused(&self) -> bool {
+        self.time_stop.active_game_pause.is_some()
     }
 
     pub fn rebuild_global_from_abyss(&mut self) {
@@ -4160,14 +4168,17 @@ mod tests {
             timestamp: 12.25,
             pause_type_mask: 1 << 2,
         });
+        assert!(state.is_game_paused());
         state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
             timestamp: 15.75,
             pause_type_mask: 1 << 2,
         });
+        assert!(!state.is_game_paused());
         state.push_hit(test_hit(20.0, 1021, "outgoing", 200.0));
 
         assert!((state.duration_with_time_stop(false) - 10.0).abs() < 1e-9);
         assert!((state.duration_with_time_stop(true) - 6.5).abs() < 1e-9);
+        assert!((state.active_elapsed_between(10.0, 20.0) - 6.5).abs() < 1e-9);
         assert!((state.dps_with_time_stop(true) - (300.0 / 6.5)).abs() < 1e-9);
     }
 
