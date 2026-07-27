@@ -214,6 +214,7 @@ namespace nte::mods::runtime
 			mod_event_history{};
 		constinit uint32_t mod_event_history_count = 0;
 		constinit uint32_t mod_event_history_next = 0;
+		// The desktop deduplicator spans workspace reloads for the DLL lifetime.
 		constinit uint64_t next_mod_event_sequence = 1;
 
 		static_assert(sizeof(Instruction) == 16);
@@ -2668,7 +2669,6 @@ namespace nte::mods::runtime
 		ZeroMemory(mod_event_history.data(), sizeof(mod_event_history));
 		mod_event_history_count = 0;
 		mod_event_history_next = 0;
-		next_mod_event_sequence = 1;
 		ReleaseSRWLockExclusive(&program_lock);
 		return ReloadResult::Changed;
 	}
@@ -2760,7 +2760,6 @@ namespace nte::mods::runtime
 		ZeroMemory(mod_event_history.data(), sizeof(mod_event_history));
 		mod_event_history_count = 0;
 		mod_event_history_next = 0;
-		next_mod_event_sequence = 1;
 		ReleaseSRWLockExclusive(&program_lock);
 	}
 } // namespace nte::mods::runtime

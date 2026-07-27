@@ -120,6 +120,9 @@ impl HistoryCombatDetails {
         } else {
             (state.started_at, state.ended_at)
         };
+        let round_started_at =
+            round_started_at.expect("a combat round with hits has a start timestamp");
+        let round_ended_at = round_ended_at.expect("a combat round with hits has an end timestamp");
         Some(Self {
             floor: if has_abyss_hits { abyss.floor } else { None },
             active_half: if has_abyss_hits {
@@ -154,19 +157,11 @@ impl HistoryCombatDetails {
             },
             first_half_hits: abyss.first_half.hits.iter().cloned().collect(),
             second_half_hits: abyss.second_half.hits.iter().cloned().collect(),
-            time_stop_events: state
-                .time_stop_events
-                .iter()
-                .filter(|event| {
-                    let timestamp = match event {
-                        TimeStopEvent::GamePauseStarted { timestamp, .. }
-                        | TimeStopEvent::GamePauseEnded { timestamp, .. } => *timestamp,
-                    };
-                    round_started_at.is_none_or(|start| timestamp >= start)
-                        && round_ended_at.is_none_or(|end| timestamp <= end)
-                })
-                .cloned()
-                .collect(),
+            time_stop_events: clipped_time_stop_events(
+                &state.time_stop_events,
+                round_started_at,
+                round_ended_at,
+            ),
         })
     }
 
@@ -247,6 +242,51 @@ impl HistoryCombatDetails {
         }
         Ok(())
     }
+}
+
+fn clipped_time_stop_events(
+    events: &[TimeStopEvent],
+    range_start: f64,
+    range_end: f64,
+) -> Vec<TimeStopEvent> {
+    let mut clipped = Vec::new();
+    let mut active_pause: Option<(f64, u32)> = None;
+    for event in events {
+        match event {
+            TimeStopEvent::GamePauseStarted {
+                timestamp,
+                pause_type_mask,
+            } => match &mut active_pause {
+                Some((start, active_mask)) => {
+                    *start = start.min(*timestamp);
+                    *active_mask |= *pause_type_mask;
+                }
+                None => active_pause = Some((*timestamp, *pause_type_mask)),
+            },
+            TimeStopEvent::GamePauseEnded {
+                timestamp,
+                pause_type_mask,
+            } => {
+                let Some((start, active_mask)) = active_pause.take() else {
+                    continue;
+                };
+                let start = start.max(range_start);
+                let end = timestamp.min(range_end);
+                if end <= start {
+                    continue;
+                }
+                clipped.push(TimeStopEvent::GamePauseStarted {
+                    timestamp: start,
+                    pause_type_mask: active_mask,
+                });
+                clipped.push(TimeStopEvent::GamePauseEnded {
+                    timestamp: end,
+                    pause_type_mask: *pause_type_mask,
+                });
+            }
+        }
+    }
+    clipped
 }
 
 fn team_from_characters(dps: f64, characters: &[CombatSessionCharacterSummary]) -> Option<TeamDps> {
@@ -799,6 +839,40 @@ mod tests {
         assert_eq!(restored.hits.len(), 2);
         assert_eq!(restored.total_damage, 300.0);
         assert_eq!(restored.time_stop_events.len(), 2);
+    }
+
+    #[test]
+    fn detailed_record_clips_a_pause_that_starts_before_the_first_hit() {
+        let mut state = CombatState::default();
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1,
+        });
+        state.push_hit(history_hit(13.0, 1, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1,
+        });
+        state.push_hit(history_hit(20.0, 2, 200.0));
+
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        let restored = details.to_combat_state();
+
+        assert_eq!(
+            details.time_stop_events,
+            vec![
+                TimeStopEvent::GamePauseStarted {
+                    timestamp: 13.0,
+                    pause_type_mask: 1,
+                },
+                TimeStopEvent::GamePauseEnded {
+                    timestamp: 14.0,
+                    pause_type_mask: 1,
+                },
+            ]
+        );
+        assert!((restored.duration_with_time_stop(false) - 7.0).abs() < 1e-9);
+        assert!((restored.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
     }
 
     #[test]
