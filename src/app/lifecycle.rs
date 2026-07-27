@@ -286,6 +286,8 @@ impl DpsApp {
             presented_history_id: None,
             presented_history_state: None,
             last_auto_archive_hits_generation: 0,
+            round_archive_pending: false,
+            pending_round_events: VecDeque::new(),
             resource_audit: ResourceAuditState::default(),
             hit_detail_filter: HitDetailFilter::All,
             hit_detail_skill_filter: String::new(),
@@ -1640,6 +1642,9 @@ impl DpsApp {
 
     pub(crate) fn drain_events(&mut self) {
         self.collect_dropped_debug_packets();
+        if self.round_archive_pending {
+            return;
+        }
         let started = Instant::now();
         let scrolling = self.detail_scroll_active();
         let event_limit = if scrolling {
@@ -1660,18 +1665,24 @@ impl DpsApp {
             return;
         }
         for _ in 0..event_limit {
+            if self.round_archive_pending {
+                break;
+            }
             if started.elapsed() >= UI_EVENT_BUDGET {
                 break;
             }
-            let event = if let Some(event) = self.paused_events.pop_front() {
-                event
-            } else {
-                let Some(event) = self.try_recv_engine_event() else {
-                    break;
+            let (event, allow_replay_round) =
+                if let Some(event) = self.pending_round_events.pop_front() {
+                    (event, false)
+                } else if let Some(event) = self.paused_events.pop_front() {
+                    (event, true)
+                } else {
+                    let Some(event) = self.try_recv_engine_event() else {
+                        break;
+                    };
+                    (event, true)
                 };
-                event
-            };
-            self.apply_engine_event(event);
+            self.apply_engine_event_with_round_boundary(event, allow_replay_round);
         }
     }
 
@@ -1736,6 +1747,12 @@ impl DpsApp {
 
     pub(crate) fn drain_pending_events(&mut self) {
         self.collect_dropped_debug_packets();
+        if self.round_archive_pending {
+            return;
+        }
+        while let Some(event) = self.pending_round_events.pop_front() {
+            self.apply_engine_event_with_round_boundary(event, false);
+        }
         while let Some(event) = self.paused_events.pop_front() {
             self.apply_engine_event(event);
         }
@@ -1749,6 +1766,40 @@ impl DpsApp {
     }
 
     pub(crate) fn apply_engine_event(&mut self, event: EngineEvent) {
+        self.apply_engine_event_with_round_boundary(event, true);
+    }
+
+    fn apply_engine_event_with_round_boundary(
+        &mut self,
+        event: EngineEvent,
+        allow_replay_round: bool,
+    ) {
+        let starts_replay_round = allow_replay_round
+            && match &event {
+                EngineEvent::Hit(hit) => {
+                    let active_gap_seconds = self
+                        .last_combat_timestamp
+                        .map(|last| self.state.active_elapsed_between(last, hit.timestamp));
+                    replay_auto_round_due(
+                        self.capture_ui.auto_round_after_idle,
+                        self.replay_thread.is_some(),
+                        self.state.abyss.is_active(),
+                        self.state.is_game_paused(),
+                        !self.state.hits.is_empty(),
+                        active_gap_seconds,
+                        self.capture_ui.auto_round_idle_seconds,
+                    )
+                }
+                _ => false,
+            };
+        if starts_replay_round
+            && self.archive_and_start_new_round(HistoryArchiveCause::Idle(
+                self.capture_ui.auto_round_idle_seconds,
+            ))
+        {
+            self.pending_round_events.push_back(event);
+            return;
+        }
         // UI-only side effects that must see the event before the shared
         // reducer consumes it; every domain-state change happens inside
         // `core::reducer::apply_engine_event`.
@@ -1889,6 +1940,7 @@ impl DpsApp {
             || self.capture_ui.paused
             || self.state.abyss.is_active()
             || self.state.is_game_paused()
+            || self.round_archive_pending
         {
             return;
         }
@@ -1898,28 +1950,16 @@ impl DpsApp {
     }
 
     fn archive_and_start_new_round(&mut self, cause: HistoryArchiveCause) -> bool {
+        if self.round_archive_pending {
+            return false;
+        }
         let Some(details) = HistoryCombatDetails::from_state(&self.state) else {
             return false;
         };
         if !self.enqueue_history_archive(details, cause) {
             return false;
         }
-        self.state.clear_battle_preserving_inventory();
-        self.projected_state = None;
-        self.mod_projection_dirty = true;
-        self.presented_history_id = None;
-        self.presented_history_state = None;
-        self.last_auto_archive_hits_generation = 0;
-        self.session_epoch = self.session_epoch.wrapping_add(1);
-        self.reset_combat_round_view_state();
-        self.notifications.status = match cause {
-            HistoryArchiveCause::Manual => t("New combat round started"),
-            HistoryArchiveCause::Idle(seconds) => tf(
-                "New combat round started after {}s idle",
-                &[&seconds.to_string()],
-            ),
-            HistoryArchiveCause::AbyssBoundary => t("Previous combat round archived"),
-        };
+        self.round_archive_pending = cause.starts_new_round();
         true
     }
 
@@ -1928,6 +1968,21 @@ impl DpsApp {
             match result {
                 HistoryWorkerResult::Archive(archive) => match archive.result {
                     Ok(record) => {
+                        if archive.cause.starts_new_round() {
+                            assert!(
+                                self.round_archive_pending,
+                                "new-round archive result must have a pending boundary"
+                            );
+                            self.round_archive_pending = false;
+                            self.state.clear_battle_preserving_inventory();
+                            self.projected_state = None;
+                            self.mod_projection_dirty = true;
+                            self.presented_history_id = None;
+                            self.presented_history_state = None;
+                            self.last_auto_archive_hits_generation = 0;
+                            self.session_epoch = self.session_epoch.wrapping_add(1);
+                            self.reset_combat_round_view_state();
+                        }
                         self.history.insert_record(record);
                         if self.presented_history_id.as_deref().is_some_and(|id| {
                             !self
@@ -1952,6 +2007,17 @@ impl DpsApp {
                         };
                     }
                     Err(error) => {
+                        if archive.cause.starts_new_round() {
+                            assert!(
+                                self.round_archive_pending,
+                                "failed new-round archive must have a pending boundary"
+                            );
+                            self.round_archive_pending = false;
+                            while let Some(event) = self.pending_round_events.pop_front() {
+                                self.apply_engine_event_with_round_boundary(event, false);
+                            }
+                            self.last_combat_activity = Some(Instant::now());
+                        }
                         self.notifications.diagnostic =
                             Some(tf("Failed to archive previous combat round: {}", &[&error]));
                     }
@@ -2006,22 +2072,6 @@ impl DpsApp {
         if hit.direction.is_incoming() {
             return;
         }
-        let active_gap_seconds = self
-            .last_combat_timestamp
-            .map(|last| self.state.active_elapsed_between(last, hit.timestamp));
-        if replay_auto_round_due(
-            self.capture_ui.auto_round_after_idle,
-            self.replay_thread.is_some(),
-            self.state.abyss.is_active(),
-            self.state.is_game_paused(),
-            !self.state.hits.is_empty(),
-            active_gap_seconds,
-            self.capture_ui.auto_round_idle_seconds,
-        ) {
-            self.archive_and_start_new_round(HistoryArchiveCause::Idle(
-                self.capture_ui.auto_round_idle_seconds,
-            ));
-        }
         if self.combat_active
             && self
                 .last_combat_timestamp
@@ -2054,6 +2104,7 @@ impl DpsApp {
             self.finish_combat_visual();
         }
         if self.capture_ui.auto_round_after_idle
+            && !self.round_archive_pending
             && auto_round_due(
                 self.capture.is_some(),
                 self.capture_ui.paused,
@@ -3521,5 +3572,12 @@ mod tests {
             Some(29.999),
             30,
         ));
+    }
+
+    #[test]
+    fn only_manual_and_idle_archives_start_a_new_round() {
+        assert!(!HistoryArchiveCause::AbyssBoundary.starts_new_round());
+        assert!(HistoryArchiveCause::Manual.starts_new_round());
+        assert!(HistoryArchiveCause::Idle(30).starts_new_round());
     }
 }

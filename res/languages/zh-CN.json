@@ -476,6 +476,7 @@
   "the selected file": "所选文件",
   "PCAPNG import failed: {}": "PCAPNG 导入失败：{}",
   "Capture JSON import failed: {}": "抓包 JSON 导入失败：{}",
+  "Capture parser stopped unexpectedly": "抓包解析线程意外停止",
   "Minimize": "最小化",
   "Maximize": "最大化",
   "Restore": "还原",

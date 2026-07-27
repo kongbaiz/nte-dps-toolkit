@@ -3007,19 +3007,53 @@ fn required_nte_blueprint_capabilities(editor: &NteBlueprintEditorState) -> Vec<
                     let source = statement.source.trim();
                     !source.starts_with('#')
                         && match *capability {
-                            "game.session" => source.contains("game."),
-                            "memory.read" => source.contains("memory."),
-                            "sdk.read" => source.contains("sdk."),
-                            "ipc" => source.contains("ipc."),
-                            "equipment" => source.contains("equipment."),
-                            "combat-clock" => source.contains("combat_clock."),
-                            "log" => source.contains("log."),
+                            "game.session" => {
+                                nte_blueprint_statement_uses_namespace(source, "game.")
+                            }
+                            "memory.read" => {
+                                nte_blueprint_statement_uses_namespace(source, "memory.")
+                            }
+                            "sdk.read" => nte_blueprint_statement_uses_namespace(source, "sdk."),
+                            "ipc" => nte_blueprint_statement_uses_namespace(source, "ipc."),
+                            "equipment" => {
+                                nte_blueprint_statement_uses_namespace(source, "equipment.")
+                            }
+                            "combat-clock" => {
+                                nte_blueprint_statement_uses_namespace(source, "combat_clock.")
+                            }
+                            "log" => nte_blueprint_statement_uses_namespace(source, "log."),
                             "viewport.tick" => true,
                             _ => unreachable!("every Blueprint capability is classified"),
                         }
                 })
         })
         .collect()
+}
+
+fn nte_blueprint_statement_uses_namespace(source: &str, namespace: &str) -> bool {
+    let bytes = source.as_bytes();
+    let namespace = namespace.as_bytes();
+    let mut in_string = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => in_string = !in_string,
+            b'#' if !in_string => break,
+            _ => {}
+        }
+        if !in_string
+            && bytes[index..].starts_with(namespace)
+            && (index == 0
+                || !matches!(
+                    bytes[index - 1],
+                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.'
+                ))
+        {
+            return true;
+        }
+        index += 1;
+    }
+    false
 }
 
 fn validate_nte_blueprint(editor: &NteBlueprintEditorState) -> Result<(), String> {
@@ -7133,6 +7167,25 @@ mod tests {
         assert!(source.contains("requires(\"sdk.read\")"));
         assert!(source.contains("requires(\"ipc\")"));
         assert!(!source.contains("requires(\"log\")"));
+    }
+
+    #[test]
+    fn nte_blueprint_ignores_capability_names_inside_string_literals() {
+        let blueprint = parse_nte_blueprint_source(concat!(
+            "nte_mod(4)\n",
+            "mod(\"example\")\n",
+            "requires(\"viewport.tick\")\n",
+            "requires(\"ipc\")\n",
+            "\n",
+            "def on_viewport_tick(event):\n",
+            "    ipc.emit(\"game.session.sdk.memory.equipment.combat_clock.log\", value)\n",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            required_nte_blueprint_capabilities(&blueprint),
+            vec!["viewport.tick", "ipc"]
+        );
     }
 
     #[test]

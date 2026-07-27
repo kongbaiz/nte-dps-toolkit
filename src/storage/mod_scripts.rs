@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::io_util::atomic_write_text;
+use super::io_util::{atomic_write_file, atomic_write_text};
 
 pub(crate) const MAX_MOD_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_MOD_BLUEPRINT_BYTES: usize = 64 * 1024;
@@ -147,13 +148,41 @@ pub(crate) fn save_mod_script(
         return Err(ModScriptError::BlueprintTooLarge(id.to_owned()));
     }
     let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
-    atomic_write_text(&mod_directory.join(format!("{id}.nte")), source)
-        .map_err(ModScriptError::FileSystem)?;
-    atomic_write_text(
-        &mod_script_blueprint_path(&mod_directory, id),
-        &format!("{text}\n"),
-    )
-    .map_err(ModScriptError::FileSystem)
+    let source_path = mod_directory.join(format!("{id}.nte"));
+    let blueprint_path = mod_script_blueprint_path(&mod_directory, id);
+    let previous_blueprint =
+        read_optional_file(&blueprint_path).map_err(ModScriptError::FileSystem)?;
+    atomic_write_text(&blueprint_path, &format!("{text}\n")).map_err(ModScriptError::FileSystem)?;
+    if let Err(error) = atomic_write_text(&source_path, source) {
+        if let Err(rollback_error) = restore_file(&blueprint_path, previous_blueprint) {
+            return Err(ModScriptError::FileSystem(format!(
+                "{error}; failed to restore Blueprint metadata: {rollback_error}"
+            )));
+        }
+        return Err(ModScriptError::FileSystem(error));
+    }
+    Ok(())
+}
+
+fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn restore_file(path: &Path, previous: Option<Vec<u8>>) -> Result<(), String> {
+    match previous {
+        Some(bytes) => atomic_write_file(path, |writer| {
+            writer.write_all(&bytes).map_err(|error| error.to_string())
+        }),
+        None => match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error.to_string()),
+        },
+    }
 }
 
 fn load_mod_script_blueprint(
@@ -427,6 +456,33 @@ mod tests {
             Err(ModScriptError::BlueprintTooLarge("oversized".to_owned()))
         );
         assert!(!root.join("nte-mods").join("oversized.nte").exists());
+    }
+
+    #[test]
+    fn source_write_failure_restores_previous_blueprint_metadata() {
+        let root = temp_workspace();
+        let mod_directory = root.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(mod_directory.join("blocked.nte")).unwrap();
+        let blueprint_path = mod_script_blueprint_path(&mod_directory, "blocked");
+        atomic_write_text(&blueprint_path, "previous blueprint").unwrap();
+        let source = new_mod_script_template("blocked").unwrap();
+        let blueprint = ModScriptBlueprint {
+            nodes: vec![ModScriptBlueprintNode {
+                signature: "0:value = 1\n".to_owned(),
+                position: [10.0, 20.0],
+                description: String::new(),
+            }],
+        };
+
+        assert!(matches!(
+            save_mod_script(&root, "blocked", &source, &blueprint),
+            Err(ModScriptError::FileSystem(_))
+        ));
+        assert_eq!(
+            fs::read_to_string(blueprint_path).unwrap(),
+            "previous blueprint"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
