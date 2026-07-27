@@ -30,6 +30,51 @@ fn should_warn_hud_without_capture(
     !capture_running && !replay_running && !has_session_data
 }
 
+fn abyss_event_starts_new_round(current_floor: Option<u32>, event: &AbyssEvent) -> bool {
+    matches!(event, AbyssEvent::RestartDetected { .. })
+        || matches!(
+            event,
+            AbyssEvent::Stage {
+                floor: Some(next_floor),
+                ..
+            } if current_floor.is_some_and(|floor| floor != *next_floor)
+        )
+}
+
+fn auto_round_due(
+    capture_running: bool,
+    paused: bool,
+    abyss_active: bool,
+    game_paused: bool,
+    has_hits: bool,
+    idle_elapsed: Option<Duration>,
+    idle_seconds: u32,
+) -> bool {
+    capture_running
+        && !paused
+        && !abyss_active
+        && !game_paused
+        && has_hits
+        && idle_elapsed.is_some_and(|elapsed| elapsed >= Duration::from_secs(idle_seconds.into()))
+}
+
+fn replay_auto_round_due(
+    enabled: bool,
+    replay_running: bool,
+    abyss_active: bool,
+    game_paused: bool,
+    has_hits: bool,
+    active_gap_seconds: Option<f64>,
+    idle_seconds: u32,
+) -> bool {
+    enabled
+        && replay_running
+        && !abyss_active
+        && !game_paused
+        && has_hits
+        && active_gap_seconds.is_some_and(|gap| gap >= f64::from(idle_seconds))
+}
+
 impl DpsApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -221,9 +266,13 @@ impl DpsApp {
             reaction_textures: HashMap::new(),
             equipment_catalog,
             equipment_textures: HashMap::new(),
-            equipment_plugin: EquipmentPluginClient::new(),
+            mods_plugin: ModsPluginClient::new(),
             kongmu_ui: KongmuUiState::default(),
+            mod_editor: ModEditorState::default(),
             state: CombatState::default(),
+            projected_state: None,
+            mod_projection_dirty: false,
+            mod_projection_last_refresh: None,
             combat_active: false,
             last_combat_timestamp: None,
             last_combat_activity: None,
@@ -234,6 +283,11 @@ impl DpsApp {
             abyss_compact_mode: false,
             abyss_overview,
             history,
+            presented_history_id: None,
+            presented_history_state: None,
+            last_auto_archive_hits_generation: 0,
+            round_archive_pending: false,
+            pending_round_events: VecDeque::new(),
             resource_audit: ResourceAuditState::default(),
             hit_detail_filter: HitDetailFilter::All,
             hit_detail_skill_filter: String::new(),
@@ -242,6 +296,7 @@ impl DpsApp {
             team_hit_cache: HitDetailCache::default(),
             skill_summary_cache: SkillSummaryCache::default(),
             timeline_cache: TimelineCache::default(),
+            time_stop_presentation: TimeStopPresentation::default(),
             timeline_view: TimelineViewState::default(),
             skill_breakdown_cache: SkillBreakdownCache::default(),
             selected_timeline_char: None,
@@ -307,16 +362,29 @@ impl DpsApp {
 
     pub(crate) fn reset_combat_session(&mut self) {
         self.state.clear();
+        self.projected_state = None;
+        self.mod_projection_dirty = true;
+        self.presented_history_id = None;
+        self.presented_history_state = None;
+        self.last_auto_archive_hits_generation = 0;
         self.session_epoch = self.session_epoch.wrapping_add(1);
         self.reset_combat_view_state();
     }
 
     pub(crate) fn reset_combat_view_state(&mut self) {
+        self.reset_combat_round_view_state();
+        self.kongmu_ui.reset_session_state();
+        self.capture_ui.paused = false;
+        self.paused_events.clear();
+        self.capture_ui.dropped_debug_packets = 0;
+        self.capture_ui.capture_quality_source = CaptureQualitySource::Unknown;
+    }
+
+    fn reset_combat_round_view_state(&mut self) {
         self.combat_active = false;
         self.last_combat_timestamp = None;
         self.last_combat_activity = None;
         self.hidden_character_ids.clear();
-        self.kongmu_ui.reset_session_state();
         self.selected_abyss_half = AbyssHalf::First;
         self.abyss_compact_mode = false;
         self.windows.hit_detail_char_id = None;
@@ -330,15 +398,12 @@ impl DpsApp {
         self.team_hit_cache = HitDetailCache::default();
         self.skill_summary_cache = SkillSummaryCache::default();
         self.timeline_cache = TimelineCache::default();
+        self.time_stop_presentation = TimeStopPresentation::default();
         self.timeline_view = TimelineViewState::default();
         self.skill_breakdown_cache = SkillBreakdownCache::default();
         self.selected_timeline_char = None;
         self.selected_skill_breakdown_char = None;
         self.detail_last_scroll_activity = None;
-        self.capture_ui.paused = false;
-        self.paused_events.clear();
-        self.capture_ui.dropped_debug_packets = 0;
-        self.capture_ui.capture_quality_source = CaptureQualitySource::Unknown;
     }
 
     pub(crate) fn has_session_data(&self) -> bool {
@@ -377,6 +442,9 @@ impl DpsApp {
             selected_abyss_half: self.selected_abyss_half,
             abyss_compact_mode: self.abyss_compact_mode,
         };
+        self.presented_history_id = None;
+        self.presented_history_state = None;
+        self.last_auto_archive_hits_generation = 0;
         self.session_epoch = self.session_epoch.wrapping_add(1);
         self.reset_combat_view_state();
         self.notifications.status = t("Stats reset");
@@ -1329,6 +1397,9 @@ impl DpsApp {
             island_notifications: self.notifications.island_enabled,
             island_offset_x: self.notifications.island_offset_x,
             server_damage_calibration: self.capture_ui.server_damage_calibration,
+            separate_reaction_damage: self.preferences.separate_reaction_damage,
+            auto_round_after_idle: self.capture_ui.auto_round_after_idle,
+            auto_round_idle_seconds: self.capture_ui.auto_round_idle_seconds,
             manual_capture_device: self.capture_ui.manual_capture_device.clone(),
             dps_time_mode: self.capture_ui.dps_time_mode,
             timeline_bucket_seconds: self.capture_ui.timeline_bucket_seconds,
@@ -1547,6 +1618,9 @@ impl DpsApp {
             FileDialogPurpose::TeamDpsExport { json } => {
                 self.finish_team_dps_export(viewport, &path, &json);
             }
+            FileDialogPurpose::HistoryImport => {
+                self.start_history_record_import(ctx, viewport, path);
+            }
             FileDialogPurpose::HistoryExport { json } => {
                 self.finish_history_record_export(viewport, &path, &json);
             }
@@ -1568,6 +1642,9 @@ impl DpsApp {
 
     pub(crate) fn drain_events(&mut self) {
         self.collect_dropped_debug_packets();
+        if self.round_archive_pending {
+            return;
+        }
         let started = Instant::now();
         let scrolling = self.detail_scroll_active();
         let event_limit = if scrolling {
@@ -1588,18 +1665,24 @@ impl DpsApp {
             return;
         }
         for _ in 0..event_limit {
+            if self.round_archive_pending {
+                break;
+            }
             if started.elapsed() >= UI_EVENT_BUDGET {
                 break;
             }
-            let event = if let Some(event) = self.paused_events.pop_front() {
-                event
-            } else {
-                let Some(event) = self.try_recv_engine_event() else {
-                    break;
+            let (event, allow_replay_round) =
+                if let Some(event) = self.pending_round_events.pop_front() {
+                    (event, false)
+                } else if let Some(event) = self.paused_events.pop_front() {
+                    (event, true)
+                } else {
+                    let Some(event) = self.try_recv_engine_event() else {
+                        break;
+                    };
+                    (event, true)
                 };
-                event
-            };
-            self.apply_engine_event(event);
+            self.apply_engine_event_with_round_boundary(event, allow_replay_round);
         }
     }
 
@@ -1633,6 +1716,7 @@ impl DpsApp {
             | EngineEvent::Warning(_)
             | EngineEvent::Error(_)
             | EngineEvent::PacketObservation(_)
+            | EngineEvent::ModScript(_)
             | EngineEvent::CaptureStopped => self.apply_engine_event(event),
         }
     }
@@ -1663,6 +1747,12 @@ impl DpsApp {
 
     pub(crate) fn drain_pending_events(&mut self) {
         self.collect_dropped_debug_packets();
+        if self.round_archive_pending {
+            return;
+        }
+        while let Some(event) = self.pending_round_events.pop_front() {
+            self.apply_engine_event_with_round_boundary(event, false);
+        }
         while let Some(event) = self.paused_events.pop_front() {
             self.apply_engine_event(event);
         }
@@ -1676,18 +1766,55 @@ impl DpsApp {
     }
 
     pub(crate) fn apply_engine_event(&mut self, event: EngineEvent) {
+        self.apply_engine_event_with_round_boundary(event, true);
+    }
+
+    fn apply_engine_event_with_round_boundary(
+        &mut self,
+        event: EngineEvent,
+        allow_replay_round: bool,
+    ) {
+        let starts_replay_round = allow_replay_round
+            && match &event {
+                EngineEvent::Hit(hit) => {
+                    let active_gap_seconds = self
+                        .last_combat_timestamp
+                        .map(|last| self.state.active_elapsed_between(last, hit.timestamp));
+                    replay_auto_round_due(
+                        self.capture_ui.auto_round_after_idle,
+                        self.replay_thread.is_some(),
+                        self.state.abyss.is_active(),
+                        self.state.is_game_paused(),
+                        !self.state.hits.is_empty(),
+                        active_gap_seconds,
+                        self.capture_ui.auto_round_idle_seconds,
+                    )
+                }
+                _ => false,
+            };
+        if starts_replay_round
+            && self.archive_and_start_new_round(HistoryArchiveCause::Idle(
+                self.capture_ui.auto_round_idle_seconds,
+            ))
+        {
+            self.pending_round_events.push_back(event);
+            return;
+        }
         // UI-only side effects that must see the event before the shared
         // reducer consumes it; every domain-state change happens inside
         // `core::reducer::apply_engine_event`.
         match &event {
             EngineEvent::Hit(hit) => self.note_combat_hit(hit),
             EngineEvent::Abyss(abyss) => {
+                self.queue_previous_abyss_round_archive(abyss);
                 self.character_hit_cache = HitDetailCache::default();
                 self.team_hit_cache = HitDetailCache::default();
                 self.skill_summary_cache = SkillSummaryCache::default();
                 self.timeline_cache = TimelineCache::default();
                 self.skill_breakdown_cache = SkillBreakdownCache::default();
-                if let AbyssEvent::Stage { half, .. } = abyss {
+                if let AbyssEvent::Stage { half, .. } = abyss
+                    && self.presented_history_id.is_none()
+                {
                     self.selected_abyss_half = *half;
                     self.abyss_compact_mode = true;
                 } else if matches!(abyss, AbyssEvent::Success { .. } | AbyssEvent::Exit { .. }) {
@@ -1695,15 +1822,35 @@ impl DpsApp {
                     self.finish_combat_visual();
                 }
             }
-            EngineEvent::TimeStop(_) => self.timeline_cache = TimelineCache::default(),
+            EngineEvent::TimeStop(time_stop) => {
+                self.timeline_cache = TimelineCache::default();
+                if self.capture.is_some() {
+                    let has_damage = if self.state.abyss.is_active() {
+                        self.state.abyss.half(self.selected_abyss_half).total_damage > 0.0
+                    } else {
+                        self.state.total_damage > 0.0
+                    };
+                    if has_damage || matches!(time_stop, TimeStopEvent::GamePauseEnded { .. }) {
+                        self.time_stop_presentation
+                            .observe(time_stop, Instant::now());
+                    }
+                    if matches!(time_stop, TimeStopEvent::GamePauseEnded { .. })
+                        && self.state.is_game_paused()
+                        && self.last_combat_activity.is_some()
+                    {
+                        self.last_combat_activity = Some(Instant::now());
+                    }
+                }
+            }
             _ => {}
         }
         match crate::core::reducer::apply_engine_event(&mut self.state, event) {
-            CoreSignal::StateChanged
-            | CoreSignal::InventoryReplaced
+            CoreSignal::StateChanged => self.mod_projection_dirty = true,
+            CoreSignal::InventoryReplaced
             | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => {}
+            CoreSignal::ModScript(event) => self.push_mod_script_event(event),
             CoreSignal::Status(status) => self.notifications.status = status,
             CoreSignal::Warning(warning) => {
                 self.notifications.diagnostic = Some(tf(
@@ -1747,6 +1894,141 @@ impl DpsApp {
                         t("Import complete; see parse quality on the diagnostics page");
                 } else {
                     self.notifications.status = t("Stopped");
+                }
+            }
+        }
+    }
+
+    fn queue_previous_abyss_round_archive(&mut self, event: &AbyssEvent) {
+        if (self.capture.is_none() && self.replay_thread.is_none())
+            || !abyss_event_starts_new_round(self.state.abyss.floor, event)
+            || self.state.hits_generation == self.last_auto_archive_hits_generation
+        {
+            return;
+        }
+        let Some(details) = HistoryCombatDetails::from_state(&self.state) else {
+            return;
+        };
+        let generation = self.state.hits_generation;
+        if self.enqueue_history_archive(details, HistoryArchiveCause::AbyssBoundary) {
+            self.last_auto_archive_hits_generation = generation;
+        }
+    }
+
+    fn enqueue_history_archive(
+        &self,
+        details: HistoryCombatDetails,
+        cause: HistoryArchiveCause,
+    ) -> bool {
+        let job = HistoryArchiveJob {
+            details,
+            source: self.capture_ui.capture_quality_source,
+            dps_time_mode: DpsTimeBasis::from_subtract_time_stop(self.subtract_time_stop_for_dps()),
+            separate_reaction_damage: self.preferences.separate_reaction_damage,
+            cause,
+        };
+        self.background_tasks
+            .history_worker_sender
+            .as_ref()
+            .expect("history worker lives for the app lifetime")
+            .send(HistoryWorkerJob::Archive(job))
+            .is_ok()
+    }
+
+    pub(crate) fn start_new_combat_round(&mut self) {
+        if self.capture.is_none()
+            || self.capture_ui.paused
+            || self.state.abyss.is_active()
+            || self.state.is_game_paused()
+            || self.round_archive_pending
+        {
+            return;
+        }
+        if !self.archive_and_start_new_round(HistoryArchiveCause::Manual) {
+            self.notifications.status = t("No combat round to archive");
+        }
+    }
+
+    fn archive_and_start_new_round(&mut self, cause: HistoryArchiveCause) -> bool {
+        if self.round_archive_pending {
+            return false;
+        }
+        let Some(details) = HistoryCombatDetails::from_state(&self.state) else {
+            return false;
+        };
+        if !self.enqueue_history_archive(details, cause) {
+            return false;
+        }
+        self.round_archive_pending = cause.starts_new_round();
+        true
+    }
+
+    pub(crate) fn drain_history_worker_results(&mut self) {
+        while let Ok(result) = self.background_tasks.history_worker_receiver.try_recv() {
+            match result {
+                HistoryWorkerResult::Archive(archive) => match archive.result {
+                    Ok(record) => {
+                        if archive.cause.starts_new_round() {
+                            assert!(
+                                self.round_archive_pending,
+                                "new-round archive result must have a pending boundary"
+                            );
+                            self.round_archive_pending = false;
+                            self.state.clear_battle_preserving_inventory();
+                            self.projected_state = None;
+                            self.mod_projection_dirty = true;
+                            self.presented_history_id = None;
+                            self.presented_history_state = None;
+                            self.last_auto_archive_hits_generation = 0;
+                            self.session_epoch = self.session_epoch.wrapping_add(1);
+                            self.reset_combat_round_view_state();
+                        }
+                        self.history.insert_record(record);
+                        if self.presented_history_id.as_deref().is_some_and(|id| {
+                            !self
+                                .history
+                                .records
+                                .iter()
+                                .any(|record| record.id == id && record.details.is_some())
+                        }) {
+                            self.select_presented_round(None);
+                        }
+                        self.notifications.status = match archive.cause {
+                            HistoryArchiveCause::AbyssBoundary => {
+                                t("Previous combat round archived")
+                            }
+                            HistoryArchiveCause::Manual => {
+                                t("Current combat round archived; new round started")
+                            }
+                            HistoryArchiveCause::Idle(seconds) => tf(
+                                "Combat round auto-archived after {}s idle",
+                                &[&seconds.to_string()],
+                            ),
+                        };
+                    }
+                    Err(error) => {
+                        if archive.cause.starts_new_round() {
+                            assert!(
+                                self.round_archive_pending,
+                                "failed new-round archive must have a pending boundary"
+                            );
+                            self.round_archive_pending = false;
+                            while let Some(event) = self.pending_round_events.pop_front() {
+                                self.apply_engine_event_with_round_boundary(event, false);
+                            }
+                            self.last_combat_activity = Some(Instant::now());
+                        }
+                        self.notifications.diagnostic =
+                            Some(tf("Failed to archive previous combat round: {}", &[&error]));
+                    }
+                },
+                HistoryWorkerResult::Import(result) => {
+                    let viewport = self
+                        .background_tasks
+                        .pending_history_import_viewport
+                        .take()
+                        .expect("history import result has a pending viewport");
+                    self.finish_history_record_import(viewport, result);
                 }
             }
         }
@@ -1813,13 +2095,29 @@ impl DpsApp {
     }
 
     pub(crate) fn update_combat_visual(&mut self) {
+        let idle_elapsed = self.last_combat_activity.map(|activity| activity.elapsed());
         if !self.capture_ui.paused
             && self.combat_active
-            && self.last_combat_activity.is_some_and(|activity| {
-                activity.elapsed().as_secs_f64() >= COMBAT_SEGMENT_GAP_SECONDS
-            })
+            && idle_elapsed
+                .is_some_and(|elapsed| elapsed.as_secs_f64() >= COMBAT_SEGMENT_GAP_SECONDS)
         {
             self.finish_combat_visual();
+        }
+        if self.capture_ui.auto_round_after_idle
+            && !self.round_archive_pending
+            && auto_round_due(
+                self.capture.is_some(),
+                self.capture_ui.paused,
+                self.state.abyss.is_active(),
+                self.state.is_game_paused(),
+                !self.state.hits.is_empty(),
+                idle_elapsed,
+                self.capture_ui.auto_round_idle_seconds,
+            )
+        {
+            self.archive_and_start_new_round(HistoryArchiveCause::Idle(
+                self.capture_ui.auto_round_idle_seconds,
+            ));
         }
     }
 
@@ -2438,6 +2736,8 @@ impl DpsApp {
                 }
                 let snapshot = *snapshot;
                 self.state = snapshot.state;
+                self.projected_state = None;
+                self.mod_projection_dirty = true;
                 self.session_epoch = self.session_epoch.wrapping_add(1);
                 self.reset_combat_view_state();
                 self.capture_ui.capture_quality_source = snapshot.capture_quality_source;
@@ -2454,7 +2754,7 @@ impl DpsApp {
                         .retain(|toast| toast.id != id);
                     self.notifications.island.remove(id);
                     let record_id = record.id.clone();
-                    self.history.reload();
+                    self.reload_history_records();
                     self.history.selected_id = Some(record_id);
                     self.history.ensure_selection();
                     self.notifications.status = t("History deletion undone");
@@ -2673,11 +2973,70 @@ impl DpsApp {
         }
     }
 
+    pub(crate) fn presented_state(&self) -> &CombatState {
+        self.projected_state
+            .as_deref()
+            .unwrap_or_else(|| self.raw_presented_state())
+    }
+
+    pub(crate) fn raw_presented_state(&self) -> &CombatState {
+        self.presented_history_state
+            .as_deref()
+            .unwrap_or(&self.state)
+    }
+
+    pub(crate) fn reload_history_records(&mut self) {
+        self.history.reload();
+        if self.presented_history_id.as_deref().is_some_and(|id| {
+            !self
+                .history
+                .records
+                .iter()
+                .any(|record| record.id == id && record.details.is_some())
+        }) {
+            self.select_presented_round(None);
+        }
+    }
+
+    pub(crate) fn select_presented_round(&mut self, record_id: Option<String>) {
+        let presented = record_id.as_deref().map(|id| {
+            let record = self
+                .history
+                .records
+                .iter()
+                .find(|record| record.id == id)
+                .expect("round selector only contains loaded history records");
+            let details = record
+                .details
+                .as_ref()
+                .expect("round selector only contains detailed history records");
+            Box::new(details.to_combat_state())
+        });
+        self.presented_history_id = record_id;
+        self.presented_history_state = presented;
+        self.projected_state = None;
+        self.mod_projection_dirty = true;
+        let state = self.presented_state();
+        self.selected_abyss_half = state.abyss.active_half.unwrap_or({
+            if state.abyss.first_half.hits.is_empty() {
+                AbyssHalf::Second
+            } else {
+                AbyssHalf::First
+            }
+        });
+        self.character_hit_cache = HitDetailCache::default();
+        self.team_hit_cache = HitDetailCache::default();
+        self.skill_summary_cache = SkillSummaryCache::default();
+        self.timeline_cache = TimelineCache::default();
+        self.skill_breakdown_cache = SkillBreakdownCache::default();
+        self.session_epoch = self.session_epoch.wrapping_add(1);
+    }
+
     pub(crate) fn selected_party_state(&self) -> Option<&PartyCombatState> {
-        self.state
+        self.presented_state()
             .abyss
             .is_active()
-            .then(|| self.state.abyss.half(self.selected_abyss_half))
+            .then(|| self.presented_state().abyss.half(self.selected_abyss_half))
     }
 
     pub(crate) fn subtract_time_stop_for_dps(&self) -> bool {
@@ -2693,20 +3052,37 @@ impl DpsApp {
     }
 
     pub(crate) fn state_duration_for_current_mode(&self) -> f64 {
-        self.state
+        self.presented_state()
             .duration_with_time_stop(self.subtract_time_stop_for_dps())
     }
 
     pub(crate) fn state_dps_for_current_mode(&self) -> f64 {
-        self.state
+        self.presented_state()
             .dps_with_time_stop(self.subtract_time_stop_for_dps())
+    }
+
+    pub(crate) fn presented_combat_readout(
+        &self,
+        duration: f64,
+        total_damage: f64,
+    ) -> (f64, f64, Option<f64>, bool) {
+        if !self.subtract_time_stop_for_dps() || self.presented_history_id.is_some() {
+            return (duration, total_damage / duration.max(1.0), None, false);
+        }
+        let frame = self.time_stop_presentation.frame(Instant::now());
+        (
+            duration,
+            total_damage / duration.max(1.0),
+            frame.deduction_seconds,
+            frame.needs_repaint,
+        )
     }
 
     pub(crate) fn character_duration_for_current_source(&self, row: &CharacterStats) -> f64 {
         if let Some(party) = self.selected_party_state() {
             party.character_duration_with_time_stop(row, self.subtract_time_stop_for_dps())
         } else {
-            self.state
+            self.presented_state()
                 .character_duration_with_time_stop(row, self.subtract_time_stop_for_dps())
         }
     }
@@ -2715,21 +3091,22 @@ impl DpsApp {
         if let Some(party) = self.selected_party_state() {
             party.character_dps_with_time_stop(row, self.subtract_time_stop_for_dps())
         } else {
-            self.state
+            self.presented_state()
                 .character_dps_with_time_stop(row, self.subtract_time_stop_for_dps())
         }
     }
 
     pub(crate) fn detail_source(&self) -> (HitDetailSource, u64) {
-        if self.state.abyss.is_active() {
-            let party = self.state.abyss.half(self.selected_abyss_half);
+        let state = self.presented_state();
+        if state.abyss.is_active() {
+            let party = state.abyss.half(self.selected_abyss_half);
             let source = match self.selected_abyss_half {
                 AbyssHalf::First => HitDetailSource::AbyssFirst,
                 AbyssHalf::Second => HitDetailSource::AbyssSecond,
             };
             (source, party.hits_generation)
         } else {
-            (HitDetailSource::Global, self.state.hits_generation)
+            (HitDetailSource::Global, state.hits_generation)
         }
     }
 
@@ -2776,7 +3153,7 @@ impl DpsApp {
                     .is_some_and(|dirty| dirty.elapsed() >= DETAIL_CACHE_REFRESH_DELAY));
         if refresh_due {
             let rows = aggregate_character_skill_damage(
-                detail_hits_for_source(&self.state, source),
+                detail_hits_for_source(self.presented_state(), source),
                 char_id,
             );
             self.skill_summary_cache = SkillSummaryCache {
@@ -2805,7 +3182,7 @@ impl DpsApp {
         if self.timeline_cache.key.as_ref() != Some(&key) {
             let series = match source {
                 HitDetailSource::Global => self
-                    .state
+                    .presented_state()
                     .timeline(bucket_seconds as f64, subtract_time_stop),
                 HitDetailSource::AbyssFirst => self.abyss_half_timeline_series(
                     AbyssHalf::First,
@@ -2832,13 +3209,13 @@ impl DpsApp {
         bucket_seconds: f64,
         subtract_time_stop: bool,
     ) -> TimelineSeries {
-        let mut series = self
-            .state
+        let state = self.presented_state();
+        let mut series = state
             .abyss
             .half(half)
             .timeline(bucket_seconds, subtract_time_stop);
         if let (Some(start), Some(end)) = (series.start_timestamp, series.end_timestamp) {
-            series.markers = self.state.abyss.timeline_markers_for_half(half, start, end);
+            series.markers = state.abyss.timeline_markers_for_half(half, start, end);
         }
         series
     }
@@ -2852,7 +3229,7 @@ impl DpsApp {
         };
         if self.skill_breakdown_cache.key.as_ref() != Some(&key) {
             let breakdown = crate::engine::model::summarize_skill_breakdown(
-                detail_hits_for_source(&self.state, source),
+                detail_hits_for_source(self.presented_state(), source),
                 char_id,
             );
             self.skill_breakdown_cache = SkillBreakdownCache {
@@ -3115,5 +3492,92 @@ mod tests {
             Some(9)
         );
         assert_eq!(newest_undo_id([10].into_iter(), [6].into_iter()), Some(10));
+    }
+
+    #[test]
+    fn restart_and_floor_change_start_a_new_archivable_round() {
+        assert!(abyss_event_starts_new_round(
+            Some(12),
+            &AbyssEvent::RestartDetected { timestamp: 20.0 }
+        ));
+        assert!(abyss_event_starts_new_round(
+            Some(11),
+            &AbyssEvent::Stage {
+                timestamp: 20.0,
+                cycle: None,
+                floor: Some(12),
+                half: AbyssHalf::First,
+                allow_late_backfill: false,
+            }
+        ));
+        assert!(!abyss_event_starts_new_round(
+            Some(12),
+            &AbyssEvent::Stage {
+                timestamp: 20.0,
+                cycle: None,
+                floor: Some(12),
+                half: AbyssHalf::Second,
+                allow_late_backfill: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn idle_auto_round_requires_live_unpaused_non_abyss_damage() {
+        let due = Some(Duration::from_secs(30));
+        assert!(auto_round_due(true, false, false, false, true, due, 30));
+        assert!(!auto_round_due(false, false, false, false, true, due, 30));
+        assert!(!auto_round_due(true, true, false, false, true, due, 30));
+        assert!(!auto_round_due(true, false, true, false, true, due, 30));
+        assert!(!auto_round_due(true, false, false, true, true, due, 30));
+        assert!(!auto_round_due(true, false, false, false, false, due, 30));
+        assert!(!auto_round_due(
+            true,
+            false,
+            false,
+            false,
+            true,
+            Some(Duration::from_secs(29)),
+            30,
+        ));
+    }
+
+    #[test]
+    fn replay_auto_round_requires_configured_non_abyss_active_gap() {
+        let due = Some(30.0);
+        assert!(replay_auto_round_due(
+            true, true, false, false, true, due, 30
+        ));
+        assert!(!replay_auto_round_due(
+            false, true, false, false, true, due, 30
+        ));
+        assert!(!replay_auto_round_due(
+            true, false, false, false, true, due, 30
+        ));
+        assert!(!replay_auto_round_due(
+            true, true, true, false, true, due, 30
+        ));
+        assert!(!replay_auto_round_due(
+            true, true, false, true, true, due, 30
+        ));
+        assert!(!replay_auto_round_due(
+            true, true, false, false, false, due, 30
+        ));
+        assert!(!replay_auto_round_due(
+            true,
+            true,
+            false,
+            false,
+            true,
+            Some(29.999),
+            30,
+        ));
+    }
+
+    #[test]
+    fn only_manual_and_idle_archives_start_a_new_round() {
+        assert!(!HistoryArchiveCause::AbyssBoundary.starts_new_round());
+        assert!(HistoryArchiveCause::Manual.starts_new_round());
+        assert!(HistoryArchiveCause::Idle(30).starts_new_round());
     }
 }

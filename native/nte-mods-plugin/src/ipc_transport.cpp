@@ -1,5 +1,6 @@
 #include "ipc_transport.hpp"
 
+#include "mod_runtime.hpp"
 #include "obfuscated_string.hpp"
 
 #include <Windows.h>
@@ -7,14 +8,14 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace nte::equipment
+namespace nte::mods
 {
 	namespace
 	{
 		constexpr ULONGLONG IPC_CLIENT_IO_TIMEOUT_MS = 1000;
 
-		static_assert(sizeof(NteEquipmentIpcRequest) == NTE_EQUIPMENT_IPC_REQUEST_SIZE);
-		static_assert(sizeof(NteEquipmentIpcResponse) == NTE_EQUIPMENT_IPC_RESPONSE_SIZE);
+		static_assert(sizeof(NteModsIpcRequest) == NTE_MODS_IPC_REQUEST_SIZE);
+		static_assert(sizeof(NteModsIpcResponse) == NTE_MODS_IPC_RESPONSE_SIZE);
 
 		enum class IpcTransportState
 		{
@@ -37,8 +38,69 @@ namespace nte::equipment
 		OVERLAPPED ipc_overlapped{};
 		IpcTransportState ipc_transport_state = IpcTransportState::Closed;
 		ULONGLONG ipc_io_deadline = 0;
-		NteEquipmentIpcRequest ipc_request{};
-		NteEquipmentIpcResponse ipc_response{};
+		NteModsIpcRequest ipc_request{};
+		NteModsIpcResponse ipc_response{};
+
+		class PipeSecurityAttributes
+		{
+		public:
+			PipeSecurityAttributes() = default;
+			PipeSecurityAttributes(const PipeSecurityAttributes&) = delete;
+			PipeSecurityAttributes& operator=(const PipeSecurityAttributes&) = delete;
+
+			~PipeSecurityAttributes()
+			{
+				if (descriptor_ != nullptr)
+					LocalFree(descriptor_);
+				if (advapi_ != nullptr)
+					FreeLibrary(advapi_);
+			}
+
+			bool Initialize()
+			{
+				const auto library_name =
+					NTE_OBFUSCATE_STRING(L"advapi32.dll");
+				advapi_ = LoadLibraryW(library_name.c_str());
+				if (advapi_ == nullptr)
+					return false;
+
+				using ConvertSecurityDescriptor =
+					BOOL(WINAPI*)(LPCWSTR, DWORD, PSECURITY_DESCRIPTOR*, PULONG);
+				const auto function_name = NTE_OBFUSCATE_STRING(
+					"ConvertStringSecurityDescriptorToSecurityDescriptorW");
+				const auto convert = reinterpret_cast<ConvertSecurityDescriptor>(
+					GetProcAddress(advapi_, function_name.c_str()));
+				if (convert == nullptr)
+					return false;
+
+				// The game runs at high integrity while the desktop client normally
+				// runs at medium integrity. Keep the pipe local and grant access only
+				// to system, administrators, and the interactive desktop session.
+				const auto descriptor = NTE_OBFUSCATE_STRING(
+					L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;IU)"
+					L"S:(ML;;NW;;;ME)");
+				if (!convert(
+					descriptor.c_str(), 1, &descriptor_, nullptr))
+					return false;
+
+				attributes_ = {
+					sizeof(SECURITY_ATTRIBUTES),
+					descriptor_,
+					FALSE,
+				};
+				return true;
+			}
+
+			SECURITY_ATTRIBUTES* Get()
+			{
+				return &attributes_;
+			}
+
+		private:
+			HMODULE advapi_ = nullptr;
+			PSECURITY_DESCRIPTOR descriptor_ = nullptr;
+			SECURITY_ATTRIBUTES attributes_{};
+		};
 
 		bool IsZeroItemId(const NteItemNetId& item)
 		{
@@ -52,7 +114,7 @@ namespace nte::equipment
 		}
 
 		bool HasOnlyZeroPlacements(
-			const NteEquipmentIpcRequest& request,
+			const NteModsIpcRequest& request,
 			uint32_t first)
 		{
 			for (uint32_t index = first; index < NTE_EQUIPMENT_MAX_PLACEMENTS; ++index)
@@ -61,6 +123,16 @@ namespace nte::equipment
 					return false;
 			}
 			return true;
+		}
+
+		bool IsEmptyQueryRequest(const NteModsIpcRequest& request)
+		{
+			return IsZeroItemId(request.character) &&
+				IsZeroItemId(request.equipment) &&
+				IsZeroItemId(request.core) &&
+				request.row == 0 && request.column == 0 &&
+				request.placement_count == 0 && request.state == 0 &&
+				HasOnlyZeroPlacements(request, 0);
 		}
 
 		void CloseIpcPipe()
@@ -150,22 +222,26 @@ namespace nte::equipment
 			if (ipc_pipe != INVALID_HANDLE_VALUE)
 				return true;
 
+			PipeSecurityAttributes security;
+			if (!security.Initialize())
+				return false;
+
 			ipc_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 			if (ipc_event == nullptr)
 				return false;
 
 			const auto pipe_name = NTE_OBFUSCATE_STRING(
-				L"\\\\.\\pipe\\nte-equipment-plugin-v3");
+				NTE_MODS_PIPE_NAME);
 			ipc_pipe = CreateNamedPipeW(
 				pipe_name.c_str(),
 				PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
 				PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT |
 				PIPE_REJECT_REMOTE_CLIENTS,
 				1,
-				sizeof(NteEquipmentIpcResponse),
-				sizeof(NteEquipmentIpcRequest),
+				sizeof(NteModsIpcResponse),
+				sizeof(NteModsIpcRequest),
 				0,
-				nullptr);
+				security.Get());
 			if (ipc_pipe == INVALID_HANDLE_VALUE)
 			{
 				CloseIpcPipe();
@@ -239,115 +315,140 @@ namespace nte::equipment
 			}
 		}
 
-		NteEquipmentStatus DispatchIpcRequest(
-			const EquipmentContext* context,
-			const NteEquipmentIpcRequest& request)
+		NteModsStatus InvokeIpcKernelServiceImpl(
+			IpcKernelService service,
+			const PluginContext* context,
+			const NteModsIpcRequest& request,
+			NteModsIpcResponse& response)
 		{
-			if (request.magic != NTE_EQUIPMENT_IPC_MAGIC ||
-				request.version != NTE_EQUIPMENT_IPC_VERSION ||
-				request.request_id == 0 ||
-				request.placement_count > NTE_EQUIPMENT_MAX_PLACEMENTS)
-				return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
-
-			switch (request.operation)
+			switch (service)
 			{
-			case NTE_EQUIPMENT_IPC_EQUIP_MODULE:
+			case IpcKernelService::QueryCombatClockTransitions:
+				if (!IsEmptyQueryRequest(request))
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+				response.record_count =
+					CopyCombatClockTransitions(
+						response.payload.combat_clock_transitions,
+						NTE_COMBAT_CLOCK_HISTORY_SIZE);
+				return NTE_MODS_STATUS_DRY_RUN_OK;
+			case IpcKernelService::QueryModEvents:
+				if (!IsEmptyQueryRequest(request))
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+				response.record_count = runtime::CopyModEvents(
+					response.payload.mod_events,
+					NTE_MOD_EVENT_HISTORY_SIZE);
+				return NTE_MODS_STATUS_DRY_RUN_OK;
+			case IpcKernelService::EquipModule:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return EquipModule(
 					context,
 					&request.character,
 					&request.equipment,
 					request.row,
 					request.column);
-			case NTE_EQUIPMENT_IPC_EQUIP_CORE:
+			case IpcKernelService::EquipCore:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return EquipCore(
 					context, &request.character, &request.equipment);
-			case NTE_EQUIPMENT_IPC_UNEQUIP_MODULE:
+			case IpcKernelService::UnequipModule:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return UnequipModule(
 					context, &request.character, &request.equipment);
-			case NTE_EQUIPMENT_IPC_UNEQUIP_CORE:
+			case IpcKernelService::UnequipCore:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return UnequipCore(
 					context, &request.character, &request.equipment);
-			case NTE_EQUIPMENT_IPC_UNEQUIP_ALL:
+			case IpcKernelService::UnequipAll:
 				if (!IsZeroItemId(request.equipment) || !IsZeroItemId(request.core) ||
 					request.row != 0 || request.column != 0 ||
 					request.placement_count != 0 || request.state != 0 ||
 					!HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return UnequipAll(context, &request.character);
-			case NTE_EQUIPMENT_IPC_EQUIP_ONE_KEY:
+			case IpcKernelService::EquipOneKey:
 				if (!IsZeroItemId(request.equipment) || request.row != 0 ||
 					request.column != 0 || request.placement_count == 0 ||
 					request.state != 0 ||
 					!HasOnlyZeroPlacements(request, request.placement_count))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return EquipOneKey(
 					context,
 					&request.character,
 					request.placements,
 					request.placement_count,
 					&request.core);
-			case NTE_EQUIPMENT_IPC_MOVE_MODULE_TO_CHARACTER:
+			case IpcKernelService::MoveModuleToCharacter:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return MoveModuleToCharacter(
 					context,
 					&request.character,
 					&request.equipment,
 					request.row,
 					request.column);
-			case NTE_EQUIPMENT_IPC_MOVE_CORE_TO_CHARACTER:
+			case IpcKernelService::MoveCoreToCharacter:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return MoveCoreToCharacter(
 					context, &request.character, &request.equipment);
-			case NTE_EQUIPMENT_IPC_SET_ITEM_DISCARDED:
+			case IpcKernelService::SetItemDiscarded:
 				if (!IsZeroItemId(request.character) || !IsZeroItemId(request.core) ||
 					request.row != 0 || request.column != 0 ||
 					request.placement_count != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return SetItemDiscarded(
 					context, &request.equipment, request.state);
-			case NTE_EQUIPMENT_IPC_SET_ITEM_LOCKED:
+			case IpcKernelService::SetItemLocked:
 				if (!IsZeroItemId(request.character) || !IsZeroItemId(request.core) ||
 					request.row != 0 || request.column != 0 ||
 					request.placement_count != 0 || !HasOnlyZeroPlacements(request, 0))
-					return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return SetItemLocked(context, &request.equipment, request.state);
-			default:
-				return NTE_EQUIPMENT_STATUS_INVALID_IPC_REQUEST;
 			}
+			return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 		}
 
-		IpcPumpResult CompleteIpcRequest(
-			const EquipmentContext* context)
+		NteModsStatus DispatchIpcRequest(
+			const PluginContext* context,
+			const NteModsIpcRequest& request,
+			NteModsIpcResponse& response)
 		{
-			const NteEquipmentStatus status = DispatchIpcRequest(context, ipc_request);
-			ipc_response = {
-				NTE_EQUIPMENT_IPC_MAGIC,
-				NTE_EQUIPMENT_IPC_VERSION,
-				0,
-				ipc_request.request_id,
-				static_cast<uint32_t>(status),
-				0,
-			};
+			if (request.magic != NTE_MODS_IPC_MAGIC ||
+				request.version != NTE_MODS_IPC_VERSION ||
+				request.request_id == 0 ||
+				request.operation < NTE_MODS_IPC_EQUIP_MODULE ||
+				request.operation > NTE_MODS_IPC_QUERY_MOD_EVENTS ||
+				request.placement_count > NTE_EQUIPMENT_MAX_PLACEMENTS)
+				return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+			return runtime::DispatchIpcRequestPrograms(
+				context,
+				request,
+				response);
+		}
+
+		IpcPumpResult CompleteIpcRequest(const PluginContext* context)
+		{
+			ipc_response = {};
+			ipc_response.magic = NTE_MODS_IPC_MAGIC;
+			ipc_response.version = NTE_MODS_IPC_VERSION;
+			ipc_response.request_id = ipc_request.request_id;
+			const NteModsStatus status = DispatchIpcRequest(
+				context, ipc_request, ipc_response);
+			ipc_response.status = static_cast<uint32_t>(status);
 
 			ResetIpcOverlapped();
 			DWORD bytes_written = 0;
@@ -384,24 +485,35 @@ namespace nte::equipment
 
 	} // namespace
 
-	IpcPumpResult PumpLiveIpc(
-		void* user_data,
-		PlayerStateResolver resolve_player_state)
+	NteModsStatus InvokeIpcKernelService(
+		IpcKernelService service,
+		const PluginContext* context,
+		const NteModsIpcRequest& request,
+		NteModsIpcResponse& response)
 	{
+		return InvokeIpcKernelServiceImpl(
+			service,
+			context,
+			request,
+			response);
+	}
+
+	IpcPumpResult PumpLiveIpc(
+		const PluginContext* context)
+	{
+		if (context == nullptr)
+			return IpcPumpResult::Error;
+
 		const IpcPollResult poll_result = PollIpcRequest();
 		if (poll_result == IpcPollResult::Error)
 			return IpcPumpResult::Error;
 		if (poll_result == IpcPollResult::Idle)
 			return IpcPumpResult::Idle;
-		if (resolve_player_state == nullptr)
-			return IpcPumpResult::Error;
-
-		const EquipmentContext context{ resolve_player_state(user_data) };
-		return CompleteIpcRequest(&context);
+		return CompleteIpcRequest(context);
 	}
 
 	void CloseIpc()
 	{
 		CloseIpcPipe();
 	}
-} // namespace nte::equipment
+} // namespace nte::mods

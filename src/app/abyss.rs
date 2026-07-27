@@ -3,11 +3,17 @@ use super::*;
 pub(crate) fn snapshot_party_team(
     party: &PartyCombatState,
     subtract_time_stop: bool,
+    separate_reaction_damage: bool,
 ) -> Option<TeamDps> {
+    let stats = party
+        .stats
+        .values()
+        .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+        .collect::<Vec<_>>();
     snapshot_team_from_stats(
         party.dps_with_time_stop(subtract_time_stop),
         party.duration_with_time_stop(subtract_time_stop),
-        party.stats.values(),
+        stats.iter(),
     )
 }
 
@@ -15,16 +21,30 @@ pub(crate) fn build_team_dps_export(
     state: &CombatState,
     abyss_overview: &AbyssOverviewState,
     subtract_time_stop: bool,
+    separate_reaction_damage: bool,
 ) -> Option<TeamDpsExport> {
+    let stats = state
+        .stats
+        .values()
+        .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
+        .collect::<Vec<_>>();
     let single = snapshot_team_from_stats(
         state.dps_with_time_stop(subtract_time_stop),
         state.duration_with_time_stop(subtract_time_stop),
-        state.stats.values(),
+        stats.iter(),
     );
-    let upper = snapshot_party_team(&state.abyss.first_half, subtract_time_stop)
-        .or_else(|| abyss_overview.upper_team.clone());
-    let lower = snapshot_party_team(&state.abyss.second_half, subtract_time_stop)
-        .or_else(|| abyss_overview.lower_team.clone());
+    let upper = snapshot_party_team(
+        &state.abyss.first_half,
+        subtract_time_stop,
+        separate_reaction_damage,
+    )
+    .or_else(|| abyss_overview.upper_team.clone());
+    let lower = snapshot_party_team(
+        &state.abyss.second_half,
+        subtract_time_stop,
+        separate_reaction_damage,
+    )
+    .or_else(|| abyss_overview.lower_team.clone());
     if single.is_none() && upper.is_none() && lower.is_none() {
         return None;
     }

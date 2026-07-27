@@ -40,7 +40,7 @@
 
 - **实时 DPS 统计**：实时计算总伤害、DPS、命中数、受击统计和战斗时长。
 - **角色维度分析**：按角色展示伤害、占比、命中数、DPS、受击统计、技能分类和可筛选命中明细。
-- **双时间口径**：支持"扣除时停"和"现实时间"两种 DPS 时间口径；大招动画时停使用资源表时长，额外时停按解析到的区间合并扣除。
+- **双时间口径**：支持"扣除时停"和"现实时间"两种 DPS 时间口径；扣除时停仅使用原生插件读取的游戏权威暂停状态。
 - **目标 HP 字段保留**：`target_hp_before`、`target_hp_after`、`target_max_hp`、`target_hp_percent`。
 - **技能与效果映射**：解析并展示 GameplayEffect 映射、技能分类、`ability_name`、`damage_name`、`attack_type`。
 - **深渊上/下行线统计**：独立统计上下行线，保留重开、进入线路、通关和离开事件状态，并提供深渊怪物数值表查看。
@@ -87,27 +87,36 @@ cargo test
 cargo run --release --bin nte-dps-tool --features gui
 ```
 
-### 可选原生装备模块
+### 可选原生 NTE Mods Plugin
 
-`native/nte-equipment-plugin` 是仓库内可独立编译的 Windows x64 子模块，只包含
-运行核心、固定 IPC 头文件和 Visual Studio 工程，不依赖 vcpkg 或客户端 SDK。
+`native/nte-mods-plugin` 是仓库内可独立编译的 Windows x64 子模块，只包含
+单 DLL 受限脚本加载器、固定 IPC 头文件和 Visual Studio 工程，不依赖 vcpkg 或客户端 SDK。
 安装 Visual Studio 2022 的“使用 C++ 的桌面开发”工作负载后，可在仓库根目录运行：
 
 ```powershell
 # 在“Developer PowerShell for VS 2022”中执行
-msbuild .\native\nte-equipment-plugin\nte-equipment-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
+msbuild .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
 ```
 
-原始输出位于 `native/nte-equipment-plugin/x64/Release/dwmapi.dll`，构建完成后会自动
+原始输出位于 `native/nte-mods-plugin/x64/Release/dwmapi.dll`，构建完成后会自动
 同步到主程序统一读取的 `plugins/dwmapi.dll`。模块细节见
-[`native/nte-equipment-plugin/README.md`](native/nte-equipment-plugin/README.md)。
+[`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)。
 
-GUI 发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并加入压缩包。
-在“控制台 → 空幕”中打开“启用游戏内装备
-插件”后，程序会先显示第三方 Mod 风险与加载原理；启用按钮在 5 秒内保持锁定，
+GUI 发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并加入压缩包，其中
+`dwmapi.dll` 是唯一的自定义 Windows 模块，`nte-mods/*.nte` 是由其直接解释的
+NTE Script v4 程序。外部脚本可使用变量、持久状态、算术／位运算、
+`if/elif/else`、有界 `for range`、类型化只读内存、China/Global SDK 一致的角色
+读取 API、隐藏客户端 Offset 的 `game.*` 会话内置值及自定义 IPC 事件。实时抓包
+会把 `pre.*`、`post.*` 和普通脚本事件送入程序的共享事件管线；DLL 保留源码编译器、
+VM、共享 Hook、边界校验和 capability 白名单。
+在“控制台 → Mod 工坊”中打开“游戏内 Mod 加载器”后，程序会先显示第三方 Mod
+风险与加载原理；启用按钮在 5 秒内保持锁定，
 取消按钮和 `Esc` 可立即关闭弹窗。若同时安装了国服与国际服，可先选择需要管理的客户端。确认后，程序
-只把 `dwmapi.dll` 安装到所选客户端中 `HTGame.exe` 所在目录，游戏下次启动时
-会加载它。更改此选项前必须关闭游戏；
+只把 `dwmapi.dll` 安装到所选客户端中 `HTGame.exe` 所在目录；启用集合和脚本始终
+保留在软件同级的 `plugins/` 目录。DLL 通过当前用户注册的工作区路径读取脚本，并在
+游戏运行期间监听保存和启停更改。编辑 `nte-mods.enabled` 可只加载 `equipment`
+或 `combat-clock`；配置只保留 `nte_mod_set 1` 时，DLL 会移除 Viewport Hook 并
+关闭 IPC。更改 DLL 安装状态前必须关闭游戏；Mod 脚本可在运行时启停。
 关闭选项会移除由本工具安装的副本。若目录里已有其他来源的 `dwmapi.dll`，程序会
 保留该文件并报告冲突，不会覆盖或删除其他 Mod。
 
@@ -117,9 +126,9 @@ GUI 发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并�
 
 正式 Windows 产物分为：
 
-- `nte-dps-tool-windows-x64.zip`：标准 GUI，资源内嵌，包含 `plugins/dwmapi.dll`，始终包含 F12 和完整诊断工具；
+- `nte-dps-tool-windows-x64.zip`：标准 GUI，资源内嵌，包含 `plugins/dwmapi.dll` 与受限 Mod 脚本，始终包含 F12 和完整诊断工具；
 - `nte-core-windows-x64.zip`：无 GUI 的本地 Sidecar，供第三方本机工具集成；
-- `nte-dps-tool-windows-external-resources.zip`：完整 GUI，`res/` 资源外置，并包含 `plugins/dwmapi.dll`。
+- `nte-dps-tool-windows-external-resources.zip`：完整 GUI，`res/` 资源外置，并包含 `plugins/dwmapi.dll` 与受限 Mod 脚本。
 
 `master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 GUI／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.0`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的“本次改动”会按时间顺序累计当前版本相对上一个版本构建标签的全部非合并提交，而不是只显示最后一次 push。
 

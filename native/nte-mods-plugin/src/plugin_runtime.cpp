@@ -1,8 +1,8 @@
 #include "plugin_runtime.hpp"
 
-#include "equipment_rpc.hpp"
 #include "ipc_transport.hpp"
 #include "memory_access.hpp"
+#include "mod_runtime.hpp"
 #include "obfuscated_string.hpp"
 #include "offset_resolver.hpp"
 #include "shadow_vtable_hook.hpp"
@@ -14,20 +14,22 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace nte::equipment
+namespace nte::mods
 {
 	namespace
 	{
 		constexpr size_t WORLD_GAME_INSTANCE_OFFSET = 0x230;
 		constexpr size_t GAME_INSTANCE_LOCAL_PLAYERS_OFFSET = 0x38;
-		constexpr size_t LOCAL_PLAYER_CONTROLLER_OFFSET = 0x30;
 		constexpr size_t LOCAL_PLAYER_VIEWPORT_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_WORLD_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
-		constexpr size_t CONTROLLER_PLAYER_STATE_OFFSET = 0x2D0;
 		constexpr size_t VIEWPORT_TICK_INDEX = 100;
 		constexpr DWORD VIEWPORT_BOOTSTRAP_RETRY_MS = 250;
-		constexpr uint32_t VIEWPORT_REBIND_CHECK_TICKS = 120;
+		constexpr wchar_t MOD_WORKSPACE_REGISTRY_KEY[] =
+			L"Software\\NTE DPS Tool\\Mods Plugin";
+		constexpr wchar_t LEGACY_MOD_WORKSPACE_REGISTRY_KEY[] =
+			L"Software\\NTE DPS Tool\\Mod Loader";
+		constexpr wchar_t MOD_WORKSPACE_REGISTRY_VALUE[] = L"Workspace";
 
 		constexpr std::array<uint8_t, 22> VIEWPORT_TICK_PREFIX{
 			0x4C, 0x89, 0x74, 0x24, 0x20, 0x55, 0x48, 0x8D, 0x6C, 0x24, 0xD0,
@@ -48,14 +50,28 @@ namespace nte::equipment
 
 		constinit nte::hook::ShadowVTableHook viewport_hooks[2];
 		size_t active_viewport_hook_index = 0;
-		void* hooked_viewport = nullptr;
-		ViewportTick original_viewport_tick = nullptr;
-		uint32_t viewport_rebind_tick_count = 0;
-		bool ipc_dispatch_in_progress = false;
+		PVOID volatile hooked_viewport = nullptr;
+		PVOID volatile original_viewport_tick = nullptr;
+		volatile LONG ipc_dispatch_in_progress = 0;
+		HANDLE runtime_stop_event = nullptr;
+		HANDLE runtime_thread = nullptr;
 
 		static_assert(sizeof(LocalPlayerArray) == 16);
 
 		bool InstallViewportHook(void* viewport);
+
+		void* CurrentHookedViewport()
+		{
+			return InterlockedCompareExchangePointer(
+				&hooked_viewport, nullptr, nullptr);
+		}
+
+		ViewportTick CurrentOriginalViewportTick()
+		{
+			return reinterpret_cast<ViewportTick>(
+				InterlockedCompareExchangePointer(
+					&original_viewport_tick, nullptr, nullptr));
+		}
 
 		bool BytesEqual(const void* left, const void* right, size_t size)
 		{
@@ -137,17 +153,6 @@ namespace nte::equipment
 				: nullptr;
 		}
 
-		void* ResolvePlayerState(void* viewport)
-		{
-			auto* game_instance = memory::ReadPointer<void>(
-				viewport, VIEWPORT_GAME_INSTANCE_OFFSET);
-			auto* local_player = ResolveLocalPlayer(game_instance);
-			auto* player_controller = memory::ReadPointer<void>(
-				local_player, LOCAL_PLAYER_CONTROLLER_OFFSET);
-			return memory::ReadPointer<void>(
-				player_controller, CONTROLLER_PLAYER_STATE_OFFSET);
-		}
-
 		bool IsExpectedViewportTick(const void* address)
 		{
 			constexpr size_t CALL_DISPLACEMENT_SIZE = 4;
@@ -175,41 +180,28 @@ namespace nte::equipment
 			void* viewport,
 			float delta_seconds)
 		{
-			original_viewport_tick(viewport, delta_seconds);
+			const auto original_tick = CurrentOriginalViewportTick();
+			if (original_tick == nullptr)
+				return;
+			original_tick(viewport, delta_seconds);
 
-			if (ipc_dispatch_in_progress)
+			if (InterlockedCompareExchange(
+					&ipc_dispatch_in_progress, 1, 0) != 0)
 				return;
 
-			ipc_dispatch_in_progress = true;
-			if (++viewport_rebind_tick_count >= VIEWPORT_REBIND_CHECK_TICKS)
+			if (viewport != CurrentHookedViewport())
 			{
-				viewport_rebind_tick_count = 0;
-				if (auto* resolved_viewport = ResolveViewport();
-					nte::hook::ShouldRebindViewport(
-						resolved_viewport, hooked_viewport))
-				{
-					InstallViewportHook(resolved_viewport);
-				}
-			}
-
-			if (viewport != hooked_viewport)
-			{
-				ipc_dispatch_in_progress = false;
+				InterlockedExchange(&ipc_dispatch_in_progress, 0);
 				return;
 			}
 
-			if (!IsEquipmentRpcCacheReady())
-			{
-				const EquipmentContext context{ ResolvePlayerState(viewport) };
-				PrepareEquipmentRpcCache(&context);
-			}
-			PumpLiveIpc(viewport, ResolvePlayerState);
-			ipc_dispatch_in_progress = false;
+			runtime::ExecuteViewportTickPrograms(viewport);
+			InterlockedExchange(&ipc_dispatch_in_progress, 0);
 		}
 
 		bool InstallViewportHook(void* viewport)
 		{
-			if (viewport == hooked_viewport &&
+			if (viewport == CurrentHookedViewport() &&
 				viewport_hooks[active_viewport_hook_index].IsInstalled())
 				return true;
 
@@ -222,7 +214,7 @@ namespace nte::equipment
 				!IsExpectedViewportTick(vtable[VIEWPORT_TICK_INDEX]))
 			{
 				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE equipment plugin: unsupported viewport Tick vtable.\n")
+					L"NTE Mods plugin: unsupported viewport Tick vtable.\n")
 					.c_str());
 				return false;
 			}
@@ -236,8 +228,10 @@ namespace nte::equipment
 				: active_viewport_hook_index;
 			viewport_hooks[target_hook_index].Remove();
 
-			const auto previous_tick = original_viewport_tick;
-			original_viewport_tick = candidate_tick;
+			const auto previous_tick = CurrentOriginalViewportTick();
+			InterlockedExchangePointer(
+				&original_viewport_tick,
+				reinterpret_cast<void*>(candidate_tick));
 			if (!viewport_hooks[target_hook_index].Install(
 				viewport,
 				VIEWPORT_TICK_INDEX,
@@ -246,18 +240,19 @@ namespace nte::equipment
 				reinterpret_cast<void*>(candidate_tick))
 			{
 				viewport_hooks[target_hook_index].Remove();
-				original_viewport_tick = previous_tick;
+				InterlockedExchangePointer(
+					&original_viewport_tick,
+					reinterpret_cast<void*>(previous_tick));
 				return false;
 			}
 
 			if (had_active_hook)
 				viewport_hooks[active_viewport_hook_index].Remove();
 			active_viewport_hook_index = target_hook_index;
-			hooked_viewport = viewport;
-			viewport_rebind_tick_count = 0;
+			InterlockedExchangePointer(&hooked_viewport, viewport);
 
 			DebugLog(NTE_OBFUSCATE_STRING(
-				L"NTE equipment plugin: viewport Tick hook installed.\n")
+				L"NTE Mods plugin: viewport Tick hook installed.\n")
 				.c_str());
 			return true;
 		}
@@ -267,9 +262,8 @@ namespace nte::equipment
 			viewport_hooks[0].Remove();
 			viewport_hooks[1].Remove();
 			active_viewport_hook_index = 0;
-			hooked_viewport = nullptr;
-			original_viewport_tick = nullptr;
-			viewport_rebind_tick_count = 0;
+			InterlockedExchangePointer(&hooked_viewport, nullptr);
+			InterlockedExchangePointer(&original_viewport_tick, nullptr);
 		}
 
 		bool IsGameExecutableHost()
@@ -291,47 +285,160 @@ namespace nte::equipment
 				NTE_OBFUSCATE_STRING(L"HTGame.exe").c_str());
 		}
 
-		DWORD WINAPI BootstrapViewportHook(void*)
+		bool ReadModWorkspaceFromKey(
+			const wchar_t* registry_key,
+			std::array<wchar_t, MAX_PATH>& workspace)
 		{
-			if (!offsets::Initialize())
-			{
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE equipment plugin: automatic offset resolution failed.\n")
-					.c_str());
-				return ERROR_NOT_FOUND;
-			}
-			DebugLog(NTE_OBFUSCATE_STRING(
-				L"NTE equipment plugin: offsets resolved.\n").c_str());
+			DWORD value_type = 0;
+			DWORD byte_length = static_cast<DWORD>(
+				workspace.size() * sizeof(wchar_t));
+			const LSTATUS status = RegGetValueW(
+				HKEY_CURRENT_USER,
+				registry_key,
+				MOD_WORKSPACE_REGISTRY_VALUE,
+				RRF_RT_REG_SZ,
+				&value_type,
+				workspace.data(),
+				&byte_length);
+			if (status != ERROR_SUCCESS || value_type != REG_SZ ||
+				byte_length < 2 * sizeof(wchar_t) ||
+				byte_length > workspace.size() * sizeof(wchar_t) ||
+				byte_length % sizeof(wchar_t) != 0)
+				return false;
 
+			const size_t length =
+				byte_length / sizeof(wchar_t);
+			if (workspace[length - 1] != L'\0')
+				return false;
+			const bool drive_path =
+				length >= 4 &&
+				((workspace[0] >= L'A' && workspace[0] <= L'Z') ||
+					(workspace[0] >= L'a' && workspace[0] <= L'z')) &&
+				workspace[1] == L':' &&
+				(workspace[2] == L'\\' || workspace[2] == L'/');
+			const bool unc_path =
+				length >= 4 && workspace[0] == L'\\' &&
+				workspace[1] == L'\\';
+			return drive_path || unc_path;
+		}
+
+		bool ReadModWorkspace(
+			std::array<wchar_t, MAX_PATH>& workspace)
+		{
+			if (ReadModWorkspaceFromKey(
+				MOD_WORKSPACE_REGISTRY_KEY, workspace))
+				return true;
+			return ReadModWorkspaceFromKey(
+				LEGACY_MOD_WORKSPACE_REGISTRY_KEY, workspace);
+		}
+
+		DWORD WINAPI WatchModWorkspace(void*)
+		{
+			bool offsets_initialized = false;
 			for (;;)
 			{
-				if (auto* viewport = ResolveViewport())
+				std::array<wchar_t, MAX_PATH> workspace{};
+				if (ReadModWorkspace(workspace))
 				{
-					if (InstallViewportHook(viewport))
-						return 0;
+					const runtime::ReloadResult reload =
+						runtime::ReloadEnabledPrograms(workspace.data());
+					if (reload == runtime::ReloadResult::Error)
+					{
+						DebugLog(NTE_OBFUSCATE_STRING(
+							L"NTE Mods plugin: failed to reload programs.\n")
+							.c_str());
+					}
+					else if (reload == runtime::ReloadResult::Changed &&
+						(runtime::EnabledCapabilities() &
+							runtime::CAPABILITY_IPC) == 0)
+					{
+						CloseIpc();
+					}
 				}
-				Sleep(VIEWPORT_BOOTSTRAP_RETRY_MS);
+				else if (runtime::HasViewportTickPrograms() ||
+					CurrentHookedViewport() != nullptr)
+				{
+					RestoreViewportHook();
+					runtime::Reset();
+					CloseIpc();
+				}
+
+				if (runtime::HasViewportTickPrograms())
+				{
+					if (!offsets_initialized)
+					{
+						offsets_initialized = offsets::Initialize();
+						if (offsets_initialized)
+						{
+							DebugLog(NTE_OBFUSCATE_STRING(
+								L"NTE Mods plugin: offsets resolved.\n")
+								.c_str());
+						}
+					}
+					if (offsets_initialized)
+					{
+						if (auto* viewport = ResolveViewport())
+							InstallViewportHook(viewport);
+					}
+				}
+				else if (CurrentHookedViewport() != nullptr)
+				{
+					RestoreViewportHook();
+					CloseIpc();
+				}
+
+				if (WaitForSingleObject(
+						runtime_stop_event,
+						VIEWPORT_BOOTSTRAP_RETRY_MS) != WAIT_TIMEOUT)
+					return 0;
 			}
 		}
 	} // namespace
 
-	void StartPluginRuntime()
+	void StartPluginRuntime(HMODULE module)
 	{
+		static_cast<void>(module);
 		if (IsGameExecutableHost())
 		{
-			if (HANDLE thread = CreateThread(
-				nullptr, 0, BootstrapViewportHook, nullptr, 0, nullptr))
-				CloseHandle(thread);
-			else
+			runtime_stop_event = CreateEventW(
+				nullptr, TRUE, FALSE, nullptr);
+			if (runtime_stop_event == nullptr)
+			{
 				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE equipment plugin: failed to start viewport bootstrap.\n")
+					L"NTE Mods plugin: failed to create runtime stop event.\n")
 					.c_str());
+				return;
+			}
+			runtime_thread = CreateThread(
+				nullptr, 0, WatchModWorkspace, nullptr, 0, nullptr);
+			if (runtime_thread == nullptr)
+			{
+				CloseHandle(runtime_stop_event);
+				runtime_stop_event = nullptr;
+				DebugLog(NTE_OBFUSCATE_STRING(
+					L"NTE Mods plugin: failed to start runtime watcher.\n")
+					.c_str());
+			}
 		}
 	}
 
 	void StopPluginRuntime()
 	{
+		if (runtime_stop_event != nullptr)
+			SetEvent(runtime_stop_event);
+		if (runtime_thread != nullptr)
+		{
+			WaitForSingleObject(runtime_thread, INFINITE);
+			CloseHandle(runtime_thread);
+			runtime_thread = nullptr;
+		}
+		if (runtime_stop_event != nullptr)
+		{
+			CloseHandle(runtime_stop_event);
+			runtime_stop_event = nullptr;
+		}
 		RestoreViewportHook();
 		CloseIpc();
+		runtime::Reset();
 	}
-} // namespace nte::equipment
+} // namespace nte::mods

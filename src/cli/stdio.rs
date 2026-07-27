@@ -41,9 +41,9 @@ use crate::engine::parser::{
     GAMEPLAY_EFFECT_SEMANTICS_PATH, SKILL_DAMAGE_DATA_PATH, load_characters,
     load_equipment_catalog,
 };
-use crate::platform::equipment_plugin::{
-    EquipmentPluginClient, EquipmentPluginOperation, EquipmentPluginPlacement,
-    EquipmentPluginRequest, EquipmentPluginResponse, EquipmentPluginSubmitError,
+use crate::platform::mods_plugin::{
+    ModsPluginClient, ModsPluginOperation, ModsPluginPlacement, ModsPluginRequest,
+    ModsPluginResponse, ModsPluginSubmitError,
 };
 
 const MAX_LINE_BYTES: usize = 1024 * 1024;
@@ -149,7 +149,7 @@ struct Runtime {
     inventory_generation: u64,
     operation_sequence: u64,
     equipment_request_sequence: u64,
-    equipment_plugin: EquipmentPluginClient,
+    mods_plugin: ModsPluginClient,
     pending_equipment_requests: HashMap<u64, Value>,
     active_operation_id: Option<String>,
     running_notified: bool,
@@ -178,7 +178,7 @@ impl Runtime {
             inventory_generation: 0,
             operation_sequence: 0,
             equipment_request_sequence: 0,
-            equipment_plugin: EquipmentPluginClient::new(),
+            mods_plugin: ModsPluginClient::new(),
             pending_equipment_requests: HashMap::new(),
             active_operation_id: None,
             running_notified: false,
@@ -262,10 +262,10 @@ impl Runtime {
     fn submit_equipment_request(
         &mut self,
         id: Value,
-        request: EquipmentPluginRequest,
-    ) -> Result<(), EquipmentPluginSubmitError> {
+        request: ModsPluginRequest,
+    ) -> Result<(), ModsPluginSubmitError> {
         let request_id = request.request_id;
-        self.equipment_plugin.submit_request(request)?;
+        self.mods_plugin.submit_request(request)?;
         assert!(
             self.pending_equipment_requests
                 .insert(request_id, id)
@@ -277,13 +277,13 @@ impl Runtime {
 
     fn process_equipment_response(
         &mut self,
-        response: EquipmentPluginResponse,
+        response: ModsPluginResponse,
         outbound: &Sender<Value>,
     ) -> bool {
         let id = self
             .pending_equipment_requests
             .remove(&response.request_id)
-            .expect("equipment plugin responses must match a submitted CLI request");
+            .expect("Mod loader responses must match a submitted CLI request");
         let message = match response.status {
             Ok(0) => success(
                 id,
@@ -301,15 +301,12 @@ impl Runtime {
                 id,
                 RpcError::domain(
                     "EQUIPMENT_REQUEST_REJECTED",
-                    format!("Equipment plugin rejected the request with status {status}"),
+                    format!("Mod loader rejected the request with status {status}"),
                 ),
             ),
             Err(_) => failure(
                 id,
-                RpcError::domain(
-                    "EQUIPMENT_PLUGIN_UNAVAILABLE",
-                    "Equipment plugin is unavailable",
-                ),
+                RpcError::domain("MODS_PLUGIN_UNAVAILABLE", "Mod loader is unavailable"),
             ),
         };
         send(outbound, message)
@@ -373,7 +370,7 @@ impl Runtime {
     fn process_engine_event(&mut self, event: EngineEvent, outbound: &Sender<Value>) {
         match apply_engine_event(&mut self.state, event) {
             CoreSignal::StateChanged => self.battle_summary_dirty = true,
-            CoreSignal::DebugPacket | CoreSignal::PacketObserved => {}
+            CoreSignal::DebugPacket | CoreSignal::PacketObserved | CoreSignal::ModScript(_) => {}
             CoreSignal::InventoryCharactersReplaced => {}
             CoreSignal::InventoryReplaced => self.publish_inventory_snapshot(outbound),
             CoreSignal::Status(_) => {
@@ -426,6 +423,7 @@ impl Runtime {
             .session_summary(
                 CaptureQualitySource::Live,
                 DpsTimeBasis::from_subtract_time_stop(subtract_time_stop),
+                false,
             )
             .as_ref()
             .map(BattleSummaryDto::from)
@@ -671,7 +669,7 @@ fn core_loop(
     mut runtime: Runtime,
 ) {
     let battle_summary_tick = tick(BATTLE_SUMMARY_INTERVAL);
-    let equipment_response_rx = runtime.equipment_plugin.response_receiver();
+    let equipment_response_rx = runtime.mods_plugin.response_receiver();
     loop {
         select! {
             recv(writer_event_rx) -> _ => {
@@ -685,7 +683,7 @@ fn core_loop(
             },
             recv(equipment_response_rx) -> response => {
                 let response = response
-                    .expect("equipment plugin worker must remain alive while Core is running");
+                    .expect("Mod loader worker must remain alive while Core is running");
                 if runtime.process_equipment_response(response, outbound_tx) {
                     return;
                 }
@@ -832,16 +830,16 @@ fn handle_request(
             send(outbound, message)
         }
         Request::Equipment(operation) => {
-            let request = equipment_plugin_request(runtime.next_equipment_request_id(), operation);
+            let request = mods_plugin_request(runtime.next_equipment_request_id(), operation);
             match runtime.submit_equipment_request(id.clone(), request) {
                 Ok(()) => false,
-                Err(EquipmentPluginSubmitError::Busy) => send(
+                Err(ModsPluginSubmitError::Busy) => send(
                     outbound,
                     failure(
                         id,
                         RpcError::domain(
-                            "EQUIPMENT_PLUGIN_BUSY",
-                            "Equipment plugin already has the maximum number of pending requests",
+                            "MODS_PLUGIN_BUSY",
+                            "Mod loader already has the maximum number of pending requests",
                         ),
                     ),
                 ),
@@ -863,10 +861,7 @@ fn handle_request(
     }
 }
 
-fn equipment_plugin_request(
-    request_id: u64,
-    operation: EquipmentOperationParam,
-) -> EquipmentPluginRequest {
+fn mods_plugin_request(request_id: u64, operation: EquipmentOperationParam) -> ModsPluginRequest {
     let (character, operation) = match operation {
         EquipmentOperationParam::EquipModule {
             character,
@@ -875,7 +870,7 @@ fn equipment_plugin_request(
             column,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::EquipModule {
+            ModsPluginOperation::EquipModule {
                 equipment: item_net_id(equipment),
                 row,
                 column,
@@ -886,7 +881,7 @@ fn equipment_plugin_request(
             equipment,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::EquipCore {
+            ModsPluginOperation::EquipCore {
                 equipment: item_net_id(equipment),
             },
         ),
@@ -895,7 +890,7 @@ fn equipment_plugin_request(
             equipment,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::UnequipModule {
+            ModsPluginOperation::UnequipModule {
                 equipment: item_net_id(equipment),
             },
         ),
@@ -904,12 +899,12 @@ fn equipment_plugin_request(
             equipment,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::UnequipCore {
+            ModsPluginOperation::UnequipCore {
                 equipment: item_net_id(equipment),
             },
         ),
         EquipmentOperationParam::UnequipAll { character } => {
-            (item_net_id(character), EquipmentPluginOperation::UnequipAll)
+            (item_net_id(character), ModsPluginOperation::UnequipAll)
         }
         EquipmentOperationParam::EquipOneKey {
             character,
@@ -917,10 +912,10 @@ fn equipment_plugin_request(
             core,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::EquipOneKey {
+            ModsPluginOperation::EquipOneKey {
                 placements: placements
                     .into_iter()
-                    .map(|placement| EquipmentPluginPlacement {
+                    .map(|placement| ModsPluginPlacement {
                         equipment: item_net_id(placement.equipment),
                         row: placement.row,
                         column: placement.column,
@@ -936,7 +931,7 @@ fn equipment_plugin_request(
             column,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::MoveModuleToCharacter {
+            ModsPluginOperation::MoveModuleToCharacter {
                 equipment: item_net_id(equipment),
                 row,
                 column,
@@ -947,7 +942,7 @@ fn equipment_plugin_request(
             equipment,
         } => (
             item_net_id(character),
-            EquipmentPluginOperation::MoveCoreToCharacter {
+            ModsPluginOperation::MoveCoreToCharacter {
                 equipment: item_net_id(equipment),
             },
         ),
@@ -956,20 +951,20 @@ fn equipment_plugin_request(
             discarded,
         } => (
             HtItemNetId::ZERO,
-            EquipmentPluginOperation::SetItemDiscarded {
+            ModsPluginOperation::SetItemDiscarded {
                 equipment: item_net_id(equipment),
                 discarded,
             },
         ),
         EquipmentOperationParam::SetItemLocked { equipment, locked } => (
             HtItemNetId::ZERO,
-            EquipmentPluginOperation::SetItemLocked {
+            ModsPluginOperation::SetItemLocked {
                 equipment: item_net_id(equipment),
                 locked,
             },
         ),
     };
-    EquipmentPluginRequest {
+    ModsPluginRequest {
         request_id,
         character,
         operation,
@@ -1224,11 +1219,16 @@ mod tests {
         runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))), &outbound);
         runtime.flush_battle_summary();
         runtime.process_engine_event(
-            EngineEvent::TimeStop(TimeStopEvent::UltraAnimation {
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted {
                 timestamp: 2.0,
-                char_id: 7,
-                ability_id: "test-ultra".to_owned(),
-                duration_seconds: 2.0,
+                pause_type_mask: 1 << 2,
+            }),
+            &outbound,
+        );
+        runtime.process_engine_event(
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseEnded {
+                timestamp: 4.0,
+                pause_type_mask: 1 << 2,
             }),
             &outbound,
         );
@@ -1345,7 +1345,7 @@ mod tests {
 
     #[test]
     fn equipment_requests_map_external_uids_and_boolean_state() {
-        let request = equipment_plugin_request(
+        let request = mods_plugin_request(
             17,
             EquipmentOperationParam::MoveModuleToCharacter {
                 character: ItemUidParam { slot: 1, serial: 2 },
@@ -1358,14 +1358,14 @@ mod tests {
         assert_eq!(request.character, HtItemNetId { solt: 1, serial: 2 });
         assert!(matches!(
             request.operation,
-            EquipmentPluginOperation::MoveModuleToCharacter {
+            ModsPluginOperation::MoveModuleToCharacter {
                 equipment: HtItemNetId { solt: 3, serial: 4 },
                 row: 2,
                 column: 5,
             }
         ));
 
-        let request = equipment_plugin_request(
+        let request = mods_plugin_request(
             18,
             EquipmentOperationParam::SetItemLocked {
                 equipment: ItemUidParam { slot: 5, serial: 6 },
@@ -1375,7 +1375,7 @@ mod tests {
         assert_eq!(request.character, HtItemNetId::ZERO);
         assert!(matches!(
             request.operation,
-            EquipmentPluginOperation::SetItemLocked {
+            ModsPluginOperation::SetItemLocked {
                 equipment: HtItemNetId { solt: 5, serial: 6 },
                 locked: true,
             }
@@ -1398,7 +1398,7 @@ mod tests {
         let (release_tx, release_rx) = bounded(1);
         let call_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let worker_call_count = Arc::clone(&call_count);
-        runtime.equipment_plugin = EquipmentPluginClient::with_call_for_test(move |_| {
+        runtime.mods_plugin = ModsPluginClient::with_call_for_test(move |_| {
             if worker_call_count.fetch_add(1, std::sync::atomic::Ordering::AcqRel) == 0 {
                 started_tx.send(()).unwrap();
                 release_rx
@@ -1458,10 +1458,7 @@ mod tests {
             .unwrap();
         let busy = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(busy["id"], 3);
-        assert_eq!(
-            busy["error"]["data"]["domain_code"],
-            "EQUIPMENT_PLUGIN_BUSY"
-        );
+        assert_eq!(busy["error"]["data"]["domain_code"], "MODS_PLUGIN_BUSY");
         let status = outbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(status["id"], 4);
         assert!(status.get("result").is_some());

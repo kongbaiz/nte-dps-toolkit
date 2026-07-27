@@ -62,7 +62,6 @@ impl DpsApp {
             char_id: Some(char_id),
             filter,
             skill_filter: skill_filter.to_owned(),
-            limit: MAX_DETAIL_HITS,
         };
         let structural_change = self.character_hit_cache.key.as_ref() != Some(&key);
         let generation_changed = self.character_hit_cache.generation != generation;
@@ -76,17 +75,19 @@ impl DpsApp {
                     .character_hit_cache
                     .dirty_since
                     .is_some_and(|dirty| dirty.elapsed() >= DETAIL_CACHE_REFRESH_DELAY));
+        let display_state = self
+            .presented_history_state
+            .as_deref()
+            .unwrap_or(&self.state);
         if refresh_due {
             self.character_hit_cache = build_hit_detail_cache(
-                detail_hits_for_source(&self.state, source),
+                detail_hits_for_source(display_state, source),
                 generation,
                 key,
             );
         }
-        let hits = detail_hits_for_source(&self.state, source);
-        let filtered_count = self.character_hit_cache.filtered_count;
+        let hits = detail_hits_for_source(display_state, source);
         let max_damage = self.character_hit_cache.max_damage;
-        show_detail_limit_notice(ui, filtered_count);
         draw_character_hit_header(ui, layout, &mut self.preferences.hit_detail_columns);
         let hit_count = self.character_hit_cache.rows.len();
         if hit_count == 0 {
@@ -163,7 +164,6 @@ impl DpsApp {
             char_id: None,
             filter,
             skill_filter: String::new(),
-            limit: MAX_DETAIL_HITS,
         };
         let structural_change = self.team_hit_cache.key.as_ref() != Some(&key);
         let generation_changed = self.team_hit_cache.generation != generation;
@@ -177,17 +177,19 @@ impl DpsApp {
                     .team_hit_cache
                     .dirty_since
                     .is_some_and(|dirty| dirty.elapsed() >= DETAIL_CACHE_REFRESH_DELAY));
+        let display_state = self
+            .presented_history_state
+            .as_deref()
+            .unwrap_or(&self.state);
         if refresh_due {
             self.team_hit_cache = build_hit_detail_cache(
-                detail_hits_for_source(&self.state, source),
+                detail_hits_for_source(display_state, source),
                 generation,
                 key,
             );
         }
-        let hits = detail_hits_for_source(&self.state, source);
-        let filtered_count = self.team_hit_cache.filtered_count;
+        let hits = detail_hits_for_source(display_state, source);
         let max_damage = self.team_hit_cache.max_damage;
-        show_detail_limit_notice(ui, filtered_count);
         draw_team_hit_header(ui, layout, &mut self.preferences.hit_detail_columns);
         if self.team_hit_cache.rows.is_empty() {
             let capture_idle = self.capture.is_none() && self.replay_thread.is_none();
@@ -277,13 +279,18 @@ impl DpsApp {
     pub(crate) fn team_hit_detail_panel(&mut self, ctx: &egui::Context) {
         let viewport_id = team_hit_detail_viewport_id();
         let (detail_source, _) = self.detail_source();
+        let display_state = self
+            .presented_history_state
+            .as_deref()
+            .unwrap_or(&self.state);
         let direction_summary =
-            summarize_hit_directions(detail_hits_for_source(&self.state, detail_source));
+            summarize_hit_directions(detail_hits_for_source(display_state, detail_source));
         let qte_summaries =
-            summarize_qte_type_filters(detail_hits_for_source(&self.state, detail_source), None);
+            summarize_qte_type_filters(detail_hits_for_source(display_state, detail_source), None);
         if !hit_detail_filter_available(&self.team_hit_detail_filter, &qte_summaries) {
             self.team_hit_detail_filter = HitDetailFilter::All;
         }
+        let damage_attribution = self.selected_damage_attribution();
         let (total_damage, total_damage_taken, duration, dps, outgoing_count, incoming_count) =
             if let Some(party) = self.selected_party_state() {
                 (
@@ -304,23 +311,23 @@ impl DpsApp {
                 )
             } else {
                 (
-                    self.state.total_damage,
-                    self.state.total_damage_taken,
+                    display_state.total_damage,
+                    display_state.total_damage_taken,
                     self.state_duration_for_current_mode(),
                     self.state_dps_for_current_mode(),
-                    self.state
+                    display_state
                         .stats
                         .values()
                         .map(|row| row.hits as usize)
                         .sum::<usize>(),
-                    self.state
+                    display_state
                         .stats
                         .values()
                         .map(|row| row.hits_taken as usize)
                         .sum::<usize>(),
                 )
             };
-        let title = if self.state.abyss.is_active() {
+        let title = if display_state.abyss.is_active() {
             tf(
                 "Team Combat Details - {}",
                 &[&t(self.selected_abyss_half.label())],
@@ -435,6 +442,13 @@ impl DpsApp {
                                 tf("Taken {}", &[&incoming_count.to_string()]),
                             );
                         });
+                        ui.add_space(4.0);
+                        draw_damage_attribution_filters(
+                            ui,
+                            damage_attribution,
+                            self.preferences.separate_reaction_damage,
+                            &mut self.team_hit_detail_filter,
+                        );
                         ui.add_space(4.0);
                         draw_qte_damage_summary(
                             ui,
@@ -669,23 +683,32 @@ impl DpsApp {
     /// would hand back one merged team for either line. Outside the abyss (大世界)
     /// there is only the global state.
     pub(crate) fn snapshot_current_team(&self, upper: bool) -> Option<TeamDps> {
-        if self.state.abyss.is_active() {
+        let state = self.presented_state();
+        if state.abyss.is_active() {
             let half = if upper {
                 AbyssHalf::First
             } else {
                 AbyssHalf::Second
             };
-            let party = self.state.abyss.half(half);
-            snapshot_team_from_stats(
-                party.dps_with_time_stop(self.subtract_time_stop_for_dps()),
-                party.duration_with_time_stop(self.subtract_time_stop_for_dps()),
-                party.stats.values(),
+            let party = state.abyss.half(half);
+            snapshot_party_team(
+                party,
+                self.subtract_time_stop_for_dps(),
+                self.preferences.separate_reaction_damage,
             )
         } else {
+            let stats = self
+                .presented_state()
+                .stats
+                .values()
+                .map(|row| {
+                    row.for_reaction_damage_policy(self.preferences.separate_reaction_damage)
+                })
+                .collect::<Vec<_>>();
             snapshot_team_from_stats(
                 self.state_dps_for_current_mode(),
                 self.state_duration_for_current_mode(),
-                self.state.stats.values(),
+                stats.iter(),
             )
         }
     }
@@ -813,6 +836,7 @@ impl DpsApp {
             &self.state,
             &self.abyss_overview,
             self.subtract_time_stop_for_dps(),
+            self.preferences.separate_reaction_damage,
         ) else {
             self.set_last_error_in(
                 ctx,
@@ -862,9 +886,13 @@ impl DpsApp {
     }
 
     pub(crate) fn save_current_history_summary(&mut self, ctx: &egui::Context) {
-        let Some(summary) = self.state.session_summary(
+        let details = HistoryCombatDetails::from_state(&self.state);
+        let summary_state = details.as_ref().map(HistoryCombatDetails::to_combat_state);
+        let state = summary_state.as_ref().unwrap_or(&self.state);
+        let Some(summary) = state.session_summary(
             self.capture_ui.capture_quality_source,
             DpsTimeBasis::from_subtract_time_stop(self.subtract_time_stop_for_dps()),
+            self.preferences.separate_reaction_damage,
         ) else {
             self.set_last_error_in(
                 ctx,
@@ -873,10 +901,14 @@ impl DpsApp {
             );
             return;
         };
-        match history::save_summary(summary) {
+        let result = match details {
+            Some(details) => history::save_summary_with_details(summary, details),
+            None => history::save_summary(summary),
+        };
+        match result {
             Ok(record) => {
-                self.history.reload();
-                self.history.selected_id = Some(record.id);
+                self.history.selected_id = Some(record.id.clone());
+                self.history.insert_record(record);
                 self.history.ensure_selection();
                 self.history.message = t("This summary saved");
                 self.notifications.status = t("History summary saved");
@@ -905,7 +937,10 @@ impl DpsApp {
             .cloned();
         match history::delete_record(&record_id) {
             Ok(true) => {
-                self.history.reload();
+                self.reload_history_records();
+                if self.presented_history_id.as_deref() == Some(&record_id) {
+                    self.select_presented_round(None);
+                }
                 self.history.message = t("History summary deleted");
                 self.notifications.status = t("History summary deleted");
                 self.clear_last_error();
@@ -1116,13 +1151,14 @@ impl DpsApp {
         let stats = if let Some(party) = self.selected_party_state() {
             party.stats.get(&char_id).cloned()
         } else {
-            self.state.stats.get(&char_id).cloned()
+            self.presented_state().stats.get(&char_id).cloned()
         };
         let Some(mut stats) = stats else {
             self.windows.hit_detail_char_id = None;
             self.windows.hit_detail_corner_applied = false;
             return;
         };
+        stats = stats.for_reaction_damage_policy(self.preferences.separate_reaction_damage);
         // Display the character's name in the active UI language (window title + header).
         stats.name = self.localized_character_name(char_id, &stats.name);
         let stats_duration = self.character_duration_for_current_source(&stats);
@@ -1130,13 +1166,17 @@ impl DpsApp {
         let outgoing_count = stats.hits as usize;
         let incoming_count = stats.hits_taken as usize;
         let (detail_source, _) = self.detail_source();
+        let display_state = self
+            .presented_history_state
+            .as_deref()
+            .unwrap_or(&self.state);
         let direction_summary = summarize_hit_directions(
-            detail_hits_for_source(&self.state, detail_source)
+            detail_hits_for_source(display_state, detail_source)
                 .iter()
                 .filter(|hit| hit.char_id == char_id),
         );
         let qte_summaries = summarize_qte_type_filters(
-            detail_hits_for_source(&self.state, detail_source),
+            detail_hits_for_source(display_state, detail_source),
             Some(char_id),
         );
         if !hit_detail_filter_available(&self.hit_detail_filter, &qte_summaries) {

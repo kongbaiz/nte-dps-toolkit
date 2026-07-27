@@ -6,14 +6,16 @@ use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::model::{
-    CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary, TeamDps,
-    TeamDpsMember,
+    AbyssHalf, CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary,
+    CombatState, Hit, TeamDps, TeamDpsMember, TimeStopEvent,
 };
 use crate::storage::io_util::atomic_write_text;
 use crate::storage::paths::software_dir;
 
 pub const HISTORY_RECORD_VERSION: u32 = 1;
 pub const MAX_HISTORY_RECORDS: usize = 200;
+const MAX_HISTORY_DETAIL_HITS: usize = 100_000;
+const MAX_HISTORY_IMPORT_BYTES: u64 = 128 * 1024 * 1024;
 
 static HISTORY_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -24,6 +26,7 @@ pub struct HistoryRecord {
     pub id: String,
     pub saved_at: DateTime<Utc>,
     pub summary: CombatSessionSummary,
+    pub details: Option<HistoryCombatDetails>,
 }
 
 impl Default for HistoryRecord {
@@ -33,6 +36,7 @@ impl Default for HistoryRecord {
             id: String::new(),
             saved_at: Utc::now(),
             summary: CombatSessionSummary::default(),
+            details: None,
         }
     }
 }
@@ -66,6 +70,223 @@ impl HistoryRecord {
             .and_then(|half| team_from_characters(half.total_dps, &half.characters))
             .or_else(|| self.to_team_dps())
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistoryCombatDetails {
+    pub floor: Option<u32>,
+    pub active_half: Option<AbyssHalf>,
+    pub first_half_at: Option<f64>,
+    pub second_half_at: Option<f64>,
+    pub success_at: Option<f64>,
+    pub exited_at: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_hits: Vec<Hit>,
+    pub first_half_hits: Vec<Hit>,
+    pub second_half_hits: Vec<Hit>,
+    pub time_stop_events: Vec<TimeStopEvent>,
+}
+
+impl HistoryCombatDetails {
+    pub fn from_state(state: &CombatState) -> Option<Self> {
+        let abyss = &state.abyss;
+        let has_abyss_hits =
+            !abyss.first_half.hits.is_empty() || !abyss.second_half.hits.is_empty();
+        if !has_abyss_hits && state.hits.is_empty() {
+            return None;
+        }
+        let (round_started_at, round_ended_at) = if has_abyss_hits {
+            (
+                [
+                    abyss.first_half_at,
+                    abyss.second_half_at,
+                    abyss.first_half.started_at,
+                    abyss.second_half.started_at,
+                ]
+                .into_iter()
+                .flatten()
+                .min_by(f64::total_cmp),
+                [
+                    abyss.first_half.ended_at,
+                    abyss.second_half.ended_at,
+                    abyss.success_at,
+                    abyss.exited_at,
+                ]
+                .into_iter()
+                .flatten()
+                .max_by(f64::total_cmp),
+            )
+        } else {
+            (state.started_at, state.ended_at)
+        };
+        let round_started_at =
+            round_started_at.expect("a combat round with hits has a start timestamp");
+        let round_ended_at = round_ended_at.expect("a combat round with hits has an end timestamp");
+        Some(Self {
+            floor: if has_abyss_hits { abyss.floor } else { None },
+            active_half: if has_abyss_hits {
+                abyss.active_half
+            } else {
+                None
+            },
+            first_half_at: if has_abyss_hits {
+                abyss.first_half_at
+            } else {
+                None
+            },
+            second_half_at: if has_abyss_hits {
+                abyss.second_half_at
+            } else {
+                None
+            },
+            success_at: if has_abyss_hits {
+                abyss.success_at
+            } else {
+                None
+            },
+            exited_at: if has_abyss_hits {
+                abyss.exited_at
+            } else {
+                None
+            },
+            global_hits: if has_abyss_hits {
+                Vec::new()
+            } else {
+                state.hits.iter().cloned().collect()
+            },
+            first_half_hits: abyss.first_half.hits.iter().cloned().collect(),
+            second_half_hits: abyss.second_half.hits.iter().cloned().collect(),
+            time_stop_events: clipped_time_stop_events(
+                &state.time_stop_events,
+                round_started_at,
+                round_ended_at,
+            ),
+        })
+    }
+
+    pub fn to_combat_state(&self) -> CombatState {
+        let mut state = CombatState::default();
+        state.abyss.floor = self.floor;
+        state.abyss.active_half = self.active_half;
+        state.abyss.first_half_at = self.first_half_at;
+        state.abyss.second_half_at = self.second_half_at;
+        state.abyss.success_at = self.success_at;
+        state.abyss.exited_at = self.exited_at;
+        for hit in &self.global_hits {
+            state.push_hit(hit.clone());
+        }
+        for hit in &self.first_half_hits {
+            state.abyss.first_half.push_hit(hit.clone());
+        }
+        for hit in &self.second_half_hits {
+            state.abyss.second_half.push_hit(hit.clone());
+        }
+        for event in &self.time_stop_events {
+            state.apply_time_stop_event(event.clone());
+        }
+        if self.global_hits.is_empty() {
+            state.rebuild_global_from_abyss();
+        }
+        state
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if !self.global_hits.is_empty()
+            && (!self.first_half_hits.is_empty() || !self.second_half_hits.is_empty())
+        {
+            return Err("History detail mixes global and abyss hits".to_owned());
+        }
+        if self.global_hits.len() + self.first_half_hits.len() + self.second_half_hits.len()
+            > MAX_HISTORY_DETAIL_HITS
+        {
+            return Err("History detail hit count exceeds the supported limit".to_owned());
+        }
+        for timestamp in [
+            self.first_half_at,
+            self.second_half_at,
+            self.success_at,
+            self.exited_at,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if !timestamp.is_finite() {
+                return Err("History detail contains an invalid timestamp".to_owned());
+            }
+        }
+        if self
+            .global_hits
+            .iter()
+            .chain(&self.first_half_hits)
+            .chain(&self.second_half_hits)
+            .any(|hit| {
+                !hit.timestamp.is_finite()
+                    || !hit.damage.is_finite()
+                    || !hit.follow_up_damage.is_finite()
+                    || hit
+                        .follow_up_timestamp
+                        .is_some_and(|timestamp| !timestamp.is_finite())
+            })
+        {
+            return Err("History detail contains an invalid hit".to_owned());
+        }
+        if self.time_stop_events.iter().any(|event| {
+            let timestamp = match event {
+                TimeStopEvent::GamePauseStarted { timestamp, .. }
+                | TimeStopEvent::GamePauseEnded { timestamp, .. } => timestamp,
+            };
+            !timestamp.is_finite()
+        }) {
+            return Err("History detail contains an invalid time-stop event".to_owned());
+        }
+        Ok(())
+    }
+}
+
+fn clipped_time_stop_events(
+    events: &[TimeStopEvent],
+    range_start: f64,
+    range_end: f64,
+) -> Vec<TimeStopEvent> {
+    let mut clipped = Vec::new();
+    let mut active_pause: Option<(f64, u32)> = None;
+    for event in events {
+        match event {
+            TimeStopEvent::GamePauseStarted {
+                timestamp,
+                pause_type_mask,
+            } => match &mut active_pause {
+                Some((start, active_mask)) => {
+                    *start = start.min(*timestamp);
+                    *active_mask |= *pause_type_mask;
+                }
+                None => active_pause = Some((*timestamp, *pause_type_mask)),
+            },
+            TimeStopEvent::GamePauseEnded {
+                timestamp,
+                pause_type_mask,
+            } => {
+                let Some((start, active_mask)) = active_pause.take() else {
+                    continue;
+                };
+                let start = start.max(range_start);
+                let end = timestamp.min(range_end);
+                if end <= start {
+                    continue;
+                }
+                clipped.push(TimeStopEvent::GamePauseStarted {
+                    timestamp: start,
+                    pause_type_mask: active_mask,
+                });
+                clipped.push(TimeStopEvent::GamePauseEnded {
+                    timestamp: end,
+                    pause_type_mask: *pause_type_mask,
+                });
+            }
+        }
+    }
+    clipped
 }
 
 fn team_from_characters(dps: f64, characters: &[CombatSessionCharacterSummary]) -> Option<TeamDps> {
@@ -158,9 +379,57 @@ pub fn save_summary(summary: CombatSessionSummary) -> Result<HistoryRecord, Stri
     save_summary_to_dir(&history_dir(), summary)
 }
 
+pub fn save_summary_with_details(
+    summary: CombatSessionSummary,
+    details: HistoryCombatDetails,
+) -> Result<HistoryRecord, String> {
+    save_summary_with_details_to_dir(&history_dir(), summary, details)
+}
+
+pub fn import_record(path: &Path) -> Result<HistoryRecord, String> {
+    import_record_to_dir(&history_dir(), path)
+}
+
+pub fn import_record_to_dir(directory: &Path, source_path: &Path) -> Result<HistoryRecord, String> {
+    let metadata = fs::metadata(source_path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("History record path is not a file".to_owned());
+    }
+    if metadata.len() > MAX_HISTORY_IMPORT_BYTES {
+        return Err("History record exceeds the supported file size".to_owned());
+    }
+    let text = fs::read_to_string(source_path).map_err(|error| error.to_string())?;
+    let mut record = parse_history_record(&text, source_path)?;
+    record.version = HISTORY_RECORD_VERSION;
+    record.id = generate_record_id(Utc::now());
+
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
+    atomic_write_text(&record_path(directory, &record), &format!("{text}\n"))?;
+    prune_history_dir(directory, MAX_HISTORY_RECORDS)?;
+    Ok(record)
+}
+
 pub fn save_summary_to_dir(
     directory: &Path,
     summary: CombatSessionSummary,
+) -> Result<HistoryRecord, String> {
+    save_record_to_dir(directory, summary, None)
+}
+
+pub fn save_summary_with_details_to_dir(
+    directory: &Path,
+    summary: CombatSessionSummary,
+    details: HistoryCombatDetails,
+) -> Result<HistoryRecord, String> {
+    details.validate()?;
+    save_record_to_dir(directory, summary, Some(details))
+}
+
+fn save_record_to_dir(
+    directory: &Path,
+    summary: CombatSessionSummary,
+    details: Option<HistoryCombatDetails>,
 ) -> Result<HistoryRecord, String> {
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let saved_at = Utc::now();
@@ -170,6 +439,7 @@ pub fn save_summary_to_dir(
         id,
         saved_at,
         summary,
+        details,
     };
     let text = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
     atomic_write_text(&record_path(directory, &record), &format!("{text}\n"))?;
@@ -256,7 +526,7 @@ fn parse_history_record(text: &str, path: &Path) -> Result<HistoryRecord, String
     let mut record: HistoryRecord =
         serde_json::from_str(text).map_err(|error| error.to_string())?;
     if record.version > HISTORY_RECORD_VERSION {
-        return Err(format!("不支持的历史版本 {}", record.version));
+        return Err(format!("Unsupported history version {}", record.version));
     }
     if record.id.trim().is_empty() {
         record.id = path
@@ -267,6 +537,9 @@ fn parse_history_record(text: &str, path: &Path) -> Result<HistoryRecord, String
     }
     if !valid_record_id(&record.id) {
         return Err("Invalid history record ID".to_owned());
+    }
+    if let Some(details) = &record.details {
+        details.validate()?;
     }
     Ok(record)
 }
@@ -460,7 +733,8 @@ mod tests {
     use super::*;
     use crate::engine::model::{
         AbyssHalf, CombatSessionAbyssHalfSummary, CombatSessionAbyssSummary,
-        CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis,
+        CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis, HitCharacterSource,
+        HitDirection,
     };
 
     #[test]
@@ -487,7 +761,190 @@ mod tests {
         assert_eq!(abyss.active_half, Some(AbyssHalf::First));
         assert_eq!(abyss.first_half.as_ref().unwrap().half, AbyssHalf::First);
         assert_eq!(abyss.second_half.as_ref().unwrap().half, AbyssHalf::Second);
+        assert!(result.records[0].details.is_none());
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn detailed_abyss_record_roundtrips_and_rebuilds_both_halves() {
+        let directory = temp_history_dir("details");
+        let mut state = CombatState::default();
+        state.abyss.floor = Some(12);
+        state.abyss.active_half = Some(AbyssHalf::Second);
+        state.abyss.first_half_at = Some(10.0);
+        state.abyss.second_half_at = Some(20.0);
+        state.abyss.first_half.push_hit(history_hit(11.0, 1, 100.0));
+        state
+            .abyss
+            .second_half
+            .push_hit(history_hit(21.0, 2, 200.0));
+        state
+            .time_stop_events
+            .push(TimeStopEvent::GamePauseStarted {
+                timestamp: 1.0,
+                pause_type_mask: 1,
+            });
+        state.time_stop_events.push(TimeStopEvent::GamePauseEnded {
+            timestamp: 2.0,
+            pause_type_mask: 1,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 12.0,
+            pause_type_mask: 1,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 13.0,
+            pause_type_mask: 1,
+        });
+        state.rebuild_global_from_abyss();
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        assert_eq!(details.time_stop_events.len(), 2);
+
+        save_summary_with_details_to_dir(&directory, CombatSessionSummary::default(), details)
+            .unwrap();
+        let records = load_history_from_dir(&directory).records;
+        let restored = records[0].details.as_ref().unwrap().to_combat_state();
+
+        assert_eq!(restored.abyss.floor, Some(12));
+        assert_eq!(restored.abyss.active_half, Some(AbyssHalf::Second));
+        assert_eq!(restored.abyss.first_half.hits.len(), 1);
+        assert_eq!(restored.abyss.second_half.hits.len(), 1);
+        assert_eq!(restored.hits.len(), 2);
+        assert_eq!(restored.total_damage, 300.0);
+        assert_eq!(restored.time_stop_events.len(), 2);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn detailed_global_record_roundtrips_without_creating_an_abyss_run() {
+        let mut state = CombatState::default();
+        state.push_hit(history_hit(11.0, 1, 100.0));
+        state.push_hit(history_hit(12.0, 2, 200.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 11.2,
+            pause_type_mask: 1,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 11.5,
+            pause_type_mask: 1,
+        });
+
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        let restored = details.to_combat_state();
+
+        assert_eq!(details.global_hits.len(), 2);
+        assert!(details.first_half_hits.is_empty());
+        assert!(details.second_half_hits.is_empty());
+        assert!(!restored.abyss.is_active());
+        assert_eq!(restored.hits.len(), 2);
+        assert_eq!(restored.total_damage, 300.0);
+        assert_eq!(restored.time_stop_events.len(), 2);
+    }
+
+    #[test]
+    fn detailed_record_clips_a_pause_that_starts_before_the_first_hit() {
+        let mut state = CombatState::default();
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 10.0,
+            pause_type_mask: 1,
+        });
+        state.push_hit(history_hit(13.0, 1, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 14.0,
+            pause_type_mask: 1,
+        });
+        state.push_hit(history_hit(20.0, 2, 200.0));
+
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        let restored = details.to_combat_state();
+
+        assert_eq!(
+            details.time_stop_events,
+            vec![
+                TimeStopEvent::GamePauseStarted {
+                    timestamp: 13.0,
+                    pause_type_mask: 1,
+                },
+                TimeStopEvent::GamePauseEnded {
+                    timestamp: 14.0,
+                    pause_type_mask: 1,
+                },
+            ]
+        );
+        assert!((restored.duration_with_time_stop(false) - 7.0).abs() < 1e-9);
+        assert!((restored.duration_with_time_stop(true) - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn imported_record_preserves_details_with_a_fresh_local_id() {
+        let source_directory = temp_history_dir("import_source");
+        let destination_directory = temp_history_dir("import_destination");
+        let mut state = CombatState::default();
+        state.push_hit(history_hit(11.0, 1, 100.0));
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+        let original = save_summary_with_details_to_dir(
+            &source_directory,
+            CombatSessionSummary::default(),
+            details,
+        )
+        .unwrap();
+        let export_path = source_directory.join("exported.json");
+        fs::write(
+            &export_path,
+            serde_json::to_string_pretty(&original).unwrap(),
+        )
+        .unwrap();
+
+        let first = import_record_to_dir(&destination_directory, &export_path).unwrap();
+        let second = import_record_to_dir(&destination_directory, &export_path).unwrap();
+
+        assert_ne!(first.id, original.id);
+        assert_ne!(second.id, first.id);
+        assert_eq!(first.version, HISTORY_RECORD_VERSION);
+        assert_eq!(first.saved_at, original.saved_at);
+        assert_eq!(
+            first
+                .details
+                .as_ref()
+                .unwrap()
+                .to_combat_state()
+                .total_damage,
+            100.0
+        );
+        let loaded = load_history_from_dir(&destination_directory);
+        assert_eq!(loaded.skipped_files, 0);
+        assert_eq!(loaded.records.len(), 2);
+        let _ = fs::remove_dir_all(source_directory);
+        let _ = fs::remove_dir_all(destination_directory);
+    }
+
+    #[test]
+    fn history_import_rejects_future_versions_and_oversized_files() {
+        let source_directory = temp_history_dir("import_invalid_source");
+        let destination_directory = temp_history_dir("import_invalid_destination");
+        fs::create_dir_all(&source_directory).unwrap();
+        let future_path = source_directory.join("future.json");
+        fs::write(
+            &future_path,
+            r#"{"version":2,"id":"future","saved_at":"2026-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            import_record_to_dir(&destination_directory, &future_path).unwrap_err(),
+            "Unsupported history version 2"
+        );
+
+        let oversized_path = source_directory.join("oversized.json");
+        fs::File::create(&oversized_path)
+            .unwrap()
+            .set_len(MAX_HISTORY_IMPORT_BYTES + 1)
+            .unwrap();
+        assert_eq!(
+            import_record_to_dir(&destination_directory, &oversized_path).unwrap_err(),
+            "History record exceeds the supported file size"
+        );
+        let _ = fs::remove_dir_all(source_directory);
+        let _ = fs::remove_dir_all(destination_directory);
     }
 
     #[test]
@@ -893,6 +1350,39 @@ mod tests {
             category: category.to_owned(),
             damage,
             ..Default::default()
+        }
+    }
+
+    fn history_hit(timestamp: f64, char_id: u32, damage: f64) -> Hit {
+        Hit {
+            timestamp,
+            char_id,
+            char_name: format!("角色{char_id}"),
+            char_known: true,
+            damage,
+            byte_offset: 0,
+            bit_shift: 0,
+            char_source: HitCharacterSource::Packet,
+            direction: HitDirection::Outgoing,
+            target_hp_before: 1_000.0,
+            target_hp_after: 1_000.0 - damage,
+            target_max_hp: 1_000.0,
+            target_hp_percent: (1_000.0 - damage) / 10.0,
+            target_id: None,
+            target_name: None,
+            target_context: Vec::new(),
+            gameplay_effect_index: None,
+            gameplay_effect_name: None,
+            ability_name: None,
+            damage_name: None,
+            damage_component: None,
+            attack_type: None,
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
         }
     }
 }
