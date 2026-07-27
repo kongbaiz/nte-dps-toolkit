@@ -229,6 +229,82 @@ def on_viewport_tick(event):
         state.last_state_flags = state_flags
 "#;
 #[cfg(feature = "gui")]
+const LEGACY_EQUIPMENT_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
+mod("equipment")
+requires("viewport.tick")
+requires("game.session")
+requires("equipment")
+requires("ipc")
+
+# The script owns PlayerState lifecycle, cache retry, and IPC activation.
+# game.player_state is a stable built-in; client offsets stay in the host.
+state.last_player_state = 0
+state.next_prepare_at = 0
+
+def on_viewport_tick(event):
+    player_state = game.player_state
+    now = time.now_ms()
+
+    if player_state != None:
+        # A new PlayerState starts a fresh cache lifecycle.
+        if player_state != state.last_player_state:
+            state.last_player_state = player_state
+            state.next_prepare_at = 0
+
+        cache_ready = equipment.cache_ready(player_state)
+        if cache_ready == False:
+            # Retry at most once per second while UE functions are unavailable.
+            if now >= state.next_prepare_at:
+                equipment.prepare(player_state)
+                state.next_prepare_at = now + 1000
+                cache_ready = equipment.cache_ready(player_state)
+
+        # Equipment IPC becomes actionable only after this Mod prepared it.
+        if cache_ready == True:
+            ipc.bind(player_state, None)
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_COMBAT_CLOCK_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
+mod("combat-clock")
+requires("viewport.tick")
+requires("game.session")
+requires("combat-clock")
+requires("ipc")
+
+# The script owns sampling, transition detection, and forwarding.
+# Stable host properties hide the session offsets and packed sample format.
+state.initialized = 0
+state.last_controller = 0
+state.last_pause_mask = 0
+state.last_state_flags = 0
+
+def on_viewport_tick(event):
+    player_controller = game.player_controller
+
+    pause_mask = 0
+    state_flags = 0
+    if player_controller != None:
+        pause_mask = combat_clock.pause_mask(player_controller)
+        state_flags = combat_clock.state_flags(player_controller)
+        ipc.bind(None, player_controller)
+
+    # Forward only the first sample or a real state transition.
+    changed = state.initialized == False
+    if player_controller != state.last_controller:
+        changed = True
+    if pause_mask != state.last_pause_mask:
+        changed = True
+    if state_flags != state.last_state_flags:
+        changed = True
+
+    if changed == True:
+        combat_clock.forward(pause_mask, state_flags)
+        state.initialized = 1
+        state.last_controller = player_controller
+        state.last_pause_mask = pause_mask
+        state.last_state_flags = state_flags
+"#;
+#[cfg(feature = "gui")]
 const NO_LEGACY_MOD_PROGRAMS: &[&[u8]] = &[];
 #[cfg(feature = "gui")]
 const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
@@ -237,6 +313,7 @@ const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V3,
     LEGACY_EQUIPMENT_MOD_V4,
     LEGACY_EQUIPMENT_MOD_V4_OFFSETS,
+    LEGACY_EQUIPMENT_MOD_V4_SESSION,
 ];
 #[cfg(feature = "gui")]
 const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
@@ -245,6 +322,7 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V3,
     LEGACY_COMBAT_CLOCK_MOD_V4,
     LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS,
+    LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1716,12 +1794,15 @@ mod tests {
         assert!(equipment.contains("state.next_prepare_at"));
         assert!(equipment.contains("equipment.cache_ready(player_state)"));
         assert!(equipment.contains("ipc.bind(player_state, None)"));
+        assert!(equipment.contains("route_ipc(1, \"equipment.equip_module\")"));
+        assert!(equipment.contains("route_ipc(10, \"equipment.set_item_locked\")"));
         assert!(!equipment.contains("0x"));
         assert!(combat_clock.contains("game.player_controller"));
         assert!(combat_clock.contains("state.last_pause_mask"));
         assert!(combat_clock.contains("combat_clock.pause_mask(player_controller)"));
         assert!(combat_clock.contains("combat_clock.state_flags(player_controller)"));
         assert!(combat_clock.contains("combat_clock.forward(pause_mask, state_flags)"));
+        assert!(combat_clock.contains("route_ipc(11, \"combat_clock.query_transitions\")"));
         assert!(!combat_clock.contains("combat_clock.observe("));
         assert!(!combat_clock.contains("0x"));
         assert_ne!(equipment, combat_clock);
@@ -2360,6 +2441,11 @@ mod tests {
                 "v4-offsets",
                 LEGACY_EQUIPMENT_MOD_V4_OFFSETS,
                 LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS,
+            ),
+            (
+                "v4-session",
+                LEGACY_EQUIPMENT_MOD_V4_SESSION,
+                LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
             ),
         ] {
             let directory = deployment_test_directory(&format!("{version}-program-migration"));

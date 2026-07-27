@@ -315,33 +315,15 @@ namespace nte::mods
 			}
 		}
 
-		NteModsStatus DispatchIpcRequest(
+		NteModsStatus InvokeIpcKernelServiceImpl(
+			IpcKernelService service,
 			const PluginContext* context,
 			const NteModsIpcRequest& request,
-			NteModsIpcResponse& response,
-			uint32_t capabilities)
+			NteModsIpcResponse& response)
 		{
-			if (request.magic != NTE_MODS_IPC_MAGIC ||
-				request.version != NTE_MODS_IPC_VERSION ||
-				request.request_id == 0 ||
-				request.placement_count > NTE_EQUIPMENT_MAX_PLACEMENTS)
-				return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
-
-			if (request.operation >= NTE_MODS_IPC_EQUIP_MODULE &&
-				request.operation <= NTE_MODS_IPC_SET_ITEM_LOCKED &&
-				(capabilities & runtime::CAPABILITY_EQUIPMENT) == 0)
-				return NTE_MODS_STATUS_MOD_DISABLED;
-			if (request.operation ==
-					NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS &&
-				(capabilities & runtime::CAPABILITY_COMBAT_CLOCK) == 0)
-				return NTE_MODS_STATUS_MOD_DISABLED;
-			if (request.operation == NTE_MODS_IPC_QUERY_MOD_EVENTS &&
-				(capabilities & runtime::CAPABILITY_IPC) == 0)
-				return NTE_MODS_STATUS_MOD_DISABLED;
-
-			switch (request.operation)
+			switch (service)
 			{
-			case NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS:
+			case IpcKernelService::QueryCombatClockTransitions:
 				if (!IsEmptyQueryRequest(request))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				response.record_count =
@@ -349,14 +331,14 @@ namespace nte::mods
 						response.payload.combat_clock_transitions,
 						NTE_COMBAT_CLOCK_HISTORY_SIZE);
 				return NTE_MODS_STATUS_DRY_RUN_OK;
-			case NTE_MODS_IPC_QUERY_MOD_EVENTS:
+			case IpcKernelService::QueryModEvents:
 				if (!IsEmptyQueryRequest(request))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				response.record_count = runtime::CopyModEvents(
 					response.payload.mod_events,
 					NTE_MOD_EVENT_HISTORY_SIZE);
 				return NTE_MODS_STATUS_DRY_RUN_OK;
-			case NTE_MODS_IPC_EQUIP_MODULE:
+			case IpcKernelService::EquipModule:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
@@ -366,35 +348,35 @@ namespace nte::mods
 					&request.equipment,
 					request.row,
 					request.column);
-			case NTE_MODS_IPC_EQUIP_CORE:
+			case IpcKernelService::EquipCore:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return EquipCore(
 					context, &request.character, &request.equipment);
-			case NTE_MODS_IPC_UNEQUIP_MODULE:
+			case IpcKernelService::UnequipModule:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return UnequipModule(
 					context, &request.character, &request.equipment);
-			case NTE_MODS_IPC_UNEQUIP_CORE:
+			case IpcKernelService::UnequipCore:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return UnequipCore(
 					context, &request.character, &request.equipment);
-			case NTE_MODS_IPC_UNEQUIP_ALL:
+			case IpcKernelService::UnequipAll:
 				if (!IsZeroItemId(request.equipment) || !IsZeroItemId(request.core) ||
 					request.row != 0 || request.column != 0 ||
 					request.placement_count != 0 || request.state != 0 ||
 					!HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return UnequipAll(context, &request.character);
-			case NTE_MODS_IPC_EQUIP_ONE_KEY:
+			case IpcKernelService::EquipOneKey:
 				if (!IsZeroItemId(request.equipment) || request.row != 0 ||
 					request.column != 0 || request.placement_count == 0 ||
 					request.state != 0 ||
@@ -406,7 +388,7 @@ namespace nte::mods
 					request.placements,
 					request.placement_count,
 					&request.core);
-			case NTE_MODS_IPC_MOVE_MODULE_TO_CHARACTER:
+			case IpcKernelService::MoveModuleToCharacter:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
@@ -416,41 +398,56 @@ namespace nte::mods
 					&request.equipment,
 					request.row,
 					request.column);
-			case NTE_MODS_IPC_MOVE_CORE_TO_CHARACTER:
+			case IpcKernelService::MoveCoreToCharacter:
 				if (!IsZeroItemId(request.core) || request.row != 0 ||
 					request.column != 0 || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return MoveCoreToCharacter(
 					context, &request.character, &request.equipment);
-			case NTE_MODS_IPC_SET_ITEM_DISCARDED:
+			case IpcKernelService::SetItemDiscarded:
 				if (!IsZeroItemId(request.character) || !IsZeroItemId(request.core) ||
 					request.row != 0 || request.column != 0 ||
 					request.placement_count != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return SetItemDiscarded(
 					context, &request.equipment, request.state);
-			case NTE_MODS_IPC_SET_ITEM_LOCKED:
+			case IpcKernelService::SetItemLocked:
 				if (!IsZeroItemId(request.character) || !IsZeroItemId(request.core) ||
 					request.row != 0 || request.column != 0 ||
 					request.placement_count != 0 || !HasOnlyZeroPlacements(request, 0))
 					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 				return SetItemLocked(context, &request.equipment, request.state);
-			default:
-				return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 			}
+			return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
 		}
 
-		IpcPumpResult CompleteIpcRequest(
+		NteModsStatus DispatchIpcRequest(
 			const PluginContext* context,
-			uint32_t capabilities)
+			const NteModsIpcRequest& request,
+			NteModsIpcResponse& response)
+		{
+			if (request.magic != NTE_MODS_IPC_MAGIC ||
+				request.version != NTE_MODS_IPC_VERSION ||
+				request.request_id == 0 ||
+				request.operation < NTE_MODS_IPC_EQUIP_MODULE ||
+				request.operation > NTE_MODS_IPC_QUERY_MOD_EVENTS ||
+				request.placement_count > NTE_EQUIPMENT_MAX_PLACEMENTS)
+				return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+			return runtime::DispatchIpcRequestPrograms(
+				context,
+				request,
+				response);
+		}
+
+		IpcPumpResult CompleteIpcRequest(const PluginContext* context)
 		{
 			ipc_response = {};
 			ipc_response.magic = NTE_MODS_IPC_MAGIC;
 			ipc_response.version = NTE_MODS_IPC_VERSION;
 			ipc_response.request_id = ipc_request.request_id;
 			const NteModsStatus status = DispatchIpcRequest(
-				context, ipc_request, ipc_response, capabilities);
+				context, ipc_request, ipc_response);
 			ipc_response.status = static_cast<uint32_t>(status);
 
 			ResetIpcOverlapped();
@@ -488,9 +485,21 @@ namespace nte::mods
 
 	} // namespace
 
-	IpcPumpResult PumpLiveIpc(
+	NteModsStatus InvokeIpcKernelService(
+		IpcKernelService service,
 		const PluginContext* context,
-		uint32_t capabilities)
+		const NteModsIpcRequest& request,
+		NteModsIpcResponse& response)
+	{
+		return InvokeIpcKernelServiceImpl(
+			service,
+			context,
+			request,
+			response);
+	}
+
+	IpcPumpResult PumpLiveIpc(
+		const PluginContext* context)
 	{
 		if (context == nullptr)
 			return IpcPumpResult::Error;
@@ -500,7 +509,7 @@ namespace nte::mods
 			return IpcPumpResult::Error;
 		if (poll_result == IpcPollResult::Idle)
 			return IpcPumpResult::Idle;
-		return CompleteIpcRequest(context, capabilities);
+		return CompleteIpcRequest(context);
 	}
 
 	void CloseIpc()

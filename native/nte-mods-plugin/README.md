@@ -27,17 +27,19 @@ msbuild .\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platfor
 
 ## NTE Script v4
 
-`.nte` v4 由 `dwmapi.dll` 直接解析并编译为定长 VM 指令。DLL 只提供共享事件入口、
-稳定 `game.*` 会话值、边界校验、IPC 传输和白名单原子宿主 API；重试、持久状态、
-条件、循环、状态变化判定和转发时机位于外部脚本。客户端版本相关的 Offset 只存在
-于宿主实现，普通 Mod 作者不需要维护指针链。
+`.nte` v4 由 `dwmapi.dll` 直接解析并编译为定长 VM 指令。DLL 是微内核，只提供共享
+事件入口、稳定 `game.*` 会话值、边界校验、IPC 传输和白名单原子宿主 API；外部脚本
+则是操作层，负责 IPC 服务路由、重试、持久状态、条件、循环、状态变化判定和转发时机。
+客户端版本相关的 Offset 只存在于宿主实现，普通 Mod 作者不需要维护指针链。
 
 两个内置脚本的主控流程有明确分工：
 
 - `equipment.nte` 使用内置 `game.player_state`，在对象变化后重置生命周期，以一秒间隔准备
-  RPC 缓存，并且只在缓存属于当前 `PlayerState` 时开放装备 IPC 上下文；
+  RPC 缓存，并用 `route_ipc(...)` 发布装备操作服务；只在缓存属于当前 `PlayerState`
+  时开放装备 IPC 上下文；
 - `combat-clock.nte` 使用内置 `game.player_controller`，分别读取权威
-  `pause_mask/state_flags`，与四个持久状态比较，只转发初始值和真实变化。
+  `pause_mask/state_flags`，与四个持久状态比较，只转发初始值和真实变化，并在脚本内
+  发布历史查询服务。
 
 完整实现和逐段注释直接位于 `plugins\nte-mods\equipment.nte` 与
 `plugins\nte-mods\combat-clock.nte`。两份脚本不再通过仅有一行差异的高层
@@ -111,6 +113,10 @@ def on_viewport_tick(event):
 | `combat_clock.pause_mask(controller)` | 当前时停类型掩码 | `combat-clock` |
 | `combat_clock.state_flags(controller)` | 当前时停状态标志 | `combat-clock` |
 | `combat_clock.forward(pause_mask, state_flags)` | 将脚本判定的单次变化写入查询历史 | `combat-clock` |
+
+`route_ipc(operation, "kernel.service")` 是顶层声明，不是 Tick 语句。它把固定 IPC
+操作号连接到一个经过边界校验的内核服务；删除该声明即可撤下服务，不需要修改或重新
+编译 DLL。当前内置服务表直接位于两份默认 `.nte` 中，蓝图的 Mod 清单也可编辑这些路由。
 
 Offset 上限为 `0x4000`；指针与 `TArray` Offset 还必须按指针宽度对齐。读取失败返回
 零，不产生写内存操作。`combat_clock.forward` 只接受宿主读取能产生的时停位和状态
@@ -197,6 +203,6 @@ Windows GUI 发布压缩包会把 `plugins` 目录放在 `nte-dps-tool.exe` 同�
 游戏目录最终只保留启用状态下的 `dwmapi.dll`。游戏目录改动可能触发完整性或反作弊检查，启用前应阅读并接受
 GUI 中的完整风险声明。
 
-公开的固定 IPC 布局位于 `include\nte_mods_ipc.h`。底层内存边界校验、
-Viewport Hook、稳定会话对象、IPC 传输和白名单宿主原语保留在 DLL 内部；功能分支、
-持久状态和执行顺序位于外部 `.nte` 程序。
+公开的固定 IPC 布局位于 `include\nte_mods_ipc.h`。底层内存边界校验、Viewport Hook、
+稳定会话对象、IPC 传输和白名单宿主原语保留在 DLL 内部；服务发布、功能分支、持久
+状态和执行顺序位于外部 `.nte` 程序。

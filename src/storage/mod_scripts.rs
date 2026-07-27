@@ -2,23 +2,52 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
 use super::io_util::atomic_write_text;
 
 pub(crate) const MAX_MOD_SOURCE_BYTES: usize = 16 * 1024;
+const MAX_MOD_BLUEPRINT_BYTES: usize = 64 * 1024;
 const MAX_ENABLED_MODS: usize = 16;
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
+const MOD_BLUEPRINT_VERSION: u32 = 1;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ModScriptDocument {
     pub(crate) id: String,
     pub(crate) enabled: bool,
     pub(crate) source: String,
+    pub(crate) blueprint: ModScriptBlueprint,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ModScriptWorkspace {
     pub(crate) scripts: Vec<ModScriptDocument>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ModScriptBlueprint {
+    #[serde(default)]
+    pub(crate) nodes: Vec<ModScriptBlueprintNode>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ModScriptBlueprintNode {
+    pub(crate) signature: String,
+    pub(crate) position: [f32; 2],
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) description: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModScriptBlueprintFile {
+    version: u32,
+    #[serde(default)]
+    nodes: Vec<ModScriptBlueprintNode>,
 }
 
 pub(crate) fn mod_script_workspace_directory() -> PathBuf {
@@ -35,6 +64,10 @@ pub(crate) enum ModScriptError {
     SourceTooLarge,
     SourceContainsNul,
     SourceNotUtf8(String),
+    BlueprintTooLarge(String),
+    BlueprintNotUtf8(String),
+    InvalidBlueprint(String),
+    UnsupportedBlueprintVersion { id: String, version: u32 },
     MissingVersionHeader,
     MissingModDeclaration,
     MismatchedModDeclaration,
@@ -85,10 +118,12 @@ pub(crate) fn load_mod_script_workspace(
         }
         let source =
             String::from_utf8(bytes).map_err(|_| ModScriptError::SourceNotUtf8(id.clone()))?;
+        let blueprint = load_mod_script_blueprint(&mod_directory, &id)?;
         scripts.push(ModScriptDocument {
             enabled: enabled.contains(&id),
             id,
             source,
+            blueprint,
         });
     }
     scripts.sort_by(|left, right| left.id.cmp(&right.id));
@@ -99,15 +134,66 @@ pub(crate) fn save_mod_script(
     workspace_directory: &Path,
     id: &str,
     source: &str,
+    blueprint: &ModScriptBlueprint,
 ) -> Result<(), ModScriptError> {
     validate_mod_source(id, source)?;
+    let file = ModScriptBlueprintFile {
+        version: MOD_BLUEPRINT_VERSION,
+        nodes: blueprint.nodes.clone(),
+    };
+    let text = serde_json::to_string_pretty(&file)
+        .map_err(|_| ModScriptError::InvalidBlueprint(id.to_owned()))?;
+    if text.len() + 1 > MAX_MOD_BLUEPRINT_BYTES {
+        return Err(ModScriptError::BlueprintTooLarge(id.to_owned()));
+    }
+    let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
+    atomic_write_text(&mod_directory.join(format!("{id}.nte")), source)
+        .map_err(ModScriptError::FileSystem)?;
     atomic_write_text(
-        &workspace_directory
-            .join(MOD_DIRECTORY_NAME)
-            .join(format!("{id}.nte")),
-        source,
+        &mod_script_blueprint_path(&mod_directory, id),
+        &format!("{text}\n"),
     )
     .map_err(ModScriptError::FileSystem)
+}
+
+fn load_mod_script_blueprint(
+    mod_directory: &Path,
+    id: &str,
+) -> Result<ModScriptBlueprint, ModScriptError> {
+    let bytes = match fs::read(mod_script_blueprint_path(mod_directory, id)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ModScriptBlueprint::default());
+        }
+        Err(error) => return Err(ModScriptError::FileSystem(error.to_string())),
+    };
+    if bytes.len() > MAX_MOD_BLUEPRINT_BYTES {
+        return Err(ModScriptError::BlueprintTooLarge(id.to_owned()));
+    }
+    let text =
+        std::str::from_utf8(&bytes).map_err(|_| ModScriptError::BlueprintNotUtf8(id.to_owned()))?;
+    let file = serde_json::from_str::<ModScriptBlueprintFile>(text)
+        .map_err(|_| ModScriptError::InvalidBlueprint(id.to_owned()))?;
+    if file.version != MOD_BLUEPRINT_VERSION {
+        return Err(ModScriptError::UnsupportedBlueprintVersion {
+            id: id.to_owned(),
+            version: file.version,
+        });
+    }
+    if file.nodes.iter().any(|node| {
+        node.signature.is_empty()
+            || node
+                .position
+                .iter()
+                .any(|coordinate| !coordinate.is_finite())
+    }) {
+        return Err(ModScriptError::InvalidBlueprint(id.to_owned()));
+    }
+    Ok(ModScriptBlueprint { nodes: file.nodes })
+}
+
+fn mod_script_blueprint_path(mod_directory: &Path, id: &str) -> PathBuf {
+    mod_directory.join(format!("{id}.blueprint.json"))
 }
 
 pub(crate) fn set_mod_enabled(
@@ -177,6 +263,7 @@ pub(crate) fn new_mod_script_template(id: &str) -> Result<String, ModScriptError
          requires(\"viewport.tick\")\n\
          requires(\"game.session\")\n\
          requires(\"ipc\")\n\
+         route_ipc(12, \"ipc.query_mod_events\")\n\
          state.last_character = 0\n\
          \n\
          # This handler is the Mod's control flow and runs on the shared tick hook.\n\
@@ -284,8 +371,15 @@ mod tests {
         assert!(source.contains("game.player_character"));
         assert!(source.contains("ipc.emit(\"pre.session.changed\""));
         assert!(source.contains("ipc.emit(\"post.session.changed\""));
+        let blueprint = ModScriptBlueprint {
+            nodes: vec![ModScriptBlueprintNode {
+                signature: "0:character = game.player_character\n".to_owned(),
+                position: [184.5, 92.25],
+                description: "Read the active character.".to_owned(),
+            }],
+        };
 
-        save_mod_script(&root, "telemetry", &source).unwrap();
+        save_mod_script(&root, "telemetry", &source, &blueprint).unwrap();
         set_mod_enabled(&root, "telemetry", true).unwrap();
         let workspace = load_mod_script_workspace(&root).unwrap();
 
@@ -295,9 +389,44 @@ mod tests {
                 id: "telemetry".to_owned(),
                 enabled: true,
                 source,
+                blueprint,
             }]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_loads_legacy_script_without_blueprint_metadata() {
+        let root = temp_workspace();
+        let source = new_mod_script_template("legacy").unwrap();
+        atomic_write_text(&root.join("nte-mods").join("legacy.nte"), &source).unwrap();
+
+        let workspace = load_mod_script_workspace(&root).unwrap();
+
+        assert_eq!(
+            workspace.scripts[0].blueprint,
+            ModScriptBlueprint::default()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_blueprint_is_rejected_before_source_is_written() {
+        let root = temp_workspace();
+        let source = new_mod_script_template("oversized").unwrap();
+        let blueprint = ModScriptBlueprint {
+            nodes: vec![ModScriptBlueprintNode {
+                signature: "0:value = 1\n".to_owned(),
+                position: [0.0, 0.0],
+                description: "x".repeat(MAX_MOD_BLUEPRINT_BYTES),
+            }],
+        };
+
+        assert_eq!(
+            save_mod_script(&root, "oversized", &source, &blueprint),
+            Err(ModScriptError::BlueprintTooLarge("oversized".to_owned()))
+        );
+        assert!(!root.join("nte-mods").join("oversized.nte").exists());
     }
 
     #[test]
