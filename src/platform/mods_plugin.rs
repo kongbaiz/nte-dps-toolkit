@@ -345,14 +345,6 @@ pub struct ModsPluginGameStatus {
 }
 
 #[cfg(feature = "gui")]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModsPluginModTarget {
-    pub region: ModsPluginGameRegion,
-    pub directory: PathBuf,
-    pub installed: bool,
-}
-
-#[cfg(feature = "gui")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModsPluginDeploymentStatus {
     pub installations: usize,
@@ -906,15 +898,12 @@ pub fn inspect_plugin_deployment(
     current_plugin: Option<&[u8]>,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     prepare_mod_workspace()?;
-    let installations = game_installation_directories()?;
+    let installations = match game_installation_directories() {
+        Ok(installations) => installations,
+        Err(ModsPluginDeploymentError::GameInstallationNotFound) => Vec::new(),
+        Err(error) => return Err(error),
+    };
     inspect_game_installations(&installations, current_plugin)
-}
-
-#[cfg(feature = "gui")]
-pub fn mods_plugin_mod_targets() -> Result<Vec<ModsPluginModTarget>, ModsPluginDeploymentError> {
-    let workspace = prepare_mod_workspace()?;
-    let installations = game_installation_directories()?;
-    inspect_mod_targets(&installations, &workspace)
 }
 
 #[cfg(feature = "gui")]
@@ -984,7 +973,7 @@ fn ensure_game_is_closed() -> Result<(), ModsPluginDeploymentError> {
 }
 
 #[cfg(feature = "gui")]
-fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
+pub fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
     let workspace = mod_script_workspace_directory();
     install_default_mod_files(&workspace).map_err(file_system_error)?;
     let workspace = workspace.canonicalize().map_err(file_system_error)?;
@@ -1259,24 +1248,6 @@ fn inspect_game_installations(
         });
     }
     Ok(status)
-}
-
-#[cfg(feature = "gui")]
-fn inspect_mod_targets(
-    installations: &[(ModsPluginGameRegion, PathBuf)],
-    workspace: &Path,
-) -> Result<Vec<ModsPluginModTarget>, ModsPluginDeploymentError> {
-    installations
-        .iter()
-        .map(|(region, directory)| {
-            let status = inspect_plugin_directories(std::slice::from_ref(directory), None)?;
-            Ok(ModsPluginModTarget {
-                region: *region,
-                directory: workspace.to_path_buf(),
-                installed: status.installed == 1,
-            })
-        })
-        .collect()
 }
 
 #[cfg(feature = "gui")]
@@ -2198,40 +2169,16 @@ mod tests {
 
     #[test]
     #[cfg(feature = "gui")]
-    fn mod_targets_report_only_managed_plugin_installations() {
-        let china = deployment_test_directory("mod-target-china");
-        let global = deployment_test_directory("mod-target-global");
-        let workspace = deployment_test_directory("mod-target-workspace");
-        install_plugin_to_directories(std::slice::from_ref(&china), &managed_plugin("current"))
-            .unwrap();
-        fs::write(global.join(PLUGIN_FILE_NAME), b"unmanaged").unwrap();
-        let targets = inspect_mod_targets(
-            &[
-                (ModsPluginGameRegion::China, china.clone()),
-                (ModsPluginGameRegion::Global, global.clone()),
-            ],
-            &workspace,
-        )
-        .unwrap();
+    fn deployment_inspection_without_game_installations_keeps_source_available() {
+        let plugin = managed_plugin("current");
 
         assert_eq!(
-            targets,
-            vec![
-                ModsPluginModTarget {
-                    region: ModsPluginGameRegion::China,
-                    directory: workspace.clone(),
-                    installed: true,
-                },
-                ModsPluginModTarget {
-                    region: ModsPluginGameRegion::Global,
-                    directory: workspace.clone(),
-                    installed: false,
-                },
-            ]
+            inspect_game_installations(&[], Some(&plugin)).unwrap(),
+            ModsPluginDeploymentStatus {
+                source_available: true,
+                ..Default::default()
+            }
         );
-        fs::remove_dir_all(china).unwrap();
-        fs::remove_dir_all(global).unwrap();
-        fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]

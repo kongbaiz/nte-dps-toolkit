@@ -29,11 +29,12 @@ use crate::engine::model::{
     AbyssEvent, AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CaptureQualitySource, CaptureQualitySummary,
     CharacterInfo, CharacterStats, CombatSegment, CombatSessionAbyssHalfSummary,
     CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState,
-    DamageAttributionSummary, DpsTimeBasis, EngineEvent, HitDirection, HitDirectionSummary,
-    PartyCombatState, SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION,
-    TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember, TimeStopEvent, TimelineMarkerKind,
-    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_reaction_damage_type, is_unbalance_damage_hit,
-    reaction_damage_for_hit, summarize_combat_segments, summarize_hit_directions,
+    DamageAttributionSummary, DamageTransformInput, DpsTimeBasis, EngineEvent, HitDirection,
+    HitDirectionSummary, PartyCombatState, SkillBreakdown, SkillBreakdownRow,
+    TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember,
+    TimeStopEvent, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
+    is_reaction_damage_type, is_unbalance_damage_hit, reaction_damage_for_hit,
+    summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file,
@@ -46,7 +47,7 @@ use crate::platform::hotkey::{
 };
 use crate::platform::mods_plugin::{
     ModsPluginClient, ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
-    ModsPluginModTarget, ModsPluginOperation, ModsPluginPlacement, ModsPluginSubmitError,
+    ModsPluginGameStatus, ModsPluginOperation, ModsPluginPlacement, ModsPluginSubmitError,
 };
 use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
@@ -1439,6 +1440,9 @@ pub struct DpsApp {
     kongmu_ui: KongmuUiState,
     mod_editor: ModEditorState,
     state: CombatState,
+    projected_state: Option<Box<CombatState>>,
+    mod_projection_dirty: bool,
+    mod_projection_last_refresh: Option<Instant>,
     combat_active: bool,
     last_combat_timestamp: Option<f64>,
     last_combat_activity: Option<Instant>,
@@ -1599,6 +1603,7 @@ impl eframe::App for DpsApp {
         );
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
+        self.refresh_applied_mod_projection(false);
         self.drain_history_archives();
         self.update_combat_visual();
         self.drain_resource_audit();

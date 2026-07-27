@@ -522,17 +522,7 @@ impl DpsApp {
             .and_then(|result| result.as_ref().ok())
             .map(|status| status.games.as_slice())
             .unwrap_or_default();
-        let selected_region = self
-            .kongmu_ui
-            .selected_plugin_region
-            .filter(|selected| games.iter().any(|game| game.region == *selected))
-            .or_else(|| {
-                games
-                    .iter()
-                    .find(|game| game.installed)
-                    .or_else(|| games.first())
-                    .map(|game| game.region)
-            });
+        let selected_region = selected_plugin_region(self.kongmu_ui.selected_plugin_region, games);
         let mut enabled = selected_region.is_some_and(|selected| {
             games
                 .iter()
@@ -1031,6 +1021,8 @@ fn plugin_deployment_status_text(
         .and_then(|result| result.as_ref().ok())
         .is_some_and(|status| status.source_available);
     match (status, selected_game) {
+        (Some(Ok(status)), _) if status.installations == 0 => t("Game installation not detected"),
+        (Some(Ok(_)), None) => t("Game installation not detected"),
         (_, Some(_)) if !source_available => t("Mod loader file plugins/dwmapi.dll was not found"),
         (_, Some(game)) if !game.installed => t("Mod loader is not installed"),
         (_, Some(game)) if !game.current => {
@@ -1043,6 +1035,19 @@ fn plugin_deployment_status_text(
         (Some(Err(_)), _) => t("Mod loader status check failed"),
         _ => t("Checking Mod loader status..."),
     }
+}
+
+fn selected_plugin_region(
+    preferred: Option<ModsPluginGameRegion>,
+    games: &[ModsPluginGameStatus],
+) -> Option<ModsPluginGameRegion> {
+    preferred.or_else(|| {
+        games
+            .iter()
+            .find(|game| game.installed)
+            .or_else(|| games.first())
+            .map(|game| game.region)
+    })
 }
 
 fn plugin_risk_confirmation_remaining(opened_at: Instant, now: Instant) -> Duration {
@@ -2810,6 +2815,31 @@ mod tests {
         assert_eq!(
             plugin_risk_confirmation_remaining(opened_at, opened_at + Duration::from_secs(5)),
             Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn mod_loader_keeps_the_editor_region_without_a_game_installation() {
+        assert_eq!(
+            selected_plugin_region(Some(ModsPluginGameRegion::China), &[]),
+            Some(ModsPluginGameRegion::China)
+        );
+        let china = ModsPluginGameStatus {
+            region: ModsPluginGameRegion::China,
+            installed: true,
+            current: true,
+        };
+        assert_eq!(
+            selected_plugin_region(Some(ModsPluginGameRegion::Global), &[china]),
+            Some(ModsPluginGameRegion::Global)
+        );
+        let status = Ok(ModsPluginDeploymentStatus {
+            source_available: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            plugin_deployment_status_text(None, Some(&status), Some(ModsPluginGameRegion::China)),
+            t("Game installation not detected")
         );
     }
 
