@@ -26,6 +26,7 @@ namespace nte::mods::runtime
 		constexpr uint8_t RESULT_REGISTER = 15;
 		constexpr size_t MAX_STATE_VARIABLES = 16;
 		constexpr size_t MAX_STRING_CONSTANTS = 16;
+		constexpr size_t MAX_IPC_ROUTES = 16;
 		constexpr size_t MAX_STRING_LENGTH = NTE_MOD_EVENT_NAME_SIZE - 1;
 		constexpr size_t MAX_VARIABLE_NAME_LENGTH = 32;
 		constexpr uint8_t NULL_REGISTER = 0xFF;
@@ -131,6 +132,12 @@ namespace nte::mods::runtime
 			uint8_t length;
 		};
 
+		struct IpcRoute
+		{
+			uint16_t operation;
+			IpcKernelService service;
+		};
+
 		struct ModProgram
 		{
 			EnabledMod mod;
@@ -142,6 +149,8 @@ namespace nte::mods::runtime
 			size_t state_count;
 			std::array<StringConstant, MAX_STRING_CONSTANTS> strings;
 			size_t string_count;
+			std::array<IpcRoute, MAX_IPC_ROUTES> ipc_routes;
+			size_t ipc_route_count;
 		};
 
 		struct Variable
@@ -502,6 +511,82 @@ namespace nte::mods::runtime
 			return 0;
 		}
 
+		bool IpcKernelServiceFromName(
+			TextView name,
+			IpcKernelService& service,
+			uint16_t& operation,
+			uint32_t& capability)
+		{
+			capability = CAPABILITY_IPC;
+			if (Equals(name, "equipment.equip_module"))
+			{
+				service = IpcKernelService::EquipModule;
+				operation = NTE_MODS_IPC_EQUIP_MODULE;
+			}
+			else if (Equals(name, "equipment.equip_core"))
+			{
+				service = IpcKernelService::EquipCore;
+				operation = NTE_MODS_IPC_EQUIP_CORE;
+			}
+			else if (Equals(name, "equipment.unequip_module"))
+			{
+				service = IpcKernelService::UnequipModule;
+				operation = NTE_MODS_IPC_UNEQUIP_MODULE;
+			}
+			else if (Equals(name, "equipment.unequip_core"))
+			{
+				service = IpcKernelService::UnequipCore;
+				operation = NTE_MODS_IPC_UNEQUIP_CORE;
+			}
+			else if (Equals(name, "equipment.unequip_all"))
+			{
+				service = IpcKernelService::UnequipAll;
+				operation = NTE_MODS_IPC_UNEQUIP_ALL;
+			}
+			else if (Equals(name, "equipment.equip_one_key"))
+			{
+				service = IpcKernelService::EquipOneKey;
+				operation = NTE_MODS_IPC_EQUIP_ONE_KEY;
+			}
+			else if (Equals(name, "equipment.move_module_to_character"))
+			{
+				service = IpcKernelService::MoveModuleToCharacter;
+				operation = NTE_MODS_IPC_MOVE_MODULE_TO_CHARACTER;
+			}
+			else if (Equals(name, "equipment.move_core_to_character"))
+			{
+				service = IpcKernelService::MoveCoreToCharacter;
+				operation = NTE_MODS_IPC_MOVE_CORE_TO_CHARACTER;
+			}
+			else if (Equals(name, "equipment.set_item_discarded"))
+			{
+				service = IpcKernelService::SetItemDiscarded;
+				operation = NTE_MODS_IPC_SET_ITEM_DISCARDED;
+			}
+			else if (Equals(name, "equipment.set_item_locked"))
+			{
+				service = IpcKernelService::SetItemLocked;
+				operation = NTE_MODS_IPC_SET_ITEM_LOCKED;
+			}
+			else if (Equals(name, "combat_clock.query_transitions"))
+			{
+				service = IpcKernelService::QueryCombatClockTransitions;
+				operation = NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS;
+				capability |= CAPABILITY_COMBAT_CLOCK;
+				return true;
+			}
+			else if (Equals(name, "ipc.query_mod_events"))
+			{
+				service = IpcKernelService::QueryModEvents;
+				operation = NTE_MODS_IPC_QUERY_MOD_EVENTS;
+				return true;
+			}
+			else
+				return false;
+			capability |= CAPABILITY_EQUIPMENT;
+			return true;
+		}
+
 		bool ParseCall(
 			TextView expression,
 			const char* function_name,
@@ -778,6 +863,41 @@ namespace nte::mods::runtime
 			state.length = static_cast<uint8_t>(name.size);
 			state.value = initial_value;
 			++program.state_count;
+			return true;
+		}
+
+		bool AddIpcRoute(ModProgram& program, TextView arguments)
+		{
+			TextView operation_text{};
+			TextView service_text{};
+			uint64_t operation = 0;
+			TextView service_name{};
+			IpcKernelService service{};
+			uint16_t service_operation = 0;
+			uint32_t capability = 0;
+			if (!SplitTwoArguments(
+					arguments, operation_text, service_text) ||
+				!ParseInteger(operation_text, operation) ||
+				operation > UINT16_MAX ||
+				!ParseStringLiteral(service_text, service_name) ||
+				!IpcKernelServiceFromName(
+					service_name,
+					service,
+					service_operation,
+					capability) ||
+				operation != service_operation ||
+				program.ipc_route_count == program.ipc_routes.size())
+				return false;
+			for (size_t index = 0; index < program.ipc_route_count; ++index)
+			{
+				if (program.ipc_routes[index].operation == operation)
+					return false;
+			}
+			program.ipc_routes[program.ipc_route_count++] = {
+				static_cast<uint16_t>(operation),
+				service,
+			};
+			program.used_capabilities |= capability;
 			return true;
 		}
 
@@ -1710,6 +1830,12 @@ namespace nte::mods::runtime
 					program.capabilities |= capability;
 					continue;
 				}
+				if (ParseCall(line, "route_ipc", arguments))
+				{
+					if (!AddIpcRoute(program, arguments))
+						return false;
+					continue;
+				}
 				TextView target{};
 				TextView expression{};
 				TextView state_name{};
@@ -2571,8 +2697,36 @@ namespace nte::mods::runtime
 		for (size_t index = 0; index < program_count; ++index)
 			ExecuteProgram(programs[index], viewport, execution);
 		if ((enabled_capabilities & CAPABILITY_IPC) != 0)
-			PumpLiveIpc(&execution.ipc_context, enabled_capabilities);
+			PumpLiveIpc(&execution.ipc_context);
 		ReleaseSRWLockShared(&program_lock);
+	}
+
+	NteModsStatus DispatchIpcRequestPrograms(
+		const PluginContext* context,
+		const NteModsIpcRequest& request,
+		NteModsIpcResponse& response)
+	{
+		for (size_t program_index = 0;
+			program_index < program_count;
+			++program_index)
+		{
+			const ModProgram& program = programs[program_index];
+			for (size_t route_index = 0;
+				route_index < program.ipc_route_count;
+				++route_index)
+			{
+				const IpcRoute& route = program.ipc_routes[route_index];
+				if (route.operation == request.operation)
+				{
+					return InvokeIpcKernelService(
+						route.service,
+						context,
+						request,
+						response);
+				}
+			}
+		}
+		return NTE_MODS_STATUS_MOD_DISABLED;
 	}
 
 	uint32_t CopyModEvents(NteModEvent* output, uint32_t capacity)

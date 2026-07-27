@@ -4,6 +4,7 @@ requires("viewport.tick")
 requires("game.session")
 requires("sdk.read")
 requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
 state.last_hp = 0
 
 def on_viewport_tick(event):

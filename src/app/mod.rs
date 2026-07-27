@@ -67,9 +67,9 @@ use crate::storage::history::{self, HistoryCombatDetails, HistoryComparison, His
 use crate::storage::i18n::{self, Language, t, tf};
 use crate::storage::io_util::atomic_write_text;
 use crate::storage::mod_scripts::{
-    MAX_MOD_SOURCE_BYTES, ModScriptDocument, ModScriptError, ModScriptWorkspace,
-    load_mod_script_workspace, new_mod_script_template, save_mod_script, set_mod_enabled,
-    validate_mod_source,
+    MAX_MOD_SOURCE_BYTES, ModScriptBlueprint, ModScriptBlueprintNode, ModScriptDocument,
+    ModScriptError, ModScriptWorkspace, load_mod_script_workspace, new_mod_script_template,
+    save_mod_script, set_mod_enabled, validate_mod_source,
 };
 use crate::storage::paths;
 use crate::storage::resource::{read_mods_plugin, read_resource_bytes, read_resource_text};

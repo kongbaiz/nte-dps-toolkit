@@ -1,5 +1,6 @@
 #pragma once
 
+#include "host_api.hpp"
 #include "nte_mods_ipc.h"
 
 #include <Windows.h>
@@ -28,6 +29,10 @@ namespace nte::mods::runtime
 	bool HasViewportTickPrograms();
 	uint32_t EnabledCapabilities();
 	void ExecuteViewportTickPrograms(void* viewport);
+	NteModsStatus DispatchIpcRequestPrograms(
+		const PluginContext* context,
+		const NteModsIpcRequest& request,
+		NteModsIpcResponse& response);
 	uint32_t CopyModEvents(NteModEvent* output, uint32_t capacity);
 	void Reset();
 } // namespace nte::mods::runtime
