@@ -6447,6 +6447,16 @@ fn mod_script_error_text(error: &ModScriptError) -> String {
         ModScriptError::MissingViewportTickHandler => {
             t("The script must define on_viewport_tick(event).")
         }
+        ModScriptError::InvalidSourceLine(line) => tf(
+            "The NTE Script compiler rejected line {}.",
+            &[&line.to_string()],
+        ),
+        ModScriptError::SourceBudgetExceeded => {
+            t("The NTE Script exceeds the compiler resource budget.")
+        }
+        ModScriptError::CapabilityMismatch => {
+            t("Declared Mod capabilities must exactly match the APIs used by the script.")
+        }
         ModScriptError::ModSourceMissing(id) => tf("The Mod source file is missing: {}", &[id]),
     }
 }
@@ -7127,9 +7137,13 @@ mod tests {
                 1,
             ),
         ] {
-            let blueprint = parse_nte_blueprint_source(source).unwrap();
+            let source = source.replace("\r\n", "\n").replace('\n', "\r\n");
+            let blueprint = parse_nte_blueprint_source(&source).unwrap();
 
-            assert_eq!(render_nte_blueprint_source(id, &blueprint), source);
+            assert_eq!(
+                render_nte_blueprint_source(id, &blueprint),
+                source.replace("\r\n", "\n")
+            );
             assert_eq!(
                 nte_blueprint_blocks(&blueprint).len(),
                 expected_flow_blocks,

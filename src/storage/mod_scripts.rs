@@ -10,6 +10,15 @@ use super::io_util::{atomic_write_file, atomic_write_text};
 pub(crate) const MAX_MOD_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_MOD_BLUEPRINT_BYTES: usize = 64 * 1024;
 const MAX_ENABLED_MODS: usize = 16;
+const MAX_MOD_INSTRUCTIONS: usize = 256;
+const MAX_MOD_VARIABLES: usize = 12;
+const MAX_MOD_STATES: usize = 16;
+const MAX_MOD_STRINGS: usize = 16;
+const MAX_MOD_ROUTES: usize = 16;
+const MAX_MOD_BLOCKS: usize = 8;
+const MAX_MOD_BRANCHES: usize = 8;
+const MAX_MOD_STRING_BYTES: usize = 31;
+const MAX_MOD_VARIABLE_BYTES: usize = 32;
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
 const MOD_BLUEPRINT_VERSION: u32 = 1;
@@ -73,6 +82,9 @@ pub(crate) enum ModScriptError {
     MissingModDeclaration,
     MismatchedModDeclaration,
     MissingViewportTickHandler,
+    InvalidSourceLine(usize),
+    SourceBudgetExceeded,
+    CapabilityMismatch,
     ModSourceMissing(String),
 }
 
@@ -261,6 +273,8 @@ pub(crate) fn validate_mod_source(id: &str, source: &str) -> Result<(), ModScrip
         return Err(ModScriptError::SourceContainsNul);
     }
     let mut lines = source
+        .strip_prefix('\u{feff}')
+        .unwrap_or(source)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'));
@@ -280,7 +294,803 @@ pub(crate) fn validate_mod_source(id: &str, source: &str) -> Result<(), ModScrip
     if !lines.any(|line| line == "def on_viewport_tick(event):") {
         return Err(ModScriptError::MissingViewportTickHandler);
     }
-    Ok(())
+    ModSourceValidator::new(source)
+        .validate(id)
+        .map_err(|failure| match failure {
+            ModSourceValidationFailure::InvalidLine(line) => {
+                ModScriptError::InvalidSourceLine(line)
+            }
+            ModSourceValidationFailure::BudgetExceeded => ModScriptError::SourceBudgetExceeded,
+            ModSourceValidationFailure::CapabilityMismatch => ModScriptError::CapabilityMismatch,
+        })
+}
+
+const CAPABILITY_VIEWPORT_TICK: u8 = 1 << 0;
+const CAPABILITY_MEMORY_READ: u8 = 1 << 1;
+const CAPABILITY_IPC: u8 = 1 << 2;
+const CAPABILITY_SDK_READ: u8 = 1 << 3;
+const CAPABILITY_EQUIPMENT: u8 = 1 << 4;
+const CAPABILITY_COMBAT_CLOCK: u8 = 1 << 5;
+const CAPABILITY_LOG: u8 = 1 << 6;
+const CAPABILITY_GAME_SESSION: u8 = 1 << 7;
+
+#[derive(Clone, Copy)]
+struct ModSourceLine<'a> {
+    number: usize,
+    indentation: usize,
+    text: &'a str,
+}
+
+#[derive(Clone, Copy)]
+enum ModSourceValidationFailure {
+    InvalidLine(usize),
+    BudgetExceeded,
+    CapabilityMismatch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModSourceBlockKind {
+    Conditional,
+    Loop,
+}
+
+struct ModSourceBlock {
+    kind: ModSourceBlockKind,
+    indentation: usize,
+    false_jump_open: bool,
+    end_jump_count: usize,
+}
+
+struct ModSourceValidator<'a> {
+    lines: Vec<ModSourceLine<'a>>,
+    capabilities: u8,
+    used_capabilities: u8,
+    instruction_count: usize,
+    states: Vec<&'a str>,
+    variables: Vec<&'a str>,
+    strings: Vec<&'a str>,
+    routes: Vec<u16>,
+}
+
+impl<'a> ModSourceValidator<'a> {
+    fn new(source: &'a str) -> Self {
+        let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+        let lines = source
+            .lines()
+            .enumerate()
+            .filter_map(|(index, raw)| {
+                let indentation = raw.bytes().take_while(|byte| *byte == b' ').count();
+                let text = raw[indentation..].trim_end_matches([' ', '\t']);
+                (!text.is_empty() && !text.starts_with('#')).then_some(ModSourceLine {
+                    number: index + 1,
+                    indentation,
+                    text,
+                })
+            })
+            .collect();
+        Self {
+            lines,
+            capabilities: 0,
+            used_capabilities: 0,
+            instruction_count: 0,
+            states: Vec::new(),
+            variables: Vec::new(),
+            strings: Vec::new(),
+            routes: Vec::new(),
+        }
+    }
+
+    fn validate(mut self, expected_id: &str) -> Result<(), ModSourceValidationFailure> {
+        let Some(version) = self.lines.first().copied() else {
+            return Err(ModSourceValidationFailure::InvalidLine(1));
+        };
+        if version.indentation != 0 || parse_call(version.text, "nte_mod") != Some("4") {
+            return Err(ModSourceValidationFailure::InvalidLine(version.number));
+        }
+        let Some(declaration) = self.lines.get(1).copied() else {
+            return Err(ModSourceValidationFailure::InvalidLine(version.number));
+        };
+        let declared_id = parse_call(declaration.text, "mod")
+            .and_then(parse_string_literal)
+            .filter(|id| *id == expected_id);
+        if declaration.indentation != 0 || declared_id.is_none() {
+            return Err(ModSourceValidationFailure::InvalidLine(declaration.number));
+        }
+
+        let mut handler_index = None;
+        for index in 2..self.lines.len() {
+            let line = self.lines[index];
+            if line.indentation != 0 {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            if line.text == "def on_viewport_tick(event):" {
+                self.used_capabilities |= CAPABILITY_VIEWPORT_TICK;
+                handler_index = Some(index);
+                break;
+            }
+            self.validate_declaration(line)?;
+        }
+        let Some(handler_index) = handler_index else {
+            return Err(ModSourceValidationFailure::InvalidLine(declaration.number));
+        };
+        self.validate_body(handler_index + 1)?;
+        if self.capabilities != self.used_capabilities {
+            return Err(ModSourceValidationFailure::CapabilityMismatch);
+        }
+        Ok(())
+    }
+
+    fn validate_declaration(
+        &mut self,
+        line: ModSourceLine<'a>,
+    ) -> Result<(), ModSourceValidationFailure> {
+        if let Some(arguments) =
+            parse_call(line.text, "requires").or_else(|| parse_call(line.text, "capability"))
+        {
+            let Some(capability) = parse_string_literal(arguments).and_then(mod_capability) else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            if self.capabilities & capability != 0 {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            self.capabilities |= capability;
+            return Ok(());
+        }
+        if let Some(arguments) = parse_call(line.text, "route_ipc") {
+            if self.routes.len() == MAX_MOD_ROUTES {
+                return Err(ModSourceValidationFailure::BudgetExceeded);
+            }
+            let Some((operation, service)) = split_two_arguments(arguments) else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            let Some(operation) = parse_mod_integer(operation)
+                .filter(|operation| *operation <= u16::MAX as u64)
+                .map(|operation| operation as u16)
+            else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            let Some(service) = parse_string_literal(service) else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            let Some((expected_operation, capability)) = mod_ipc_service(service) else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            if operation != expected_operation || self.routes.contains(&operation) {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            self.routes.push(operation);
+            self.used_capabilities |= capability;
+            return Ok(());
+        }
+        if let Some((target, expression)) = parse_mod_assignment(line.text)
+            && let Some(name) = parse_state_name(target)
+        {
+            if self.states.len() == MAX_MOD_STATES {
+                return Err(ModSourceValidationFailure::BudgetExceeded);
+            }
+            if !is_mod_variable_name(name)
+                || self.states.contains(&name)
+                || parse_mod_integer(expression).is_none()
+            {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            self.states.push(name);
+            return Ok(());
+        }
+        Err(ModSourceValidationFailure::InvalidLine(line.number))
+    }
+
+    fn validate_body(&mut self, first_line: usize) -> Result<(), ModSourceValidationFailure> {
+        let mut blocks = Vec::<ModSourceBlock>::new();
+        let mut has_body = false;
+        for index in first_line..self.lines.len() {
+            let line = self.lines[index];
+            let condition = parse_mod_condition(line.text, "if ");
+            let elif_condition = parse_mod_condition(line.text, "elif ");
+            let is_else = line.text == "else:";
+            while blocks.last().is_some_and(|block| {
+                line.indentation <= block.indentation
+                    && !(line.indentation == block.indentation
+                        && (is_else || elif_condition.is_some())
+                        && block.kind == ModSourceBlockKind::Conditional)
+            }) {
+                self.close_block(
+                    blocks
+                        .pop()
+                        .expect("the loop condition established a block"),
+                )?;
+            }
+            let expected_indentation = blocks.last().map_or(4, |block| block.indentation + 4);
+            if is_else || elif_condition.is_some() {
+                let Some(block) = blocks.last_mut() else {
+                    return Err(ModSourceValidationFailure::InvalidLine(line.number));
+                };
+                if line.indentation != block.indentation
+                    || block.kind != ModSourceBlockKind::Conditional
+                    || !block.false_jump_open
+                {
+                    return Err(ModSourceValidationFailure::InvalidLine(line.number));
+                }
+                if block.end_jump_count == MAX_MOD_BRANCHES {
+                    return Err(ModSourceValidationFailure::BudgetExceeded);
+                }
+                block.end_jump_count += 1;
+                block.false_jump_open = false;
+                self.append_instructions(1)?;
+                if let Some(expression) = elif_condition {
+                    self.compile_expression(expression, line.number)?;
+                    self.append_instructions(1)?;
+                    blocks
+                        .last_mut()
+                        .expect("the branch block remains active")
+                        .false_jump_open = true;
+                }
+                has_body = true;
+                continue;
+            }
+            if line.indentation != expected_indentation {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            if let Some(expression) = condition {
+                if blocks.len() == MAX_MOD_BLOCKS {
+                    return Err(ModSourceValidationFailure::BudgetExceeded);
+                }
+                self.compile_expression(expression, line.number)?;
+                self.append_instructions(1)?;
+                blocks.push(ModSourceBlock {
+                    kind: ModSourceBlockKind::Conditional,
+                    indentation: line.indentation,
+                    false_jump_open: true,
+                    end_jump_count: 0,
+                });
+                has_body = true;
+                continue;
+            }
+            if let Some((variable, _count)) = parse_mod_for_range(line.text) {
+                if blocks.len() == MAX_MOD_BLOCKS {
+                    return Err(ModSourceValidationFailure::BudgetExceeded);
+                }
+                self.assign_variable(variable, line.number)?;
+                self.append_instructions(2)?;
+                blocks.push(ModSourceBlock {
+                    kind: ModSourceBlockKind::Loop,
+                    indentation: line.indentation,
+                    false_jump_open: false,
+                    end_jump_count: 0,
+                });
+                has_body = true;
+                continue;
+            }
+            self.compile_statement(line.text, line.number)?;
+            has_body = true;
+        }
+        while let Some(block) = blocks.pop() {
+            self.close_block(block)?;
+        }
+        if !has_body {
+            return Err(ModSourceValidationFailure::InvalidLine(
+                self.lines
+                    .get(first_line.saturating_sub(1))
+                    .map_or(1, |line| line.number),
+            ));
+        }
+        Ok(())
+    }
+
+    fn close_block(&mut self, block: ModSourceBlock) -> Result<(), ModSourceValidationFailure> {
+        if block.kind == ModSourceBlockKind::Loop {
+            self.append_instructions(1)?;
+        }
+        Ok(())
+    }
+
+    fn compile_statement(
+        &mut self,
+        line: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        if let Some((target, expression)) = parse_mod_assignment(line) {
+            if let Some(state) = parse_state_name(target) {
+                if !self.states.contains(&state) {
+                    return Err(ModSourceValidationFailure::InvalidLine(line_number));
+                }
+                self.compile_expression(expression, line_number)?;
+                return self.append_instructions(1);
+            }
+            self.assign_variable(target, line_number)?;
+            return self.compile_expression(expression, line_number);
+        }
+        if let Some(arguments) = parse_call(line, "equipment.prepare") {
+            let arguments = split_mod_arguments(arguments, 4)
+                .filter(|arguments| arguments.len() == 1)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.materialize_atom(arguments[0], line_number)?;
+            self.used_capabilities |= CAPABILITY_EQUIPMENT;
+            return self.append_instructions(1);
+        }
+        if let Some(arguments) = parse_call(line, "combat_clock.forward") {
+            let arguments = split_mod_arguments(arguments, 4)
+                .filter(|arguments| arguments.len() == 2)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.materialize_atom(arguments[0], line_number)?;
+            self.materialize_atom(arguments[1], line_number)?;
+            self.used_capabilities |= CAPABILITY_COMBAT_CLOCK;
+            return self.append_instructions(1);
+        }
+        if let Some(arguments) = parse_call(line, "ipc.bind") {
+            let arguments = split_mod_arguments(arguments, 4)
+                .filter(|arguments| arguments.len() == 2)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            if arguments[0] == "None" && arguments[1] == "None" {
+                return Err(ModSourceValidationFailure::InvalidLine(line_number));
+            }
+            for argument in arguments {
+                if argument != "None" {
+                    self.materialize_atom(argument, line_number)?;
+                }
+            }
+            self.used_capabilities |= CAPABILITY_IPC;
+            return self.append_instructions(1);
+        }
+        if let Some(arguments) = parse_call(line, "ipc.emit") {
+            let arguments = split_mod_arguments(arguments, 4)
+                .filter(|arguments| !arguments.is_empty())
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            let event_name = parse_string_literal(arguments[0])
+                .filter(|event_name| is_mod_event_name(event_name))
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.add_string(event_name, line_number)?;
+            for argument in &arguments[1..] {
+                self.materialize_atom(argument, line_number)?;
+            }
+            self.used_capabilities |= CAPABILITY_IPC;
+            return self.append_instructions(1);
+        }
+        if let Some(arguments) = parse_call(line, "log.info") {
+            let arguments = split_mod_arguments(arguments, 4)
+                .filter(|arguments| arguments.len() == 1)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            let message = parse_string_literal(arguments[0])
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.add_string(message, line_number)?;
+            self.used_capabilities |= CAPABILITY_LOG;
+            return self.append_instructions(1);
+        }
+        Err(ModSourceValidationFailure::InvalidLine(line_number))
+    }
+
+    fn compile_expression(
+        &mut self,
+        expression: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        let expression = expression.trim_matches([' ', '\t']);
+        if let Some(operand) = expression.strip_prefix("not ") {
+            self.compile_expression(operand.trim_matches([' ', '\t']), line_number)?;
+            return self.append_instructions(1);
+        }
+        if let Some(operand) = expression.strip_prefix('-')
+            && !operand.is_empty()
+        {
+            self.compile_atom(operand.trim_matches([' ', '\t']), line_number)?;
+            return self.append_instructions(1);
+        }
+        if let Some((left, right)) = split_mod_binary_expression(expression) {
+            self.materialize_atom(left, line_number)?;
+            self.materialize_atom(right, line_number)?;
+            return self.append_instructions(1);
+        }
+        if self.compile_call_expression(expression, line_number)? {
+            return Ok(());
+        }
+        self.compile_atom(expression, line_number)
+    }
+
+    fn compile_call_expression(
+        &mut self,
+        expression: &'a str,
+        line_number: usize,
+    ) -> Result<bool, ModSourceValidationFailure> {
+        if let Some(arguments) = parse_call(expression, "time.now_ms") {
+            if !arguments.is_empty() {
+                return Err(ModSourceValidationFailure::InvalidLine(line_number));
+            }
+            self.append_instructions(1)?;
+            return Ok(true);
+        }
+        if let Some(arguments) = parse_call(expression, "equipment.cache_missing") {
+            if !arguments.is_empty() {
+                return Err(ModSourceValidationFailure::InvalidLine(line_number));
+            }
+            self.used_capabilities |= CAPABILITY_EQUIPMENT;
+            self.append_instructions(1)?;
+            return Ok(true);
+        }
+        if let Some(arguments) = parse_call(expression, "equipment.cache_ready") {
+            self.compile_single_argument_call(arguments, line_number)?;
+            self.used_capabilities |= CAPABILITY_EQUIPMENT;
+            return Ok(true);
+        }
+        if let Some(arguments) = parse_call(expression, "combat_clock.sample") {
+            self.compile_single_argument_call(arguments, line_number)?;
+            self.used_capabilities |= CAPABILITY_COMBAT_CLOCK;
+            return Ok(true);
+        }
+        for name in ["combat_clock.pause_mask", "combat_clock.state_flags"] {
+            if let Some(arguments) = parse_call(expression, name) {
+                self.compile_single_argument_call(arguments, line_number)?;
+                self.used_capabilities |= CAPABILITY_COMBAT_CLOCK;
+                return Ok(true);
+            }
+        }
+        for name in [
+            "memory.read_ptr",
+            "memory.read_u8",
+            "memory.read_u16",
+            "memory.read_u32",
+            "memory.read_u64",
+            "memory.read_i32",
+            "memory.tarray_first",
+            "memory.tarray_count",
+            "memory.is_readable",
+        ] {
+            if let Some(arguments) = parse_call(expression, name) {
+                let arguments = split_mod_arguments(arguments, 3)
+                    .filter(|arguments| arguments.len() == 2)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                self.materialize_atom(arguments[0], line_number)?;
+                self.materialize_atom(arguments[1], line_number)?;
+                self.used_capabilities |= CAPABILITY_MEMORY_READ;
+                self.append_instructions(1)?;
+                return Ok(true);
+            }
+        }
+        for (name, expected_arguments) in [
+            ("sdk.player_character", 1),
+            ("sdk.player_state", 1),
+            ("sdk.game_paused", 1),
+            ("sdk.attack_target", 1),
+            ("sdk.current_weapon", 1),
+            ("sdk.character_level", 1),
+            ("sdk.character_hp_milli", 1),
+            ("sdk.character_hp_max_milli", 2),
+            ("sdk.character_is_alive", 1),
+            ("sdk.character_is_dead", 1),
+            ("sdk.character_is_controlled", 1),
+            ("sdk.character_slomo_milli", 1),
+        ] {
+            if let Some(arguments) = parse_call(expression, name) {
+                let arguments = split_mod_arguments(arguments, 3)
+                    .filter(|arguments| arguments.len() == expected_arguments)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                self.materialize_atom(arguments[0], line_number)?;
+                if expected_arguments == 2 {
+                    self.materialize_atom(arguments[1], line_number)?;
+                } else {
+                    self.append_instructions(1)?;
+                }
+                self.used_capabilities |= CAPABILITY_SDK_READ;
+                self.append_instructions(1)?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn compile_single_argument_call(
+        &mut self,
+        arguments: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        let arguments = split_mod_arguments(arguments, 3)
+            .filter(|arguments| arguments.len() == 1)
+            .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+        self.materialize_atom(arguments[0], line_number)?;
+        self.append_instructions(1)
+    }
+
+    fn materialize_atom(
+        &mut self,
+        expression: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        let expression = expression.trim_matches([' ', '\t']);
+        if self.variables.contains(&expression) {
+            return Ok(());
+        }
+        self.compile_atom(expression, line_number)
+    }
+
+    fn compile_atom(
+        &mut self,
+        expression: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        if parse_mod_integer(expression).is_some() {
+            return self.append_instructions(1);
+        }
+        if expression == "event.viewport" {
+            self.used_capabilities |= CAPABILITY_VIEWPORT_TICK;
+            return self.append_instructions(1);
+        }
+        if matches!(
+            expression,
+            "game.viewport"
+                | "game.instance"
+                | "game.local_player"
+                | "game.player_controller"
+                | "game.player_state"
+                | "game.player_character"
+        ) {
+            self.used_capabilities |= CAPABILITY_GAME_SESSION;
+            return self.append_instructions(1);
+        }
+        if let Some(state) = parse_state_name(expression)
+            && self.states.contains(&state)
+        {
+            return self.append_instructions(1);
+        }
+        if self.variables.contains(&expression) {
+            return self.append_instructions(1);
+        }
+        Err(ModSourceValidationFailure::InvalidLine(line_number))
+    }
+
+    fn assign_variable(
+        &mut self,
+        name: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        if !is_mod_variable_name(name) {
+            return Err(ModSourceValidationFailure::InvalidLine(line_number));
+        }
+        if self.variables.contains(&name) {
+            return Ok(());
+        }
+        if self.variables.len() == MAX_MOD_VARIABLES {
+            return Err(ModSourceValidationFailure::BudgetExceeded);
+        }
+        self.variables.push(name);
+        Ok(())
+    }
+
+    fn add_string(
+        &mut self,
+        value: &'a str,
+        line_number: usize,
+    ) -> Result<(), ModSourceValidationFailure> {
+        if value.is_empty() || value.len() > MAX_MOD_STRING_BYTES {
+            return Err(ModSourceValidationFailure::InvalidLine(line_number));
+        }
+        if self.strings.contains(&value) {
+            return Ok(());
+        }
+        if self.strings.len() == MAX_MOD_STRINGS {
+            return Err(ModSourceValidationFailure::BudgetExceeded);
+        }
+        self.strings.push(value);
+        Ok(())
+    }
+
+    fn append_instructions(&mut self, count: usize) -> Result<(), ModSourceValidationFailure> {
+        if self.instruction_count + count > MAX_MOD_INSTRUCTIONS {
+            return Err(ModSourceValidationFailure::BudgetExceeded);
+        }
+        self.instruction_count += count;
+        Ok(())
+    }
+}
+
+fn parse_call<'a>(expression: &'a str, function_name: &str) -> Option<&'a str> {
+    expression
+        .strip_prefix(function_name)
+        .and_then(|expression| expression.strip_prefix('('))
+        .and_then(|expression| expression.strip_suffix(')'))
+        .map(|arguments| arguments.trim_matches([' ', '\t']))
+}
+
+fn parse_string_literal(text: &str) -> Option<&str> {
+    let value = text.strip_prefix('"')?.strip_suffix('"')?;
+    (!value.bytes().any(|byte| matches!(byte, b'"' | b'\\'))).then_some(value)
+}
+
+fn split_two_arguments(arguments: &str) -> Option<(&str, &str)> {
+    let mut parts = arguments.split(',');
+    let first = parts.next()?.trim_matches([' ', '\t']);
+    let second = parts.next()?.trim_matches([' ', '\t']);
+    (!first.is_empty() && !second.is_empty() && parts.next().is_none()).then_some((first, second))
+}
+
+fn parse_mod_assignment(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let mut separator = None;
+    for index in 0..bytes.len() {
+        if bytes[index] != b'=' {
+            continue;
+        }
+        let comparison = index != 0 && matches!(bytes[index - 1], b'=' | b'!' | b'<' | b'>')
+            || index + 1 < bytes.len() && bytes[index + 1] == b'=';
+        if comparison {
+            continue;
+        }
+        if separator.replace(index).is_some() {
+            return None;
+        }
+    }
+    let separator = separator?;
+    let target = line[..separator].trim_matches([' ', '\t']);
+    let expression = line[separator + 1..].trim_matches([' ', '\t']);
+    (!target.is_empty() && !expression.is_empty()).then_some((target, expression))
+}
+
+fn parse_mod_integer(text: &str) -> Option<u64> {
+    match text {
+        "None" | "False" => Some(0),
+        "True" => Some(1),
+        _ => {
+            let (digits, base) = text
+                .strip_prefix("0x")
+                .or_else(|| text.strip_prefix("0X"))
+                .map_or((text, 10), |digits| (digits, 16));
+            if digits.is_empty() {
+                return None;
+            }
+            digits.bytes().try_fold(0u64, |value, digit| {
+                let digit = match digit {
+                    b'0'..=b'9' => u64::from(digit - b'0'),
+                    b'a'..=b'f' if base == 16 => u64::from(digit - b'a' + 10),
+                    b'A'..=b'F' if base == 16 => u64::from(digit - b'A' + 10),
+                    _ => return None,
+                };
+                (digit < base).then_some(())?;
+                value.checked_mul(base)?.checked_add(digit)
+            })
+        }
+    }
+}
+
+fn parse_state_name(text: &str) -> Option<&str> {
+    text.strip_prefix("state.").filter(|name| !name.is_empty())
+}
+
+fn is_mod_variable_name(name: &str) -> bool {
+    name.len() <= MAX_MOD_VARIABLE_BYTES
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        && name
+            .bytes()
+            .skip(1)
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        && !matches!(name, "event" | "state" | "None" | "True" | "False")
+}
+
+fn is_mod_event_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_MOD_STRING_BYTES
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
+        })
+}
+
+fn mod_capability(name: &str) -> Option<u8> {
+    Some(match name {
+        "viewport.tick" => CAPABILITY_VIEWPORT_TICK,
+        "memory.read" => CAPABILITY_MEMORY_READ,
+        "ipc" => CAPABILITY_IPC,
+        "sdk.read" => CAPABILITY_SDK_READ,
+        "equipment" => CAPABILITY_EQUIPMENT,
+        "combat-clock" => CAPABILITY_COMBAT_CLOCK,
+        "log" => CAPABILITY_LOG,
+        "game.session" => CAPABILITY_GAME_SESSION,
+        _ => return None,
+    })
+}
+
+fn mod_ipc_service(name: &str) -> Option<(u16, u8)> {
+    Some(match name {
+        "equipment.equip_module" => (1, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.equip_core" => (2, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.unequip_module" => (3, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.unequip_core" => (4, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.unequip_all" => (5, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.equip_one_key" => (6, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.move_module_to_character" => (7, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.move_core_to_character" => (8, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.set_item_discarded" => (9, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "equipment.set_item_locked" => (10, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
+        "combat_clock.query_transitions" => (11, CAPABILITY_IPC | CAPABILITY_COMBAT_CLOCK),
+        "ipc.query_mod_events" => (12, CAPABILITY_IPC),
+        _ => return None,
+    })
+}
+
+fn split_mod_arguments(arguments: &str, capacity: usize) -> Option<Vec<&str>> {
+    if arguments.is_empty() {
+        return Some(Vec::new());
+    }
+    let bytes = arguments.as_bytes();
+    let mut output = Vec::new();
+    let mut in_string = false;
+    let mut depth = 0usize;
+    let mut first = 0usize;
+    for index in 0..=bytes.len() {
+        let value = bytes.get(index).copied().unwrap_or(b',');
+        match value {
+            b'"' => in_string = !in_string,
+            b'(' if !in_string => depth += 1,
+            b')' if !in_string => depth = depth.checked_sub(1)?,
+            b',' if !in_string && depth == 0 => {
+                if output.len() == capacity {
+                    return None;
+                }
+                let argument = arguments[first..index].trim_matches([' ', '\t']);
+                if argument.is_empty() {
+                    return None;
+                }
+                output.push(argument);
+                first = index + 1;
+            }
+            _ => {}
+        }
+    }
+    (!in_string && depth == 0).then_some(output)
+}
+
+fn split_mod_binary_expression(expression: &str) -> Option<(&str, &str)> {
+    const OPERATORS: [&str; 18] = [
+        " or ", " and ", "==", "!=", "<=", ">=", "<<", ">>", "<", ">", "+", "-", "*", "/", "%",
+        "&", "|", "^",
+    ];
+    let bytes = expression.as_bytes();
+    let mut found = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => in_string = !in_string,
+            b'(' if !in_string => depth += 1,
+            b')' if !in_string => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+        if !in_string
+            && depth == 0
+            && let Some(operator) = OPERATORS
+                .iter()
+                .find(|operator| bytes[index..].starts_with(operator.as_bytes()))
+        {
+            if found.replace((index, operator.len())).is_some() {
+                return None;
+            }
+            index += operator.len();
+            continue;
+        }
+        index += 1;
+    }
+    if in_string || depth != 0 {
+        return None;
+    }
+    let (index, length) = found?;
+    let left = expression[..index].trim_matches([' ', '\t']);
+    let right = expression[index + length..].trim_matches([' ', '\t']);
+    (!left.is_empty() && !right.is_empty()).then_some((left, right))
+}
+
+fn parse_mod_condition<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    let expression = line.strip_prefix(prefix)?.strip_suffix(':')?;
+    let expression = expression.trim_matches([' ', '\t']);
+    (!expression.is_empty()).then_some(expression)
+}
+
+fn parse_mod_for_range(line: &str) -> Option<(&str, u8)> {
+    let header = line.strip_prefix("for ")?.strip_suffix(':')?;
+    let (variable, count) = header.split_once(" in range(")?;
+    let count = count.strip_suffix(')')?.trim_matches([' ', '\t']);
+    let variable = variable.trim_matches([' ', '\t']);
+    let count = parse_mod_integer(count)?;
+    (is_mod_variable_name(variable) && count <= 64).then_some((variable, count as u8))
 }
 
 pub(crate) fn new_mod_script_template(id: &str) -> Result<String, ModScriptError> {
@@ -497,6 +1307,107 @@ mod tests {
         assert_eq!(
             validate_mod_source("telemetry", "nte_mod(4)\nmod(\"telemetry\")\n"),
             Err(ModScriptError::MissingViewportTickHandler)
+        );
+    }
+
+    #[test]
+    fn source_validation_accepts_bundled_programs_with_crlf() {
+        for (id, source) in [
+            (
+                "equipment",
+                include_str!("../../plugins/nte-mods/equipment.nte"),
+            ),
+            (
+                "combat-clock",
+                include_str!("../../plugins/nte-mods/combat-clock.nte"),
+            ),
+            (
+                "character-telemetry",
+                include_str!("../../plugins/examples/character-telemetry.nte"),
+            ),
+        ] {
+            let crlf = source.replace("\r\n", "\n").replace('\n', "\r\n");
+            validate_mod_source(id, &crlf).unwrap();
+        }
+    }
+
+    #[test]
+    fn source_validation_rejects_native_grammar_errors() {
+        let prefix = concat!(
+            "nte_mod(4)\n",
+            "mod(\"telemetry\")\n",
+            "requires(\"viewport.tick\")\n",
+            "def on_viewport_tick(event):\n",
+        );
+        assert_eq!(
+            validate_mod_source("telemetry", &format!("{prefix}  value = 1\n")),
+            Err(ModScriptError::InvalidSourceLine(5))
+        );
+        assert_eq!(
+            validate_mod_source("telemetry", &format!("{prefix}    unknown.call()\n")),
+            Err(ModScriptError::InvalidSourceLine(5))
+        );
+        assert_eq!(
+            validate_mod_source(
+                "telemetry",
+                concat!(
+                    "nte_mod(4)\n",
+                    "mod(\"telemetry\")\n",
+                    "requires(\"unknown\")\n",
+                    "def on_viewport_tick(event):\n",
+                    "    value = 1\n",
+                )
+            ),
+            Err(ModScriptError::InvalidSourceLine(3))
+        );
+    }
+
+    #[test]
+    fn save_rejects_invalid_native_grammar_before_writing_files() {
+        let root = temp_workspace();
+        let source = concat!(
+            "nte_mod(4)\n",
+            "mod(\"telemetry\")\n",
+            "requires(\"viewport.tick\")\n",
+            "def on_viewport_tick(event):\n",
+            "    unknown.call()\n",
+        );
+
+        assert_eq!(
+            save_mod_script(&root, "telemetry", source, &ModScriptBlueprint::default(),),
+            Err(ModScriptError::InvalidSourceLine(5))
+        );
+        assert!(!root.join(MOD_DIRECTORY_NAME).exists());
+    }
+
+    #[test]
+    fn source_validation_rejects_capability_and_instruction_budget_mismatches() {
+        assert_eq!(
+            validate_mod_source(
+                "telemetry",
+                concat!(
+                    "nte_mod(4)\n",
+                    "mod(\"telemetry\")\n",
+                    "requires(\"viewport.tick\")\n",
+                    "requires(\"log\")\n",
+                    "def on_viewport_tick(event):\n",
+                    "    value = 1\n",
+                )
+            ),
+            Err(ModScriptError::CapabilityMismatch)
+        );
+
+        let mut oversized = concat!(
+            "nte_mod(4)\n",
+            "mod(\"telemetry\")\n",
+            "requires(\"viewport.tick\")\n",
+            "def on_viewport_tick(event):\n",
+        )
+        .to_owned();
+        oversized.push_str(&"    value = 1\n".repeat(MAX_MOD_INSTRUCTIONS + 1));
+        assert_eq!(
+            validate_mod_source("telemetry", &oversized),
+            Err(ModScriptError::SourceBudgetExceeded)
         );
     }
 
