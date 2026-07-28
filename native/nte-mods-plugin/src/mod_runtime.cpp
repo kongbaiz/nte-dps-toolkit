@@ -4,12 +4,14 @@
 #include "ipc_transport.hpp"
 #include "memory_access.hpp"
 #include "obfuscated_string.hpp"
+#include "plugin_runtime.hpp"
 
 #include <Windows.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 namespace nte::mods::runtime
 {
@@ -25,9 +27,10 @@ namespace nte::mods::runtime
 		constexpr uint8_t CONDITION_REGISTER = 14;
 		constexpr uint8_t RESULT_REGISTER = 15;
 		constexpr size_t MAX_STATE_VARIABLES = 16;
+		constexpr size_t MAX_CACHE_ENTRIES = 32;
 		constexpr size_t MAX_STRING_CONSTANTS = 16;
 		constexpr size_t MAX_IPC_ROUTES = 16;
-		constexpr size_t MAX_STRING_LENGTH = NTE_MOD_EVENT_NAME_SIZE - 1;
+		constexpr size_t MAX_STRING_LENGTH = 96;
 		constexpr size_t MAX_VARIABLE_NAME_LENGTH = 32;
 		constexpr uint8_t NULL_REGISTER = 0xFF;
 		constexpr uint64_t MAX_MEMORY_OFFSET = 0x4000;
@@ -87,9 +90,46 @@ namespace nte::mods::runtime
 			ReadU32,
 			ReadU64,
 			ReadI32,
+			ReadFloatMilli,
+			ReadNameHash,
+			WriteU8,
+			WriteU16,
+			WriteU32,
+			WriteU64,
+			WriteI32,
+			WriteFloatMilli,
 			ReadPointerArrayFirst,
 			ReadPointerArrayCount,
 			IsReadable,
+			CacheGet,
+			CacheRemember,
+			FindReflectedFunction,
+			ClearCallParams,
+			WriteParamU8,
+			WriteParamU16,
+			WriteParamU32,
+			WriteParamU64,
+			WriteParamI32,
+			WriteParamFloatMilli,
+			ReadParamU8,
+			ReadParamU16,
+			ReadParamU32,
+			ReadParamU64,
+			ReadParamI32,
+			ReadParamFloatMilli,
+			InvokeReflectedFunction,
+			WatchProcessEvent,
+			UnwatchProcessEvent,
+			NextProcessEvent,
+			ReadProcessEventObject,
+			ReadProcessEventFunction,
+			ReadProcessEventParamSize,
+			ReadProcessEventParamU8,
+			ReadProcessEventParamU16,
+			ReadProcessEventParamU32,
+			ReadProcessEventParamU64,
+			ReadProcessEventParamI32,
+			ReadProcessEventParamFloatMilli,
 			TickMilliseconds,
 			EquipmentCacheMissing,
 			EquipmentCacheReady,
@@ -132,6 +172,12 @@ namespace nte::mods::runtime
 			uint8_t length;
 		};
 
+		struct CacheEntry
+		{
+			uint64_t key;
+			uint64_t value;
+		};
+
 		struct IpcRoute
 		{
 			uint16_t operation;
@@ -147,6 +193,8 @@ namespace nte::mods::runtime
 			size_t instruction_count;
 			std::array<NamedValue, MAX_STATE_VARIABLES> states;
 			size_t state_count;
+			std::array<CacheEntry, MAX_CACHE_ENTRIES> cache;
+			size_t cache_count;
 			std::array<StringConstant, MAX_STRING_CONSTANTS> strings;
 			size_t string_count;
 			std::array<IpcRoute, MAX_IPC_ROUTES> ipc_routes;
@@ -190,6 +238,16 @@ namespace nte::mods::runtime
 			bool combat_clock_sample_resolved;
 		};
 
+		struct ProgramExecution
+		{
+			std::array<uint64_t, REGISTER_COUNT> registers;
+			std::array<uint8_t, PROCESS_EVENT_PARAM_CAPACITY> call_params;
+			uint16_t call_params_size;
+			bool call_params_valid;
+			ProcessEventRecord process_event;
+			bool has_process_event;
+		};
+
 		enum class GameValue : uint8_t
 		{
 			Viewport,
@@ -209,6 +267,7 @@ namespace nte::mods::runtime
 		constinit ModProgram candidate_program{};
 		constinit std::array<wchar_t, MAX_PATH> script_path{};
 		constinit std::array<char, MAX_SCRIPT_BYTES + 1> script_text{};
+		constinit std::array<char, MAX_SCRIPT_BYTES + 1> translated_script_text{};
 		constinit EnabledModSet enabled_mod_set{};
 		constinit std::array<NteModEvent, NTE_MOD_EVENT_HISTORY_SIZE>
 			mod_event_history{};
@@ -281,6 +340,18 @@ namespace nte::mods::runtime
 				++index;
 			}
 			return index == text.size && expected[index] == '\0';
+		}
+
+		bool Equals(TextView left, TextView right)
+		{
+			if (left.size != right.size)
+				return false;
+			for (size_t index = 0; index < left.size; ++index)
+			{
+				if (left.data[index] != right.data[index])
+					return false;
+			}
+			return true;
 		}
 
 		bool StartsWith(TextView text, const char* expected)
@@ -509,6 +580,12 @@ namespace nte::mods::runtime
 				return CAPABILITY_LOG;
 			if (Equals(name, "game.session"))
 				return CAPABILITY_GAME_SESSION;
+			if (Equals(name, "memory.write"))
+				return CAPABILITY_MEMORY_WRITE;
+			if (Equals(name, "unreal.reflection"))
+				return CAPABILITY_UNREAL_REFLECTION;
+			if (Equals(name, "process.event"))
+				return CAPABILITY_PROCESS_EVENT;
 			return 0;
 		}
 
@@ -944,7 +1021,8 @@ namespace nte::mods::runtime
 
 		bool IsValidEventName(TextView text)
 		{
-			if (text.size == 0 || text.size > MAX_STRING_LENGTH)
+			if (text.size == 0 ||
+				text.size >= NTE_MOD_EVENT_NAME_SIZE)
 				return false;
 			for (size_t index = 0; index < text.size; ++index)
 			{
@@ -1340,6 +1418,10 @@ namespace nte::mods::runtime
 				memory_opcode = OpCode::ReadU64;
 			else if (ParseCall(expression, "memory.read_i32", arguments))
 				memory_opcode = OpCode::ReadI32;
+			else if (ParseCall(expression, "memory.read_f32_milli", arguments))
+				memory_opcode = OpCode::ReadFloatMilli;
+			else if (ParseCall(expression, "memory.read_fname_hash", arguments))
+				memory_opcode = OpCode::ReadNameHash;
 			else if (ParseCall(expression, "memory.tarray_first", arguments))
 				memory_opcode = OpCode::ReadPointerArrayFirst;
 			else if (ParseCall(expression, "memory.tarray_count", arguments))
@@ -1371,6 +1453,210 @@ namespace nte::mods::runtime
 				program.used_capabilities |= CAPABILITY_MEMORY_READ;
 				return AppendInstruction(
 					program, memory_opcode, destination, base, offset);
+			}
+
+			if (ParseCall(expression, "cache.get", arguments))
+			{
+				uint8_t key = SCRATCH_REGISTER_A;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 1 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						key))
+					return false;
+				return AppendInstruction(
+					program,
+					OpCode::CacheGet,
+					destination,
+					key);
+			}
+			if (ParseCall(expression, "cache.remember", arguments))
+			{
+				uint8_t key = SCRATCH_REGISTER_A;
+				uint8_t value = SCRATCH_REGISTER_B;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 2 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						key) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						value))
+					return false;
+				return AppendInstruction(
+					program,
+					OpCode::CacheRemember,
+					destination,
+					key,
+					value);
+			}
+
+			if (ParseCall(expression, "unreal.find_function", arguments))
+			{
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 3)
+					return false;
+				uint8_t object = 0;
+				TextView owner_name{};
+				TextView function_name{};
+				uint8_t owner_string = 0;
+				uint8_t function_string = 0;
+				if (!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						object) ||
+					!ParseStringLiteral(parsed[1], owner_name) ||
+					!ParseStringLiteral(parsed[2], function_name) ||
+					!AddStringConstant(program, owner_name, owner_string) ||
+					!AddStringConstant(program, function_name, function_string))
+					return false;
+				program.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+				return AppendInstruction(
+					program,
+					OpCode::FindReflectedFunction,
+					destination,
+					object,
+					owner_string,
+					function_string);
+			}
+
+			OpCode param_read_opcode{};
+			bool param_read = true;
+			if (ParseCall(expression, "unreal.params_read_u8", arguments))
+				param_read_opcode = OpCode::ReadParamU8;
+			else if (ParseCall(expression, "unreal.params_read_u16", arguments))
+				param_read_opcode = OpCode::ReadParamU16;
+			else if (ParseCall(expression, "unreal.params_read_u32", arguments))
+				param_read_opcode = OpCode::ReadParamU32;
+			else if (ParseCall(expression, "unreal.params_read_u64", arguments))
+				param_read_opcode = OpCode::ReadParamU64;
+			else if (ParseCall(expression, "unreal.params_read_i32", arguments))
+				param_read_opcode = OpCode::ReadParamI32;
+			else if (ParseCall(
+				expression, "unreal.params_read_f32_milli", arguments))
+				param_read_opcode = OpCode::ReadParamFloatMilli;
+			else
+				param_read = false;
+			if (param_read)
+			{
+				uint8_t offset = SCRATCH_REGISTER_A;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 1 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						offset))
+					return false;
+				program.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+				return AppendInstruction(
+					program,
+					param_read_opcode,
+					destination,
+					offset);
+			}
+
+			if (ParseCall(expression, "unreal.call", arguments))
+			{
+				uint8_t object = SCRATCH_REGISTER_A;
+				uint8_t function = SCRATCH_REGISTER_B;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 2 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						object) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						function))
+					return false;
+				program.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+				return AppendInstruction(
+					program,
+					OpCode::InvokeReflectedFunction,
+					destination,
+					object,
+					function);
+			}
+
+			if (ParseCall(expression, "event.next", arguments))
+			{
+				if (arguments.size != 0)
+					return false;
+				program.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+				return AppendInstruction(
+					program,
+					OpCode::NextProcessEvent,
+					destination);
+			}
+			for (const auto [name, opcode] : std::array{
+				std::pair{ "event.object", OpCode::ReadProcessEventObject },
+				std::pair{ "event.function", OpCode::ReadProcessEventFunction },
+				std::pair{
+					"event.params_size",
+					OpCode::ReadProcessEventParamSize },
+			})
+			{
+				if (ParseCall(expression, name, arguments))
+				{
+					if (arguments.size != 0)
+						return false;
+					program.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+					return AppendInstruction(program, opcode, destination);
+				}
+			}
+
+			OpCode event_read_opcode{};
+			bool event_read = true;
+			if (ParseCall(expression, "event.read_u8", arguments))
+				event_read_opcode = OpCode::ReadProcessEventParamU8;
+			else if (ParseCall(expression, "event.read_u16", arguments))
+				event_read_opcode = OpCode::ReadProcessEventParamU16;
+			else if (ParseCall(expression, "event.read_u32", arguments))
+				event_read_opcode = OpCode::ReadProcessEventParamU32;
+			else if (ParseCall(expression, "event.read_u64", arguments))
+				event_read_opcode = OpCode::ReadProcessEventParamU64;
+			else if (ParseCall(expression, "event.read_i32", arguments))
+				event_read_opcode = OpCode::ReadProcessEventParamI32;
+			else if (ParseCall(expression, "event.read_f32_milli", arguments))
+				event_read_opcode = OpCode::ReadProcessEventParamFloatMilli;
+			else
+				event_read = false;
+			if (event_read)
+			{
+				uint8_t offset = SCRATCH_REGISTER_A;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 1 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						offset))
+					return false;
+				program.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+				return AppendInstruction(
+					program,
+					event_read_opcode,
+					destination,
+					offset);
 			}
 
 			SdkReadApi api{};
@@ -1520,6 +1806,173 @@ namespace nte::mods::runtime
 			TextView arguments{};
 			std::array<TextView, 4> parsed{};
 			size_t count = 0;
+			OpCode memory_write_opcode{};
+			bool memory_write = true;
+			if (ParseCall(line, "memory.write_u8", arguments))
+				memory_write_opcode = OpCode::WriteU8;
+			else if (ParseCall(line, "memory.write_u16", arguments))
+				memory_write_opcode = OpCode::WriteU16;
+			else if (ParseCall(line, "memory.write_u32", arguments))
+				memory_write_opcode = OpCode::WriteU32;
+			else if (ParseCall(line, "memory.write_u64", arguments))
+				memory_write_opcode = OpCode::WriteU64;
+			else if (ParseCall(line, "memory.write_i32", arguments))
+				memory_write_opcode = OpCode::WriteI32;
+			else if (ParseCall(line, "memory.write_f32_milli", arguments))
+				memory_write_opcode = OpCode::WriteFloatMilli;
+			else
+				memory_write = false;
+			if (memory_write)
+			{
+				uint8_t base = SCRATCH_REGISTER_A;
+				uint8_t offset = SCRATCH_REGISTER_B;
+				uint8_t value = RESULT_REGISTER;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 3 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						base) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						offset) ||
+					!MaterializeAtom(
+						parsed[2],
+						program,
+						variables,
+						RESULT_REGISTER,
+						value))
+					return false;
+				program.used_capabilities |= CAPABILITY_MEMORY_WRITE;
+				return AppendInstruction(
+					program,
+					memory_write_opcode,
+					base,
+					offset,
+					value);
+			}
+
+			if (ParseCall(line, "unreal.params_clear", arguments))
+			{
+				uint8_t size = SCRATCH_REGISTER_A;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 1 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						size))
+					return false;
+				program.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+				return AppendInstruction(
+					program,
+					OpCode::ClearCallParams,
+					size);
+			}
+
+			OpCode param_write_opcode{};
+			bool param_write = true;
+			if (ParseCall(line, "unreal.params_write_u8", arguments))
+				param_write_opcode = OpCode::WriteParamU8;
+			else if (ParseCall(line, "unreal.params_write_u16", arguments))
+				param_write_opcode = OpCode::WriteParamU16;
+			else if (ParseCall(line, "unreal.params_write_u32", arguments))
+				param_write_opcode = OpCode::WriteParamU32;
+			else if (ParseCall(line, "unreal.params_write_u64", arguments))
+				param_write_opcode = OpCode::WriteParamU64;
+			else if (ParseCall(line, "unreal.params_write_i32", arguments))
+				param_write_opcode = OpCode::WriteParamI32;
+			else if (ParseCall(
+				line, "unreal.params_write_f32_milli", arguments))
+				param_write_opcode = OpCode::WriteParamFloatMilli;
+			else
+				param_write = false;
+			if (param_write)
+			{
+				uint8_t offset = SCRATCH_REGISTER_A;
+				uint8_t value = SCRATCH_REGISTER_B;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 2 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						offset) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						value))
+					return false;
+				program.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+				return AppendInstruction(
+					program,
+					param_write_opcode,
+					offset,
+					value);
+			}
+
+			if (ParseCall(line, "unreal.watch", arguments))
+			{
+				uint8_t object = SCRATCH_REGISTER_A;
+				uint8_t function = SCRATCH_REGISTER_B;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 2 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						object) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						function))
+					return false;
+				program.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+				return AppendInstruction(
+					program,
+					OpCode::WatchProcessEvent,
+					object,
+					function);
+			}
+			if (ParseCall(line, "unreal.unwatch", arguments))
+			{
+				uint8_t object = SCRATCH_REGISTER_A;
+				uint8_t function = SCRATCH_REGISTER_B;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 2 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						object) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						function))
+					return false;
+				program.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+				return AppendInstruction(
+					program,
+					OpCode::UnwatchProcessEvent,
+					object,
+					function);
+			}
+
 			if (ParseCall(line, "equipment.prepare", arguments))
 			{
 				uint8_t object = 0;
@@ -1790,6 +2243,585 @@ namespace nte::mods::runtime
 			block.false_jump = program.instruction_count;
 			return AppendInstruction(
 				program, OpCode::JumpIfFalse, CONDITION_REGISTER);
+		}
+
+		bool StripPrefix(
+			TextView text,
+			const char* prefix,
+			TextView& remainder)
+		{
+			size_t length = 0;
+			while (prefix[length] != '\0')
+				++length;
+			if (text.size < length)
+				return false;
+			for (size_t index = 0; index < length; ++index)
+			{
+				if (text.data[index] != prefix[index])
+					return false;
+			}
+			remainder = { text.data + length, text.size - length };
+			return true;
+		}
+
+		TextView StripCppLineComment(TextView line)
+		{
+			bool in_string = false;
+			for (size_t index = 0; index < line.size; ++index)
+			{
+				if (line.data[index] == '"')
+					in_string = !in_string;
+				else if (!in_string && index + 1 < line.size &&
+					line.data[index] == '/' && line.data[index + 1] == '/')
+					return Trim({ line.data, index });
+			}
+			return Trim(line);
+		}
+
+		bool StripCppSemicolon(TextView line, TextView& content)
+		{
+			if (line.size == 0 || line.data[line.size - 1] != ';')
+				return false;
+			content = Trim({ line.data, line.size - 1 });
+			return content.size != 0;
+		}
+
+		bool AppendTranslated(
+			std::array<char, MAX_SCRIPT_BYTES + 1>& output,
+			size_t& size,
+			const char* text)
+		{
+			for (size_t index = 0; text[index] != '\0'; ++index)
+			{
+				if (size == MAX_SCRIPT_BYTES)
+					return false;
+				output[size++] = text[index];
+			}
+			output[size] = '\0';
+			return true;
+		}
+
+		bool AppendTranslated(
+			std::array<char, MAX_SCRIPT_BYTES + 1>& output,
+			size_t& size,
+			TextView text)
+		{
+			if (text.size > MAX_SCRIPT_BYTES - size)
+				return false;
+			for (size_t index = 0; index < text.size; ++index)
+				output[size++] = text.data[index];
+			output[size] = '\0';
+			return true;
+		}
+
+		bool AppendTranslatedIndent(
+			std::array<char, MAX_SCRIPT_BYTES + 1>& output,
+			size_t& size,
+			size_t depth)
+		{
+			for (size_t index = 0; index < depth * 4; ++index)
+			{
+				if (!AppendTranslated(output, size, " "))
+					return false;
+			}
+			return true;
+		}
+
+		bool CppStateExists(
+			const std::array<NamedValue, MAX_STATE_VARIABLES>& states,
+			size_t state_count,
+			TextView name)
+		{
+			for (size_t index = 0; index < state_count; ++index)
+			{
+				if (states[index].length != name.size)
+					continue;
+				bool same = true;
+				for (size_t character = 0; character < name.size; ++character)
+				{
+					if (states[index].name[character] != name.data[character])
+					{
+						same = false;
+						break;
+					}
+				}
+				if (same)
+					return true;
+			}
+			return false;
+		}
+
+		bool AddCppState(
+			std::array<NamedValue, MAX_STATE_VARIABLES>& states,
+			size_t& state_count,
+			TextView name)
+		{
+			if (!IsValidVariableName(name) ||
+				state_count == states.size() ||
+				CppStateExists(states, state_count, name))
+				return false;
+			NamedValue& state = states[state_count++];
+			for (size_t index = 0; index < name.size; ++index)
+				state.name[index] = name.data[index];
+			state.name[name.size] = '\0';
+			state.length = static_cast<uint8_t>(name.size);
+			return true;
+		}
+
+		bool NormalizeCppExpression(
+			TextView expression,
+			const std::array<NamedValue, MAX_STATE_VARIABLES>& states,
+			size_t state_count,
+			std::array<char, MAX_SCRIPT_BYTES + 1>& output,
+			size_t& size)
+		{
+			bool in_string = false;
+			size_t index = 0;
+			while (index < expression.size)
+			{
+				const char value = expression.data[index];
+				if (value == '"')
+				{
+					in_string = !in_string;
+					if (!AppendTranslated(output, size, TextView{ &expression.data[index], 1 }))
+						return false;
+					++index;
+					continue;
+				}
+				if (!in_string &&
+					((value >= 'a' && value <= 'z') ||
+						(value >= 'A' && value <= 'Z') || value == '_'))
+				{
+					const size_t start = index++;
+					while (index < expression.size)
+					{
+						const char token = expression.data[index];
+						if ((token >= 'a' && token <= 'z') ||
+							(token >= 'A' && token <= 'Z') ||
+							(token >= '0' && token <= '9') || token == '_')
+						{
+							++index;
+							continue;
+						}
+						if (index + 1 < expression.size &&
+							token == ':' && expression.data[index + 1] == ':')
+						{
+							index += 2;
+							continue;
+						}
+						break;
+					}
+					TextView name{ expression.data + start, index - start };
+					TextView canonical = name;
+					StripPrefix(name, "nte::", canonical);
+					if (CppStateExists(states, state_count, canonical))
+					{
+						if (!AppendTranslated(output, size, "state.") ||
+							!AppendTranslated(output, size, canonical))
+							return false;
+					}
+					else if (Equals(canonical, "nullptr"))
+					{
+						if (!AppendTranslated(output, size, "None"))
+							return false;
+					}
+					else if (Equals(canonical, "true"))
+					{
+						if (!AppendTranslated(output, size, "True"))
+							return false;
+					}
+					else if (Equals(canonical, "false"))
+					{
+						if (!AppendTranslated(output, size, "False"))
+							return false;
+					}
+					else
+					{
+						for (size_t character = 0; character < canonical.size; ++character)
+						{
+							if (character + 1 < canonical.size &&
+								canonical.data[character] == ':' &&
+								canonical.data[character + 1] == ':')
+							{
+								if (!AppendTranslated(output, size, "."))
+									return false;
+								++character;
+							}
+							else if (!AppendTranslated(
+								output,
+								size,
+								TextView{ &canonical.data[character], 1 }))
+								return false;
+						}
+					}
+					continue;
+				}
+				if (!in_string && index + 1 < expression.size &&
+					value == '&' && expression.data[index + 1] == '&')
+				{
+					if (!AppendTranslated(output, size, " and "))
+						return false;
+					index += 2;
+				}
+				else if (!in_string && index + 1 < expression.size &&
+					value == '|' && expression.data[index + 1] == '|')
+				{
+					if (!AppendTranslated(output, size, " or "))
+						return false;
+					index += 2;
+				}
+				else if (!in_string && value == '!' &&
+					(index + 1 == expression.size || expression.data[index + 1] != '='))
+				{
+					if (!AppendTranslated(output, size, "not "))
+						return false;
+					++index;
+				}
+				else
+				{
+					if (!AppendTranslated(
+						output,
+						size,
+						TextView{ &expression.data[index], 1 }))
+						return false;
+					++index;
+				}
+			}
+			return !in_string;
+		}
+
+		bool ParseCppMacro(
+			TextView line,
+			const char* name,
+			TextView& arguments)
+		{
+			TextView content{};
+			return StripCppSemicolon(line, content) &&
+				ParseCall(content, name, arguments);
+		}
+
+		bool StripCppIntegerDeclaration(TextView line, TextView& declaration)
+		{
+			for (const char* prefix : std::array{
+				"std::uint64_t ",
+				"std::uintptr_t ",
+				"std::int64_t ",
+				"std::uint32_t ",
+				"std::int32_t ",
+				"bool ",
+			})
+			{
+				if (StripPrefix(line, prefix, declaration))
+					return true;
+			}
+			return false;
+		}
+
+		bool StripCppLocalDeclaration(TextView line, TextView& statement)
+		{
+			if (StripPrefix(line, "const auto ", statement) ||
+				StripPrefix(line, "auto ", statement))
+				return true;
+			return StripCppIntegerDeclaration(line, statement);
+		}
+
+		bool ParseCppCondition(
+			TextView line,
+			const char* keyword,
+			TextView& expression)
+		{
+			TextView remainder{};
+			if (!StripPrefix(line, keyword, remainder))
+				return false;
+			remainder = Trim(remainder);
+			if (remainder.size < 3 || remainder.data[0] != '(' ||
+				remainder.data[remainder.size - 1] != ')')
+				return false;
+			expression = Trim({
+				remainder.data + 1,
+				remainder.size - 2,
+			});
+			return expression.size != 0;
+		}
+
+		bool ParseCppForRange(
+			TextView line,
+			TextView& variable,
+			uint8_t& count)
+		{
+			TextView header{};
+			if (!StripPrefix(line, "for (", header) ||
+				header.size == 0 || header.data[header.size - 1] != ')')
+				return false;
+			header = { header.data, header.size - 1 };
+			std::array<TextView, 3> clauses{};
+			size_t clause_count = 0;
+			size_t first = 0;
+			for (size_t index = 0; index <= header.size; ++index)
+			{
+				if (index != header.size && header.data[index] != ';')
+					continue;
+				if (clause_count == clauses.size())
+					return false;
+				clauses[clause_count++] = Trim({
+					header.data + first,
+					index - first,
+				});
+				first = index + 1;
+			}
+			if (clause_count != 3)
+				return false;
+			TextView declaration{};
+			TextView initial{};
+			if (!StripCppIntegerDeclaration(clauses[0], declaration) ||
+				!ParseAssignment(declaration, variable, initial) ||
+				!Equals(initial, "0"))
+				return false;
+			size_t separator = clauses[1].size;
+			for (size_t index = 0; index < clauses[1].size; ++index)
+			{
+				if (clauses[1].data[index] == '<')
+				{
+					separator = index;
+					break;
+				}
+			}
+			if (separator == clauses[1].size ||
+				!Equals(Trim({ clauses[1].data, separator }), variable))
+				return false;
+			uint64_t parsed_count = 0;
+			if (!ParseInteger(
+					Trim({
+						clauses[1].data + separator + 1,
+						clauses[1].size - separator - 1,
+					}),
+					parsed_count) ||
+				parsed_count > 64)
+				return false;
+			TextView increment = clauses[2];
+			bool valid_increment =
+				increment.size == variable.size + 2;
+			if (valid_increment &&
+				increment.data[0] == '+' && increment.data[1] == '+')
+			{
+				for (size_t index = 0; index < variable.size; ++index)
+					valid_increment &=
+						increment.data[index + 2] == variable.data[index];
+			}
+			else if (valid_increment &&
+				increment.data[increment.size - 2] == '+' &&
+				increment.data[increment.size - 1] == '+')
+			{
+				for (size_t index = 0; index < variable.size; ++index)
+					valid_increment &=
+						increment.data[index] == variable.data[index];
+			}
+			else
+				valid_increment = false;
+			if (!valid_increment || !IsValidVariableName(variable))
+				return false;
+			count = static_cast<uint8_t>(parsed_count);
+			return true;
+		}
+
+		bool TranspileCppProgram(
+			TextView text,
+			std::array<char, MAX_SCRIPT_BYTES + 1>& output,
+			size_t& output_size)
+		{
+			output_size = 0;
+			std::array<NamedValue, MAX_STATE_VARIABLES> states{};
+			size_t state_count = 0;
+			uint8_t stage = 0;
+			size_t depth = 0;
+			bool pending_block = false;
+			bool handler_closed = false;
+			TextView raw{};
+			while (ReadRawLine(text, raw))
+			{
+				TextView line = StripCppLineComment(raw);
+				if (line.size == 0 || StartsWith(line, "#include "))
+					continue;
+				if (stage == 0)
+				{
+					TextView arguments{};
+					if (!ParseCppMacro(line, "NTE_SCRIPT", arguments) ||
+						!Equals(arguments, "5") ||
+						!AppendTranslated(output, output_size, "nte_mod(4)\n"))
+						return false;
+					stage = 1;
+					continue;
+				}
+				if (stage == 1)
+				{
+					TextView arguments{};
+					TextView id{};
+					if (!ParseCppMacro(line, "NTE_MOD", arguments) ||
+						!ParseStringLiteral(arguments, id) ||
+						!AppendTranslated(output, output_size, "mod(") ||
+						!AppendTranslated(output, output_size, arguments) ||
+						!AppendTranslated(output, output_size, ")\n"))
+						return false;
+					stage = 2;
+					continue;
+				}
+				if (stage == 2)
+				{
+					if (Equals(
+						line,
+						"void on_viewport_tick(const nte::viewport_tick_event& event)"))
+					{
+						if (!AppendTranslated(
+							output,
+							output_size,
+							"def on_viewport_tick(event):\n"))
+							return false;
+						stage = 3;
+						pending_block = true;
+						continue;
+					}
+					TextView arguments{};
+					if (ParseCppMacro(line, "NTE_REQUIRES", arguments))
+					{
+						if (!AppendTranslated(output, output_size, "requires(") ||
+							!AppendTranslated(output, output_size, arguments) ||
+							!AppendTranslated(output, output_size, ")\n"))
+							return false;
+						continue;
+					}
+					if (ParseCppMacro(line, "NTE_ROUTE_IPC", arguments))
+					{
+						if (!AppendTranslated(output, output_size, "route_ipc(") ||
+							!AppendTranslated(output, output_size, arguments) ||
+							!AppendTranslated(output, output_size, ")\n"))
+							return false;
+						continue;
+					}
+					TextView content{};
+					TextView declaration{};
+					TextView name{};
+					TextView initial{};
+					uint64_t initial_value = 0;
+					if (!StripCppSemicolon(line, content) ||
+						!StripCppIntegerDeclaration(content, declaration) ||
+						!ParseAssignment(declaration, name, initial) ||
+						!ParseInteger(initial, initial_value) ||
+						!AddCppState(states, state_count, name) ||
+						!AppendTranslated(output, output_size, "state.") ||
+						!AppendTranslated(output, output_size, name) ||
+						!AppendTranslated(output, output_size, " = ") ||
+						!NormalizeCppExpression(
+							initial,
+							states,
+							state_count,
+							output,
+							output_size) ||
+						!AppendTranslated(output, output_size, "\n"))
+						return false;
+					continue;
+				}
+
+				if (pending_block)
+				{
+					if (!Equals(line, "{"))
+						return false;
+					++depth;
+					pending_block = false;
+					continue;
+				}
+				if (Equals(line, "{"))
+					return false;
+				if (Equals(line, "}"))
+				{
+					if (depth == 0)
+						return false;
+					--depth;
+					if (depth == 0)
+						handler_closed = true;
+					continue;
+				}
+				if (handler_closed || depth == 0 ||
+					!AppendTranslatedIndent(output, output_size, depth))
+					return false;
+
+				TextView expression{};
+				if (ParseCppCondition(line, "if", expression))
+				{
+					if (!AppendTranslated(output, output_size, "if ") ||
+						!NormalizeCppExpression(
+							expression,
+							states,
+							state_count,
+							output,
+							output_size) ||
+						!AppendTranslated(output, output_size, ":\n"))
+						return false;
+					pending_block = true;
+					continue;
+				}
+				if (ParseCppCondition(line, "else if", expression))
+				{
+					if (!AppendTranslated(output, output_size, "elif ") ||
+						!NormalizeCppExpression(
+							expression,
+							states,
+							state_count,
+							output,
+							output_size) ||
+						!AppendTranslated(output, output_size, ":\n"))
+						return false;
+					pending_block = true;
+					continue;
+				}
+				if (Equals(line, "else"))
+				{
+					if (!AppendTranslated(output, output_size, "else:\n"))
+						return false;
+					pending_block = true;
+					continue;
+				}
+				TextView variable{};
+				uint8_t loop_count = 0;
+				if (ParseCppForRange(line, variable, loop_count))
+				{
+					char count_text[4]{};
+					const int count_length = wsprintfA(
+						count_text,
+						"%u",
+						static_cast<unsigned int>(loop_count));
+					if (count_length <= 0 ||
+						!AppendTranslated(output, output_size, "for ") ||
+						!AppendTranslated(output, output_size, variable) ||
+						!AppendTranslated(output, output_size, " in range(") ||
+						!AppendTranslated(
+							output,
+							output_size,
+							TextView{
+								count_text,
+								static_cast<size_t>(count_length),
+							}) ||
+						!AppendTranslated(output, output_size, "):\n"))
+						return false;
+					pending_block = true;
+					continue;
+				}
+
+				TextView statement{};
+				if (!StripCppSemicolon(line, statement))
+					return false;
+				TextView declaration{};
+				if (StripCppLocalDeclaration(statement, declaration))
+					statement = declaration;
+				if (!NormalizeCppExpression(
+						statement,
+						states,
+						state_count,
+						output,
+						output_size) ||
+					!AppendTranslated(output, output_size, "\n"))
+					return false;
+			}
+			return stage == 3 && !pending_block && depth == 0 && handler_closed;
 		}
 
 		bool ParseModProgram(
@@ -2223,6 +3255,142 @@ namespace nte::mods::runtime
 			return static_cast<uint64_t>(value);
 		}
 
+		uint64_t ReadFloatMilli(uint64_t base, uint64_t offset)
+		{
+			constexpr float MAX_MILLI_INPUT = 9.0e15f;
+			if (offset > MAX_MEMORY_OFFSET)
+				return 0;
+			float value = 0.0f;
+			if (!memory::ReadValue(
+					reinterpret_cast<const void*>(base),
+					static_cast<size_t>(offset),
+					value) ||
+				value != value ||
+				value < -MAX_MILLI_INPUT ||
+				value > MAX_MILLI_INPUT)
+				return 0;
+			return static_cast<uint64_t>(
+				static_cast<int64_t>(value * 1000.0f));
+		}
+
+		template <typename T>
+		bool WriteScalar(uint64_t base, uint64_t offset, uint64_t value)
+		{
+			if (offset > MAX_MEMORY_OFFSET)
+				return false;
+			const T typed_value = static_cast<T>(value);
+			return memory::WriteValue(
+				reinterpret_cast<void*>(base),
+				static_cast<size_t>(offset),
+				typed_value);
+		}
+
+		bool WriteFloatMilli(uint64_t base, uint64_t offset, uint64_t value)
+		{
+			if (offset > MAX_MEMORY_OFFSET)
+				return false;
+			const float typed_value =
+				static_cast<float>(static_cast<int64_t>(value)) / 1000.0f;
+			return memory::WriteValue(
+				reinterpret_cast<void*>(base),
+				static_cast<size_t>(offset),
+				typed_value);
+		}
+
+		template <typename T, size_t Capacity>
+		uint64_t ReadBufferValue(
+			const std::array<uint8_t, Capacity>& buffer,
+			size_t size,
+			uint64_t offset)
+		{
+			if (offset > size || sizeof(T) > size - offset)
+				return 0;
+			T value{};
+			for (size_t index = 0; index < sizeof(T); ++index)
+				reinterpret_cast<uint8_t*>(&value)[index] =
+					buffer[static_cast<size_t>(offset) + index];
+			return static_cast<uint64_t>(value);
+		}
+
+		template <typename T, size_t Capacity>
+		bool WriteBufferValue(
+			std::array<uint8_t, Capacity>& buffer,
+			size_t size,
+			uint64_t offset,
+			uint64_t value)
+		{
+			if (offset > size || sizeof(T) > size - offset)
+				return false;
+			const T typed_value = static_cast<T>(value);
+			for (size_t index = 0; index < sizeof(T); ++index)
+				buffer[static_cast<size_t>(offset) + index] =
+					reinterpret_cast<const uint8_t*>(&typed_value)[index];
+			return true;
+		}
+
+		template <size_t Capacity>
+		uint64_t ReadBufferFloatMilli(
+			const std::array<uint8_t, Capacity>& buffer,
+			size_t size,
+			uint64_t offset)
+		{
+			if (offset > size || sizeof(float) > size - offset)
+				return 0;
+			float value = 0.0f;
+			for (size_t index = 0; index < sizeof(float); ++index)
+				reinterpret_cast<uint8_t*>(&value)[index] =
+					buffer[static_cast<size_t>(offset) + index];
+			constexpr float MAX_MILLI_INPUT = 9.0e15f;
+			if (value != value ||
+				value < -MAX_MILLI_INPUT ||
+				value > MAX_MILLI_INPUT)
+				return 0;
+			return static_cast<uint64_t>(
+				static_cast<int64_t>(value * 1000.0f));
+		}
+
+		template <size_t Capacity>
+		bool WriteBufferFloatMilli(
+			std::array<uint8_t, Capacity>& buffer,
+			size_t size,
+			uint64_t offset,
+			uint64_t value)
+		{
+			if (offset > size || sizeof(float) > size - offset)
+				return false;
+			const float typed_value =
+				static_cast<float>(static_cast<int64_t>(value)) / 1000.0f;
+			for (size_t index = 0; index < sizeof(float); ++index)
+				buffer[static_cast<size_t>(offset) + index] =
+					reinterpret_cast<const uint8_t*>(&typed_value)[index];
+			return true;
+		}
+
+		uint64_t ReadCachedValue(const ModProgram& program, uint64_t key)
+		{
+			for (size_t index = 0; index < program.cache_count; ++index)
+			{
+				if (program.cache[index].key == key)
+					return program.cache[index].value;
+			}
+			return 0;
+		}
+
+		uint64_t RememberCachedValue(
+			ModProgram& program,
+			uint64_t key,
+			uint64_t value)
+		{
+			const uint64_t cached = ReadCachedValue(program, key);
+			if (cached != 0)
+				return cached;
+			if (key == 0 || value == 0 ||
+				program.cache_count == program.cache.size())
+				return 0;
+			program.cache[program.cache_count++] = CacheEntry{ key, value };
+			return value;
+		}
+
 		void MergeIpcPointer(void*& target, uint64_t candidate)
 		{
 			if (candidate != 0)
@@ -2271,10 +3439,12 @@ namespace nte::mods::runtime
 
 		void ExecuteProgram(
 			ModProgram& program,
+			uint32_t program_index,
 			void* viewport,
 			TickExecution& execution)
 		{
-			std::array<uint64_t, REGISTER_COUNT> registers{};
+			ProgramExecution frame{};
+			auto& registers = frame.registers;
 			size_t instruction_index = 0;
 			while (instruction_index < program.instruction_count)
 			{
@@ -2442,6 +3612,67 @@ namespace nte::mods::runtime
 						registers[instruction.third]);
 					++instruction_index;
 					break;
+				case OpCode::ReadFloatMilli:
+					registers[instruction.first] = ReadFloatMilli(
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::ReadNameHash:
+				{
+					uint64_t result = 0;
+					if (registers[instruction.third] <= MAX_MEMORY_OFFSET)
+						ReadNameHash(
+							reinterpret_cast<const void*>(
+								registers[instruction.second]),
+							registers[instruction.third],
+							result);
+					registers[instruction.first] = result;
+					++instruction_index;
+					break;
+				}
+				case OpCode::WriteU8:
+					WriteScalar<uint8_t>(
+						registers[instruction.first],
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::WriteU16:
+					WriteScalar<uint16_t>(
+						registers[instruction.first],
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::WriteU32:
+					WriteScalar<uint32_t>(
+						registers[instruction.first],
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::WriteU64:
+					WriteScalar<uint64_t>(
+						registers[instruction.first],
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::WriteI32:
+					WriteScalar<int32_t>(
+						registers[instruction.first],
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::WriteFloatMilli:
+					WriteFloatMilli(
+						registers[instruction.first],
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
 				case OpCode::ReadPointerArrayFirst:
 					registers[instruction.first] = reinterpret_cast<uint64_t>(
 						ReadPointerArrayFirst(
@@ -2464,6 +3695,258 @@ namespace nte::mods::runtime
 							reinterpret_cast<const void*>(
 								registers[instruction.second]),
 							static_cast<size_t>(registers[instruction.third]));
+					++instruction_index;
+					break;
+				case OpCode::CacheGet:
+					registers[instruction.first] = ReadCachedValue(
+						program,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::CacheRemember:
+					registers[instruction.first] = RememberCachedValue(
+						program,
+						registers[instruction.second],
+						registers[instruction.third]);
+					++instruction_index;
+					break;
+				case OpCode::FindReflectedFunction:
+				{
+					void* function = nullptr;
+					const StringConstant& owner_name =
+						program.strings[instruction.third];
+					const StringConstant& function_name =
+						program.strings[instruction.fourth];
+					FindReflectedFunction(
+						reinterpret_cast<void*>(
+							registers[instruction.second]),
+						owner_name.value.data(),
+						function_name.value.data(),
+						function);
+					registers[instruction.first] =
+						reinterpret_cast<uint64_t>(function);
+					++instruction_index;
+					break;
+				}
+				case OpCode::ClearCallParams:
+					frame.call_params.fill(0);
+					frame.call_params_valid =
+						registers[instruction.first] <=
+						frame.call_params.size();
+					frame.call_params_size = frame.call_params_valid
+						? static_cast<uint16_t>(
+							registers[instruction.first])
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::WriteParamU8:
+					WriteBufferValue<uint8_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.first],
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::WriteParamU16:
+					WriteBufferValue<uint16_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.first],
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::WriteParamU32:
+					WriteBufferValue<uint32_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.first],
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::WriteParamU64:
+					WriteBufferValue<uint64_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.first],
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::WriteParamI32:
+					WriteBufferValue<int32_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.first],
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::WriteParamFloatMilli:
+					WriteBufferFloatMilli(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.first],
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::ReadParamU8:
+					registers[instruction.first] = ReadBufferValue<uint8_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::ReadParamU16:
+					registers[instruction.first] = ReadBufferValue<uint16_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::ReadParamU32:
+					registers[instruction.first] = ReadBufferValue<uint32_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::ReadParamU64:
+					registers[instruction.first] = ReadBufferValue<uint64_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::ReadParamI32:
+					registers[instruction.first] = ReadBufferValue<int32_t>(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::ReadParamFloatMilli:
+					registers[instruction.first] = ReadBufferFloatMilli(
+						frame.call_params,
+						frame.call_params_size,
+						registers[instruction.second]);
+					++instruction_index;
+					break;
+				case OpCode::InvokeReflectedFunction:
+					registers[instruction.first] =
+						frame.call_params_valid &&
+						InvokeReflectedFunction(
+							reinterpret_cast<void*>(
+								registers[instruction.second]),
+							reinterpret_cast<void*>(
+								registers[instruction.third]),
+							frame.call_params.data(),
+							frame.call_params_size);
+					++instruction_index;
+					break;
+				case OpCode::WatchProcessEvent:
+					WatchProcessEvent(
+						program_index,
+						reinterpret_cast<void*>(
+							registers[instruction.first]),
+						reinterpret_cast<void*>(
+							registers[instruction.second]));
+					++instruction_index;
+					break;
+				case OpCode::UnwatchProcessEvent:
+					UnwatchProcessEvent(
+						program_index,
+						reinterpret_cast<void*>(
+							registers[instruction.first]),
+						reinterpret_cast<void*>(
+							registers[instruction.second]));
+					++instruction_index;
+					break;
+				case OpCode::NextProcessEvent:
+					frame.has_process_event =
+						PopProcessEvent(program_index, frame.process_event);
+					registers[instruction.first] =
+						frame.has_process_event;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventObject:
+					registers[instruction.first] =
+						frame.has_process_event
+						? reinterpret_cast<uint64_t>(
+							frame.process_event.object)
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventFunction:
+					registers[instruction.first] =
+						frame.has_process_event
+						? reinterpret_cast<uint64_t>(
+							frame.process_event.function)
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamSize:
+					registers[instruction.first] =
+						frame.has_process_event
+						? frame.process_event.params_size
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamU8:
+					registers[instruction.first] =
+						frame.has_process_event
+						? ReadBufferValue<uint8_t>(
+							frame.process_event.params,
+							frame.process_event.params_size,
+							registers[instruction.second])
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamU16:
+					registers[instruction.first] =
+						frame.has_process_event
+						? ReadBufferValue<uint16_t>(
+							frame.process_event.params,
+							frame.process_event.params_size,
+							registers[instruction.second])
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamU32:
+					registers[instruction.first] =
+						frame.has_process_event
+						? ReadBufferValue<uint32_t>(
+							frame.process_event.params,
+							frame.process_event.params_size,
+							registers[instruction.second])
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamU64:
+					registers[instruction.first] =
+						frame.has_process_event
+						? ReadBufferValue<uint64_t>(
+							frame.process_event.params,
+							frame.process_event.params_size,
+							registers[instruction.second])
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamI32:
+					registers[instruction.first] =
+						frame.has_process_event
+						? ReadBufferValue<int32_t>(
+							frame.process_event.params,
+							frame.process_event.params_size,
+							registers[instruction.second])
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventParamFloatMilli:
+					registers[instruction.first] =
+						frame.has_process_event
+						? ReadBufferFloatMilli(
+							frame.process_event.params,
+							frame.process_event.params_size,
+							registers[instruction.second])
+						: 0;
 					++instruction_index;
 					break;
 				case OpCode::TickMilliseconds:
@@ -2645,11 +4128,30 @@ namespace nte::mods::runtime
 			fingerprint = UpdateFingerprint(
 				fingerprint, script_text.data(), text_size);
 
+			const TextView source =
+				StripUtf8Bom({ script_text.data(), text_size });
 			ZeroMemory(&candidate_program, sizeof(candidate_program));
-			if (!ParseModProgram(
-				StripUtf8Bom({ script_text.data(), text_size }),
+			bool parsed = ParseModProgram(
+				source,
 				enabled_mod_set.mods[index],
-				candidate_program))
+				candidate_program);
+			if (!parsed)
+			{
+				size_t translated_size = 0;
+				ZeroMemory(&candidate_program, sizeof(candidate_program));
+				parsed = TranspileCppProgram(
+						source,
+						translated_script_text,
+						translated_size) &&
+					ParseModProgram(
+						{
+							translated_script_text.data(),
+							translated_size,
+						},
+						enabled_mod_set.mods[index],
+						candidate_program);
+			}
+			if (!parsed)
 			{
 				DebugLog(NTE_OBFUSCATE_STRING(
 					L"NTE Mods plugin: invalid mod program.\n").c_str());
@@ -2662,6 +4164,7 @@ namespace nte::mods::runtime
 			return ReloadResult::Unchanged;
 
 		AcquireSRWLockExclusive(&program_lock);
+		ResetProcessEventWatches();
 		programs = candidate_programs;
 		program_count = candidate_count;
 		enabled_capabilities = candidate_capabilities;
@@ -2695,7 +4198,11 @@ namespace nte::mods::runtime
 		TickExecution execution{};
 		execution.viewport = viewport;
 		for (size_t index = 0; index < program_count; ++index)
-			ExecuteProgram(programs[index], viewport, execution);
+			ExecuteProgram(
+				programs[index],
+				static_cast<uint32_t>(index),
+				viewport,
+				execution);
 		if ((enabled_capabilities & CAPABILITY_IPC) != 0)
 			PumpLiveIpc(&execution.ipc_context);
 		ReleaseSRWLockShared(&program_lock);
@@ -2751,6 +4258,7 @@ namespace nte::mods::runtime
 	void Reset()
 	{
 		AcquireSRWLockExclusive(&program_lock);
+		ResetProcessEventWatches();
 		enabled_capabilities = 0;
 		program_count = 0;
 		source_fingerprint = 0;

@@ -24,6 +24,11 @@ namespace nte::mods
 		constexpr size_t VIEWPORT_WORLD_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
 		constexpr size_t VIEWPORT_TICK_INDEX = 100;
+		constexpr size_t PROCESS_EVENT_INDEX = 0x4C;
+		constexpr size_t MAX_PROCESS_EVENT_HOOKS = 16;
+		constexpr size_t MAX_PROCESS_EVENT_SUBSCRIPTIONS = 32;
+		constexpr size_t PROCESS_EVENT_QUEUE_CAPACITY = 32;
+		constexpr size_t MAX_PROCESS_EVENT_PROGRAMS = 16;
 		constexpr DWORD VIEWPORT_BOOTSTRAP_RETRY_MS = 250;
 		constexpr wchar_t MOD_WORKSPACE_REGISTRY_KEY[] =
 			L"Software\\NTE DPS Tool\\Mods Plugin";
@@ -47,6 +52,29 @@ namespace nte::mods
 		};
 
 		using ViewportTick = void(__fastcall*)(void*, float);
+		using ProcessEvent = void(__fastcall*)(void*, void*, void*);
+
+		struct ProcessEventHookEntry
+		{
+			void* object;
+			ProcessEvent original;
+			nte::hook::ShadowVTableHook hook;
+		};
+
+		struct ProcessEventSubscription
+		{
+			uint32_t program_index;
+			void* object;
+			void* function;
+			uint16_t params_size;
+		};
+
+		struct ProcessEventQueue
+		{
+			std::array<ProcessEventRecord, PROCESS_EVENT_QUEUE_CAPACITY> events;
+			size_t first;
+			size_t count;
+		};
 
 		constinit nte::hook::ShadowVTableHook viewport_hooks[2];
 		size_t active_viewport_hook_index = 0;
@@ -55,6 +83,18 @@ namespace nte::mods
 		volatile LONG ipc_dispatch_in_progress = 0;
 		HANDLE runtime_stop_event = nullptr;
 		HANDLE runtime_thread = nullptr;
+		SRWLOCK process_event_lock = SRWLOCK_INIT;
+		constinit std::array<
+			ProcessEventHookEntry,
+			MAX_PROCESS_EVENT_HOOKS> process_event_hooks{};
+		constinit size_t process_event_hook_count = 0;
+		constinit std::array<
+			ProcessEventSubscription,
+			MAX_PROCESS_EVENT_SUBSCRIPTIONS> process_event_subscriptions{};
+		constinit size_t process_event_subscription_count = 0;
+		constinit std::array<
+			ProcessEventQueue,
+			MAX_PROCESS_EVENT_PROGRAMS> process_event_queues{};
 
 		static_assert(sizeof(LocalPlayerArray) == 16);
 
@@ -197,6 +237,77 @@ namespace nte::mods
 
 			runtime::ExecuteViewportTickPrograms(viewport);
 			InterlockedExchange(&ipc_dispatch_in_progress, 0);
+		}
+
+		void __fastcall HookedProcessEvent(
+			void* object,
+			void* function,
+			void* params)
+		{
+			ProcessEvent original = nullptr;
+			bool subscribed = false;
+			AcquireSRWLockShared(&process_event_lock);
+			for (size_t index = 0; index < process_event_hooks.size(); ++index)
+			{
+				if (process_event_hooks[index].object == object)
+				{
+					original = process_event_hooks[index].original;
+					break;
+				}
+			}
+			for (size_t index = 0;
+				index < process_event_subscription_count;
+				++index)
+			{
+				if (process_event_subscriptions[index].object == object &&
+					process_event_subscriptions[index].function == function)
+				{
+					subscribed = true;
+					break;
+				}
+			}
+			ReleaseSRWLockShared(&process_event_lock);
+			if (original == nullptr)
+				return;
+
+			original(object, function, params);
+			if (!subscribed)
+				return;
+
+			AcquireSRWLockExclusive(&process_event_lock);
+			for (size_t index = 0;
+				index < process_event_subscription_count;
+				++index)
+			{
+				const ProcessEventSubscription& subscription =
+					process_event_subscriptions[index];
+				if (subscription.object != object ||
+					subscription.function != function ||
+					subscription.program_index >= process_event_queues.size() ||
+					(subscription.params_size != 0 &&
+						!memory::IsReadableRange(
+							params,
+							subscription.params_size)))
+					continue;
+
+				ProcessEventQueue& queue =
+					process_event_queues[subscription.program_index];
+				if (queue.count == queue.events.size())
+				{
+					queue.first = (queue.first + 1) % queue.events.size();
+					--queue.count;
+				}
+				ProcessEventRecord& event =
+					queue.events[(queue.first + queue.count) % queue.events.size()];
+				event = {};
+				event.object = object;
+				event.function = function;
+				event.params_size = subscription.params_size;
+				for (size_t byte = 0; byte < subscription.params_size; ++byte)
+					event.params[byte] = static_cast<const uint8_t*>(params)[byte];
+				++queue.count;
+			}
+			ReleaseSRWLockExclusive(&process_event_lock);
 		}
 
 		bool InstallViewportHook(void* viewport)
@@ -358,8 +469,8 @@ namespace nte::mods
 				else if (runtime::HasViewportTickPrograms() ||
 					CurrentHookedViewport() != nullptr)
 				{
-					RestoreViewportHook();
 					runtime::Reset();
+					RestoreViewportHook();
 					CloseIpc();
 				}
 
@@ -394,6 +505,204 @@ namespace nte::mods
 			}
 		}
 	} // namespace
+
+	bool WatchProcessEvent(
+		uint32_t program_index,
+		void* object,
+		void* function)
+	{
+		if (program_index >= process_event_queues.size() ||
+			!memory::IsReadableRange(object, sizeof(void*)) ||
+			!memory::IsReadableRange(function, 0xBA))
+			return false;
+
+		auto** vtable = *reinterpret_cast<void***>(object);
+		if (!memory::IsReadableRange(
+				vtable,
+				(PROCESS_EVENT_INDEX + 1) * sizeof(void*)) ||
+			!memory::IsExecutableAddress(vtable[PROCESS_EVENT_INDEX]))
+			return false;
+		uint16_t params_size = 0;
+		if (!ReflectedFunctionParamSize(function, params_size) ||
+			params_size > PROCESS_EVENT_PARAM_CAPACITY)
+			return false;
+
+		AcquireSRWLockExclusive(&process_event_lock);
+		for (size_t index = 0;
+			index < process_event_subscription_count;
+			++index)
+		{
+			const ProcessEventSubscription& subscription =
+				process_event_subscriptions[index];
+			if (subscription.program_index == program_index &&
+				subscription.object == object &&
+				subscription.function == function)
+			{
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return true;
+			}
+		}
+		if (process_event_subscription_count ==
+			process_event_subscriptions.size())
+		{
+			ReleaseSRWLockExclusive(&process_event_lock);
+			return false;
+		}
+
+		ProcessEventHookEntry* target_hook = nullptr;
+		for (size_t index = 0; index < process_event_hooks.size(); ++index)
+		{
+			if (process_event_hooks[index].object == object &&
+				process_event_hooks[index].hook.IsInstalled())
+			{
+				target_hook = &process_event_hooks[index];
+				break;
+			}
+		}
+		if (target_hook == nullptr)
+		{
+			if (process_event_hook_count == process_event_hooks.size())
+			{
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return false;
+			}
+			for (ProcessEventHookEntry& candidate : process_event_hooks)
+			{
+				if (candidate.object == nullptr)
+				{
+					target_hook = &candidate;
+					break;
+				}
+			}
+			if (target_hook == nullptr)
+			{
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return false;
+			}
+			target_hook->hook.Remove();
+			target_hook->object = object;
+			target_hook->original =
+				reinterpret_cast<ProcessEvent>(vtable[PROCESS_EVENT_INDEX]);
+			if (!target_hook->hook.Install(
+					object,
+					PROCESS_EVENT_INDEX,
+					reinterpret_cast<void*>(&HookedProcessEvent)) ||
+				target_hook->hook.OriginalFunction() !=
+					reinterpret_cast<void*>(target_hook->original))
+			{
+				target_hook->hook.Remove();
+				target_hook->object = nullptr;
+				target_hook->original = nullptr;
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return false;
+			}
+			++process_event_hook_count;
+		}
+
+		process_event_subscriptions[process_event_subscription_count++] = {
+			program_index,
+			object,
+			function,
+			params_size,
+		};
+		ReleaseSRWLockExclusive(&process_event_lock);
+		return true;
+	}
+
+	bool UnwatchProcessEvent(
+		uint32_t program_index,
+		void* object,
+		void* function)
+	{
+		AcquireSRWLockExclusive(&process_event_lock);
+		bool removed = false;
+		for (size_t index = 0;
+			index < process_event_subscription_count;
+			++index)
+		{
+			const ProcessEventSubscription& subscription =
+				process_event_subscriptions[index];
+			if (subscription.program_index != program_index ||
+				subscription.object != object ||
+				subscription.function != function)
+				continue;
+			process_event_subscriptions[index] =
+				process_event_subscriptions[
+					--process_event_subscription_count];
+			removed = true;
+			break;
+		}
+
+		if (removed)
+		{
+			bool object_subscribed = false;
+			for (size_t index = 0;
+				index < process_event_subscription_count;
+				++index)
+			{
+				if (process_event_subscriptions[index].object == object)
+				{
+					object_subscribed = true;
+					break;
+				}
+			}
+			if (!object_subscribed)
+			{
+				for (ProcessEventHookEntry& hook : process_event_hooks)
+				{
+					if (hook.object != object)
+						continue;
+					hook.hook.Remove();
+					hook.object = nullptr;
+					hook.original = nullptr;
+					--process_event_hook_count;
+					break;
+				}
+			}
+		}
+		ReleaseSRWLockExclusive(&process_event_lock);
+		return removed;
+	}
+
+	bool PopProcessEvent(
+		uint32_t program_index,
+		ProcessEventRecord& event)
+	{
+		if (program_index >= process_event_queues.size())
+			return false;
+
+		AcquireSRWLockExclusive(&process_event_lock);
+		ProcessEventQueue& queue = process_event_queues[program_index];
+		if (queue.count == 0)
+		{
+			ReleaseSRWLockExclusive(&process_event_lock);
+			return false;
+		}
+		event = queue.events[queue.first];
+		queue.first = (queue.first + 1) % queue.events.size();
+		--queue.count;
+		ReleaseSRWLockExclusive(&process_event_lock);
+		return true;
+	}
+
+	void ResetProcessEventWatches()
+	{
+		AcquireSRWLockExclusive(&process_event_lock);
+		for (ProcessEventHookEntry& hook : process_event_hooks)
+		{
+			hook.hook.Remove();
+			hook.object = nullptr;
+			hook.original = nullptr;
+		}
+		process_event_hook_count = 0;
+		process_event_subscription_count = 0;
+		for (ProcessEventQueue& queue : process_event_queues)
+		{
+			queue.first = 0;
+			queue.count = 0;
+		}
+		ReleaseSRWLockExclusive(&process_event_lock);
+	}
 
 	void StartPluginRuntime(HMODULE module)
 	{
@@ -437,8 +746,8 @@ namespace nte::mods
 			CloseHandle(runtime_stop_event);
 			runtime_stop_event = nullptr;
 		}
+		runtime::Reset();
 		RestoreViewportHook();
 		CloseIpc();
-		runtime::Reset();
 	}
 } // namespace nte::mods

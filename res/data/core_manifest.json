@@ -3,6 +3,7 @@
   "data_version": "1",
   "resources": [
     "res/data/characters/characters.json",
+    "res/data/enemies/enemies.json",
     "res/data/equipment/equipment.json",
     "res/data/skills/ability_tips.json",
     "res/data/skills/gameplay_effect_mapping.json",

@@ -62,6 +62,9 @@ pub(crate) fn hit_detail_hover_text(
         lines.push(tf("Damage: {}", &[&format_number(hit.damage)]));
     }
     if hit.target_max_hp > 0.0 {
+        if let Some(target_name) = localized_target_name(hit) {
+            lines.push(format!("{}：{target_name}", t("Target")));
+        }
         lines.push(tf(
             "Target HP: {} / {}  {}%",
             &[
@@ -77,6 +80,14 @@ pub(crate) fn hit_detail_hover_text(
         lines.push(format!("GA：{ability_name}"));
     }
     lines.join("\n")
+}
+
+pub(crate) fn localized_target_name(hit: &crate::engine::model::Hit) -> Option<&str> {
+    match i18n::current_language() {
+        Language::English => hit.target_name_en.as_deref().or(hit.target_name.as_deref()),
+        Language::Japanese => hit.target_name_ja.as_deref().or(hit.target_name.as_deref()),
+        Language::SimplifiedChinese => hit.target_name.as_deref(),
+    }
 }
 
 pub(crate) fn aggregate_character_skill_damage(
@@ -699,6 +710,13 @@ pub(crate) struct TeamHitRowAssets<'a> {
     pub(crate) damage_digits: Option<&'a [egui::TextureHandle]>,
     pub(crate) follow_up_damage_digits: Option<&'a [egui::TextureHandle]>,
     pub(crate) reaction_textures: &'a HashMap<u8, Vec<egui::TextureHandle>>,
+    pub(crate) target: TargetHitRowAssets<'a>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TargetHitRowAssets<'a> {
+    pub(crate) name: Option<&'a str>,
+    pub(crate) texture: Option<&'a egui::TextureHandle>,
 }
 
 fn hit_column_index(column: HitDetailColumn) -> usize {
@@ -1181,6 +1199,7 @@ pub(crate) fn draw_character_hit_row(
     damage_digits: Option<&[egui::TextureHandle]>,
     follow_up_damage_digits: Option<&[egui::TextureHandle]>,
     reaction_textures: &HashMap<u8, Vec<egui::TextureHandle>>,
+    target: TargetHitRowAssets<'_>,
     row_height: f32,
 ) {
     let (rect, response) = ui.allocate_exact_size(
@@ -1268,7 +1287,7 @@ pub(crate) fn draw_character_hit_row(
                 semantic_danger(ui.visuals().dark_mode).gamma_multiply(0.16)
             },
         );
-        draw_target_hp_text(ui, hp_cell_rect, hit, text_color, mono.clone());
+        draw_target_hp_text(ui, hp_cell_rect, hit, target, text_color, mono.clone());
     }
     response.on_hover_text(hit_detail_hover_text(hit, false));
 }
@@ -1506,7 +1525,7 @@ pub(crate) fn draw_team_hit_row(
                 semantic_danger(ui.visuals().dark_mode).gamma_multiply(0.16)
             },
         );
-        draw_target_hp_text(ui, hp_cell_rect, hit, text_color, mono);
+        draw_target_hp_text(ui, hp_cell_rect, hit, assets.target, text_color, mono);
     }
     response.on_hover_text(hit_detail_hover_text(hit, true));
 }
@@ -1648,10 +1667,45 @@ pub(crate) fn draw_target_hp_text(
     ui: &mut egui::Ui,
     cell_rect: egui::Rect,
     hit: &crate::engine::model::Hit,
+    assets: TargetHitRowAssets<'_>,
     target_color: Color32,
     hp_font: egui::FontId,
 ) {
-    let text_rect = cell_rect.shrink2(egui::vec2(8.0, 0.0));
+    let mut text_rect = cell_rect.shrink2(egui::vec2(8.0, 0.0));
+    if assets.name.is_some() {
+        let avatar_size = 32.0_f32.min(cell_rect.height() - 8.0);
+        let avatar_rect = pixel_aligned_rect(
+            egui::pos2(text_rect.left(), cell_rect.center().y - avatar_size * 0.5),
+            avatar_size,
+            ui.ctx().pixels_per_point(),
+        );
+        if let Some(texture) = assets.texture {
+            ui.put(
+                avatar_rect,
+                egui::Image::new((texture.id(), avatar_rect.size())).corner_radius(6),
+            );
+        } else if let Some(name) = assets.name {
+            let fill = theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).border_strong;
+            ui.painter().rect_filled(avatar_rect, 6.0, fill);
+            ui.painter().text(
+                avatar_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                name.chars().next().unwrap_or('?').to_string(),
+                density_proportional_font(ui, 13.0),
+                target_color,
+            );
+        }
+        ui.painter().rect_stroke(
+            avatar_rect,
+            6.0,
+            Stroke::new(
+                1.0_f32,
+                theme_tokens(ui.visuals().dark_mode, AccentColor::Zinc).border_strong,
+            ),
+            egui::StrokeKind::Inside,
+        );
+        text_rect.set_left(avatar_rect.right() + 7.0);
+    }
     let target_rect = egui::Rect::from_min_max(
         text_rect.min,
         egui::pos2(text_rect.right(), text_rect.center().y),
@@ -1660,7 +1714,10 @@ pub(crate) fn draw_target_hp_text(
         egui::pos2(text_rect.left(), text_rect.center().y),
         text_rect.max,
     );
-    let target = "Target HP";
+    let target = assets
+        .name
+        .map(str::to_owned)
+        .unwrap_or_else(|| t("Unknown target"));
     let hp = format!(
         "{} / {}  {:.1}%",
         format_number(hit.target_hp_after),
@@ -1670,11 +1727,11 @@ pub(crate) fn draw_target_hp_text(
     draw_clipped_label(
         ui,
         target_rect,
-        target,
+        &target,
         density_proportional_font(ui, 12.0),
         target_color,
         egui::Align::Min,
-        None,
+        assets.name,
     );
     draw_clipped_label(
         ui,

@@ -38,6 +38,23 @@ namespace nte::mods
 		SdkReadApi api,
 		uint64_t argument,
 		uint64_t& result);
+	bool ReadNameHash(
+		const void* object,
+		uint64_t offset,
+		uint64_t& result);
+	bool FindReflectedFunction(
+		void* object,
+		const char* owner_class_name,
+		const char* function_name,
+		void*& result);
+	bool ReflectedFunctionParamSize(
+		void* function,
+		uint16_t& size);
+	bool InvokeReflectedFunction(
+		void* object,
+		void* function,
+		void* params,
+		uint16_t params_size);
 	uint32_t CopyCombatClockTransitions(
 		NteCombatClockTransition* output,
 		uint32_t capacity);
