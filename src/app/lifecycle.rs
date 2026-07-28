@@ -132,6 +132,20 @@ impl DpsApp {
                 }
             };
         let equipment_catalog = Arc::new(equipment_catalog);
+        let enemy_catalog_path = data_root.join(ENEMY_CATALOG_PATH);
+        let (enemy_monster_ids, enemy_load_error) = match load_enemy_catalog(&enemy_catalog_path) {
+            Ok(catalog) => (catalog.monster_ids(), None),
+            Err(error) => (
+                Vec::new(),
+                Some(tf(
+                    "Failed to load enemy catalog ({}): {}",
+                    &[
+                        &enemy_catalog_path.display().to_string(),
+                        &error.to_string(),
+                    ],
+                )),
+            ),
+        };
         let abyss_overview = AbyssOverviewState::load();
         let history = HistoryState::load();
         // Decode the texture sets (avatars, attribute icons, damage digits,
@@ -147,7 +161,10 @@ impl DpsApp {
             let root = data_root.clone();
             let avatar_characters = Arc::clone(&characters);
             let equipment_catalog = Arc::clone(&equipment_catalog);
-            let monster_ids = abyss_overview.monster_ids();
+            let mut monster_ids = abyss_overview.monster_ids();
+            monster_ids.extend(enemy_monster_ids);
+            monster_ids.sort();
+            monster_ids.dedup();
             thread::spawn(move || {
                 let send = |load: TextureLoad| {
                     if texture_load_sender.send(load).is_ok() {
@@ -235,10 +252,15 @@ impl DpsApp {
                 }
             })
         };
-        let startup_errors = [config_warning, character_load_error, equipment_load_error]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let startup_errors = [
+            config_warning,
+            character_load_error,
+            equipment_load_error,
+            enemy_load_error,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         let startup_error = (!startup_errors.is_empty()).then(|| startup_errors.join("\n"));
         let capture_ui = CaptureUiState::from_config(&ui_config);
         let windows = WindowState::from_config(&ui_config);
@@ -1850,7 +1872,10 @@ impl DpsApp {
             | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => {}
-            CoreSignal::ModScript(event) => self.push_mod_script_event(event),
+            CoreSignal::ModScript(event) => {
+                self.mod_projection_dirty = true;
+                self.push_mod_script_event(event);
+            }
             CoreSignal::Status(status) => self.notifications.status = status,
             CoreSignal::Warning(warning) => {
                 self.notifications.diagnostic = Some(tf(

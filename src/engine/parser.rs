@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::engine::model::{
-    CharacterInfo, EmptyCurtainItem, EquipmentStat, Hit, HitCharacterSource, HitDirection,
-    HtItemNetId,
+    CharacterInfo, EmptyCurtainItem, EnemyIdentity, EquipmentStat, Hit, HitCharacterSource,
+    HitDirection, HtItemNetId,
 };
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
@@ -50,6 +50,46 @@ pub const GAMEPLAY_EFFECT_SEMANTICS_PATH: &str = "res/data/skills/gameplay_effec
 pub const SKILL_DAMAGE_DATA_PATH: &str = "res/data/skills/skill_damage.json";
 pub const ABILITY_TIPS_PATH: &str = "res/data/skills/ability_tips.json";
 pub const EQUIPMENT_CATALOG_PATH: &str = "res/data/equipment/equipment.json";
+pub const ENEMY_CATALOG_PATH: &str = "res/data/enemies/enemies.json";
+
+#[derive(Clone, Debug, Default)]
+pub struct EnemyCatalog {
+    enemies: HashMap<u64, EnemyIdentity>,
+}
+
+impl EnemyCatalog {
+    pub fn get(&self, config_hash: u64) -> Option<&EnemyIdentity> {
+        self.enemies.get(&config_hash)
+    }
+
+    pub fn monster_ids(&self) -> Vec<String> {
+        let mut monster_ids = self
+            .enemies
+            .values()
+            .map(|enemy| enemy.monster_id.clone())
+            .collect::<Vec<_>>();
+        monster_ids.sort();
+        monster_ids.dedup();
+        monster_ids
+    }
+}
+
+#[derive(Deserialize)]
+struct EnemyCatalogDocument {
+    version: u32,
+    hash: String,
+    enemies: Vec<EnemyCatalogEntry>,
+}
+
+#[derive(Deserialize)]
+struct EnemyCatalogEntry {
+    config_id: String,
+    config_hash: String,
+    monster_id: String,
+    name_en: String,
+    name_zh: String,
+    name_ja: String,
+}
 
 // DT_SkillDamageData assigns Jin's time-stop katana hits to an unnamed internal
 // ability, while the parent ability owns those GE rows and the localized name.
@@ -355,6 +395,78 @@ pub fn load_characters(path: &Path) -> Result<HashMap<u32, CharacterInfo>> {
         .into_iter()
         .filter_map(|(key, value)| key.parse::<u32>().ok().map(|id| (id, value)))
         .collect())
+}
+
+pub fn enemy_config_hash(config_id: &str) -> Option<u64> {
+    if config_id.is_empty() || !config_id.is_ascii() {
+        return None;
+    }
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in config_id.bytes() {
+        hash ^= u64::from(byte.to_ascii_lowercase());
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Some(hash)
+}
+
+pub fn load_enemy_catalog(path: &Path) -> Result<EnemyCatalog> {
+    let text = read_resource_text(path)
+        .with_context(|| format!("Failed to read enemy catalog {}", path.display()))?;
+    let document: EnemyCatalogDocument =
+        serde_json::from_str(&text).context("Invalid enemy catalog JSON")?;
+    ensure!(document.version == 1, "Unsupported enemy catalog version");
+    ensure!(
+        document.hash == "fnv1a64_ascii_lower",
+        "Unsupported enemy catalog hash"
+    );
+    ensure!(!document.enemies.is_empty(), "Enemy catalog has no entries");
+
+    let mut enemies = HashMap::with_capacity(document.enemies.len());
+    let mut config_ids = HashSet::with_capacity(document.enemies.len());
+    for entry in document.enemies {
+        ensure!(
+            config_ids.insert(entry.config_id.clone()),
+            "Duplicate enemy config ID {}",
+            entry.config_id
+        );
+        ensure!(
+            !entry.monster_id.is_empty()
+                && !entry.name_en.is_empty()
+                && !entry.name_zh.is_empty()
+                && !entry.name_ja.is_empty(),
+            "Enemy catalog entry {} has empty display data",
+            entry.config_id
+        );
+        ensure!(
+            entry.config_hash.len() == 16
+                && entry
+                    .config_hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit()),
+            "Enemy catalog entry {} has an invalid hash",
+            entry.config_id
+        );
+        let config_hash =
+            u64::from_str_radix(&entry.config_hash, 16).context("Invalid enemy config hash")?;
+        ensure!(
+            enemy_config_hash(&entry.config_id) == Some(config_hash),
+            "Enemy catalog hash mismatch for {}",
+            entry.config_id
+        );
+        let identity = EnemyIdentity {
+            config_hash,
+            config_id: entry.config_id,
+            monster_id: entry.monster_id,
+            name_en: entry.name_en,
+            name_zh: entry.name_zh,
+            name_ja: entry.name_ja,
+        };
+        ensure!(
+            enemies.insert(config_hash, identity).is_none(),
+            "Enemy catalog contains a config hash collision"
+        );
+    }
+    Ok(EnemyCatalog { enemies })
 }
 
 pub fn load_equipment_catalog(path: &Path) -> Result<EquipmentCatalog> {
@@ -2508,6 +2620,9 @@ pub fn parse_damage_payload(
             },
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,
@@ -2533,6 +2648,35 @@ mod character_tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static TEMP_JSON_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    #[test]
+    fn enemy_config_hash_is_stable_and_case_insensitive() {
+        assert_eq!(
+            enemy_config_hash("Boss_016_BP"),
+            Some(0x4d88_7b49_05d5_dbaf)
+        );
+        assert_eq!(
+            enemy_config_hash("BOSS_016_BP"),
+            enemy_config_hash("boss_016_bp")
+        );
+        assert_eq!(enemy_config_hash(""), None);
+        assert_eq!(enemy_config_hash("敌人"), None);
+    }
+
+    #[test]
+    fn bundled_enemy_catalog_resolves_official_names_and_portrait() {
+        let catalog =
+            load_enemy_catalog(Path::new(ENEMY_CATALOG_PATH)).expect("enemy catalog should load");
+        let identity = catalog
+            .get(enemy_config_hash("Boss_016_BP").expect("ASCII config ID"))
+            .expect("known enemy config should resolve");
+
+        assert_eq!(identity.config_id, "Boss_016_BP");
+        assert_eq!(identity.monster_id, "Boss_16");
+        assert_eq!(identity.name_en, "Imaginadough");
+        assert_eq!(identity.name_zh, "随心泥");
+        assert_eq!(identity.name_ja, "イメージクレイ");
+    }
 
     fn encoded_damage_record_with_flags(
         damage: f32,

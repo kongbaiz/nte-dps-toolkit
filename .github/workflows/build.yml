@@ -122,7 +122,8 @@ jobs:
             "game.player_controller",
             "game.player_state",
             "combat_clock.pause_mask",
-            "combat_clock.state_flags"
+            "combat_clock.state_flags",
+            "sdk.character_config_id"
           )) {
             if (-not $pluginText.Contains($requiredApi)) {
               throw "NTE Mods Plugin is missing the bundled-script API: $requiredApi"
@@ -131,7 +132,9 @@ jobs:
           foreach ($script in @(
             "plugins/nte-mods.enabled",
             "plugins/nte-mods/equipment.nte",
-            "plugins/nte-mods/combat-clock.nte"
+            "plugins/nte-mods/combat-clock.nte",
+            "plugins/nte-mods/enemy-telemetry.nte",
+            "plugins/nte-mods/enemy-telemetry.blueprint.json"
           )) {
             if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
               throw "NTE Mods Plugin script is missing: $script"
@@ -139,7 +142,8 @@ jobs:
           }
           foreach ($program in @(
             "plugins/nte-mods/equipment.nte",
-            "plugins/nte-mods/combat-clock.nte"
+            "plugins/nte-mods/combat-clock.nte",
+            "plugins/nte-mods/enemy-telemetry.nte"
           )) {
             if (-not (Get-Content -LiteralPath $program -Raw).StartsWith("nte_mod(4)")) {
               throw "NTE Mods Plugin program is not Python-style DSL v4: $program"

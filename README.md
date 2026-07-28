@@ -55,6 +55,9 @@
 - **自动选网卡**：根据 `HTGame.exe` 的活动连接自动选择网卡和本机 IP。
 
 > 具体敌方目标识别与场景识别仍在研究中。
+> `plugins/nte-mods/enemy-telemetry.nte` 提供研究蓝图。它只使用通用只读内存、FName
+> 哈希、首次写入缓存和 Mod 事件原语，在蓝图内完成多目标采样与配置标识缓存；DLL
+> 不含敌人专用服务。仅在配置目录和抓包 HP 连续性同时吻合时，将敌人本地化名称与头像投影到战斗明细。
 
 ---
 
@@ -103,10 +106,13 @@ msbuild .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Configura
 [`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)。
 
 GUI 发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并加入压缩包，其中
-`dwmapi.dll` 是唯一的自定义 Windows 模块，`nte-mods/*.nte` 是由其直接解释的
-NTE Script v4 程序。外部脚本可使用变量、持久状态、算术／位运算、
-`if/elif/else`、有界 `for range`、类型化只读内存、China/Global SDK 一致的角色
-读取 API、隐藏客户端 Offset 的 `game.*` 会话内置值及自定义 IPC 事件。实时抓包
+`dwmapi.dll` 是唯一的自定义 Windows 模块，`nte-mods/*.nte` 统一使用受限
+NTE C++ v5 源码，由 DLL 编译为定长 VM 程序。外部 Mod 使用标准 C++ 声明、花括号、
+分号、命名空间 API、持久全局状态、算术／位运算、`if/else if/else`、有界 `for`、
+类型化内存读写、通用 UFunction 调用与
+ProcessEvent 订阅、China/Global SDK 一致的角色读取 API、隐藏客户端 Offset 的
+`nte::game::*` 会话内置值及自定义 IPC 事件。新增 Mod 只增加 `.nte`、可选蓝图元数据和
+资源，不增加功能专用 DLL 服务，也不重新构建 DLL。实时抓包
 会把 `pre.*`、`post.*` 和普通脚本事件送入程序的共享事件管线；DLL 保留源码编译器、
 VM、共享 Hook、边界校验和 capability 白名单。
 在“控制台 → Mod 工坊”中打开“游戏内 Mod 加载器”后，程序会先显示第三方 Mod

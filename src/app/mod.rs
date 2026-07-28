@@ -37,8 +37,8 @@ use crate::engine::model::{
     summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
-    AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, find_data_file,
-    load_characters, load_equipment_catalog,
+    AbilityCatalog, CHARACTER_DATA_PATH, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
+    EquipmentCatalog, find_data_file, load_characters, load_enemy_catalog, load_equipment_catalog,
 };
 use crate::platform::file_drop::NativeFileDrop;
 use crate::platform::hotkey::{
@@ -2403,6 +2403,9 @@ mod tests {
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,

@@ -130,6 +130,11 @@ impl DpsApp {
                             hit,
                             &self.damage_digit_textures,
                         );
+                        let target_name = localized_target_name(hit);
+                        let target_texture =
+                            hit.target_monster_id.as_deref().and_then(|monster_id| {
+                                monster_texture(&self.monster_textures, monster_id)
+                            });
                         draw_character_hit_row(
                             ui,
                             layout,
@@ -138,6 +143,10 @@ impl DpsApp {
                             damage_digits,
                             follow_up_digits,
                             &self.reaction_textures,
+                            TargetHitRowAssets {
+                                name: target_name,
+                                texture: target_texture,
+                            },
                             row_height,
                         );
                     }
@@ -249,6 +258,11 @@ impl DpsApp {
                     let follow_up_digits =
                         follow_up_damage_digit_textures_for_hit(hit, &self.damage_digit_textures);
                     let char_name = self.localized_character_name(hit.char_id, &hit.char_name);
+                    let target_name = localized_target_name(hit);
+                    let target_texture = hit
+                        .target_monster_id
+                        .as_deref()
+                        .and_then(|monster_id| monster_texture(&self.monster_textures, monster_id));
                     draw_team_hit_row(
                         ui,
                         layout,
@@ -261,6 +275,10 @@ impl DpsApp {
                             damage_digits,
                             follow_up_damage_digits: follow_up_digits,
                             reaction_textures: &self.reaction_textures,
+                            target: TargetHitRowAssets {
+                                name: target_name,
+                                texture: target_texture,
+                            },
                         },
                         row_height,
                     );

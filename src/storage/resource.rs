@@ -8,13 +8,28 @@ include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 #[cfg(feature = "gui")]
 const MODS_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
 #[cfg(feature = "gui")]
-const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 6] = [
+const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 21] = [
     b"NTE_DPS_TOOL_MODS_PLUGIN_V1",
     b"game.session",
     b"game.player_controller",
     b"game.player_state",
     b"combat_clock.pause_mask",
     b"combat_clock.state_flags",
+    b"memory.read_f32_milli",
+    b"memory.read_fname_hash",
+    b"cache.get",
+    b"cache.remember",
+    b"memory.write_u64",
+    b"unreal.reflection",
+    b"unreal.find_function",
+    b"unreal.params_clear",
+    b"unreal.params_write_u64",
+    b"unreal.params_read_u64",
+    b"unreal.call",
+    b"process.event",
+    b"unreal.watch",
+    b"unreal.unwatch",
+    b"event.next",
 ];
 
 pub(crate) fn bundled_resource(path: &str) -> Option<&'static [u8]> {

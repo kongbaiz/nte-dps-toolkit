@@ -703,7 +703,7 @@ impl DpsApp {
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(t(
-                            "This loader runs only the restricted equipment and combat-clock mods listed in nte-mods.enabled. Keep only the mods you use enabled.",
+                            "This loader runs only the restricted mods listed in nte-mods.enabled. Keep only the mods you use enabled.",
                         ))
                         .strong()
                         .color(theme.success),

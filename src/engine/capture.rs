@@ -32,17 +32,18 @@ use crate::engine::model::{
     PartyCombatState, TimeStopEvent,
 };
 use crate::engine::parser::{
-    AbilityCatalog, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
+    AbilityCatalog, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
     GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH, GameplayEffectSkill,
     ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, classify_attack_type, declared_character_ids_from_evidence,
     find_data_file, find_declared_character_evidence, find_final_tower_character_evidence,
-    load_equipment_catalog, load_gameplay_effect_mapping, matches_shifted_bytes_at,
-    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
-    parse_empty_curtain_character_owners, parse_empty_curtain_compact_module_placements,
-    parse_empty_curtain_equipment_snapshot, parse_empty_curtain_item_additions,
-    parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
-    parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
+    load_enemy_catalog, load_equipment_catalog, load_gameplay_effect_mapping,
+    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
+    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
+    parse_empty_curtain_item_additions, parse_empty_curtain_item_removals,
+    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
+    valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
     CombatClockTransitionSnapshot, query_combat_clock_transitions, query_mod_events,
@@ -653,6 +654,18 @@ fn run_plugin_monitor(
     raw_capture: &RawCaptureBuffer,
     sender: &EngineEventSink,
 ) {
+    let mut resource_warnings = Vec::new();
+    let enemy_catalog = load_resource(
+        ENEMY_CATALOG_PATH,
+        &mut resource_warnings,
+        load_enemy_catalog,
+    );
+    if !resource_warnings.is_empty() {
+        let _ = sender.send(EngineEvent::Warning(format!(
+            "enemy telemetry catalog: {}",
+            resource_warnings.join("; ")
+        )));
+    }
     let mut last_sequence = 0;
     let mut last_mod_event_sequence = 0;
     let mut tracker = GamePauseIntervalTracker::default();
@@ -744,13 +757,24 @@ fn run_plugin_monitor(
                     continue;
                 }
                 last_mod_event_sequence = event.sequence;
-                let event = crate::engine::model::ModScriptEvent::from_bridge(
+                if event.mod_id == "enemy-telemetry"
+                    && event.timestamp_100ns < capture_started_100ns
+                {
+                    continue;
+                }
+                let mut event = crate::engine::model::ModScriptEvent::from_bridge(
                     event.sequence,
                     event.timestamp_100ns,
                     event.mod_id,
                     event.name,
                     event.values,
                 );
+                if event.mod_id == "enemy-telemetry"
+                    && event.name == "enemy.identity"
+                    && let [_, config_hash, _] = event.values.as_slice()
+                {
+                    event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
+                }
                 if sender.send(EngineEvent::ModScript(event)).is_err() {
                     return;
                 }
@@ -4285,6 +4309,12 @@ struct ExportHit {
     #[serde(default)]
     target_name: Option<String>,
     #[serde(default)]
+    target_name_en: Option<String>,
+    #[serde(default)]
+    target_name_ja: Option<String>,
+    #[serde(default)]
+    target_monster_id: Option<String>,
+    #[serde(default)]
     target_context: Vec<String>,
     #[serde(default)]
     gameplay_effect_index: Option<u32>,
@@ -4408,6 +4438,9 @@ impl From<&Hit> for ExportHit {
             target_hp_percent: hit.target_hp_percent,
             target_id: hit.target_id.clone(),
             target_name: hit.target_name.clone(),
+            target_name_en: hit.target_name_en.clone(),
+            target_name_ja: hit.target_name_ja.clone(),
+            target_monster_id: hit.target_monster_id.clone(),
             target_context: hit.target_context.clone(),
             gameplay_effect_index: hit.gameplay_effect_index,
             gameplay_effect_name: hit.gameplay_effect_name.clone(),
@@ -4788,6 +4821,9 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         target_hp_percent: hit.target_hp_percent,
         target_id: hit.target_id,
         target_name: hit.target_name,
+        target_name_en: hit.target_name_en,
+        target_name_ja: hit.target_name_ja,
+        target_monster_id: hit.target_monster_id,
         target_context: hit.target_context,
         gameplay_effect_index: hit.gameplay_effect_index,
         gameplay_effect_name: hit.gameplay_effect_name,
@@ -4857,6 +4893,7 @@ fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crossbeam_channel::unbounded;
 
     use crate::engine::parser::{
@@ -6605,6 +6642,9 @@ mod tests {
                     "target_hp_percent":87.655,
                     "target_id":"TARGET",
                     "target_name":"Target Name",
+                    "target_name_en":"Target Name EN",
+                    "target_name_ja":"ターゲット名",
+                    "target_monster_id":"Boss_16",
                     "target_context":["context-a","context-b"],
                     "gameplay_effect_index":77,
                     "gameplay_effect_name":"GE_Test_Damage",
@@ -6648,6 +6688,9 @@ mod tests {
         assert_eq!(hit.target_hp_percent, 87.655);
         assert_eq!(hit.target_id.as_deref(), Some("TARGET"));
         assert_eq!(hit.target_name.as_deref(), Some("Target Name"));
+        assert_eq!(hit.target_name_en.as_deref(), Some("Target Name EN"));
+        assert_eq!(hit.target_name_ja.as_deref(), Some("ターゲット名"));
+        assert_eq!(hit.target_monster_id.as_deref(), Some("Boss_16"));
         assert_eq!(hit.target_context, ["context-a", "context-b"]);
         assert_eq!(hit.gameplay_effect_index, Some(77));
         assert_eq!(hit.gameplay_effect_name.as_deref(), Some("GE_Test_Damage"));
@@ -8137,6 +8180,9 @@ mod tests {
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,

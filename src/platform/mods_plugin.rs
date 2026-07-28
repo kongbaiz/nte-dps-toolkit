@@ -120,11 +120,192 @@ const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
 #[cfg(feature = "gui")]
 const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
 #[cfg(feature = "gui")]
+const ENEMY_TELEMETRY_MOD_FILE_NAME: &str = "enemy-telemetry.nte";
+#[cfg(feature = "gui")]
+const ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME: &str = "enemy-telemetry.blueprint.json";
+#[cfg(feature = "gui")]
 const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
 #[cfg(feature = "gui")]
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
 #[cfg(feature = "gui")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
+#[cfg(feature = "gui")]
+const ENEMY_TELEMETRY_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/enemy-telemetry.nte");
+#[cfg(feature = "gui")]
+const ENEMY_TELEMETRY_BLUEPRINT: &[u8] =
+    include_bytes!("../../plugins/nte-mods/enemy-telemetry.blueprint.json");
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V2: &[u8] = br#"{
+  "version": 1,
+  "nodes": [
+    {
+      "signature": "0:now = time.now_ms()\n0:sample_due = now >= state.next_sample_at\n0:if sample_due == True:\n1:# Target SDK calls execute at 10 Hz instead of on every rendered frame.\n1:state.next_sample_at = now + 100\n1:character = game.player_character\n1:target = None\n1:if character != None:\n2:target = sdk.attack_target(character)\n",
+      "position": [
+        24.0,
+        70.0
+      ]
+    },
+    {
+      "signature": "0:if sample_due == True:\n1:if target == None:\n2:if state.last_target != 0:\n3:ipc.emit(\"post.enemy.cleared\", state.last_target)\n2:state.last_target = 0\n2:state.last_hp = 0\n2:state.last_max_hp = 0\n",
+      "position": [
+        380.0,
+        70.0
+      ]
+    },
+    {
+      "signature": "0:if sample_due == True:\n1:if target != None:\n2:hp = sdk.character_hp_milli(target)\n2:if target != state.last_target:\n3:config_id = sdk.character_config_id(target)\n3:level = sdk.character_level(target)\n3:max_hp = sdk.character_hp_max_milli(target, False)\n3:ipc.emit(\"pre.enemy.identity\", target, config_id, level)\n3:ipc.emit(\"post.enemy.vitals\", target, hp, max_hp)\n3:state.last_max_hp = max_hp\n2:else:\n3:if hp != state.last_hp:\n4:max_hp = sdk.character_hp_max_milli(target, False)\n4:ipc.emit(\"post.enemy.vitals\", target, hp, max_hp)\n4:state.last_max_hp = max_hp\n2:state.last_target = target\n2:state.last_hp = hp\n",
+      "position": [
+        736.0,
+        70.0
+      ]
+    }
+  ]
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V3: &[u8] = br#"{
+  "version": 1,
+  "nodes": [
+    {
+      "signature": "0:# The desktop requests one identity snapshot after this capture's first hit.\n0:# This handler only publishes the current controller as the IPC context.\n0:player_controller = game.player_controller\n0:if player_controller != None:\n1:ipc.bind(None, player_controller)\n",
+      "position": [
+        24.0,
+        70.0
+      ]
+    }
+  ]
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+state.last_target = 0
+state.last_config_id = 0
+state.last_level = 0
+state.last_hp = 0
+state.last_max_hp = 0
+state.last_flags = 0
+
+def on_viewport_tick(event):
+    character = game.player_character
+    target = None
+    if character != None:
+        target = sdk.attack_target(character)
+
+    if target == None:
+        if state.last_target != 0:
+            ipc.emit("post.enemy.cleared", state.last_target)
+        state.last_target = 0
+        state.last_config_id = 0
+        state.last_level = 0
+        state.last_hp = 0
+        state.last_max_hp = 0
+        state.last_flags = 0
+
+    if target != None:
+        config_id = sdk.character_config_id(target)
+        level = sdk.character_level(target)
+        hp = sdk.character_hp_milli(target)
+        max_hp = sdk.character_hp_max_milli(target, False)
+        alive = sdk.character_is_alive(target)
+        dead = sdk.character_is_dead(target)
+        dead_flag = dead << 1
+        state_flags = alive | dead_flag
+        if target != state.last_target:
+            ipc.emit("pre.enemy.identity", target, config_id, level)
+            ipc.emit("post.enemy.vitals", target, hp, max_hp)
+            ipc.emit("post.enemy.state", target, state_flags, level)
+        else:
+            if config_id != state.last_config_id:
+                ipc.emit("pre.enemy.identity", target, config_id, level)
+            if hp != state.last_hp:
+                ipc.emit("post.enemy.vitals", target, hp, max_hp)
+            elif max_hp != state.last_max_hp:
+                ipc.emit("post.enemy.vitals", target, hp, max_hp)
+            if level != state.last_level:
+                ipc.emit("post.enemy.state", target, state_flags, level)
+            elif state_flags != state.last_flags:
+                ipc.emit("post.enemy.state", target, state_flags, level)
+        state.last_target = target
+        state.last_config_id = config_id
+        state.last_level = level
+        state.last_hp = hp
+        state.last_max_hp = max_hp
+        state.last_flags = state_flags
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V2: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+state.next_sample_at = 0
+state.last_target = 0
+state.last_hp = 0
+state.last_max_hp = 0
+
+def on_viewport_tick(event):
+    now = time.now_ms()
+    sample_due = now >= state.next_sample_at
+
+    if sample_due == True:
+        # Target SDK calls execute at 10 Hz instead of on every rendered frame.
+        state.next_sample_at = now + 100
+        character = game.player_character
+        target = None
+        if character != None:
+            target = sdk.attack_target(character)
+
+    if sample_due == True:
+        if target == None:
+            if state.last_target != 0:
+                ipc.emit("post.enemy.cleared", state.last_target)
+            state.last_target = 0
+            state.last_hp = 0
+            state.last_max_hp = 0
+
+    if sample_due == True:
+        if target != None:
+            hp = sdk.character_hp_milli(target)
+            if target != state.last_target:
+                config_id = sdk.character_config_id(target)
+                level = sdk.character_level(target)
+                max_hp = sdk.character_hp_max_milli(target, False)
+                ipc.emit("pre.enemy.identity", target, config_id, level)
+                ipc.emit("post.enemy.vitals", target, hp, max_hp)
+                state.last_max_hp = max_hp
+            else:
+                if hp != state.last_hp:
+                    max_hp = sdk.character_hp_max_milli(target, False)
+                    ipc.emit("post.enemy.vitals", target, hp, max_hp)
+                    state.last_max_hp = max_hp
+            state.last_target = target
+            state.last_hp = hp
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V3: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+route_ipc(13, "enemy.query_identity")
+
+def on_viewport_tick(event):
+    # The desktop requests one identity snapshot after this capture's first hit.
+    # This handler only publishes the current controller as the IPC context.
+    player_controller = game.player_controller
+    if player_controller != None:
+        ipc.bind(None, player_controller)
+"#;
 #[cfg(feature = "gui")]
 const LEGACY_EQUIPMENT_MOD_V1: &[u8] =
     b"nte_mod 1\nmod equipment\non viewport_tick equipment.prepare\non viewport_tick ipc.pump\n";
@@ -305,7 +486,156 @@ def on_viewport_tick(event):
         state.last_state_flags = state_flags
 "#;
 #[cfg(feature = "gui")]
-const NO_LEGACY_MOD_PROGRAMS: &[&[u8]] = &[];
+const LEGACY_EQUIPMENT_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
+mod("equipment")
+requires("viewport.tick")
+requires("game.session")
+requires("equipment")
+requires("ipc")
+
+# External routing is the Mod's service table; the DLL only exposes validated kernel calls.
+route_ipc(1, "equipment.equip_module")
+route_ipc(2, "equipment.equip_core")
+route_ipc(3, "equipment.unequip_module")
+route_ipc(4, "equipment.unequip_core")
+route_ipc(5, "equipment.unequip_all")
+route_ipc(6, "equipment.equip_one_key")
+route_ipc(7, "equipment.move_module_to_character")
+route_ipc(8, "equipment.move_core_to_character")
+route_ipc(9, "equipment.set_item_discarded")
+route_ipc(10, "equipment.set_item_locked")
+route_ipc(12, "ipc.query_mod_events")
+
+# The script owns PlayerState lifecycle, cache retry, and IPC activation.
+# game.player_state is a stable built-in; client offsets stay in the host.
+state.last_player_state = 0
+state.next_prepare_at = 0
+
+def on_viewport_tick(event):
+    player_state = game.player_state
+    now = time.now_ms()
+    if player_state != None:
+        # A new PlayerState starts a fresh cache lifecycle.
+        if player_state != state.last_player_state:
+            state.last_player_state = player_state
+            state.next_prepare_at = 0
+
+        cache_ready = equipment.cache_ready(player_state)
+        if cache_ready == False:
+            # Retry at most once per second while UE functions are unavailable.
+            if now >= state.next_prepare_at:
+                equipment.prepare(player_state)
+                state.next_prepare_at = now + 1000
+                cache_ready = equipment.cache_ready(player_state)
+
+        # Equipment IPC becomes actionable only after this Mod prepared it.
+        if cache_ready == True:
+            ipc.bind(player_state, None)
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
+mod("combat-clock")
+requires("viewport.tick")
+requires("game.session")
+requires("combat-clock")
+requires("ipc")
+
+# External routing publishes the services owned by this Mod.
+route_ipc(11, "combat_clock.query_transitions")
+route_ipc(12, "ipc.query_mod_events")
+
+# The script owns sampling, transition detection, and forwarding.
+# Stable host properties hide the session offsets and packed sample format.
+state.initialized = 0
+state.last_controller = 0
+state.last_pause_mask = 0
+state.last_state_flags = 0
+
+def on_viewport_tick(event):
+    player_controller = game.player_controller
+    pause_mask = 0
+    state_flags = 0
+    if player_controller != None:
+        pause_mask = combat_clock.pause_mask(player_controller)
+        state_flags = combat_clock.state_flags(player_controller)
+        ipc.bind(None, player_controller)
+
+    # Forward only the first sample or a real state transition.
+    changed = state.initialized == False
+    if player_controller != state.last_controller:
+        changed = True
+    if pause_mask != state.last_pause_mask:
+        changed = True
+    if state_flags != state.last_state_flags:
+        changed = True
+
+    if changed == True:
+        combat_clock.forward(pause_mask, state_flags)
+        state.initialized = 1
+        state.last_controller = player_controller
+        state.last_pause_mask = pause_mask
+        state.last_state_flags = state_flags
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("memory.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+state.next_sample_at = 0
+state.next_identity_at = 0
+state.last_target = 0
+state.last_hp = 0
+state.last_max_hp = 0
+
+def on_viewport_tick(event):
+    now = time.now_ms()
+    if now >= state.next_sample_at:
+        state.next_sample_at = now + 50
+        player_state = memory.read_ptr(game.player_controller, 0x2d0)
+        target = memory.read_ptr(player_state, 0x2880)
+        if target == None:
+            if state.last_target != 0:
+                ipc.emit("post.enemy.cleared", state.last_target)
+            state.last_target = 0
+            state.last_hp = 0
+            state.last_max_hp = 0
+        if target != None:
+            ability_system = memory.read_ptr(target, 0x8a0)
+            hp = memory.read_f32_milli(ability_system, 0x1a08)
+            max_hp = memory.read_f32_milli(ability_system, 0x1a0c)
+            if max_hp > 0:
+                if hp <= max_hp:
+                    object_index = memory.read_u32(target, 0x0c)
+                    target_key = target ^ object_index
+                    config_hash = cache.get(target_key)
+                    if config_hash == 0:
+                        config_hash = memory.read_fname_hash(target, 0x1d38)
+                        if config_hash != 0:
+                            config_hash = cache.remember(target_key, config_hash)
+                    target_changed = target_key != state.last_target
+                    if config_hash != 0:
+                        if target_changed == True:
+                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
+                        elif now >= state.next_identity_at:
+                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
+                    if target_changed == True:
+                        ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
+                    else:
+                        if hp != state.last_hp:
+                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
+                        elif max_hp != state.last_max_hp:
+                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
+                    if now >= state.next_identity_at:
+                        state.next_identity_at = now + 250
+                    state.last_target = target_key
+                    state.last_hp = hp
+                    state.last_max_hp = max_hp
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[b"nte_mod_set 1\nload equipment\nload combat-clock\n"];
 #[cfg(feature = "gui")]
 const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V1,
@@ -314,6 +644,7 @@ const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V4,
     LEGACY_EQUIPMENT_MOD_V4_OFFSETS,
     LEGACY_EQUIPMENT_MOD_V4_SESSION,
+    LEGACY_EQUIPMENT_MOD_V4_ROUTES,
 ];
 #[cfg(feature = "gui")]
 const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
@@ -323,6 +654,19 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V4,
     LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS,
     LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
+    LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
+];
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
+    LEGACY_ENEMY_TELEMETRY_MOD_V1,
+    LEGACY_ENEMY_TELEMETRY_MOD_V2,
+    LEGACY_ENEMY_TELEMETRY_MOD_V3,
+    LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC,
+];
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_BLUEPRINTS: &[&[u8]] = &[
+    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V2,
+    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V3,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1692,7 +2036,7 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
         (
             workspace_directory.join(MOD_SET_FILE_NAME),
             DEFAULT_MOD_SET,
-            NO_LEGACY_MOD_PROGRAMS,
+            LEGACY_DEFAULT_MOD_SETS,
         ),
         (
             mod_directory.join(EQUIPMENT_MOD_FILE_NAME),
@@ -1703,6 +2047,16 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
             mod_directory.join(COMBAT_CLOCK_MOD_FILE_NAME),
             COMBAT_CLOCK_MOD,
             LEGACY_COMBAT_CLOCK_MOD_PROGRAMS,
+        ),
+        (
+            mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME),
+            ENEMY_TELEMETRY_MOD,
+            LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS,
+        ),
+        (
+            mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
+            ENEMY_TELEMETRY_BLUEPRINT,
+            LEGACY_ENEMY_TELEMETRY_BLUEPRINTS,
         ),
     ] {
         if !path.exists() {
@@ -1752,6 +2106,20 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/include/nte_mods_ipc.h"
     ));
+    const NATIVE_HOST_API: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/host_api.cpp"
+    ));
+    #[cfg(feature = "gui")]
+    const NATIVE_MOD_RUNTIME: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/mod_runtime.cpp"
+    ));
+    #[cfg(feature = "gui")]
+    const NATIVE_PLUGIN_RUNTIME: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/plugin_runtime.cpp"
+    ));
 
     fn native_define(name: &str) -> u64 {
         let prefix = format!("#define {name} ");
@@ -1790,20 +2158,20 @@ mod tests {
 
         crate::storage::mod_scripts::validate_mod_source("equipment", equipment).unwrap();
         crate::storage::mod_scripts::validate_mod_source("combat-clock", combat_clock).unwrap();
-        assert!(equipment.contains("game.player_state"));
-        assert!(equipment.contains("state.next_prepare_at"));
-        assert!(equipment.contains("equipment.cache_ready(player_state)"));
-        assert!(equipment.contains("ipc.bind(player_state, None)"));
-        assert!(equipment.contains("route_ipc(1, \"equipment.equip_module\")"));
-        assert!(equipment.contains("route_ipc(10, \"equipment.set_item_locked\")"));
+        assert!(equipment.contains("nte::game::player_state"));
+        assert!(equipment.contains("std::uint64_t next_prepare_at"));
+        assert!(equipment.contains("nte::equipment::cache_ready(player_state)"));
+        assert!(equipment.contains("nte::ipc::bind(player_state, nullptr)"));
+        assert!(equipment.contains("NTE_ROUTE_IPC(1, \"equipment.equip_module\")"));
+        assert!(equipment.contains("NTE_ROUTE_IPC(10, \"equipment.set_item_locked\")"));
         assert!(!equipment.contains("0x"));
-        assert!(combat_clock.contains("game.player_controller"));
-        assert!(combat_clock.contains("state.last_pause_mask"));
-        assert!(combat_clock.contains("combat_clock.pause_mask(player_controller)"));
-        assert!(combat_clock.contains("combat_clock.state_flags(player_controller)"));
-        assert!(combat_clock.contains("combat_clock.forward(pause_mask, state_flags)"));
-        assert!(combat_clock.contains("route_ipc(11, \"combat_clock.query_transitions\")"));
-        assert!(!combat_clock.contains("combat_clock.observe("));
+        assert!(combat_clock.contains("nte::game::player_controller"));
+        assert!(combat_clock.contains("std::uint64_t last_pause_mask"));
+        assert!(combat_clock.contains("nte::combat_clock::pause_mask(player_controller)"));
+        assert!(combat_clock.contains("nte::combat_clock::state_flags(player_controller)"));
+        assert!(combat_clock.contains("nte::combat_clock::forward(pause_mask, state_flags)"));
+        assert!(combat_clock.contains("NTE_ROUTE_IPC(11, \"combat_clock.query_transitions\")"));
+        assert!(!combat_clock.contains("nte::combat_clock::observe("));
         assert!(!combat_clock.contains("0x"));
         assert_ne!(equipment, combat_clock);
     }
@@ -1896,6 +2264,14 @@ mod tests {
             native_enum("NTE_MODS_STATUS_MOD_DISABLED"),
             MAX_PLUGIN_STATUS as u64
         );
+    }
+
+    #[test]
+    fn native_host_exposes_generic_name_hash_reading_without_enemy_services() {
+        assert!(NATIVE_HOST_API.contains("bool ReadNameHash("));
+        assert!(!NATIVE_HOST_API.contains("ReadEnemyIdentitySnapshot"));
+        assert!(!NATIVE_IPC_HEADER.contains("NTE_MODS_IPC_QUERY_ENEMY_IDENTITY"));
+        assert!(!NATIVE_IPC_HEADER.contains("NteEnemyIdentitySnapshot"));
     }
 
     #[test]
@@ -2246,6 +2622,137 @@ mod tests {
         )
         .unwrap();
         install_default_mod_files(directory).unwrap();
+        fs::remove_file(
+            directory
+                .join(MOD_DIRECTORY_NAME)
+                .join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn default_workspace_installs_and_enables_enemy_telemetry_blueprint() {
+        let workspace = deployment_test_directory("enemy-telemetry-defaults");
+
+        install_default_mod_files(&workspace).unwrap();
+
+        assert_eq!(
+            fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
+            DEFAULT_MOD_SET
+        );
+        assert_eq!(
+            fs::read(
+                workspace
+                    .join(MOD_DIRECTORY_NAME)
+                    .join(ENEMY_TELEMETRY_MOD_FILE_NAME)
+            )
+            .unwrap(),
+            ENEMY_TELEMETRY_MOD
+        );
+        assert_eq!(
+            fs::read(
+                workspace
+                    .join(MOD_DIRECTORY_NAME)
+                    .join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME)
+            )
+            .unwrap(),
+            ENEMY_TELEMETRY_BLUEPRINT
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn default_workspace_upgrades_the_previous_exact_enabled_set() {
+        let workspace = deployment_test_directory("enemy-telemetry-enabled-set-upgrade");
+        fs::write(
+            workspace.join(MOD_SET_FILE_NAME),
+            LEGACY_DEFAULT_MOD_SETS[0],
+        )
+        .unwrap();
+
+        install_default_mod_files(&workspace).unwrap();
+
+        assert_eq!(
+            fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
+            DEFAULT_MOD_SET
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn default_workspace_upgrades_polling_enemy_telemetry() {
+        for legacy in LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS {
+            let workspace = deployment_test_directory("enemy-telemetry-sampling-upgrade");
+            let mod_directory = workspace.join(MOD_DIRECTORY_NAME);
+            fs::create_dir_all(&mod_directory).unwrap();
+            fs::write(mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME), legacy).unwrap();
+            if *legacy == LEGACY_ENEMY_TELEMETRY_MOD_V2 {
+                fs::write(
+                    mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
+                    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V2,
+                )
+                .unwrap();
+            } else if *legacy == LEGACY_ENEMY_TELEMETRY_MOD_V3 {
+                fs::write(
+                    mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
+                    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V3,
+                )
+                .unwrap();
+            }
+
+            install_default_mod_files(&workspace).unwrap();
+
+            assert_eq!(
+                fs::read(mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME)).unwrap(),
+                ENEMY_TELEMETRY_MOD
+            );
+            assert_eq!(
+                fs::read(mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME)).unwrap(),
+                ENEMY_TELEMETRY_BLUEPRINT
+            );
+            fs::remove_dir_all(workspace).unwrap();
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn enemy_telemetry_uses_only_generic_script_primitives() {
+        let source = std::str::from_utf8(ENEMY_TELEMETRY_MOD).unwrap();
+        assert!(source.contains("NTE_ROUTE_IPC(12, \"ipc.query_mod_events\")"));
+        assert!(source.contains("nte::memory::read_f32_milli("));
+        assert!(source.contains("nte::memory::read_fname_hash("));
+        assert!(source.contains("nte::cache::get("));
+        assert!(source.contains("nte::cache::remember("));
+        assert!(source.contains("nte::ipc::emit(\"pre.enemy.identity\""));
+        assert!(!source.contains("NTE_ROUTE_IPC(13,"));
+        assert!(!source.contains("enemy.query_identity"));
+        assert!(!source.contains("nte::ipc::bind("));
+        assert!(!source.contains("nte::sdk::"));
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn native_runtime_exposes_generic_mod_extension_abi() {
+        for api in [
+            "memory.write_u64",
+            "unreal.find_function",
+            "unreal.params_clear",
+            "unreal.params_write_u64",
+            "unreal.params_read_u64",
+            "unreal.call",
+            "unreal.watch",
+            "unreal.unwatch",
+            "event.next",
+            "event.read_u64",
+        ] {
+            assert!(NATIVE_MOD_RUNTIME.contains(api), "{api} is missing");
+        }
+        assert!(NATIVE_HOST_API.contains("InvokeReflectedFunction"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("HookedProcessEvent"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResetProcessEventWatches"));
     }
 
     #[test]

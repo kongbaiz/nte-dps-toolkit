@@ -55,6 +55,11 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 - **Auto adapter selection**: picks the network adapter and local IP from `HTGame.exe`'s active connections.
 
 > Precise enemy-target and scene identification are still under research.
+> The `plugins/nte-mods/enemy-telemetry.nte` research
+> Blueprint uses only generic read-only memory, FName hashing, first-write cache,
+> and Mod-event primitives to sample and cache multiple targets without an
+> enemy-specific DLL service. Localized names and portraits are projected
+> into battle details only when both the config catalog and captured HP continuity match.
 
 ---
 
@@ -107,12 +112,16 @@ runtime location read by the app. See
 for module details.
 
 GUI release archives place `plugins/` beside `nte-dps-tool.exe`. `dwmapi.dll`
-is the only custom Windows module; `nte-mods/*.nte` use NTE Script v4,
-interpreted directly by that DLL. External programs can use variables,
-persistent state, arithmetic and bit operations, `if/elif/else`, bounded
-`for range`, typed read-only memory, character APIs shared by the inspected
-China/Global SDKs, stable `game.*` session values that hide client offsets, and
-custom IPC events. Live capture routes `pre.*`, `post.*`, and ordinary script
+is the only custom Windows module; `nte-mods/*.nte` use restricted NTE C++ v5,
+compiled by that DLL to fixed-size VM programs. External Mods use regular C++
+declarations, braces, semicolons, namespace-qualified APIs, persistent global
+state, arithmetic and bit operations, `if/else if/else`, bounded `for`, typed
+memory reads and writes, generic UFunction calls and
+ProcessEvent subscriptions, character APIs shared by the inspected
+China/Global SDKs, stable `nte::game::*` session values that hide client offsets, and
+custom IPC events. A new Mod adds only its `.nte`, optional Blueprint metadata,
+and resources; it adds no feature-specific DLL service and requires no DLL
+rebuild. Live capture routes `pre.*`, `post.*`, and ordinary script
 events through the app's shared event pipeline. The DLL retains the compiler,
 VM, shared hook, boundary validation, and capability whitelist. Open
 **Console → Mod Workshop** and enable **Enable in-game Mod loader** to review the

@@ -51,11 +51,25 @@ enum NteBlueprintSelection {
     Statement(u64),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum NteSourceLanguage {
+    Legacy,
+    #[default]
+    Cpp,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum NteBlueprintDeclaration {
     Capability(String),
-    State { name: String, value: String },
-    IpcRoute { operation: String, service: String },
+    State {
+        type_name: String,
+        name: String,
+        value: String,
+    },
+    IpcRoute {
+        operation: String,
+        service: String,
+    },
     Other(String),
 }
 
@@ -73,6 +87,44 @@ struct NteBlueprintStatement {
 struct NteBlueprintBlockRange {
     start: usize,
     end: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NteBlueprintFlowEdgeKind {
+    Next,
+    True,
+    False,
+    Loop,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NteBlueprintFlowEdge {
+    from: usize,
+    to: usize,
+    kind: NteBlueprintFlowEdgeKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NteBlueprintControlFlow {
+    blocks: Vec<NteBlueprintBlockRange>,
+    edges: Vec<NteBlueprintFlowEdge>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NteBlueprintWireRoute {
+    Direct,
+    Channel,
+    OuterLeft,
+    OuterRight,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NteBlueprintRoutedWire {
+    edge: NteBlueprintFlowEdge,
+    start: egui::Pos2,
+    end: egui::Pos2,
+    route: NteBlueprintWireRoute,
+    lane: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,20 +152,68 @@ impl NteBlueprintBlockCategory {
     }
 }
 
-const NTE_BLUEPRINT_NODE_WIDTH: f32 = 300.0;
+const NTE_BLUEPRINT_NODE_WIDTH: f32 = 340.0;
 const NTE_BLUEPRINT_BASE_Y: f32 = 64.0;
-const NTE_BLUEPRINT_GRID_COLUMNS: usize = 4;
-const NTE_BLUEPRINT_ROW_STEP: f32 = 126.0;
-const NTE_BLUEPRINT_COLUMN_GAP: f32 = 56.0;
+const NTE_BLUEPRINT_GRAPH_COLUMN_STEP: f32 = 410.0;
+const NTE_BLUEPRINT_GRAPH_ROW_GAP: f32 = 36.0;
 const NTE_BLUEPRINT_VIEW_WIDTH: f32 = 1_680.0;
 const NTE_BLUEPRINT_VIEW_HEIGHT: f32 = 760.0;
 const NTE_BLUEPRINT_COMFORT_WIDTH: f32 = 1_120.0;
 const NTE_BLUEPRINT_COMFORT_HEIGHT: f32 = 460.0;
 const NTE_BLUEPRINT_OVERVIEW_MAX_WIDTH: f32 = 2_400.0;
 const NTE_BLUEPRINT_OVERVIEW_MAX_HEIGHT: f32 = 760.0;
+const NTE_BLUEPRINT_CPP_STATE_TYPES: &[&str] = &[
+    "std::uint64_t",
+    "std::uintptr_t",
+    "std::int64_t",
+    "std::uint32_t",
+    "std::int32_t",
+    "bool",
+];
+const NTE_BLUEPRINT_CPP_LOCAL_TYPES: &[&str] = &[
+    "",
+    "const auto",
+    "auto",
+    "std::uint64_t",
+    "std::uintptr_t",
+    "std::int64_t",
+    "std::uint32_t",
+    "std::int32_t",
+    "bool",
+];
+const NTE_BLUEPRINT_CPP_BUILTIN_VALUES: &[&str] = &[
+    "0",
+    "1",
+    "false",
+    "true",
+    "nullptr",
+    "event.viewport",
+    "nte::game::viewport",
+    "nte::game::instance",
+    "nte::game::local_player",
+    "nte::game::player_controller",
+    "nte::game::player_state",
+    "nte::game::player_character",
+];
+const NTE_BLUEPRINT_LEGACY_BUILTIN_VALUES: &[&str] = &[
+    "0",
+    "1",
+    "False",
+    "True",
+    "None",
+    "event.viewport",
+    "game.viewport",
+    "game.instance",
+    "game.local_player",
+    "game.player_controller",
+    "game.player_state",
+    "game.player_character",
+];
+const NTE_BLUEPRINT_COMPARISON_OPERATORS: &[&str] = &["==", "!=", ">", ">=", "<", "<="];
 
 #[derive(Clone, Debug, PartialEq)]
 struct NteBlueprintEditorState {
+    language: NteSourceLanguage,
     declarations: Vec<NteBlueprintDeclaration>,
     statements: Vec<NteBlueprintStatement>,
     trailing_blank_lines: usize,
@@ -128,6 +228,7 @@ struct NteBlueprintEditorState {
 impl Default for NteBlueprintEditorState {
     fn default() -> Self {
         Self {
+            language: NteSourceLanguage::Cpp,
             declarations: Vec::new(),
             statements: Vec::new(),
             trailing_blank_lines: 0,
@@ -153,6 +254,10 @@ enum NteBlueprintStatementTemplate {
     GameValue,
     SdkCall,
     MemoryRead,
+    MemoryWrite,
+    Cache,
+    UnrealCall,
+    ProcessEvent,
     IpcEmit,
     IpcBind,
     Equipment,
@@ -554,216 +659,344 @@ struct NteEditorResponse {
 
 const NTE_COMPLETIONS: &[NteCompletion] = &[
     NteCompletion {
-        label: "nte_mod(4)",
-        insert: "nte_mod(4)",
+        label: "#include <nte/mod.hpp>",
+        insert: "#include <nte/mod.hpp>",
     },
     NteCompletion {
-        label: "mod(\"id\")",
-        insert: "mod(\"mod-id\")",
+        label: "NTE_SCRIPT(5);",
+        insert: "NTE_SCRIPT(5);",
     },
     NteCompletion {
-        label: "requires(\"viewport.tick\")",
-        insert: "requires(\"viewport.tick\")",
+        label: "NTE_MOD(\"id\");",
+        insert: "NTE_MOD(\"mod-id\");",
     },
     NteCompletion {
-        label: "requires(\"game.session\")",
-        insert: "requires(\"game.session\")",
+        label: "NTE_REQUIRES(\"capability\");",
+        insert: "NTE_REQUIRES(\"viewport.tick\");",
     },
     NteCompletion {
-        label: "requires(\"memory.read\")",
-        insert: "requires(\"memory.read\")",
+        label: "NTE_ROUTE_IPC(operation, \"kernel.service\");",
+        insert: "NTE_ROUTE_IPC(12, \"ipc.query_mod_events\");",
     },
     NteCompletion {
-        label: "requires(\"sdk.read\")",
-        insert: "requires(\"sdk.read\")",
+        label: "std::uint64_t state = 0;",
+        insert: "std::uint64_t state_name = 0;",
     },
     NteCompletion {
-        label: "requires(\"ipc\")",
-        insert: "requires(\"ipc\")",
-    },
-    NteCompletion {
-        label: "requires(\"equipment\")",
-        insert: "requires(\"equipment\")",
-    },
-    NteCompletion {
-        label: "requires(\"combat-clock\")",
-        insert: "requires(\"combat-clock\")",
-    },
-    NteCompletion {
-        label: "requires(\"log\")",
-        insert: "requires(\"log\")",
-    },
-    NteCompletion {
-        label: "route_ipc(operation, \"kernel.service\")",
-        insert: "route_ipc(1, \"equipment.equip_module\")",
-    },
-    NteCompletion {
-        label: "def on_viewport_tick(event):",
-        insert: "def on_viewport_tick(event):",
+        label: "void on_viewport_tick(const nte::viewport_tick_event& event)",
+        insert: "void on_viewport_tick(const nte::viewport_tick_event& event)\n{\n    \n}",
     },
     NteCompletion {
         label: "event.viewport",
         insert: "event.viewport",
     },
     NteCompletion {
-        label: "game.viewport",
-        insert: "game.viewport",
+        label: "nte::game::viewport",
+        insert: "nte::game::viewport",
     },
     NteCompletion {
-        label: "game.instance",
-        insert: "game.instance",
+        label: "nte::game::instance",
+        insert: "nte::game::instance",
     },
     NteCompletion {
-        label: "game.local_player",
-        insert: "game.local_player",
+        label: "nte::game::local_player",
+        insert: "nte::game::local_player",
     },
     NteCompletion {
-        label: "game.player_controller",
-        insert: "game.player_controller",
+        label: "nte::game::player_controller",
+        insert: "nte::game::player_controller",
     },
     NteCompletion {
-        label: "game.player_state",
-        insert: "game.player_state",
+        label: "nte::game::player_state",
+        insert: "nte::game::player_state",
     },
     NteCompletion {
-        label: "game.player_character",
-        insert: "game.player_character",
+        label: "nte::game::player_character",
+        insert: "nte::game::player_character",
     },
     NteCompletion {
-        label: "memory.read_ptr(base, offset)",
-        insert: "memory.read_ptr(",
+        label: "nte::memory::read_ptr(base, offset)",
+        insert: "nte::memory::read_ptr(",
     },
     NteCompletion {
-        label: "memory.read_u8(base, offset)",
-        insert: "memory.read_u8(",
+        label: "nte::memory::read_u8(base, offset)",
+        insert: "nte::memory::read_u8(",
     },
     NteCompletion {
-        label: "memory.read_u16(base, offset)",
-        insert: "memory.read_u16(",
+        label: "nte::memory::read_u16(base, offset)",
+        insert: "nte::memory::read_u16(",
     },
     NteCompletion {
-        label: "memory.read_u32(base, offset)",
-        insert: "memory.read_u32(",
+        label: "nte::memory::read_u32(base, offset)",
+        insert: "nte::memory::read_u32(",
     },
     NteCompletion {
-        label: "memory.read_u64(base, offset)",
-        insert: "memory.read_u64(",
+        label: "nte::memory::read_u64(base, offset)",
+        insert: "nte::memory::read_u64(",
     },
     NteCompletion {
-        label: "memory.read_i32(base, offset)",
-        insert: "memory.read_i32(",
+        label: "nte::memory::read_i32(base, offset)",
+        insert: "nte::memory::read_i32(",
     },
     NteCompletion {
-        label: "memory.tarray_first(base, offset)",
-        insert: "memory.tarray_first(",
+        label: "nte::memory::read_f32_milli(base, offset)",
+        insert: "nte::memory::read_f32_milli(",
     },
     NteCompletion {
-        label: "memory.tarray_count(base, offset)",
-        insert: "memory.tarray_count(",
+        label: "nte::memory::read_fname_hash(base, offset)",
+        insert: "nte::memory::read_fname_hash(",
     },
     NteCompletion {
-        label: "memory.is_readable(pointer, size)",
-        insert: "memory.is_readable(",
+        label: "nte::memory::tarray_first(base, offset)",
+        insert: "nte::memory::tarray_first(",
     },
     NteCompletion {
-        label: "sdk.player_character(controller)",
-        insert: "sdk.player_character(",
+        label: "nte::memory::tarray_count(base, offset)",
+        insert: "nte::memory::tarray_count(",
     },
     NteCompletion {
-        label: "sdk.player_state(controller)",
-        insert: "sdk.player_state(",
+        label: "nte::memory::is_readable(pointer, size)",
+        insert: "nte::memory::is_readable(",
     },
     NteCompletion {
-        label: "sdk.game_paused(controller)",
-        insert: "sdk.game_paused(",
+        label: "nte::memory::write_u8(base, offset, value)",
+        insert: "nte::memory::write_u8(",
     },
     NteCompletion {
-        label: "sdk.attack_target(character)",
-        insert: "sdk.attack_target(",
+        label: "nte::memory::write_u16(base, offset, value)",
+        insert: "nte::memory::write_u16(",
     },
     NteCompletion {
-        label: "sdk.current_weapon(character)",
-        insert: "sdk.current_weapon(",
+        label: "nte::memory::write_u32(base, offset, value)",
+        insert: "nte::memory::write_u32(",
     },
     NteCompletion {
-        label: "sdk.character_level(character)",
-        insert: "sdk.character_level(",
+        label: "nte::memory::write_u64(base, offset, value)",
+        insert: "nte::memory::write_u64(",
     },
     NteCompletion {
-        label: "sdk.character_hp_milli(character)",
-        insert: "sdk.character_hp_milli(",
+        label: "nte::memory::write_i32(base, offset, value)",
+        insert: "nte::memory::write_i32(",
     },
     NteCompletion {
-        label: "sdk.character_hp_max_milli(character, fixed)",
-        insert: "sdk.character_hp_max_milli(",
+        label: "nte::memory::write_f32_milli(base, offset, value)",
+        insert: "nte::memory::write_f32_milli(",
     },
     NteCompletion {
-        label: "sdk.character_is_alive(character)",
-        insert: "sdk.character_is_alive(",
+        label: "nte::unreal::find_function(object, \"Owner\", \"Function\")",
+        insert: "nte::unreal::find_function(",
     },
     NteCompletion {
-        label: "sdk.character_is_dead(character)",
-        insert: "sdk.character_is_dead(",
+        label: "nte::unreal::params_clear(size)",
+        insert: "nte::unreal::params_clear(",
     },
     NteCompletion {
-        label: "sdk.character_is_controlled(character)",
-        insert: "sdk.character_is_controlled(",
+        label: "nte::unreal::params_write_u8(offset, value)",
+        insert: "nte::unreal::params_write_u8(",
     },
     NteCompletion {
-        label: "sdk.character_slomo_milli(character)",
-        insert: "sdk.character_slomo_milli(",
+        label: "nte::unreal::params_write_u16(offset, value)",
+        insert: "nte::unreal::params_write_u16(",
     },
     NteCompletion {
-        label: "equipment.cache_missing()",
-        insert: "equipment.cache_missing()",
+        label: "nte::unreal::params_write_u32(offset, value)",
+        insert: "nte::unreal::params_write_u32(",
     },
     NteCompletion {
-        label: "equipment.cache_ready(player_state)",
-        insert: "equipment.cache_ready(",
+        label: "nte::unreal::params_write_u64(offset, value)",
+        insert: "nte::unreal::params_write_u64(",
     },
     NteCompletion {
-        label: "equipment.prepare(player_state)",
-        insert: "equipment.prepare(",
+        label: "nte::unreal::params_write_i32(offset, value)",
+        insert: "nte::unreal::params_write_i32(",
     },
     NteCompletion {
-        label: "combat_clock.pause_mask(controller)",
-        insert: "combat_clock.pause_mask(",
+        label: "nte::unreal::params_write_f32_milli(offset, value)",
+        insert: "nte::unreal::params_write_f32_milli(",
     },
     NteCompletion {
-        label: "combat_clock.state_flags(controller)",
-        insert: "combat_clock.state_flags(",
+        label: "nte::unreal::params_read_u8(offset)",
+        insert: "nte::unreal::params_read_u8(",
     },
     NteCompletion {
-        label: "combat_clock.forward(pause_mask, state_flags)",
-        insert: "combat_clock.forward(",
+        label: "nte::unreal::params_read_u16(offset)",
+        insert: "nte::unreal::params_read_u16(",
     },
     NteCompletion {
-        label: "ipc.bind(player_state, controller)",
-        insert: "ipc.bind(",
+        label: "nte::unreal::params_read_u32(offset)",
+        insert: "nte::unreal::params_read_u32(",
     },
     NteCompletion {
-        label: "ipc.emit(\"event\", value...)",
-        insert: "ipc.emit(\"event.name\", ",
+        label: "nte::unreal::params_read_u64(offset)",
+        insert: "nte::unreal::params_read_u64(",
     },
     NteCompletion {
-        label: "ipc.emit(\"pre.event\", value...)",
-        insert: "ipc.emit(\"pre.event.name\", ",
+        label: "nte::unreal::params_read_i32(offset)",
+        insert: "nte::unreal::params_read_i32(",
     },
     NteCompletion {
-        label: "ipc.emit(\"post.event\", value...)",
-        insert: "ipc.emit(\"post.event.name\", ",
+        label: "nte::unreal::params_read_f32_milli(offset)",
+        insert: "nte::unreal::params_read_f32_milli(",
     },
     NteCompletion {
-        label: "time.now_ms()",
-        insert: "time.now_ms()",
+        label: "nte::unreal::call(object, function)",
+        insert: "nte::unreal::call(",
     },
     NteCompletion {
-        label: "log.info(\"message\")",
-        insert: "log.info(\"message\")",
+        label: "nte::unreal::watch(object, function)",
+        insert: "nte::unreal::watch(",
     },
     NteCompletion {
-        label: "for name in range(COUNT):",
-        insert: "for index in range(1):",
+        label: "nte::unreal::unwatch(object, function)",
+        insert: "nte::unreal::unwatch(",
+    },
+    NteCompletion {
+        label: "nte::event::next()",
+        insert: "nte::event::next()",
+    },
+    NteCompletion {
+        label: "nte::event::object()",
+        insert: "nte::event::object()",
+    },
+    NteCompletion {
+        label: "nte::event::function()",
+        insert: "nte::event::function()",
+    },
+    NteCompletion {
+        label: "nte::event::params_size()",
+        insert: "nte::event::params_size()",
+    },
+    NteCompletion {
+        label: "nte::event::read_u8(offset)",
+        insert: "nte::event::read_u8(",
+    },
+    NteCompletion {
+        label: "nte::event::read_u16(offset)",
+        insert: "nte::event::read_u16(",
+    },
+    NteCompletion {
+        label: "nte::event::read_u32(offset)",
+        insert: "nte::event::read_u32(",
+    },
+    NteCompletion {
+        label: "nte::event::read_u64(offset)",
+        insert: "nte::event::read_u64(",
+    },
+    NteCompletion {
+        label: "nte::event::read_i32(offset)",
+        insert: "nte::event::read_i32(",
+    },
+    NteCompletion {
+        label: "nte::event::read_f32_milli(offset)",
+        insert: "nte::event::read_f32_milli(",
+    },
+    NteCompletion {
+        label: "nte::sdk::player_character(controller)",
+        insert: "nte::sdk::player_character(",
+    },
+    NteCompletion {
+        label: "nte::sdk::player_state(controller)",
+        insert: "nte::sdk::player_state(",
+    },
+    NteCompletion {
+        label: "nte::sdk::game_paused(controller)",
+        insert: "nte::sdk::game_paused(",
+    },
+    NteCompletion {
+        label: "nte::sdk::attack_target(character)",
+        insert: "nte::sdk::attack_target(",
+    },
+    NteCompletion {
+        label: "nte::sdk::current_weapon(character)",
+        insert: "nte::sdk::current_weapon(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_level(character)",
+        insert: "nte::sdk::character_level(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_hp_milli(character)",
+        insert: "nte::sdk::character_hp_milli(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_hp_max_milli(character, fixed)",
+        insert: "nte::sdk::character_hp_max_milli(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_is_alive(character)",
+        insert: "nte::sdk::character_is_alive(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_is_dead(character)",
+        insert: "nte::sdk::character_is_dead(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_is_controlled(character)",
+        insert: "nte::sdk::character_is_controlled(",
+    },
+    NteCompletion {
+        label: "nte::sdk::character_slomo_milli(character)",
+        insert: "nte::sdk::character_slomo_milli(",
+    },
+    NteCompletion {
+        label: "nte::cache::get(key)",
+        insert: "nte::cache::get(",
+    },
+    NteCompletion {
+        label: "nte::cache::remember(key, value)",
+        insert: "nte::cache::remember(",
+    },
+    NteCompletion {
+        label: "nte::equipment::cache_missing()",
+        insert: "nte::equipment::cache_missing()",
+    },
+    NteCompletion {
+        label: "nte::equipment::cache_ready(player_state)",
+        insert: "nte::equipment::cache_ready(",
+    },
+    NteCompletion {
+        label: "nte::equipment::prepare(player_state)",
+        insert: "nte::equipment::prepare(",
+    },
+    NteCompletion {
+        label: "nte::combat_clock::pause_mask(controller)",
+        insert: "nte::combat_clock::pause_mask(",
+    },
+    NteCompletion {
+        label: "nte::combat_clock::state_flags(controller)",
+        insert: "nte::combat_clock::state_flags(",
+    },
+    NteCompletion {
+        label: "nte::combat_clock::forward(pause_mask, state_flags)",
+        insert: "nte::combat_clock::forward(",
+    },
+    NteCompletion {
+        label: "nte::ipc::bind(player_state, controller)",
+        insert: "nte::ipc::bind(",
+    },
+    NteCompletion {
+        label: "nte::ipc::emit(\"event\", value...)",
+        insert: "nte::ipc::emit(\"event.name\", ",
+    },
+    NteCompletion {
+        label: "nte::ipc::emit(\"pre.event\", value...)",
+        insert: "nte::ipc::emit(\"pre.event.name\", ",
+    },
+    NteCompletion {
+        label: "nte::ipc::emit(\"post.event\", value...)",
+        insert: "nte::ipc::emit(\"post.event.name\", ",
+    },
+    NteCompletion {
+        label: "nte::time::now_ms()",
+        insert: "nte::time::now_ms()",
+    },
+    NteCompletion {
+        label: "nte::log::info(\"message\")",
+        insert: "nte::log::info(\"message\")",
+    },
+    NteCompletion {
+        label: "for (std::uint64_t index = 0; index < COUNT; ++index)",
+        insert: "for (std::uint64_t index = 0; index < 1; ++index)\n{\n    \n}",
     },
 ];
 
@@ -845,26 +1078,12 @@ impl DpsApp {
         let deployment_changed = egui::Frame::new()
             .fill(palette.chrome)
             .stroke(Stroke::new(1.0_f32, palette.border))
-            .inner_margin(egui::Margin::symmetric(10, 8))
+            .inner_margin(egui::Margin::symmetric(8, 5))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(t("Mod Studio")).size(18.0).strong());
                     ui.separator();
-                    ui.label(
-                        RichText::new(match self.mod_editor.mode {
-                            ModStudioMode::Blueprint => {
-                                t("Build game-side Mods with visual steps.")
-                            }
-                            ModStudioMode::Projection => {
-                                t("Preview damage changes without changing captured data.")
-                            }
-                        })
-                        .color(palette.muted),
-                    );
-                });
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(
                         &mut self.mod_editor.mode,
                         ModStudioMode::Blueprint,
@@ -879,7 +1098,8 @@ impl DpsApp {
                 if matches!(self.mod_editor.mode, ModStudioMode::Projection) {
                     return false;
                 }
-                ui.add_space(4.0);
+                ui.add_space(2.0);
+                let mut deployment_changed = false;
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(t("Game client")).color(palette.muted));
                     ui.add_enabled_ui(!pending && !dirty, |ui| {
@@ -929,18 +1149,13 @@ impl DpsApp {
                         }
                     }
                     ui.separator();
-                    ui.label(
-                        RichText::new(t("Saved changes apply automatically."))
-                            .small()
-                            .color(palette.muted),
+                    deployment_changed = self.mod_loader_management_contents(
+                        ui,
+                        self.mod_editor.selected_region,
+                        !pending && !dirty,
                     );
                 });
-                ui.add_space(4.0);
-                self.mod_loader_management_contents(
-                    ui,
-                    self.mod_editor.selected_region,
-                    !pending && !dirty,
-                )
+                deployment_changed
             })
             .inner;
         if matches!(self.mod_editor.mode, ModStudioMode::Projection) {
@@ -1535,57 +1750,19 @@ impl DpsApp {
         }
 
         let blueprint_before = blueprint.clone();
-        ui.add_space(6.0);
+        ui.add_space(3.0);
         nte_blueprint_toolbar(ui, &mut blueprint, palette);
-        ui.add_space(6.0);
-        nte_blueprint_advanced_settings(ui, &mut blueprint, palette);
-        ui.add_space(6.0);
-        let workspace_height = (ui.available_height() - 44.0).max(480.0);
-        let show_details = nte_blueprint_selected_block(&blueprint).is_some();
+        ui.add_space(3.0);
+        let workspace_height = (ui.available_height() - 30.0).max(480.0);
         let canvas_accepts_scroll = !self.mod_editor.source_editor_open;
-        ui.allocate_ui_with_layout(
+        let canvas = ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), workspace_height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                if show_details && blueprint_details_use_side_panel(ui.available_width()) {
-                    let workspace_width = ui.available_width();
-                    let details_max_width = (workspace_width * 0.42).min(520.0);
-                    egui::Panel::right("nte_blueprint_node_details_panel")
-                        .resizable(true)
-                        .default_size(400.0)
-                        .size_range(320.0..=details_max_width)
-                        .show_separator_line(false)
-                        .frame(egui::Frame::new().inner_margin(egui::Margin {
-                            left: 8,
-                            ..egui::Margin::ZERO
-                        }))
-                        .show_inside(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_salt("nte_blueprint_node_details_scroll")
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    nte_blueprint_inspector(ui, &mut blueprint, palette);
-                                });
-                        });
-                    egui::CentralPanel::default()
-                        .frame(egui::Frame::NONE)
-                        .show_inside(ui, |ui| {
-                            nte_blueprint_canvas(
-                                ui,
-                                &mut blueprint,
-                                palette,
-                                canvas_accepts_scroll,
-                            );
-                        });
-                } else {
-                    nte_blueprint_canvas(ui, &mut blueprint, palette, canvas_accepts_scroll);
-                    if show_details {
-                        ui.add_space(8.0);
-                        nte_blueprint_inspector(ui, &mut blueprint, palette);
-                    }
-                }
+                nte_blueprint_canvas(ui, &mut blueprint, palette, canvas_accepts_scroll);
             },
         );
+        nte_blueprint_inspector_window(ui.ctx(), &mut blueprint, palette, canvas.response.rect);
 
         if !nte_blueprint_document_eq(&blueprint, &blueprint_before) {
             sync_nte_blueprint_capabilities(&mut blueprint);
@@ -1845,7 +2022,7 @@ impl DpsApp {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("NTE Script v4")
+                            RichText::new("NTE C++")
                                 .monospace()
                                 .small()
                                 .color(Color32::WHITE),
@@ -2779,7 +2956,10 @@ const NTE_BLUEPRINT_CAPABILITIES: &[&str] = &[
     "viewport.tick",
     "game.session",
     "memory.read",
+    "memory.write",
     "sdk.read",
+    "unreal.reflection",
+    "process.event",
     "ipc",
     "equipment",
     "combat-clock",
@@ -2817,6 +2997,19 @@ fn sync_nte_blueprint_from_source(editor: &mut NteBlueprintEditorState, source: 
 }
 
 fn parse_nte_blueprint_source(source: &str) -> Result<NteBlueprintEditorState, String> {
+    if source
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('#'))
+        == Some("NTE_SCRIPT(5);")
+    {
+        parse_cpp_blueprint_source(source)
+    } else {
+        parse_legacy_blueprint_source(source)
+    }
+}
+
+fn parse_legacy_blueprint_source(source: &str) -> Result<NteBlueprintEditorState, String> {
     let lines = source.lines().collect::<Vec<_>>();
     if lines.first().copied() != Some("nte_mod(4)") {
         return Err(t("The first statement must be nte_mod(4)."));
@@ -2866,6 +3059,108 @@ fn parse_nte_blueprint_source(source: &str) -> Result<NteBlueprintEditorState, S
         leading_blank_lines = 0;
     }
     let mut editor = NteBlueprintEditorState {
+        language: NteSourceLanguage::Legacy,
+        declarations,
+        statements,
+        trailing_blank_lines: leading_blank_lines,
+        next_statement_id,
+        ..NteBlueprintEditorState::default()
+    };
+    layout_nte_blueprint(&mut editor);
+    editor.scene_rect = nte_blueprint_initial_scene(&editor);
+    Ok(editor)
+}
+
+fn parse_cpp_blueprint_source(source: &str) -> Result<NteBlueprintEditorState, String> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let script_index = lines
+        .iter()
+        .position(|line| line.trim() == "NTE_SCRIPT(5);")
+        .ok_or_else(|| t("The first statement must be NTE_SCRIPT(5)."))?;
+    let mod_index = lines
+        .iter()
+        .skip(script_index + 1)
+        .position(|line| line.trim().starts_with("NTE_MOD("))
+        .map(|index| script_index + 1 + index)
+        .ok_or_else(|| t("The script must declare NTE_MOD(\"id\")."))?;
+    let handler_index = lines
+        .iter()
+        .skip(mod_index + 1)
+        .position(|line| {
+            line.trim() == "void on_viewport_tick(const nte::viewport_tick_event& event)"
+        })
+        .map(|index| mod_index + 1 + index)
+        .ok_or_else(|| t("The script must define on_viewport_tick(event)."))?;
+    let declarations = lines[mod_index + 1..handler_index]
+        .iter()
+        .map(|line| parse_cpp_blueprint_declaration(line.trim()))
+        .collect();
+    let mut next = handler_index + 1;
+    while lines.get(next).is_some_and(|line| line.trim().is_empty()) {
+        next += 1;
+    }
+    if lines.get(next).map(|line| line.trim()) != Some("{") {
+        return Err(t("The on_viewport_tick function must open with a brace."));
+    }
+    next += 1;
+
+    let mut depth = 1usize;
+    let mut statements = Vec::new();
+    let mut leading_blank_lines = 0;
+    let mut next_statement_id = 1;
+    while let Some(raw) = lines.get(next) {
+        let line_number = next + 1;
+        next += 1;
+        let line = raw.trim();
+        if line.is_empty() {
+            leading_blank_lines += 1;
+            continue;
+        }
+        if line == "{" {
+            depth += 1;
+            continue;
+        }
+        if line == "}" {
+            depth = depth.checked_sub(1).ok_or_else(|| {
+                tf(
+                    "Blueprint import found an unmatched brace on line {}.",
+                    &[&line_number.to_string()],
+                )
+            })?;
+            if depth == 0 {
+                break;
+            }
+            continue;
+        }
+        if depth == 0 || depth > 8 {
+            return Err(t("NTE C++ blocks can be nested at most eight levels."));
+        }
+        let source = if line.starts_with("//") {
+            line.to_owned()
+        } else {
+            line.strip_suffix(';').unwrap_or(line).trim().to_owned()
+        };
+        statements.push(NteBlueprintStatement {
+            id: next_statement_id,
+            indent: (depth - 1) as u8,
+            leading_blank_lines,
+            source,
+            position: egui::Pos2::ZERO,
+            description: String::new(),
+        });
+        next_statement_id += 1;
+        leading_blank_lines = 0;
+    }
+    if depth != 0 {
+        return Err(t(
+            "The on_viewport_tick function is missing a closing brace.",
+        ));
+    }
+    if lines[next..].iter().any(|line| !line.trim().is_empty()) {
+        return Err(t("Only one on_viewport_tick function is supported."));
+    }
+    let mut editor = NteBlueprintEditorState {
+        language: NteSourceLanguage::Cpp,
         declarations,
         statements,
         trailing_blank_lines: leading_blank_lines,
@@ -2888,6 +3183,7 @@ fn parse_nte_blueprint_declaration(line: &str) -> NteBlueprintDeclaration {
         && let Some((name, value)) = declaration.split_once('=')
     {
         return NteBlueprintDeclaration::State {
+            type_name: "std::uint64_t".to_owned(),
             name: name.trim().to_owned(),
             value: value.trim().to_owned(),
         };
@@ -2911,7 +3207,53 @@ fn parse_nte_blueprint_declaration(line: &str) -> NteBlueprintDeclaration {
     NteBlueprintDeclaration::Other(line.to_owned())
 }
 
+fn parse_cpp_blueprint_declaration(line: &str) -> NteBlueprintDeclaration {
+    if let Some(capability) = line
+        .strip_prefix("NTE_REQUIRES(\"")
+        .and_then(|line| line.strip_suffix("\");"))
+    {
+        return NteBlueprintDeclaration::Capability(capability.to_owned());
+    }
+    if let Some((type_name, declaration)) = line.strip_suffix(';').and_then(|line| {
+        NTE_BLUEPRINT_CPP_STATE_TYPES.iter().find_map(|type_name| {
+            line.strip_prefix(&format!("{type_name} "))
+                .map(|declaration| (*type_name, declaration))
+        })
+    }) && let Some((name, value)) = declaration.split_once('=')
+    {
+        return NteBlueprintDeclaration::State {
+            type_name: type_name.to_owned(),
+            name: name.trim().to_owned(),
+            value: value.trim().to_owned(),
+        };
+    }
+    if let Some(arguments) = line
+        .strip_prefix("NTE_ROUTE_IPC(")
+        .and_then(|line| line.strip_suffix(");"))
+        && let Some((operation, service)) = arguments.split_once(',')
+    {
+        let service = service.trim();
+        if let Some(service) = service
+            .strip_prefix('"')
+            .and_then(|service| service.strip_suffix('"'))
+        {
+            return NteBlueprintDeclaration::IpcRoute {
+                operation: operation.trim().to_owned(),
+                service: service.to_owned(),
+            };
+        }
+    }
+    NteBlueprintDeclaration::Other(line.to_owned())
+}
+
 fn render_nte_blueprint_source(id: &str, editor: &NteBlueprintEditorState) -> String {
+    match editor.language {
+        NteSourceLanguage::Legacy => render_legacy_blueprint_source(id, editor),
+        NteSourceLanguage::Cpp => render_cpp_blueprint_source(id, editor),
+    }
+}
+
+fn render_legacy_blueprint_source(id: &str, editor: &NteBlueprintEditorState) -> String {
     use std::fmt::Write as _;
 
     let mut source = String::new();
@@ -2922,7 +3264,7 @@ fn render_nte_blueprint_source(id: &str, editor: &NteBlueprintEditorState) -> St
             NteBlueprintDeclaration::Capability(capability) => {
                 let _ = writeln!(source, "requires({capability:?})");
             }
-            NteBlueprintDeclaration::State { name, value } => {
+            NteBlueprintDeclaration::State { name, value, .. } => {
                 let _ = writeln!(source, "state.{name} = {value}");
             }
             NteBlueprintDeclaration::IpcRoute { operation, service } => {
@@ -2948,11 +3290,79 @@ fn render_nte_blueprint_source(id: &str, editor: &NteBlueprintEditorState) -> St
     source
 }
 
+fn render_cpp_blueprint_source(id: &str, editor: &NteBlueprintEditorState) -> String {
+    use std::fmt::Write as _;
+
+    let mut source = String::new();
+    let _ = writeln!(source, "#include <nte/mod.hpp>");
+    let _ = writeln!(source);
+    let _ = writeln!(source, "NTE_SCRIPT(5);");
+    let _ = writeln!(source, "NTE_MOD({id:?});");
+    for declaration in &editor.declarations {
+        match declaration {
+            NteBlueprintDeclaration::Capability(capability) => {
+                let _ = writeln!(source, "NTE_REQUIRES({capability:?});");
+            }
+            NteBlueprintDeclaration::State {
+                type_name,
+                name,
+                value,
+            } => {
+                let _ = writeln!(source, "{type_name} {name} = {value};");
+            }
+            NteBlueprintDeclaration::IpcRoute { operation, service } => {
+                let _ = writeln!(source, "NTE_ROUTE_IPC({operation}, {service:?});");
+            }
+            NteBlueprintDeclaration::Other(line) => {
+                let _ = writeln!(source, "{line}");
+            }
+        }
+    }
+    let _ = writeln!(
+        source,
+        "void on_viewport_tick(const nte::viewport_tick_event& event)"
+    );
+    let _ = writeln!(source, "{{");
+    let mut open_blocks = 0usize;
+    for statement in &editor.statements {
+        let indent = statement.indent as usize;
+        while open_blocks > indent {
+            open_blocks -= 1;
+            let _ = writeln!(source, "{}}}", "    ".repeat(open_blocks + 1));
+        }
+        for _ in 0..statement.leading_blank_lines {
+            source.push('\n');
+        }
+        let statement_source = statement.source.trim();
+        source.push_str(&"    ".repeat(indent + 1));
+        source.push_str(statement_source);
+        if statement_source.starts_with("//") {
+            source.push('\n');
+        } else if nte_blueprint_statement_opens_block(statement_source) {
+            source.push('\n');
+            let _ = writeln!(source, "{}{{", "    ".repeat(indent + 1));
+            open_blocks = indent + 1;
+        } else {
+            source.push_str(";\n");
+        }
+    }
+    while open_blocks > 0 {
+        open_blocks -= 1;
+        let _ = writeln!(source, "{}}}", "    ".repeat(open_blocks + 1));
+    }
+    let _ = writeln!(source, "}}");
+    for _ in 0..editor.trailing_blank_lines {
+        source.push('\n');
+    }
+    source
+}
+
 fn nte_blueprint_document_eq(
     left: &NteBlueprintEditorState,
     right: &NteBlueprintEditorState,
 ) -> bool {
     left.declarations == right.declarations
+        && left.language == right.language
         && left.trailing_blank_lines == right.trailing_blank_lines
         && left.statements.len() == right.statements.len()
         && left
@@ -3011,9 +3421,36 @@ fn required_nte_blueprint_capabilities(editor: &NteBlueprintEditorState) -> Vec<
                                 nte_blueprint_statement_uses_namespace(source, "game.")
                             }
                             "memory.read" => {
-                                nte_blueprint_statement_uses_namespace(source, "memory.")
+                                ["memory.read_", "memory.tarray_", "memory.is_readable"]
+                                    .iter()
+                                    .any(|namespace| {
+                                        nte_blueprint_statement_uses_namespace(source, namespace)
+                                    })
+                            }
+                            "memory.write" => {
+                                nte_blueprint_statement_uses_namespace(source, "memory.write_")
                             }
                             "sdk.read" => nte_blueprint_statement_uses_namespace(source, "sdk."),
+                            "unreal.reflection" => {
+                                ["unreal.find_function", "unreal.params_", "unreal.call"]
+                                    .iter()
+                                    .any(|namespace| {
+                                        nte_blueprint_statement_uses_namespace(source, namespace)
+                                    })
+                            }
+                            "process.event" => [
+                                "unreal.watch",
+                                "unreal.unwatch",
+                                "event.next(",
+                                "event.object(",
+                                "event.function(",
+                                "event.params_size(",
+                                "event.read_",
+                            ]
+                            .iter()
+                            .any(|namespace| {
+                                nte_blueprint_statement_uses_namespace(source, namespace)
+                            }),
                             "ipc" => nte_blueprint_statement_uses_namespace(source, "ipc."),
                             "equipment" => {
                                 nte_blueprint_statement_uses_namespace(source, "equipment.")
@@ -3031,6 +3468,14 @@ fn required_nte_blueprint_capabilities(editor: &NteBlueprintEditorState) -> Vec<
 }
 
 fn nte_blueprint_statement_uses_namespace(source: &str, namespace: &str) -> bool {
+    nte_blueprint_statement_uses_token(source, namespace)
+        || nte_blueprint_statement_uses_token(
+            source,
+            &format!("nte::{}", namespace.replace('.', "::")),
+        )
+}
+
+fn nte_blueprint_statement_uses_token(source: &str, namespace: &str) -> bool {
     let bytes = source.as_bytes();
     let namespace = namespace.as_bytes();
     let mut in_string = false;
@@ -3039,6 +3484,13 @@ fn nte_blueprint_statement_uses_namespace(source: &str, namespace: &str) -> bool
         match bytes[index] {
             b'"' => in_string = !in_string,
             b'#' if !in_string => break,
+            b'/' if !in_string
+                && bytes
+                    .get(index + 1)
+                    .is_some_and(|character| *character == b'/') =>
+            {
+                break;
+            }
             _ => {}
         }
         if !in_string
@@ -3046,7 +3498,12 @@ fn nte_blueprint_statement_uses_namespace(source: &str, namespace: &str) -> bool
             && (index == 0
                 || !matches!(
                     bytes[index - 1],
-                    b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.'
+                    b'a'..=b'z'
+                        | b'A'..=b'Z'
+                        | b'0'..=b'9'
+                        | b'_'
+                        | b'.'
+                        | b':'
                 ))
         {
             return true;
@@ -3065,7 +3522,7 @@ fn validate_nte_blueprint(editor: &NteBlueprintEditorState) -> Result<(), String
     }
     for declaration in &editor.declarations {
         match declaration {
-            NteBlueprintDeclaration::State { name, value } => {
+            NteBlueprintDeclaration::State { name, value, .. } => {
                 if !is_nte_blueprint_identifier(name) {
                     return Err(tf("Invalid state variable name: {}", &[name]));
                 }
@@ -3171,7 +3628,10 @@ fn is_nte_blueprint_identifier(value: &str) -> bool {
 }
 
 fn is_nte_blueprint_integer(value: &str) -> bool {
-    if matches!(value, "None" | "False" | "True") {
+    if matches!(
+        value,
+        "None" | "False" | "True" | "nullptr" | "false" | "true"
+    ) {
         return true;
     }
     if let Some(value) = value
@@ -3205,20 +3665,22 @@ fn nte_blueprint_statement_opens_block(source: &str) -> bool {
             | NteBlueprintStatementKind::Elif
             | NteBlueprintStatementKind::Else
             | NteBlueprintStatementKind::Loop
-    ) && source.trim_end().ends_with(':')
+    ) && (source.trim_end().ends_with(':')
+        || source.trim_end().ends_with(')')
+        || source.trim() == "else")
 }
 
 fn nte_blueprint_statement_kind(source: &str) -> NteBlueprintStatementKind {
     let source = source.trim();
-    if source.starts_with('#') {
+    if source.starts_with('#') || source.starts_with("//") {
         NteBlueprintStatementKind::Comment
-    } else if source.starts_with("if ") {
+    } else if source.starts_with("if ") || source.starts_with("if (") {
         NteBlueprintStatementKind::If
-    } else if source.starts_with("elif ") {
+    } else if source.starts_with("elif ") || source.starts_with("else if (") {
         NteBlueprintStatementKind::Elif
-    } else if source == "else:" {
+    } else if matches!(source, "else:" | "else") {
         NteBlueprintStatementKind::Else
-    } else if source.starts_with("for ") {
+    } else if source.starts_with("for ") || source.starts_with("for (") {
         NteBlueprintStatementKind::Loop
     } else if split_nte_blueprint_assignment(source).is_some() {
         NteBlueprintStatementKind::Assignment
@@ -3228,6 +3690,28 @@ fn nte_blueprint_statement_kind(source: &str) -> NteBlueprintStatementKind {
 }
 
 fn nte_blueprint_blocks(editor: &NteBlueprintEditorState) -> Vec<NteBlueprintBlockRange> {
+    if editor.language == NteSourceLanguage::Cpp {
+        let mut blocks = Vec::new();
+        let mut start = 0;
+        while start < editor.statements.len() {
+            let base_indent = editor.statements[start].indent;
+            let mut end = start + 1;
+            if !nte_blueprint_statement_opens_block(&editor.statements[start].source) {
+                while let Some(statement) = editor.statements.get(end) {
+                    if statement.indent != base_indent
+                        || statement.leading_blank_lines != 0
+                        || nte_blueprint_statement_opens_block(&statement.source)
+                    {
+                        break;
+                    }
+                    end += 1;
+                }
+            }
+            blocks.push(NteBlueprintBlockRange { start, end });
+            start = end;
+        }
+        return blocks;
+    }
     let mut blocks = Vec::new();
     let mut start = 0;
     while start < editor.statements.len() {
@@ -3245,6 +3729,256 @@ fn nte_blueprint_blocks(editor: &NteBlueprintEditorState) -> Vec<NteBlueprintBlo
         start = end;
     }
     blocks
+}
+
+fn nte_blueprint_block_subtree_end(
+    editor: &NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+) -> usize {
+    let indent = editor.statements[block.start].indent;
+    editor.statements[block.end..]
+        .iter()
+        .position(|statement| statement.indent <= indent)
+        .map_or(editor.statements.len(), |offset| block.end + offset)
+}
+
+fn nte_blueprint_can_indent_block(
+    editor: &NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+) -> bool {
+    let indent = editor.statements[block.start].indent;
+    editor.statements[..block.start]
+        .iter()
+        .rposition(|statement| statement.indent <= indent)
+        .is_some_and(|index| {
+            editor.statements[index].indent == indent
+                && nte_blueprint_statement_opens_block(&editor.statements[index].source)
+        })
+}
+
+fn nte_blueprint_can_outdent_block(
+    editor: &NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+) -> bool {
+    let indent = editor.statements[block.start].indent;
+    if indent == 0 {
+        return false;
+    }
+    let Some(parent) = editor.statements[..block.start]
+        .iter()
+        .rposition(|statement| statement.indent < indent)
+    else {
+        return false;
+    };
+    if editor.statements[parent].indent + 1 != indent
+        || !nte_blueprint_statement_opens_block(&editor.statements[parent].source)
+    {
+        return false;
+    }
+    let subtree_end = nte_blueprint_block_subtree_end(editor, block);
+    let parent_end = editor.statements[parent + 1..]
+        .iter()
+        .position(|statement| statement.indent <= editor.statements[parent].indent)
+        .map_or(editor.statements.len(), |offset| parent + 1 + offset);
+    editor.statements[parent + 1..block.start]
+        .iter()
+        .chain(editor.statements[subtree_end..parent_end].iter())
+        .any(|statement| statement.indent == indent)
+}
+
+fn adjust_nte_blueprint_block_indent(
+    editor: &mut NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+    increase: bool,
+) {
+    let subtree_end = nte_blueprint_block_subtree_end(editor, block);
+    if block.start != 0 {
+        editor.statements[block.start].leading_blank_lines =
+            editor.statements[block.start].leading_blank_lines.max(1);
+    }
+    for statement in &mut editor.statements[block.start..subtree_end] {
+        if increase {
+            statement.indent += 1;
+        } else {
+            statement.indent -= 1;
+        }
+    }
+}
+
+fn nte_blueprint_block_flow_kind(
+    editor: &NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+) -> NteBlueprintStatementKind {
+    let last = &editor.statements[block.end - 1].source;
+    if nte_blueprint_statement_opens_block(last) {
+        nte_blueprint_statement_kind(last)
+    } else {
+        nte_blueprint_statement_kind(&editor.statements[block.start].source)
+    }
+}
+
+fn nte_blueprint_control_flow(editor: &NteBlueprintEditorState) -> NteBlueprintControlFlow {
+    let blocks = nte_blueprint_blocks(editor);
+    let mut edges = Vec::new();
+    if editor.language == NteSourceLanguage::Cpp {
+        if !blocks.is_empty() {
+            let indent = editor.statements[blocks[0].start].indent;
+            build_nte_cpp_flow_sequence(editor, &blocks, 0, blocks.len(), indent, None, &mut edges);
+        }
+    } else {
+        for index in 0..blocks.len().saturating_sub(1) {
+            edges.push(NteBlueprintFlowEdge {
+                from: index,
+                to: index + 1,
+                kind: NteBlueprintFlowEdgeKind::Next,
+            });
+        }
+    }
+    NteBlueprintControlFlow { blocks, edges }
+}
+
+fn build_nte_cpp_flow_sequence(
+    editor: &NteBlueprintEditorState,
+    blocks: &[NteBlueprintBlockRange],
+    start: usize,
+    end: usize,
+    indent: u8,
+    continuation: Option<usize>,
+    edges: &mut Vec<NteBlueprintFlowEdge>,
+) -> Option<usize> {
+    let top_level = (start..end)
+        .filter(|index| editor.statements[blocks[*index].start].indent == indent)
+        .collect::<Vec<_>>();
+    if top_level.is_empty() {
+        return continuation;
+    }
+
+    let mut units = Vec::new();
+    let mut cursor = 0;
+    while cursor < top_level.len() {
+        let index = top_level[cursor];
+        let kind = nte_blueprint_block_flow_kind(editor, blocks[index]);
+        if kind == NteBlueprintStatementKind::If {
+            let mut branch_end = cursor + 1;
+            while branch_end < top_level.len()
+                && matches!(
+                    nte_blueprint_block_flow_kind(editor, blocks[top_level[branch_end]]),
+                    NteBlueprintStatementKind::Elif | NteBlueprintStatementKind::Else
+                )
+            {
+                branch_end += 1;
+            }
+            units.push((cursor, branch_end));
+            cursor = branch_end;
+        } else {
+            units.push((cursor, cursor + 1));
+            cursor += 1;
+        }
+    }
+
+    let mut next_entry = continuation;
+    for (unit_start, unit_end) in units.into_iter().rev() {
+        let first = top_level[unit_start];
+        let first_kind = nte_blueprint_block_flow_kind(editor, blocks[first]);
+        if first_kind == NteBlueprintStatementKind::If {
+            for branch_offset in (unit_start..unit_end).rev() {
+                let branch = top_level[branch_offset];
+                let branch_body_end = if branch_offset + 1 < unit_end {
+                    top_level[branch_offset + 1]
+                } else if unit_end < top_level.len() {
+                    top_level[unit_end]
+                } else {
+                    end
+                };
+                let branch_kind = nte_blueprint_block_flow_kind(editor, blocks[branch]);
+                let body_entry = build_nte_cpp_flow_sequence(
+                    editor,
+                    blocks,
+                    branch + 1,
+                    branch_body_end,
+                    indent + 1,
+                    next_entry,
+                    edges,
+                );
+                if branch_kind == NteBlueprintStatementKind::Else {
+                    if let Some(to) = body_entry {
+                        push_nte_blueprint_flow_edge(
+                            edges,
+                            branch,
+                            to,
+                            NteBlueprintFlowEdgeKind::Next,
+                        );
+                    }
+                } else {
+                    if let Some(to) = body_entry {
+                        push_nte_blueprint_flow_edge(
+                            edges,
+                            branch,
+                            to,
+                            NteBlueprintFlowEdgeKind::True,
+                        );
+                    }
+                    let false_target = if branch_offset + 1 < unit_end {
+                        Some(top_level[branch_offset + 1])
+                    } else {
+                        next_entry
+                    };
+                    if let Some(to) = false_target {
+                        push_nte_blueprint_flow_edge(
+                            edges,
+                            branch,
+                            to,
+                            NteBlueprintFlowEdgeKind::False,
+                        );
+                    }
+                }
+            }
+            next_entry = Some(first);
+            continue;
+        }
+
+        let item_end = if unit_end < top_level.len() {
+            top_level[unit_end]
+        } else {
+            end
+        };
+        if first_kind == NteBlueprintStatementKind::Loop {
+            let body_entry = build_nte_cpp_flow_sequence(
+                editor,
+                blocks,
+                first + 1,
+                item_end,
+                indent + 1,
+                Some(first),
+                edges,
+            );
+            if let Some(to) = body_entry {
+                push_nte_blueprint_flow_edge(edges, first, to, NteBlueprintFlowEdgeKind::True);
+            }
+            if let Some(to) = next_entry {
+                push_nte_blueprint_flow_edge(edges, first, to, NteBlueprintFlowEdgeKind::False);
+            }
+        } else if let Some(to) = next_entry {
+            push_nte_blueprint_flow_edge(edges, first, to, NteBlueprintFlowEdgeKind::Next);
+        }
+        next_entry = Some(first);
+    }
+    next_entry
+}
+
+fn push_nte_blueprint_flow_edge(
+    edges: &mut Vec<NteBlueprintFlowEdge>,
+    from: usize,
+    to: usize,
+    mut kind: NteBlueprintFlowEdgeKind,
+) {
+    if to <= from {
+        kind = NteBlueprintFlowEdgeKind::Loop;
+    }
+    let edge = NteBlueprintFlowEdge { from, to, kind };
+    if !edges.contains(&edge) {
+        edges.push(edge);
+    }
 }
 
 fn nte_blueprint_metadata(editor: &NteBlueprintEditorState) -> ModScriptBlueprint {
@@ -3343,8 +4077,17 @@ fn nte_blueprint_selected_block(
     })
 }
 
-fn nte_blueprint_block_height(block: NteBlueprintBlockRange) -> f32 {
-    if block.end - block.start == 1 {
+fn nte_blueprint_block_height(
+    editor: &NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+) -> f32 {
+    if editor.language == NteSourceLanguage::Cpp
+        && nte_blueprint_statement_opens_block(&editor.statements[block.start].source)
+    {
+        68.0
+    } else if editor.language == NteSourceLanguage::Cpp {
+        48.0 + (block.end - block.start) as f32 * 15.0
+    } else if block.end - block.start == 1 {
         88.0
     } else {
         92.0
@@ -3373,15 +4116,17 @@ fn nte_blueprint_block_category(
     editor: &NteBlueprintEditorState,
     block: NteBlueprintBlockRange,
 ) -> NteBlueprintBlockCategory {
-    if editor.statements[block.start..block.end]
+    let has_flow = editor.statements[block.start..block.end]
         .iter()
-        .any(|statement| nte_blueprint_call_name(&statement.source).is_some())
-    {
+        .any(|statement| nte_blueprint_statement_opens_block(&statement.source));
+    let has_action = editor.statements[block.start..block.end]
+        .iter()
+        .any(|statement| nte_blueprint_call_name(&statement.source).is_some());
+    if editor.language == NteSourceLanguage::Cpp && has_flow {
+        NteBlueprintBlockCategory::Flow
+    } else if has_action {
         NteBlueprintBlockCategory::Action
-    } else if editor.statements[block.start..block.end]
-        .iter()
-        .any(|statement| nte_blueprint_statement_opens_block(&statement.source))
-    {
+    } else if has_flow {
         NteBlueprintBlockCategory::Flow
     } else {
         NteBlueprintBlockCategory::Values
@@ -3392,6 +4137,15 @@ fn nte_blueprint_block_title(
     editor: &NteBlueprintEditorState,
     block: NteBlueprintBlockRange,
 ) -> String {
+    match nte_blueprint_block_flow_kind(editor, block) {
+        NteBlueprintStatementKind::If => return t("Conditional Branch"),
+        NteBlueprintStatementKind::Elif => return t("Alternative Condition"),
+        NteBlueprintStatementKind::Else => return t("Fallback Branch"),
+        NteBlueprintStatementKind::Loop => return t("Repeat actions"),
+        NteBlueprintStatementKind::Assignment
+        | NteBlueprintStatementKind::Call
+        | NteBlueprintStatementKind::Comment => {}
+    }
     if let Some((title, _)) = nte_blueprint_known_step(editor, block) {
         return t(title);
     }
@@ -3455,6 +4209,28 @@ fn nte_blueprint_block_title(
     }
 }
 
+fn nte_blueprint_block_code_lines(
+    editor: &NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+) -> Vec<String> {
+    if editor.language != NteSourceLanguage::Cpp {
+        return Vec::new();
+    }
+    editor.statements[block.start..block.end]
+        .iter()
+        .map(|statement| {
+            let source = statement.source.trim();
+            let source = if source.starts_with("//") || nte_blueprint_statement_opens_block(source)
+            {
+                source.to_owned()
+            } else {
+                format!("{source};")
+            };
+            nte_blueprint_truncate(&source, 46)
+        })
+        .collect()
+}
+
 fn nte_blueprint_known_step(
     editor: &NteBlueprintEditorState,
     block: NteBlueprintBlockRange,
@@ -3463,7 +4239,9 @@ fn nte_blueprint_known_step(
         .iter()
         .map(|statement| statement.source.as_str())
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n")
+        .replace("nte::", "")
+        .replace("::", ".");
     if source.contains("equipment.cache_ready(") || source.contains("equipment.prepare(") {
         Some((
             "Enable equipment actions",
@@ -3480,6 +4258,8 @@ fn nte_blueprint_known_step(
         || source.contains("combat_clock.state_flags(")
     {
         Some(("Read combat state", "Read pause and combat status."))
+    } else if source.contains("cache.remember(") {
+        Some(("Cache data", "Keep the first value for each key."))
     } else if source.contains("state.last_") && source.contains("changed") {
         Some(("Detect state changes", "Continue when the state changes."))
     } else if source.contains("ipc.emit(") {
@@ -3501,7 +4281,10 @@ fn nte_blueprint_call_name(source: &str) -> Option<&str> {
         .char_indices()
         .rev()
         .find(|(_, character)| {
-            !character.is_ascii_alphanumeric() && *character != '_' && *character != '.'
+            !character.is_ascii_alphanumeric()
+                && *character != '_'
+                && *character != '.'
+                && *character != ':'
         })
         .map_or(0, |(index, character)| index + character.len_utf8());
     let call = &prefix[start..];
@@ -3543,28 +4326,161 @@ fn split_nte_blueprint_assignment(source: &str) -> Option<(&str, &str)> {
     None
 }
 
+fn split_nte_blueprint_typed_target(target: &str) -> (&str, &str) {
+    for type_name in NTE_BLUEPRINT_CPP_LOCAL_TYPES
+        .iter()
+        .copied()
+        .filter(|type_name| !type_name.is_empty())
+    {
+        if let Some(name) = target
+            .strip_prefix(type_name)
+            .and_then(|target| target.strip_prefix(' '))
+        {
+            return (type_name, name.trim());
+        }
+    }
+    ("", target.trim())
+}
+
+fn split_nte_blueprint_comparison(condition: &str) -> Option<(&str, &str, &str)> {
+    let bytes = condition.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => in_string = !in_string,
+            b'(' if !in_string => depth += 1,
+            b')' if !in_string && depth != 0 => depth -= 1,
+            _ => {}
+        }
+        if !in_string && depth == 0 {
+            for operator in ["==", "!=", ">=", "<=", ">", "<"] {
+                if bytes[index..].starts_with(operator.as_bytes()) {
+                    let left = condition[..index].trim();
+                    let right = condition[index + operator.len()..].trim();
+                    if !left.is_empty()
+                        && !right.is_empty()
+                        && !left.contains("&&")
+                        && !left.contains("||")
+                        && !right.contains("&&")
+                        && !right.contains("||")
+                    {
+                        return Some((left, operator, right));
+                    }
+                }
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn nte_blueprint_value_options(editor: &NteBlueprintEditorState) -> Vec<String> {
+    let builtins = match editor.language {
+        NteSourceLanguage::Legacy => NTE_BLUEPRINT_LEGACY_BUILTIN_VALUES,
+        NteSourceLanguage::Cpp => NTE_BLUEPRINT_CPP_BUILTIN_VALUES,
+    };
+    let mut options = builtins
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
+    for declaration in &editor.declarations {
+        if let NteBlueprintDeclaration::State { name, .. } = declaration
+            && !options.contains(name)
+        {
+            options.push(name.clone());
+        }
+    }
+    for statement in &editor.statements {
+        if let Some((target, _)) = split_nte_blueprint_assignment(&statement.source) {
+            let (_, name) = split_nte_blueprint_typed_target(target);
+            if !name.is_empty() && !options.iter().any(|option| option == name) {
+                options.push(name.to_owned());
+            }
+        }
+    }
+    options
+}
+
+fn nte_blueprint_value_option_label(value: &str) -> String {
+    match value {
+        "false" | "False" => format!("{} · {value}", t("False")),
+        "true" | "True" => format!("{} · {value}", t("True")),
+        _ => value.to_owned(),
+    }
+}
+
+fn nte_blueprint_value_selector(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    value: &mut String,
+    options: &[String],
+) -> bool {
+    const CUSTOM_VALUE: &str = "\u{0}custom";
+
+    let mut selection = if options.iter().any(|option| option == value) {
+        value.clone()
+    } else {
+        CUSTOM_VALUE.to_owned()
+    };
+    let previous = selection.clone();
+    egui::ComboBox::from_id_salt(id)
+        .width(ui.available_width())
+        .selected_text(if selection == CUSTOM_VALUE {
+            t("Custom expression")
+        } else {
+            nte_blueprint_value_option_label(&selection)
+        })
+        .show_ui(ui, |ui| {
+            for option in options {
+                ui.selectable_value(
+                    &mut selection,
+                    option.clone(),
+                    nte_blueprint_value_option_label(option),
+                );
+            }
+            ui.separator();
+            ui.selectable_value(
+                &mut selection,
+                CUSTOM_VALUE.to_owned(),
+                t("Custom expression"),
+            );
+        });
+
+    let mut changed = false;
+    if selection != previous {
+        if selection == CUSTOM_VALUE {
+            value.clear();
+        } else {
+            value.clone_from(&selection);
+        }
+        changed = true;
+    }
+    if selection == CUSTOM_VALUE {
+        changed |= ui
+            .add(
+                egui::TextEdit::singleline(value)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(ui.available_width()),
+            )
+            .changed();
+    }
+    changed
+}
+
 fn nte_blueprint_advanced_settings(
     ui: &mut egui::Ui,
     editor: &mut NteBlueprintEditorState,
     palette: ModEditorPalette,
 ) {
-    egui::CollapsingHeader::new(
-        RichText::new(t("Advanced Mod settings"))
+    ui.label(
+        RichText::new(t("Configure persistent values and desktop commands."))
             .small()
-            .strong()
             .color(palette.muted),
-    )
-    .id_salt("nte_blueprint_advanced_settings")
-    .default_open(false)
-    .show(ui, |ui| {
-        ui.label(
-            RichText::new(t("Configure persistent values and desktop commands."))
-                .small()
-                .color(palette.muted),
-        );
-        ui.add_space(4.0);
-        nte_blueprint_manifest(ui, editor, palette);
-    });
+    );
+    ui.add_space(4.0);
+    nte_blueprint_manifest(ui, editor, palette);
 }
 
 fn nte_blueprint_manifest(
@@ -3611,7 +4527,7 @@ fn nte_blueprint_manifest(
             .id_salt("nte_blueprint_manifest_state")
             .default_open(false)
             .show(ui, |ui| {
-                nte_blueprint_manifest_state(ui, editor, palette);
+                nte_blueprint_manifest_state(ui, editor);
             });
             let route_count = editor
                 .declarations
@@ -3632,11 +4548,7 @@ fn nte_blueprint_manifest(
         });
 }
 
-fn nte_blueprint_manifest_state(
-    ui: &mut egui::Ui,
-    editor: &mut NteBlueprintEditorState,
-    palette: ModEditorPalette,
-) {
+fn nte_blueprint_manifest_state(ui: &mut egui::Ui, editor: &mut NteBlueprintEditorState) {
     if ui
         .add(egui::Button::new(t("Add state variable")).small())
         .clicked()
@@ -3654,6 +4566,7 @@ fn nte_blueprint_manifest_state(
         editor.declarations.insert(
             insertion_index,
             NteBlueprintDeclaration::State {
+                type_name: "std::uint64_t".to_owned(),
                 name: format!("value_{}", count + 1),
                 value: "0".to_owned(),
             },
@@ -3667,24 +4580,57 @@ fn nte_blueprint_manifest_state(
         .auto_shrink([false, true])
         .show(ui, |ui| {
             for (index, declaration) in editor.declarations.iter_mut().enumerate() {
-                if let NteBlueprintDeclaration::State { name, value } = declaration {
+                if let NteBlueprintDeclaration::State {
+                    type_name,
+                    name,
+                    value,
+                } = declaration
+                {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label(
-                            RichText::new("state.")
-                                .monospace()
-                                .color(palette.selected_border),
-                        );
+                        egui::ComboBox::from_id_salt(("nte_state_type", index))
+                            .selected_text(type_name.as_str())
+                            .show_ui(ui, |ui| {
+                                for candidate in NTE_BLUEPRINT_CPP_STATE_TYPES {
+                                    if ui
+                                        .selectable_value(
+                                            type_name,
+                                            (*candidate).to_owned(),
+                                            *candidate,
+                                        )
+                                        .changed()
+                                    {
+                                        if *candidate == "bool"
+                                            && !matches!(value.as_str(), "true" | "false")
+                                        {
+                                            *value = "false".to_owned();
+                                        } else if *candidate != "bool"
+                                            && matches!(value.as_str(), "true" | "false")
+                                        {
+                                            *value = "0".to_owned();
+                                        }
+                                    }
+                                }
+                            });
                         ui.add(
                             egui::TextEdit::singleline(name)
                                 .font(egui::TextStyle::Monospace)
                                 .desired_width(150.0),
                         );
                         ui.label(RichText::new("=").monospace());
-                        ui.add(
-                            egui::TextEdit::singleline(value)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_width(110.0),
-                        );
+                        if type_name == "bool" {
+                            egui::ComboBox::from_id_salt(("nte_state_bool", index))
+                                .selected_text(t(if value == "true" { "True" } else { "False" }))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(value, "false".to_owned(), t("False"));
+                                    ui.selectable_value(value, "true".to_owned(), t("True"));
+                                });
+                        } else {
+                            ui.add(
+                                egui::TextEdit::singleline(value)
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(110.0),
+                            );
+                        }
                         if ui
                             .add(egui::Button::new(t("Remove")).small())
                             .on_hover_text(t("Remove state variable"))
@@ -3808,7 +4754,7 @@ fn nte_blueprint_toolbar(
         .fill(palette.chrome)
         .stroke(Stroke::new(1.0_f32, palette.border))
         .corner_radius(8)
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -3828,17 +4774,21 @@ fn nte_blueprint_toolbar(
                     nte_blueprint_statement_palette(ui, editor);
                 });
                 ui.menu_button(t("View"), |ui| {
-                    if ui.button(t("Arrange steps")).clicked() {
+                    if ui.button(t("Arrange control-flow graph")).clicked() {
                         layout_nte_blueprint(editor);
                         editor.scene_rect = nte_blueprint_initial_scene(editor);
-                        editor.feedback = Some(t("Steps arranged"));
+                        editor.feedback = Some(t("Control-flow graph arranged"));
                         ui.close();
                     }
-                    if ui.button(t("Fit steps to window")).clicked() {
+                    if ui.button(t("Fit graph to window")).clicked() {
                         editor.scene_rect = nte_blueprint_initial_scene(editor);
-                        editor.feedback = Some(t("Steps fitted to window"));
+                        editor.feedback = Some(t("Graph fitted to window"));
                         ui.close();
                     }
+                });
+                ui.menu_button(t("Advanced Mod settings"), |ui| {
+                    ui.set_min_width(520.0);
+                    nte_blueprint_advanced_settings(ui, editor, palette);
                 });
                 if let Some(feedback) = &editor.feedback {
                     ui.separator();
@@ -3856,12 +4806,6 @@ fn nte_blueprint_toolbar(
                     );
                 }
             });
-            ui.add_space(3.0);
-            ui.label(
-                RichText::new(t("Click a step to edit it."))
-                    .small()
-                    .color(palette.muted),
-            );
         });
 }
 
@@ -3874,6 +4818,8 @@ fn nte_blueprint_statement_palette(ui: &mut egui::Ui, editor: &mut NteBlueprintE
             NteBlueprintStatementTemplate::GameValue,
             NteBlueprintStatementTemplate::SdkCall,
             NteBlueprintStatementTemplate::MemoryRead,
+            NteBlueprintStatementTemplate::UnrealCall,
+            NteBlueprintStatementTemplate::ProcessEvent,
         ],
     );
     ui.separator();
@@ -3886,6 +4832,7 @@ fn nte_blueprint_statement_palette(ui: &mut egui::Ui, editor: &mut NteBlueprintE
             NteBlueprintStatementTemplate::IpcBind,
             NteBlueprintStatementTemplate::Equipment,
             NteBlueprintStatementTemplate::CombatClock,
+            NteBlueprintStatementTemplate::MemoryWrite,
             NteBlueprintStatementTemplate::Log,
         ],
     );
@@ -3897,6 +4844,7 @@ fn nte_blueprint_statement_palette(ui: &mut egui::Ui, editor: &mut NteBlueprintE
         &[
             NteBlueprintStatementTemplate::Assignment,
             NteBlueprintStatementTemplate::StateAssignment,
+            NteBlueprintStatementTemplate::Cache,
         ],
     );
     ui.separator();
@@ -3939,6 +4887,10 @@ fn nte_blueprint_template_label(template: NteBlueprintStatementTemplate) -> &'st
         NteBlueprintStatementTemplate::GameValue => "Read game data",
         NteBlueprintStatementTemplate::SdkCall => "Read character data",
         NteBlueprintStatementTemplate::MemoryRead => "Read an advanced game value",
+        NteBlueprintStatementTemplate::MemoryWrite => "Write an advanced game value",
+        NteBlueprintStatementTemplate::Cache => "Cache a value",
+        NteBlueprintStatementTemplate::UnrealCall => "Call an Unreal function",
+        NteBlueprintStatementTemplate::ProcessEvent => "Observe an Unreal event",
         NteBlueprintStatementTemplate::IpcEmit => "Send data to the desktop tool",
         NteBlueprintStatementTemplate::IpcBind => "Connect a desktop service",
         NteBlueprintStatementTemplate::Equipment => "Prepare equipment data",
@@ -3948,7 +4900,51 @@ fn nte_blueprint_template_label(template: NteBlueprintStatementTemplate) -> &'st
     }
 }
 
-fn nte_blueprint_template_source(template: NteBlueprintStatementTemplate) -> &'static str {
+fn nte_blueprint_template_source(
+    template: NteBlueprintStatementTemplate,
+    language: NteSourceLanguage,
+) -> &'static str {
+    if language == NteSourceLanguage::Cpp {
+        return match template {
+            NteBlueprintStatementTemplate::Assignment => "auto value = 0",
+            NteBlueprintStatementTemplate::StateAssignment => "value = value",
+            NteBlueprintStatementTemplate::If => "if (value == true)",
+            NteBlueprintStatementTemplate::Loop => {
+                "for (std::uint64_t index = 0; index < 1; ++index)"
+            }
+            NteBlueprintStatementTemplate::GameValue => {
+                "const auto character = nte::game::player_character"
+            }
+            NteBlueprintStatementTemplate::SdkCall => {
+                "const auto hp = nte::sdk::character_hp_milli(nte::game::player_character)"
+            }
+            NteBlueprintStatementTemplate::MemoryRead => {
+                "const auto value = nte::memory::read_u64(nte::game::player_character, 0x0)"
+            }
+            NteBlueprintStatementTemplate::MemoryWrite => {
+                "nte::memory::write_u64(nte::game::player_character, 0x0, value)"
+            }
+            NteBlueprintStatementTemplate::Cache => {
+                "const auto cached = nte::cache::remember(1, value)"
+            }
+            NteBlueprintStatementTemplate::UnrealCall => {
+                "const auto called = nte::unreal::call(nte::game::player_controller, function)"
+            }
+            NteBlueprintStatementTemplate::ProcessEvent => "const auto ready = nte::event::next()",
+            NteBlueprintStatementTemplate::IpcEmit => "nte::ipc::emit(\"event.name\", value)",
+            NteBlueprintStatementTemplate::IpcBind => {
+                "nte::ipc::bind(nte::game::player_state, nte::game::player_controller)"
+            }
+            NteBlueprintStatementTemplate::Equipment => {
+                "nte::equipment::prepare(nte::game::player_state)"
+            }
+            NteBlueprintStatementTemplate::CombatClock => {
+                "nte::combat_clock::forward(pause_mask, state_flags)"
+            }
+            NteBlueprintStatementTemplate::Log => "nte::log::info(\"message\")",
+            NteBlueprintStatementTemplate::Comment => "// Describe this step",
+        };
+    }
     match template {
         NteBlueprintStatementTemplate::Assignment => "value = 0",
         NteBlueprintStatementTemplate::StateAssignment => "state.value = value",
@@ -3961,6 +4957,14 @@ fn nte_blueprint_template_source(template: NteBlueprintStatementTemplate) -> &'s
         NteBlueprintStatementTemplate::MemoryRead => {
             "value = memory.read_u64(game.player_character, 0x0)"
         }
+        NteBlueprintStatementTemplate::MemoryWrite => {
+            "memory.write_u64(game.player_character, 0x0, value)"
+        }
+        NteBlueprintStatementTemplate::Cache => "cached = cache.remember(1, value)",
+        NteBlueprintStatementTemplate::UnrealCall => {
+            "called = unreal.call(game.player_controller, function)"
+        }
+        NteBlueprintStatementTemplate::ProcessEvent => "ready = event.next()",
         NteBlueprintStatementTemplate::IpcEmit => "ipc.emit(\"event.name\", value)",
         NteBlueprintStatementTemplate::IpcBind => {
             "ipc.bind(game.player_state, game.player_controller)"
@@ -3995,7 +4999,7 @@ fn add_nte_blueprint_statement(
     };
     let id = editor.next_statement_id;
     editor.next_statement_id += 1;
-    let source = nte_blueprint_template_source(template).to_owned();
+    let source = nte_blueprint_template_source(template, editor.language).to_owned();
     let opens_block = nte_blueprint_statement_opens_block(&source);
     editor.statements.insert(
         insertion_index,
@@ -4017,7 +5021,11 @@ fn add_nte_blueprint_statement(
                 id: child_id,
                 indent: indent + 1,
                 leading_blank_lines: 0,
-                source: "# Add actions to this step".to_owned(),
+                source: match editor.language {
+                    NteSourceLanguage::Legacy => "# Add actions to this step",
+                    NteSourceLanguage::Cpp => "// Add actions to this step",
+                }
+                .to_owned(),
                 position: egui::Pos2::ZERO,
                 description: String::new(),
             },
@@ -4030,23 +5038,162 @@ fn add_nte_blueprint_statement(
     editor.feedback = Some(t("Step added"));
 }
 
+fn add_nte_blueprint_action_to_block(
+    editor: &mut NteBlueprintEditorState,
+    block: NteBlueprintBlockRange,
+    template: NteBlueprintStatementTemplate,
+) {
+    if editor.language == NteSourceLanguage::Cpp
+        && nte_blueprint_statement_opens_block(&editor.statements[block.start].source)
+    {
+        let child_index = block.end;
+        let child_indent = editor.statements[block.start].indent + 1;
+        let source = nte_blueprint_template_source(template, editor.language).to_owned();
+        let child = editor
+            .statements
+            .get(child_index)
+            .filter(|statement| statement.indent == child_indent)
+            .expect("a C++ Blueprint block retains its indented child");
+        let placeholder = child.source == "// Add actions to this step";
+        if placeholder {
+            editor.statements[child_index].source = source;
+            editor.selected = NteBlueprintSelection::Statement(editor.statements[child_index].id);
+        } else {
+            let id = editor.next_statement_id;
+            editor.next_statement_id += 1;
+            let position = child.position;
+            let description = child.description.clone();
+            let leading_blank_lines = child.leading_blank_lines;
+            editor.statements.insert(
+                child_index,
+                NteBlueprintStatement {
+                    id,
+                    indent: child_indent,
+                    leading_blank_lines,
+                    source,
+                    position,
+                    description,
+                },
+            );
+            editor.statements[child_index + 1].description.clear();
+            editor.statements[child_index + 1].leading_blank_lines = 0;
+            editor.selected = NteBlueprintSelection::Statement(id);
+        }
+        sync_nte_blueprint_capabilities(editor);
+        editor.feedback = Some(t("Action added to step"));
+        return;
+    }
+
+    let structural = nte_blueprint_statement_opens_block(&editor.statements[block.end - 1].source);
+    let insertion_index = if structural { block.end - 1 } else { block.end };
+    let starts_block = insertion_index == block.start;
+    let position = editor.statements[block.start].position;
+    let description = if starts_block {
+        editor.statements[block.start].description.clone()
+    } else {
+        String::new()
+    };
+    let id = editor.next_statement_id;
+    editor.next_statement_id += 1;
+    editor.statements.insert(
+        insertion_index,
+        NteBlueprintStatement {
+            id,
+            indent: editor.statements[block.start].indent,
+            leading_blank_lines: 0,
+            source: nte_blueprint_template_source(template, editor.language).to_owned(),
+            position,
+            description,
+        },
+    );
+    if starts_block {
+        editor.statements[block.start + 1].description.clear();
+    }
+    editor.selected = NteBlueprintSelection::Statement(editor.statements[block.start].id);
+    sync_nte_blueprint_capabilities(editor);
+    editor.feedback = Some(t("Action added to step"));
+}
+
 fn layout_nte_blueprint(editor: &mut NteBlueprintEditorState) {
-    let blocks = nte_blueprint_blocks(editor);
-    for (block_index, block) in blocks.iter().copied().enumerate() {
-        let position = nte_blueprint_grid_position(block_index);
+    let flow = nte_blueprint_control_flow(editor);
+    if flow.blocks.is_empty() {
+        return;
+    }
+
+    let ranks = nte_blueprint_flow_ranks(&flow);
+    let mut columns = vec![0.0_f32; flow.blocks.len()];
+    let mut column_proposals = vec![Vec::new(); flow.blocks.len()];
+    for index in 0..flow.blocks.len() {
+        if !column_proposals[index].is_empty() {
+            columns[index] =
+                column_proposals[index].iter().sum::<f32>() / column_proposals[index].len() as f32;
+        }
+        for edge in flow
+            .edges
+            .iter()
+            .filter(|edge| edge.from == index && edge.to > index)
+        {
+            let offset = match edge.kind {
+                NteBlueprintFlowEdgeKind::True => -1.0,
+                NteBlueprintFlowEdgeKind::False => 1.0,
+                NteBlueprintFlowEdgeKind::Next | NteBlueprintFlowEdgeKind::Loop => 0.0,
+            };
+            column_proposals[edge.to].push(columns[index] + offset);
+        }
+    }
+
+    let rank_count = ranks.iter().copied().max().unwrap_or(0) + 1;
+    let mut rank_heights = vec![0.0_f32; rank_count];
+    for (index, block) in flow.blocks.iter().copied().enumerate() {
+        rank_heights[ranks[index]] =
+            rank_heights[ranks[index]].max(nte_blueprint_block_height(editor, block));
+    }
+    let mut rank_y = vec![NTE_BLUEPRINT_BASE_Y; rank_count];
+    for rank in 1..rank_count {
+        rank_y[rank] = rank_y[rank - 1] + rank_heights[rank - 1] + NTE_BLUEPRINT_GRAPH_ROW_GAP;
+    }
+
+    let mut positions = vec![egui::Pos2::ZERO; flow.blocks.len()];
+    for (rank, y) in rank_y.iter().copied().enumerate() {
+        let mut nodes = (0..flow.blocks.len())
+            .filter(|index| ranks[*index] == rank)
+            .collect::<Vec<_>>();
+        nodes.sort_by(|left, right| {
+            columns[*left]
+                .total_cmp(&columns[*right])
+                .then(left.cmp(right))
+        });
+        let first_x = -(nodes.len() as f32 - 1.0) * NTE_BLUEPRINT_GRAPH_COLUMN_STEP / 2.0;
+        for (slot, index) in nodes.into_iter().enumerate() {
+            positions[index] =
+                egui::pos2(first_x + slot as f32 * NTE_BLUEPRINT_GRAPH_COLUMN_STEP, y);
+        }
+    }
+    let min_x = positions
+        .iter()
+        .map(|position| position.x)
+        .fold(f32::INFINITY, f32::min);
+    let translate_x = 40.0 - min_x;
+    for (block, mut position) in flow.blocks.into_iter().zip(positions) {
+        position.x += translate_x;
         for statement in &mut editor.statements[block.start..block.end] {
             statement.position = position;
         }
     }
 }
 
-fn nte_blueprint_grid_position(item_index: usize) -> egui::Pos2 {
-    let row = item_index / NTE_BLUEPRINT_GRID_COLUMNS;
-    let column = item_index % NTE_BLUEPRINT_GRID_COLUMNS;
-    egui::pos2(
-        40.0 + column as f32 * (NTE_BLUEPRINT_NODE_WIDTH + NTE_BLUEPRINT_COLUMN_GAP),
-        NTE_BLUEPRINT_BASE_Y + row as f32 * NTE_BLUEPRINT_ROW_STEP,
-    )
+fn nte_blueprint_flow_ranks(flow: &NteBlueprintControlFlow) -> Vec<usize> {
+    let mut ranks = vec![0usize; flow.blocks.len()];
+    for index in 0..flow.blocks.len() {
+        for edge in flow
+            .edges
+            .iter()
+            .filter(|edge| edge.from == index && edge.to > index)
+        {
+            ranks[edge.to] = ranks[edge.to].max(ranks[index] + 1);
+        }
+    }
+    ranks
 }
 
 fn nte_blueprint_initial_scene(editor: &NteBlueprintEditorState) -> egui::Rect {
@@ -4090,14 +5237,31 @@ fn nte_blueprint_graph_bounds(editor: &NteBlueprintEditorState) -> egui::Rect {
     };
     let mut bounds = egui::Rect::from_min_size(
         editor.statements[first.start].position,
-        egui::vec2(NTE_BLUEPRINT_NODE_WIDTH, nte_blueprint_block_height(first)),
+        egui::vec2(
+            NTE_BLUEPRINT_NODE_WIDTH,
+            nte_blueprint_block_height(editor, first),
+        ),
     );
     for block in blocks.into_iter().skip(1) {
         let statement = &editor.statements[block.start];
         bounds = bounds.union(egui::Rect::from_min_size(
             statement.position,
-            egui::vec2(NTE_BLUEPRINT_NODE_WIDTH, nte_blueprint_block_height(block)),
+            egui::vec2(
+                NTE_BLUEPRINT_NODE_WIDTH,
+                nte_blueprint_block_height(editor, block),
+            ),
         ));
+    }
+    let flow = nte_blueprint_control_flow(editor);
+    for wire in nte_blueprint_routed_wires(editor, &flow) {
+        for point in
+            nte_blueprint_wire_points(wire.start, wire.end, wire.edge.kind, wire.route, wire.lane)
+        {
+            bounds.min.x = bounds.min.x.min(point.x);
+            bounds.min.y = bounds.min.y.min(point.y);
+            bounds.max.x = bounds.max.x.max(point.x);
+            bounds.max.y = bounds.max.y.max(point.y);
+        }
     }
     bounds.expand(40.0)
 }
@@ -4167,33 +5331,68 @@ fn nte_blueprint_canvas(
             {
                 let ui = &mut scene_ui;
                 paint_blueprint_grid(ui.painter(), grid_rect, canvas_palette);
-                paint_nte_blueprint_wires(ui.painter(), editor, canvas_palette);
-                let blocks = nte_blueprint_blocks(editor);
-                for (block_index, block) in blocks.iter().copied().enumerate() {
+                let flow = nte_blueprint_control_flow(editor);
+                paint_nte_blueprint_wires(ui.painter(), editor, &flow, canvas_palette);
+                for (block_index, block) in flow.blocks.iter().copied().enumerate() {
                     let category = nte_blueprint_block_category(editor, block);
                     let title = nte_blueprint_block_title(editor, block);
                     let summary =
                         nte_blueprint_truncate(&nte_blueprint_block_summary(editor, block), 52);
-                    let height = nte_blueprint_block_height(block);
-                    let selected = editor.selected
-                        == NteBlueprintSelection::Statement(editor.statements[block.start].id);
-                    let first_id = editor.statements[block.start].id;
-                    let badge = tf("Step {}", &[&(block_index + 1).to_string()]);
-                    let response = nte_blueprint_node(
-                        ui,
-                        &mut editor.statements[block.start].position,
-                        ("nte_blueprint_statement", first_id),
-                        category.key(),
-                        &title,
-                        &summary,
-                        selected,
-                        egui::vec2(NTE_BLUEPRINT_NODE_WIDTH, height),
-                        category.color(),
-                        canvas_palette,
-                        false,
-                        false,
-                        &badge,
+                    let code_lines = nte_blueprint_block_code_lines(editor, block);
+                    let height = nte_blueprint_block_height(editor, block);
+                    let selected = matches!(
+                        editor.selected,
+                        NteBlueprintSelection::Statement(selected_id)
+                            if editor.statements[block.start..block.end]
+                                .iter()
+                                .any(|statement| statement.id == selected_id)
                     );
+                    let first_id = editor.statements[block.start].id;
+                    let badge = tf("Block {}", &[&(block_index + 1).to_string()]);
+                    let has_input = flow.edges.iter().any(|edge| edge.to == block_index);
+                    let output_kinds = flow
+                        .edges
+                        .iter()
+                        .filter(|edge| edge.from == block_index)
+                        .map(|edge| edge.kind)
+                        .collect::<Vec<_>>();
+                    let structured = editor.language == NteSourceLanguage::Cpp
+                        && nte_blueprint_statement_opens_block(
+                            &editor.statements[block.start].source,
+                        );
+                    let response = if structured {
+                        let source = editor.statements[block.start].source.clone();
+                        nte_blueprint_control_node(
+                            ui,
+                            &mut editor.statements[block.start].position,
+                            ("nte_blueprint_statement", first_id),
+                            &source,
+                            selected,
+                            egui::vec2(NTE_BLUEPRINT_NODE_WIDTH, height),
+                            category.color(),
+                            canvas_palette,
+                            has_input,
+                            &output_kinds,
+                            &badge,
+                        )
+                    } else {
+                        nte_blueprint_node(
+                            ui,
+                            &mut editor.statements[block.start].position,
+                            ("nte_blueprint_statement", first_id),
+                            category.key(),
+                            &title,
+                            &summary,
+                            selected,
+                            egui::vec2(NTE_BLUEPRINT_NODE_WIDTH, height),
+                            category.color(),
+                            canvas_palette,
+                            has_input,
+                            &output_kinds,
+                            &badge,
+                            &code_lines,
+                        )
+                    };
                     let position = editor.statements[block.start].position;
                     for statement in &mut editor.statements[block.start + 1..block.end] {
                         statement.position = position;
@@ -4210,10 +5409,7 @@ fn nte_blueprint_canvas(
             if pan_response.changed() {
                 scene_rect = to_global.inverse() * outer_rect;
             }
-            let pointer_over_canvas = ui
-                .input(|input| input.pointer.hover_pos())
-                .is_some_and(|position| visible_clip.contains(position));
-            if accepts_scroll && pointer_over_canvas {
+            if accepts_scroll && pan_response.hovered() {
                 ui.input_mut(|input| input.smooth_scroll_delta = egui::Vec2::ZERO);
             }
         });
@@ -4223,82 +5419,378 @@ fn nte_blueprint_canvas(
 fn paint_nte_blueprint_wires(
     painter: &egui::Painter,
     editor: &NteBlueprintEditorState,
+    flow: &NteBlueprintControlFlow,
     palette: BlueprintCanvasPalette,
 ) {
-    let blocks = nte_blueprint_blocks(editor);
-    for pair in blocks.windows(2) {
-        let from = pair[0];
-        let to = pair[1];
-        let start = editor.statements[from.start].position
-            + egui::vec2(
-                NTE_BLUEPRINT_NODE_WIDTH,
-                nte_blueprint_block_height(from) / 2.0,
-            );
-        let end = editor.statements[to.start].position
-            + egui::vec2(0.0, nte_blueprint_block_height(to) / 2.0);
-        paint_nte_blueprint_wire(painter, start, end, palette.execution);
+    let wires = nte_blueprint_routed_wires(editor, flow);
+    for wire in wires {
+        let junction = (wire.edge.kind != NteBlueprintFlowEdgeKind::Loop)
+            .then(|| nte_blueprint_merge_junction(editor, flow, wire.edge.to))
+            .flatten();
+        paint_nte_blueprint_wire(
+            painter,
+            wire,
+            junction.unwrap_or(wire.end),
+            nte_blueprint_flow_edge_color(wire.edge.kind, palette),
+            junction.is_none(),
+        );
+    }
+    for target in 0..flow.blocks.len() {
+        let Some(junction) = nte_blueprint_merge_junction(editor, flow, target) else {
+            continue;
+        };
+        let block = flow.blocks[target];
+        let end = editor.statements[block.start].position
+            + egui::vec2(NTE_BLUEPRINT_NODE_WIDTH * 0.5, 0.0);
+        painter.line_segment([junction, end], Stroke::new(2.0_f32, palette.execution));
+        painter.circle_filled(junction, 4.5, palette.execution);
+        paint_nte_blueprint_arrow(painter, end, palette.execution);
+    }
+}
+
+fn nte_blueprint_merge_junction(
+    editor: &NteBlueprintEditorState,
+    flow: &NteBlueprintControlFlow,
+    target: usize,
+) -> Option<egui::Pos2> {
+    (flow
+        .edges
+        .iter()
+        .filter(|edge| edge.to == target && edge.kind != NteBlueprintFlowEdgeKind::Loop)
+        .count()
+        > 1)
+    .then(|| {
+        let block = flow.blocks[target];
+        editor.statements[block.start].position + egui::vec2(NTE_BLUEPRINT_NODE_WIDTH * 0.5, -18.0)
+    })
+}
+
+fn nte_blueprint_flow_edge_color(
+    kind: NteBlueprintFlowEdgeKind,
+    palette: BlueprintCanvasPalette,
+) -> Color32 {
+    match kind {
+        NteBlueprintFlowEdgeKind::Next => palette.execution,
+        NteBlueprintFlowEdgeKind::True => Color32::from_rgb(73, 184, 108),
+        NteBlueprintFlowEdgeKind::False => Color32::from_rgb(224, 86, 94),
+        NteBlueprintFlowEdgeKind::Loop => Color32::from_rgb(82, 156, 224),
+    }
+}
+
+fn nte_blueprint_routed_wires(
+    editor: &NteBlueprintEditorState,
+    flow: &NteBlueprintControlFlow,
+) -> Vec<NteBlueprintRoutedWire> {
+    let ranks = nte_blueprint_flow_ranks(flow);
+    let mut left_lanes: Vec<Vec<(f32, f32)>> = Vec::new();
+    let mut right_lanes: Vec<Vec<(f32, f32)>> = Vec::new();
+    flow.edges
+        .iter()
+        .copied()
+        .map(|edge| {
+            let from = flow.blocks[edge.from];
+            let to = flow.blocks[edge.to];
+            let start_position = editor.statements[from.start].position;
+            let start_x = match edge.kind {
+                NteBlueprintFlowEdgeKind::True => NTE_BLUEPRINT_NODE_WIDTH * 0.32,
+                NteBlueprintFlowEdgeKind::False => NTE_BLUEPRINT_NODE_WIDTH * 0.68,
+                NteBlueprintFlowEdgeKind::Next | NteBlueprintFlowEdgeKind::Loop => {
+                    NTE_BLUEPRINT_NODE_WIDTH * 0.5
+                }
+            };
+            let start =
+                start_position + egui::vec2(start_x, nte_blueprint_block_height(editor, from));
+            let end = editor.statements[to.start].position
+                + egui::vec2(NTE_BLUEPRINT_NODE_WIDTH * 0.5, 0.0);
+            let rank_gap = ranks[edge.to].saturating_sub(ranks[edge.from]);
+            let route = nte_blueprint_wire_route(start, end, edge.kind, rank_gap);
+            let interval = (start.y.min(end.y), start.y.max(end.y));
+            let lane = match route {
+                NteBlueprintWireRoute::OuterLeft => {
+                    reserve_nte_blueprint_wire_lane(&mut left_lanes, interval)
+                }
+                NteBlueprintWireRoute::OuterRight => {
+                    reserve_nte_blueprint_wire_lane(&mut right_lanes, interval)
+                }
+                NteBlueprintWireRoute::Direct | NteBlueprintWireRoute::Channel => 0,
+            };
+            NteBlueprintRoutedWire {
+                edge,
+                start,
+                end,
+                route,
+                lane,
+            }
+        })
+        .collect()
+}
+
+fn reserve_nte_blueprint_wire_lane(
+    lanes: &mut Vec<Vec<(f32, f32)>>,
+    interval: (f32, f32),
+) -> usize {
+    let lane = lanes
+        .iter()
+        .position(|occupied| {
+            occupied
+                .iter()
+                .all(|other| interval.1 + 8.0 < other.0 || interval.0 > other.1 + 8.0)
+        })
+        .unwrap_or(lanes.len());
+    if lane == lanes.len() {
+        lanes.push(Vec::new());
+    }
+    lanes[lane].push(interval);
+    lane
+}
+
+fn nte_blueprint_wire_route(
+    start: egui::Pos2,
+    end: egui::Pos2,
+    kind: NteBlueprintFlowEdgeKind,
+    rank_gap: usize,
+) -> NteBlueprintWireRoute {
+    if matches!(kind, NteBlueprintFlowEdgeKind::Loop) || end.y <= start.y {
+        return NteBlueprintWireRoute::OuterLeft;
+    }
+    if rank_gap <= 1 {
+        return if (start.x - end.x).abs() < 1.0 {
+            NteBlueprintWireRoute::Direct
+        } else {
+            NteBlueprintWireRoute::Channel
+        };
+    }
+    match kind {
+        NteBlueprintFlowEdgeKind::True => NteBlueprintWireRoute::OuterLeft,
+        NteBlueprintFlowEdgeKind::False => NteBlueprintWireRoute::OuterRight,
+        NteBlueprintFlowEdgeKind::Next => {
+            if end.x < start.x {
+                NteBlueprintWireRoute::OuterLeft
+            } else {
+                NteBlueprintWireRoute::OuterRight
+            }
+        }
+        NteBlueprintFlowEdgeKind::Loop => {
+            unreachable!("loop edges are routed before forward edges")
+        }
+    }
+}
+
+fn nte_blueprint_wire_points(
+    start: egui::Pos2,
+    end: egui::Pos2,
+    kind: NteBlueprintFlowEdgeKind,
+    route: NteBlueprintWireRoute,
+    lane: usize,
+) -> Vec<egui::Pos2> {
+    match route {
+        NteBlueprintWireRoute::Direct => vec![start, end],
+        NteBlueprintWireRoute::Channel => {
+            let track_y = (start.y + end.y) / 2.0;
+            vec![
+                start,
+                egui::pos2(start.x, track_y),
+                egui::pos2(end.x, track_y),
+                end,
+            ]
+        }
+        NteBlueprintWireRoute::OuterLeft | NteBlueprintWireRoute::OuterRight => {
+            let start_offset = match kind {
+                NteBlueprintFlowEdgeKind::True => NTE_BLUEPRINT_NODE_WIDTH * 0.32,
+                NteBlueprintFlowEdgeKind::False => NTE_BLUEPRINT_NODE_WIDTH * 0.68,
+                NteBlueprintFlowEdgeKind::Next | NteBlueprintFlowEdgeKind::Loop => {
+                    NTE_BLUEPRINT_NODE_WIDTH * 0.5
+                }
+            };
+            let start_left = start.x - start_offset;
+            let start_right = start_left + NTE_BLUEPRINT_NODE_WIDTH;
+            let end_left = end.x - NTE_BLUEPRINT_NODE_WIDTH * 0.5;
+            let end_right = end.x + NTE_BLUEPRINT_NODE_WIDTH * 0.5;
+            let lane_offset = lane as f32 * 14.0;
+            let rail_x = match route {
+                NteBlueprintWireRoute::OuterLeft => start_left.min(end_left) - 28.0 - lane_offset,
+                NteBlueprintWireRoute::OuterRight => {
+                    start_right.max(end_right) + 28.0 + lane_offset
+                }
+                NteBlueprintWireRoute::Direct | NteBlueprintWireRoute::Channel => {
+                    unreachable!("outer routes select an outer rail")
+                }
+            };
+            vec![
+                start,
+                start + egui::vec2(0.0, 18.0),
+                egui::pos2(rail_x, start.y + 18.0),
+                egui::pos2(rail_x, end.y - 18.0),
+                end - egui::vec2(0.0, 18.0),
+                end,
+            ]
+        }
     }
 }
 
 fn paint_nte_blueprint_wire(
     painter: &egui::Painter,
-    start: egui::Pos2,
+    wire: NteBlueprintRoutedWire,
     end: egui::Pos2,
     color: Color32,
+    paint_arrow: bool,
 ) {
-    if end.x <= start.x {
-        let track_y = (start.y + end.y) / 2.0;
-        let start_rail_x = start.x + 26.0;
-        let end_rail_x = end.x - 26.0;
-        painter.add(egui::Shape::line(
-            vec![
-                start,
-                egui::pos2(start_rail_x, start.y),
-                egui::pos2(start_rail_x, track_y),
-                egui::pos2(end_rail_x, track_y),
-                egui::pos2(end_rail_x, end.y),
-                end,
-            ],
-            Stroke::new(2.0_f32, color),
-        ));
-        painter.text(
-            egui::pos2((start.x + end.x) / 2.0, track_y - 3.0),
-            egui::Align2::CENTER_BOTTOM,
-            t("Continue flow"),
-            egui::FontId::proportional(9.0),
-            color,
-        );
+    painter.add(egui::Shape::line(
+        nte_blueprint_wire_points(wire.start, end, wire.edge.kind, wire.route, wire.lane),
+        Stroke::new(2.0_f32, color),
+    ));
+    if paint_arrow {
         paint_nte_blueprint_arrow(painter, end, color);
-        return;
     }
-    let control_offset = ((end.x - start.x).abs() * 0.45).max(48.0);
-    let control_a = start + egui::vec2(control_offset, 0.0);
-    let control_b = end - egui::vec2(control_offset, 0.0);
-    let points = (0..=24)
-        .map(|index| {
-            let t = index as f32 / 24.0;
-            let inverse = 1.0 - t;
-            start.to_vec2() * inverse.powi(3)
-                + control_a.to_vec2() * (3.0 * inverse.powi(2) * t)
-                + control_b.to_vec2() * (3.0 * inverse * t.powi(2))
-                + end.to_vec2() * t.powi(3)
-        })
-        .map(|point| egui::pos2(point.x, point.y))
-        .collect::<Vec<_>>();
-    painter.add(egui::Shape::line(points, Stroke::new(2.0_f32, color)));
-    paint_nte_blueprint_arrow(painter, end, color);
 }
 
 fn paint_nte_blueprint_arrow(painter: &egui::Painter, end: egui::Pos2, color: Color32) {
     painter.add(egui::Shape::convex_polygon(
         vec![
             end,
-            end + egui::vec2(-8.0, -5.0),
-            end + egui::vec2(-8.0, 5.0),
+            end + egui::vec2(-5.0, -8.0),
+            end + egui::vec2(5.0, -8.0),
         ],
         color,
         Stroke::NONE,
     ));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn nte_blueprint_control_node(
+    ui: &mut egui::Ui,
+    position: &mut egui::Pos2,
+    id_source: impl std::hash::Hash,
+    source: &str,
+    selected: bool,
+    size: egui::Vec2,
+    color: Color32,
+    palette: BlueprintCanvasPalette,
+    has_input: bool,
+    output_kinds: &[NteBlueprintFlowEdgeKind],
+    badge: &str,
+) -> egui::Response {
+    let rect = egui::Rect::from_min_size(*position, size);
+    let response = ui.interact(rect, ui.id().with(id_source), egui::Sense::click_and_drag());
+    if response.dragged() {
+        *position += response.drag_delta();
+    }
+    ui.painter().rect(
+        rect,
+        10.0,
+        color,
+        Stroke::new(
+            if selected { 2.5_f32 } else { 1.0_f32 },
+            if selected {
+                palette.selection
+            } else {
+                Color32::from_white_alpha(90)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    let (keyword, expression) = nte_blueprint_control_parts(source);
+    ui.painter().text(
+        rect.left_top() + egui::vec2(11.0, 11.0),
+        egui::Align2::LEFT_TOP,
+        keyword,
+        egui::FontId::monospace(12.0),
+        Color32::WHITE,
+    );
+    ui.painter().text(
+        rect.right_top() + egui::vec2(-10.0, 11.0),
+        egui::Align2::RIGHT_TOP,
+        badge,
+        egui::FontId::proportional(9.0),
+        Color32::from_white_alpha(220),
+    );
+    if expression.is_empty() {
+        ui.painter().text(
+            rect.left_bottom() + egui::vec2(11.0, -11.0),
+            egui::Align2::LEFT_BOTTOM,
+            t("Fallback Branch"),
+            egui::FontId::proportional(10.0),
+            Color32::from_white_alpha(220),
+        );
+    } else {
+        let expression_rect = egui::Rect::from_min_max(
+            rect.left_top() + egui::vec2(40.0, 27.0),
+            rect.right_bottom() - egui::vec2(10.0, 20.0),
+        );
+        ui.painter().rect_filled(
+            expression_rect,
+            expression_rect.height() / 2.0,
+            palette.node_fill,
+        );
+        ui.painter().text(
+            expression_rect.left_center() + egui::vec2(9.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            nte_blueprint_truncate(&expression, 44),
+            egui::FontId::monospace(9.5),
+            palette.text,
+        );
+    }
+    if has_input {
+        let center = rect.center_top();
+        ui.painter().circle_filled(center, 5.5, palette.execution);
+        ui.painter()
+            .circle_stroke(center, 7.0, Stroke::new(1.5_f32, color));
+    }
+    for kind in output_kinds {
+        let x = match kind {
+            NteBlueprintFlowEdgeKind::True => rect.left() + rect.width() * 0.32,
+            NteBlueprintFlowEdgeKind::False => rect.left() + rect.width() * 0.68,
+            NteBlueprintFlowEdgeKind::Next | NteBlueprintFlowEdgeKind::Loop => rect.center().x,
+        };
+        let center = egui::pos2(x, rect.bottom());
+        let edge_color = nte_blueprint_flow_edge_color(*kind, palette);
+        ui.painter().circle_filled(center, 5.5, edge_color);
+        ui.painter()
+            .circle_stroke(center, 7.0, Stroke::new(1.5_f32, color));
+        if keyword != "for"
+            && matches!(
+                kind,
+                NteBlueprintFlowEdgeKind::True | NteBlueprintFlowEdgeKind::False
+            )
+        {
+            ui.painter().text(
+                center - egui::vec2(0.0, 9.0),
+                egui::Align2::CENTER_BOTTOM,
+                t(match kind {
+                    NteBlueprintFlowEdgeKind::True => "True",
+                    NteBlueprintFlowEdgeKind::False => "False",
+                    NteBlueprintFlowEdgeKind::Next | NteBlueprintFlowEdgeKind::Loop => {
+                        unreachable!("only branch outputs have labels")
+                    }
+                }),
+                egui::FontId::proportional(9.0),
+                Color32::from_white_alpha(230),
+            );
+        }
+    }
+    response
+}
+
+fn nte_blueprint_control_parts(source: &str) -> (&'static str, String) {
+    let source = source.trim();
+    let (keyword, expression) = if let Some(expression) = source.strip_prefix("else if") {
+        ("else if", expression)
+    } else if let Some(expression) = source.strip_prefix("if") {
+        ("if", expression)
+    } else if let Some(expression) = source.strip_prefix("for") {
+        ("for", expression)
+    } else {
+        ("else", "")
+    };
+    (
+        keyword,
+        expression
+            .trim()
+            .strip_prefix('(')
+            .and_then(|expression| expression.strip_suffix(')'))
+            .unwrap_or_else(|| expression.trim())
+            .to_owned(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4314,18 +5806,19 @@ fn nte_blueprint_node(
     header_color: Color32,
     palette: BlueprintCanvasPalette,
     has_input: bool,
-    has_output: bool,
+    output_kinds: &[NteBlueprintFlowEdgeKind],
     badge: &str,
+    code_lines: &[String],
 ) -> egui::Response {
     let rect = egui::Rect::from_min_size(*position, size);
-    let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 28.0));
+    let header = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 22.0));
     let response = ui.interact(rect, ui.id().with(id_source), egui::Sense::click_and_drag());
     if response.dragged() {
         *position += response.drag_delta();
     }
     ui.painter().rect(
         rect,
-        7.0,
+        5.0,
         palette.node_fill,
         Stroke::new(
             if selected { 2.0_f32 } else { 1.0_f32 },
@@ -4337,51 +5830,74 @@ fn nte_blueprint_node(
         ),
         egui::StrokeKind::Inside,
     );
-    ui.painter().rect_filled(header, 7.0, header_color);
+    ui.painter().rect_filled(header, 5.0, header_color);
     ui.painter().rect_filled(
         egui::Rect::from_min_max(
-            egui::pos2(header.left(), header.bottom() - 7.0),
+            egui::pos2(header.left(), header.bottom() - 5.0),
             header.right_bottom(),
         ),
         0.0,
         header_color,
     );
     ui.painter().text(
-        header.left_center() + egui::vec2(9.0, 0.0),
+        header.left_center() + egui::vec2(8.0, 0.0),
         egui::Align2::LEFT_CENTER,
         t(category),
-        egui::FontId::proportional(10.0),
+        egui::FontId::proportional(9.0),
         Color32::WHITE,
     );
     ui.painter().text(
-        header.right_center() - egui::vec2(9.0, 0.0),
+        header.right_center() - egui::vec2(8.0, 0.0),
         egui::Align2::RIGHT_CENTER,
         badge,
-        egui::FontId::proportional(10.0),
+        egui::FontId::proportional(9.0),
         Color32::from_white_alpha(220),
     );
     ui.painter().text(
-        rect.left_top() + egui::vec2(10.0, 38.0),
+        rect.left_top() + egui::vec2(9.0, 29.0),
         egui::Align2::LEFT_TOP,
         t(title),
-        egui::FontId::proportional(14.0),
+        egui::FontId::proportional(12.0),
         palette.text,
     );
-    ui.painter().text(
-        rect.left_top() + egui::vec2(10.0, 62.0),
-        egui::Align2::LEFT_TOP,
-        summary,
-        egui::FontId::proportional(11.5),
-        palette.muted,
-    );
-    for center in [
-        has_input.then(|| rect.left_center()),
-        has_output.then(|| rect.right_center()),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    if code_lines.is_empty() {
+        ui.painter().text(
+            rect.left_top() + egui::vec2(9.0, 46.0),
+            egui::Align2::LEFT_TOP,
+            summary,
+            egui::FontId::proportional(10.0),
+            palette.muted,
+        );
+    } else {
+        for (line_index, line) in code_lines.iter().enumerate() {
+            ui.painter().text(
+                rect.left_top() + egui::vec2(9.0, 45.0 + line_index as f32 * 15.0),
+                egui::Align2::LEFT_TOP,
+                line,
+                egui::FontId::monospace(9.5),
+                if line.starts_with("//") {
+                    palette.muted
+                } else {
+                    palette.text
+                },
+            );
+        }
+    }
+    if has_input {
+        let center = rect.center_top();
         ui.painter().circle_filled(center, 5.5, palette.execution);
+        ui.painter()
+            .circle_stroke(center, 7.0, Stroke::new(1.5_f32, palette.node_fill));
+    }
+    for kind in output_kinds {
+        let x = match kind {
+            NteBlueprintFlowEdgeKind::True => rect.left() + rect.width() * 0.32,
+            NteBlueprintFlowEdgeKind::False => rect.left() + rect.width() * 0.68,
+            NteBlueprintFlowEdgeKind::Next | NteBlueprintFlowEdgeKind::Loop => rect.center().x,
+        };
+        let center = egui::pos2(x, rect.bottom());
+        let color = nte_blueprint_flow_edge_color(*kind, palette);
+        ui.painter().circle_filled(center, 5.5, color);
         ui.painter()
             .circle_stroke(center, 7.0, Stroke::new(1.5_f32, palette.node_fill));
     }
@@ -4400,16 +5916,58 @@ fn nte_blueprint_statement_title(source: &str) -> &'static str {
     }
 }
 
+fn nte_blueprint_inspector_window(
+    ctx: &egui::Context,
+    editor: &mut NteBlueprintEditorState,
+    palette: ModEditorPalette,
+    canvas_rect: egui::Rect,
+) {
+    if nte_blueprint_selected_block(editor).is_none() {
+        return;
+    }
+
+    let constrain_rect = canvas_rect.intersect(ctx.content_rect());
+    let default_width = constrain_rect.width().min(400.0);
+    let default_height = constrain_rect.height().min(520.0);
+    let default_position = egui::pos2(
+        constrain_rect.right() - default_width - 12.0,
+        constrain_rect.top() + 12.0,
+    );
+    let mut open = true;
+    egui::Window::new(t("Edit step"))
+        .id(egui::Id::new("nte_blueprint_node_inspector_window"))
+        .open(&mut open)
+        .default_pos(default_position)
+        .default_size(egui::vec2(default_width, default_height))
+        .min_size(egui::vec2(300.0, 220.0))
+        .max_size(egui::vec2(
+            constrain_rect.width().min(520.0),
+            constrain_rect.height(),
+        ))
+        .resizable(true)
+        .collapsible(false)
+        .constrain_to(constrain_rect)
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("nte_blueprint_node_details_scroll")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    nte_blueprint_inspector(ui, editor, palette);
+                });
+        });
+    if !open {
+        editor.selected = NteBlueprintSelection::Manifest;
+    }
+}
+
 fn nte_blueprint_inspector(
     ui: &mut egui::Ui,
     editor: &mut NteBlueprintEditorState,
     palette: ModEditorPalette,
 ) {
-    use egui_material_icons::icons::{
-        ICON_ARROW_DOWNWARD, ICON_ARROW_UPWARD, ICON_CLOSE, ICON_DELETE,
-        ICON_FORMAT_INDENT_DECREASE, ICON_FORMAT_INDENT_INCREASE,
-    };
+    use egui_material_icons::icons::{ICON_ARROW_DOWNWARD, ICON_ARROW_UPWARD, ICON_DELETE};
 
+    let value_options = nte_blueprint_value_options(editor);
     egui::Frame::new()
         .fill(palette.editor)
         .stroke(Stroke::new(1.0_f32, palette.selected_border))
@@ -4425,7 +5983,7 @@ fn nte_blueprint_inspector(
                 .position(|candidate| *candidate == block)
                 .expect("selected Blueprint block exists");
             let structural =
-                nte_blueprint_statement_opens_block(&editor.statements[block.start].source);
+                nte_blueprint_statement_opens_block(&editor.statements[block.end - 1].source);
             let block_title = nte_blueprint_block_title(editor, block);
             let block_summary = nte_blueprint_block_summary(editor, block);
             let mut move_up = false;
@@ -4433,33 +5991,6 @@ fn nte_blueprint_inspector(
             let mut indent = false;
             let mut outdent = false;
             let mut remove = false;
-            let mut close = false;
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(t("Edit step"))
-                        .size(15.0)
-                        .strong()
-                        .color(palette.text),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if mod_editor_icon_button(
-                        ui,
-                        ICON_CLOSE,
-                        t("Close step settings"),
-                        true,
-                        palette,
-                    )
-                    .clicked()
-                    {
-                        close = true;
-                    }
-                });
-            });
-            if close {
-                editor.selected = NteBlueprintSelection::Manifest;
-                return;
-            }
-            ui.add_space(6.0);
             ui.label(
                 RichText::new(block_title)
                     .size(17.0)
@@ -4528,26 +6059,39 @@ fn nte_blueprint_inspector(
             ))
             .default_open(false)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if mod_editor_icon_button(
-                        ui,
-                        ICON_FORMAT_INDENT_DECREASE,
-                        t("Reduce nesting"),
-                        editor.statements[block.start].indent > 0,
-                        palette,
-                    )
-                    .clicked()
+                let can_outdent = nte_blueprint_can_outdent_block(editor, block);
+                let can_indent = nte_blueprint_can_indent_block(editor, block);
+                ui.label(
+                    RichText::new(tf(
+                        "Nesting level · {}",
+                        &[&(editor.statements[block.start].indent + 1).to_string()],
+                    ))
+                    .small()
+                    .strong()
+                    .color(palette.muted),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(
+                            can_outdent,
+                            egui::Button::new(t("Move outside current branch")).small(),
+                        )
+                        .on_disabled_hover_text(t(
+                            "The current branch must keep at least one child step.",
+                        ))
+                        .clicked()
                     {
                         outdent = true;
                     }
-                    if mod_editor_icon_button(
-                        ui,
-                        ICON_FORMAT_INDENT_INCREASE,
-                        t("Increase nesting"),
-                        editor.statements[block.start].indent < 7,
-                        palette,
-                    )
-                    .clicked()
+                    if ui
+                        .add_enabled(
+                            can_indent,
+                            egui::Button::new(t("Nest under previous branch")).small(),
+                        )
+                        .on_disabled_hover_text(t(
+                            "Place this step after a condition or loop before nesting it.",
+                        ))
+                        .clicked()
                     {
                         indent = true;
                     }
@@ -4581,7 +6125,9 @@ fn nte_blueprint_inspector(
                     nte_blueprint_statement_editor(
                         ui,
                         &mut editor.statements[statement_index],
+                        editor.language,
                         palette,
+                        &value_options,
                     );
                     if statement_index + 1 < block.end {
                         ui.separator();
@@ -4594,6 +6140,10 @@ fn nte_blueprint_inspector(
                         NteBlueprintStatementTemplate::GameValue,
                         NteBlueprintStatementTemplate::SdkCall,
                         NteBlueprintStatementTemplate::MemoryRead,
+                        NteBlueprintStatementTemplate::MemoryWrite,
+                        NteBlueprintStatementTemplate::Cache,
+                        NteBlueprintStatementTemplate::UnrealCall,
+                        NteBlueprintStatementTemplate::ProcessEvent,
                         NteBlueprintStatementTemplate::IpcEmit,
                         NteBlueprintStatementTemplate::IpcBind,
                         NteBlueprintStatementTemplate::Equipment,
@@ -4605,24 +6155,7 @@ fn nte_blueprint_inspector(
                             .button(t(nte_blueprint_template_label(template)))
                             .clicked()
                         {
-                            let id = editor.next_statement_id;
-                            editor.next_statement_id += 1;
-                            editor.statements.insert(
-                                block.end,
-                                NteBlueprintStatement {
-                                    id,
-                                    indent: editor.statements[block.start].indent
-                                        + u8::from(structural),
-                                    leading_blank_lines: 0,
-                                    source: nte_blueprint_template_source(template).to_owned(),
-                                    position: editor.statements[block.start].position,
-                                    description: String::new(),
-                                },
-                            );
-                            editor.selected =
-                                NteBlueprintSelection::Statement(editor.statements[block.start].id);
-                            sync_nte_blueprint_capabilities(editor);
-                            editor.feedback = Some(t("Action added to step"));
+                            add_nte_blueprint_action_to_block(editor, block, template);
                             ui.close();
                         }
                     }
@@ -4650,14 +6183,10 @@ fn nte_blueprint_inspector(
                 editor.statements[block.start + next_len].leading_blank_lines = next_blank_lines;
                 editor.feedback = Some(t("Step moved"));
             } else if outdent {
-                for statement in &mut editor.statements[block.start..block.end] {
-                    statement.indent -= 1;
-                }
+                adjust_nte_blueprint_block_indent(editor, block, false);
                 editor.feedback = Some(t("Nesting reduced"));
             } else if indent {
-                for statement in &mut editor.statements[block.start..block.end] {
-                    statement.indent += 1;
-                }
+                adjust_nte_blueprint_block_indent(editor, block, true);
                 editor.feedback = Some(t("Nesting increased"));
             } else if remove {
                 let leading_blank_lines = editor.statements[block.start].leading_blank_lines;
@@ -4713,39 +6242,100 @@ fn mod_editor_icon_button(
 fn nte_blueprint_statement_editor(
     ui: &mut egui::Ui,
     statement: &mut NteBlueprintStatement,
+    language: NteSourceLanguage,
     palette: ModEditorPalette,
+    value_options: &[String],
 ) {
     match nte_blueprint_statement_kind(&statement.source) {
         NteBlueprintStatementKind::Assignment => {
             let (mut target, mut expression) = split_nte_blueprint_assignment(&statement.source)
                 .map(|(target, expression)| (target.to_owned(), expression.to_owned()))
                 .expect("assignment statement has a target and expression");
-            ui.label(
-                RichText::new(t("Target"))
-                    .small()
-                    .strong()
-                    .color(palette.muted),
-            );
-            let target_changed = ui
-                .add(
+            let target_changed = if language == NteSourceLanguage::Cpp {
+                let (parsed_type, parsed_name) = split_nte_blueprint_typed_target(&target);
+                let mut type_name = parsed_type.to_owned();
+                let mut name = parsed_name.to_owned();
+                ui.label(
+                    RichText::new(t("Variable type"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                let previous_type = type_name.clone();
+                egui::ComboBox::from_id_salt((statement.id, "assignment_type"))
+                    .width(ui.available_width())
+                    .selected_text(if type_name.is_empty() {
+                        t("Existing variable")
+                    } else {
+                        type_name.clone()
+                    })
+                    .show_ui(ui, |ui| {
+                        for candidate in NTE_BLUEPRINT_CPP_LOCAL_TYPES {
+                            ui.selectable_value(
+                                &mut type_name,
+                                (*candidate).to_owned(),
+                                if candidate.is_empty() {
+                                    t("Existing variable")
+                                } else {
+                                    (*candidate).to_owned()
+                                },
+                            );
+                        }
+                    });
+                ui.label(
+                    RichText::new(t("Variable name"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                let name_changed = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut name)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(ui.available_width()),
+                    )
+                    .changed();
+                if type_name == "bool"
+                    && previous_type != "bool"
+                    && !matches!(expression.as_str(), "true" | "false")
+                {
+                    expression = "false".to_owned();
+                }
+                let changed = type_name != previous_type || name_changed;
+                if changed {
+                    target = if type_name.is_empty() {
+                        name.trim().to_owned()
+                    } else {
+                        format!("{} {}", type_name, name.trim())
+                    };
+                }
+                changed
+            } else {
+                ui.label(
+                    RichText::new(t("Target"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                ui.add(
                     egui::TextEdit::singleline(&mut target)
                         .font(egui::TextStyle::Monospace)
                         .desired_width(ui.available_width()),
                 )
-                .changed();
+                .changed()
+            };
             ui.label(
-                RichText::new(t("Value or expression"))
+                RichText::new(t("Value source"))
                     .small()
                     .strong()
                     .color(palette.muted),
             );
-            let expression_changed = ui
-                .add(
-                    egui::TextEdit::singleline(&mut expression)
-                        .font(egui::TextStyle::Monospace)
-                        .desired_width(ui.available_width()),
-                )
-                .changed();
+            let expression_changed = nte_blueprint_value_selector(
+                ui,
+                egui::Id::new((statement.id, "assignment_value")),
+                &mut expression,
+                value_options,
+            );
             if target_changed || expression_changed {
                 statement.source = format!("{} = {}", target.trim(), expression.trim());
             }
@@ -4753,6 +6343,8 @@ fn nte_blueprint_statement_editor(
         NteBlueprintStatementKind::If | NteBlueprintStatementKind::Elif => {
             let prefix = if statement.source.trim_start().starts_with("elif ") {
                 "elif"
+            } else if statement.source.trim_start().starts_with("else if") {
+                "else if"
             } else {
                 "if"
             };
@@ -4762,8 +6354,19 @@ fn nte_blueprint_statement_editor(
                 .strip_prefix(prefix)
                 .expect("branch prefix matches its statement kind")
                 .trim()
-                .strip_suffix(':')
-                .unwrap_or_default()
+                .trim_end_matches(':')
+                .trim()
+                .strip_prefix('(')
+                .and_then(|condition| condition.strip_suffix(')'))
+                .unwrap_or_else(|| {
+                    statement
+                        .source
+                        .trim()
+                        .strip_prefix(prefix)
+                        .expect("branch prefix matches its statement kind")
+                        .trim()
+                        .trim_end_matches(':')
+                })
                 .to_owned();
             ui.label(
                 RichText::new(t("Condition"))
@@ -4771,15 +6374,75 @@ fn nte_blueprint_statement_editor(
                     .strong()
                     .color(palette.muted),
             );
-            if ui
-                .add(
+            let condition_changed = if let Some((left, operator, right)) =
+                split_nte_blueprint_comparison(&condition)
+            {
+                let mut left = left.to_owned();
+                let mut operator = operator.to_owned();
+                let mut right = right.to_owned();
+                ui.label(
+                    RichText::new(t("Left value"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                let left_changed = nte_blueprint_value_selector(
+                    ui,
+                    egui::Id::new((statement.id, "condition_left")),
+                    &mut left,
+                    value_options,
+                );
+                ui.label(
+                    RichText::new(t("Comparison"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                let previous_operator = operator.clone();
+                egui::ComboBox::from_id_salt((statement.id, "condition_operator"))
+                    .width(ui.available_width())
+                    .selected_text(&operator)
+                    .show_ui(ui, |ui| {
+                        for candidate in NTE_BLUEPRINT_COMPARISON_OPERATORS {
+                            ui.selectable_value(&mut operator, (*candidate).to_owned(), *candidate);
+                        }
+                    });
+                ui.label(
+                    RichText::new(t("Right value"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                let right_changed = nte_blueprint_value_selector(
+                    ui,
+                    egui::Id::new((statement.id, "condition_right")),
+                    &mut right,
+                    value_options,
+                );
+                let changed = left_changed || operator != previous_operator || right_changed;
+                if changed {
+                    condition = format!("{} {} {}", left.trim(), operator, right.trim());
+                }
+                changed
+            } else {
+                ui.label(
+                    RichText::new(t("Custom expression"))
+                        .small()
+                        .strong()
+                        .color(palette.muted),
+                );
+                ui.add(
                     egui::TextEdit::singleline(&mut condition)
                         .font(egui::TextStyle::Monospace)
                         .desired_width(ui.available_width()),
                 )
                 .changed()
-            {
-                statement.source = format!("{prefix} {}:", condition.trim());
+            };
+            if condition_changed {
+                statement.source = match language {
+                    NteSourceLanguage::Legacy => format!("{prefix} {}:", condition.trim()),
+                    NteSourceLanguage::Cpp => format!("{prefix} ({})", condition.trim()),
+                };
             }
         }
         NteBlueprintStatementKind::Loop => {
@@ -4791,6 +6454,22 @@ fn nte_blueprint_statement_editor(
             {
                 variable = parsed_variable.trim().to_owned();
                 count = parsed_count.trim().to_owned();
+            } else if let Some(header) = statement
+                .source
+                .trim()
+                .strip_prefix("for (std::uint64_t ")
+                .and_then(|header| header.strip_suffix(')'))
+            {
+                let mut clauses = header.split(';').map(str::trim);
+                if let Some((parsed_variable, "0")) =
+                    clauses.next().and_then(|clause| clause.split_once('='))
+                    && let Some((condition_variable, parsed_count)) =
+                        clauses.next().and_then(|clause| clause.split_once('<'))
+                    && parsed_variable.trim() == condition_variable.trim()
+                {
+                    variable = parsed_variable.trim().to_owned();
+                    count = parsed_count.trim().to_owned();
+                }
             }
             ui.label(
                 RichText::new(t("Loop variable"))
@@ -4819,7 +6498,16 @@ fn nte_blueprint_statement_editor(
                 )
                 .changed();
             if variable_changed || count_changed {
-                statement.source = format!("for {} in range({}):", variable.trim(), count.trim());
+                statement.source = match language {
+                    NteSourceLanguage::Legacy => {
+                        format!("for {} in range({}):", variable.trim(), count.trim())
+                    }
+                    NteSourceLanguage::Cpp => format!(
+                        "for (std::uint64_t {0} = 0; {0} < {1}; ++{0})",
+                        variable.trim(),
+                        count.trim()
+                    ),
+                };
             }
         }
         NteBlueprintStatementKind::Else => {
@@ -6437,22 +8125,20 @@ fn mod_script_error_text(error: &ModScriptError) -> String {
             "Blueprint metadata {} uses unsupported version {}.",
             &[id, &version.to_string()],
         ),
-        ModScriptError::MissingVersionHeader => t("The first statement must be nte_mod(4)."),
-        ModScriptError::MissingModDeclaration => {
-            t("The second statement must declare mod(\"id\").")
-        }
+        ModScriptError::MissingVersionHeader => t("The first statement must be NTE_SCRIPT(5)."),
+        ModScriptError::MissingModDeclaration => t("The script must declare NTE_MOD(\"id\")."),
         ModScriptError::MismatchedModDeclaration => {
-            t("The mod(\"id\") declaration must match the file name.")
+            t("The NTE_MOD(\"id\") declaration must match the file name.")
         }
         ModScriptError::MissingViewportTickHandler => {
             t("The script must define on_viewport_tick(event).")
         }
         ModScriptError::InvalidSourceLine(line) => tf(
-            "The NTE Script compiler rejected line {}.",
+            "The NTE C++ compiler rejected line {}.",
             &[&line.to_string()],
         ),
         ModScriptError::SourceBudgetExceeded => {
-            t("The NTE Script exceeds the compiler resource budget.")
+            t("The NTE C++ program exceeds the compiler resource budget.")
         }
         ModScriptError::CapabilityMismatch => {
             t("Declared Mod capabilities must exactly match the APIs used by the script.")
@@ -6475,6 +8161,10 @@ fn declared_capabilities(source: &str) -> Vec<&str> {
         .filter_map(|line| {
             line.strip_prefix("requires(\"")
                 .and_then(|line| line.strip_suffix("\")"))
+                .or_else(|| {
+                    line.strip_prefix("NTE_REQUIRES(\"")
+                        .and_then(|line| line.strip_suffix("\");"))
+                })
         })
         .collect()
 }
@@ -6574,7 +8264,7 @@ fn nte_script_editor(
                             })
                             .frame(egui::Frame::new().fill(palette.editor))
                             .layouter(&mut layouter)
-                            .hint_text(t("Write NTE Script v4 code here."))
+                            .hint_text(t("Write NTE C++ code here."))
                             .show(ui);
                         changed = output.response.changed();
                         focused = output.response.has_focus();
@@ -6836,12 +8526,12 @@ fn completion_popup(
 }
 
 fn completion_kind_label(completion: NteCompletion) -> &'static str {
-    if completion.label.starts_with("nte_mod")
-        || completion.label.starts_with("mod(")
-        || completion.label.starts_with("requires(")
+    if completion.label.starts_with("#include")
+        || completion.label.starts_with("NTE_")
+        || completion.label.starts_with("std::")
     {
         "Declaration"
-    } else if completion.label.starts_with("def ") || completion.label.starts_with("for ") {
+    } else if completion.label.starts_with("void ") || completion.label.starts_with("for ") {
         "Snippet"
     } else if completion.label.contains('(') {
         "Function"
@@ -6912,7 +8602,7 @@ fn completion_prefix(source: &str, cursor_char: usize) -> Option<(std::ops::Rang
         .char_indices()
         .rev()
         .find_map(|(index, character)| {
-            (!character.is_ascii_alphanumeric() && !matches!(character, '_' | '.' | '"'))
+            (!character.is_ascii_alphanumeric() && !matches!(character, '_' | ':' | '.' | '"'))
                 .then_some(index + character.len_utf8())
         })
         .unwrap_or(0);
@@ -6974,15 +8664,29 @@ fn nte_script_layout_job(
 
     let mut index = 0;
     let mut expect_function_name = false;
+    let mut expect_include_header = false;
     while index < source.len() {
         let character = source[index..]
             .chars()
             .next()
             .expect("index remains on a character boundary");
-        let end = if character == '#' {
+        let cpp_comment = source[index..].starts_with("//");
+        let preprocessor_end = (character == '#')
+            .then(|| nte_cpp_preprocessor_directive_end(source, index))
+            .flatten();
+        let include_header_end = (expect_include_header && character == '<').then(|| {
+            source[index..]
+                .find('>')
+                .map_or(source.len(), |offset| index + offset + 1)
+        });
+        let end = if cpp_comment {
             source[index..]
                 .find('\n')
                 .map_or(source.len(), |offset| index + offset)
+        } else if let Some(end) = preprocessor_end {
+            end
+        } else if let Some(end) = include_header_end {
+            end
         } else if character == '"' {
             let tail = index + character.len_utf8();
             source[tail..]
@@ -7000,8 +8704,16 @@ fn nte_script_layout_job(
             index + character.len_utf8()
         };
         let token = &source[index..end];
-        let token_format = if character == '#' {
+        let token_format = if cpp_comment {
             comment.clone()
+        } else if preprocessor_end.is_some() {
+            expect_include_header = token
+                .strip_prefix('#')
+                .is_some_and(|directive| directive.trim() == "include");
+            keyword.clone()
+        } else if include_header_end.is_some() {
+            expect_include_header = false;
+            string.clone()
         } else if character == '"' {
             string.clone()
         } else if character.is_ascii_digit() {
@@ -7010,7 +8722,7 @@ fn nte_script_layout_job(
             let followed_by_call =
                 source[end..].chars().find(|value| !value.is_whitespace()) == Some('(');
             let kind = classify_nte_identifier(token, expect_function_name, followed_by_call);
-            expect_function_name = token == "def";
+            expect_function_name = matches!(token, "void" | "auto");
             match kind {
                 NteIdentifierKind::Keyword => keyword.clone(),
                 NteIdentifierKind::Function => function.clone(),
@@ -7020,6 +8732,9 @@ fn nte_script_layout_job(
         } else {
             base.clone()
         };
+        if character == '\n' {
+            expect_include_header = false;
+        }
         job.append(token, 0.0, token_format);
         index = end;
     }
@@ -7027,6 +8742,26 @@ fn nte_script_layout_job(
         job.append("", 0.0, base);
     }
     job
+}
+
+fn nte_cpp_preprocessor_directive_end(source: &str, start: usize) -> Option<usize> {
+    let line_start = source[..start].rfind('\n').map_or(0, |index| index + 1);
+    if !source[line_start..start].trim().is_empty() {
+        return None;
+    }
+    let mut end = start + '#'.len_utf8();
+    while source[end..]
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_whitespace() && character != '\n')
+    {
+        end += 1;
+    }
+    let name_start = end;
+    end = consume_ascii_token(source, end, |character| {
+        character.is_ascii_alphanumeric() || character == '_'
+    });
+    (end > name_start).then_some(end)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7044,11 +8779,61 @@ fn classify_nte_identifier(
 ) -> NteIdentifierKind {
     if matches!(
         token,
-        "def"
-            | "if"
-            | "elif"
+        "alignas"
+            | "alignof"
+            | "auto"
+            | "bool"
+            | "break"
+            | "case"
+            | "catch"
+            | "char"
+            | "class"
+            | "const"
+            | "constexpr"
+            | "continue"
+            | "default"
+            | "delete"
+            | "do"
+            | "double"
             | "else"
+            | "enum"
+            | "explicit"
+            | "false"
+            | "float"
             | "for"
+            | "if"
+            | "inline"
+            | "int"
+            | "namespace"
+            | "new"
+            | "noexcept"
+            | "nullptr"
+            | "private"
+            | "protected"
+            | "public"
+            | "return"
+            | "short"
+            | "signed"
+            | "sizeof"
+            | "static"
+            | "struct"
+            | "switch"
+            | "template"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typedef"
+            | "typename"
+            | "union"
+            | "unsigned"
+            | "using"
+            | "virtual"
+            | "void"
+            | "volatile"
+            | "while"
+            | "def"
+            | "elif"
             | "in"
             | "and"
             | "or"
@@ -7062,7 +8847,9 @@ fn classify_nte_identifier(
         NteIdentifierKind::Function
     } else if matches!(
         token,
-        "game"
+        "nte"
+            | "std"
+            | "game"
             | "memory"
             | "sdk"
             | "ipc"
@@ -7090,6 +8877,7 @@ fn consume_ascii_token(source: &str, start: usize, accepted: impl Fn(char) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -7124,22 +8912,31 @@ mod tests {
             (
                 "equipment",
                 include_str!("../../plugins/nte-mods/equipment.nte"),
-                1,
+                10,
             ),
             (
                 "combat-clock",
                 include_str!("../../plugins/nte-mods/combat-clock.nte"),
-                3,
+                12,
+            ),
+            (
+                "enemy-telemetry",
+                include_str!("../../plugins/nte-mods/enemy-telemetry.nte"),
+                32,
             ),
             (
                 "character-telemetry",
                 include_str!("../../plugins/examples/character-telemetry.nte"),
-                1,
+                8,
+            ),
+            (
+                "reflection-events",
+                include_str!("../../plugins/examples/reflection-events.nte"),
+                8,
             ),
         ] {
             let source = source.replace("\r\n", "\n").replace('\n', "\r\n");
             let blueprint = parse_nte_blueprint_source(&source).unwrap();
-
             assert_eq!(
                 render_nte_blueprint_source(id, &blueprint),
                 source.replace("\r\n", "\n")
@@ -7154,6 +8951,49 @@ mod tests {
                 "{id} should be a valid Blueprint"
             );
         }
+    }
+
+    #[test]
+    fn enemy_telemetry_blueprint_uses_the_control_flow_layout_without_metadata() {
+        let root = temp_mod_workspace();
+        let mod_directory = root.join("nte-mods");
+        fs::create_dir_all(&mod_directory).unwrap();
+        fs::write(root.join("nte-mods.enabled"), "nte_mod_set 1\n").unwrap();
+        fs::write(
+            mod_directory.join("enemy-telemetry.nte"),
+            include_str!("../../plugins/nte-mods/enemy-telemetry.nte"),
+        )
+        .unwrap();
+        fs::write(
+            mod_directory.join("enemy-telemetry.blueprint.json"),
+            include_str!("../../plugins/nte-mods/enemy-telemetry.blueprint.json"),
+        )
+        .unwrap();
+
+        let workspace = load_mod_script_workspace(&root).unwrap();
+        let document = workspace
+            .scripts
+            .iter()
+            .find(|script| script.id == "enemy-telemetry")
+            .unwrap();
+        let mut blueprint = parse_nte_blueprint_source(&document.source).unwrap();
+        apply_nte_blueprint_metadata(&mut blueprint, &document.blueprint, false);
+        let positions = nte_blueprint_blocks(&blueprint)
+            .into_iter()
+            .map(|block| blueprint.statements[block.start].position)
+            .collect::<Vec<_>>();
+        let bounds = nte_blueprint_graph_bounds(&blueprint);
+
+        assert_eq!(positions.len(), 32);
+        assert_eq!(positions[0].y, NTE_BLUEPRINT_BASE_Y);
+        assert!(
+            positions
+                .iter()
+                .any(|position| position.x != positions[0].x)
+        );
+        assert!(bounds.width() <= 1_250.0, "graph bounds: {bounds:?}");
+        assert!(bounds.height() <= 3_200.0, "graph bounds: {bounds:?}");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -7203,6 +9043,35 @@ mod tests {
     }
 
     #[test]
+    fn nte_blueprint_derives_generic_runtime_capabilities_independently() {
+        let blueprint = parse_nte_blueprint_source(concat!(
+            "nte_mod(4)\n",
+            "mod(\"example\")\n",
+            "requires(\"viewport.tick\")\n",
+            "\n",
+            "def on_viewport_tick(event):\n",
+            "    viewport = event.viewport\n",
+            "    value = memory.read_u32(viewport, 0x20)\n",
+            "    memory.write_u32(viewport, 0x24, value)\n",
+            "    function = unreal.find_function(viewport, \"Owner\", \"Function\")\n",
+            "    unreal.watch(viewport, function)\n",
+            "    ready = event.next()\n",
+        ))
+        .unwrap();
+
+        assert_eq!(
+            required_nte_blueprint_capabilities(&blueprint),
+            vec![
+                "viewport.tick",
+                "memory.read",
+                "memory.write",
+                "unreal.reflection",
+                "process.event"
+            ]
+        );
+    }
+
+    #[test]
     fn nte_blueprint_groups_a_logical_phase_with_its_nested_subtree() {
         let blueprint = parse_nte_blueprint_source(concat!(
             "nte_mod(4)\n",
@@ -7223,7 +9092,7 @@ mod tests {
 
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].end - blocks[0].start, 6);
-        assert_eq!(nte_blueprint_block_height(blocks[0]), 92.0);
+        assert_eq!(nte_blueprint_block_height(&blueprint, blocks[0]), 92.0);
         assert_eq!(
             nte_blueprint_block_category(&blueprint, blocks[0]),
             NteBlueprintBlockCategory::Action
@@ -7239,36 +9108,487 @@ mod tests {
     }
 
     #[test]
-    fn nte_blueprint_layout_uses_one_row_for_combat_clock_phases() {
+    fn nte_cpp_blueprint_groups_combat_clock_into_basic_blocks() {
         let blueprint =
             parse_nte_blueprint_source(include_str!("../../plugins/nte-mods/combat-clock.nte"))
                 .unwrap();
         let blocks = nte_blueprint_blocks(&blueprint);
+        let flow = nte_blueprint_control_flow(&blueprint);
         let positions = blocks
             .iter()
             .map(|block| blueprint.statements[block.start].position)
             .collect::<Vec<_>>();
+        let bounds = nte_blueprint_graph_bounds(&blueprint);
 
-        assert_eq!(blocks.len(), 3);
-        assert!(positions.windows(2).all(|pair| pair[0].x < pair[1].x));
+        assert!(blocks.iter().any(|block| block.end - block.start > 1));
+        assert!(blocks.iter().all(|block| {
+            !nte_blueprint_statement_opens_block(&blueprint.statements[block.start].source)
+                || block.end == block.start + 1
+        }));
+        let first_condition = blocks
+            .iter()
+            .position(|block| {
+                nte_blueprint_statement_opens_block(&blueprint.statements[block.start].source)
+            })
+            .unwrap();
+        assert!(first_condition > 0);
         assert!(
-            positions
+            !blueprint.statements
+                [blocks[first_condition - 1].start..blocks[first_condition - 1].end]
                 .iter()
-                .all(|position| position.y == positions[0].y)
+                .any(|statement| nte_blueprint_statement_opens_block(&statement.source))
         );
-        assert_eq!(positions[0], nte_blueprint_grid_position(0));
-        assert_eq!(positions[2], nte_blueprint_grid_position(2));
+        assert!(positions.windows(2).all(|pair| pair[0] != pair[1]));
+        assert!(bounds.width() <= 500.0);
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.kind == NteBlueprintFlowEdgeKind::True)
+        );
+        assert!(
+            flow.edges
+                .iter()
+                .any(|edge| edge.kind == NteBlueprintFlowEdgeKind::False)
+        );
+    }
+
+    #[test]
+    fn nte_cpp_control_flow_splits_true_false_paths_and_merges_them() {
+        let blueprint = parse_nte_blueprint_source(concat!(
+            "#include <nte/mod.hpp>\n",
+            "\n",
+            "NTE_SCRIPT(5);\n",
+            "NTE_MOD(\"branches\");\n",
+            "NTE_REQUIRES(\"viewport.tick\");\n",
+            "NTE_REQUIRES(\"log\");\n",
+            "\n",
+            "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+            "{\n",
+            "    const auto value = event.viewport;\n",
+            "    if (value != nullptr)\n",
+            "    {\n",
+            "        nte::log::info(\"true\");\n",
+            "    }\n",
+            "    else\n",
+            "    {\n",
+            "        nte::log::info(\"false\");\n",
+            "    }\n",
+            "    nte::log::info(\"merged\");\n",
+            "}\n",
+        ))
+        .unwrap();
+        let flow = nte_blueprint_control_flow(&blueprint);
+        let block_index = |needle: &str| {
+            flow.blocks
+                .iter()
+                .position(|block| {
+                    blueprint.statements[block.start..block.end]
+                        .iter()
+                        .any(|statement| statement.source.contains(needle))
+                })
+                .unwrap()
+        };
+        let condition = block_index("if (value");
+        let true_body = block_index("\"true\"");
+        let fallback = block_index("else");
+        let false_body = block_index("\"false\"");
+        let merge = block_index("\"merged\"");
+
+        for edge in [
+            NteBlueprintFlowEdge {
+                from: condition,
+                to: true_body,
+                kind: NteBlueprintFlowEdgeKind::True,
+            },
+            NteBlueprintFlowEdge {
+                from: condition,
+                to: fallback,
+                kind: NteBlueprintFlowEdgeKind::False,
+            },
+            NteBlueprintFlowEdge {
+                from: true_body,
+                to: merge,
+                kind: NteBlueprintFlowEdgeKind::Next,
+            },
+            NteBlueprintFlowEdge {
+                from: fallback,
+                to: false_body,
+                kind: NteBlueprintFlowEdgeKind::Next,
+            },
+            NteBlueprintFlowEdge {
+                from: false_body,
+                to: merge,
+                kind: NteBlueprintFlowEdgeKind::Next,
+            },
+        ] {
+            assert!(flow.edges.contains(&edge), "missing flow edge {edge:?}");
+        }
+        let condition_position = blueprint.statements[flow.blocks[condition].start].position;
+        let true_position = blueprint.statements[flow.blocks[true_body].start].position;
+        let fallback_position = blueprint.statements[flow.blocks[fallback].start].position;
+        let false_position = blueprint.statements[flow.blocks[false_body].start].position;
+        let merge_position = blueprint.statements[flow.blocks[merge].start].position;
+        assert!(condition_position.y < true_position.y);
+        assert_eq!(true_position.y, fallback_position.y);
+        assert_ne!(true_position.x, fallback_position.x);
+        assert!(fallback_position.y < false_position.y);
+        assert!(false_position.y < merge_position.y);
+        let junction = nte_blueprint_merge_junction(&blueprint, &flow, merge).unwrap();
         assert_eq!(
-            nte_blueprint_block_title(&blueprint, blocks[0]),
-            t("Read combat state")
+            junction,
+            merge_position + egui::vec2(NTE_BLUEPRINT_NODE_WIDTH * 0.5, -18.0)
+        );
+        let wires = nte_blueprint_routed_wires(&blueprint, &flow);
+        assert!(
+            wires
+                .iter()
+                .any(|wire| wire.edge.kind == NteBlueprintFlowEdgeKind::True)
+        );
+        assert!(
+            wires
+                .iter()
+                .any(|wire| wire.edge.kind == NteBlueprintFlowEdgeKind::False)
+        );
+    }
+
+    #[test]
+    fn nte_cpp_control_flow_marks_loop_back_edges() {
+        let blueprint = parse_nte_blueprint_source(concat!(
+            "#include <nte/mod.hpp>\n",
+            "\n",
+            "NTE_SCRIPT(5);\n",
+            "NTE_MOD(\"loop\");\n",
+            "NTE_REQUIRES(\"viewport.tick\");\n",
+            "NTE_REQUIRES(\"log\");\n",
+            "\n",
+            "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+            "{\n",
+            "    for (std::uint64_t index = 0; index < 2; ++index)\n",
+            "    {\n",
+            "        nte::log::info(\"body\");\n",
+            "    }\n",
+            "    nte::log::info(\"after\");\n",
+            "}\n",
+        ))
+        .unwrap();
+        let flow = nte_blueprint_control_flow(&blueprint);
+        let loop_block = flow
+            .blocks
+            .iter()
+            .position(|block| {
+                blueprint.statements[block.start]
+                    .source
+                    .starts_with("for (")
+            })
+            .unwrap();
+        let body = flow
+            .blocks
+            .iter()
+            .position(|block| {
+                blueprint.statements[block.start]
+                    .source
+                    .contains("\"body\"")
+            })
+            .unwrap();
+        let after = flow
+            .blocks
+            .iter()
+            .position(|block| {
+                blueprint.statements[block.start]
+                    .source
+                    .contains("\"after\"")
+            })
+            .unwrap();
+
+        assert!(flow.edges.contains(&NteBlueprintFlowEdge {
+            from: loop_block,
+            to: body,
+            kind: NteBlueprintFlowEdgeKind::True,
+        }));
+        assert!(flow.edges.contains(&NteBlueprintFlowEdge {
+            from: loop_block,
+            to: after,
+            kind: NteBlueprintFlowEdgeKind::False,
+        }));
+        assert!(flow.edges.contains(&NteBlueprintFlowEdge {
+            from: body,
+            to: loop_block,
+            kind: NteBlueprintFlowEdgeKind::Loop,
+        }));
+    }
+
+    #[test]
+    fn nte_blueprint_wires_keep_short_edges_local_and_long_edges_outside_nodes() {
+        let aligned_start = egui::pos2(300.0, 180.0);
+        let aligned_end = egui::pos2(300.0, 260.0);
+        assert_eq!(
+            nte_blueprint_wire_route(
+                aligned_start,
+                aligned_end,
+                NteBlueprintFlowEdgeKind::Next,
+                1,
+            ),
+            NteBlueprintWireRoute::Direct
         );
         assert_eq!(
-            nte_blueprint_block_title(&blueprint, blocks[1]),
-            t("Detect state changes")
+            nte_blueprint_wire_points(
+                aligned_start,
+                aligned_end,
+                NteBlueprintFlowEdgeKind::Next,
+                NteBlueprintWireRoute::Direct,
+                0,
+            ),
+            vec![aligned_start, aligned_end]
+        );
+
+        let branch_end = egui::pos2(710.0, 300.0);
+        assert_eq!(
+            nte_blueprint_wire_route(aligned_start, branch_end, NteBlueprintFlowEdgeKind::True, 1,),
+            NteBlueprintWireRoute::Channel
+        );
+
+        let long_route = nte_blueprint_wire_route(
+            aligned_start,
+            branch_end,
+            NteBlueprintFlowEdgeKind::False,
+            3,
+        );
+        assert_eq!(long_route, NteBlueprintWireRoute::OuterRight);
+        let long_points = nte_blueprint_wire_points(
+            aligned_start,
+            branch_end,
+            NteBlueprintFlowEdgeKind::False,
+            long_route,
+            2,
+        );
+        let start_right = aligned_start.x + NTE_BLUEPRINT_NODE_WIDTH * (1.0 - 0.68);
+        let end_right = branch_end.x + NTE_BLUEPRINT_NODE_WIDTH / 2.0;
+        assert!(long_points[2].x > start_right.max(end_right));
+
+        let loop_route =
+            nte_blueprint_wire_route(branch_end, aligned_start, NteBlueprintFlowEdgeKind::Loop, 0);
+        assert_eq!(loop_route, NteBlueprintWireRoute::OuterLeft);
+        let loop_points = nte_blueprint_wire_points(
+            branch_end,
+            aligned_start,
+            NteBlueprintFlowEdgeKind::Loop,
+            loop_route,
+            0,
+        );
+        let start_left = branch_end.x - NTE_BLUEPRINT_NODE_WIDTH / 2.0;
+        let end_left = aligned_start.x - NTE_BLUEPRINT_NODE_WIDTH / 2.0;
+        assert!(loop_points[2].x < start_left.min(end_left));
+
+        let mut lanes = Vec::new();
+        assert_eq!(
+            reserve_nte_blueprint_wire_lane(&mut lanes, (100.0, 180.0)),
+            0
         );
         assert_eq!(
-            nte_blueprint_block_title(&blueprint, blocks[2]),
-            t("Send pause state")
+            reserve_nte_blueprint_wire_lane(&mut lanes, (200.0, 280.0)),
+            0
+        );
+        assert_eq!(
+            reserve_nte_blueprint_wire_lane(&mut lanes, (160.0, 220.0)),
+            1
+        );
+    }
+
+    #[test]
+    fn nte_cpp_basic_block_metadata_survives_source_sync() {
+        let source = concat!(
+            "#include <nte/mod.hpp>\n",
+            "\n",
+            "NTE_SCRIPT(5);\n",
+            "NTE_MOD(\"sync\");\n",
+            "NTE_REQUIRES(\"viewport.tick\");\n",
+            "\n",
+            "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+            "{\n",
+            "    auto value = 1;\n",
+            "    value = value + 1;\n",
+            "}\n",
+        );
+        let mut blueprint = parse_nte_blueprint_source(source).unwrap();
+        assert_eq!(nte_blueprint_blocks(&blueprint).len(), 1);
+        blueprint.statements[0].position = egui::pos2(420.0, 260.0);
+        blueprint.statements[0].description = "Update the local value.".to_owned();
+
+        sync_nte_blueprint_from_source(
+            &mut blueprint,
+            &source.replace("auto value = 1;", "auto value = 2;"),
+        );
+
+        assert_eq!(nte_blueprint_blocks(&blueprint).len(), 1);
+        assert_eq!(blueprint.statements[0].position, egui::pos2(420.0, 260.0));
+        assert_eq!(
+            blueprint.statements[0].description,
+            "Update the local value."
+        );
+    }
+
+    #[test]
+    fn nte_cpp_action_added_to_a_condition_becomes_a_child() {
+        let source = concat!(
+            "#include <nte/mod.hpp>\n",
+            "\n",
+            "NTE_SCRIPT(5);\n",
+            "NTE_MOD(\"insert\");\n",
+            "NTE_REQUIRES(\"viewport.tick\");\n",
+            "\n",
+            "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+            "{\n",
+            "    if (event.viewport != nullptr)\n",
+            "    {\n",
+            "\n",
+            "        nte::log::info(\"child\");\n",
+            "    }\n",
+            "    nte::log::info(\"after\");\n",
+            "}\n",
+        );
+        let mut blueprint = parse_nte_blueprint_source(source).unwrap();
+        let blocks = nte_blueprint_blocks(&blueprint);
+        let selected = blocks[0];
+        let condition_id = blueprint.statements[selected.start].id;
+        let condition_position = blueprint.statements[selected.start].position;
+        let child_id = blueprint.statements[blocks[1].start].id;
+        let child_position = blueprint.statements[blocks[1].start].position;
+        blueprint.statements[blocks[1].start].description = "Keep this child node.".to_owned();
+        blueprint.statements[selected.start].description = "Keep this node.".to_owned();
+
+        add_nte_blueprint_action_to_block(
+            &mut blueprint,
+            selected,
+            NteBlueprintStatementTemplate::Assignment,
+        );
+
+        let updated_blocks = nte_blueprint_blocks(&blueprint);
+        assert_eq!(updated_blocks.len(), blocks.len());
+        assert_eq!(
+            blueprint.statements[updated_blocks[0].start].id,
+            condition_id
+        );
+        assert_eq!(
+            blueprint.statements[updated_blocks[0].start].position,
+            condition_position
+        );
+        assert_eq!(
+            blueprint.statements[updated_blocks[0].start].description,
+            "Keep this node."
+        );
+        assert_eq!(
+            blueprint.statements[updated_blocks[1].start].source,
+            "auto value = 0"
+        );
+        assert_eq!(
+            blueprint.statements[updated_blocks[1].start].indent,
+            blueprint.statements[updated_blocks[0].start].indent + 1
+        );
+        assert_eq!(
+            blueprint.statements[updated_blocks[1].start].position,
+            child_position
+        );
+        assert_eq!(
+            blueprint.statements[updated_blocks[1].start].description,
+            "Keep this child node."
+        );
+        assert_eq!(
+            blueprint
+                .statements
+                .iter()
+                .find(|statement| statement.id == child_id)
+                .unwrap()
+                .position,
+            child_position
+        );
+        assert_eq!(
+            blueprint
+                .statements
+                .iter()
+                .find(|statement| statement.id == child_id)
+                .unwrap()
+                .description,
+            ""
+        );
+    }
+
+    #[test]
+    fn nte_cpp_nesting_moves_the_whole_subtree_without_merging_nodes() {
+        let source = concat!(
+            "#include <nte/mod.hpp>\n",
+            "\n",
+            "NTE_SCRIPT(5);\n",
+            "NTE_MOD(\"nest\");\n",
+            "NTE_REQUIRES(\"viewport.tick\");\n",
+            "\n",
+            "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+            "{\n",
+            "    if (event.viewport != nullptr)\n",
+            "    {\n",
+            "        nte::log::info(\"child\");\n",
+            "    }\n",
+            "    nte::log::info(\"after\");\n",
+            "}\n",
+        );
+        let mut blueprint = parse_nte_blueprint_source(source).unwrap();
+        let blocks = nte_blueprint_blocks(&blueprint);
+        let after = *blocks.last().unwrap();
+        let after_id = blueprint.statements[after.start].id;
+        assert!(nte_blueprint_can_indent_block(&blueprint, after));
+
+        adjust_nte_blueprint_block_indent(&mut blueprint, after, true);
+
+        let nested_blocks = nte_blueprint_blocks(&blueprint);
+        assert_eq!(nested_blocks.len(), blocks.len());
+        let nested = nested_blocks
+            .iter()
+            .copied()
+            .find(|block| blueprint.statements[block.start].id == after_id)
+            .unwrap();
+        assert_eq!(blueprint.statements[nested.start].indent, 1);
+        assert!(nte_blueprint_can_outdent_block(&blueprint, nested));
+
+        adjust_nte_blueprint_block_indent(&mut blueprint, nested, false);
+
+        assert_eq!(nte_blueprint_blocks(&blueprint).len(), blocks.len());
+        assert_eq!(
+            blueprint
+                .statements
+                .iter()
+                .find(|statement| statement.id == after_id)
+                .unwrap()
+                .indent,
+            0
+        );
+    }
+
+    #[test]
+    fn nte_cpp_state_types_and_structured_values_round_trip() {
+        let source = concat!(
+            "#include <nte/mod.hpp>\n",
+            "\n",
+            "NTE_SCRIPT(5);\n",
+            "NTE_MOD(\"types\");\n",
+            "NTE_REQUIRES(\"viewport.tick\");\n",
+            "bool enabled = false;\n",
+            "std::int32_t count = 1;\n",
+            "\n",
+            "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+            "{\n",
+            "    auto ready = enabled;\n",
+            "}\n",
+        );
+        let blueprint = parse_nte_blueprint_source(source).unwrap();
+        let rendered = render_nte_blueprint_source("types", &blueprint);
+        let values = nte_blueprint_value_options(&blueprint);
+
+        assert!(rendered.contains("bool enabled = false;"));
+        assert!(rendered.contains("std::int32_t count = 1;"));
+        assert!(values.iter().any(|value| value == "enabled"));
+        assert!(values.iter().any(|value| value == "ready"));
+        assert_eq!(
+            split_nte_blueprint_comparison("状态 == true"),
+            Some(("状态", "==", "true"))
         );
     }
 
@@ -7350,20 +9670,19 @@ mod tests {
     }
 
     #[test]
-    fn nte_blueprint_bundled_mod_opens_as_compact_complete_overview() {
+    fn nte_blueprint_bundled_mod_opens_at_the_entry_of_the_complete_graph() {
         let blueprint =
             parse_nte_blueprint_source(include_str!("../../plugins/nte-mods/equipment.nte"))
                 .unwrap();
         let bounds = nte_blueprint_graph_bounds(&blueprint);
 
         let blocks = nte_blueprint_blocks(&blueprint);
-        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks.len(), 10);
         assert!(bounds.width() <= NTE_BLUEPRINT_OVERVIEW_MAX_WIDTH);
-        assert!(bounds.height() <= NTE_BLUEPRINT_OVERVIEW_MAX_HEIGHT);
+        assert!(bounds.height() > NTE_BLUEPRINT_OVERVIEW_MAX_HEIGHT);
         assert!(blueprint.scene_rect.width() >= NTE_BLUEPRINT_COMFORT_WIDTH);
         assert!(blueprint.scene_rect.height() >= NTE_BLUEPRINT_COMFORT_HEIGHT);
         assert!(blueprint.scene_rect.contains(bounds.min));
-        assert!(blueprint.scene_rect.contains(bounds.max));
         assert!(
             blueprint
                 .scene_rect
@@ -7435,12 +9754,15 @@ mod tests {
         ))
         .unwrap();
         add_nte_blueprint_statement(&mut blueprint, NteBlueprintStatementTemplate::IpcEmit);
+        add_nte_blueprint_statement(&mut blueprint, NteBlueprintStatementTemplate::Cache);
 
         let source = render_nte_blueprint_source("example", &blueprint);
 
-        assert_eq!(nte_blueprint_blocks(&blueprint).len(), 2);
+        assert_eq!(nte_blueprint_blocks(&blueprint).len(), 3);
         assert!(source.contains("ipc.emit(\"event.name\", value)"));
+        assert!(source.contains("cached = cache.remember(1, value)"));
         assert!(source.contains("requires(\"ipc\")"));
+        assert!(validate_mod_source("example", &source).is_ok());
     }
 
     #[test]
@@ -7892,51 +10214,109 @@ mod tests {
 
     #[test]
     fn completion_replaces_only_the_token_before_the_cursor() {
-        let mut source = "value = sdk.char".to_owned();
+        let mut source = "const auto value = nte::sdk::char".to_owned();
         let cursor = source.chars().count();
 
-        let next = apply_completion(&mut source, cursor, "sdk.character_hp_milli(").unwrap();
+        let next = apply_completion(&mut source, cursor, "nte::sdk::character_hp_milli(").unwrap();
 
-        assert_eq!(source, "value = sdk.character_hp_milli(");
+        assert_eq!(source, "const auto value = nte::sdk::character_hp_milli(");
         assert_eq!(next, source.chars().count());
     }
 
     #[test]
     fn completion_filters_host_apis_by_dotted_prefix() {
-        let source = "    hp = sdk.character_hp";
+        let source = "    const auto hp = nte::sdk::character_hp";
         let suggestions = completion_candidates(source, source.chars().count(), false);
 
         assert!(
             suggestions
                 .iter()
-                .any(|completion| { completion.insert == "sdk.character_hp_milli(" })
+                .any(|completion| { completion.insert == "nte::sdk::character_hp_milli(" })
         );
         assert!(suggestions.iter().all(|completion| {
-            completion.insert.starts_with("sdk.character_hp")
-                || completion.label.starts_with("sdk.character_hp")
+            completion.insert.starts_with("nte::sdk::character_hp")
+                || completion.label.starts_with("nte::sdk::character_hp")
         }));
     }
 
     #[test]
     fn completion_exposes_stable_game_session_builtins() {
-        let source = "    controller = game.player_";
+        let source = "    const auto controller = nte::game::player_";
         let suggestions = completion_candidates(source, source.chars().count(), false);
 
         assert!(
             suggestions
                 .iter()
-                .any(|completion| completion.insert == "game.player_controller")
+                .any(|completion| completion.insert == "nte::game::player_controller")
         );
         assert!(
             suggestions
                 .iter()
-                .any(|completion| completion.insert == "game.player_state")
+                .any(|completion| completion.insert == "nte::game::player_state")
         );
         assert!(
             suggestions
                 .iter()
-                .any(|completion| completion.insert == "game.player_character")
+                .any(|completion| completion.insert == "nte::game::player_character")
         );
+    }
+
+    #[test]
+    fn completion_exposes_generic_typed_reads_and_cache() {
+        let memory_source = "    const auto hp = nte::memory::read_";
+        let memory = completion_candidates(memory_source, memory_source.chars().count(), false);
+        assert!(
+            memory
+                .iter()
+                .any(|completion| completion.insert == "nte::memory::read_f32_milli(")
+        );
+        assert!(
+            memory
+                .iter()
+                .any(|completion| completion.insert == "nte::memory::read_fname_hash(")
+        );
+
+        let cache_source = "    const auto value = nte::cache::";
+        let cache = completion_candidates(cache_source, cache_source.chars().count(), false);
+        assert!(
+            cache
+                .iter()
+                .any(|completion| completion.insert == "nte::cache::get(")
+        );
+        assert!(
+            cache
+                .iter()
+                .any(|completion| completion.insert == "nte::cache::remember(")
+        );
+    }
+
+    #[test]
+    fn completion_exposes_generic_write_reflection_and_event_apis() {
+        for (source, expected) in [
+            ("    nte::memory::write_", "nte::memory::write_f32_milli("),
+            (
+                "    const auto function = nte::unreal::find_",
+                "nte::unreal::find_function(",
+            ),
+            (
+                "    nte::unreal::params_write_",
+                "nte::unreal::params_write_u64(",
+            ),
+            ("    nte::unreal::un", "nte::unreal::unwatch("),
+            ("    const auto ready = nte::event::", "nte::event::next()"),
+            (
+                "    const auto value = nte::event::read_",
+                "nte::event::read_u32(",
+            ),
+        ] {
+            let suggestions = completion_candidates(source, source.chars().count(), false);
+            assert!(
+                suggestions
+                    .iter()
+                    .any(|completion| completion.insert == expected),
+                "{expected} should be suggested"
+            );
+        }
     }
 
     #[test]
@@ -7986,6 +10366,10 @@ mod tests {
             NteIdentifierKind::Keyword
         );
         assert_eq!(
+            classify_nte_identifier("constexpr", false, false),
+            NteIdentifierKind::Keyword
+        );
+        assert_eq!(
             classify_nte_identifier("on_viewport_tick", true, false),
             NteIdentifierKind::Function
         );
@@ -7994,7 +10378,7 @@ mod tests {
             NteIdentifierKind::Function
         );
         assert_eq!(
-            classify_nte_identifier("memory", false, false),
+            classify_nte_identifier("nte", false, false),
             NteIdentifierKind::Namespace
         );
         assert_eq!(
@@ -8008,10 +10392,37 @@ mod tests {
     }
 
     #[test]
-    fn declared_capabilities_follow_requires_lines() {
+    fn cpp_preprocessor_directives_are_not_python_comments() {
+        let source = "  #include <nte/mod.hpp>\n// comment\nvalue # other";
+
+        assert_eq!(
+            nte_cpp_preprocessor_directive_end(source, source.find('#').unwrap()),
+            Some("  #include".len())
+        );
+        assert_eq!(
+            nte_cpp_preprocessor_directive_end(source, source.rfind('#').unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn cpp_control_headers_split_keyword_from_their_expression() {
+        assert_eq!(
+            nte_blueprint_control_parts("if (value != nullptr)"),
+            ("if", "value != nullptr".to_owned())
+        );
+        assert_eq!(
+            nte_blueprint_control_parts("else if (ready)"),
+            ("else if", "ready".to_owned())
+        );
+        assert_eq!(nte_blueprint_control_parts("else"), ("else", String::new()));
+    }
+
+    #[test]
+    fn declared_capabilities_follow_cpp_macros() {
         assert_eq!(
             declared_capabilities(
-                "nte_mod(4)\nrequires(\"viewport.tick\")\nrequires(\"sdk.read\")\n"
+                "NTE_SCRIPT(5);\nNTE_REQUIRES(\"viewport.tick\");\nNTE_REQUIRES(\"sdk.read\");\n"
             ),
             vec!["viewport.tick", "sdk.read"]
         );
