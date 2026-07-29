@@ -55,8 +55,8 @@
 - **自动选网卡**：根据 `HTGame.exe` 的活动连接自动选择网卡和本机 IP。
 
 > 具体敌方目标识别与场景识别仍在研究中。
-> `plugins/nte-mods/enemy-telemetry.nte` 提供研究蓝图。它只使用通用只读内存、FName
-> 哈希、首次写入缓存和 Mod 事件原语，在蓝图内完成多目标采样与配置标识缓存；DLL
+> `plugins/nte-mods/enemy-telemetry.nte` 提供研究脚本。它只使用通用只读内存、FName
+> 哈希、首次写入缓存和 Mod 事件原语，在代码内完成多目标采样与配置标识缓存；DLL
 > 不含敌人专用服务。仅在配置目录和抓包 HP 连续性同时吻合时，将敌人本地化名称与头像投影到战斗明细。
 
 ---
@@ -111,8 +111,8 @@ NTE C++ v5 源码，由 DLL 编译为定长 VM 程序。外部 Mod 使用标准 
 分号、命名空间 API、持久全局状态、算术／位运算、`if/else if/else`、有界 `for`、
 类型化内存读写、通用 UFunction 调用与
 ProcessEvent 订阅、China/Global SDK 一致的角色读取 API、隐藏客户端 Offset 的
-`nte::game::*` 会话内置值及自定义 IPC 事件。新增 Mod 只增加 `.nte`、可选蓝图元数据和
-资源，不增加功能专用 DLL 服务，也不重新构建 DLL。实时抓包
+`nte::game::*` 会话内置值及自定义 IPC 事件。新增 Mod 只增加 `.nte` 和资源，不增加
+功能专用 DLL 服务，也不重新构建 DLL。实时抓包
 会把 `pre.*`、`post.*` 和普通脚本事件送入程序的共享事件管线；DLL 保留源码编译器、
 VM、共享 Hook、边界校验和 capability 白名单。
 在“控制台 → Mod 工坊”中打开“游戏内 Mod 加载器”后，程序会先显示第三方 Mod
@@ -120,7 +120,10 @@ VM、共享 Hook、边界校验和 capability 白名单。
 取消按钮和 `Esc` 可立即关闭弹窗。若同时安装了国服与国际服，可先选择需要管理的客户端。确认后，程序
 只把 `dwmapi.dll` 安装到所选客户端中 `HTGame.exe` 所在目录；启用集合和脚本始终
 保留在软件同级的 `plugins/` 目录。DLL 通过当前用户注册的工作区路径读取脚本，并在
-游戏运行期间监听保存和启停更改。编辑 `nte-mods.enabled` 可只加载 `equipment`
+游戏运行期间以 250 ms 间隔监听保存和启停更改；“Mod 工坊”底部的可最小化运行时控制台
+会显示热更新状态、编译错误和 `nte::log::info("message")` 输出。每次更新会先完整编译
+候选集合再原子替换；源码错误时继续运行上一个可用版本，单个脚本触发运行时异常时只暂停
+该 Mod，下一次成功热更新后再恢复。编辑 `nte-mods.enabled` 可只加载 `equipment`
 或 `combat-clock`；配置只保留 `nte_mod_set 1` 时，DLL 会移除 Viewport Hook 并
 关闭 IPC。更改 DLL 安装状态前必须关闭游戏；Mod 脚本可在运行时启停。
 关闭选项会移除由本工具安装的副本。若目录里已有其他来源的 `dwmapi.dll`，程序会

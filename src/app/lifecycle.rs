@@ -292,9 +292,6 @@ impl DpsApp {
             kongmu_ui: KongmuUiState::default(),
             mod_editor: ModEditorState::default(),
             state: CombatState::default(),
-            projected_state: None,
-            mod_projection_dirty: false,
-            mod_projection_last_refresh: None,
             combat_active: false,
             last_combat_timestamp: None,
             last_combat_activity: None,
@@ -384,8 +381,6 @@ impl DpsApp {
 
     pub(crate) fn reset_combat_session(&mut self) {
         self.state.clear();
-        self.projected_state = None;
-        self.mod_projection_dirty = true;
         self.presented_history_id = None;
         self.presented_history_state = None;
         self.last_auto_archive_hits_generation = 0;
@@ -1867,15 +1862,11 @@ impl DpsApp {
             _ => {}
         }
         match crate::core::reducer::apply_engine_event(&mut self.state, event) {
-            CoreSignal::StateChanged => self.mod_projection_dirty = true,
+            CoreSignal::StateChanged | CoreSignal::ModScript(_) => {}
             CoreSignal::InventoryReplaced
             | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
             | CoreSignal::PacketObserved => {}
-            CoreSignal::ModScript(event) => {
-                self.mod_projection_dirty = true;
-                self.push_mod_script_event(event);
-            }
             CoreSignal::Status(status) => self.notifications.status = status,
             CoreSignal::Warning(warning) => {
                 self.notifications.diagnostic = Some(tf(
@@ -2000,8 +1991,6 @@ impl DpsApp {
                             );
                             self.round_archive_pending = false;
                             self.state.clear_battle_preserving_inventory();
-                            self.projected_state = None;
-                            self.mod_projection_dirty = true;
                             self.presented_history_id = None;
                             self.presented_history_state = None;
                             self.last_auto_archive_hits_generation = 0;
@@ -2761,8 +2750,6 @@ impl DpsApp {
                 }
                 let snapshot = *snapshot;
                 self.state = snapshot.state;
-                self.projected_state = None;
-                self.mod_projection_dirty = true;
                 self.session_epoch = self.session_epoch.wrapping_add(1);
                 self.reset_combat_view_state();
                 self.capture_ui.capture_quality_source = snapshot.capture_quality_source;
@@ -2999,9 +2986,7 @@ impl DpsApp {
     }
 
     pub(crate) fn presented_state(&self) -> &CombatState {
-        self.projected_state
-            .as_deref()
-            .unwrap_or_else(|| self.raw_presented_state())
+        self.raw_presented_state()
     }
 
     pub(crate) fn raw_presented_state(&self) -> &CombatState {
@@ -3039,8 +3024,6 @@ impl DpsApp {
         });
         self.presented_history_id = record_id;
         self.presented_history_state = presented;
-        self.projected_state = None;
-        self.mod_projection_dirty = true;
         let state = self.presented_state();
         self.selected_abyss_half = state.abyss.active_half.unwrap_or({
             if state.abyss.first_half.hits.is_empty() {

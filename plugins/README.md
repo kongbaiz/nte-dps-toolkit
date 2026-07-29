@@ -11,7 +11,6 @@ plugins/
     equipment.nte
     combat-clock.nte
     enemy-telemetry.nte
-    enemy-telemetry.blueprint.json
   examples/
     character-telemetry.nte
     reflection-events.nte
@@ -27,7 +26,12 @@ local build. The desktop program rejects an older DLL that lacks any host API
 required by the bundled scripts instead of installing mismatched components.
 Only `dwmapi.dll` is copied beside `HTGame.exe`. The desktop program registers
 this software-side directory as the active workspace, and the DLL watches
-saved script and enable-set changes while the game is running.
+saved script and enable-set changes every 250 ms while the game is running.
+Each update compiles the complete candidate set before swapping it in. Invalid
+source keeps the last working programs, and a trapped runtime fault pauses only
+the affected Mod until the next successful hot update. The minimizable Mod
+Workshop runtime console shows these lifecycle messages and output from
+`nte::log::info("message")`.
 
 `nte-mods.enabled` lists the active scripts. Each `.nte` file is restricted
 NTE C++ v5: normal C++ declarations, braces, semicolons, namespace-qualified
@@ -41,7 +45,7 @@ shared hook. Shared session entry points stay behind
 feature-specific offsets, UFunction parameter layouts, sampling rules, cache
 keys, and event formats remain in Mod source instead of requiring a new DLL
 service or DLL build. After the runtime ABI is installed, a new Mod consists
-only of its `.nte`, optional `.blueprint.json`, and resources.
+only of its `.nte` and resources.
 
 The two built-ins contain their own documented control flow rather than thin
 calls into hard-coded features. `equipment.nte` owns cache retry/readiness and
@@ -50,7 +54,7 @@ forwarding. The DLL host APIs remain bounded primitives for stable session
 objects, checked reads, one cache preparation attempt, authoritative pause
 fields, one transition record, and IPC transport.
 
-`enemy-telemetry.nte` is a research Blueprint listed by the research branch's
+`enemy-telemetry.nte` is a research script listed by the research branch's
 default `nte-mods.enabled`. Starting from the generic
 `nte::game::player_controller`, it uses bounded `nte::memory::*` primitives to read each
 attack target and its HP. `nte::cache::remember` locks the first stable lowercase
@@ -59,12 +63,8 @@ ASCII FNV-1a character-config hash for every target key, while generic
 has no enemy-specific service, IPC operation, or response structure. The
 desktop resolves hashes through `res/data/enemies/enemies.json` and only
 projects the localized name and portrait when exactly one captured HP stream
-matches; ambiguous identical streams stay unidentified. Its
-`enemy-telemetry.blueprint.json` stores optional visual metadata. Mod Studio
-groups straight-line C++ statements into editable basic blocks and renders
-conditions, branch merges, and loop-back edges as an IDA-style control-flow
-graph instead of collapsing the whole handler into one advanced node. Remove
-`load enemy-telemetry` from `nte-mods.enabled` to stop it.
+matches; ambiguous identical streams stay unidentified. Remove `load
+enemy-telemetry` from `nte-mods.enabled` to stop it.
 
 During live capture, the desktop program consumes `nte::ipc::emit` records through
 its shared engine pipeline. Names prefixed with `pre.` and `post.` become typed

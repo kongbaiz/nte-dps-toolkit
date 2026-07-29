@@ -55,8 +55,8 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 - **Auto adapter selection**: picks the network adapter and local IP from `HTGame.exe`'s active connections.
 
 > Precise enemy-target and scene identification are still under research.
-> The `plugins/nte-mods/enemy-telemetry.nte` research
-> Blueprint uses only generic read-only memory, FName hashing, first-write cache,
+> The `plugins/nte-mods/enemy-telemetry.nte` research script uses only generic
+> read-only memory, FName hashing, first-write cache,
 > and Mod-event primitives to sample and cache multiple targets without an
 > enemy-specific DLL service. Localized names and portraits are projected
 > into battle details only when both the config catalog and captured HP continuity match.
@@ -119,8 +119,8 @@ state, arithmetic and bit operations, `if/else if/else`, bounded `for`, typed
 memory reads and writes, generic UFunction calls and
 ProcessEvent subscriptions, character APIs shared by the inspected
 China/Global SDKs, stable `nte::game::*` session values that hide client offsets, and
-custom IPC events. A new Mod adds only its `.nte`, optional Blueprint metadata,
-and resources; it adds no feature-specific DLL service and requires no DLL
+custom IPC events. A new Mod adds only its `.nte` and resources; it adds no
+feature-specific DLL service and requires no DLL
 rebuild. Live capture routes `pre.*`, `post.*`, and ordinary script
 events through the app's shared event pipeline. The DLL retains the compiler,
 VM, shared hook, boundary validation, and capability whitelist. Open
@@ -130,7 +130,12 @@ seconds, while Cancel and `Esc` close the dialog immediately. After confirmation
 the app installs only `dwmapi.dll` beside `HTGame.exe` in the selected client.
 The enabled set and scripts remain under `plugins/` beside the software. The
 DLL resolves that registered workspace and watches saved source and enable
-changes while the game is running. Edit `nte-mods.enabled` to load only
+changes every 250 ms while the game is running. The minimizable runtime console
+at the bottom of Mod Workshop shows hot-update status, compile failures, and
+`nte::log::info("message")` output. An update compiles the complete candidate
+set before an atomic swap; invalid source keeps the last working version, while
+a runtime fault pauses only that Mod until the next successful hot update.
+Edit `nte-mods.enabled` to load only
 `equipment` or `combat-clock`. Leaving only `nte_mod_set 1` removes the
 Viewport hook and closes IPC.
 When both China and Global clients are installed, choose the client to manage

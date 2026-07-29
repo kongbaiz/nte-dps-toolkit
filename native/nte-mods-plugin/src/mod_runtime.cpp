@@ -261,20 +261,29 @@ namespace nte::mods::runtime
 		uint32_t enabled_capabilities = 0;
 		size_t program_count = 0;
 		uint64_t source_fingerprint = 0;
+		uint64_t failed_source_fingerprint = 0;
 		SRWLOCK program_lock = SRWLOCK_INIT;
+		SRWLOCK mod_log_lock = SRWLOCK_INIT;
 		constinit std::array<ModProgram, MAX_ENABLED_MODS> programs{};
 		constinit std::array<ModProgram, MAX_ENABLED_MODS> candidate_programs{};
+		constinit std::array<bool, MAX_ENABLED_MODS> quarantined_programs{};
 		constinit ModProgram candidate_program{};
 		constinit std::array<wchar_t, MAX_PATH> script_path{};
 		constinit std::array<char, MAX_SCRIPT_BYTES + 1> script_text{};
 		constinit std::array<char, MAX_SCRIPT_BYTES + 1> translated_script_text{};
 		constinit EnabledModSet enabled_mod_set{};
+		constinit EnabledModSet candidate_enabled_mod_set{};
 		constinit std::array<NteModEvent, NTE_MOD_EVENT_HISTORY_SIZE>
 			mod_event_history{};
 		constinit uint32_t mod_event_history_count = 0;
 		constinit uint32_t mod_event_history_next = 0;
 		// The desktop deduplicator spans workspace reloads for the DLL lifetime.
 		constinit uint64_t next_mod_event_sequence = 1;
+		constinit std::array<NteModLogEntry, NTE_MOD_LOG_HISTORY_SIZE>
+			mod_log_history{};
+		constinit uint32_t mod_log_history_count = 0;
+		constinit uint32_t mod_log_history_next = 0;
+		constinit uint64_t next_mod_log_sequence = 1;
 
 		static_assert(sizeof(Instruction) == 16);
 		static_assert(sizeof(PointerArray) == 16);
@@ -3405,6 +3414,96 @@ namespace nte::mods::runtime
 				timestamp.dwLowDateTime;
 		}
 
+		size_t Utf8SequenceLength(uint8_t lead)
+		{
+			if (lead < 0x80)
+				return 1;
+			if (lead >= 0xC2 && lead <= 0xDF)
+				return 2;
+			if (lead >= 0xE0 && lead <= 0xEF)
+				return 3;
+			if (lead >= 0xF0 && lead <= 0xF4)
+				return 4;
+			return 0;
+		}
+
+		void CopyLogMessage(
+			char* output,
+			size_t output_capacity,
+			const char* message)
+		{
+			size_t input_index = 0;
+			size_t output_index = 0;
+			while (message[input_index] != '\0' &&
+				output_index + 1 < output_capacity)
+			{
+				const uint8_t lead =
+					static_cast<uint8_t>(message[input_index]);
+				const size_t sequence_length = Utf8SequenceLength(lead);
+				bool valid = sequence_length != 0;
+				for (size_t index = 1;
+					valid && index < sequence_length;
+					++index)
+				{
+					const uint8_t continuation =
+						static_cast<uint8_t>(message[input_index + index]);
+					valid = continuation >= 0x80 && continuation <= 0xBF;
+				}
+				if (!valid)
+				{
+					output[output_index++] = '?';
+					++input_index;
+					continue;
+				}
+				if (output_index + sequence_length >= output_capacity)
+					break;
+				for (size_t index = 0; index < sequence_length; ++index)
+					output[output_index++] = message[input_index++];
+			}
+			output[output_index] = '\0';
+		}
+
+		void RecordModLog(
+			const char* mod_id,
+			NteModLogLevel level,
+			const char* message)
+		{
+			NteModLogEntry entry{};
+			entry.timestamp_100ns = CurrentFileTime100ns();
+			entry.level = static_cast<uint32_t>(level);
+			for (size_t index = 0;
+				index < NTE_MOD_LOG_ID_SIZE - 1 && mod_id[index] != '\0';
+				++index)
+				entry.mod_id[index] = mod_id[index];
+			CopyLogMessage(
+				entry.message,
+				NTE_MOD_LOG_MESSAGE_SIZE,
+				message);
+
+			AcquireSRWLockExclusive(&mod_log_lock);
+			entry.sequence = next_mod_log_sequence++;
+			mod_log_history[mod_log_history_next] = entry;
+			mod_log_history_next =
+				(mod_log_history_next + 1) % NTE_MOD_LOG_HISTORY_SIZE;
+			if (mod_log_history_count < NTE_MOD_LOG_HISTORY_SIZE)
+				++mod_log_history_count;
+			ReleaseSRWLockExclusive(&mod_log_lock);
+		}
+
+		ReloadResult RecordReloadError(
+			uint64_t fingerprint,
+			const char* mod_id,
+			const char* message)
+		{
+			if (fingerprint != failed_source_fingerprint)
+			{
+				failed_source_fingerprint = fingerprint;
+				RecordModLog(mod_id, NTE_MOD_LOG_ERROR, message);
+				DebugLog(message);
+			}
+			return ReloadResult::Error;
+		}
+
 		void RecordModEvent(
 			const ModProgram& program,
 			const Instruction& instruction,
@@ -4053,36 +4152,80 @@ namespace nte::mods::runtime
 					++instruction_index;
 					break;
 				case OpCode::DebugLog:
-					DebugLog(program.strings[instruction.immediate].value.data());
+				{
+					const char* message =
+						program.strings[instruction.immediate].value.data();
+					RecordModLog(
+						program.mod.id.data(),
+						NTE_MOD_LOG_INFO,
+						message);
+					DebugLog(message);
 					++instruction_index;
 					break;
 				}
+				}
 			}
+		}
+
+		bool ExecuteProgramGuarded(
+			ModProgram& program,
+			uint32_t program_index,
+			void* viewport,
+			TickExecution& execution)
+		{
+		#if defined(_MSC_VER)
+			__try
+			{
+				ExecuteProgram(
+					program,
+					program_index,
+					viewport,
+					execution);
+				return true;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				RecordModLog(
+					program.mod.id.data(),
+					NTE_MOD_LOG_ERROR,
+					"Runtime fault trapped; Mod paused until hot reload.");
+				return false;
+			}
+		#else
+			ExecuteProgram(program, program_index, viewport, execution);
+			return true;
+		#endif
 		}
 	} // namespace
 
 	ReloadResult ReloadEnabledPrograms(const wchar_t* workspace)
 	{
+		uint64_t fingerprint = 0xCBF29CE484222325ull;
 		if (!BuildConfigPath(
 			workspace, script_path.data(), script_path.size()))
-			return ReloadResult::Error;
+		{
+			return RecordReloadError(
+				fingerprint,
+				"runtime",
+				"Mod workspace path is invalid; previous version kept.");
+		}
 
-		uint64_t fingerprint = 0xCBF29CE484222325ull;
 		size_t text_size = 0;
 		const ReadTextResult config_result =
 			ReadTextFile(script_path.data(), script_text, text_size);
-		enabled_mod_set = {};
+		candidate_enabled_mod_set = {};
 		if (config_result == ReadTextResult::Ok)
 		{
 			fingerprint = UpdateFingerprint(
 				fingerprint, script_text.data(), text_size);
 			if (!ParseEnabledModSet(
 				StripUtf8Bom({ script_text.data(), text_size }),
-				enabled_mod_set))
+				candidate_enabled_mod_set))
 			{
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE Mods plugin: invalid enabled-mod set.\n").c_str());
-				enabled_mod_set = {};
+				return RecordReloadError(
+					fingerprint,
+					"runtime",
+					"Enabled Mod set is invalid; previous version kept.");
 			}
 		}
 		else if (config_result == ReadTextResult::NotFound)
@@ -4092,23 +4235,40 @@ namespace nte::mods::runtime
 				fingerprint, missing_config, sizeof(missing_config) - 1);
 		}
 		else
-			return ReloadResult::Error;
+		{
+			constexpr char unreadable_config[] = "unreadable-enabled-mod-set";
+			fingerprint = UpdateFingerprint(
+				fingerprint,
+				unreadable_config,
+				sizeof(unreadable_config) - 1);
+			return RecordReloadError(
+				fingerprint,
+				"runtime",
+				"Enabled Mod set is unreadable; previous version kept.");
+		}
 
 		size_t candidate_count = 0;
 		uint32_t candidate_capabilities = 0;
 		ZeroMemory(candidate_programs.data(), sizeof(candidate_programs));
-		for (size_t index = 0; index < enabled_mod_set.count; ++index)
+		for (size_t index = 0;
+			index < candidate_enabled_mod_set.count;
+			++index)
 		{
 			fingerprint = UpdateFingerprint(
 				fingerprint,
-				enabled_mod_set.mods[index].id.data(),
-				enabled_mod_set.mods[index].id.size());
+				candidate_enabled_mod_set.mods[index].id.data(),
+				candidate_enabled_mod_set.mods[index].id.size());
 			if (!BuildModPath(
 				workspace,
-				enabled_mod_set.mods[index],
+				candidate_enabled_mod_set.mods[index],
 				script_path.data(),
 				script_path.size()))
-				return ReloadResult::Error;
+			{
+				return RecordReloadError(
+					fingerprint,
+					candidate_enabled_mod_set.mods[index].id.data(),
+					"Mod source path is invalid; previous version kept.");
+			}
 
 			text_size = 0;
 			const ReadTextResult program_result = ReadTextFile(
@@ -4120,10 +4280,10 @@ namespace nte::mods::runtime
 					fingerprint,
 					missing_program,
 					sizeof(missing_program) - 1);
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE Mods plugin: enabled mod program is unavailable.\n")
-					.c_str());
-				continue;
+				return RecordReloadError(
+					fingerprint,
+					candidate_enabled_mod_set.mods[index].id.data(),
+					"Enabled Mod source is missing; previous version kept.");
 			}
 			fingerprint = UpdateFingerprint(
 				fingerprint, script_text.data(), text_size);
@@ -4133,7 +4293,7 @@ namespace nte::mods::runtime
 			ZeroMemory(&candidate_program, sizeof(candidate_program));
 			bool parsed = ParseModProgram(
 				source,
-				enabled_mod_set.mods[index],
+				candidate_enabled_mod_set.mods[index],
 				candidate_program);
 			if (!parsed)
 			{
@@ -4148,31 +4308,42 @@ namespace nte::mods::runtime
 							translated_script_text.data(),
 							translated_size,
 						},
-						enabled_mod_set.mods[index],
+						candidate_enabled_mod_set.mods[index],
 						candidate_program);
 			}
 			if (!parsed)
 			{
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE Mods plugin: invalid mod program.\n").c_str());
-				continue;
+				return RecordReloadError(
+					fingerprint,
+					candidate_enabled_mod_set.mods[index].id.data(),
+					"Compilation failed; previous version kept.");
 			}
 			candidate_programs[candidate_count++] = candidate_program;
 			candidate_capabilities |= candidate_program.capabilities;
 		}
 		if (fingerprint == source_fingerprint)
+		{
+			failed_source_fingerprint = 0;
 			return ReloadResult::Unchanged;
+		}
 
 		AcquireSRWLockExclusive(&program_lock);
 		ResetProcessEventWatches();
 		programs = candidate_programs;
+		enabled_mod_set = candidate_enabled_mod_set;
 		program_count = candidate_count;
 		enabled_capabilities = candidate_capabilities;
 		source_fingerprint = fingerprint;
+		failed_source_fingerprint = 0;
+		quarantined_programs.fill(false);
 		ZeroMemory(mod_event_history.data(), sizeof(mod_event_history));
 		mod_event_history_count = 0;
 		mod_event_history_next = 0;
 		ReleaseSRWLockExclusive(&program_lock);
+		RecordModLog(
+			"runtime",
+			NTE_MOD_LOG_INFO,
+			"Hot reload applied.");
 		return ReloadResult::Changed;
 	}
 
@@ -4198,13 +4369,16 @@ namespace nte::mods::runtime
 		TickExecution execution{};
 		execution.viewport = viewport;
 		for (size_t index = 0; index < program_count; ++index)
-			ExecuteProgram(
-				programs[index],
-				static_cast<uint32_t>(index),
-				viewport,
-				execution);
-		if ((enabled_capabilities & CAPABILITY_IPC) != 0)
-			PumpLiveIpc(&execution.ipc_context);
+		{
+			if (!quarantined_programs[index] &&
+				!ExecuteProgramGuarded(
+					programs[index],
+					static_cast<uint32_t>(index),
+					viewport,
+					execution))
+				quarantined_programs[index] = true;
+		}
+		PumpLiveIpc(&execution.ipc_context);
 		ReleaseSRWLockShared(&program_lock);
 	}
 
@@ -4255,6 +4429,27 @@ namespace nte::mods::runtime
 		return copy_count;
 	}
 
+	uint32_t CopyModLogs(NteModLogEntry* output, uint32_t capacity)
+	{
+		if (output == nullptr || capacity == 0)
+			return 0;
+		AcquireSRWLockShared(&mod_log_lock);
+		const uint32_t copy_count = capacity < mod_log_history_count
+			? capacity
+			: mod_log_history_count;
+		const uint32_t first =
+			(mod_log_history_next +
+				NTE_MOD_LOG_HISTORY_SIZE - copy_count) %
+			NTE_MOD_LOG_HISTORY_SIZE;
+		for (uint32_t index = 0; index < copy_count; ++index)
+		{
+			output[index] = mod_log_history[
+				(first + index) % NTE_MOD_LOG_HISTORY_SIZE];
+		}
+		ReleaseSRWLockShared(&mod_log_lock);
+		return copy_count;
+	}
+
 	void Reset()
 	{
 		AcquireSRWLockExclusive(&program_lock);
@@ -4262,12 +4457,20 @@ namespace nte::mods::runtime
 		enabled_capabilities = 0;
 		program_count = 0;
 		source_fingerprint = 0;
+		failed_source_fingerprint = 0;
 		enabled_mod_set = {};
+		candidate_enabled_mod_set = {};
 		ZeroMemory(programs.data(), sizeof(programs));
 		ZeroMemory(candidate_programs.data(), sizeof(candidate_programs));
+		quarantined_programs.fill(false);
 		ZeroMemory(mod_event_history.data(), sizeof(mod_event_history));
 		mod_event_history_count = 0;
 		mod_event_history_next = 0;
 		ReleaseSRWLockExclusive(&program_lock);
+		AcquireSRWLockExclusive(&mod_log_lock);
+		ZeroMemory(mod_log_history.data(), sizeof(mod_log_history));
+		mod_log_history_count = 0;
+		mod_log_history_next = 0;
+		ReleaseSRWLockExclusive(&mod_log_lock);
 	}
 } // namespace nte::mods::runtime
