@@ -119,11 +119,14 @@ namespace nte::mods::runtime
 			ReadParamFloatMilli,
 			InvokeReflectedFunction,
 			WatchProcessEvent,
+			WatchProcessEventArrayU64,
+			WatchProcessEventClassArrayU64,
 			UnwatchProcessEvent,
 			NextProcessEvent,
 			ReadProcessEventObject,
 			ReadProcessEventFunction,
 			ReadProcessEventParamSize,
+			ReadProcessEventCapturedU64,
 			ReadProcessEventParamU8,
 			ReadProcessEventParamU16,
 			ReadProcessEventParamU32,
@@ -1619,6 +1622,9 @@ namespace nte::mods::runtime
 				std::pair{ "event.object", OpCode::ReadProcessEventObject },
 				std::pair{ "event.function", OpCode::ReadProcessEventFunction },
 				std::pair{
+					"event.captured_u64",
+					OpCode::ReadProcessEventCapturedU64 },
+				std::pair{
 					"event.params_size",
 					OpCode::ReadProcessEventParamSize },
 			})
@@ -1929,6 +1935,60 @@ namespace nte::mods::runtime
 					value);
 			}
 
+			OpCode array_watch_opcode{};
+			bool array_watch = true;
+			if (ParseCall(
+					line,
+					"unreal.watch_class_array_u64",
+					arguments))
+				array_watch_opcode =
+					OpCode::WatchProcessEventClassArrayU64;
+			else if (ParseCall(line, "unreal.watch_array_u64", arguments))
+				array_watch_opcode = OpCode::WatchProcessEventArrayU64;
+			else
+				array_watch = false;
+			if (array_watch)
+			{
+				uint8_t object = SCRATCH_REGISTER_A;
+				uint8_t function = SCRATCH_REGISTER_B;
+				uint8_t element_size = CONDITION_REGISTER;
+				uint8_t value_offset = RESULT_REGISTER;
+				if (!SplitArguments(arguments, parsed.data(), parsed.size(), count) ||
+					count != 4 ||
+					!MaterializeAtom(
+						parsed[0],
+						program,
+						variables,
+						SCRATCH_REGISTER_A,
+						object) ||
+					!MaterializeAtom(
+						parsed[1],
+						program,
+						variables,
+						SCRATCH_REGISTER_B,
+						function) ||
+					!MaterializeAtom(
+						parsed[2],
+						program,
+						variables,
+						CONDITION_REGISTER,
+						element_size) ||
+					!MaterializeAtom(
+						parsed[3],
+						program,
+						variables,
+						RESULT_REGISTER,
+						value_offset))
+					return false;
+				program.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+				return AppendInstruction(
+					program,
+					array_watch_opcode,
+					object,
+					function,
+					element_size,
+					value_offset);
+			}
 			if (ParseCall(line, "unreal.watch", arguments))
 			{
 				uint8_t object = SCRATCH_REGISTER_A;
@@ -3949,6 +4009,28 @@ namespace nte::mods::runtime
 							registers[instruction.second]));
 					++instruction_index;
 					break;
+				case OpCode::WatchProcessEventArrayU64:
+					WatchProcessEventArrayU64(
+						program_index,
+						reinterpret_cast<void*>(
+							registers[instruction.first]),
+						reinterpret_cast<void*>(
+							registers[instruction.second]),
+						registers[instruction.third],
+						registers[instruction.fourth]);
+					++instruction_index;
+					break;
+				case OpCode::WatchProcessEventClassArrayU64:
+					WatchProcessEventClassArrayU64(
+						program_index,
+						reinterpret_cast<void*>(
+							registers[instruction.first]),
+						reinterpret_cast<void*>(
+							registers[instruction.second]),
+						registers[instruction.third],
+						registers[instruction.fourth]);
+					++instruction_index;
+					break;
 				case OpCode::UnwatchProcessEvent:
 					UnwatchProcessEvent(
 						program_index,
@@ -3985,6 +4067,13 @@ namespace nte::mods::runtime
 					registers[instruction.first] =
 						frame.has_process_event
 						? frame.process_event.params_size
+						: 0;
+					++instruction_index;
+					break;
+				case OpCode::ReadProcessEventCapturedU64:
+					registers[instruction.first] =
+						frame.has_process_event
+						? frame.process_event.captured_u64
 						: 0;
 					++instruction_index;
 					break;

@@ -37,12 +37,18 @@ struct PendingModEditorTask {
 }
 
 struct PendingModConsolePoll {
-    receiver: Receiver<Result<Vec<ModLogSnapshot>, String>>,
+    receiver: Receiver<Result<ModConsolePollResult, String>>,
+}
+
+struct ModConsolePollResult {
+    logs: Vec<ModLogSnapshot>,
+    events: Vec<ModEventSnapshot>,
 }
 
 #[derive(Clone, Copy)]
 enum ModConsoleEntryLevel {
     Editor,
+    Event,
     Runtime(ModLogLevel),
 }
 
@@ -58,6 +64,7 @@ struct ModConsoleState {
     connected: bool,
     entries: VecDeque<ModConsoleEntry>,
     last_runtime_sequence: u64,
+    last_event_sequence: u64,
     pending: Option<PendingModConsolePoll>,
     next_poll_at: Instant,
 }
@@ -69,6 +76,7 @@ impl Default for ModConsoleState {
             connected: false,
             entries: VecDeque::new(),
             last_runtime_sequence: 0,
+            last_event_sequence: 0,
             pending: None,
             next_poll_at: Instant::now(),
         }
@@ -85,23 +93,60 @@ impl ModConsoleState {
         });
     }
 
-    fn ingest_runtime(&mut self, logs: Vec<ModLogSnapshot>) {
-        let newest_sequence = logs.last().map_or(0, |entry| entry.sequence);
-        if newest_sequence != 0 && newest_sequence < self.last_runtime_sequence {
+    fn ingest_runtime(&mut self, result: ModConsolePollResult) {
+        let newest_log_sequence = result
+            .logs
+            .iter()
+            .map(|entry| entry.sequence)
+            .max()
+            .unwrap_or(0);
+        let newest_event_sequence = result
+            .events
+            .iter()
+            .map(|entry| entry.sequence)
+            .max()
+            .unwrap_or(0);
+        if (newest_log_sequence != 0 && newest_log_sequence < self.last_runtime_sequence)
+            || (newest_event_sequence != 0 && newest_event_sequence < self.last_event_sequence)
+        {
             self.entries.clear();
             self.last_runtime_sequence = 0;
+            self.last_event_sequence = 0;
         }
-        for log in logs {
+        let mut entries = Vec::with_capacity(result.logs.len() + result.events.len());
+        for log in result.logs {
             if log.sequence <= self.last_runtime_sequence {
                 continue;
             }
             self.last_runtime_sequence = log.sequence;
-            self.push(ModConsoleEntry {
-                time: mod_log_time(log.timestamp_100ns),
-                mod_id: log.mod_id,
-                level: ModConsoleEntryLevel::Runtime(log.level),
-                message: mod_runtime_log_text(&log.message),
-            });
+            entries.push((
+                log.timestamp_100ns,
+                ModConsoleEntry {
+                    time: mod_log_time(log.timestamp_100ns),
+                    mod_id: log.mod_id,
+                    level: ModConsoleEntryLevel::Runtime(log.level),
+                    message: mod_runtime_log_text(&log.message),
+                },
+            ));
+        }
+        for event in result.events {
+            if event.sequence <= self.last_event_sequence {
+                continue;
+            }
+            self.last_event_sequence = event.sequence;
+            entries.push((
+                event.timestamp_100ns,
+                ModConsoleEntry {
+                    time: mod_log_time(event.timestamp_100ns),
+                    mod_id: event.mod_id.clone(),
+                    level: ModConsoleEntryLevel::Event,
+                    message: mod_runtime_event_text(&event),
+                },
+            ));
+        }
+        entries.sort_by_key(|(timestamp, _)| *timestamp);
+        for (_, entry) in entries {
+            self.push(entry);
         }
     }
 
@@ -111,6 +156,22 @@ impl ModConsoleState {
             self.entries.pop_front();
         }
         self.entries.push_back(entry);
+    }
+
+    fn plain_text(&self) -> String {
+        self.entries
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{} [{}] [{}] {}",
+                    entry.time,
+                    mod_console_level(entry.level),
+                    entry.mod_id,
+                    entry.message
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -453,6 +514,14 @@ const NTE_COMPLETIONS: &[NteCompletion] = &[
         insert: "nte::unreal::watch(",
     },
     NteCompletion {
+        label: "nte::unreal::watch_array_u64(object, function, element_size, value_offset)",
+        insert: "nte::unreal::watch_array_u64(",
+    },
+    NteCompletion {
+        label: "nte::unreal::watch_class_array_u64(object, function, element_size, value_offset)",
+        insert: "nte::unreal::watch_class_array_u64(",
+    },
+    NteCompletion {
         label: "nte::unreal::unwatch(object, function)",
         insert: "nte::unreal::unwatch(",
     },
@@ -471,6 +540,10 @@ const NTE_COMPLETIONS: &[NteCompletion] = &[
     NteCompletion {
         label: "nte::event::params_size()",
         insert: "nte::event::params_size()",
+    },
+    NteCompletion {
+        label: "nte::event::captured_u64()",
+        insert: "nte::event::captured_u64()",
     },
     NteCompletion {
         label: "nte::event::read_u8(offset)",
@@ -1262,6 +1335,16 @@ impl DpsApp {
                         {
                             self.mod_editor.console.entries.clear();
                         }
+                        if ui
+                            .add_enabled(
+                                !self.mod_editor.console.entries.is_empty(),
+                                egui::Button::new(t("Copy")).small(),
+                            )
+                            .on_hover_text(t("Copy"))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(self.mod_editor.console.plain_text());
+                        }
                     });
                 });
             });
@@ -1281,12 +1364,10 @@ impl DpsApp {
                     .show(ui, |ui| {
                         if self.mod_editor.console.entries.is_empty() {
                             ui.label(
-                                RichText::new(t(
-                                    "Use nte::log::info(\"message\") to print script output here.",
-                                ))
-                                .monospace()
-                                .small()
-                                .color(palette.muted),
+                                RichText::new(t("Script logs and emitted IPC events appear here."))
+                                    .monospace()
+                                    .small()
+                                    .color(palette.muted),
                             );
                         }
                         for entry in &self.mod_editor.console.entries {
@@ -1301,6 +1382,7 @@ impl DpsApp {
                                     ModConsoleEntryLevel::Editor => {
                                         ("EDITOR", palette.selected_border)
                                     }
+                                    ModConsoleEntryLevel::Event => ("EVENT", palette.status),
                                     ModConsoleEntryLevel::Runtime(ModLogLevel::Info) => {
                                         ("INFO", palette.text)
                                     }
@@ -1323,11 +1405,14 @@ impl DpsApp {
                                         .small()
                                         .color(palette.selected_border),
                                 );
-                                ui.label(
-                                    RichText::new(&entry.message)
-                                        .monospace()
-                                        .small()
-                                        .color(palette.text),
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(&entry.message)
+                                            .monospace()
+                                            .small()
+                                            .color(palette.text),
+                                    )
+                                    .selectable(true),
                                 );
                             });
                         }
@@ -1336,7 +1421,7 @@ impl DpsApp {
     }
 
     fn start_mod_console_poll_if_due(&mut self, ctx: &egui::Context) {
-        const MOD_CONSOLE_POLL_INTERVAL: Duration = Duration::from_millis(750);
+        const MOD_CONSOLE_POLL_INTERVAL: Duration = Duration::from_millis(500);
         let now = Instant::now();
         if self.mod_editor.console.pending.is_some() {
             ctx.request_repaint_after(Duration::from_millis(50));
@@ -1354,7 +1439,10 @@ impl DpsApp {
         let (sender, receiver) = bounded(1);
         let repaint = ctx.clone();
         thread::spawn(move || {
-            let _ = sender.send(query_mod_logs());
+            let result = query_mod_logs().and_then(|logs| {
+                query_mod_events().map(|events| ModConsolePollResult { logs, events })
+            });
+            let _ = sender.send(result);
             repaint.request_repaint();
         });
         self.mod_editor.console.pending = Some(PendingModConsolePoll { receiver });
@@ -1375,9 +1463,9 @@ impl DpsApp {
         };
         self.mod_editor.console.pending = None;
         match result {
-            Ok(logs) => {
+            Ok(result) => {
                 self.mod_editor.console.connected = true;
-                self.mod_editor.console.ingest_runtime(logs);
+                self.mod_editor.console.ingest_runtime(result);
             }
             Err(_) => {
                 self.mod_editor.console.connected = false;
@@ -1515,6 +1603,39 @@ fn mod_runtime_log_text(message: &str) -> String {
         | "Runtime fault trapped; Mod paused until hot reload." => t(message),
         _ => message.to_owned(),
     }
+}
+
+fn mod_console_level(level: ModConsoleEntryLevel) -> &'static str {
+    match level {
+        ModConsoleEntryLevel::Editor => "EDITOR",
+        ModConsoleEntryLevel::Event => "EVENT",
+        ModConsoleEntryLevel::Runtime(ModLogLevel::Info) => "INFO",
+        ModConsoleEntryLevel::Runtime(ModLogLevel::Warning) => "WARN",
+        ModConsoleEntryLevel::Runtime(ModLogLevel::Error) => "ERROR",
+    }
+}
+
+fn mod_runtime_event_text(event: &ModEventSnapshot) -> String {
+    match (event.name.as_str(), event.values.as_slice()) {
+        ("pre.enemy.identity", [target, config_hash, level]) => {
+            return format!(
+                "pre.enemy.identity target=0x{target:016X} \
+                 config_hash=0x{config_hash:016X} level={level}"
+            );
+        }
+        ("post.enemy.vitals", [target, hp, max_hp]) => {
+            return format!("post.enemy.vitals target=0x{target:016X} hp={hp} max_hp={max_hp}");
+        }
+        ("post.enemy.cleared", [target]) => {
+            return format!("post.enemy.cleared target=0x{target:016X}");
+        }
+        _ => {}
+    }
+    let mut text = event.name.clone();
+    for (index, value) in event.values.iter().enumerate() {
+        text.push_str(&format!(" v{index}={value}/0x{value:016X}"));
+    }
+    text
 }
 
 fn load_mod_editor_targets() -> Result<Vec<ModEditorTarget>, ModEditorTaskError> {
@@ -2411,7 +2532,7 @@ fn signature_help_popup(
             ui.set_width(width);
             egui::Frame::new()
                 .fill(palette.chrome)
-                .stroke(Stroke::new(1.0, palette.border))
+                .stroke(Stroke::new(1.0_f32, palette.border))
                 .inner_margin(egui::Margin::symmetric(8, 6))
                 .show(ui, |ui| {
                     ui.add(
@@ -2879,6 +3000,66 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[test]
+    fn runtime_event_text_keeps_enemy_target_and_hp_values() {
+        let event = ModEventSnapshot {
+            sequence: 7,
+            timestamp_100ns: 0,
+            mod_id: "enemy-telemetry".to_owned(),
+            name: "post.enemy.vitals".to_owned(),
+            values: vec![0x1234, 1_593_822, 2_220_578],
+        };
+
+        assert_eq!(
+            mod_runtime_event_text(&event),
+            "post.enemy.vitals target=0x0000000000001234 hp=1593822 max_hp=2220578"
+        );
+    }
+
+    #[test]
+    fn runtime_console_merges_logs_and_events_once_in_timestamp_order() {
+        let logs = vec![ModLogSnapshot {
+            sequence: 4,
+            timestamp_100ns: 200,
+            mod_id: "enemy-telemetry".to_owned(),
+            level: ModLogLevel::Info,
+            message: "enemy identity hash missing".to_owned(),
+        }];
+        let events = vec![ModEventSnapshot {
+            sequence: 9,
+            timestamp_100ns: 100,
+            mod_id: "enemy-telemetry".to_owned(),
+            name: "post.enemy.vitals".to_owned(),
+            values: vec![0x1234, 1_593_822, 2_220_578],
+        }];
+        let mut console = ModConsoleState::default();
+
+        console.ingest_runtime(ModConsolePollResult {
+            logs: logs.clone(),
+            events: events.clone(),
+        });
+
+        assert_eq!(console.entries.len(), 2);
+        assert!(matches!(
+            console.entries[0].level,
+            ModConsoleEntryLevel::Event
+        ));
+        assert!(matches!(
+            console.entries[1].level,
+            ModConsoleEntryLevel::Runtime(ModLogLevel::Info)
+        ));
+        assert_eq!(console.last_runtime_sequence, 4);
+        assert_eq!(console.last_event_sequence, 9);
+        let copied = console.plain_text();
+        assert!(copied.contains("[EVENT] [enemy-telemetry] post.enemy.vitals"));
+        assert!(copied.contains("[INFO] [enemy-telemetry] enemy identity hash missing"));
+        assert_eq!(copied.lines().count(), 2);
+
+        console.ingest_runtime(ModConsolePollResult { logs, events });
+
+        assert_eq!(console.entries.len(), 2);
+    }
+
     fn temp_mod_workspace() -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -2968,6 +3149,8 @@ mod tests {
             "nte::unreal::find_function(object, \"Owner\", \"Function\")",
             "nte::unreal::params_write_u64(offset, value)",
             "nte::unreal::watch(object, function)",
+            "nte::unreal::watch_class_array_u64(object, function, element_size, value_offset)",
+            "nte::event::captured_u64()",
             "nte::event::read_u64(offset)",
         ] {
             assert!(NTE_COMPLETIONS.iter().any(|item| item.label == expected));

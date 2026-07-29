@@ -1410,7 +1410,7 @@
   "Restore runtime console": "ランタイムコンソールを復元",
   "Minimize runtime console": "ランタイムコンソールを最小化",
   "Clear runtime console": "ランタイムコンソールをクリア",
-  "Use nte::log::info(\"message\") to print script output here.": "nte::log::info(\"message\") でスクリプト出力をここに表示できます。",
+  "Script logs and emitted IPC events appear here.": "スクリプトログと送信された IPC イベントがここに表示されます。",
   "Saved; waiting for the runtime hot update.": "保存済み。ランタイムのホット更新を待機しています。",
   "Enabled; waiting for the runtime hot update.": "有効化済み。ランタイムのホット更新を待機しています。",
   "Disabled; waiting for the runtime hot update.": "無効化済み。ランタイムのホット更新を待機しています。",

@@ -45,9 +45,9 @@ use crate::platform::hotkey::{
     passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
 };
 use crate::platform::mods_plugin::{
-    ModLogLevel, ModLogSnapshot, ModsPluginClient, ModsPluginDeploymentError,
+    ModEventSnapshot, ModLogLevel, ModLogSnapshot, ModsPluginClient, ModsPluginDeploymentError,
     ModsPluginDeploymentStatus, ModsPluginGameRegion, ModsPluginGameStatus, ModsPluginOperation,
-    ModsPluginPlacement, ModsPluginSubmitError, query_mod_logs,
+    ModsPluginPlacement, ModsPluginSubmitError, query_mod_events, query_mod_logs,
 };
 use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{

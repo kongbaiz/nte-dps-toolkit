@@ -1410,7 +1410,7 @@
   "Restore runtime console": "还原运行时控制台",
   "Minimize runtime console": "最小化运行时控制台",
   "Clear runtime console": "清空运行时控制台",
-  "Use nte::log::info(\"message\") to print script output here.": "使用 nte::log::info(\"message\") 在此打印脚本输出。",
+  "Script logs and emitted IPC events appear here.": "脚本日志和发出的 IPC 事件会显示在这里。",
   "Saved; waiting for the runtime hot update.": "已保存；正在等待运行时热更新。",
   "Enabled; waiting for the runtime hot update.": "已启用；正在等待运行时热更新。",
   "Disabled; waiting for the runtime hot update.": "已停用；正在等待运行时热更新。",
