@@ -34,8 +34,8 @@ msbuild .\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platfor
 通用会话入口的 Offset 只存在于宿主实现；新功能自己的字段 Offset、采样频率、缓存键、
 变化条件、UFunction 参数布局和事件格式都留在外部脚本中。
 
-运行时 ABI 建立后，新增 Mod 的交付单元只有 `.nte`、可选
-`.blueprint.json` 和资源文件；不增加功能专用 C++ 类型、IPC 操作或 DLL 服务，也不重新
+运行时 ABI 建立后，新增 Mod 的交付单元只有 `.nte` 和资源文件；不增加功能专用 C++ 类型、
+IPC 操作或 DLL 服务，也不重新
 构建 DLL。DLL 的后续变更只用于运行时 ABI 升级、引擎版本公共入口迁移和宿主缺陷修复，
 不用于逐 Mod 适配。`plugins/examples/reflection-events.nte` 展示了只靠现有 ABI 查找
 UFunction、组装参数、调用函数、订阅 ProcessEvent 并发布结果的完整流程。
@@ -59,6 +59,15 @@ UFunction、组装参数、调用函数、订阅 ProcessEvent 并发布结果的
 对象路径及版本 Offset 由 `game.session` capability 统一维护。每个程序必须用
 `NTE_REQUIRES()` 准确声明实际使用的能力；多声明、
 漏声明和未知能力都会使该程序保持未激活。
+
+### 热更新与故障隔离
+
+运行时每 250 ms 检查 `nte-mods.enabled` 和已启用的 `.nte` 源码。发生变化时先编译完整
+候选集合，全部成功后再原子替换当前程序；缺失文件、配置错误或编译错误会保留上一版程序，
+并写入运行时控制台。VM 的每条宿主操作仍执行既有边界校验，单个 Mod 触发 Windows 运行时
+异常时会被隔离并暂停，其他 Mod 和游戏主循环继续工作；下一次成功热更新会解除暂停。
+声明 `NTE_REQUIRES("log")` 后，可用 `nte::log::info("message")` 在 Mod 工坊底部控制台
+打印脚本输出。
 
 ### 语言能力
 
@@ -143,7 +152,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
 | `nte::time::now_ms()` | 进程单调毫秒计时 | 无额外能力 |
 | `nte::ipc::bind(player_state, player_controller)` | 合并装备 IPC 上下文，空参数用 `nullptr` | `ipc` |
 | `nte::ipc::emit("event.name", value...)` | 发布最多三个 64 位值的自定义事件 | `ipc` |
-| `nte::log::info("message")` | Debug 构建调试输出 | `log` |
+| `nte::log::info("message")` | 向 Mod 工坊运行时控制台打印输出 | `log` |
 | `nte::equipment::cache_missing()` | 任意装备 RPC 缓存是否尚未建立 | `equipment` |
 | `nte::equipment::cache_ready(player_state)` | 缓存是否属于当前 `PlayerState` | `equipment` |
 | `nte::equipment::prepare(player_state)` | 尝试为当前对象准备一次装备 RPC 缓存 | `equipment` |
@@ -153,7 +162,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
 
 `NTE_ROUTE_IPC(operation, "kernel.service");` 是顶层声明，不是 Tick 语句。它把固定 IPC
 操作号连接到一个经过边界校验的内核服务；删除该声明即可撤下服务，不需要修改或重新
-编译 DLL。当前内置服务表直接位于两份默认 `.nte` 中，蓝图的 Mod 清单也可编辑这些路由。
+编译 DLL。当前内置服务表直接位于两份默认 `.nte` 中，代码内的 Mod 清单也可编辑这些路由。
 
 Offset 上限为 `0x4000`；指针与 `TArray` Offset 还必须按指针宽度对齐。读取失败返回
 零，写入只接受单个已提交且具备写权限的内存区间。`combat_clock.forward` 只接受宿主读取能产生的时停位和状态
@@ -231,7 +240,7 @@ load enemy-telemetry
 ```
 
 它只发布通用 `ipc.query_mod_events` 路由。PlayerState、攻击目标、属性组件、HP 和
-配置名字段均由 `.nte` 蓝图通过通用只读原语获取，不调用目标查询 UFunction，也不走
+配置名字段均由 `.nte` 代码通过通用只读原语获取，不调用目标查询 UFunction，也不走
 敌人专用 DLL 服务。脚本为每个目标键通过 `cache.remember` 固定首次配置哈希，后续
 采样只读取缓存，并以 250 ms 心跳重复发送缓存后的 identity，便于抓包中途开始时同步。
 `enemy.identity` 的三个值依次为目标实例、配置名稳定哈希和保留值；

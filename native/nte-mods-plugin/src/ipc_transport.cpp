@@ -338,6 +338,13 @@ namespace nte::mods
 					response.payload.mod_events,
 					NTE_MOD_EVENT_HISTORY_SIZE);
 				return NTE_MODS_STATUS_DRY_RUN_OK;
+			case IpcKernelService::QueryModLogs:
+				if (!IsEmptyQueryRequest(request))
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+				response.record_count = runtime::CopyModLogs(
+					response.payload.mod_logs,
+					NTE_MOD_LOG_HISTORY_SIZE);
+				return NTE_MODS_STATUS_DRY_RUN_OK;
 			case IpcKernelService::EquipModule:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))
@@ -431,9 +438,17 @@ namespace nte::mods
 				request.version != NTE_MODS_IPC_VERSION ||
 				request.request_id == 0 ||
 				request.operation < NTE_MODS_IPC_EQUIP_MODULE ||
-				request.operation > NTE_MODS_IPC_QUERY_MOD_EVENTS ||
+				request.operation > NTE_MODS_IPC_QUERY_MOD_LOGS ||
 				request.placement_count > NTE_EQUIPMENT_MAX_PLACEMENTS)
 				return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+			if (request.operation == NTE_MODS_IPC_QUERY_MOD_LOGS)
+			{
+				return InvokeIpcKernelServiceImpl(
+					IpcKernelService::QueryModLogs,
+					context,
+					request,
+					response);
+			}
 			return runtime::DispatchIpcRequestPrograms(
 				context,
 				request,

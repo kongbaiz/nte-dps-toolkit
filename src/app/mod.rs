@@ -29,12 +29,11 @@ use crate::engine::model::{
     AbyssEvent, AbyssHalf, COMBAT_SEGMENT_GAP_SECONDS, CaptureQualitySource, CaptureQualitySummary,
     CharacterInfo, CharacterStats, CombatSegment, CombatSessionAbyssHalfSummary,
     CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatState,
-    DamageAttributionSummary, DamageTransformInput, DpsTimeBasis, EngineEvent, HitDirection,
-    HitDirectionSummary, PartyCombatState, SkillBreakdown, SkillBreakdownRow,
-    TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember,
-    TimeStopEvent, TimelineMarkerKind, TimelineSeries, UNBALANCE_ATTACK_TYPE,
-    is_reaction_damage_type, is_unbalance_damage_hit, reaction_damage_for_hit,
-    summarize_combat_segments, summarize_hit_directions,
+    DamageAttributionSummary, DpsTimeBasis, EngineEvent, HitDirection, HitDirectionSummary,
+    PartyCombatState, SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION,
+    TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember, TimeStopEvent, TimelineMarkerKind,
+    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_reaction_damage_type, is_unbalance_damage_hit,
+    reaction_damage_for_hit, summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
@@ -46,8 +45,9 @@ use crate::platform::hotkey::{
     passthrough_hotkey_matches_egui, passthrough_hotkey_to_egui,
 };
 use crate::platform::mods_plugin::{
-    ModsPluginClient, ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
-    ModsPluginGameStatus, ModsPluginOperation, ModsPluginPlacement, ModsPluginSubmitError,
+    ModLogLevel, ModLogSnapshot, ModsPluginClient, ModsPluginDeploymentError,
+    ModsPluginDeploymentStatus, ModsPluginGameRegion, ModsPluginGameStatus, ModsPluginOperation,
+    ModsPluginPlacement, ModsPluginSubmitError, query_mod_logs,
 };
 use crate::platform::network::GameNetwork;
 use crate::platform::window_attributes::{
@@ -67,9 +67,9 @@ use crate::storage::history::{self, HistoryCombatDetails, HistoryComparison, His
 use crate::storage::i18n::{self, Language, t, tf};
 use crate::storage::io_util::atomic_write_text;
 use crate::storage::mod_scripts::{
-    MAX_MOD_SOURCE_BYTES, ModScriptBlueprint, ModScriptBlueprintNode, ModScriptDocument,
-    ModScriptError, ModScriptWorkspace, load_mod_script_workspace, new_mod_script_template,
-    save_mod_script, set_mod_enabled, validate_mod_source,
+    MAX_MOD_SOURCE_BYTES, ModScriptDocument, ModScriptError, ModScriptWorkspace,
+    load_mod_script_workspace, new_mod_script_template, save_mod_script, set_mod_enabled,
+    validate_mod_source,
 };
 use crate::storage::paths;
 use crate::storage::resource::{read_mods_plugin, read_resource_bytes, read_resource_text};
@@ -1498,9 +1498,6 @@ pub struct DpsApp {
     kongmu_ui: KongmuUiState,
     mod_editor: ModEditorState,
     state: CombatState,
-    projected_state: Option<Box<CombatState>>,
-    mod_projection_dirty: bool,
-    mod_projection_last_refresh: Option<Instant>,
     combat_active: bool,
     last_combat_timestamp: Option<f64>,
     last_combat_activity: Option<Instant>,
@@ -1663,7 +1660,6 @@ impl eframe::App for DpsApp {
         );
         self.note_detail_scroll_activity(ctx);
         self.drain_events();
-        self.refresh_applied_mod_projection(false);
         self.drain_history_worker_results();
         self.update_combat_visual();
         self.drain_resource_audit();

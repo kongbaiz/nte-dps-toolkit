@@ -56,6 +56,8 @@ const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
+#[cfg(any(feature = "gui", test))]
+const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
 const MAX_PLACEMENTS: usize = 64;
 const REQUEST_HEADER_SIZE: usize = 56;
@@ -69,6 +71,14 @@ const MOD_EVENT_HISTORY_SIZE: usize = 18;
 const MOD_EVENT_ID_SIZE: usize = 32;
 const MOD_EVENT_NAME_SIZE: usize = 32;
 const MOD_EVENT_VALUE_COUNT: usize = 3;
+#[cfg(any(feature = "gui", test))]
+const MOD_LOG_SIZE: usize = 112;
+#[cfg(any(feature = "gui", test))]
+const MOD_LOG_HISTORY_SIZE: usize = 18;
+#[cfg(any(feature = "gui", test))]
+const MOD_LOG_ID_SIZE: usize = 32;
+#[cfg(any(feature = "gui", test))]
+const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
@@ -77,6 +87,8 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+#[cfg(feature = "gui")]
+static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "gui")]
 static PLUGIN_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -122,8 +134,6 @@ const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
 #[cfg(feature = "gui")]
 const ENEMY_TELEMETRY_MOD_FILE_NAME: &str = "enemy-telemetry.nte";
 #[cfg(feature = "gui")]
-const ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME: &str = "enemy-telemetry.blueprint.json";
-#[cfg(feature = "gui")]
 const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
 #[cfg(feature = "gui")]
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
@@ -131,51 +141,6 @@ const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nt
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
 #[cfg(feature = "gui")]
 const ENEMY_TELEMETRY_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/enemy-telemetry.nte");
-#[cfg(feature = "gui")]
-const ENEMY_TELEMETRY_BLUEPRINT: &[u8] =
-    include_bytes!("../../plugins/nte-mods/enemy-telemetry.blueprint.json");
-#[cfg(feature = "gui")]
-const LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V2: &[u8] = br#"{
-  "version": 1,
-  "nodes": [
-    {
-      "signature": "0:now = time.now_ms()\n0:sample_due = now >= state.next_sample_at\n0:if sample_due == True:\n1:# Target SDK calls execute at 10 Hz instead of on every rendered frame.\n1:state.next_sample_at = now + 100\n1:character = game.player_character\n1:target = None\n1:if character != None:\n2:target = sdk.attack_target(character)\n",
-      "position": [
-        24.0,
-        70.0
-      ]
-    },
-    {
-      "signature": "0:if sample_due == True:\n1:if target == None:\n2:if state.last_target != 0:\n3:ipc.emit(\"post.enemy.cleared\", state.last_target)\n2:state.last_target = 0\n2:state.last_hp = 0\n2:state.last_max_hp = 0\n",
-      "position": [
-        380.0,
-        70.0
-      ]
-    },
-    {
-      "signature": "0:if sample_due == True:\n1:if target != None:\n2:hp = sdk.character_hp_milli(target)\n2:if target != state.last_target:\n3:config_id = sdk.character_config_id(target)\n3:level = sdk.character_level(target)\n3:max_hp = sdk.character_hp_max_milli(target, False)\n3:ipc.emit(\"pre.enemy.identity\", target, config_id, level)\n3:ipc.emit(\"post.enemy.vitals\", target, hp, max_hp)\n3:state.last_max_hp = max_hp\n2:else:\n3:if hp != state.last_hp:\n4:max_hp = sdk.character_hp_max_milli(target, False)\n4:ipc.emit(\"post.enemy.vitals\", target, hp, max_hp)\n4:state.last_max_hp = max_hp\n2:state.last_target = target\n2:state.last_hp = hp\n",
-      "position": [
-        736.0,
-        70.0
-      ]
-    }
-  ]
-}
-"#;
-#[cfg(feature = "gui")]
-const LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V3: &[u8] = br#"{
-  "version": 1,
-  "nodes": [
-    {
-      "signature": "0:# The desktop requests one identity snapshot after this capture's first hit.\n0:# This handler only publishes the current controller as the IPC context.\n0:player_controller = game.player_controller\n0:if player_controller != None:\n1:ipc.bind(None, player_controller)\n",
-      "position": [
-        24.0,
-        70.0
-      ]
-    }
-  ]
-}
-"#;
 #[cfg(feature = "gui")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
@@ -663,11 +628,6 @@ const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_ENEMY_TELEMETRY_MOD_V3,
     LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC,
 ];
-#[cfg(feature = "gui")]
-const LEGACY_ENEMY_TELEMETRY_BLUEPRINTS: &[&[u8]] = &[
-    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V2,
-    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V3,
-];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModsPluginPlacement {
@@ -744,6 +704,24 @@ pub struct ModEventSnapshot {
     pub mod_id: String,
     pub name: String,
     pub values: Vec<u64>,
+}
+
+#[cfg(any(feature = "gui", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModLogLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+#[cfg(any(feature = "gui", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ModLogSnapshot {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub mod_id: String,
+    pub level: ModLogLevel,
+    pub message: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -968,6 +946,20 @@ pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
     request[8..16].copy_from_slice(&request_id.to_le_bytes());
     let response = call_plugin_request(&request)?;
     decode_mod_events(&response, request_id)
+}
+
+#[cfg(feature = "gui")]
+pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
+    let request_id = MOD_LOG_QUERY_SEQUENCE
+        .fetch_add(1, Ordering::Relaxed)
+        .max(1);
+    let mut request = [0_u8; REQUEST_SIZE];
+    request[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+    request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+    request[6..8].copy_from_slice(&IPC_QUERY_MOD_LOGS.to_le_bytes());
+    request[8..16].copy_from_slice(&request_id.to_le_bytes());
+    let response = call_plugin_request(&request)?;
+    decode_mod_logs(&response, request_id)
 }
 
 fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
@@ -1313,6 +1305,82 @@ fn decode_mod_events(
         });
     }
     Ok(events)
+}
+
+#[cfg(any(feature = "gui", test))]
+fn decode_fixed_utf8(bytes: &[u8], field: &str) -> Result<String, String> {
+    let end = bytes
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(bytes.len());
+    if end == 0 || bytes[end..].iter().any(|value| *value != 0) {
+        return Err(format!("Mod loader returned an invalid Mod log {field}"));
+    }
+    let text = std::str::from_utf8(&bytes[..end])
+        .map_err(|_| format!("Mod loader returned an invalid Mod log {field}"))?;
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\t'))
+    {
+        return Err(format!("Mod loader returned an invalid Mod log {field}"));
+    }
+    Ok(text.to_owned())
+}
+
+#[cfg(any(feature = "gui", test))]
+fn decode_mod_logs(
+    bytes: &[u8; RESPONSE_SIZE],
+    request_id: u64,
+) -> Result<Vec<ModLogSnapshot>, String> {
+    let (status, log_count) = decode_response_header(bytes, request_id)?;
+    if status != PLUGIN_STATUS_DRY_RUN_OK || log_count as usize > MOD_LOG_HISTORY_SIZE {
+        return Err("Mod loader returned invalid Mod log history".to_owned());
+    }
+
+    let mut logs = Vec::with_capacity(log_count as usize);
+    for index in 0..log_count as usize {
+        let offset = RESPONSE_HEADER_SIZE + index * MOD_LOG_SIZE;
+        let level = match u32::from_le_bytes(
+            bytes[offset + 48..offset + 52]
+                .try_into()
+                .expect("fixed Mod log level"),
+        ) {
+            1 => ModLogLevel::Info,
+            2 => ModLogLevel::Warning,
+            3 => ModLogLevel::Error,
+            _ => return Err("Mod loader returned invalid Mod log history".to_owned()),
+        };
+        let reserved = u32::from_le_bytes(
+            bytes[offset + 52..offset + 56]
+                .try_into()
+                .expect("fixed Mod log reserved"),
+        );
+        if reserved != 0 {
+            return Err("Mod loader returned invalid Mod log history".to_owned());
+        }
+        logs.push(ModLogSnapshot {
+            sequence: u64::from_le_bytes(
+                bytes[offset..offset + 8]
+                    .try_into()
+                    .expect("fixed Mod log sequence"),
+            ),
+            timestamp_100ns: u64::from_le_bytes(
+                bytes[offset + 8..offset + 16]
+                    .try_into()
+                    .expect("fixed Mod log timestamp"),
+            ),
+            mod_id: decode_fixed_ascii(
+                &bytes[offset + 16..offset + 16 + MOD_LOG_ID_SIZE],
+                "log mod id",
+            )?,
+            level,
+            message: decode_fixed_utf8(
+                &bytes[offset + 56..offset + 56 + MOD_LOG_MESSAGE_SIZE],
+                "message",
+            )?,
+        });
+    }
+    Ok(logs)
 }
 
 #[cfg(feature = "gui")]
@@ -2053,11 +2121,6 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
             ENEMY_TELEMETRY_MOD,
             LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS,
         ),
-        (
-            mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
-            ENEMY_TELEMETRY_BLUEPRINT,
-            LEGACY_ENEMY_TELEMETRY_BLUEPRINTS,
-        ),
     ] {
         if !path.exists() {
             if let Err(error) = fs::write(&path, bytes) {
@@ -2213,6 +2276,15 @@ mod tests {
             MOD_EVENT_VALUE_COUNT as u64
         );
         assert_eq!(
+            native_define("NTE_MOD_LOG_HISTORY_SIZE"),
+            MOD_LOG_HISTORY_SIZE as u64
+        );
+        assert_eq!(native_define("NTE_MOD_LOG_ID_SIZE"), MOD_LOG_ID_SIZE as u64);
+        assert_eq!(
+            native_define("NTE_MOD_LOG_MESSAGE_SIZE"),
+            MOD_LOG_MESSAGE_SIZE as u64
+        );
+        assert_eq!(
             native_enum("NTE_MODS_IPC_EQUIP_MODULE"),
             IPC_EQUIP_MODULE as u64
         );
@@ -2259,6 +2331,10 @@ mod tests {
         assert_eq!(
             native_enum("NTE_MODS_IPC_QUERY_MOD_EVENTS"),
             IPC_QUERY_MOD_EVENTS as u64
+        );
+        assert_eq!(
+            native_enum("NTE_MODS_IPC_QUERY_MOD_LOGS"),
+            IPC_QUERY_MOD_LOGS as u64
         );
         assert_eq!(
             native_enum("NTE_MODS_STATUS_MOD_DISABLED"),
@@ -2501,6 +2577,60 @@ mod tests {
     }
 
     #[test]
+    fn mod_log_response_decodes_runtime_output() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&29_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[24..32].copy_from_slice(&12_u64.to_le_bytes());
+        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
+        bytes[40..49].copy_from_slice(b"telemetry");
+        bytes[72..76].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[80..95].copy_from_slice("热更新完成".as_bytes());
+
+        assert_eq!(
+            decode_mod_logs(&bytes, 29),
+            Ok(vec![ModLogSnapshot {
+                sequence: 12,
+                timestamp_100ns: 133_000_000_000_000_000,
+                mod_id: "telemetry".to_owned(),
+                level: ModLogLevel::Info,
+                message: "热更新完成".to_owned(),
+            }])
+        );
+    }
+
+    #[test]
+    fn mod_log_response_rejects_invalid_levels_and_trailing_bytes() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&29_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[40..47].copy_from_slice(b"runtime");
+        bytes[72..76].copy_from_slice(&4_u32.to_le_bytes());
+        bytes[80..85].copy_from_slice(b"error");
+        assert!(decode_mod_logs(&bytes, 29).is_err());
+
+        bytes[72..76].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[86] = 1;
+        assert!(decode_mod_logs(&bytes, 29).is_err());
+    }
+
+    #[cfg(feature = "gui")]
+    #[test]
+    fn native_hot_reload_keeps_the_last_working_program_and_quarantines_faults() {
+        assert!(NATIVE_MOD_RUNTIME.contains("candidate_enabled_mod_set"));
+        assert!(NATIVE_MOD_RUNTIME.contains("previous version kept."));
+        assert!(NATIVE_MOD_RUNTIME.contains("ExecuteProgramGuarded"));
+        assert!(NATIVE_MOD_RUNTIME.contains("quarantined_programs"));
+        assert!(NATIVE_MOD_RUNTIME.contains("CopyModLogs"));
+    }
+
+    #[test]
     fn combat_clock_response_rejects_legacy_timer_payloads() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
         bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
@@ -2622,17 +2752,11 @@ mod tests {
         )
         .unwrap();
         install_default_mod_files(directory).unwrap();
-        fs::remove_file(
-            directory
-                .join(MOD_DIRECTORY_NAME)
-                .join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
-        )
-        .unwrap();
     }
 
     #[test]
     #[cfg(feature = "gui")]
-    fn default_workspace_installs_and_enables_enemy_telemetry_blueprint() {
+    fn default_workspace_installs_and_enables_enemy_telemetry_mod() {
         let workspace = deployment_test_directory("enemy-telemetry-defaults");
 
         install_default_mod_files(&workspace).unwrap();
@@ -2649,15 +2773,6 @@ mod tests {
             )
             .unwrap(),
             ENEMY_TELEMETRY_MOD
-        );
-        assert_eq!(
-            fs::read(
-                workspace
-                    .join(MOD_DIRECTORY_NAME)
-                    .join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME)
-            )
-            .unwrap(),
-            ENEMY_TELEMETRY_BLUEPRINT
         );
         fs::remove_dir_all(workspace).unwrap();
     }
@@ -2689,29 +2804,12 @@ mod tests {
             let mod_directory = workspace.join(MOD_DIRECTORY_NAME);
             fs::create_dir_all(&mod_directory).unwrap();
             fs::write(mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME), legacy).unwrap();
-            if *legacy == LEGACY_ENEMY_TELEMETRY_MOD_V2 {
-                fs::write(
-                    mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
-                    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V2,
-                )
-                .unwrap();
-            } else if *legacy == LEGACY_ENEMY_TELEMETRY_MOD_V3 {
-                fs::write(
-                    mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME),
-                    LEGACY_ENEMY_TELEMETRY_BLUEPRINT_V3,
-                )
-                .unwrap();
-            }
 
             install_default_mod_files(&workspace).unwrap();
 
             assert_eq!(
                 fs::read(mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME)).unwrap(),
                 ENEMY_TELEMETRY_MOD
-            );
-            assert_eq!(
-                fs::read(mod_directory.join(ENEMY_TELEMETRY_BLUEPRINT_FILE_NAME)).unwrap(),
-                ENEMY_TELEMETRY_BLUEPRINT
             );
             fs::remove_dir_all(workspace).unwrap();
         }

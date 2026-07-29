@@ -133,8 +133,7 @@ jobs:
             "plugins/nte-mods.enabled",
             "plugins/nte-mods/equipment.nte",
             "plugins/nte-mods/combat-clock.nte",
-            "plugins/nte-mods/enemy-telemetry.nte",
-            "plugins/nte-mods/enemy-telemetry.blueprint.json"
+            "plugins/nte-mods/enemy-telemetry.nte"
           )) {
             if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
               throw "NTE Mods Plugin script is missing: $script"

@@ -37,5 +37,6 @@ namespace nte::mods::runtime
 		const NteModsIpcRequest& request,
 		NteModsIpcResponse& response);
 	uint32_t CopyModEvents(NteModEvent* output, uint32_t capacity);
+	uint32_t CopyModLogs(NteModLogEntry* output, uint32_t capacity);
 	void Reset();
 } // namespace nte::mods::runtime

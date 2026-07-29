@@ -318,11 +318,7 @@ impl DpsApp {
         let width_class = main_width_class(ui.available_width());
         ui.spacing_mut().item_spacing.x = 6.0;
         let accent = self.theme().accent;
-        let dps_label = if self.mod_projection_is_applied() {
-            t("Modded Team DPS")
-        } else {
-            t("Team DPS")
-        };
+        let dps_label = t("Team DPS");
         let paint_primary_metrics = |columns: &mut [egui::Ui]| {
             let dps_metric_bounds = columns[0].available_rect_before_wrap();
             compact_metric(
@@ -1723,21 +1719,9 @@ impl DpsApp {
                 self.preferences.reduce_motion,
             );
             let label = if self.preferences.hud_config.show_duration {
-                format!(
-                    "{} · {:.1}s",
-                    if self.mod_projection_is_applied() {
-                        t("Modded Team DPS")
-                    } else {
-                        t("Team DPS")
-                    },
-                    values.duration
-                )
+                format!("{} · {:.1}s", t("Team DPS"), values.duration)
             } else {
-                if self.mod_projection_is_applied() {
-                    t("Modded Team DPS")
-                } else {
-                    t("Team DPS")
-                }
+                t("Team DPS")
             };
             let label_pos = egui::pos2(header.left(), header.top() + 12.0);
             let label_font = egui::FontId::proportional(10.5 * duration_scale);
