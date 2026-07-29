@@ -28,8 +28,8 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, CombatState, DpsTimeBasis, EmptyCurtainCharacter,
     EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit, HitCharacterSource,
-    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, PacketDebug, PacketObservation,
-    PartyCombatState, TimeStopEvent,
+    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, ModScriptEvent,
+    ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState, TimeStopEvent,
 };
 use crate::engine::parser::{
     AbilityCatalog, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
@@ -64,6 +64,11 @@ const RAW_CAPTURE_FLUSH_INTERVAL: u64 = 256;
 const NTE_COMBAT_CLOCK_BLOCK_TYPE: u32 = 0x4e54_4543;
 const NTE_COMBAT_CLOCK_BLOCK_MAGIC: &[u8; 8] = b"NTECLK01";
 const NTE_COMBAT_CLOCK_BLOCK_SIZE: usize = 40;
+const NTE_MOD_SCRIPT_BLOCK_TYPE: u32 = 0x4e54_454d;
+const NTE_MOD_SCRIPT_BLOCK_MAGIC: &[u8; 8] = b"NTEMOD01";
+const NTE_MOD_SCRIPT_BLOCK_SIZE: usize = 120;
+const NTE_MOD_SCRIPT_STRING_CAPACITY: usize = 32;
+const NTE_MOD_SCRIPT_VALUE_CAPACITY: usize = 3;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
@@ -403,6 +408,19 @@ impl RawCaptureBuffer {
         }
     }
 
+    fn push_mod_script_event(&self, event: &ModScriptEvent) {
+        if let Ok(mut capture) = self.inner.lock() {
+            let result = capture
+                .writer
+                .as_mut()
+                .map(|writer| writer.write_mod_script_event(event));
+            if let Some(Err(error)) = result {
+                capture.write_error = Some(error);
+                capture.writer = None;
+            }
+        }
+    }
+
     pub fn packet_count(&self) -> usize {
         self.inner
             .lock()
@@ -544,6 +562,15 @@ impl RawCaptureWriter {
             .map_err(|error| error.to_string())
     }
 
+    fn write_mod_script_event(&mut self, event: &ModScriptEvent) -> Result<(), String> {
+        let payload = encode_mod_script_block(event)
+            .ok_or_else(|| "invalid ModScript event for raw capture".to_owned())?;
+        self.writer
+            .write_pcapng_block(UnknownBlock::new(NTE_MOD_SCRIPT_BLOCK_TYPE, 0, &payload))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn finish(mut self) -> Result<(u64, u64), String> {
         self.writer
             .get_mut()
@@ -597,6 +624,95 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
         reserved_value,
         state_flags,
     })
+}
+
+fn encode_mod_script_block(event: &ModScriptEvent) -> Option<[u8; NTE_MOD_SCRIPT_BLOCK_SIZE]> {
+    if !valid_mod_script_block_identifier(&event.mod_id)
+        || !valid_mod_script_block_identifier(&event.name)
+        || event.values.len() > NTE_MOD_SCRIPT_VALUE_CAPACITY
+        || event.timestamp_100ns < FILETIME_UNIX_EPOCH_100NS
+    {
+        return None;
+    }
+    let mut payload = [0_u8; NTE_MOD_SCRIPT_BLOCK_SIZE];
+    payload[0..8].copy_from_slice(NTE_MOD_SCRIPT_BLOCK_MAGIC);
+    payload[8..16].copy_from_slice(&event.sequence.to_le_bytes());
+    payload[16..24].copy_from_slice(&event.timestamp_100ns.to_le_bytes());
+    payload[24] = match event.phase {
+        ModScriptEventPhase::Event => 0,
+        ModScriptEventPhase::Preprocess => 1,
+        ModScriptEventPhase::Postprocess => 2,
+    };
+    payload[25] = event.values.len() as u8;
+    payload[26] = event.mod_id.len() as u8;
+    payload[27] = event.name.len() as u8;
+    for (index, value) in event.values.iter().enumerate() {
+        let start = 32 + index * 8;
+        payload[start..start + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    payload[56..56 + event.mod_id.len()].copy_from_slice(event.mod_id.as_bytes());
+    payload[88..88 + event.name.len()].copy_from_slice(event.name.as_bytes());
+    Some(payload)
+}
+
+fn decode_mod_script_block(value: &[u8]) -> Option<ModScriptEvent> {
+    if value.len() != NTE_MOD_SCRIPT_BLOCK_SIZE
+        || &value[0..8] != NTE_MOD_SCRIPT_BLOCK_MAGIC
+        || value[28..32] != [0; 4]
+    {
+        return None;
+    }
+    let phase = match value[24] {
+        0 => ModScriptEventPhase::Event,
+        1 => ModScriptEventPhase::Preprocess,
+        2 => ModScriptEventPhase::Postprocess,
+        _ => return None,
+    };
+    let value_count = usize::from(value[25]);
+    let mod_id_length = usize::from(value[26]);
+    let name_length = usize::from(value[27]);
+    let timestamp_100ns =
+        u64::from_le_bytes(value[16..24].try_into().expect("fixed ModScript timestamp"));
+    if value_count > NTE_MOD_SCRIPT_VALUE_CAPACITY
+        || mod_id_length == 0
+        || mod_id_length >= NTE_MOD_SCRIPT_STRING_CAPACITY
+        || name_length == 0
+        || name_length >= NTE_MOD_SCRIPT_STRING_CAPACITY
+        || timestamp_100ns < FILETIME_UNIX_EPOCH_100NS
+        || value[32 + value_count * 8..56]
+            .iter()
+            .any(|byte| *byte != 0)
+        || value[56 + mod_id_length..88].iter().any(|byte| *byte != 0)
+        || value[88 + name_length..120].iter().any(|byte| *byte != 0)
+    {
+        return None;
+    }
+    let mod_id = std::str::from_utf8(&value[56..56 + mod_id_length]).ok()?;
+    let name = std::str::from_utf8(&value[88..88 + name_length]).ok()?;
+    if !valid_mod_script_block_identifier(mod_id) || !valid_mod_script_block_identifier(name) {
+        return None;
+    }
+    let values = value[32..32 + value_count * 8]
+        .chunks_exact(8)
+        .map(|bytes| u64::from_le_bytes(bytes.try_into().expect("fixed ModScript value")))
+        .collect();
+    Some(ModScriptEvent {
+        sequence: u64::from_le_bytes(value[8..16].try_into().expect("fixed ModScript sequence")),
+        timestamp_100ns,
+        mod_id: mod_id.to_owned(),
+        phase,
+        name: name.to_owned(),
+        values,
+        enemy_identity: None,
+    })
+}
+
+fn valid_mod_script_block_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() < NTE_MOD_SCRIPT_STRING_CAPACITY
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
 }
 
 fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
@@ -770,11 +886,12 @@ fn run_plugin_monitor(
                     event.values,
                 );
                 if event.mod_id == "enemy-telemetry"
-                    && event.name == "enemy.identity"
+                    && matches!(event.name.as_str(), "enemy.identity" | "enemy.hit_target")
                     && let [_, config_hash, _] = event.values.as_slice()
                 {
                     event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
                 }
+                raw_capture.push_mod_script_event(&event);
                 if sender.send(EngineEvent::ModScript(event)).is_err() {
                     return;
                 }
@@ -3974,8 +4091,20 @@ pub fn import_pcapng(
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
             let mut game_pause = GamePauseIntervalTracker::default();
+            let mut resource_warnings = Vec::new();
+            let enemy_catalog = load_resource(
+                ENEMY_CATALOG_PATH,
+                &mut resource_warnings,
+                load_enemy_catalog,
+            );
             if let Some(warning) = decoder.resource_warning() {
                 let _ = sender.send(EngineEvent::Warning(warning));
+            }
+            if !resource_warnings.is_empty() {
+                let _ = sender.send(EngineEvent::Warning(format!(
+                    "enemy telemetry catalog: {}",
+                    resource_warnings.join("; ")
+                )));
             }
             let mut packet_count = 0;
             let mut supported_count = 0;
@@ -3995,6 +4124,23 @@ pub fn import_pcapng(
                                 game_pause.apply_transition(timestamp, transition.pause_type_mask)
                         {
                             send_game_pause_transition(&sender, event)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        continue;
+                    }
+                    Block::Unknown(block) if block.type_ == NTE_MOD_SCRIPT_BLOCK_TYPE => {
+                        if let Some(mut event) = decode_mod_script_block(block.value.as_ref()) {
+                            if event.mod_id == "enemy-telemetry"
+                                && matches!(
+                                    event.name.as_str(),
+                                    "enemy.identity" | "enemy.hit_target"
+                                )
+                                && let [_, config_hash, _] = event.values.as_slice()
+                            {
+                                event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
+                            }
+                            sender
+                                .send(EngineEvent::ModScript(event))
                                 .map_err(|error| error.to_string())?;
                         }
                         continue;
@@ -4959,6 +5105,101 @@ mod tests {
         let mut invalid_flags = payload;
         invalid_flags[32..36].copy_from_slice(&2_u32.to_le_bytes());
         assert!(decode_combat_clock_block(&invalid_flags).is_none());
+    }
+
+    #[test]
+    fn mod_script_block_round_trips_bounded_event_data() {
+        let event = ModScriptEvent {
+            sequence: 17,
+            timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 42 * FILETIME_TICKS_PER_SECOND,
+            mod_id: "enemy-telemetry".to_owned(),
+            phase: ModScriptEventPhase::Postprocess,
+            name: "enemy.hit_target".to_owned(),
+            values: vec![0x1234, 0x4d88_7b49_05d5_dbaf, 80],
+            enemy_identity: None,
+        };
+        let payload =
+            encode_mod_script_block(&event).expect("bounded ModScript event should encode");
+
+        assert_eq!(decode_mod_script_block(&payload), Some(event));
+        assert!(decode_mod_script_block(&payload[..119]).is_none());
+
+        let mut invalid_phase = payload;
+        invalid_phase[24] = 3;
+        assert!(decode_mod_script_block(&invalid_phase).is_none());
+
+        let mut invalid_timestamp = payload;
+        invalid_timestamp[16..24].copy_from_slice(&(FILETIME_UNIX_EPOCH_100NS - 1).to_le_bytes());
+        assert!(decode_mod_script_block(&invalid_timestamp).is_none());
+
+        let mut invalid_padding = payload;
+        invalid_padding[119] = 1;
+        assert!(decode_mod_script_block(&invalid_padding).is_none());
+    }
+
+    #[test]
+    fn pcapng_import_restores_mod_script_enemy_identity() {
+        let path = std::env::temp_dir().join(format!(
+            "nte-mod-script-replay-{}-{}.pcapng",
+            std::process::id(),
+            Local::now()
+                .timestamp_nanos_opt()
+                .expect("current local time must fit in nanoseconds")
+        ));
+        let event = ModScriptEvent {
+            sequence: 23,
+            timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 84 * FILETIME_TICKS_PER_SECOND,
+            mod_id: "enemy-telemetry".to_owned(),
+            phase: ModScriptEventPhase::Postprocess,
+            name: "enemy.hit_target".to_owned(),
+            values: vec![0x5678, 0x4d88_7b49_05d5_dbaf, 0],
+            enemy_identity: None,
+        };
+        let payload = encode_mod_script_block(&event).expect("ModScript event should encode");
+        let file = File::create(&path).expect("pcapng fixture should be created");
+        let mut writer =
+            PcapNgWriter::new(BufWriter::new(file)).expect("pcapng writer should initialize");
+        writer
+            .write_pcapng_block(UnknownBlock::new(NTE_MOD_SCRIPT_BLOCK_TYPE, 0, &payload))
+            .expect("ModScript block should be written");
+        writer
+            .get_mut()
+            .flush()
+            .expect("pcapng fixture should flush");
+        drop(writer);
+
+        let (sender, receiver) = unbounded();
+        let handle = import_pcapng(
+            path.clone(),
+            CaptureResources {
+                characters: Arc::new(HashMap::new()),
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
+            None,
+            true,
+            true,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        );
+        handle.join().expect("pcapng import thread should finish");
+        std::fs::remove_file(path).expect("pcapng fixture should be removable");
+
+        let restored = receiver
+            .try_iter()
+            .find_map(|event| match event {
+                EngineEvent::ModScript(event) => Some(event),
+                _ => None,
+            })
+            .expect("pcapng import should restore the ModScript event");
+        assert_eq!(restored.sequence, 23);
+        assert_eq!(restored.name, "enemy.hit_target");
+        assert_eq!(
+            restored
+                .enemy_identity
+                .as_ref()
+                .map(|identity| identity.name_zh.as_str()),
+            Some("随心泥")
+        );
     }
 
     #[test]
@@ -8749,6 +8990,134 @@ mod tests {
             Some("GE_Test_Skill1_Damage")
         );
         assert_eq!(hit.damage_name, None);
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE to a local pcapng path for target-instance diagnostics"]
+    fn diagnose_capture_enemy_instance_resolution() {
+        let path = std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set");
+        let characters = Arc::new(
+            load_characters(Path::new(CHARACTER_DATA_PATH))
+                .expect("character resource table should load"),
+        );
+        let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = import_pcapng(
+            PathBuf::from(&path),
+            CaptureResources {
+                characters,
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
+            None,
+            true,
+            true,
+            sender,
+            stop,
+        );
+        handle.join().expect("pcapng import thread should finish");
+
+        let mut state = CombatState::default();
+        let mut identity_events = 0;
+        let mut hit_target_events = 0;
+        let mut enemy_events = Vec::new();
+        for event in receiver.try_iter() {
+            if let EngineEvent::ModScript(script) = &event
+                && script.mod_id == "enemy-telemetry"
+            {
+                enemy_events.push((
+                    filetime_100ns_to_unix_seconds(script.timestamp_100ns)
+                        .expect("enemy event timestamp should be valid"),
+                    script.name.clone(),
+                    script.values.clone(),
+                ));
+                match script.name.as_str() {
+                    "enemy.identity" => identity_events += 1,
+                    "enemy.hit_target" => hit_target_events += 1,
+                    _ => {}
+                }
+            }
+            crate::core::reducer::apply_engine_event(&mut state, event);
+        }
+
+        let outgoing = state
+            .hits
+            .iter()
+            .filter(|hit| hit.direction.is_outgoing())
+            .collect::<Vec<_>>();
+        let unidentified = outgoing
+            .iter()
+            .filter(|hit| hit.target_name.is_none())
+            .collect::<Vec<_>>();
+        println!(
+            "{}: {identity_events} identity events, {hit_target_events} hit-target events, {}/{} outgoing hits unidentified",
+            path,
+            unidentified.len(),
+            outgoing.len()
+        );
+        let identity_instances = enemy_events
+            .iter()
+            .filter(|(_, name, values)| name == "enemy.identity" && values.len() == 3)
+            .map(|(_, _, values)| values[0])
+            .collect::<HashSet<_>>();
+        let projected_instances = outgoing
+            .iter()
+            .flat_map(|hit| hit.target_context.iter())
+            .filter_map(|context| context.strip_prefix("enemy_target_instance="))
+            .collect::<HashSet<_>>();
+        let mut simultaneous = HashMap::<u64, Vec<&Hit>>::new();
+        for hit in &outgoing {
+            simultaneous
+                .entry(hit.timestamp.to_bits())
+                .or_default()
+                .push(hit);
+        }
+        let simultaneous_groups = simultaneous.values().filter(|hits| hits.len() > 1).count();
+        println!(
+            "  unique identity instances={} projected instances={} simultaneous hit groups={simultaneous_groups}",
+            identity_instances.len(),
+            projected_instances.len()
+        );
+        for hits in simultaneous.values().filter(|hits| hits.len() > 1).take(8) {
+            println!(
+                "  simultaneous t={:.6} hits={}",
+                hits[0].timestamp,
+                hits.len()
+            );
+            for hit in hits {
+                println!(
+                    "    char={} damage={:.1} hp={:.1}->{:.1} target={:?}",
+                    hit.char_name,
+                    hit.total_damage(),
+                    hit.target_hp_before,
+                    hit.target_hp_after,
+                    hit.target_context
+                        .iter()
+                        .find(|context| context.starts_with("enemy_target_instance="))
+                );
+            }
+        }
+        for hit in unidentified {
+            println!(
+                "t={:.3} char={} damage={:.1} max_hp={:.1}",
+                hit.timestamp,
+                hit.char_name,
+                hit.total_damage(),
+                hit.target_max_hp
+            );
+            let mut nearby = enemy_events.iter().collect::<Vec<_>>();
+            nearby.sort_by(|left, right| {
+                (left.0 - hit.timestamp)
+                    .abs()
+                    .total_cmp(&(right.0 - hit.timestamp).abs())
+            });
+            for (timestamp, name, values) in nearby.into_iter().take(6) {
+                println!(
+                    "  enemy_event delta={:+.6} t={timestamp:.6} name={name} values={values:?}",
+                    timestamp - hit.timestamp
+                );
+            }
+        }
     }
 
     #[test]

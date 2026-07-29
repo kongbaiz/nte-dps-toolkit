@@ -16,7 +16,8 @@ namespace nte::mods
 	{
 		constexpr uint32_t NATIVE_FUNCTION_FLAG = 0x400;
 		constexpr size_t PROCESS_EVENT_INDEX = 0x4C;
-		constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB8;
+		// UE5 UFunction stores ParmsSize before ReturnValueOffset at 0xB8.
+		constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB6;
 		constexpr uint64_t FUNCTION_CAST_FLAG = 0x0000000000080000;
 		constexpr uint8_t PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO = 2;
 		constexpr uint8_t PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT = 3;

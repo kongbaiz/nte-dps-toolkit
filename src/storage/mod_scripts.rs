@@ -915,6 +915,18 @@ impl<'a> ModSourceValidator<'a> {
                 return self.append_instructions(1);
             }
         }
+        for name in ["unreal.watch_array_u64", "unreal.watch_class_array_u64"] {
+            if let Some(arguments) = parse_call(line, name) {
+                let arguments = split_mod_arguments(arguments, 4)
+                    .filter(|arguments| arguments.len() == 4)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                for argument in arguments {
+                    self.materialize_atom(argument, line_number)?;
+                }
+                self.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+                return self.append_instructions(1);
+            }
+        }
         for name in ["unreal.watch", "unreal.unwatch"] {
             if let Some(arguments) = parse_call(line, name) {
                 let arguments = split_mod_arguments(arguments, 3)
@@ -1130,6 +1142,7 @@ impl<'a> ModSourceValidator<'a> {
             "event.object",
             "event.function",
             "event.params_size",
+            "event.captured_u64",
         ] {
             if let Some(arguments) = parse_call(expression, name) {
                 if !arguments.is_empty() {
@@ -1776,11 +1789,14 @@ mod tests {
                 "    called = unreal.call(controller, function)\n",
                 "    output = unreal.params_read_u32(8)\n",
                 "    unreal.watch(controller, function)\n",
+                "    unreal.watch_array_u64(controller, function, 0x160, 0x110)\n",
+                "    unreal.watch_class_array_u64(controller, function, 0x160, 0x110)\n",
                 "    memory.write_u8(controller, 0x20, output)\n",
                 "    ready = event.next()\n",
                 "    if ready:\n",
                 "        source = event.object()\n",
                 "        size = event.params_size()\n",
+                "        captured = event.captured_u64()\n",
                 "        value = event.read_u32(8)\n",
                 "        unreal.unwatch(controller, function)\n",
             ),

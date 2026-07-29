@@ -48,9 +48,11 @@ UFunction、组装参数、调用函数、订阅 ProcessEvent 并发布结果的
 - `combat-clock.nte` 使用内置 `nte::game::player_controller`，分别读取权威
   `pause_mask/state_flags`，与四个持久状态比较，只转发初始值和真实变化，并在脚本内
   发布历史查询服务；
-- `enemy-telemetry.nte` 从通用 `nte::game::player_controller` 入口使用只读内存原语定位攻击
-  目标和生命值，以目标键缓存首次读取的配置名哈希，并通过通用 Mod 事件流发布多目标
-  identity/vitals；DLL 中没有敌人专用查询、结构体或 IPC 操作。
+- `enemy-telemetry.nte` 从通用 `nte::game::player_controller` 入口采样当前攻击目标，并按类订阅
+  所有 AbilitySystemComponent 实例的批量伤害回调；Host 在回调入口按脚本声明
+  的数组步长和字段偏移复制每个 `DamageCharacter`，脚本再取得 UObject 地址与
+  `InternalIndex` 实例键，通过通用 Mod 事件流发布 identity/hit_target/cleared；DLL 中
+  没有敌人专用查询、结构体或 IPC 操作。
 
 完整实现直接位于 `plugins\nte-mods\equipment.nte`、
 `plugins\nte-mods\combat-clock.nte` 与 `plugins\nte-mods\enemy-telemetry.nte`。
@@ -144,9 +146,12 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
 | `nte::unreal::params_read_f32_milli(offset)` | 读取并缩放 `float` 返回／输出字段 | `unreal.reflection` |
 | `nte::unreal::call(object, function)` | 参数大小与 UFunction 一致时调用 ProcessEvent | `unreal.reflection` |
 | `nte::unreal::watch(object, function)` | 为对象订阅指定 UFunction 的 ProcessEvent | `process.event` |
+| `nte::unreal::watch_array_u64(object, function, element_size, value_offset)` | 订阅首个 `TArray` 参数，并把每个元素的指定 `u64` 字段复制为独立事件 | `process.event` |
+| `nte::unreal::watch_class_array_u64(object, function, element_size, value_offset)` | 以示例对象的共享 vtable 订阅同类全部实例，并展开首个 `TArray` 参数 | `process.event` |
 | `nte::unreal::unwatch(object, function)` | 删除当前 Mod 的指定订阅 | `process.event` |
 | `nte::event::next()` | 取出当前 Mod 的下一条已订阅事件 | `process.event` |
 | `nte::event::object/function/params_size()` | 读取当前事件元数据 | `process.event` |
+| `nte::event::captured_u64()` | 读取 `watch_array_u64` 在回调入口复制的元素字段 | `process.event` |
 | `nte::event::read_u8/u16/u32/u64/i32(offset)` | 读取当前事件参数字段 | `process.event` |
 | `nte::event::read_f32_milli(offset)` | 读取并缩放当前事件的 `float` 字段 | `process.event` |
 | `nte::time::now_ms()` | 进程单调毫秒计时 | 无额外能力 |
@@ -183,17 +188,21 @@ Offset 上限为 `0x4000`；指针与 `TArray` Offset 还必须按指针宽度�
 
 ### 通用 Unreal 调用与事件
 
-反射调用使用每次 Tick 独立的 256 字节参数缓冲区。脚本先按本地 SDK 或资源元数据写明
+反射调用与 ProcessEvent 订阅使用每次 Tick 独立的 512 字节参数缓冲区。当前 UE
+`UFunction::ParmsSize` 位于 `0xB6`；脚本先按本地 SDK 或资源元数据写明
 Owner 类名、函数名、`ParmsSize` 和字段 Offset；`unreal.call` 会核对实际
 UFunction `ParmsSize`，不一致时返回 `False`。调用完成后，同一缓冲区包含返回值与
 输出参数，脚本通过 `unreal.params_read_*` 读取。
 
-`nte::unreal::watch` 只为脚本明确给出的对象安装共享 ProcessEvent shadow-vtable Hook，并只
-复制指定 UFunction 调用完成后的参数。每个 Mod 拥有独立的 32 条定长队列，满时丢弃
-最旧记录；全局最多 16 个被观察对象和 32 条订阅。`nte::event::next()` 取出一条记录后，
-`nte::event::object()`、`nte::event::function()`、`nte::event::params_size()` 与 `event.read_*`
-访问该记录。动态对象退出观察范围时可调用 `nte::unreal::unwatch` 回收其订阅；脚本重新
-加载、禁用或运行时关闭时，订阅队列和相关 Hook 一并清除。
+`nte::unreal::watch` 只为脚本明确给出的对象安装 ProcessEvent shadow-vtable Hook，并
+复制指定 UFunction 的入口参数。`watch_array_u64` 额外校验首个 `TArray` 的数量、容量、
+元素步长和字段范围，在临时数组仍有效时把每个元素的一个 `u64` 字段复制为独立记录；
+`watch_class_array_u64` 用示例对象的共享类 vtable 覆盖同类全部实例，事件中的 `object`
+仍是实际触发回调的实例。每个 Mod 拥有独立的 32 条定长队列，满时丢弃最旧记录；全局
+最多 16 个对象 Hook、4 个类 Hook 和 32 条订阅。`nte::event::next()` 取出一条记录后，`nte::event::object()`、
+`nte::event::function()`、`nte::event::params_size()`、`nte::event::captured_u64()` 与
+`event.read_*` 访问该记录。动态对象退出观察范围时可调用 `nte::unreal::unwatch` 回收其
+订阅；脚本重新加载、禁用或运行时关闭时，订阅队列和相关 Hook 一并清除。
 
 ### SDK 读取 API
 
@@ -239,15 +248,19 @@ load equipment
 load enemy-telemetry
 ```
 
-它只发布通用 `ipc.query_mod_events` 路由。PlayerState、攻击目标、属性组件、HP 和
-配置名字段均由 `.nte` 代码通过通用只读原语获取，不调用目标查询 UFunction，也不走
-敌人专用 DLL 服务。脚本为每个目标键通过 `cache.remember` 固定首次配置哈希，后续
-采样只读取缓存，并以 250 ms 心跳重复发送缓存后的 identity，便于抓包中途开始时同步。
-`enemy.identity` 的三个值依次为目标实例、配置名稳定哈希和保留值；
-`enemy.vitals` 为目标实例、当前 HP×1000、最大 HP×1000。
-桌面端只在配置哈希命中 `res/data/enemies/enemies.json`，且目标最大 HP 与
-当前/前后 HP 连续性唯一吻合时，才把本地化名称和怪物头像投影到对应伤害记录；
-相同 HP 流无法区分时保持未识别。
+它只发布通用 `ipc.query_mod_events` 路由。PlayerState、攻击目标、伤害回调参数、
+UObject `InternalIndex` 和配置名字段均由 `.nte` 代码通过通用反射、事件与只读原语获取，
+不走敌人专用 DLL 服务。脚本以 UObject 地址和 `InternalIndex` 组合敌人的唯一实例键，
+通过 `cache.remember` 固定首次配置哈希，并以 50 ms 心跳发送当前目标 identity。
+每次 `NetMulticast_OnSendHandleDamageInfos` 批量回调都会在入口展开
+`FHandleDamageInfo_NetQueue`，为其中每个实际 `DamageCharacter` 发布 hit_target，因此
+同一帧命中的多个敌人保留各自实例。该回调按 AbilitySystemComponent 类订阅，RPC 落在
+当前角色、后台角色或敌方同类组件实例时都会进入同一条 UFunction 过滤后的事件队列；
+切人只改变普通游戏状态，不触发同步扫描或重绑。脚本重载或运行时关闭时统一回收类 Hook。
+`enemy.identity` 与 `enemy.hit_target` 的三个值依次为目标实例、配置名稳定哈希和保留值；
+目标消失时发布 `enemy.cleared`。桌面端只按逐次 hit_target 投影
+`res/data/enemies/enemies.json` 的名称与头像；缺少逐次事件时保留未识别，
+目标最大生命值、当前生命值及伤害包内生命值均不参与目标选择。
 
 只保留第一行表示不加载任何 Mod。运行时监听器会移除 Viewport Tick Hook 并关闭
 IPC 管道；后续再次启用 Mod 时会重新解析脚本并安装共享 Hook。没有 `equipment`、

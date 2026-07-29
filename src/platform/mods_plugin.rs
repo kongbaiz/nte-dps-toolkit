@@ -600,6 +600,666 @@ def on_viewport_tick(event):
                     state.last_max_hp = max_hp
 "#;
 #[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_sample_at = 0;
+std::uint64_t next_identity_at = 0;
+std::uint64_t last_target = 0;
+std::uint64_t last_hp = 0;
+std::uint64_t last_max_hp = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    if (now >= next_sample_at)
+    {
+        next_sample_at = now + 50;
+        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+        const auto target = nte::memory::read_ptr(player_state, 0x2880);
+        if (target == nullptr)
+        {
+            if (last_target != 0)
+            {
+                nte::ipc::emit("post.enemy.cleared", last_target);
+            }
+            last_target = 0;
+            last_hp = 0;
+            last_max_hp = 0;
+        }
+        if (target != nullptr)
+        {
+            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
+            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
+            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
+            if (max_hp > 0)
+            {
+                if (hp <= max_hp)
+                {
+                    const auto object_index = nte::memory::read_u32(target, 0x0c);
+                    const auto target_key = target ^ object_index;
+                    auto config_hash = nte::cache::get(target_key);
+                    if (config_hash == 0)
+                    {
+                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                        if (config_hash != 0)
+                        {
+                            config_hash = nte::cache::remember(target_key, config_hash);
+                        }
+                    }
+                    const auto target_changed = target_key != last_target;
+                    if (config_hash != 0)
+                    {
+                        if (target_changed == true)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                        else if (now >= next_identity_at)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                    }
+                    if (target_changed == true)
+                    {
+                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                    }
+                    else
+                    {
+                        if (hp != last_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                        else if (max_hp != last_max_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                    }
+                    if (now >= next_identity_at)
+                    {
+                        next_identity_at = now + 250;
+                    }
+                    last_target = target_key;
+                    last_hp = hp;
+                    last_max_hp = max_hp;
+                }
+            }
+        }
+    }
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("ipc");
+NTE_REQUIRES("log");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_sample_at = 0;
+std::uint64_t next_identity_at = 0;
+std::uint64_t next_diagnostic_at = 0;
+std::uint64_t last_target = 0;
+std::uint64_t last_hp = 0;
+std::uint64_t last_max_hp = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    if (now >= next_sample_at)
+    {
+        next_sample_at = now + 50;
+        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+        const auto target = nte::memory::read_ptr(player_state, 0x2880);
+        if (target == nullptr)
+        {
+            if (last_target != 0)
+            {
+                nte::ipc::emit("post.enemy.cleared", last_target);
+                nte::log::info("enemy target cleared");
+            }
+            last_target = 0;
+            last_hp = 0;
+            last_max_hp = 0;
+        }
+        if (target != nullptr)
+        {
+            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
+            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
+            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
+            if (max_hp > 0)
+            {
+                if (hp <= max_hp)
+                {
+                    const auto object_index = nte::memory::read_u32(target, 0x0c);
+                    const auto target_key = target ^ object_index;
+                    auto config_hash = nte::cache::get(target_key);
+                    if (config_hash == 0)
+                    {
+                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                        if (config_hash != 0)
+                        {
+                            config_hash = nte::cache::remember(target_key, config_hash);
+                        }
+                    }
+                    if (config_hash == 0)
+                    {
+                        if (now >= next_diagnostic_at)
+                        {
+                            nte::log::info("enemy identity hash missing");
+                            next_diagnostic_at = now + 500;
+                        }
+                    }
+                    const auto target_changed = target_key != last_target;
+                    if (config_hash != 0)
+                    {
+                        if (target_changed == true)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                        else if (now >= next_identity_at)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                    }
+                    if (target_changed == true)
+                    {
+                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                    }
+                    else
+                    {
+                        if (hp != last_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                        else if (max_hp != last_max_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                    }
+                    if (now >= next_identity_at)
+                    {
+                        next_identity_at = now + 250;
+                    }
+                    last_target = target_key;
+                    last_hp = hp;
+                    last_max_hp = max_hp;
+                }
+                else if (now >= next_diagnostic_at)
+                {
+                    nte::log::info("enemy vitals invalid");
+                    next_diagnostic_at = now + 500;
+                }
+            }
+            else if (now >= next_diagnostic_at)
+            {
+                nte::log::info("enemy vitals invalid");
+                next_diagnostic_at = now + 500;
+            }
+        }
+    }
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("unreal.reflection");
+NTE_REQUIRES("process.event");
+NTE_REQUIRES("ipc");
+NTE_REQUIRES("log");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_sample_at = 0;
+std::uint64_t next_identity_at = 0;
+std::uint64_t next_diagnostic_at = 0;
+std::uint64_t watched_character = 0;
+std::uint64_t watched_function = 0;
+std::uint64_t last_target = 0;
+std::uint64_t last_hp = 0;
+std::uint64_t last_max_hp = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    if (nte::game::player_character != watched_character)
+    {
+        if (watched_character != 0)
+        {
+            if (watched_function != 0)
+            {
+                nte::unreal::unwatch(watched_character, watched_function);
+            }
+        }
+        watched_character = nte::game::player_character;
+        watched_function = 0;
+    }
+    if (watched_character != 0)
+    {
+        if (watched_function == 0)
+        {
+            watched_function = nte::unreal::find_function(watched_character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
+            if (watched_function == 0)
+            {
+                if (now >= next_diagnostic_at)
+                {
+                    nte::log::info("enemy damage function missing");
+                    next_diagnostic_at = now + 500;
+                }
+            }
+        }
+        if (watched_function != 0)
+        {
+            nte::unreal::watch(watched_character, watched_function);
+        }
+    }
+    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
+    {
+        const auto event_ready = nte::event::next();
+        if (event_ready == true)
+        {
+            const auto damaged = nte::event::read_u64(0x110);
+            if (damaged != nullptr)
+            {
+                auto target_key = nte::memory::read_u32(damaged, 0x0c);
+                target_key = damaged ^ target_key;
+                const auto object_name_hash = nte::memory::read_fname_hash(damaged, 0x18);
+                target_key = target_key ^ object_name_hash;
+                auto config_hash = nte::cache::get(target_key);
+                if (config_hash == 0)
+                {
+                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
+                    if (config_hash != 0)
+                    {
+                        config_hash = nte::cache::remember(target_key, config_hash);
+                    }
+                }
+                if (config_hash != 0)
+                {
+                    nte::ipc::emit("post.enemy.hit_target", target_key, config_hash, 0);
+                }
+            }
+        }
+    }
+    if (now >= next_sample_at)
+    {
+        next_sample_at = now + 50;
+        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+        const auto target = nte::memory::read_ptr(player_state, 0x2880);
+        if (target == nullptr)
+        {
+            if (last_target != 0)
+            {
+                nte::ipc::emit("post.enemy.cleared", last_target);
+                nte::log::info("enemy target cleared");
+            }
+            last_target = 0;
+            last_hp = 0;
+            last_max_hp = 0;
+        }
+        if (target != nullptr)
+        {
+            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
+            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
+            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
+            if (max_hp > 0)
+            {
+                if (hp <= max_hp)
+                {
+                    auto target_key = nte::memory::read_u32(target, 0x0c);
+                    target_key = target ^ target_key;
+                    const auto object_name_hash = nte::memory::read_fname_hash(target, 0x18);
+                    target_key = target_key ^ object_name_hash;
+                    auto config_hash = nte::cache::get(target_key);
+                    if (config_hash == 0)
+                    {
+                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                        if (config_hash != 0)
+                        {
+                            config_hash = nte::cache::remember(target_key, config_hash);
+                        }
+                    }
+                    if (config_hash == 0)
+                    {
+                        if (now >= next_diagnostic_at)
+                        {
+                            nte::log::info("enemy identity hash missing");
+                            next_diagnostic_at = now + 500;
+                        }
+                    }
+                    if (config_hash != 0)
+                    {
+                        if (target_key != last_target)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                        else if (now >= next_identity_at)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                    }
+                    if (target_key != last_target)
+                    {
+                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                    }
+                    else
+                    {
+                        if (hp != last_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                        else if (max_hp != last_max_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                    }
+                    if (now >= next_identity_at)
+                    {
+                        next_identity_at = now + 250;
+                    }
+                    last_target = target_key;
+                    last_hp = hp;
+                    last_max_hp = max_hp;
+                }
+                else if (now >= next_diagnostic_at)
+                {
+                    nte::log::info("enemy vitals invalid");
+                    next_diagnostic_at = now + 500;
+                }
+            }
+            else if (now >= next_diagnostic_at)
+            {
+                nte::log::info("enemy vitals invalid");
+                next_diagnostic_at = now + 500;
+            }
+        }
+    }
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_identity_at = 0;
+std::uint64_t last_target = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+    const auto target = nte::memory::read_ptr(player_state, 0x2880);
+    if (target == nullptr)
+    {
+        if (last_target != 0)
+        {
+            nte::ipc::emit("post.enemy.cleared", last_target);
+        }
+        last_target = 0;
+    }
+    if (target != nullptr)
+    {
+        const auto object_index = nte::memory::read_u32(target, 0x0c);
+        const auto shifted_index = object_index << 32;
+        const auto target_instance = target ^ shifted_index;
+        if (target_instance != last_target)
+        {
+            next_identity_at = 0;
+        }
+        if (now >= next_identity_at)
+        {
+            auto config_hash = nte::cache::get(target_instance);
+            if (config_hash == 0)
+            {
+                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                if (config_hash != 0)
+                {
+                    config_hash = nte::cache::remember(target_instance, config_hash);
+                }
+            }
+            if (config_hash != 0)
+            {
+                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
+            }
+            next_identity_at = now + 50;
+        }
+        last_target = target_instance;
+    }
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("unreal.reflection");
+NTE_REQUIRES("process.event");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_identity_at = 0;
+std::uint64_t watched_character = 0;
+std::uint64_t damage_function = 0;
+std::uint64_t last_target = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    const auto character = nte::game::player_character;
+    if (character != nullptr)
+    {
+        if (damage_function == 0)
+        {
+            damage_function = nte::unreal::find_function(character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
+        }
+        if (damage_function != 0)
+        {
+            if (character != watched_character)
+            {
+                nte::unreal::watch(character, damage_function);
+                watched_character = character;
+            }
+        }
+    }
+    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
+    {
+        const auto event_ready = nte::event::next();
+        if (event_ready == true)
+        {
+            const auto damaged = nte::event::read_u64(0x110);
+            if (damaged != nullptr)
+            {
+                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
+                const auto shifted_index = object_index << 32;
+                const auto target_instance = damaged ^ shifted_index;
+                auto config_hash = nte::cache::get(target_instance);
+                if (config_hash == 0)
+                {
+                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
+                    if (config_hash != 0)
+                    {
+                        config_hash = nte::cache::remember(target_instance, config_hash);
+                    }
+                }
+                if (config_hash != 0)
+                {
+                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
+                }
+            }
+        }
+    }
+    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+    const auto target = nte::memory::read_ptr(player_state, 0x2880);
+    if (target == nullptr)
+    {
+        if (last_target != 0)
+        {
+            nte::ipc::emit("post.enemy.cleared", last_target);
+        }
+        last_target = 0;
+    }
+    if (target != nullptr)
+    {
+        const auto object_index = nte::memory::read_u32(target, 0x0c);
+        const auto shifted_index = object_index << 32;
+        const auto target_instance = target ^ shifted_index;
+        if (target_instance != last_target)
+        {
+            next_identity_at = 0;
+        }
+        if (now >= next_identity_at)
+        {
+            auto config_hash = nte::cache::get(target_instance);
+            if (config_hash == 0)
+            {
+                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                if (config_hash != 0)
+                {
+                    config_hash = nte::cache::remember(target_instance, config_hash);
+                }
+            }
+            if (config_hash != 0)
+            {
+                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
+            }
+            next_identity_at = now + 50;
+        }
+        last_target = target_instance;
+    }
+}
+"#;
+#[cfg(feature = "gui")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("unreal.reflection");
+NTE_REQUIRES("process.event");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_identity_at = 0;
+std::uint64_t watched_ability_system = 0;
+std::uint64_t damage_function = 0;
+std::uint64_t last_target = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    const auto character = nte::game::player_character;
+    if (character != nullptr)
+    {
+        const auto ability_system = nte::memory::read_ptr(character, 0x8A0);
+        if (ability_system != nullptr)
+        {
+            if (damage_function == 0)
+            {
+                damage_function = nte::unreal::find_function(ability_system, "HTAbilitySystemComponent", "NetMulticast_OnSendHandleDamageInfos");
+            }
+            if (damage_function != 0)
+            {
+                if (ability_system != watched_ability_system)
+                {
+                    nte::unreal::watch_array_u64(ability_system, damage_function, 0x160, 0x110);
+                    watched_ability_system = ability_system;
+                }
+            }
+        }
+    }
+    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
+    {
+        const auto event_ready = nte::event::next();
+        if (event_ready == true)
+        {
+            const auto damaged = nte::event::captured_u64();
+            if (damaged != nullptr)
+            {
+                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
+                const auto shifted_index = object_index << 32;
+                const auto target_instance = damaged ^ shifted_index;
+                auto config_hash = nte::cache::get(target_instance);
+                if (config_hash == 0)
+                {
+                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
+                    if (config_hash != 0)
+                    {
+                        config_hash = nte::cache::remember(target_instance, config_hash);
+                    }
+                }
+                if (config_hash != 0)
+                {
+                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
+                }
+            }
+        }
+    }
+    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+    const auto target = nte::memory::read_ptr(player_state, 0x2880);
+    if (target == nullptr)
+    {
+        if (last_target != 0)
+        {
+            nte::ipc::emit("post.enemy.cleared", last_target);
+        }
+        last_target = 0;
+    }
+    if (target != nullptr)
+    {
+        const auto object_index = nte::memory::read_u32(target, 0x0c);
+        const auto shifted_index = object_index << 32;
+        const auto target_instance = target ^ shifted_index;
+        if (target_instance != last_target)
+        {
+            next_identity_at = 0;
+        }
+        if (now >= next_identity_at)
+        {
+            auto config_hash = nte::cache::get(target_instance);
+            if (config_hash == 0)
+            {
+                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                if (config_hash != 0)
+                {
+                    config_hash = nte::cache::remember(target_instance, config_hash);
+                }
+            }
+            if (config_hash != 0)
+            {
+                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
+            }
+            next_identity_at = now + 50;
+        }
+        last_target = target_instance;
+    }
+}
+"#;
+#[cfg(feature = "gui")]
 const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[b"nte_mod_set 1\nload equipment\nload combat-clock\n"];
 #[cfg(feature = "gui")]
 const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
@@ -627,6 +1287,12 @@ const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_ENEMY_TELEMETRY_MOD_V2,
     LEGACY_ENEMY_TELEMETRY_MOD_V3,
     LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC,
+    LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP,
+    LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS,
+    LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT,
+    LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET,
+    LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT,
+    LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2183,7 +2849,11 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/src/plugin_runtime.cpp"
     ));
-
+    #[cfg(feature = "gui")]
+    const NATIVE_PLUGIN_RUNTIME_HEADER: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/plugin_runtime.hpp"
+    ));
     fn native_define(name: &str) -> u64 {
         let prefix = format!("#define {name} ");
         let value = NATIVE_IPC_HEADER
@@ -2348,6 +3018,28 @@ mod tests {
         assert!(!NATIVE_HOST_API.contains("ReadEnemyIdentitySnapshot"));
         assert!(!NATIVE_IPC_HEADER.contains("NTE_MODS_IPC_QUERY_ENEMY_IDENTITY"));
         assert!(!NATIVE_IPC_HEADER.contains("NteEnemyIdentitySnapshot"));
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn process_event_buffer_covers_the_damage_callback_payload() {
+        assert!(
+            NATIVE_PLUGIN_RUNTIME_HEADER
+                .contains("constexpr size_t PROCESS_EVENT_PARAM_CAPACITY = 512;")
+        );
+        assert!(NATIVE_HOST_API.contains("constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB6;"));
+        assert!(
+            NATIVE_MOD_RUNTIME.contains("ParseCall(line, \"unreal.watch_array_u64\", arguments)")
+        );
+        assert!(NATIVE_MOD_RUNTIME.contains("\"unreal.watch_class_array_u64\""));
+        assert!(NATIVE_MOD_RUNTIME.contains("\"event.captured_u64\""));
+        assert!(
+            NATIVE_PLUGIN_RUNTIME
+                .contains("constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENTS = 32;")
+        );
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("event.captured_u64 = captured_u64;"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("process_event_class_hooks"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("ReplaceProcessEventVTableEntry"));
     }
 
     #[test]
@@ -2819,12 +3511,32 @@ mod tests {
     #[cfg(feature = "gui")]
     fn enemy_telemetry_uses_only_generic_script_primitives() {
         let source = std::str::from_utf8(ENEMY_TELEMETRY_MOD).unwrap();
+        validate_mod_source("enemy-telemetry", source).unwrap();
         assert!(source.contains("NTE_ROUTE_IPC(12, \"ipc.query_mod_events\")"));
-        assert!(source.contains("nte::memory::read_f32_milli("));
+        assert!(source.contains("nte::memory::read_ptr("));
+        assert!(source.contains("nte::memory::read_u32(target, 0x0c)"));
+        assert!(source.contains("object_index << 32"));
+        assert!(source.contains("target ^ shifted_index"));
         assert!(source.contains("nte::memory::read_fname_hash("));
         assert!(source.contains("nte::cache::get("));
         assert!(source.contains("nte::cache::remember("));
         assert!(source.contains("nte::ipc::emit(\"pre.enemy.identity\""));
+        assert!(source.contains("nte::ipc::emit(\"post.enemy.hit_target\""));
+        assert!(source.contains("nte::ipc::emit(\"post.enemy.cleared\""));
+        assert!(source.contains("NTE_REQUIRES(\"process.event\")"));
+        assert!(source.contains("nte::memory::read_ptr(character, 0x8A0)"));
+        assert!(source.contains("\"NetMulticast_OnSendHandleDamageInfos\""));
+        assert!(source.contains(
+            "nte::unreal::watch_class_array_u64(ability_system, damage_function, 0x160, 0x110)"
+        ));
+        assert!(source.contains("nte::event::captured_u64()"));
+        assert!(!source.contains("nte::event::read_u64(0x110)"));
+        assert!(!source.contains("0x27E8"));
+        assert!(!source.contains("party_index"));
+        assert!(!source.contains("read_f32_milli"));
+        assert!(!source.contains("max_hp"));
+        assert!(!source.contains("nte::unreal::unwatch("));
+        assert!(!source.contains("enemy.vitals"));
         assert!(!source.contains("NTE_ROUTE_IPC(13,"));
         assert!(!source.contains("enemy.query_identity"));
         assert!(!source.contains("nte::ipc::bind("));
@@ -2842,6 +3554,7 @@ mod tests {
             "unreal.params_read_u64",
             "unreal.call",
             "unreal.watch",
+            "unreal.watch_class_array_u64",
             "unreal.unwatch",
             "event.next",
             "event.read_u64",

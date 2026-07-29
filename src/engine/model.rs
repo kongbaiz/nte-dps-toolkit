@@ -1477,6 +1477,22 @@ impl PartyCombatState {
         updated
     }
 
+    fn apply_enemy_target_projection_result(&mut self, result: EnemyTargetProjectionResult) {
+        if result.changed {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+        }
+        if result.direction_changed {
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+    }
+
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => {
@@ -1808,217 +1824,85 @@ impl AbyssRunState {
 }
 
 const ENEMY_TELEMETRY_MOD_ID: &str = "enemy-telemetry";
-const ENEMY_TELEMETRY_MAX_TARGETS: usize = 32;
 const ENEMY_TELEMETRY_BACKFILL_HITS: usize = 32;
-const ENEMY_TELEMETRY_BACKFILL_SECONDS: f64 = 1.0;
-const ENEMY_TELEMETRY_CONTINUITY_SECONDS: f64 = 0.5;
-const ENEMY_TELEMETRY_HP_MATCH: &str = "target_name_resolution=enemy_telemetry_hp_match";
-const ENEMY_TELEMETRY_CONTINUITY: &str = "target_name_resolution=enemy_telemetry_continuity";
+const ENEMY_TELEMETRY_MAX_HIT_TARGETS: usize = 128;
+const ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS: f64 = 0.35;
+const ENEMY_TELEMETRY_INSTANCE: &str = "target_name_resolution=enemy_telemetry_instance";
+const ENEMY_TELEMETRY_HIT_INSTANCE: &str = "target_name_resolution=enemy_telemetry_hit_instance";
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: f64 = 10_000_000.0;
-const MAX_ENEMY_HP_MILLI: u64 = 1_000_000_000_000_000;
 
 #[derive(Clone, Default)]
 struct EnemyTelemetryTracker {
-    targets: Vec<ActiveEnemyTelemetry>,
-    continuity: Option<EnemyTelemetryContinuity>,
+    hit_targets: VecDeque<EnemyHitTargetObservation>,
 }
 
 #[derive(Clone)]
-struct ActiveEnemyTelemetry {
+struct EnemyHitTargetObservation {
+    sequence: u64,
     target: u64,
+    config_hash: u64,
     identity: Option<EnemyIdentity>,
     level: u64,
-    hp: Option<f64>,
-    max_hp: Option<f64>,
-    identified_at: f64,
-}
-
-#[derive(Clone)]
-struct EnemyTelemetryContinuity {
-    target: u64,
-    hp: f64,
-    max_hp: f64,
-    timestamp: f64,
-}
-
-struct EnemyIdentityBackfill {
-    identity: EnemyIdentity,
-    level: u64,
-    hp: f64,
-    max_hp: f64,
-    identified_at: f64,
     observed_at: f64,
 }
 
 impl EnemyTelemetryTracker {
-    fn apply_event(&mut self, event: &ModScriptEvent) -> Option<EnemyIdentityBackfill> {
+    fn apply_event(&mut self, event: &ModScriptEvent) -> Option<EnemyHitTargetObservation> {
         if event.mod_id != ENEMY_TELEMETRY_MOD_ID {
             return None;
         }
         let timestamp = filetime_100ns_to_unix_seconds(event.timestamp_100ns)?;
         match (event.phase, event.name.as_str(), event.values.as_slice()) {
-            (ModScriptEventPhase::Preprocess, "enemy.identity", [target, config_hash, level])
-                if *target != 0 && *config_hash != 0 =>
-            {
-                let identity = event
-                    .enemy_identity
-                    .as_ref()
-                    .filter(|identity| identity.config_hash == *config_hash)
-                    .cloned();
-                if let Some(active) = self
-                    .targets
-                    .iter_mut()
-                    .find(|active| active.target == *target)
-                {
-                    if active.identity.is_none() {
-                        active.identity = identity;
-                    }
-                    if active.level == 0 {
-                        active.level = *level;
-                    }
-                } else {
-                    if self.targets.len() == ENEMY_TELEMETRY_MAX_TARGETS {
-                        self.targets.remove(0);
-                    }
-                    self.targets.push(ActiveEnemyTelemetry {
-                        target: *target,
-                        identity,
-                        level: *level,
-                        hp: None,
-                        max_hp: None,
-                        identified_at: timestamp,
-                    });
-                }
-                None
-            }
             (
                 ModScriptEventPhase::Postprocess,
-                "enemy.vitals",
-                [target, hp_milli, max_hp_milli],
-            ) if *max_hp_milli > 0
-                && *max_hp_milli <= MAX_ENEMY_HP_MILLI
-                && *hp_milli <= *max_hp_milli =>
-            {
-                let active = self
-                    .targets
-                    .iter_mut()
-                    .find(|active| active.target == *target)?;
-                let hp = *hp_milli as f64 / 1000.0;
-                let max_hp = *max_hp_milli as f64 / 1000.0;
-                active.hp = Some(hp);
-                active.max_hp = Some(max_hp);
-                active
-                    .identity
-                    .clone()
-                    .map(|identity| EnemyIdentityBackfill {
-                        identity,
-                        level: active.level,
-                        hp,
-                        max_hp,
-                        identified_at: active.identified_at,
-                        observed_at: timestamp,
-                    })
-            }
-            (ModScriptEventPhase::Postprocess, "enemy.state", [target, _flags, level]) => {
-                if let Some(active) = self
-                    .targets
-                    .iter_mut()
-                    .find(|active| active.target == *target)
-                {
-                    active.level = *level;
+                "enemy.hit_target",
+                [target, config_hash, level],
+            ) if *target != 0 && *config_hash != 0 => {
+                if self.hit_targets.len() == ENEMY_TELEMETRY_MAX_HIT_TARGETS {
+                    self.hit_targets.pop_front();
                 }
-                None
-            }
-            (ModScriptEventPhase::Postprocess, "enemy.cleared", [target]) => {
-                self.targets.retain(|active| active.target != *target);
-                if self
-                    .continuity
-                    .as_ref()
-                    .is_some_and(|continuity| continuity.target == *target)
-                {
-                    self.continuity = None;
-                }
-                None
+                let observation = EnemyHitTargetObservation {
+                    sequence: event.sequence,
+                    target: *target,
+                    config_hash: *config_hash,
+                    identity: event
+                        .enemy_identity
+                        .as_ref()
+                        .filter(|identity| identity.config_hash == *config_hash)
+                        .cloned(),
+                    level: *level,
+                    observed_at: timestamp,
+                };
+                self.hit_targets.push_back(observation.clone());
+                Some(observation)
             }
             _ => None,
         }
     }
 
-    fn project_hit(&mut self, hit: &mut Hit) {
-        let mut matched_index = None;
-        for (index, active) in self.targets.iter().enumerate() {
-            let (Some(hp), Some(max_hp)) = (active.hp, active.max_hp) else {
-                continue;
-            };
-            if !hit_matches_enemy_hp(hit, hp, max_hp)
-                || active
-                    .identity
-                    .as_ref()
-                    .is_some_and(|identity| !hit_accepts_enemy_identity(hit, identity))
-            {
-                continue;
-            }
-            if matched_index.replace(index).is_some() {
-                return;
-            }
+    fn take_hit_target_for_hit(&mut self, hit: &Hit) -> Option<EnemyHitTargetObservation> {
+        while self.hit_targets.front().is_some_and(|target| {
+            target.observed_at + ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS < hit.timestamp
+        }) {
+            self.hit_targets.pop_front();
         }
-        let (index, resolution) = match matched_index {
-            Some(index) => (index, ENEMY_TELEMETRY_HP_MATCH),
-            None => {
-                let Some(continuity) = self.continuity.as_ref() else {
-                    return;
-                };
-                if hit.timestamp < continuity.timestamp
-                    || hit.timestamp - continuity.timestamp > ENEMY_TELEMETRY_CONTINUITY_SECONDS
-                    || !hit.direction.is_outgoing()
-                    || !combat_value_matches(hit.target_max_hp, continuity.max_hp)
-                    || hit.target_hp_after > continuity.hp
-                        && !combat_value_matches(hit.target_hp_after, continuity.hp)
-                    || !combat_value_matches(hit.target_hp_before, continuity.hp)
-                        && !combat_value_matches(hit.target_hp_after, continuity.hp)
-                        && !combat_value_matches(
-                            continuity.hp - hit.target_hp_after,
-                            hit.total_damage(),
-                        )
-                {
-                    return;
-                }
-                let mut matching_target = None;
-                for (index, active) in self.targets.iter().enumerate() {
-                    if active.identity.is_none()
-                        || !active
-                            .max_hp
-                            .is_some_and(|max_hp| combat_value_matches(max_hp, continuity.max_hp))
-                    {
-                        continue;
-                    }
-                    if matching_target.replace(index).is_some() {
-                        return;
-                    }
-                }
-                let Some(index) = matching_target else {
-                    return;
-                };
-                if self.targets[index].target != continuity.target {
-                    return;
-                }
-                (index, ENEMY_TELEMETRY_CONTINUITY)
-            }
-        };
-        let active = &mut self.targets[index];
-        let Some(identity) = active.identity.as_ref() else {
-            return;
-        };
-        project_enemy_identity(hit, identity, active.level, resolution);
-        active.hp = Some(hit.target_hp_after);
-        active.max_hp = Some(hit.target_max_hp);
-        self.continuity = Some(EnemyTelemetryContinuity {
-            target: active.target,
-            hp: hit.target_hp_after,
-            max_hp: hit.target_max_hp,
-            timestamp: hit.timestamp,
-        });
+        let index = self.hit_targets.iter().position(|target| {
+            hit_accepts_enemy_hit_target(hit, target)
+                && (target.observed_at - hit.timestamp).abs()
+                    <= ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS
+        })?;
+        self.hit_targets.remove(index)
+    }
+
+    fn consume_hit_target(&mut self, sequence: u64) {
+        if let Some(index) = self
+            .hit_targets
+            .iter()
+            .position(|target| target.sequence == sequence)
+        {
+            self.hit_targets.remove(index);
+        }
     }
 }
 
@@ -2028,109 +1912,140 @@ fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
         .map(|ticks| ticks as f64 / FILETIME_TICKS_PER_SECOND)
 }
 
-fn combat_value_matches(left: f64, right: f64) -> bool {
-    let tolerance = (left.abs().max(right.abs()) * 1.0e-6).max(0.01);
-    (left - right).abs() <= tolerance
+fn hit_accepts_enemy_telemetry(hit: &Hit) -> bool {
+    !hit.direction.is_incoming()
 }
 
-fn hit_matches_enemy_hp(hit: &Hit, hp: f64, max_hp: f64) -> bool {
-    hit.direction.is_outgoing()
-        && hit.target_max_hp > 0.0
-        && combat_value_matches(hit.target_max_hp, max_hp)
-        && (combat_value_matches(hit.target_hp_before, hp)
-            || combat_value_matches(hit.target_hp_after, hp))
-}
-
-fn hit_accepts_enemy_identity(hit: &Hit, identity: &EnemyIdentity) -> bool {
-    let expected_target_id = format!("enemy:{:016x}", identity.config_hash);
-    hit.target_id
-        .as_deref()
-        .is_none_or(|target_id| target_id == expected_target_id)
-        && hit
-            .target_name
-            .as_deref()
-            .is_none_or(|name| name == identity.name_zh)
-        && hit
-            .target_name_en
-            .as_deref()
-            .is_none_or(|name| name == identity.name_en)
-        && hit
-            .target_name_ja
-            .as_deref()
-            .is_none_or(|name| name == identity.name_ja)
-        && hit
-            .target_monster_id
-            .as_deref()
-            .is_none_or(|monster_id| monster_id == identity.monster_id)
-}
-
-fn project_enemy_identity(
-    hit: &mut Hit,
-    identity: &EnemyIdentity,
-    level: u64,
-    resolution: &str,
-) -> bool {
-    let context_missing = !hit
-        .target_context
+fn hit_has_exact_enemy_target(hit: &Hit) -> bool {
+    hit.target_context
         .iter()
-        .any(|context| context == resolution);
-    let changed = hit.target_id.is_none()
-        || hit.target_name.is_none()
-        || hit.target_name_en.is_none()
-        || hit.target_name_ja.is_none()
-        || hit.target_monster_id.is_none()
-        || context_missing;
-    hit.target_id
-        .get_or_insert_with(|| format!("enemy:{:016x}", identity.config_hash));
-    hit.target_name
-        .get_or_insert_with(|| identity.name_zh.clone());
-    hit.target_name_en
-        .get_or_insert_with(|| identity.name_en.clone());
-    hit.target_name_ja
-        .get_or_insert_with(|| identity.name_ja.clone());
-    hit.target_monster_id
-        .get_or_insert_with(|| identity.monster_id.clone());
-    if context_missing {
-        hit.target_context.push(resolution.to_owned());
+        .any(|context| context == ENEMY_TELEMETRY_HIT_INSTANCE)
+}
+
+fn hit_accepts_enemy_hit_target(hit: &Hit, target: &EnemyHitTargetObservation) -> bool {
+    hit_accepts_enemy_telemetry(hit)
+        && !hit_has_exact_enemy_target(hit)
+        && hit.target_id.as_deref().is_none_or(|target_id| {
+            target_id == format!("enemy:{:016x}", target.config_hash)
+                || hit
+                    .target_context
+                    .iter()
+                    .any(|context| context == ENEMY_TELEMETRY_INSTANCE)
+        })
+}
+
+fn project_enemy_hit_target(
+    hit: &mut Hit,
+    target: &EnemyHitTargetObservation,
+) -> EnemyTargetProjectionResult {
+    let direction_changed = hit.direction.is_unknown();
+    let target_id = format!("enemy-instance:{:016x}", target.target);
+    let target_instance = format!("enemy_target_instance={:016x}", target.target);
+    let identity_changed = target.identity.as_ref().is_some_and(|identity| {
+        hit.target_name.as_deref() != Some(&identity.name_zh)
+            || hit.target_name_en.as_deref() != Some(&identity.name_en)
+            || hit.target_name_ja.as_deref() != Some(&identity.name_ja)
+            || hit.target_monster_id.as_deref() != Some(&identity.monster_id)
+    });
+    let changed = direction_changed
+        || hit.target_id.as_deref() != Some(&target_id)
+        || identity_changed
+        || !hit_has_exact_enemy_target(hit)
+        || !hit
+            .target_context
+            .iter()
+            .any(|context| context == &target_instance);
+
+    if direction_changed {
+        hit.direction = HitDirection::Outgoing;
+    }
+    hit.target_id = Some(target_id);
+    if let Some(identity) = &target.identity {
+        hit.target_name = Some(identity.name_zh.clone());
+        hit.target_name_en = Some(identity.name_en.clone());
+        hit.target_name_ja = Some(identity.name_ja.clone());
+        hit.target_monster_id = Some(identity.monster_id.clone());
+    }
+    hit.target_context.retain(|context| {
+        context != ENEMY_TELEMETRY_INSTANCE
+            && context != ENEMY_TELEMETRY_HIT_INSTANCE
+            && !context.starts_with("enemy_target_instance=")
+            && !context.starts_with("enemy_config_id=")
+            && !context.starts_with("enemy_level=")
+    });
+    hit.target_context
+        .push(ENEMY_TELEMETRY_HIT_INSTANCE.to_owned());
+    if let Some(identity) = &target.identity {
         hit.target_context
             .push(format!("enemy_config_id={}", identity.config_id));
-        if level > 0 {
-            hit.target_context.push(format!("enemy_level={level}"));
-        }
     }
-    changed
+    if target.level > 0 {
+        hit.target_context
+            .push(format!("enemy_level={}", target.level));
+    }
+    hit.target_context.push(target_instance);
+
+    EnemyTargetProjectionResult {
+        changed,
+        direction_changed,
+    }
 }
 
-fn backfill_enemy_identity(hits: &mut VecDeque<Hit>, backfill: &EnemyIdentityBackfill) -> bool {
-    let mut expected_hp = backfill.hp;
-    let mut changed = false;
-    for hit in hits.iter_mut().rev().take(ENEMY_TELEMETRY_BACKFILL_HITS) {
-        if hit.timestamp > backfill.observed_at + 0.25 {
-            continue;
+#[derive(Clone, Copy)]
+struct EnemyHitKey {
+    timestamp: u64,
+    char_id: u32,
+    byte_offset: usize,
+    bit_shift: u8,
+}
+
+impl EnemyHitKey {
+    fn from_hit(hit: &Hit) -> Self {
+        Self {
+            timestamp: hit.timestamp.to_bits(),
+            char_id: hit.char_id,
+            byte_offset: hit.byte_offset,
+            bit_shift: hit.bit_shift,
         }
-        if hit.timestamp < backfill.identified_at - 0.25
-            || hit.timestamp < backfill.observed_at - ENEMY_TELEMETRY_BACKFILL_SECONDS
-        {
-            break;
-        }
-        if !hit.direction.is_outgoing()
-            || !combat_value_matches(hit.target_max_hp, backfill.max_hp)
-            || !combat_value_matches(hit.target_hp_after, expected_hp)
-        {
-            continue;
-        }
-        if !hit_accepts_enemy_identity(hit, &backfill.identity) {
-            break;
-        }
-        changed |= project_enemy_identity(
-            hit,
-            &backfill.identity,
-            backfill.level,
-            ENEMY_TELEMETRY_HP_MATCH,
-        );
-        expected_hp = hit.target_hp_before;
     }
-    changed
+
+    fn matches(self, hit: &Hit) -> bool {
+        hit.timestamp.to_bits() == self.timestamp
+            && hit.char_id == self.char_id
+            && hit.byte_offset == self.byte_offset
+            && hit.bit_shift == self.bit_shift
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct EnemyTargetProjectionResult {
+    changed: bool,
+    direction_changed: bool,
+}
+
+fn backfill_enemy_hit_target(
+    hits: &mut VecDeque<Hit>,
+    target: &EnemyHitTargetObservation,
+) -> Option<(EnemyHitKey, EnemyTargetProjectionResult)> {
+    let first = hits.len().saturating_sub(ENEMY_TELEMETRY_BACKFILL_HITS);
+    let hit = hits.iter_mut().skip(first).find(|hit| {
+        hit_accepts_enemy_hit_target(hit, target)
+            && (target.observed_at - hit.timestamp).abs()
+                <= ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS
+    })?;
+    let key = EnemyHitKey::from_hit(hit);
+    Some((key, project_enemy_hit_target(hit, target)))
+}
+
+fn apply_enemy_hit_target_to_key(
+    hits: &mut VecDeque<Hit>,
+    key: EnemyHitKey,
+    target: &EnemyHitTargetObservation,
+) -> EnemyTargetProjectionResult {
+    match hits.iter_mut().find(|hit| key.matches(hit)) {
+        Some(hit) => project_enemy_hit_target(hit, target),
+        None => EnemyTargetProjectionResult::default(),
+    }
 }
 
 #[derive(Clone, Default)]
@@ -2157,7 +2072,9 @@ pub struct CombatState {
 
 impl CombatState {
     pub fn push_hit(&mut self, mut hit: Hit) {
-        self.enemy_telemetry.project_hit(&mut hit);
+        if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
+            project_enemy_hit_target(&mut hit, &target);
+        }
         self.abyss.push_hit(hit.clone());
         update_combat_totals(
             &mut self.stats,
@@ -2238,17 +2155,34 @@ impl CombatState {
         self.empty_curtain_characters = characters;
     }
 
-    pub fn apply_mod_script_event(&mut self, event: &ModScriptEvent) {
-        let Some(backfill) = self.enemy_telemetry.apply_event(event) else {
-            return;
-        };
-        if backfill_enemy_identity(&mut self.hits, &backfill) {
+    fn apply_enemy_target_projection_result(&mut self, result: EnemyTargetProjectionResult) {
+        if result.changed {
             self.hits_generation = self.hits_generation.wrapping_add(1);
         }
+        if result.direction_changed {
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+    }
+
+    pub fn apply_mod_script_event(&mut self, event: &ModScriptEvent) {
+        let Some(target) = self.enemy_telemetry.apply_event(event) else {
+            return;
+        };
+        let Some((key, result)) = backfill_enemy_hit_target(&mut self.hits, &target) else {
+            return;
+        };
+        self.enemy_telemetry.consume_hit_target(target.sequence);
+        self.apply_enemy_target_projection_result(result);
         for party in [&mut self.abyss.first_half, &mut self.abyss.second_half] {
-            if backfill_enemy_identity(&mut party.hits, &backfill) {
-                party.hits_generation = party.hits_generation.wrapping_add(1);
-            }
+            let result = apply_enemy_hit_target_to_key(&mut party.hits, key, &target);
+            party.apply_enemy_target_projection_result(result);
         }
     }
 
