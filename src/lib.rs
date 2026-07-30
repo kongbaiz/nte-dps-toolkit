@@ -47,29 +47,33 @@ mod gui_entry {
             .flatten()
             .collect::<Vec<_>>();
         let config_warning = (!config_warning.is_empty()).then(|| config_warning.join("\n"));
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_title("NTE DPS TOOL")
+            // Reopen at the last dragged size (native edge-resize via BeginResize grips), falling
+            // back to the base size on first run. The window stays borderless; resize is driven by
+            // the custom grips in `window_resize_grips`.
+            .with_inner_size(
+                ui_config
+                    .main_window_size
+                    .map(egui::Vec2::from)
+                    .unwrap_or(app::MAIN_WINDOW_BASE_SIZE),
+            )
+            .with_min_inner_size(egui::Vec2::from(storage::config::MAIN_WINDOW_MIN_SIZE))
+            .with_decorations(false)
+            .with_resizable(true)
+            .with_transparent(true)
+            .with_has_shadow(false)
+            .with_icon(Arc::new(app_icon()))
+            .with_window_level(if ui_config.always_on_top {
+                egui::WindowLevel::AlwaysOnTop
+            } else {
+                egui::WindowLevel::Normal
+            });
+        if let Some(position) = ui_config.main_window_position {
+            viewport = viewport.with_position(egui::Pos2::from(position));
+        }
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_title("NTE DPS TOOL")
-                // Reopen at the last dragged size (native edge-resize via BeginResize grips), falling
-                // back to the base size on first run. The window stays borderless; resize is driven by
-                // the custom grips in `window_resize_grips`.
-                .with_inner_size(
-                    ui_config
-                        .main_window_size
-                        .map(egui::Vec2::from)
-                        .unwrap_or(app::MAIN_WINDOW_BASE_SIZE),
-                )
-                .with_min_inner_size(egui::Vec2::from(storage::config::MAIN_WINDOW_MIN_SIZE))
-                .with_decorations(false)
-                .with_resizable(true)
-                .with_transparent(true)
-                .with_has_shadow(false)
-                .with_icon(Arc::new(app_icon()))
-                .with_window_level(if ui_config.always_on_top {
-                    egui::WindowLevel::AlwaysOnTop
-                } else {
-                    egui::WindowLevel::Normal
-                }),
+            viewport,
             // Render through wgpu, not glow/OpenGL. On this transparent, borderless
             // window the NVIDIA OpenGL driver loses the GL context ("GPU has been
             // disconnected", error 10) during the native corner-resize modal loop,

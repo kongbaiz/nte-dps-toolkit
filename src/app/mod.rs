@@ -121,6 +121,7 @@ const CHARACTER_EDITOR_CARD_HEIGHT: f32 = 68.0;
 const CHARACTER_EDITOR_AVATAR_SIZE: f32 = 48.0;
 const UI_CONFIG_SAVE_DELAY: Duration = Duration::from_millis(350);
 const UI_CONFIG_SAVE_RETRY_DELAY: Duration = Duration::from_secs(2);
+const MAIN_WINDOW_CLOSE_DURATION: Duration = Duration::from_millis(180);
 const STATUS_TOAST_DURATION: Duration = Duration::from_secs(4);
 const UNDO_TOAST_DURATION: Duration = Duration::from_secs(5);
 const HUD_TRANSITION_TRACKING_GUARD_FRAMES: u8 = 8;
@@ -899,8 +900,8 @@ impl HistoryState {
         self.records.push(record);
         self.records.sort_by(|left, right| {
             right
-                .saved_at
-                .cmp(&left.saved_at)
+                .effective_timestamp()
+                .cmp(left.effective_timestamp())
                 .then_with(|| right.id.cmp(&left.id))
         });
         self.records.truncate(history::MAX_HISTORY_RECORDS);
@@ -1159,6 +1160,7 @@ struct WindowState {
     corner_applied_hwnd: Option<isize>,
     /// Live logical inner sizes persisted after the user resizes each viewport.
     main_window_size: egui::Vec2,
+    main_window_position: Option<egui::Pos2>,
     abyss_window_size: egui::Vec2,
     hit_detail_window_size: egui::Vec2,
     team_hit_detail_window_size: egui::Vec2,
@@ -1168,6 +1170,58 @@ struct WindowState {
     /// Last root minimum size sent to egui, avoiding duplicate viewport commands.
     applied_main_min_size: egui::Vec2,
     opacity_reapply_frames: u8,
+    close_state: MainWindowCloseState,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MainWindowCloseState {
+    #[default]
+    Open,
+    Requested,
+    Fading {
+        started_at: Instant,
+    },
+    Committed,
+}
+
+impl MainWindowCloseState {
+    fn request(&mut self) {
+        if *self == Self::Open {
+            *self = Self::Requested;
+        }
+    }
+
+    fn start_fade(&mut self, now: Instant) {
+        if *self == Self::Requested {
+            *self = Self::Fading { started_at: now };
+        }
+    }
+
+    fn visibility(self, now: Instant, reduce_motion: bool) -> f32 {
+        let Self::Fading { started_at } = self else {
+            return if self == Self::Committed { 0.0 } else { 1.0 };
+        };
+        if reduce_motion {
+            return 0.0;
+        }
+        let progress = now.saturating_duration_since(started_at).as_secs_f32()
+            / MAIN_WINDOW_CLOSE_DURATION.as_secs_f32();
+        1.0 - motion::ease::standard(progress)
+    }
+
+    fn fade_finished(self, now: Instant, reduce_motion: bool) -> bool {
+        match self {
+            Self::Fading { started_at } => {
+                reduce_motion
+                    || now.saturating_duration_since(started_at) >= MAIN_WINDOW_CLOSE_DURATION
+            }
+            _ => false,
+        }
+    }
+
+    fn is_closing(self) -> bool {
+        self != Self::Open
+    }
 }
 
 impl WindowState {
@@ -1177,22 +1231,31 @@ impl WindowState {
             hud_size_key: None,
             abyss_overview_open: false,
             abyss_overview_corner_applied: false,
-            abyss_overview_geometry: SecondaryViewportGeometry::default(),
+            abyss_overview_geometry: SecondaryViewportGeometry::from_position(
+                config.abyss_window_position,
+            ),
             hit_detail_char_id: None,
             hit_detail_corner_applied: false,
-            hit_detail_geometry: SecondaryViewportGeometry::default(),
+            hit_detail_geometry: SecondaryViewportGeometry::from_position(
+                config.hit_detail_window_position,
+            ),
             team_hit_detail_open: false,
             team_hit_detail_corner_applied: false,
-            team_hit_detail_geometry: SecondaryViewportGeometry::default(),
+            team_hit_detail_geometry: SecondaryViewportGeometry::from_position(
+                config.team_hit_detail_window_position,
+            ),
             console_open: false,
             console_corner_applied: false,
-            console_geometry: SecondaryViewportGeometry::default(),
+            console_geometry: SecondaryViewportGeometry::from_position(
+                config.console_window_position,
+            ),
             applied_opacity: None,
             corner_applied_hwnd: None,
             main_window_size: config
                 .main_window_size
                 .map(egui::Vec2::from)
                 .unwrap_or(MAIN_WINDOW_BASE_SIZE),
+            main_window_position: config.main_window_position.map(egui::Pos2::from),
             abyss_window_size: config
                 .abyss_window_size
                 .map(egui::Vec2::from)
@@ -1212,6 +1275,7 @@ impl WindowState {
             main_size_restore_frames: 0,
             applied_main_min_size: egui::Vec2::ZERO,
             opacity_reapply_frames: 4,
+            close_state: MainWindowCloseState::Open,
         }
     }
 }
@@ -1534,6 +1598,7 @@ pub struct DpsApp {
     raw_capture: Option<RawCaptureBuffer>,
     replay_stop: Option<Arc<AtomicBool>>,
     replay_thread: Option<thread::JoinHandle<()>>,
+    renderer_queue: eframe::wgpu::Queue,
     sender: EngineEventSink,
     receiver: Receiver<EngineEvent>,
     debug_receiver: Receiver<EngineEvent>,
@@ -1612,6 +1677,24 @@ impl eframe::App for DpsApp {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let native_close_requested = ctx.input(|input| input.viewport().close_requested());
+        if native_close_requested && self.windows.close_state != MainWindowCloseState::Committed {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.request_main_window_close(ctx);
+        }
+        if self.windows.close_state == MainWindowCloseState::Requested {
+            // Finish joins and disk writes while the last complete frame is still presented.
+            // Doing this after the viewport is destroyed leaves a blank DirectComposition
+            // surface and only the DWM border visible until Drop finishes.
+            self.shutdown_services();
+            self.windows.close_state.start_fade(Instant::now());
+        }
+        let close_now = Instant::now();
+        let close_visibility = self
+            .windows
+            .close_state
+            .visibility(close_now, self.preferences.reduce_motion);
+
         if ctx.input(|input| input.viewport().minimized == Some(true)) {
             // eframe skips `App::ui` while the root viewport is minimized, which removes all
             // immediate child viewports from the native backend. Mark their first-frame setup as
@@ -1659,6 +1742,12 @@ impl eframe::App for DpsApp {
             self.preferences.reduce_motion,
         );
         self.note_detail_scroll_activity(ctx);
+        if self.replay_thread.is_some() {
+            // A viewport surface can temporarily disappear while egui-wgpu still has staging
+            // uploads pending. Submit them before a heavy replay frame so its transient upload
+            // buffers cannot accumulate until `Queue::write_buffer_with` returns `None`.
+            self.renderer_queue.submit([]);
+        }
         self.drain_events();
         self.drain_history_worker_results();
         self.update_combat_visual();
@@ -1684,10 +1773,12 @@ impl eframe::App for DpsApp {
         apply_window_attributes(
             frame,
             WindowAttributeConfig {
-                opacity: egui::lerp(self.preferences.opacity..=1.0, hud_progress),
+                opacity: egui::lerp(self.preferences.opacity..=1.0, hud_progress)
+                    * close_visibility,
                 force_opacity,
                 hud_overlay: hud_progress >= 0.5,
                 passthrough: self.preferences.mouse_passthrough,
+                closing: self.windows.close_state.is_closing(),
             },
             &mut self.windows.applied_opacity,
             &mut self.windows.corner_applied_hwnd,
@@ -1744,6 +1835,16 @@ impl eframe::App for DpsApp {
             }
         }
         self.update_status_toast(ctx);
+        if self
+            .windows
+            .close_state
+            .fade_finished(close_now, self.preferences.reduce_motion)
+        {
+            self.windows.close_state = MainWindowCloseState::Committed;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        } else if self.windows.close_state.is_closing() {
+            ctx.request_repaint();
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1879,6 +1980,7 @@ impl eframe::App for DpsApp {
                     // size the user chose — persisting it would make the window reopen
                     // huge, so only the last restored size is tracked.
                     track_window_size(&ctx, &mut self.windows.main_window_size);
+                    track_window_position(&ctx, &mut self.windows.main_window_position);
                 }
                 // Grow the window minimum to whatever the current-language toolbar
                 // needs, and heal an undersized window, so the button groups can never
@@ -1940,11 +2042,7 @@ impl eframe::App for DpsApp {
 
 impl Drop for DpsApp {
     fn drop(&mut self) {
-        self.background_tasks.stop_game_process_monitor();
-        self.persist_ui_config_on_shutdown();
-        self.stop_engine();
-        self.background_tasks.stop_history_worker();
-        self.background_tasks.join_pending_capture_export();
+        self.shutdown_services();
     }
 }
 
@@ -1952,16 +2050,16 @@ impl Drop for DpsApp {
 mod tests {
     use super::{
         AbyssOverviewState, BackgroundTasks, CaptureUiState, ConsoleTab, DpsApp, HitDetailCacheKey,
-        HitDetailFilter, HitDetailSource, NotificationState, PendingCaptureExport,
-        QteTypeFilterSummary, SkillBreakdownCache, SkillDamageSummary, SkillSummaryCache,
-        TimeStopPresentation, TimelineCache, UiConfigSavePlan, UiPreferences, WindowState,
-        adjusted_cached_index, aggregate_character_skill_damage, build_hit_detail_cache,
-        build_team_dps_export, cached_hit_row, character_color, compare_cached_team_hits,
-        comparison_skill_display_name, damage_digit_key_for_hit, damage_digit_resource_path,
-        damage_number_digits_text, fill_missing_character_colors_from_avatars,
-        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
-        hit_type_label, is_party_member_row, mixed_damage_digit_key, parse_hex_color,
-        qte_type_filter_label, reaction_text_key_for_hit,
+        HitDetailFilter, HitDetailSource, MainWindowCloseState, NotificationState,
+        PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache, SkillDamageSummary,
+        SkillSummaryCache, TimeStopPresentation, TimelineCache, UiConfigSavePlan, UiPreferences,
+        WindowState, adjusted_cached_index, aggregate_character_skill_damage,
+        build_hit_detail_cache, build_team_dps_export, cached_hit_row, character_color,
+        compare_cached_team_hits, comparison_skill_display_name, damage_digit_key_for_hit,
+        damage_digit_resource_path, damage_number_digits_text,
+        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
+        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
+        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
         reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
         resolve_cached_hit, skill_display_name, skill_summary_display_text,
         snapshot_team_from_stats, summarize_qte_type_filters, translate_reaction_label,
@@ -2119,6 +2217,7 @@ mod tests {
             defaults.console_window_size,
             super::CONSOLE_WINDOW_BASE_SIZE
         );
+        assert!(defaults.main_window_position.is_none());
 
         let config = UiConfig {
             main_window_size: Some([640.0, 480.0]),
@@ -2126,6 +2225,11 @@ mod tests {
             hit_detail_window_size: Some([920.0, 710.0]),
             team_hit_detail_window_size: Some([880.0, 680.0]),
             console_window_size: Some([860.0, 620.0]),
+            main_window_position: Some([-1700.0, 120.0]),
+            abyss_window_position: Some([-1600.0, 150.0]),
+            hit_detail_window_position: Some([200.0, 180.0]),
+            team_hit_detail_window_position: Some([240.0, 210.0]),
+            console_window_position: Some([280.0, 240.0]),
             ..UiConfig::default()
         };
 
@@ -2136,21 +2240,51 @@ mod tests {
         assert_eq!(state.hit_detail_window_size, egui::vec2(920.0, 710.0));
         assert_eq!(state.team_hit_detail_window_size, egui::vec2(880.0, 680.0));
         assert_eq!(state.console_window_size, egui::vec2(860.0, 620.0));
+        assert_eq!(state.main_window_position, Some(egui::pos2(-1700.0, 120.0)));
         assert!(!state.hud_mode);
         assert!(state.hud_size_key.is_none());
         assert!(!state.abyss_overview_open);
         assert!(state.hit_detail_char_id.is_none());
         assert!(!state.team_hit_detail_open);
         assert!(!state.console_open);
-        assert_eq!(state.abyss_overview_geometry, Default::default());
-        assert_eq!(state.hit_detail_geometry, Default::default());
-        assert_eq!(state.team_hit_detail_geometry, Default::default());
-        assert_eq!(state.console_geometry, Default::default());
+        assert_eq!(
+            state.abyss_overview_geometry.position(),
+            Some([-1600.0, 150.0])
+        );
+        assert_eq!(state.hit_detail_geometry.position(), Some([200.0, 180.0]));
+        assert_eq!(
+            state.team_hit_detail_geometry.position(),
+            Some([240.0, 210.0])
+        );
+        assert_eq!(state.console_geometry.position(), Some([280.0, 240.0]));
         assert!(state.applied_opacity.is_none());
         assert!(state.corner_applied_hwnd.is_none());
         assert_eq!(state.main_size_restore_frames, 0);
         assert_eq!(state.applied_main_min_size, egui::Vec2::ZERO);
         assert_eq!(state.opacity_reapply_frames, 4);
+        assert_eq!(state.close_state, MainWindowCloseState::Open);
+    }
+
+    #[test]
+    fn main_window_close_state_keeps_a_complete_frame_until_the_fade_finishes() {
+        let started_at = Instant::now();
+        let mut state = MainWindowCloseState::Open;
+
+        state.request();
+        assert_eq!(state, MainWindowCloseState::Requested);
+        assert_eq!(state.visibility(started_at, false), 1.0);
+
+        state.start_fade(started_at);
+        assert_eq!(state.visibility(started_at, false), 1.0);
+        let midpoint = started_at + super::MAIN_WINDOW_CLOSE_DURATION / 2;
+        assert!((state.visibility(midpoint, false) - 0.5).abs() < f32::EPSILON);
+        let finished_at = started_at + super::MAIN_WINDOW_CLOSE_DURATION;
+        assert_eq!(state.visibility(finished_at, false), 0.0);
+        assert!(state.fade_finished(finished_at, false));
+        assert!(state.fade_finished(started_at, true));
+
+        state.request();
+        assert_eq!(state, MainWindowCloseState::Fading { started_at });
     }
 
     #[test]

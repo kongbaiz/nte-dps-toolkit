@@ -809,7 +809,9 @@ impl AbilityCatalog {
             if let Some(attack_type) = semantic.attack_type {
                 skill.attack_type = attack_type;
             }
-            skill.damage_component = Some(semantic.damage_name_en);
+            if let Some(damage_name_en) = semantic.damage_name_en {
+                skill.damage_component = Some(damage_name_en);
+            }
             skill.owner_character_id = semantic.owner_character_id;
         }
         Ok(())
@@ -840,9 +842,12 @@ struct GameplayEffectSemantic {
     attack_type: Option<String>,
     #[serde(default = "default_show_parent_ability")]
     show_parent_ability: bool,
-    damage_name_en: String,
-    damage_name_zh: String,
-    damage_name_ja: String,
+    #[serde(default)]
+    damage_name_en: Option<String>,
+    #[serde(default)]
+    damage_name_zh: Option<String>,
+    #[serde(default)]
+    damage_name_ja: Option<String>,
 }
 
 const fn default_show_parent_ability() -> bool {
@@ -889,11 +894,17 @@ fn load_gameplay_effect_semantics(path: &Path) -> Result<HashMap<String, Gamepla
                 .is_none_or(|attack_type| !attack_type.trim().is_empty()),
             "GE 语义表 {effect_name} 的 attack_type 为空"
         );
+        let damage_names = [
+            semantic.damage_name_en.as_deref(),
+            semantic.damage_name_zh.as_deref(),
+            semantic.damage_name_ja.as_deref(),
+        ];
         ensure!(
-            !semantic.damage_name_en.trim().is_empty()
-                && !semantic.damage_name_zh.trim().is_empty()
-                && !semantic.damage_name_ja.trim().is_empty(),
-            "GE 语义表 {effect_name} 缺少多语言伤害组件名"
+            damage_names.iter().all(Option::is_none)
+                || damage_names
+                    .iter()
+                    .all(|name| name.is_some_and(|name| !name.trim().is_empty())),
+            "GE 语义表 {effect_name} 的多语言伤害组件名必须同时提供"
         );
     }
     Ok(document.effects)
@@ -906,13 +917,13 @@ pub fn load_gameplay_effect_semantic_names(
     let semantics = load_gameplay_effect_semantics(path)?;
     Ok(semantics
         .into_iter()
-        .map(|(effect_name, semantic)| {
+        .filter_map(|(effect_name, semantic)| {
             let name = match language {
                 Language::SimplifiedChinese => semantic.damage_name_zh,
                 Language::English => semantic.damage_name_en,
                 Language::Japanese => semantic.damage_name_ja,
             };
-            (effect_name, (name, semantic.show_parent_ability))
+            name.map(|name| (effect_name, (name, semantic.show_parent_ability)))
         })
         .collect())
 }
@@ -3485,6 +3496,20 @@ mod character_tests {
         );
         assert_eq!(replica_blossom.owner_character_id, None);
 
+        for effect_name in [
+            "GE_Player_Nanally_UltraSkill1_Damage",
+            "GE_Player_Nanally_UltraSkill2_Damage",
+            "GE_Player_Nanally_UltraSkill3_Damage",
+        ] {
+            let nanally_ultimate = catalog.skill(effect_name).unwrap();
+            assert_eq!(nanally_ultimate.owner_character_id, Some(1010));
+            assert_eq!(
+                nanally_ultimate.ability_name.as_deref(),
+                Some("GA_Nanally_UltraSkill")
+            );
+            assert_eq!(nanally_ultimate.damage_component, None);
+        }
+
         let names = load_gameplay_effect_semantic_names(
             Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH),
             Language::SimplifiedChinese,
@@ -3498,6 +3523,7 @@ mod character_tests {
             names.get("GE_ActorReaction_1_1019_Damage"),
             Some(&("复制创生花".to_owned(), true))
         );
+        assert!(!names.contains_key("GE_Player_Nanally_UltraSkill3_Damage"));
     }
 
     #[test]

@@ -2894,12 +2894,19 @@ impl PacketDecoder {
         {
             return None;
         }
-        let source_index = self.recent_confirmed_hits.iter().rev().position(|hit| {
-            !hit.direction.is_incoming()
-                && hit.target_max_hp > 0.0
-                && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
-        })?;
-        let source_index = self.recent_confirmed_hits.len() - 1 - source_index;
+        let mut candidates = self
+            .recent_confirmed_hits
+            .iter()
+            .enumerate()
+            .filter(|(_, hit)| {
+                !hit.direction.is_incoming()
+                    && hit.target_max_hp > 0.0
+                    && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
+            });
+        let (source_index, _) = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
         let source = self.recent_confirmed_hits[source_index].clone();
         self.recent_confirmed_hits[source_index].target_hp_after = current_hp;
         self.recent_confirmed_hits[source_index].target_hp_percent = if source.target_max_hp > 0.0 {
@@ -7917,6 +7924,36 @@ mod tests {
     }
 
     #[test]
+    fn exact_gameplay_effect_owner_overrides_regular_packet_id() {
+        let characters = HashMap::from([
+            (1010, character_with_attribute("娜娜莉", "咒")),
+            (1051, character_with_attribute("零(女)", "光")),
+        ]);
+        let catalog = AbilityCatalog::from(HashMap::from([(
+            "GE_Player_Nanally_UltraSkill3_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("Q".to_owned()),
+                ability_name: Some("GA_Nanally_UltraSkill".to_owned()),
+                attack_type: "Q技能".to_owned(),
+                damage_component: None,
+                owner_character_id: Some(1010),
+            },
+        )]));
+        let mut hit = targetless_hit();
+        hit.char_id = 1051;
+        hit.char_name = "零(女)".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
+        hit.direction = HitDirection::Outgoing;
+        hit.gameplay_effect_name = Some("GE_Player_Nanally_UltraSkill3_Damage".to_owned());
+
+        reattribute_hit_from_gameplay_effect_semantics(&mut hit, &catalog, &characters);
+
+        assert_eq!(hit.char_id, 1010);
+        assert_eq!(hit.char_name, "娜娜莉");
+        assert_eq!(hit.char_source, HitCharacterSource::GameplayEffect);
+    }
+
+    #[test]
     fn numeric_ability_owner_overrides_session_id() {
         let characters = HashMap::from([
             (1019, character_with_attribute("薄荷", "灵")),
@@ -8895,6 +8932,93 @@ mod tests {
         assert_eq!(follow_up.target_hp_after, 0.0);
         assert_eq!(follow_up.damage_name.as_deref(), Some("HP同步伤害"));
         assert_eq!(follow_up.source_char_id, 1051);
+    }
+
+    #[test]
+    fn boss_hp_sync_damage_does_not_guess_between_multiple_recent_hits() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut first = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        first.damage = 726.0;
+        first.target_hp_before = 7_060.0;
+        first.target_hp_after = 6_334.0;
+        first.gameplay_effect_index = Some(1_001);
+        let mut second = duplicate_test_hit(10.02, HitCharacterSource::Packet, "outgoing");
+        second.damage = 1_196.0;
+        second.target_hp_before = 6_334.0;
+        second.target_hp_after = 5_138.0;
+        second.gameplay_effect_index = Some(1_002);
+
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![first, second], &[1051], false, &characters);
+        assert_eq!(prepared.emit.len(), 2);
+
+        assert!(
+            decoder
+                .infer_boss_hp_sync_damage(10.04, 0.0, &characters)
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE to a local large or concatenated pcapng path"]
+    fn stress_large_pcapng_import_with_bounded_event_lanes() {
+        let path =
+            PathBuf::from(std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set"));
+        let characters = Arc::new(
+            load_characters(Path::new(CHARACTER_DATA_PATH))
+                .expect("character resource table should load"),
+        );
+        let mut ability_catalog = AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))
+            .expect("skill table should load");
+        ability_catalog
+            .apply_semantics(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))
+            .expect("effect semantics should load");
+        let (reliable_sender, reliable_receiver) = bounded(16_384);
+        let (debug_sender, debug_receiver) = bounded(2_048);
+        let sink = EngineEventSink::split(reliable_sender, debug_sender);
+        let dropped_debug_probe = sink.clone();
+        let handle = import_pcapng(
+            path,
+            CaptureResources {
+                characters,
+                ability_catalog: Arc::new(ability_catalog),
+            },
+            None,
+            true,
+            false,
+            sink,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let mut semantic_events = 0;
+        let mut debug_packets = 0;
+        let mut capture_stopped = false;
+        let mut errors = Vec::new();
+        while !handle.is_finished() || !reliable_receiver.is_empty() || !debug_receiver.is_empty() {
+            while let Ok(event) = reliable_receiver.try_recv() {
+                semantic_events += 1;
+                match event {
+                    EngineEvent::CaptureStopped => capture_stopped = true,
+                    EngineEvent::Error(error) => errors.push(error),
+                    _ => {}
+                }
+            }
+            while debug_receiver.try_recv().is_ok() {
+                debug_packets += 1;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        handle.join().expect("pcapng import thread should finish");
+
+        assert!(capture_stopped);
+        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(semantic_events > 1);
+        assert!(debug_packets > 0);
+        println!(
+            "large pcapng import completed: semantic_events={semantic_events}, debug_packets={debug_packets}, dropped_debug_packets={}",
+            dropped_debug_probe.take_dropped_debug_packets()
+        );
     }
 
     #[test]

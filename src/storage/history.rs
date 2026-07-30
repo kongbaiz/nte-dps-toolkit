@@ -25,6 +25,8 @@ pub struct HistoryRecord {
     pub version: u32,
     pub id: String,
     pub saved_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_at: Option<DateTime<Utc>>,
     pub summary: CombatSessionSummary,
     pub details: Option<HistoryCombatDetails>,
 }
@@ -35,6 +37,7 @@ impl Default for HistoryRecord {
             version: HISTORY_RECORD_VERSION,
             id: String::new(),
             saved_at: Utc::now(),
+            recorded_at: None,
             summary: CombatSessionSummary::default(),
             details: None,
         }
@@ -42,10 +45,21 @@ impl Default for HistoryRecord {
 }
 
 impl HistoryRecord {
+    pub fn effective_timestamp(&self) -> &DateTime<Utc> {
+        self.recorded_at.as_ref().unwrap_or(&self.saved_at)
+    }
+
     pub fn display_time(&self) -> String {
-        self.saved_at
+        self.effective_timestamp()
             .with_timezone(&Local)
             .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+    }
+
+    pub fn file_timestamp(&self) -> String {
+        self.effective_timestamp()
+            .with_timezone(&Local)
+            .format("%Y%m%d_%H%M%S")
             .to_string()
     }
 
@@ -191,6 +205,16 @@ impl HistoryCombatDetails {
         state
     }
 
+    fn recorded_at(&self) -> Option<DateTime<Utc>> {
+        self.global_hits
+            .iter()
+            .chain(&self.first_half_hits)
+            .chain(&self.second_half_hits)
+            .map(|hit| hit.timestamp)
+            .min_by(f64::total_cmp)
+            .and_then(unix_seconds_to_utc)
+    }
+
     fn validate(&self) -> Result<(), String> {
         if !self.global_hits.is_empty()
             && (!self.first_half_hits.is_empty() || !self.second_half_hits.is_empty())
@@ -287,6 +311,17 @@ fn clipped_time_stop_events(
         }
     }
     clipped
+}
+
+fn unix_seconds_to_utc(timestamp: f64) -> Option<DateTime<Utc>> {
+    let timestamp_millis = timestamp * 1_000.0;
+    if !timestamp_millis.is_finite()
+        || timestamp_millis < i64::MIN as f64
+        || timestamp_millis > i64::MAX as f64
+    {
+        return None;
+    }
+    DateTime::<Utc>::from_timestamp_millis(timestamp_millis.round() as i64)
 }
 
 fn team_from_characters(dps: f64, characters: &[CombatSessionCharacterSummary]) -> Option<TeamDps> {
@@ -434,10 +469,12 @@ fn save_record_to_dir(
     fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let saved_at = Utc::now();
     let id = generate_record_id(saved_at);
+    let recorded_at = details.as_ref().and_then(HistoryCombatDetails::recorded_at);
     let record = HistoryRecord {
         version: HISTORY_RECORD_VERSION,
         id,
         saved_at,
+        recorded_at,
         summary,
         details,
     };
@@ -553,14 +590,7 @@ fn valid_record_id(record_id: &str) -> bool {
 }
 
 fn record_path(directory: &Path, record: &HistoryRecord) -> PathBuf {
-    directory.join(format!(
-        "{}_{}.json",
-        record
-            .saved_at
-            .with_timezone(&Local)
-            .format("%Y%m%d_%H%M%S"),
-        record.id
-    ))
+    directory.join(format!("{}_{}.json", record.file_timestamp(), record.id))
 }
 
 fn prune_history_dir(directory: &Path, max_records: usize) -> Result<(), String> {
@@ -586,8 +616,8 @@ fn prune_history_dir(directory: &Path, max_records: usize) -> Result<(), String>
 fn sort_records_newest_first(records: &mut [HistoryRecord]) {
     records.sort_by(|left, right| {
         right
-            .saved_at
-            .cmp(&left.saved_at)
+            .effective_timestamp()
+            .cmp(left.effective_timestamp())
             .then_with(|| right.id.cmp(&left.id))
     });
 }
@@ -762,6 +792,58 @@ mod tests {
         assert_eq!(abyss.first_half.as_ref().unwrap().half, AbyssHalf::First);
         assert_eq!(abyss.second_half.as_ref().unwrap().half, AbyssHalf::Second);
         assert!(result.records[0].details.is_none());
+        assert!(result.records[0].recorded_at.is_none());
+        assert_eq!(
+            result.records[0].effective_timestamp(),
+            &result.records[0].saved_at
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn detailed_record_uses_earliest_hit_time_for_display_file_and_sorting() {
+        let directory = temp_history_dir("recorded_at");
+        let mut state = CombatState::default();
+        state.push_hit(history_hit(1_700_000_005.0, 1, 100.0));
+        let mut incoming = history_hit(1_700_000_000.125, 2, 50.0);
+        incoming.direction = HitDirection::Incoming;
+        state.push_hit(incoming);
+        let details = HistoryCombatDetails::from_state(&state).unwrap();
+
+        let record =
+            save_summary_with_details_to_dir(&directory, CombatSessionSummary::default(), details)
+                .unwrap();
+        let expected = DateTime::<Utc>::from_timestamp_millis(1_700_000_000_125).unwrap();
+
+        assert_eq!(record.recorded_at, Some(expected));
+        assert_eq!(record.effective_timestamp(), &expected);
+        let file_name = fs::read_dir(&directory)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            file_name,
+            format!("{}_{}.json", record.file_timestamp(), record.id)
+        );
+
+        let newer_saved_at = DateTime::<Utc>::from_timestamp_millis(1_800_000_000_000).unwrap();
+        let later_combat = DateTime::<Utc>::from_timestamp_millis(1_700_000_010_000).unwrap();
+        let mut records = vec![
+            record,
+            HistoryRecord {
+                id: "later-combat".to_owned(),
+                saved_at: newer_saved_at,
+                recorded_at: Some(later_combat),
+                ..Default::default()
+            },
+        ];
+        sort_records_newest_first(&mut records);
+        assert_eq!(records[0].id, "later-combat");
+
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -902,6 +984,7 @@ mod tests {
         assert_ne!(second.id, first.id);
         assert_eq!(first.version, HISTORY_RECORD_VERSION);
         assert_eq!(first.saved_at, original.saved_at);
+        assert_eq!(first.recorded_at, original.recorded_at);
         assert_eq!(
             first
                 .details
