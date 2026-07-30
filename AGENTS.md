@@ -2,206 +2,402 @@
 
 ## 0. 最小行为守则（动手前必读）
 
-本节是全文的强制摘要，供任何智能体（无论能力强弱）在动手前快速对齐；与正文冲突时以正文为准。
+本节是全文的强制摘要；与后文冲突时，以后文更具体的条款为准。
 
-1. **先定位规则再动手**：改任何文件前，先在 §4「架构边界」找到该文件的条目并遵守其约束；要新建文件，先按 §4 的归属表确定目录。
-2. **只做被要求的事**：只改与当前任务直接相关的文件。发现无关问题（bug、坏味道、过期注释）只记录并在回复中报告，不顺手修。
-3. **改完必验证**：`cargo fmt --check`、`cargo check`、`cargo test` 三条命令全部通过才算完成；跑不了的要在回复里写明原因，不得声称已验证。
-4. **默认禁止清单**（除非用户当次明确要求）：`git commit` / `git push`；新增、升级、删除依赖；修改 `Cargo.toml` 的 `[profile]` / `[patch]` 段；修改 `vendor/`；拆分、合并、重命名模块文件；批量格式化或风格清洗。
-5. **UI 验证交给用户**：禁止自行启动程序、模拟点击或截图来"验证"UI 改动；改完列出人工验证清单，由用户操作并反馈结果。
-6. **文案必须走 i18n**：新增用户可见文案一律 `t("English key")` / `tf(...)`，并在 `res/languages/zh-CN.json` 补中文值；禁止在源码硬编码中文字面量。
-7. **校验只做在信任边界**：解析外部输入（网络字节、文件、FFI）时做一次完整校验；边界之内禁止防御性代码（详见 §5）。
-8. **不确定就停**：任务与本文约束冲突、或存在多种合理理解时，停下来向用户说明歧义和备选方案；禁止凭猜测扩大改动范围。
-9. **回复有固定格式**：最终回复必须包含改动文件、验证命令结果、未运行项及原因、需人工验证的点（见 §13）。
-10. **UI 布局小步走**：布局容器的嵌套必须遵守 §7 的布局硬规则；一次迭代只重构一个窗口/页签的布局结构，停下等待人工验证通过后再继续。禁止把跨窗口布局重构与主题、热键、动效等多主题改动合并成一次数千行的落地（`cargo check`/`cargo test` 对布局崩坏零检出，人工验证是唯一防线，改动量必须匹配人工可验证的粒度）。
+1. **先确认影响层再动手**：修改前先判断工作属于 Rust 领域核心、Tauri 适配层、React 前端、Windows 平台层、Mod 系统、资源或文档，并遵守 §4 的边界。
+2. **Rust 核心保持唯一事实源**：抓包、协议解析、战斗归并、历史、资源、更新、Mod IPC 和系统集成继续由 Rust 实现；React 负责展示与交互。
+3. **迁移必须小步进行**：一次只迁移一个窗口或一个页签。完成编译和自动化验证后，停止并交付人工验证清单；人工验收通过后再进入下一阶段。
+4. **保持 CLI 纯净**：`nte-core` 的 CLI-only 依赖树不得出现 Tauri、WebView、React 构建、egui、eframe、wgpu 或窗口库。
+5. **跨边界只传稳定契约**：Rust 与 React、游戏 Mod 与桌面程序之间只传显式 DTO、事件、命令和错误码；禁止把内部领域类型、裸指针、窗口句柄或可变状态直接暴露给前端。
+6. **高频数据必须批量传输**：逐包、逐 hit、逐帧 IPC 属于禁止实现；使用有序 Channel、状态代次、增量批次、分页和节流。
+7. **文案统一走 i18n**：英文字符串作为稳定 key，简体中文继续以 `res/languages/zh-CN.json` 为源；Rust egui 与 React 前端都从同一份翻译资源生成或加载。
+8. **信任边界完整校验一次**：网络字节、文件、Tauri command 参数、Mod manifest、FFI 和系统调用在入口完成校验；边界内部保持类型驱动和简洁实现。
+9. **默认禁止清单**（除非用户当次明确要求）：`git commit`、`git push`、批量重构、整仓格式化、同时迁移多个窗口、升级大版本依赖、改写更新协议、修改 `vendor/`。
+10. **改完必验证**：执行与影响面匹配的 Rust、Tauri、TypeScript、前端构建和测试命令；任何未运行项都要在最终回复中写明原因。
+11. **UI 由用户人工验收**：智能体不启动桌面程序、不模拟点击、不截图验证。透明、穿透、置顶、快捷键、多屏 DPI 和窗口恢复必须列入人工验证。
+12. **保留无关工作树内容**：只修改当前任务直接涉及的文件；发现其他问题只记录，不顺手修复。
 
 ## 1. 适用范围与优先级
 
-- 本文适用于整个仓库的一切修改、审查、重构和资源维护。
-- 优先级：用户当次明确指令 > 更深层目录的 `AGENTS.md` > 本文。
-- 本文的**规范性条款**（"必须 / 禁止"）始终有效；若任务要求违反，先停下询问，不得自行取舍。
-- 本文的**描述性内容**（架构、文件职责）与代码现状不符时，以代码为准，并在回复中报告文档偏差；不要为了让代码符合文档而扩大改动。
+- 本文适用于整个 `NTE DPS TOOL` 仓库，包括 Rust 核心、现有 egui GUI、Tauri 主程序、React 前端、原生 Mods Plugin、资源、构建、测试和文档。
+- 优先级：用户当次明确指令 > 更深层目录中的 `AGENTS.md` > 本文。
+- 本文中的“必须 / 禁止”是规范性要求；描述性架构与代码现状不一致时，以代码为准，并报告偏差。
+- 迁移期允许 egui 与 Tauri 并存，但同一业务规则只能有一个 Rust 实现。
 
-## 2. 项目定位
+## 2. 项目定位与迁移目标
 
-`NTE DPS TOOL` 是 Windows 桌面实时 DPS 工具。主程序使用 Rust 2024 + `eframe/egui`（渲染后端固定 `wgpu`，见 §10）；通过 Npcap 抓取本机 UDP 流量，解析 NTE/UE 网络载荷，并在本地展示队伍、角色、技能、深渊上下行线等统计。资源导出和离线维护工具位于独立私有仓库 `kongbaiz/nte-resource-exporter`；普通运行不依赖这些工具。
+`NTE DPS TOOL` 是 Windows 桌面实时 DPS 工具。Rust 负责 Npcap 抓包、UE 网络协议解析、战斗模型、资源、历史、更新、Mod IPC 和 Windows 集成；桌面界面逐步从 `eframe/egui` 迁移到：
+
+```text
+Tauri 2
+Vite
+React
+TypeScript
+Tailwind CSS
+shadcn/ui
+```
+
+目标产物保持：
+
+- `nte-dps-tool`：最终由 Tauri 承载的完整桌面程序；
+- `nte-core`：无 GUI 的 stdio sidecar，Feature `cli`；
+- `nte-updater`：现有签名更新事务的独立执行程序；
+- `dwmapi.dll`：游戏侧 NTE Mods Plugin；
+- 迁移期 egui GUI：仅用于尚未迁移的窗口和行为对照，按阶段退出。
+
+迁移目标不是把 Rust 业务代码翻译成 TypeScript，而是把 UI 表达层替换为 Web 技术，并建立稳定的前后端契约。
 
 ## 3. 不可破坏的约束
 
-- 不提交 `target/`、`logs/`、`data/`、`NTE_Assets/`、`nte-resource-exporter/`、`Dumper-7/`、`tools/`、C# `bin/obj`、`.env`、资源导出 AES key、`*.usmap`、完整解包数据或抓包样本。这些根目录条目是本地参考/工具区，主程序不得依赖它们运行。
-- 不把资源导出 AES key、授权资源路径、完整载荷、PCAP 内容、用户本机路径写入日志、报告或提交说明。
-- `src/support/encrypted_ini.rs` 中用于 NTE 加密 INI 读写的固定 key 属于长期稳定的协议兼容常量，可保留；不得把资源解包/导出 AES key 或用户授权 key 写入源码。
-- 不绕过现有 debug 回放链路：实时抓包、JSON 导出导入、PCAPNG 导入必须尽量复用同一稳定解析流程。
-- 不在 `master` 主线重新启用敌方目标识别显示；相关研究只应在 `research/scene-target-identification` 或明确授权的分支进行。
-- 不无理由提高 Rust 最低版本、.NET 目标版本、Python 版本或升级 `egui/eframe` 主版本（升级前置条件见 §10、§11）。
+- 不提交 `target/`、`logs/`、`data/`、`NTE_Assets/`、`nte-resource-exporter/`、`Dumper-7/`、`tools/`、C# `bin/obj`、Node `node_modules/`、前端临时缓存、`.env`、抓包样本、资源导出 key 或完整解包数据。
+- 不把 PCAP 内容、完整网络载荷、用户本机路径、授权资源路径、密钥或 token 写入日志、前端错误、测试快照或提交说明。
+- `src/support/encrypted_ini.rs` 中长期稳定的加密 INI 协议 key 可保留；资源导出 key 不进入源码。
+- 实时抓包、JSON 导入和 PCAPNG 回放尽量复用同一解析与 reducer 流程。
+- `master` 主线不重新启用敌方目标识别显示；相关研究留在明确的 research 分支。
+- 当前自定义签名更新与 Mods Plugin 组件更新语义保持稳定；引入 Tauri updater 时不得静默替换现有组件更新协议。
+- `plugins/nte-mods` 和 `plugins/nte-mods.enabled` 是软件侧 Mod 工作区。编辑与查看不依赖游戏安装检测，部署插件时才检查游戏路径。
+- Mod 热更新保持事务式：完整候选集合成功后原子替换；失败保留上一工作版本；单 Mod 故障隔离。
+- 资源导出和离线维护工具属于独立仓库；主程序普通运行不依赖这些工具。
 
-## 4. 架构边界
+## 4. 总体架构与目录边界
 
-仓库产出两个二进制：`nte-dps-tool`（完整 GUI，Feature `gui`，默认启用）与 `nte-core`（无 GUI 的 stdio sidecar，Feature `cli`）。GUI 始终包含 F12、Packets、Resources、Diagnostics 等维护能力，不再提供裁剪调试入口的构建变体。源码由 `src/lib.rs`（共享 crate 根）统一声明模块并做 Feature gating：`app`、`support` 仅在 `gui` 下编译；`api`、`cli` 仅在 `cli` 下编译；`platform` 内 `hotkey`/`file_drop`/`window_attributes` 仅 `gui`，`network`/`locale` 与 CLI 共享；`core`、`engine`、`storage` 全量共享且必须保持不依赖 GUI crate。新代码先按下表定归属，再看对应文件的具体约束：
+### 4.1 目标分层
 
-| 新代码的性质 | 归属 | 绝对禁止 |
+```mermaid
+flowchart LR
+    Capture["Npcap / PCAP / JSON"] --> Engine["Rust engine"]
+    Engine --> Reducer["core reducer"]
+    GameMods["游戏侧 .nte Mods"] --> ModIPC["Mods Plugin IPC"]
+    ModIPC --> Reducer
+    Reducer --> Service["AppService"]
+    Service --> Contract["DTO / Command / Channel"]
+    Contract --> Tauri["Tauri adapter"]
+    Tauri --> React["React / shadcn UI"]
+```
+
+各层职责：
+
+| 性质 | 归属 | 禁止 |
 | --- | --- | --- |
-| 界面渲染、状态展示、事件派发 | `src/app/` 对应视图子模块 | 在帧渲染路径做解析、扫描、长耗时任务 |
-| 抓包、设备枚举、PCAPNG/JSON 导入 | `src/engine/capture.rs` | 依赖 UI |
-| UE 传输层位级解析 | `src/engine/protocol.rs` | 文件系统、时间、UI、非确定性 |
-| 伤害/技能/GameplayEffect 语义解析 | `src/engine/parser.rs` | panic（失败返回 `Option`/`Result`） |
-| 领域模型、战斗聚合、序列化结构 | `src/engine/model.rs` | UI、Win32 API |
-| 深渊静态表与波次预测计算 | `src/engine/abyss_data.rs` | UI |
-| 引擎事件归并、抓包环境准备与控制（GUI/CLI 共享的非 UI 核心） | `src/core/` | 依赖 egui、调用 `t()`/`tf()`、读写 stdout |
-| JSON-RPC envelope、请求参数、响应与外部 DTO | `src/api/` | 启动线程、抓包、读写 stdout、修改领域状态 |
-| CLI 参数、NDJSON framing、请求分发与进程退出 | `src/cli/` | 协议解析算法、GUI 类型、用户可见非英文协议文案 |
-| Win32/系统集成（窗口、热键、网络探测、拖放） | `src/platform/` | 业务逻辑 |
-| 配置、历史库、资源读取、i18n、通用 I/O | `src/storage/` | UI |
-| Debug/维护辅助（编辑器状态、诊断、加密 INI） | `src/support/` | 依赖 egui、阻塞帧 |
+| 网络字节、PCAPNG、Npcap | `src/engine/` | 依赖 Tauri、React、egui |
+| 战斗模型和事件归并 | `src/engine/model.rs`、`src/core/reducer.rs` | 前端状态、窗口逻辑 |
+| 抓包环境与控制 | `src/core/` | 读写 WebView、调用 i18n |
+| CLI JSON-RPC | `src/api/`、`src/cli/` | Tauri command、React 类型 |
+| 稳定桌面 DTO、命令、流式消息 | Rust 前端无关契约模块 | 暴露 `DpsApp`、`CombatState` 可变引用 |
+| Tauri command/channel/window 适配 | `src-tauri/src/` | 复制解析、战斗聚合、历史规则 |
+| React 页面与状态展示 | `frontend/src/` | 解析原始包、直接访问 Npcap/Win32 |
+| Windows 热键、穿透、窗口属性 | Rust 平台层 / Tauri window 适配 | 在 React 中实现 Win32 业务 |
+| 文件、配置、历史、资源、i18n | `src/storage/` | 依赖 React 或 WebView |
+| Mod 编辑器 UI | `frontend/src/features/mods/` | 把游戏安装检测作为加载前置 |
+| 游戏侧受限 Mod VM | `native/nte-mods-plugin/` | 应用 UI 业务、React 组件 |
 
-各文件职责：
+### 4.2 Rust 根 crate
 
-- `src/lib.rs`：共享 crate 根。模块声明与 Feature gating，以及 GUI 启动逻辑 `run_gui()`（panic 日志、配置加载、`eframe::NativeOptions`、透明窗口 wgpu 配置、`DpsApp` 创建）。
-- `src/main.rs`：GUI 薄启动器，仅保留 `windows_subsystem = "windows"` 并调用 `nte_dps_tool::run_gui()`。
-- `src/bin/nte-core.rs`：CLI Core 薄启动器（真实控制台，不得加 `windows_subsystem`），分发 `serve --stdio`、`version --json` 与 `devices --json`。
-- `src/api/`：CLI 对外稳定协议类型。`jsonrpc.rs` 负责 envelope 与标准错误，`request.rs` 负责 typed method/params，`response.rs` 与 `dto.rs` 负责显式外部响应结构；不得直接序列化内部领域类型。
-- `src/cli/args.rs`：无第三方依赖的严格 CLI 参数解析；未知参数与缺值必须返回退出码 2 对应的英文错误。
-- `src/cli/stdio.rs`：UTF-8 NDJSON stdin reader、单一 core loop 与独占 stdout writer；stdout 禁止任何非 JSON 文本，日志和启动错误只写 stderr。
-- `docs/CLI_PROTOCOL.md`、`docs/CLI_PROTOCOL_ZH.md`：同一 CLI 协议的英文和简体中文文档；稳定字段、错误码、方法、事件及示例必须同步更新。`docs/examples/` 只放可运行、无秘密且默认不启动抓包的集成示例。
-- `src/app/`：UI、应用状态和事件编排。`mod.rs` 持有 `DpsApp` 结构、`eframe::App`/`Drop` 实现、共享辅助类型/常量与测试模块；按窗口/页签拆分为子模块（方法子模块 `lifecycle`、`main_view`、`detail_panels`、`console_view` 以 `impl DpsApp` 续写；视图/自由函数子模块 `abyss`、`hit_detail`、`timeline`、`history_ui`、`resources`、`diagnostics_ui`、`editor`、`chrome`、`hud`、`theme`，由 `mod.rs` 以 `pub(crate) use` 再导出，子模块统一 `use super::*` 共享一个扁平 `app` 命名空间）。
-- `src/core/reducer.rs`：唯一的 `EngineEvent` → `CombatState` 归并入口 `apply_engine_event`，返回 `CoreSignal` 供前端处理各自副作用；GUI/CLI 都不得再各写一套完整事件 match。
-- `src/core/capture.rs`：非 UI 抓包准备与控制：游戏进程探测、设备枚举、自动/手动网卡解析、BPF 组合、`CaptureController` 与抓包启停。两个前端的实时抓包必须走这里，语义不得分叉。
-- `src/core/snapshot.rs`：把已验证的内部背包条目与 equipment catalog 转为 frontend-neutral 稳定快照；内部字段不得直接承诺为外部 API。
-- `src/core/mod.rs`：`CoreError`/`CoreErrorCode` 稳定错误码。core 层不做 i18n；用户可见文案由前端在展示边界生成。
-- `src/engine/capture.rs`：Npcap FFI、设备枚举、实时抓包、PCAPNG/JSON 导入、原始帧写入和 `EngineEvent` 产生。
-- `src/engine/protocol.rs`：UE 传输层位级解析。必须保持纯函数、确定性。
-- `src/engine/parser.rs`：伤害载荷、GameplayEffect、技能分类和资源表读取。
-- `src/engine/model.rs`：领域模型、序列化结构、战斗聚合和深渊状态。
-- `src/engine/abyss_data.rs`：深渊怪物静态表、数值与波次预测的纯数据计算。
-- `src/platform/network.rs`：Windows 进程和 TCP 连接检测，仅用于定位 `HTGame.exe` 的本机 IP 与网卡。
-- `src/platform/window_attributes.rs`：Win32 窗口圆角、透明度和进程窗口属性处理。
-- `src/platform/hotkey.rs`、`src/platform/file_drop.rs`：全局穿透热键与原生文件拖放桥接。
-- `src/storage/config.rs`：UI 配置加载、保存、迁移与净化。新增字段必须有默认值和兼容旧 JSON 的行为。
-- `src/storage/i18n.rs`：UI 本地化。源码统一以英文字符串为键；`res/languages/<code>.json` 提供"英文键→本地化值"覆盖表（英文无需文件）。`t`/`tf` 做查表与占位符替换，缺失键回退到英文键本身。语言存于 `UiConfig::language`，入口在控制台设置页下拉框。
-- `src/storage/history.rs`：本地脱敏战斗历史库的结构、读写、迁移与裁剪。
-- `src/storage/io_util.rs`：原子写文件等通用 I/O 辅助。
-- `src/storage/resource.rs`：内嵌/外置运行资源的字节与文本读取。
-- `src/storage/capture_logs.rs`：`logs/nte_raw_*.pcapng` 原始抓包文件的容量统计与清理（纯文件 I/O，删除失败的占用文件跳过）。
-- `src/support/character_editor.rs`：角色表 Debug 编辑器的数据状态、JSON 字段读写和表单校验。
-- `src/support/encrypted_ini.rs`：NTE 加密 INI 的解析、搜索、加解密和记录复用。不得用于资源解包。
-- `src/support/diagnostics.rs`、`src/support/resource_audit.rs`：采集诊断与运行资源覆盖率检查，只消费只读数据。
-- `build.rs`：资源内嵌和 Windows 图标。GUI 构建递归内嵌完整 `res/` 并写入图标；CLI-only 只读取 `res/data/core_manifest.json` 白名单且不得遍历图片或写入 GUI 图标；`external_resources` 不生成内嵌映射。输出必须确定，新增资源路径需保持大小写和 `/` 分隔符稳定。
-- `res/data/core_manifest.json`：CLI-only 内嵌资源的显式白名单与 `data_version`；只加入 CLI 真实运行所需 JSON，禁止加入 GUI 图片、字体、图标或预测/审计专用数据。
-- `res/`：稳定运行资源。手工字段优先保留，批量生成必须说明来源。
-- `vendor/egui-winit-0.34.3/`：本地 fork 依赖，仅为 §10 透明背景修复而存在，见 §11。
-- 资源导出、CUE4Parse probe 和离线资源维护工具已迁出到独立私有仓库 `kongbaiz/nte-resource-exporter`。主程序仓库不得依赖这些工具运行。
-- `Dumper-7/`：本地忽略的第三方或生成 SDK 参考区。主程序和工具不得依赖该目录。
+现有根 crate 继续作为领域和系统能力来源：
 
-模块结构本身（文件的拆分、合并、重命名、re-export 布局）属于用户决策；智能体不得为了"整洁"自行调整，即使某个文件很大（`capture.rs` 近 5000 行是已知且接受的现状）。
+- `src/lib.rs`：Feature gating 和共享 crate 根；
+- `src/core/`：frontend-neutral 服务、抓包控制、reducer、稳定快照；
+- `src/engine/`：协议与领域模型；
+- `src/platform/`：Win32、网络、热键、Mod IPC；
+- `src/storage/`：配置、历史、资源、i18n、文件；
+- `src/api/`、`src/cli/`：`nte-core` 对外协议；
+- `src/app/`：迁移期 egui UI，只处理尚未迁移的界面。
 
-## 5. 代码风格：简洁优先，按信任边界校验
+领域逻辑从 egui 页面抽离时，先放入既有 `core`、`engine`、`storage` 或 `platform` 归属，不放进 `src-tauri`。
 
-本节回答"这段代码要不要检查、要不要抽象"。原则：**在保证功能正确的前提下，用最少的概念和分支表达意图；校验集中在信任边界做一次，边界之内不写防御性代码。**
+### 4.3 Tauri crate
 
-### 5.1 信任边界（必须校验的地方）
+目标目录：
 
-以下入口处理的是不可信数据，必须完整校验，失败返回 `Option`/`Result`，不得 panic：
+```text
+src-tauri/
+  Cargo.toml
+  tauri.conf.json
+  capabilities/
+  src/
+    lib.rs
+    main.rs
+    commands/
+    channels/
+    windows/
+    state.rs
+```
 
-- 网络字节流：`engine/protocol.rs`、`engine/capture.rs` 的帧与载荷解析。位偏移、长度、索引计算必须用 `checked_*`、`saturating_*` 或显式 guard，禁止先索引再判断。
-- 外部文件：PCAPNG/JSON 导入、加密 INI、`res/` 资源、用户配置与历史库的读取和反序列化。
-- FFI 与系统调用返回值：Npcap、Win32 API。
+约束：
 
-这是边界校验，不是防御性编程；两者的区别就在数据来源。
+- `src-tauri` 是适配器，不是第二套业务核心。
+- command 名全局唯一，按领域分组注册。
+- Tauri managed state 只持有线程安全的服务句柄。
+- command 输入和输出使用显式 serde DTO。
+- 窗口 label 是稳定标识，集中定义，不在组件中散落字符串。
+- capabilities 权限按窗口和功能最小化配置。
+- 原生文件、注册表、进程、热键和窗口调用由 Rust 执行。
 
-### 5.2 边界之内（禁止防御性代码）
+### 4.4 React 前端
 
-数据一旦通过上述入口进入 model/UI 层即视为可信。禁止：
+目标目录：
 
-- 对内部函数参数做"以防万一"的 None 检查、空集合检查、范围检查；
-- 用 `unwrap_or_default()`、`.ok()`、`if let` 静默吞掉"按当前逻辑不可能发生"的错误——这是把 bug 藏起来，不是修掉；
-- 同一条数据在多层重复做相同校验；
-- 只记日志就继续执行的空兜底分支。
+```text
+frontend/
+  package.json
+  vite.config.ts
+  tsconfig.json
+  components.json
+  src/
+    app/
+    routes/
+    components/
+      ui/
+      nte/
+    features/
+      combat/
+      timeline/
+      history/
+      mods/
+      settings/
+      diagnostics/
+      hud/
+    hooks/
+    stores/
+    lib/
+    mod-sdk/
+    locales/
+```
 
-内部不变量按以下优先级表达：
+职责：
 
-1. 调整类型让非法状态无法表示（枚举替代标志位组合、新类型、构造时保证非空）；
-2. `match` 穷举，不写多余的 `_ =>` 兜底；
-3. `expect("<说明为何不可能失败>")`——不变量被破坏时应当立刻 panic 暴露 bug，而不是静默降级。生产代码仍避免裸 `unwrap()`；`expect()` 只用于编译期内嵌资源、测试或上述不变量。
+- `components/ui/`：shadcn/ui 生成的基础组件源码，只做通用组件维护；
+- `components/nte/`：NTE 设计系统和领域组件；
+- `features/<name>/`：页面、局部组件、hooks、store、测试；
+- `routes/`：静态和动态页面路由；
+- `stores/`：跨页面、跨窗口的前端投影状态，不承载 Rust 领域规则；
+- `lib/tauri/`：typed command、Channel 和错误适配；
+- `mod-sdk/`：桌面 Mod 的稳定类型、组件 schema 和 capability。
 
-### 5.3 简洁性硬规则
+页面不得直接调用裸 `invoke()`；统一经过 typed client。组件不得直接拼接 command 名或窗口 label。
 
-- 只实现当前任务需要的功能。禁止预留参数、预留配置项、"未来可能用到"的分支或钩子。
-- 单一调用点不引入封装层；单一实现不定义 trait；两处重复不足以立刻抽象，出现第三处再考虑。
-- 优先 early return 降低嵌套；迭代器链与手写循环选可读性更好的那个。
-- 替换逻辑时删除旧代码：不注释掉、不留 `_old`/`_v2` 命名、不保留新旧双路径开关。
-- 注释只写代码表达不了的约束（协议位布局、Windows 特殊行为、`SAFETY:`、数值口径来源）；禁止叙述"下一行在做什么"或"此处改了什么"的注释。
-- 修 bug 先定位根因并在根因处修复；禁止在症状处加 guard 或 fallback 掩盖。
-- 新代码的命名、注释密度、错误处理方式与所在文件保持一致；不要引入该文件没有的新范式。
+### 4.5 资源源与构建产物
 
-## 6. Rust 规范
+- `res/` 继续作为运行数据、图片、字体和翻译的稳定源。
+- React 构建使用显式资源清单、Vite import 或受控复制步骤；同一资源不维护两份手工副本。
+- `frontend/dist/`、Vite 缓存和生成的绑定文件不提交，除非发行流程明确要求。
+- Mod 资源通过受控协议或 Rust command 读取，路径必须限制在对应 Mod 目录。
 
-- 使用 `rustfmt` 默认格式；不要手工制造对齐或局部风格。
-- 命名遵循 Rust 习惯：类型 `PascalCase`，函数/变量/模块 `snake_case`，常量 `SCREAMING_SNAKE_CASE`。
-- 错误处理用现有 crate：`anyhow` 用于带上下文的 I/O/解析错误；面向 UI 的错误保留可展示的 `String`。
-- 所有 `unsafe` 必须最小化、局部化，并附 `SAFETY:` 注释；FFI 资源必须用 RAII/`Drop` 守卫释放。
-- 后台线程通过 `crossbeam_channel` 与 UI 通信；不得在 egui 帧内阻塞抓包、文件扫描或 JSON 大解析。
-- 保持序列化兼容。`Hit` 等导出结构新增字段必须 `#[serde(default)]` 或保证旧 JSON 可导入。
-- 测试写在同文件的 `#[cfg(test)] mod tests`（与现有各模块惯例一致）。新增业务规则必须有测试覆盖；解析规则至少覆盖正常、边界、误判规避三个场景。
+## 5. 前后端契约
 
-## 7. egui/UI 规范
+### 5.1 Rust 是权威状态
 
-- egui 是 immediate mode：UI 函数只做渲染、轻量状态更新和事件派发。
-- **布局容器硬规则**（2026-07 一次大规模交互重构因违反下列各条导致 Console 与主窗口整体布局叠画崩坏，这些错误编译和测试均无法检出）：
-  1. **子 Ui 继承父布局方向**。`Frame::show`、`allocate_ui_with_layout` 的闭包、`scope` 等创建的子 Ui 沿用外层方向：在 `horizontal*` 行内绘制纵向内容前必须显式 `ui.vertical(...)`；`Layout::centered_and_justified` 只允许包裹**单个**控件，多控件内容先包一层 `vertical`/`horizontal` 再居中。
-  2. **并排结构先圈地再绘制**。侧栏、双栏等每一列必须拥有自己的子区域（`allocate_ui_with_layout` 固定宽度、`egui::SidePanel::show_inside` 或 `ui.columns`）；禁止把"列"的内容直接画进共享的行 Ui——那会让整列横着排开并挤压兄弟控件。
-  3. **`set_width` / `set_max_width` / `set_min_*` 作用于当前 Ui 本身**，会改变其兄弟控件的排布；禁止在共享容器（如 `horizontal` 行）上调用它们来为某个子块"预留"尺寸，预留尺寸只能发生在该子块自己的子 Ui 上。
-  4. **`new_child` + `max_rect` 是"画而不占位"**。手动定位绘制必须配套 `allocate_rect`/`allocate_exact_size` 占住同样的空间（现有范式：`main_view.rs` 的 `animated_controls`、`party_panel`），否则后续控件会叠画在同一区域。
-  5. **不得假设文案宽度**。固定宽度控件必须按中英双语的最长文案自检：空间不足时降级为图标 + `on_hover_text` 或换行，禁止让文本被裁成半个词；本地化标签所在的行优先 `horizontal_wrapped`（既有惯例见 `chrome.rs` 的 `inline_controls`）。
-- 长列表、命中详情和技能汇总必须使用缓存、分页或预算控制；不得移除现有 UI 事件预算常量的保护意图。
-- 从后台线程改变状态后，应通过 `Context::request_repaint()` 触发刷新。
-- 仅使用图标或符号的控件必须提供 `on_hover_text(...)`，并使用可本地化的英文键说明动作；不可只依赖图标表达含义。
-- UI 支持中英双语（默认简体中文，可在控制台设置页切换）。新增用户可见文案必须以英文为键调用 `t("...")`/`tf("...", &[...])`，并在 `res/languages/zh-CN.json` 补上对应中文值；不要再硬编码裸中文字面量。游戏内专用名词优先取自 `NTE_Assets` 官方本地化，匹配不到则保留原值；深渊、上下行线、创生花、覆纹、延滞、黯星、浊燃、浸染、盈蓄等术语的既有中文口径不得随意改名（这些是 `zh-CN.json` 的值，不是键）。引擎/模型层仅返回稳定英文键或原始数据，翻译只在 UI 展示点进行。
-- **UI 改动的验证由用户人工执行**：智能体不得自行启动程序、模拟点击、注入输入或截图来确认效果。改完后在回复中列出人工验证清单（入口位置、操作步骤、预期表现），涉及窗口透明、置顶、穿透、快捷键或 debug 面板时必须单独列出。
+- `CombatState`、抓包状态、历史事务、Mod 部署状态和更新事务只在 Rust 中变更。
+- React store 是显示投影和短暂交互状态。
+- React 发出 `AppCommand`，Rust 校验并执行，然后发布新一代状态。
+- 禁止前端先乐观修改权威战斗状态再尝试同步。
 
-## 8. 抓包与解析规范
+### 5.2 DTO
 
-- Npcap 通过动态加载使用；新增 FFI 绑定必须保持 C ABI 类型准确，并处理失败返回。
-- BPF 过滤器应尽量收窄到目标流量，避免无谓保存全量本机流量。
-- 原始帧写入 PCAPNG 是核心 debug 能力；不得静默移除、降级或改变默认路径格式。
-- 实时解析、PCAPNG 回放、JSON 回放的字段语义必须一致。
-- 解析器宁可"不识别"也不要制造高置信误判；新增启发式必须记录触发依据。
-- 修改 GameplayEffect、技能分类、伤害属性或深渊事件时，必须同步检查 `res/data/skills/`、`res/data/reactions/` 和相关 UI 汇总。
+- DTO 字段显式、可序列化、可版本化；默认使用 `camelCase` 与 TypeScript 一致。
+- 内部领域结构不得直接作为 Tauri 返回类型。
+- 大列表使用摘要、分页、游标或请求式详情。
+- 时间、ID、枚举、可选值要有明确语义；64 位整数跨 JS 边界时使用字符串或经过验证的安全表示。
+- 错误采用稳定 code + 可展示 message key + 参数；内部错误链写 Rust 日志。
 
-## 9. 资源维护规范
+### 5.3 Command、Channel 与 Event
 
-- 普通运行只依赖 Rust、Npcap 和仓库内 `res/`。
-- 更新 `res/` 优先走独立资源工具仓库的导出管线；手工编辑只允许小范围修正，并保留已有人工颜色、头像、别名等字段。
-- 生成或更新资源时，检查 `asset_report.json`、`asset_manifest.json` 与 README/工具文档是否需要同步。
-- 不提交原始客户端容器、授权密钥、usmap、第三方工具目录或中间导出树。
-- 新增图片资源要考虑 `build.rs` 会内嵌图片，避免无意义大文件进入二进制。
+- Command：请求/响应、有限操作、查询、保存、启停、导入导出。
+- Channel：有序、高频、持续数据，如战斗状态批次、导入进度、日志和 Mod 控制台。
+- Event：窗口生命周期、低频通知和广播。
+- 高频流包含 `generation` 或 `sequence`，前端按序消费并识别重连后的完整快照。
+- 同一帧产生的状态变化先在 Rust 归并，再发布一个批次。
+- 订阅必须返回清理句柄；React 组件卸载时注销监听。
 
-## 10. Windows 渲染与透明度（wgpu / DirectComposition）
+### 5.4 性能预算
 
-主程序渲染后端固定为 `wgpu`（非 `glow`）：借边框透明窗口在 OpenGL 下，从窗口角落斜向快速拖拽缩放时 NVIDIA 驱动会直接丢失 GL 上下文导致进程崩溃（无 panic 日志，`egui` #4061 / #5460，上游未修）。`wgpu` 完全避开这条驱动路径，代价是 Windows 下默认拿不到真正的窗口透明——见下。
+- 前端默认消费聚合快照或增量批次，不消费原始网络帧。
+- 长表格使用虚拟化、分页或预算控制。
+- 图表数据先在 Rust 或 worker 中降采样。
+- 序列化和 IPC 不放在抓包热路径。
+- 活跃页面按需刷新；后台窗口保持事件驱动。
+- 性能优化以测量结果为依据，不增加无使用证据的缓存层。
 
-- **HUD 透明背景变黑问题**：`wgpu` 在 Windows 上创建的普通 HWND swapchain（D3D12、Vulkan 都一样）永远只能协商到 `CompositeAlphaMode::Opaque`，"透明"窗口会画成纯黑（`egui` #4451、wgpu #1375 / #7108，均为上游未修的已知限制；已实测切到 Vulkan 后端同样无效）。修复由两部分组成，**缺一不可**：
-  1. `src/lib.rs` 的 `wgpu_options_with_transparent_dx12()`：把后端固定为 `Backends::DX12`，并设置 `Dx12BackendOptions.presentation_system = Dx12SwapchainKind::DxgiFromVisual`（wgpu 27+ 内建的 DirectComposition 支持，自动创建 `IDCompositionVisual` 承载 swapchain）。
-  2. `vendor/egui-winit-0.34.3/`：`egui-winit` 0.34.3 的本地 fork，仅打了一处补丁——透明窗口额外设置 `WindowAttributesExtWindows::with_no_redirection_bitmap(true)`（补丁位置：`create_winit_window_attributes` 里的 `#[cfg(target_os = "windows")]` 分支）。没有这一步，HWND 自带的默认 GDI 重定向表面依然存在，会在 DirectComposition 可视化层周围/下方露出一块带原生标题栏的白色系统窗口。补丁说明见该目录下 `PATCH_NOTES.md`；`Cargo.toml` 用 `[patch.crates-io]` 接管这份 fork。
-  - 只设置 `DxgiFromVisual` 而不打 `no_redirection_bitmap` 补丁：透明生效但会叠加一层白色系统窗口残影。只打补丁而不设 `DxgiFromVisual`：完全不透明。两处均已单独实测验证过上述失败现象。
-  - 升级 `eframe`/`egui-winit` 版本前，必须先对照新版本重新核对/重打 `no_redirection_bitmap` 补丁，否则会静默回归黑屏；这也是"不无理由升级 `egui/eframe` 主版本"约束的具体原因之一。
-  - 若上游 `egui-winit`/`eframe` 未来把这个 Windows 专属窗口属性开放到公共 API（关注 https://github.com/emilk/egui/issues/4451 ），应移除 `vendor/` 目录和 `Cargo.toml` 里的 `[patch.crates-io]`，改用官方接口。
-  - 排查此类问题时，`env_logger::init()`（已在 `main.rs` 里接入）配合 `RUST_LOG=warn,egui_wgpu=debug` 运行可以看到 `egui_wgpu::winit` 关于 `CompositeAlphaMode` 协商失败的告警，是判断修复是否生效的直接依据。
+## 6. Rust 代码规范
 
-## 11. 依赖策略
+- 使用 Rust 2024 和默认 `rustfmt`。
+- 类型 `PascalCase`，函数/变量/模块 `snake_case`，常量 `SCREAMING_SNAKE_CASE`。
+- I/O 与解析使用现有 `anyhow` 或领域错误类型；面向契约的错误使用稳定枚举。
+- 网络、文件、FFI、Tauri 输入在边界返回 `Option`/`Result`，不得 panic。
+- 内部不变量优先通过类型、穷举 `match` 和带原因的 `expect()` 表达。
+- 禁止用 `.ok()`、`unwrap_or_default()` 或空分支吞掉内部错误。
+- 所有 `unsafe` 最小化并附 `SAFETY:` 注释；FFI 资源使用 RAII。
+- 后台任务不得阻塞 Tauri 主线程、egui 帧或抓包线程。
+- 单一调用点不引入 trait；第三处重复出现前不急于抽象。
+- 新业务规则必须有同文件测试；解析规则覆盖正常、边界和误判规避。
+- 序列化字段改动保持旧配置、旧历史和旧导入文件兼容。
 
-- `vendor/egui-winit-0.34.3/` 是唯一例外的本地 fork 依赖，仅为 §10 所述的透明背景修复而存在；不要以此为先例引入其他 vendored/fork 依赖，也不要在无关改动里顺手清理它。
-- 新依赖必须说明用途、维护状态、许可证兼容性和替代方案，并经用户确认后才能加入。
-- 不为少量代码引入大型框架；不引入异步运行时，除非能证明收益超过复杂度。
-- `release` profile 以小体积和稳定发布为目标，保留 `panic = "abort"`、LTO、`opt-level = "z"` 等意图。
-- 升级 `eframe/egui`、`windows-sys` 或 Npcap 相关实现时，必须检查 API 变更、UI 行为和 Windows 兼容性；`eframe/egui-winit` 升级另见 §10 的补丁前置条件。
+## 7. TypeScript 与 React 规范
 
-## 12. 开发流程与验证
+### 7.1 TypeScript
 
-修改前先判定影响范围：主程序、解析协议、资源数据、构建配置或文档。只改必要文件，保持 diff 小而可审查。
+- `strict` 必须启用。
+- 禁止无说明的 `any`、`@ts-ignore` 和跨层强制类型断言。
+- 外部数据在 typed client 边界解析一次；边界内部使用静态类型。
+- DTO 类型优先从 Rust 契约生成或由单一 schema 生成，禁止手写两份易漂移结构。
+- 枚举使用字符串 union 或生成类型，避免散落魔法数字。
+- 路径 alias 以实际 `tsconfig` 和 `components.json` 为准。
+- 一个文件只承载一个清晰职责；避免同时包含路由、全局 store、IPC 和大段 UI。
 
-多阶段任务（如按方案文档落地一整套 UI/交互改造）必须按阶段拆分执行：每个阶段只覆盖一个内聚主题（一个窗口的布局、或一套 token、或一组热键），阶段结束即停，交付该阶段的人工验证清单并等待用户确认后才能进入下一阶段。UI 布局类改动的阶段粒度进一步收紧为"单个窗口/页签"（§0 第 10 条）。禁止把整套方案在一次会话里无停顿地全部落地。
+### 7.2 React
 
-每次改动后必须运行并通过：
+- 使用函数组件和 hooks。
+- render 保持纯函数；订阅、计时器、Channel 和窗口调用放在 hook/effect 中并完整清理。
+- 领域数据通过 feature hook 或 selector 读取，避免整个应用订阅一个巨型对象。
+- 临时表单状态留在组件附近；跨页面状态才进入 store。
+- selector 返回稳定引用，避免高频批次触发整棵组件树更新。
+- 列表必须使用稳定领域 ID 作为 key。
+- 异步请求处理 loading、empty、error 和 stale 状态。
+- 错误边界至少按窗口或路由设置；单个 Mod 页面异常不拖垮主界面。
+- 公共组件 props 保持小而明确；禁止传递整个全局 store。
+
+### 7.3 前端状态
+
+- Rust 权威快照与纯前端 UI 状态分开存储。
+- store action 不实现战斗计算、解析或历史迁移。
+- 高频序列采用 ring、分页缓存或 normalized map。
+- 切换窗口和页面时保留必要选择状态，但不复制整份 Rust 快照。
+
+## 8. shadcn/ui、Tailwind 与视觉规范
+
+- 优先使用已安装的 shadcn/ui 组件并进行组合，再考虑自建基础组件。
+- 添加组件前使用当前项目 package runner 调用 shadcn CLI，并先检查 `components.json` 和已安装列表。
+- shadcn 组件以源码进入仓库；新增后必须阅读生成文件、修正 alias、图标库和组合问题。
+- `components/ui/` 使用通用语义；NTE 特有视觉放在 `components/nte/`。
+- Tailwind 使用语义颜色 token，如 `bg-background`、`text-muted-foreground`；避免散落原始色值。
+- 布局使用 `flex/grid` 与 `gap-*`，不使用 `space-x-*` / `space-y-*`。
+- 条件 class 使用 `cn()`。
+- 等宽高使用 `size-*`。
+- 表单使用 `FieldGroup`、`Field` 和对应可访问性属性。
+- Dialog、Sheet、Drawer 必须包含标题；图标按钮必须有 Tooltip 或 `aria-label`。
+- Card 使用完整的 Header/Content/Footer 组合。
+- Loading 使用 Skeleton/Spinner，空状态使用 Empty，提示使用 Alert，toast 使用统一封装。
+- 表格按页面需求组合 TanStack Table，不创建无法适配所有业务的巨型表格组件。
+- 主题、圆角、间距、字体和动效通过设计 token 维护；页面中不复制主题常量。
+- 中英文最长文案、窄窗口和 125%/150% DPI 都要纳入人工检查。
+
+## 9. i18n
+
+- 英文字符串是稳定 key。
+- 简体中文值继续维护在 `res/languages/zh-CN.json`。
+- 迁移期 egui 使用 `t()` / `tf()`；React 使用统一的 `t()` 封装读取同一资源。
+- 新增用户可见文案必须同时补中文值。
+- Rust `core`、`engine` 和契约层返回稳定 code/key，不调用 UI 翻译函数。
+- 动态参数使用命名或显式占位符，禁止字符串拼接改变语序。
+- 游戏内专有名词优先使用现有官方资源口径。
+- Mod manifest 可提供多语言名称和描述；缺少本地化时展示其原始名称。
+
+## 10. Mod 系统与可扩展 UI
+
+### 10.1 两类运行时
+
+- 游戏侧 `.nte` C++ v5 继续运行于 `native/nte-mods-plugin`，负责游戏对象、反射、事件和受限宿主 API。
+- 桌面侧扩展运行于应用侧受控环境，负责页面、Slot、命令、派生视图和用户交互。
+- 一个 Mod 包可以同时具有游戏和桌面 entrypoint，但两个运行时通过稳定事件/命令通信。
+
+### 10.2 桌面 Mod API
+
+- 数据入口：版本化只读 DTO、查询和订阅。
+- UI 入口：稳定页面注册、Slot 和声明式组件 schema。
+- 动作入口：经 Rust 路由的 `AppCommand`。
+- 存储入口：限制在 Mod 自己的 namespaced 目录。
+- capability 在 manifest 中声明并由宿主校验。
+- 外部 Mod 依赖公开 `mod-sdk`，不导入应用内部 feature 组件、store 或路由实现。
+- shadcn/ui 是应用内部实现，Mod API 暴露稳定 NTE 组件语义。
+
+### 10.3 编辑器与热更新
+
+- Mod 工坊采用 Monaco 或等价编辑器，补全、签名帮助和诊断从同一 API schema 生成。
+- 保存时先完成语法、manifest、capability 和候选集合检查。
+- 新运行时成功初始化并生成有效首屏后再原子替换。
+- 编译失败保留上一工作版本。
+- 单 Mod 运行异常暂停该 Mod；其他 Mod、抓包和主程序继续。
+- 控制台显示编译错误、热更新状态、运行时日志和故障来源。
+
+## 11. Windows、窗口与 HUD
+
+### 11.1 Tauri 窗口
+
+- 窗口 label、默认尺寸、最小尺寸、位置恢复和权限集中配置。
+- 主窗口、Console、详情、深渊总览和 HUD 分别建模，不在 React 页面临时创建匿名窗口。
+- 自定义标题栏使用官方 drag region 和统一窗口控件。
+- Always-on-top、鼠标穿透、快捷键、焦点和窗口恢复由 Rust/Tauri window 层协调。
+- Tauri HUD 不注册全局 F12；HUD 进入穿透状态后，通过现有控制台入口恢复编辑状态。
+- React 只发出意图，不直接维护 Win32 状态机。
+
+### 11.2 HUD 验证门槛
+
+Tauri HUD 替换 egui HUD 前，必须人工验证：
+
+1. WebView2 背景透明且没有白边、黑底或系统窗口残影；
+2. 快速角落缩放、拖动和模式切换稳定；
+3. `setIgnoreCursorEvents` 穿透与编辑模式切换正确；
+4. 控制台入口可以在 HUD 穿透后恢复编辑状态；
+5. Always-on-top 与游戏全屏/无边框窗口组合正确；
+6. 多显示器、不同 DPI、休眠恢复和显示器拔插后位置正确；
+7. 抓包高负载时 HUD 更新平滑；
+8. 关闭、更新和崩溃恢复不遗留幽灵窗口。
+
+### 11.3 迁移期 egui
+
+- 当前 `wgpu + DX12 DxgiFromVisual + vendor/egui-winit` 透明修复在 egui HUD 退出前保持完整。
+- 只在 Tauri HUD 人工验收完成并删除最后一个 egui 入口时，整体移除 `eframe`、`egui`、`wgpu` 和 `vendor/egui-winit`。
+- 迁移页面时禁止顺手改动透明补丁。
+
+## 12. 抓包、解析与历史
+
+- Npcap 动态加载和 FFI 保持 C ABI 准确，所有失败返回显式处理。
+- BPF 过滤尽量收窄。
+- 原始 PCAPNG 写入是核心诊断能力。
+- 实时、PCAPNG 和 JSON 回放字段语义一致。
+- 解析器宁可不识别，也不生成高置信误判。
+- React 只接收解析后的 DTO；Packets 页面需要的调试字段由 Rust 显式投影。
+- 历史数据库和迁移由 Rust 管理；前端通过分页查询和显式导入导出命令访问。
+- 修改 GameplayEffect、技能分类、伤害属性或深渊事件时，同步检查相关资源和前端投影。
+
+## 13. 依赖与构建策略
+
+- 新增、升级或删除 Rust、Node、Tauri plugin、shadcn registry 依赖前，说明用途、维护状态、许可证、体积和替代方案，并获得用户确认。
+- 初始化前端后，以 lockfile 确定 package runner；禁止在同一项目混用 npm、pnpm、yarn 或 bun。
+- 禁止无选择地安装全部 shadcn 组件。
+- Tauri 和前端依赖留在各自目录，不进入 CLI-only feature。
+- 不引入 Next.js；桌面前端采用 Vite SPA，除非用户明确改变架构。
+- 不为少量状态引入大型全局状态框架或异步运行时。
+- 保留 release profile 的小体积、LTO 和 `panic = "abort"` 意图。
+- WebView2/Tauri、React、Tailwind 和 shadcn 的大版本升级必须先检查 API、窗口行为、构建产物和迁移说明。
+- `vendor/egui-winit-0.34.3` 是迁移期唯一允许的本地 fork；不以此为先例新增 fork。
+
+## 14. 迁移阶段
+
+迁移必须按以下顺序或用户明确调整后的顺序执行，每阶段结束后停止：
+
+1. **技术验证**：Tauri shell、typed command、Channel、透明 HUD、穿透、置顶、控制台恢复入口；
+2. **Mod 工坊**：Monaco、多文件、补全、控制台、热更新；
+3. **Console 页签**：设置、历史、时间线、技能、空幕、资源、诊断等逐页迁移；
+4. **Console 窗口替换**：动态 Sidebar、命令面板、Mod 页面；
+5. **主 DPS 窗口**：标题区、角色卡、团队统计、控制区；
+6. **详情窗口**：角色命中、团队命中、深渊总览；
+7. **HUD**：完成专项验收后替换；
+8. **清理阶段**：移除已无入口的 egui 代码、GUI feature 和透明 fork。
+
+每阶段：
+
+- 只覆盖一个窗口或页签；
+- 保持 Rust 规则唯一；
+- 保留旧界面作为对照直到该阶段验收；
+- 不同时进行主题、快捷键、更新器和布局的多主题重构；
+- 输出入口、操作步骤和预期表现的人工验证清单。
+
+## 15. 验证要求
+
+### 15.1 Rust 基线
+
+每次 Rust 改动必须运行：
 
 ```powershell
 cargo fmt --check
@@ -209,7 +405,7 @@ cargo check
 cargo test
 ```
 
-涉及双 Binary、Feature、共享 core、资源或 CI 时，还必须运行：
+涉及双 Binary、共享 core、资源或 Feature 时追加：
 
 ```powershell
 cargo check --bin nte-dps-tool --features gui
@@ -221,37 +417,104 @@ cargo test --no-default-features --features cli
 cargo tree -e normal --no-default-features --features cli
 ```
 
-最后一条的正常依赖树不得出现 `eframe`、`egui`、`wgpu`、`rfd` 或 `raw-window-handle`。
+CLI 依赖树不得出现：
 
-建议在可行时追加：
-
-```powershell
-cargo clippy -- -Dwarnings
-cargo run --release
+```text
+tauri
+wry
+webview2-com
+eframe
+egui
+wgpu
+rfd
+raw-window-handle
 ```
 
-依赖真实抓包的诊断测试默认不跑。需要时使用：
+### 15.2 Tauri
+
+创建 `src-tauri` 后，涉及 Tauri 的改动必须运行：
 
 ```powershell
-$env:NTE_TEST_CAPTURE = "<pcapng-path>"
-cargo test -- --ignored
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-收尾自查清单（回复前逐项核对）：
+涉及 capabilities、窗口或打包时追加对应 Tauri 构建检查。
 
-- [ ] diff 里没有与任务无关的文件、格式化噪音或顺手修改；
-- [ ] 新增文案全部走 `t()`/`tf()` 且 `zh-CN.json` 已补值；
-- [ ] 没有新增防御性检查、预留接口或被注释掉的旧代码（§5）；
-- [ ] 序列化结构改动保持旧 JSON 兼容（§6）；
-- [ ] 三条必跑命令的实际结果已记录，失败或未跑的写明原因。
+### 15.3 React
 
-## 13. 提交与回复规范
+创建 `frontend` 后，使用 lockfile 对应的 package runner 执行：
 
-- 未经用户明确要求不执行 `git commit` / `git push`。被要求提交时：提交信息动词开头、描述实际改动（例：`Fix damage parser boundary check`），不夹带无关文件，不用 `git add -A` 盲加。
-- 最终回复固定包含五项：
+```text
+format/check
+lint
+typecheck
+test
+build
+```
+
+脚本名以 `package.json` 为准。新增页面至少覆盖：
+
+- 关键纯函数和 selector；
+- loading、empty、error；
+- 订阅清理；
+- 路由或 Slot 注册；
+- DTO 兼容和未知枚举展示。
+
+### 15.4 原生 Mod 插件
+
+涉及 `native/nte-mods-plugin` 时使用干净 Release x64 构建：
+
+```powershell
+MSBuild.exe .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
+```
+
+同时检查 DLL 依赖、运行时字符串和 IPC 版本。
+
+### 15.5 UI 人工验收
+
+智能体不自行启动桌面 UI。最终回复列出：
+
+- 入口窗口和页签；
+- 操作步骤；
+- 中英文预期；
+- 窄窗口和 DPI；
+- loading/empty/error；
+- 透明、穿透、置顶、快捷键、拖拽或多窗口专项；
+- 新旧界面对照点。
+
+## 16. 禁止事项
+
+除非用户当次明确要求，禁止：
+
+- `git commit`、`git push`、创建 PR；
+- 批量移动、拆分、合并或重命名 Rust 模块；
+- 一次性翻写全部 egui 页面；
+- 在 React 中复制 Rust 领域算法；
+- 在 `src-tauri` 中复制 reducer、历史或解析逻辑；
+- 每个 hit、包或动画帧执行一次 Tauri `invoke` / global event；
+- 把 `CombatState`、内部 Rust enum 或裸句柄直接序列化给前端；
+- 在页面中直接调用裸 Tauri command；
+- 在组件中直接调用 Win32；
+- 用 `any`、`@ts-ignore` 或静默 catch 掩盖契约错误；
+- 为未来功能预留接口、配置和未使用 capability；
+- 同时维护两套翻译源；
+- 直接编辑生成构建产物；
+- 混用 Node package manager；
+- 使用 `git add -A` 盲目暂存；
+- 修改 `Cargo.toml` 的 `[profile]` / `[patch]`、`vendor/` 或 updater 协议；
+- 无关格式化、主题清洗、依赖升级或代码风格重排。
+
+## 17. 提交与最终回复规范
+
+- 未经用户明确要求不提交、不推送。
+- 用户要求提交时，只暂存任务相关文件；提交信息以动词开头并描述实际改动。
+- 最终回复固定包含：
   1. 改动摘要与影响范围；
   2. 改动文件清单；
-  3. 已运行的验证命令与结果；
-  4. 未运行的验证及原因（不得声称已验证）；
-  5. 需人工验证的点（UI 改动必填，按 §7 列出操作步骤与预期表现）。
-- 不做无关重排、批量格式化或风格清洗；格式化只限被改动语言的标准工具。
+  3. 已运行验证命令及结果；
+  4. 未运行验证及原因；
+  5. 需人工验证的点。
+- 不把秘密、完整本机路径、PCAP 内容或资源 key 写入回复。
+- 若创建或切换分支，明确报告分支名。
