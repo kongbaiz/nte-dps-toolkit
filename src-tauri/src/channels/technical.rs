@@ -22,12 +22,17 @@ pub(crate) fn subscribe_technical_state(
     let stop = state.begin_stream(subscription_id.clone());
     let stream_subscription_id = subscription_id.clone();
     thread::spawn(move || {
+        let mut last_revision = None;
         while !stop.load(Ordering::Acquire) {
-            if on_event
-                .send(TechnicalEvent::Snapshot(state.snapshot()))
-                .is_err()
-            {
-                break;
+            let revision = state.stream_revision();
+            if should_emit_snapshot(last_revision, revision) {
+                if on_event
+                    .send(TechnicalEvent::Snapshot(state.snapshot()))
+                    .is_err()
+                {
+                    break;
+                }
+                last_revision = Some(revision);
             }
             thread::sleep(Duration::from_millis(u64::from(
                 TECHNICAL_STREAM_INTERVAL_MS,
@@ -52,6 +57,13 @@ pub(crate) fn unsubscribe_technical_state(
     hud::validate_window(&window)?;
     state.stop_stream(&subscription_id);
     Ok(())
+}
+
+fn should_emit_snapshot(
+    last_revision: Option<crate::state::StreamRevision>,
+    current_revision: crate::state::StreamRevision,
+) -> bool {
+    last_revision != Some(current_revision)
 }
 
 fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
@@ -81,5 +93,20 @@ mod tests {
         assert!(validate_subscription_id("").is_err());
         assert!(validate_subscription_id(&"a".repeat(65)).is_err());
         assert!(validate_subscription_id("hud/spike").is_err());
+    }
+
+    #[test]
+    fn unchanged_revision_skips_idle_snapshot_work() {
+        let state = AppState::default();
+        let revision = state.stream_revision();
+
+        assert!(should_emit_snapshot(None, revision));
+        assert!(!should_emit_snapshot(Some(revision), revision));
+
+        state.set_passthrough(true);
+        assert!(should_emit_snapshot(
+            Some(revision),
+            state.stream_revision()
+        ));
     }
 }

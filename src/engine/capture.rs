@@ -1881,13 +1881,41 @@ struct InventoryBitPayload {
     bit_len: usize,
 }
 
+struct InventoryFragment {
+    bunch: SingleBunch,
+    packet_order: i64,
+}
+
 #[derive(Default)]
 struct InventoryConnectionState {
     known_channels: HashSet<u16>,
-    fragments: HashMap<(u16, u16), SingleBunch>,
+    fragments: HashMap<(u16, u16), InventoryFragment>,
     fragment_order: VecDeque<(u16, u16)>,
+    latest_packet_order: Option<i64>,
     character_ids: HashMap<HtItemNetId, u32>,
     module_placements: HashMap<HtItemNetId, (String, EmptyCurtainPlacement)>,
+}
+
+fn unwrap_inventory_packet_id(packet_id: u16, reference: Option<i64>) -> i64 {
+    const PACKET_ID_BITS: u32 = 14;
+    const PACKET_ID_MODULUS: i64 = 1 << PACKET_ID_BITS;
+    const PACKET_ID_HALF_RANGE: i64 = PACKET_ID_MODULUS / 2;
+    const PACKET_ID_MASK: u16 = (1 << PACKET_ID_BITS) - 1;
+
+    // UE transport packet IDs wrap at 14 bits. Keep a connection-local unwrapped order so
+    // out-of-order delivery remains distinguishable from a later reuse of a bunch sequence.
+    let raw = i64::from(packet_id & PACKET_ID_MASK);
+    let Some(reference) = reference else {
+        return raw;
+    };
+    let base = reference - reference.rem_euclid(PACKET_ID_MODULUS);
+    let mut unwrapped = base + raw;
+    if unwrapped - reference > PACKET_ID_HALF_RANGE {
+        unwrapped -= PACKET_ID_MODULUS;
+    } else if reference - unwrapped > PACKET_ID_HALF_RANGE {
+        unwrapped += PACKET_ID_MODULUS;
+    }
+    unwrapped
 }
 
 impl InventoryConnectionState {
@@ -1897,23 +1925,39 @@ impl InventoryConnectionState {
             .any(|(net_id, character_id)| other.character_ids.get(net_id) == Some(character_id))
     }
 
-    fn push_bunches(&mut self, bunches: Vec<SingleBunch>) -> Vec<InventoryBitPayload> {
-        let mut added = false;
+    fn push_bunches(
+        &mut self,
+        packet_id: u16,
+        bunches: Vec<SingleBunch>,
+    ) -> Vec<InventoryBitPayload> {
+        let packet_order = unwrap_inventory_packet_id(packet_id, self.latest_packet_order);
+        if self
+            .latest_packet_order
+            .is_none_or(|latest| packet_order > latest)
+        {
+            self.latest_packet_order = Some(packet_order);
+        }
+        let mut completed = Vec::new();
         for bunch in bunches {
             let channel = reliable_bunch_channel(bunch.prefix);
             self.known_channels.insert(channel);
             let key = (channel, bunch.sequence);
-            if self.fragments.get(&key) == Some(&bunch) {
-                continue;
+            if let Some(stored) = self.fragments.get_mut(&key) {
+                if stored.bunch == bunch {
+                    let packet_order_changed = packet_order > stored.packet_order;
+                    if packet_order_changed {
+                        stored.packet_order = packet_order;
+                    }
+                    if packet_order_changed {
+                        completed.extend(self.take_completed_streams());
+                    }
+                    continue;
+                }
+                if packet_order <= stored.packet_order {
+                    continue;
+                }
             }
-            if matches!(bunch.partial_flags, 0x09 | 0x0d) {
-                // A partial start begins a new generation on its channel. Older unmatched
-                // continuations must not complete the new stream before its real tail arrives.
-                self.fragments
-                    .retain(|(stored_channel, _), _| *stored_channel != channel);
-                self.fragment_order
-                    .retain(|(stored_channel, _)| *stored_channel != channel);
-            } else if self.fragments.contains_key(&key) {
+            if self.fragments.contains_key(&key) {
                 self.fragment_order.retain(|stored| *stored != key);
             }
             while self.fragments.len() >= MAX_INVENTORY_FRAGMENTS_PER_CONNECTION {
@@ -1923,27 +1967,32 @@ impl InventoryConnectionState {
                 self.fragments.remove(&oldest);
             }
             self.fragment_order.push_back(key);
-            self.fragments.insert(key, bunch);
-            added = true;
+            self.fragments.insert(
+                key,
+                InventoryFragment {
+                    bunch,
+                    packet_order,
+                },
+            );
+            completed.extend(self.take_completed_streams());
         }
-        if !added {
-            return Vec::new();
-        }
-        self.take_completed_streams()
+        completed
     }
 
     fn take_completed_streams(&mut self) -> Vec<InventoryBitPayload> {
         let mut starts = self
             .fragments
             .iter()
-            .filter_map(|(key, bunch)| matches!(bunch.partial_flags, 0x09 | 0x0d).then_some(*key))
+            .filter_map(|(key, fragment)| {
+                matches!(fragment.bunch.partial_flags, 0x09 | 0x0d).then_some(*key)
+            })
             .collect::<Vec<_>>();
         starts.sort_unstable();
 
         let mut completed = Vec::new();
         let mut consumed = HashSet::new();
         for start @ (channel, initial_sequence) in starts {
-            let Some(initial) = self.fragments.get(&start) else {
+            let Some(initial) = self.fragments.get(&start).map(|fragment| &fragment.bunch) else {
                 continue;
             };
             if initial.partial_flags == 0x0d {
@@ -1960,11 +2009,20 @@ impl InventoryConnectionState {
             let mut sequence = initial_sequence;
             let mut is_complete = false;
             let mut chain_keys = Vec::new();
+            let mut previous_packet_order = None;
             for index in 0..1024 {
                 let key = (channel, sequence);
-                let Some(fragment) = self.fragments.get(&key) else {
+                let Some(stored) = self.fragments.get(&key) else {
                     break;
                 };
+                // Bunches may arrive out of order, but their original transport packet order must
+                // still move forward across one reconstructed stream. This keeps recent future
+                // fragments while preventing stale fragments from an older generation joining it.
+                if previous_packet_order.is_some_and(|previous| previous > stored.packet_order) {
+                    break;
+                }
+                previous_packet_order = Some(stored.packet_order);
+                let fragment = &stored.bunch;
                 let valid_flag = if index == 0 {
                     fragment.partial_flags == 0x09
                 } else {
@@ -2294,7 +2352,7 @@ impl EmptyCurtainDecoder {
             let known_channels = state.known_channels.iter().copied().collect::<Vec<_>>();
             let bunches = parse_inventory_bunches(packet, &known_channels);
             let recognized = !bunches.is_empty();
-            (state.push_bunches(bunches), recognized)
+            (state.push_bunches(packet.packet_id, bunches), recognized)
         };
 
         let mut items_changed = false;
@@ -3133,12 +3191,15 @@ fn damage_record_source_character(hit: &Hit, evidence: &[(u32, u8, usize)]) -> O
     (before == after).then_some(before)
 }
 
-fn reattribute_creation_flower_from_damage_record(
+/// Uses the two character anchors that bracket a damage record to recover its
+/// exact outgoing owner. This record-local evidence is stronger than a
+/// packet-wide bit alignment or the connection's last single-character owner.
+fn reattribute_hit_from_damage_record_owner(
     hit: &mut Hit,
     evidence: &[(u32, u8, usize)],
     characters: &HashMap<u32, CharacterInfo>,
 ) {
-    if hit.direction.is_incoming() || hit.attack_type.as_deref() != Some("创生花") {
+    if !hit.direction.is_outgoing() {
         return;
     }
     let Some(character_id) = damage_record_source_character(hit, evidence) else {
@@ -3529,9 +3590,9 @@ impl PacketDecoder {
                 previous_hit_bit_offset,
             );
             previous_hit_bit_offset = Some(hit_bit_offset);
+            reattribute_hit_from_damage_record_owner(hit, &evidence, characters);
             reattribute_hit_from_gameplay_effect_semantics(hit, &self.ability_catalog, characters);
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
-            reattribute_creation_flower_from_damage_record(hit, &evidence, characters);
             if hit
                 .attack_type
                 .as_deref()
@@ -5729,18 +5790,24 @@ mod tests {
         let mut state = InventoryConnectionState::default();
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch(1023, 0x09, 0xa1),
-                    inventory_bunch(1, 0x0c, 0xa3),
-                ])
+                .push_bunches(
+                    100,
+                    vec![
+                        inventory_bunch(1023, 0x09, 0xa1),
+                        inventory_bunch(1, 0x0c, 0xa3),
+                    ]
+                )
                 .is_empty()
         );
 
-        let completed = state.push_bunches(vec![
-            inventory_bunch(1023, 0x09, 0xb1),
-            inventory_bunch(0, 0x08, 0xb2),
-            inventory_bunch(1, 0x0c, 0xb3),
-        ]);
+        let completed = state.push_bunches(
+            200,
+            vec![
+                inventory_bunch(1023, 0x09, 0xb1),
+                inventory_bunch(0, 0x08, 0xb2),
+                inventory_bunch(1, 0x0c, 0xb3),
+            ],
+        );
 
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3]);
@@ -5752,25 +5819,34 @@ mod tests {
         let mut state = InventoryConnectionState::default();
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch(12, 0x08, 0xa3),
-                    inventory_bunch(13, 0x0c, 0xa4),
-                ])
+                .push_bunches(
+                    100,
+                    vec![
+                        inventory_bunch(12, 0x08, 0xa3),
+                        inventory_bunch(13, 0x0c, 0xa4),
+                    ]
+                )
                 .is_empty()
         );
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch(10, 0x09, 0xb1),
-                    inventory_bunch(11, 0x08, 0xb2),
-                ])
+                .push_bunches(
+                    200,
+                    vec![
+                        inventory_bunch(10, 0x09, 0xb1),
+                        inventory_bunch(11, 0x08, 0xb2),
+                    ]
+                )
                 .is_empty()
         );
 
-        let completed = state.push_bunches(vec![
-            inventory_bunch(12, 0x08, 0xb3),
-            inventory_bunch(13, 0x0c, 0xb4),
-        ]);
+        let completed = state.push_bunches(
+            201,
+            vec![
+                inventory_bunch(12, 0x08, 0xb3),
+                inventory_bunch(13, 0x0c, 0xb4),
+            ],
+        );
 
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3, 0xb4]);
@@ -5778,24 +5854,130 @@ mod tests {
     }
 
     #[test]
+    fn inventory_reassembly_retries_after_a_fragment_is_retransmitted_in_a_newer_packet() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(100, vec![inventory_bunch(12, 0x0c, 0xa3)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(
+                    200,
+                    vec![
+                        inventory_bunch(10, 0x09, 0xa1),
+                        inventory_bunch(11, 0x08, 0xa2),
+                    ],
+                )
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(201, vec![inventory_bunch(12, 0x0c, 0xa3)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3]);
+        assert_eq!(completed[0].bit_len, 24);
+    }
+
+    #[test]
+    fn inventory_reassembly_keeps_logically_newer_fragments_that_arrive_before_their_start() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(1_867, vec![inventory_bunch(810, 0x08, 0xa2)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(1_868, vec![inventory_bunch(811, 0x08, 0xa3)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(1_866, vec![inventory_bunch(809, 0x09, 0xa1)])
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(1_869, vec![inventory_bunch(812, 0x0c, 0xa4)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
+        assert_eq!(completed[0].bit_len, 32);
+    }
+
+    #[test]
+    fn inventory_reassembly_accepts_transport_packet_id_wrap() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches((1 << 14) - 1, vec![inventory_bunch(100, 0x09, 0xa1)],)
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(0, vec![inventory_bunch(101, 0x0c, 0xa2)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2]);
+        assert_eq!(completed[0].bit_len, 16);
+    }
+
+    #[test]
+    fn inventory_reassembly_finishes_a_stream_before_the_next_start_in_the_same_packet() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(
+                    1_912,
+                    vec![
+                        inventory_bunch(821, 0x09, 0xa1),
+                        inventory_bunch(822, 0x08, 0xa2),
+                        inventory_bunch(823, 0x08, 0xa3),
+                    ],
+                )
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(
+            1_915,
+            vec![
+                inventory_bunch(824, 0x0c, 0xa4),
+                inventory_bunch(825, 0x09, 0xb1),
+            ],
+        );
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
+        assert_eq!(completed[0].bit_len, 32);
+        assert!(
+            state
+                .fragments
+                .contains_key(&(reliable_bunch_channel(7), 825))
+        );
+    }
+
+    #[test]
     fn inventory_reassembly_uses_channel_index_across_prefix_flag_changes() {
         let mut state = InventoryConnectionState::default();
         assert!(
             state
-                .push_bunches(vec![inventory_bunch_on(5146, 483, 0x09, 0xa1)])
+                .push_bunches(100, vec![inventory_bunch_on(5146, 483, 0x09, 0xa1)],)
                 .is_empty()
         );
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch_on(4122, 484, 0x08, 0xa2),
-                    inventory_bunch_on(4122, 485, 0x08, 0xa3),
-                    inventory_bunch_on(4122, 486, 0x08, 0xa4),
-                ])
+                .push_bunches(
+                    101,
+                    vec![
+                        inventory_bunch_on(4122, 484, 0x08, 0xa2),
+                        inventory_bunch_on(4122, 485, 0x08, 0xa3),
+                        inventory_bunch_on(4122, 486, 0x08, 0xa4),
+                    ],
+                )
                 .is_empty()
         );
 
-        let completed = state.push_bunches(vec![inventory_bunch_on(4122, 487, 0x0c, 0xa5)]);
+        let completed = state.push_bunches(102, vec![inventory_bunch_on(4122, 487, 0x0c, 0xa5)]);
 
         assert_eq!(state.known_channels, HashSet::from([26]));
         assert_eq!(completed.len(), 1);
@@ -7186,7 +7368,7 @@ mod tests {
         nanally_pair_flower.bit_shift = 6;
         let nanally_pair_evidence = [(1051, 5, 157), (1051, 2, 368), (1010, 7, 640)];
 
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut nanally_pair_flower,
             &nanally_pair_evidence,
             &characters,
@@ -7202,7 +7384,7 @@ mod tests {
         kuhara_pair_flower.bit_shift = 5;
         let kuhara_pair_evidence = [(1051, 4, 148), (1051, 1, 359), (1055, 5, 529)];
 
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut kuhara_pair_flower,
             &kuhara_pair_evidence,
             &characters,
@@ -7216,7 +7398,7 @@ mod tests {
     }
 
     #[test]
-    fn creation_flower_requires_matching_record_owner_on_both_sides() {
+    fn damage_record_owner_requires_matching_anchors_and_outgoing_hit() {
         let characters = HashMap::from([
             (1010, character_with_attribute("娜娜莉", "灵")),
             (1051, character_with_attribute("「零」", "光")),
@@ -7231,11 +7413,11 @@ mod tests {
         flower.byte_offset = 253;
         flower.bit_shift = 6;
 
-        reattribute_creation_flower_from_damage_record(&mut flower, &[(1051, 5, 157)], &characters);
+        reattribute_hit_from_damage_record_owner(&mut flower, &[(1051, 5, 157)], &characters);
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
 
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut flower,
             &[(1051, 5, 157), (1055, 2, 368)],
             &characters,
@@ -7243,14 +7425,75 @@ mod tests {
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
 
+        flower.direction = HitDirection::Incoming;
         flower.attack_type = Some("Passive Damage".to_owned());
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut flower,
             &[(1051, 5, 157), (1051, 2, 368)],
             &characters,
         );
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
+    }
+
+    #[test]
+    fn damage_record_owner_separates_mixed_oneiroi_and_nanally_hits() {
+        let characters = HashMap::from([
+            (1010, character_with_attribute("娜娜莉", "灵")),
+            (1075, character_with_attribute("伊洛伊", "灵")),
+        ]);
+        let evidence = [
+            (1075, 4, 148),
+            (1075, 1, 359),
+            (1010, 6, 642),
+            (1010, 3, 853),
+        ];
+        let mut oneiroi = targetless_hit();
+        oneiroi.char_id = 1010;
+        oneiroi.char_name = "娜娜莉".to_owned();
+        oneiroi.char_source = HitCharacterSource::Session;
+        oneiroi.direction = HitDirection::Outgoing;
+        oneiroi.byte_offset = 244;
+        oneiroi.bit_shift = 5;
+        let mut nanally = targetless_hit();
+        nanally.char_id = 1010;
+        nanally.char_name = "娜娜莉".to_owned();
+        nanally.char_source = HitCharacterSource::Session;
+        nanally.direction = HitDirection::Outgoing;
+        nanally.byte_offset = 738;
+        nanally.bit_shift = 7;
+
+        reattribute_hit_from_damage_record_owner(&mut oneiroi, &evidence, &characters);
+        reattribute_hit_from_damage_record_owner(&mut nanally, &evidence, &characters);
+
+        assert_eq!(oneiroi.char_id, 1075);
+        assert_eq!(oneiroi.char_name, "伊洛伊");
+        assert_eq!(oneiroi.char_source, HitCharacterSource::Packet);
+        assert_eq!(nanally.char_id, 1010);
+        assert_eq!(nanally.char_name, "娜娜莉");
+        assert_eq!(nanally.char_source, HitCharacterSource::Packet);
+    }
+
+    #[test]
+    fn damage_record_owner_overrides_unrelated_same_shift_packet_id() {
+        let characters = HashMap::from([
+            (1055, character_with_attribute("九原", "灵")),
+            (1075, character_with_attribute("伊洛伊", "灵")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1075;
+        hit.char_name = "伊洛伊".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
+        hit.direction = HitDirection::Outgoing;
+        hit.byte_offset = 244;
+        hit.bit_shift = 5;
+        let evidence = [(1055, 4, 148), (1055, 1, 359), (1075, 5, 650)];
+
+        reattribute_hit_from_damage_record_owner(&mut hit, &evidence, &characters);
+
+        assert_eq!(hit.char_id, 1055);
+        assert_eq!(hit.char_name, "九原");
+        assert_eq!(hit.char_source, HitCharacterSource::Packet);
     }
 
     #[test]

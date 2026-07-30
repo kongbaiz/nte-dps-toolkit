@@ -1490,6 +1490,10 @@ impl DpsApp {
             hit_detail_window_position: self.windows.hit_detail_geometry.position(),
             team_hit_detail_window_position: self.windows.team_hit_detail_geometry.position(),
             console_window_position: self.windows.console_geometry.position(),
+            // The migration-period egui app does not own the Tauri HUD window.
+            // Preserve the last persisted physical position when it saves the
+            // shared UI config.
+            hud_window_position: self.saved_ui_config.hud_window_position,
         }
         .sanitized()
     }

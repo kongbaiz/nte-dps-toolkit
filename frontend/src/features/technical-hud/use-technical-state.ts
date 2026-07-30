@@ -6,6 +6,7 @@ import {
 } from "@/lib/tauri/technical-client";
 import {
   parseTechnicalCommandError,
+  type HudModuleId,
   type TechnicalSnapshot,
 } from "@/lib/tauri/technical-contract";
 
@@ -60,6 +61,55 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
     [applyError, applySnapshot, client],
   );
 
+  const setHudModuleVisibility = useCallback(
+    async (module: HudModuleId, visible: boolean) => {
+      try {
+        applySnapshot(await client.setModuleVisibility(module, visible));
+      } catch (error) {
+        applyError(error);
+      }
+    },
+    [applyError, applySnapshot, client],
+  );
+
+  const moveHudModule = useCallback(
+    async (dragged: HudModuleId, target: HudModuleId, insertAfter: boolean) => {
+      try {
+        applySnapshot(await client.moveModule(dragged, target, insertAfter));
+      } catch (error) {
+        applyError(error);
+      }
+    },
+    [applyError, applySnapshot, client],
+  );
+
+  const setHudWidth = useCallback(
+    async (width: number) => {
+      try {
+        applySnapshot(await client.setWidth(width));
+      } catch (error) {
+        applyError(error);
+      }
+    },
+    [applyError, applySnapshot, client],
+  );
+
+  const startCapture = useCallback(async () => {
+    try {
+      applySnapshot(await client.startCapture());
+    } catch (error) {
+      applyError(error);
+    }
+  }, [applyError, applySnapshot, client]);
+
+  const stopCapture = useCallback(async () => {
+    try {
+      applySnapshot(await client.stopCapture());
+    } catch (error) {
+      applyError(error);
+    }
+  }, [applyError, applySnapshot, client]);
+
   useEffect(() => {
     void refresh();
     const unsubscribe = client.subscribe(applySnapshot, applyError);
@@ -76,5 +126,10 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
     refresh,
     setPassthrough,
     setAlwaysOnTop,
+    setHudModuleVisibility,
+    moveHudModule,
+    setHudWidth,
+    startCapture,
+    stopCapture,
   };
 }

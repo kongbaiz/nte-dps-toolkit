@@ -32,8 +32,8 @@ use crate::engine::model::{
     DamageAttributionSummary, DpsTimeBasis, EngineEvent, HitDirection, HitDirectionSummary,
     PartyCombatState, SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION,
     TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember, TimeStopEvent, TimelineMarkerKind,
-    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_reaction_damage_type, is_unbalance_damage_hit,
-    reaction_damage_for_hit, summarize_combat_segments, summarize_hit_directions,
+    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_unbalance_damage_hit, reaction_damage_for_hit,
+    summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,

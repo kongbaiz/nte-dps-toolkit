@@ -2,10 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "enables the default permissions",
-  "windows": [
-    "hud-spike"
-  ],
-  "permissions": [
-    "core:default"
-  ]
+  "windows": ["hud-spike"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }
