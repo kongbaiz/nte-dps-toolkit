@@ -1014,7 +1014,7 @@ impl DpsApp {
                 return;
             }
         };
-        let default_name = format!("nte_history_{}.json", record.id);
+        let default_name = format!("nte_history_{}_{}.json", record.file_timestamp(), record.id);
         let filter = t("NTE history summary");
         self.spawn_file_dialog(
             ctx,

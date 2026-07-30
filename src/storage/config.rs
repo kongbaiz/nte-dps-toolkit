@@ -782,6 +782,18 @@ pub struct UiConfig {
     pub team_hit_detail_window_size: Option<[f32; 2]>,
     #[serde(default)]
     pub console_window_size: Option<[f32; 2]>,
+    /// Last normal outer position (logical points) for each native window. Negative coordinates
+    /// are valid for monitors placed left of or above the primary display.
+    #[serde(default)]
+    pub main_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub abyss_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub hit_detail_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub team_hit_detail_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub console_window_position: Option<[f32; 2]>,
 }
 
 impl Default for UiConfig {
@@ -818,6 +830,11 @@ impl Default for UiConfig {
             hit_detail_window_size: None,
             team_hit_detail_window_size: None,
             console_window_size: None,
+            main_window_position: None,
+            abyss_window_position: None,
+            hit_detail_window_position: None,
+            team_hit_detail_window_position: None,
+            console_window_position: None,
         }
     }
 }
@@ -845,6 +862,12 @@ impl UiConfig {
         );
         self.console_window_size =
             sanitize_window_size(self.console_window_size, CONSOLE_WINDOW_MIN_SIZE);
+        self.main_window_position = sanitize_window_position(self.main_window_position);
+        self.abyss_window_position = sanitize_window_position(self.abyss_window_position);
+        self.hit_detail_window_position = sanitize_window_position(self.hit_detail_window_position);
+        self.team_hit_detail_window_position =
+            sanitize_window_position(self.team_hit_detail_window_position);
+        self.console_window_position = sanitize_window_position(self.console_window_position);
         self.timeline_bucket_seconds =
             sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
         self.auto_round_idle_seconds = self
@@ -908,6 +931,11 @@ fn sanitize_window_size(size: Option<[f32; 2]>, min: [f32; 2]) -> Option<[f32; 2
         width.clamp(min[0], WINDOW_SIZE_MAX),
         height.clamp(min[1], WINDOW_SIZE_MAX),
     ])
+}
+
+fn sanitize_window_position(position: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    let [x, y] = position?;
+    (x.is_finite() && y.is_finite()).then_some([x, y])
 }
 
 pub fn config_path() -> PathBuf {
@@ -1108,6 +1136,19 @@ mod tests {
             .console_window_size,
             None
         );
+    }
+
+    #[test]
+    fn sanitizes_window_positions_without_discarding_secondary_monitor_coordinates() {
+        let config = UiConfig {
+            main_window_position: Some([-1920.0, 84.0]),
+            console_window_position: Some([f32::NAN, 120.0]),
+            ..UiConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(config.main_window_position, Some([-1920.0, 84.0]));
+        assert_eq!(config.console_window_position, None);
     }
 
     #[test]

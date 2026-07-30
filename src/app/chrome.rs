@@ -434,6 +434,36 @@ pub(crate) struct SecondaryViewportGeometry {
     maximized: bool,
 }
 
+impl SecondaryViewportGeometry {
+    pub(crate) fn from_position(position: Option<[f32; 2]>) -> Self {
+        Self {
+            normal_position: position.map(egui::Pos2::from),
+            maximized: false,
+        }
+    }
+
+    pub(crate) fn position(self) -> Option<[f32; 2]> {
+        self.normal_position
+            .map(|position| [position.x, position.y])
+    }
+}
+
+pub(crate) fn track_window_position(ctx: &egui::Context, normal_position: &mut Option<egui::Pos2>) {
+    let position = ctx.input(|input| {
+        let viewport = input.viewport();
+        if viewport.minimized == Some(true) || viewport.maximized == Some(true) {
+            return None;
+        }
+        viewport
+            .outer_rect
+            .map(|rect| rect.min)
+            .filter(|position| position.is_finite())
+    });
+    if let Some(position) = position {
+        *normal_position = Some(position);
+    }
+}
+
 pub(crate) fn track_secondary_viewport_geometry(
     ctx: &egui::Context,
     normal_size: &mut egui::Vec2,
@@ -744,24 +774,42 @@ mod viewport_tests {
     #[test]
     fn secondary_viewport_reinitialization_restores_saved_builder_state() {
         let saved_size = egui::vec2(913.0, 587.0);
-        let saved_position = egui::pos2(321.0, 147.0);
+        let saved_position = egui::pos2(-1600.0, 147.0);
         let builder = secondary_viewport_builder(
             "secondary",
             saved_size,
             config::CONSOLE_WINDOW_MIN_SIZE,
-            SecondaryViewportGeometry {
-                normal_position: Some(saved_position),
-                maximized: true,
-            },
+            SecondaryViewportGeometry::from_position(Some([saved_position.x, saved_position.y])),
             false,
         );
 
         assert_eq!(builder.inner_size, Some(saved_size));
         assert_eq!(builder.position, Some(saved_position));
-        assert_eq!(builder.maximized, Some(true));
+        assert_eq!(builder.maximized, Some(false));
         assert_eq!(builder.decorations, Some(false));
         assert_eq!(builder.resizable, Some(true));
         assert_eq!(builder.window_level, Some(egui::WindowLevel::AlwaysOnTop));
+    }
+
+    #[test]
+    fn root_viewport_tracks_negative_normal_position() {
+        let ctx = egui::Context::default();
+        let position = egui::pos2(-1480.0, 96.0);
+        let mut input = egui::RawInput::default();
+        let viewport = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+        viewport.minimized = Some(false);
+        viewport.maximized = Some(false);
+        viewport.outer_rect = Some(egui::Rect::from_min_size(
+            position,
+            egui::vec2(640.0, 480.0),
+        ));
+        let mut saved_position = None;
+
+        let _ = ctx.run_ui(input, |ui| {
+            track_window_position(ui.ctx(), &mut saved_position);
+        });
+
+        assert_eq!(saved_position, Some(position));
     }
 
     #[test]

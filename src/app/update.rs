@@ -318,10 +318,7 @@ impl DpsApp {
                 match update_storage::launch_prepared_app_update(prepared) {
                     Ok(_) => {
                         self.notifications.status = t("Restarting to install the update...");
-                        ctx.send_viewport_cmd_to(
-                            egui::ViewportId::ROOT,
-                            egui::ViewportCommand::Close,
-                        );
+                        self.request_main_window_close(ctx);
                     }
                     Err(error) => {
                         self.update_client.status = UpdateStatus::Failed {

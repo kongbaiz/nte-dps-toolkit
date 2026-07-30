@@ -75,6 +75,18 @@ fn replay_auto_round_due(
         && active_gap_seconds.is_some_and(|gap| gap >= f64::from(idle_seconds))
 }
 
+fn should_return_to_live_from_history(presenting_history: bool, direction: HitDirection) -> bool {
+    presenting_history && direction.is_outgoing()
+}
+
+fn round_reset_abyss_half(presenting_history: bool, selected_half: AbyssHalf) -> AbyssHalf {
+    if presenting_history {
+        selected_half
+    } else {
+        AbyssHalf::First
+    }
+}
+
 impl DpsApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
@@ -278,6 +290,12 @@ impl DpsApp {
         );
         let notifications = NotificationState::new(&ui_config, status, diagnostic, startup_error);
         let update_client = UpdateClientState::new(&ui_config);
+        let renderer_queue = cc
+            .wgpu_render_state
+            .as_ref()
+            .expect("the GUI is configured to use the wgpu renderer")
+            .queue
+            .clone();
         Self {
             characters,
             ability_catalog,
@@ -328,6 +346,7 @@ impl DpsApp {
             raw_capture: None,
             replay_stop: None,
             replay_thread: None,
+            renderer_queue,
             sender,
             receiver,
             debug_receiver,
@@ -379,6 +398,14 @@ impl DpsApp {
         self.engine_task_viewport = None;
     }
 
+    pub(crate) fn shutdown_services(&mut self) {
+        self.background_tasks.stop_game_process_monitor();
+        self.persist_ui_config_on_shutdown();
+        self.stop_engine();
+        self.background_tasks.stop_history_worker();
+        self.background_tasks.join_pending_capture_export();
+    }
+
     pub(crate) fn reset_combat_session(&mut self) {
         self.state.clear();
         self.presented_history_id = None;
@@ -402,7 +429,10 @@ impl DpsApp {
         self.last_combat_timestamp = None;
         self.last_combat_activity = None;
         self.hidden_character_ids.clear();
-        self.selected_abyss_half = AbyssHalf::First;
+        self.selected_abyss_half = round_reset_abyss_half(
+            self.presented_history_id.is_some(),
+            self.selected_abyss_half,
+        );
         self.abyss_compact_mode = false;
         self.windows.hit_detail_char_id = None;
         self.hit_detail_filter = HitDetailFilter::All;
@@ -962,7 +992,7 @@ impl DpsApp {
             let ui = &mut controls;
             ui.spacing_mut().item_spacing.x = 2.0;
             if window_control_button(ui, WindowControlIcon::Close, &t("Close")).clicked() {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                self.request_main_window_close(ui.ctx());
             }
             let maximized = ui
                 .input(|input| input.viewport().maximized)
@@ -1020,6 +1050,11 @@ impl DpsApp {
             egui::FontId::proportional(13.0),
             self.theme().accent,
         );
+    }
+
+    pub(crate) fn request_main_window_close(&mut self, ctx: &egui::Context) {
+        self.windows.close_state.request();
+        ctx.request_repaint();
     }
 
     /// Keeps the main window at the configured floor. The live toolbar adapts before
@@ -1447,6 +1482,14 @@ impl DpsApp {
                 self.windows.console_window_size.x,
                 self.windows.console_window_size.y,
             ]),
+            main_window_position: self
+                .windows
+                .main_window_position
+                .map(|position| [position.x, position.y]),
+            abyss_window_position: self.windows.abyss_overview_geometry.position(),
+            hit_detail_window_position: self.windows.hit_detail_geometry.position(),
+            team_hit_detail_window_position: self.windows.team_hit_detail_geometry.position(),
+            console_window_position: self.windows.console_geometry.position(),
         }
         .sanitized()
     }
@@ -1791,6 +1834,13 @@ impl DpsApp {
         event: EngineEvent,
         allow_replay_round: bool,
     ) {
+        let return_to_live = match &event {
+            EngineEvent::Hit(hit) => should_return_to_live_from_history(
+                self.presented_history_id.is_some(),
+                hit.direction,
+            ),
+            _ => false,
+        };
         let starts_replay_round = allow_replay_round
             && match &event {
                 EngineEvent::Hit(hit) => {
@@ -1913,6 +1963,19 @@ impl DpsApp {
                 }
             }
         }
+        if return_to_live {
+            let live_half = self
+                .state
+                .abyss
+                .is_active()
+                .then_some(self.state.abyss.active_half)
+                .flatten();
+            self.select_presented_round(None);
+            if let Some(live_half) = live_half {
+                self.selected_abyss_half = live_half;
+                self.abyss_compact_mode = true;
+            }
+        }
     }
 
     fn queue_previous_abyss_round_archive(&mut self, event: &AbyssEvent) {
@@ -1991,8 +2054,6 @@ impl DpsApp {
                             );
                             self.round_archive_pending = false;
                             self.state.clear_battle_preserving_inventory();
-                            self.presented_history_id = None;
-                            self.presented_history_state = None;
                             self.last_auto_archive_hits_generation = 0;
                             self.session_epoch = self.session_epoch.wrapping_add(1);
                             self.reset_combat_round_view_state();
@@ -3024,14 +3085,6 @@ impl DpsApp {
         });
         self.presented_history_id = record_id;
         self.presented_history_state = presented;
-        let state = self.presented_state();
-        self.selected_abyss_half = state.abyss.active_half.unwrap_or({
-            if state.abyss.first_half.hits.is_empty() {
-                AbyssHalf::Second
-            } else {
-                AbyssHalf::First
-            }
-        });
         self.character_hit_cache = HitDetailCache::default();
         self.team_hit_cache = HitDetailCache::default();
         self.skill_summary_cache = SkillSummaryCache::default();
@@ -3580,6 +3633,38 @@ mod tests {
             Some(29.999),
             30,
         ));
+    }
+
+    #[test]
+    fn history_view_returns_to_live_only_for_new_outgoing_damage() {
+        assert!(should_return_to_live_from_history(
+            true,
+            HitDirection::Outgoing
+        ));
+        assert!(!should_return_to_live_from_history(
+            true,
+            HitDirection::Incoming
+        ));
+        assert!(!should_return_to_live_from_history(
+            true,
+            HitDirection::Unknown
+        ));
+        assert!(!should_return_to_live_from_history(
+            false,
+            HitDirection::Outgoing
+        ));
+    }
+
+    #[test]
+    fn round_reset_preserves_history_half_selection() {
+        assert_eq!(
+            round_reset_abyss_half(true, AbyssHalf::Second),
+            AbyssHalf::Second
+        );
+        assert_eq!(
+            round_reset_abyss_half(false, AbyssHalf::Second),
+            AbyssHalf::First
+        );
     }
 
     #[test]

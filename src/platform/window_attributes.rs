@@ -32,6 +32,7 @@ pub(crate) struct WindowAttributeConfig {
     pub(crate) force_opacity: bool,
     pub(crate) hud_overlay: bool,
     pub(crate) passthrough: bool,
+    pub(crate) closing: bool,
 }
 
 pub(crate) fn apply_window_attributes(
@@ -40,7 +41,11 @@ pub(crate) fn apply_window_attributes(
     applied_opacity: &mut Option<f32>,
     corner_applied_hwnd: &mut Option<isize>,
 ) {
-    let opacity = config.opacity.clamp(0.35, 1.0);
+    let opacity = if config.closing {
+        config.opacity.clamp(0.0, 1.0)
+    } else {
+        config.opacity.clamp(0.35, 1.0)
+    };
     let Ok(window_handle) = frame.window_handle() else {
         return;
     };
@@ -72,8 +77,8 @@ pub(crate) fn apply_window_attributes(
         if config.hud_overlay {
             // Match egui_overlay/glfw's transparent-framebuffer model: the HUD
             // should only keep layered style when needed for reliable mouse
-            // pass-through.
-            if config.passthrough {
+            // pass-through or the whole HWND is fading during shutdown.
+            if config.passthrough || config.closing {
                 new_style |= WS_EX_LAYERED as isize;
             } else {
                 new_style &= !(WS_EX_LAYERED as isize);
@@ -121,7 +126,7 @@ pub(crate) fn apply_window_attributes(
             std::mem::size_of_val(&nc_policy) as u32,
         );
 
-        if config.hud_overlay {
+        if config.hud_overlay && !config.closing {
             // HUD transparency comes from the transparent swapchain/clear colour,
             // not layered uniform alpha. If click-through keeps WS_EX_LAYERED
             // enabled, reset any opacity slider alpha left from normal mode.
@@ -133,7 +138,9 @@ pub(crate) fn apply_window_attributes(
             return;
         }
 
-        // Normal: layered uniform-alpha opacity (style already applied above).
+        // Normal windows and a closing HUD use layered uniform alpha. Fading the HWND,
+        // rather than only egui content, keeps the DWM border and DirectComposition
+        // surface disappearing together.
         let opacity_stale =
             !applied_opacity.is_some_and(|current| (current - opacity).abs() < f32::EPSILON);
         if (config.force_opacity || style_changed || opacity_stale)
