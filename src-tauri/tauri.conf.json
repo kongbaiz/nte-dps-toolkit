@@ -6,18 +6,24 @@
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeDevCommand": {
+      "script": "pnpm dev",
+      "cwd": "../frontend"
+    },
+    "beforeBuildCommand": {
+      "script": "pnpm build",
+      "cwd": "../frontend"
+    }
   },
   "app": {
     "windows": [
       {
         "label": "hud-spike",
         "title": "NTE DPS TOOL - HUD Spike",
-        "width": 540,
-        "height": 372,
-        "minWidth": 440,
-        "minHeight": 320,
+        "width": 380,
+        "height": 238,
+        "minWidth": 280,
+        "minHeight": 180,
         "resizable": true,
         "fullscreen": false,
         "transparent": true,
@@ -25,6 +31,22 @@
         "alwaysOnTop": true,
         "shadow": false,
         "skipTaskbar": true,
+        "center": true
+      },
+      {
+        "label": "console",
+        "title": "NTE Console",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 820,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "shadow": true,
+        "skipTaskbar": false,
         "center": true
       }
     ],

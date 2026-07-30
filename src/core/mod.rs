@@ -5,6 +5,10 @@
 //! `CoreError` codes at their own display boundary.
 
 pub mod capture;
+pub mod hud;
+pub mod live_capture;
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub mod mod_studio;
 pub mod reducer;
 pub mod snapshot;
 #[cfg(feature = "gui")]

@@ -1,3 +1,11 @@
+#![cfg_attr(
+    all(feature = "desktop", not(feature = "gui")),
+    allow(
+        dead_code,
+        reason = "the first Mod Studio slice reads the shared workspace; later slices reuse the existing save and validation transaction"
+    )
+)]
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1549,7 +1557,7 @@ pub(crate) fn validate_enabled_mod_set(source: &str) -> Result<(), ModScriptErro
     parse_enabled_mods(source).map(|_| ())
 }
 
-fn validate_mod_id(id: &str) -> Result<(), ModScriptError> {
+pub(crate) fn validate_mod_id(id: &str) -> Result<(), ModScriptError> {
     if id.is_empty()
         || id.len() > 31
         || id.bytes().any(|value| {

@@ -11,9 +11,13 @@ pub mod hotkey;
 pub mod locale;
 pub mod mods_plugin;
 pub mod network;
+#[cfg(windows)]
+pub mod passthrough_hotkey;
 #[cfg(feature = "gui")]
 pub mod update_http;
 #[cfg(feature = "gui")]
 pub mod update_install;
 #[cfg(feature = "gui")]
 pub mod window_attributes;
+#[cfg(windows)]
+pub mod window_style;

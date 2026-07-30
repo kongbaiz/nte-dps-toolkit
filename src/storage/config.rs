@@ -794,6 +794,11 @@ pub struct UiConfig {
     pub team_hit_detail_window_position: Option<[f32; 2]>,
     #[serde(default)]
     pub console_window_position: Option<[f32; 2]>,
+    /// Last Tauri HUD outer position in physical virtual-desktop pixels.
+    /// Physical coordinates preserve negative secondary-monitor origins without
+    /// applying the startup monitor's DPI scale to another display.
+    #[serde(default)]
+    pub hud_window_position: Option<[i32; 2]>,
 }
 
 impl Default for UiConfig {
@@ -835,6 +840,7 @@ impl Default for UiConfig {
             hit_detail_window_position: None,
             team_hit_detail_window_position: None,
             console_window_position: None,
+            hud_window_position: None,
         }
     }
 }
@@ -1143,12 +1149,33 @@ mod tests {
         let config = UiConfig {
             main_window_position: Some([-1920.0, 84.0]),
             console_window_position: Some([f32::NAN, 120.0]),
+            hud_window_position: Some([-1920, 84]),
             ..UiConfig::default()
         }
         .sanitized();
 
         assert_eq!(config.main_window_position, Some([-1920.0, 84.0]));
         assert_eq!(config.console_window_position, None);
+        assert_eq!(config.hud_window_position, Some([-1920, 84]));
+    }
+
+    #[test]
+    fn legacy_config_defaults_the_tauri_hud_position() {
+        let config: UiConfig = serde_json::from_str("{}").expect("legacy config");
+
+        assert_eq!(config.hud_window_position, None);
+    }
+
+    #[test]
+    fn tauri_hud_position_roundtrips_physical_secondary_monitor_coordinates() {
+        let config = UiConfig {
+            hud_window_position: Some([-1920, 84]),
+            ..UiConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("config should serialize");
+        let decoded: UiConfig = serde_json::from_str(&json).expect("config should deserialize");
+
+        assert_eq!(decoded.hud_window_position, Some([-1920, 84]));
     }
 
     #[test]

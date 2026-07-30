@@ -1,18 +1,11 @@
 use super::*;
 
 pub(crate) fn is_qte_follow_up_damage_type(attack_type: &str) -> bool {
-    is_reaction_damage_type(attack_type)
+    crate::engine::model::is_qte_follow_up_damage_type(attack_type)
 }
 
 pub(crate) fn is_qte_follow_up_damage_hit(hit: &crate::engine::model::Hit) -> bool {
-    hit.follow_up_attack_type
-        .as_deref()
-        .is_some_and(is_qte_follow_up_damage_type)
-        || (!hit.char_known
-            && hit
-                .attack_type
-                .as_deref()
-                .is_some_and(is_qte_follow_up_damage_type))
+    crate::engine::model::is_qte_follow_up_damage_hit(hit)
 }
 
 pub(crate) fn reaction_text_key_for_hit(hit: &crate::engine::model::Hit) -> Option<u8> {

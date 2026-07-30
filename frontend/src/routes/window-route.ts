@@ -1,8 +1,10 @@
+import { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/mod-studio-contract";
 import { HUD_WINDOW_LABEL } from "@/lib/tauri/technical-contract";
 
-export type WindowRoute = "technical-hud" | "unsupported";
+export type WindowRoute = "mod-studio" | "technical-hud" | "unsupported";
 
 const WINDOW_ROUTES = new Map<string, WindowRoute>([
+  [CONSOLE_WINDOW_LABEL, "mod-studio"],
   [HUD_WINDOW_LABEL, "technical-hud"],
 ]);
 

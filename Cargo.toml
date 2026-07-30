@@ -8,6 +8,7 @@ license = "AGPL-3.0-or-later"
 
 [features]
 default = ["gui"]
+desktop = []
 gui = [
     "dep:ed25519-dalek",
     "dep:eframe",
