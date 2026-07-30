@@ -1,0 +1,24 @@
+[package]
+name = "nte-dps-tool-tauri"
+version = "0.3.6"
+description = "Tauri desktop shell for NTE DPS TOOL"
+authors = ["NTE DPS TOOL contributors"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/kongbaiz/nte-dps-tool"
+edition = "2024"
+rust-version = "1.85"
+
+[lib]
+name = "nte_dps_tool_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+nte-dps-tool = { path = "..", default-features = false }
