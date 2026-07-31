@@ -185,6 +185,42 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn update_operation_busy() -> Self {
+        Self {
+            code: "update_operation_busy",
+            message_key: "Another update operation is already in progress.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn update_component_unavailable() -> Self {
+        Self {
+            code: "update_component_unavailable",
+            message_key: "The selected update component is no longer available.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn update_not_prepared() -> Self {
+        Self {
+            code: "update_not_prepared",
+            message_key: "Download and verify the update before installing it.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn update_install_blocked(message_key: &'static str) -> Self {
+        Self {
+            code: "update_install_blocked",
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn team_data_invalid() -> Self {
         Self {
             code: "team_data_invalid",

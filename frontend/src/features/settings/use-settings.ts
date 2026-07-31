@@ -15,11 +15,15 @@ import type {
   LayoutProfileId,
   SettingsCommandError,
   SettingsSnapshot,
+  UpdateComponentId,
 } from "@/lib/tauri/settings-contract";
 import { applySettingsPresentation } from "@/lib/settings-presentation";
 import type { HudModuleId } from "@/lib/tauri/technical-contract";
 
-import type { SettingsPageState } from "./settings-view-model";
+import {
+  shouldAcceptSettingsGeneration,
+  type SettingsPageState,
+} from "./settings-view-model";
 
 export function useSettings(client: SettingsClient = settingsClient) {
   const [state, setState] = useState<SettingsPageState>({
@@ -31,12 +35,28 @@ export function useSettings(client: SettingsClient = settingsClient) {
   const mounted = useRef(true);
   const mutationPending = useRef(false);
   const loadGeneration = useRef(0);
+  const acceptedGeneration = useRef<string | null>(null);
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
+  }, []);
+
+  const applySnapshot = useCallback((snapshot: SettingsSnapshot) => {
+    if (
+      !shouldAcceptSettingsGeneration(
+        acceptedGeneration.current,
+        snapshot.generation,
+      )
+    ) {
+      return;
+    }
+    acceptedGeneration.current = snapshot.generation;
+    applySettingsPresentation(snapshot.interface);
+    loadGeneration.current += 1;
+    setState({ status: "ready", snapshot });
   }, []);
 
   const refresh = useCallback(async () => {
@@ -46,37 +66,50 @@ export function useSettings(client: SettingsClient = settingsClient) {
     try {
       const snapshot = await client.getSnapshot();
       if (mounted.current && generation === loadGeneration.current) {
-        applySettingsPresentation(snapshot.interface);
-        setState({ status: "ready", snapshot });
+        applySnapshot(snapshot);
       }
     } catch (error) {
       if (mounted.current && generation === loadGeneration.current) {
         setState({ status: "error", error: settingsError(error) });
       }
     }
-  }, [client]);
+  }, [applySnapshot, client]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    const unsubscribe = client.subscribe(
+      (snapshot) => {
+        if (mounted.current) {
+          applySnapshot(snapshot);
+        }
+      },
+      (error) => {
+        if (mounted.current) {
+          setState({ status: "error", error });
+        }
+      },
+    );
+    return () => {
+      void unsubscribe().catch((error: unknown) => {
+        console.error("settings subscription cleanup failed", error);
+      });
+    };
+  }, [applySnapshot, client]);
 
   const mutate = useCallback(
     async (
-      action: string,
+      action: string | null,
       command: () => Promise<SettingsSnapshot>,
     ): Promise<void> => {
       if (mutationPending.current) {
         return;
       }
       mutationPending.current = true;
-      setPendingAction(action);
+      if (action !== null) setPendingAction(action);
       setMutationError(null);
       try {
         const snapshot = await command();
         if (mounted.current) {
-          applySettingsPresentation(snapshot.interface);
-          loadGeneration.current += 1;
-          setState({ status: "ready", snapshot });
+          applySnapshot(snapshot);
         }
       } catch (error) {
         if (mounted.current) {
@@ -89,7 +122,7 @@ export function useSettings(client: SettingsClient = settingsClient) {
         }
       }
     },
-    [],
+    [applySnapshot],
   );
 
   return {
@@ -99,25 +132,27 @@ export function useSettings(client: SettingsClient = settingsClient) {
     clearMutationError: () => setMutationError(null),
     refresh,
     setInterface: (settings: InterfaceSettingsInput) =>
-      mutate("interface", () => client.setInterface(settings)),
+      mutate(null, () => client.setInterface(settings)),
     setUpdatePreferences: (autoCheck: boolean, autoDownload: boolean) =>
-      mutate("update-preferences", () =>
+      mutate(null, () =>
         client.setUpdatePreferences({ autoCheck, autoDownload }),
       ),
     checkUpdates: () => mutate("update-check", () => client.checkUpdates()),
+    downloadUpdate: (component: UpdateComponentId) =>
+      mutate(`update-download:${component}`, () =>
+        client.downloadUpdate(component),
+      ),
+    installUpdate: () => mutate("update-install", () => client.installUpdate()),
     setCapture: (settings: CaptureSettingsInput) =>
-      mutate("capture", () => client.setCapture(settings)),
+      mutate(null, () => client.setCapture(settings)),
     refreshCaptureDevices: () =>
       mutate("capture-devices", () => client.refreshCaptureDevices()),
     setHotkeysEnabled: (enabled: boolean) =>
-      mutate("hotkeys-enabled", () => client.setHotkeysEnabled(enabled)),
+      mutate(null, () => client.setHotkeysEnabled(enabled)),
     setHotkeyBinding: (
       action: GlobalHotkeyActionId,
       binding: HotkeyBinding | null,
-    ) =>
-      mutate(`hotkey:${action}`, () =>
-        client.setHotkeyBinding(action, binding),
-      ),
+    ) => mutate(null, () => client.setHotkeyBinding(action, binding)),
     applyLayoutProfile: (profile: LayoutProfileId) =>
       mutate(`layout:${profile}`, () => client.applyLayoutProfile(profile)),
     openAbyssValues: () =>
@@ -150,13 +185,11 @@ export function useSettings(client: SettingsClient = settingsClient) {
     clearCaptureFiles: () =>
       mutate("capture-files-clear", () => client.clearCaptureFiles()),
     setHudOption: (option: HudSettingOptionId, enabled: boolean) =>
-      mutate(`option:${option}`, () => client.setHudOption(option, enabled)),
+      mutate(null, () => client.setHudOption(option, enabled)),
     applyHudPreset: (preset: HudPresetId) =>
       mutate(`preset:${preset}`, () => client.applyHudPreset(preset)),
     setHudModuleVisibility: (module: HudModuleId, visible: boolean) =>
-      mutate(`module:${module}`, () =>
-        client.setHudModuleVisibility(module, visible),
-      ),
+      mutate(null, () => client.setHudModuleVisibility(module, visible)),
     moveHudModule: (
       dragged: HudModuleId,
       target: HudModuleId,
@@ -166,9 +199,9 @@ export function useSettings(client: SettingsClient = settingsClient) {
         client.moveHudModule(dragged, target, insertAfter),
       ),
     setHudWidth: (width: number) =>
-      mutate("width", () => client.setHudWidth(width)),
+      mutate(null, () => client.setHudWidth(width)),
     setHudAlwaysOnTop: (enabled: boolean) =>
-      mutate("always-on-top", () => client.setHudAlwaysOnTop(enabled)),
+      mutate(null, () => client.setHudAlwaysOnTop(enabled)),
     openHudEditor: () => mutate("open-editor", () => client.openHudEditor()),
   };
 }

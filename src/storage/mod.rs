@@ -12,5 +12,5 @@ pub mod io_util;
 pub mod mod_scripts;
 pub mod paths;
 pub mod resource;
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod update;

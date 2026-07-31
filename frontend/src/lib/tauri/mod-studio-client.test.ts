@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createModStudioClient } from "./mod-studio-client";
 
 const workspace = {
-  contractVersion: 4,
+  contractVersion: 5,
+  generation: "0",
   workspaceLabel: "plugins/nte-mods",
   documents: [],
 };
@@ -14,7 +15,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(workspace)
       .mockResolvedValueOnce({
-        contractVersion: 4,
+        contractVersion: 5,
         schemaVersion: 1,
         symbols: [
           {
@@ -27,13 +28,13 @@ describe("Mod Studio client", () => {
         ],
       })
       .mockResolvedValueOnce({
-        contractVersion: 4,
+        contractVersion: 5,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
       })
       .mockResolvedValueOnce({
-        contractVersion: 4,
+        contractVersion: 5,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);\n// saved",
@@ -115,7 +116,7 @@ describe("Mod Studio client", () => {
     deliver?.({
       event: "connection",
       payload: {
-        contractVersion: 4,
+        contractVersion: 5,
         generation: "1",
         connected: true,
       },
@@ -125,7 +126,7 @@ describe("Mod Studio client", () => {
     expect(onEvent).toHaveBeenCalledWith({
       event: "connection",
       payload: {
-        contractVersion: 4,
+        contractVersion: 5,
         generation: "1",
         connected: true,
       },

@@ -18,6 +18,8 @@ use nte_dps_tool::{
         },
         hud::{HudProjectionOptions, project_hud},
         live_capture::{LiveCapturePhase, LiveCaptureResources, LiveCaptureService},
+        mod_studio::ModStudioWorkspaceService,
+        update::{AvailableComponentUpdate, UpdateComponent},
     },
     engine::{
         capture::PacketEmissionMode,
@@ -31,13 +33,14 @@ use nte_dps_tool::{
         },
         i18n::Language,
         paths::capture_log_dir,
+        update::PreparedUpdate,
     },
 };
 
 use crate::{
     contract::{
         HudWindowSnapshot, TECHNICAL_CONTRACT_VERSION, TechnicalSnapshot,
-        settings::{CaptureDeviceSnapshot, SettingsSnapshot},
+        settings::{CaptureDeviceSnapshot, SettingsSnapshot, UpdateSettingsSnapshot},
     },
     windows::hud::HUD_WINDOW_LABEL,
 };
@@ -91,12 +94,13 @@ struct AppStateInner {
     passthrough_hotkey_ready: AtomicBool,
     always_on_top: AtomicBool,
     presentation_revision: AtomicU64,
+    settings_revision: AtomicU64,
     streams: Mutex<HashMap<String, Arc<AtomicBool>>>,
     live_capture: LiveCaptureService,
-    capture_filter: Mutex<String>,
+    mod_studio: ModStudioWorkspaceService,
     capture_devices: Mutex<Vec<CaptureDeviceSnapshot>>,
     imported_teams: Mutex<(Option<TeamDps>, Option<TeamDps>)>,
-    update_status: Mutex<UpdateStatusState>,
+    update_runtime: Mutex<UpdateRuntimeState>,
     selected_abyss_half: Mutex<Option<AbyssHalf>>,
     passthrough_transaction: Mutex<()>,
     always_on_top_transaction: Mutex<()>,
@@ -106,20 +110,44 @@ struct AppStateInner {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct UpdateStatusState {
-    pub status: &'static str,
-    pub message_key: &'static str,
-    pub message_arguments: Vec<String>,
+struct UpdateRuntimeState {
+    status: &'static str,
+    message_key: &'static str,
+    message_arguments: Vec<String>,
+    available: Vec<AvailableComponentUpdate>,
+    active_component: Option<UpdateComponent>,
+    downloaded_bytes: u64,
+    total_bytes: u64,
+    prepared: Option<PreparedUpdate>,
 }
 
-impl Default for UpdateStatusState {
+impl Default for UpdateRuntimeState {
     fn default() -> Self {
         Self {
             status: "idle",
             message_key: "Updates have not been checked in this session",
             message_arguments: Vec::new(),
+            available: Vec::new(),
+            active_component: None,
+            downloaded_bytes: 0,
+            total_bytes: 0,
+            prepared: None,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UpdateActionError {
+    Busy,
+    Unavailable,
+    NotPrepared,
+}
+
+fn update_is_busy(status: &str) -> bool {
+    matches!(
+        status,
+        "checking" | "downloading" | "installing" | "restarting"
+    )
 }
 
 impl Default for AppState {
@@ -141,7 +169,7 @@ impl AppState {
         live_capture: LiveCaptureService,
         config_path: PathBuf,
     ) -> Self {
-        config.hud = config.hud.clone().sanitized();
+        config = config.sanitized();
         let capture_devices = enumerate_devices()
             .unwrap_or_default()
             .iter()
@@ -154,12 +182,13 @@ impl AppState {
             passthrough_hotkey_ready: AtomicBool::new(false),
             always_on_top: AtomicBool::new(config.always_on_top),
             presentation_revision: AtomicU64::new(0),
+            settings_revision: AtomicU64::new(0),
             streams: Mutex::new(HashMap::new()),
             live_capture,
-            capture_filter: Mutex::new("udp".to_owned()),
+            mod_studio: ModStudioWorkspaceService::default(),
             capture_devices: Mutex::new(capture_devices),
             imported_teams: Mutex::new((None, None)),
-            update_status: Mutex::new(UpdateStatusState::default()),
+            update_runtime: Mutex::new(UpdateRuntimeState::default()),
             selected_abyss_half: Mutex::new(None),
             passthrough_transaction: Mutex::new(()),
             always_on_top_transaction: Mutex::new(()),
@@ -220,41 +249,50 @@ impl AppState {
     }
 
     pub(crate) fn settings_snapshot(&self) -> SettingsSnapshot {
+        let generation = self.settings_revision();
         let config = self.ui_config();
-        let filter = self
-            .0
-            .capture_filter
-            .lock()
-            .expect("capture filter lock poisoned")
-            .clone();
         let devices = self
             .0
             .capture_devices
             .lock()
             .expect("capture device cache lock poisoned")
             .clone();
-        let imported = self
+        let (upper_imported, lower_imported) = {
+            let imported = self
+                .0
+                .imported_teams
+                .lock()
+                .expect("imported team lock poisoned");
+            (imported.0.is_some(), imported.1.is_some())
+        };
+        let update = self
             .0
-            .imported_teams
+            .update_runtime
             .lock()
-            .expect("imported team lock poisoned");
-        let update_status = self
-            .0
-            .update_status
-            .lock()
-            .expect("update status lock poisoned")
+            .expect("update runtime lock poisoned")
             .clone();
+        let install_blocked_message_key = self.install_blocked_message_key_for(&update);
+        let updates = UpdateSettingsSnapshot::from_runtime(
+            &config,
+            update.status,
+            update.message_key,
+            update.message_arguments,
+            &update.available,
+            update.active_component,
+            update.downloaded_bytes,
+            update.total_bytes,
+            update.prepared.as_ref(),
+            install_blocked_message_key,
+        );
         SettingsSnapshot::from_config(
             &config,
+            generation,
             self.always_on_top(),
-            filter,
             devices,
             scan_capture_logs(&capture_log_dir()),
-            imported.0.is_some(),
-            imported.1.is_some(),
-            update_status.status.to_owned(),
-            update_status.message_key.to_owned(),
-            update_status.message_arguments,
+            upper_imported,
+            lower_imported,
+            updates,
         )
     }
 
@@ -264,16 +302,10 @@ impl AppState {
             .manual_capture_device
             .clone()
             .map_or(CaptureDeviceSelector::Auto, CaptureDeviceSelector::Name);
-        let filter = self
-            .0
-            .capture_filter
-            .lock()
-            .expect("capture filter lock poisoned")
-            .clone();
         self.0.live_capture.request_start(CaptureControllerOptions {
             profile: CaptureProfile::Combat,
             device,
-            filter,
+            filter: config.capture_filter.clone(),
             include_incoming: true,
             server_damage_calibration: config.server_damage_calibration,
             raw_capture: RawCaptureMode::Enabled,
@@ -413,6 +445,7 @@ impl AppState {
         self.update_hud_config(|hud| hud.width = width)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_interface_settings(
         &self,
         language: Language,
@@ -453,13 +486,275 @@ impl AppState {
             .auto_check_updates
     }
 
-    pub(crate) fn set_update_status(&self, status: UpdateStatusState) {
-        *self
-            .0
-            .update_status
+    pub(crate) fn auto_download_updates(&self) -> bool {
+        self.0
+            .ui_config
             .lock()
-            .expect("update status lock poisoned") = status;
-        self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+            .expect("UI config lock poisoned")
+            .auto_download_updates
+    }
+
+    pub(crate) fn begin_update_check(&self) -> Result<(), UpdateActionError> {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        if update_is_busy(update.status) || update.prepared.is_some() {
+            return Err(UpdateActionError::Busy);
+        }
+        update.status = "checking";
+        update.message_key = "Checking for updates...";
+        update.message_arguments.clear();
+        update.active_component = None;
+        update.downloaded_bytes = 0;
+        update.total_bytes = 0;
+        drop(update);
+        self.bump_settings_revision();
+        Ok(())
+    }
+
+    pub(crate) fn finish_update_check(&self, available: Vec<AvailableComponentUpdate>) {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        update.prepared = None;
+        update.active_component = None;
+        update.downloaded_bytes = 0;
+        update.total_bytes = 0;
+        if available.is_empty() {
+            update.available.clear();
+            update.status = "up-to-date";
+            update.message_key = "All available update components are up to date";
+            update.message_arguments.clear();
+        } else {
+            let preferred = available
+                .iter()
+                .find(|item| item.component == UpdateComponent::App)
+                .unwrap_or(&available[0]);
+            update.status = "available";
+            update.message_key = match preferred.component {
+                UpdateComponent::App => "Version {} is available",
+                UpdateComponent::ModsPlugin => "Mod loader version {} is available",
+            };
+            update.message_arguments = vec![preferred.version.to_string()];
+            update.available = available;
+        }
+        drop(update);
+        self.bump_settings_revision();
+    }
+
+    pub(crate) fn fail_update_check(&self, message_key: &'static str) {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        update.status =
+            if message_key == "The official update channel is not configured in this build" {
+                "not-configured"
+            } else {
+                "error"
+            };
+        update.message_key = message_key;
+        update.message_arguments.clear();
+        update.available.clear();
+        update.prepared = None;
+        update.active_component = None;
+        update.downloaded_bytes = 0;
+        update.total_bytes = 0;
+        drop(update);
+        self.bump_settings_revision();
+    }
+
+    pub(crate) fn begin_update_download(
+        &self,
+        component: UpdateComponent,
+    ) -> Result<AvailableComponentUpdate, UpdateActionError> {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        if update_is_busy(update.status) || update.prepared.is_some() {
+            return Err(UpdateActionError::Busy);
+        }
+        let selected = update
+            .available
+            .iter()
+            .find(|item| item.component == component)
+            .cloned()
+            .ok_or(UpdateActionError::Unavailable)?;
+        update.status = "downloading";
+        update.message_key = match component {
+            UpdateComponent::App => "Downloading verified update...",
+            UpdateComponent::ModsPlugin => "Downloading verified Mod loader...",
+        };
+        update.message_arguments.clear();
+        update.active_component = Some(component);
+        update.downloaded_bytes = 0;
+        update.total_bytes = selected.artifact_size;
+        drop(update);
+        self.bump_settings_revision();
+        Ok(selected)
+    }
+
+    pub(crate) fn update_download_progress(
+        &self,
+        component: UpdateComponent,
+        downloaded_bytes: u64,
+        total_bytes: u64,
+    ) {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        if update.status != "downloading" || update.active_component != Some(component) {
+            return;
+        }
+        update.downloaded_bytes = downloaded_bytes.min(total_bytes);
+        update.total_bytes = total_bytes;
+        drop(update);
+        self.bump_settings_revision();
+    }
+
+    pub(crate) fn finish_update_download(&self, prepared: PreparedUpdate) {
+        let component = prepared.component();
+        let version = prepared.version().to_string();
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        update.status = "ready";
+        update.message_key = match component {
+            UpdateComponent::App => "Version {} is ready to install",
+            UpdateComponent::ModsPlugin => "Mod loader {} is ready to install",
+        };
+        update.message_arguments = vec![version];
+        update.active_component = None;
+        update.downloaded_bytes = update.total_bytes;
+        update.prepared = Some(prepared);
+        drop(update);
+        self.bump_settings_revision();
+    }
+
+    pub(crate) fn fail_update_download(&self) {
+        self.fail_update_operation("Update download failed.");
+    }
+
+    pub(crate) fn begin_update_install(&self) -> Result<PreparedUpdate, UpdateActionError> {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        if update_is_busy(update.status) {
+            return Err(UpdateActionError::Busy);
+        }
+        let prepared = update
+            .prepared
+            .as_ref()
+            .cloned()
+            .ok_or(UpdateActionError::NotPrepared)?;
+        update.status = match prepared.component() {
+            UpdateComponent::App => "restarting",
+            UpdateComponent::ModsPlugin => "installing",
+        };
+        update.message_key = match prepared.component() {
+            UpdateComponent::App => "Restarting to install the update...",
+            UpdateComponent::ModsPlugin => "Installing Mod loader update...",
+        };
+        update.message_arguments.clear();
+        update.active_component = Some(prepared.component());
+        drop(update);
+        self.bump_settings_revision();
+        Ok(prepared)
+    }
+
+    pub(crate) fn finish_plugin_update_install(&self, version: String) {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        update
+            .available
+            .retain(|item| item.component != UpdateComponent::ModsPlugin);
+        update.status = if update.available.is_empty() {
+            "up-to-date"
+        } else {
+            "available"
+        };
+        update.message_key = "Mod loader {} was installed";
+        update.message_arguments = vec![version];
+        update.active_component = None;
+        update.downloaded_bytes = 0;
+        update.total_bytes = 0;
+        update.prepared = None;
+        drop(update);
+        self.bump_settings_revision();
+    }
+
+    pub(crate) fn fail_update_install(&self) {
+        self.fail_update_operation("Update installation could not start.");
+    }
+
+    pub(crate) fn update_install_blocked_message_key(&self) -> Option<&'static str> {
+        let update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned")
+            .clone();
+        self.install_blocked_message_key_for(&update)
+    }
+
+    fn install_blocked_message_key_for(&self, update: &UpdateRuntimeState) -> Option<&'static str> {
+        match update.prepared.as_ref().map(PreparedUpdate::component) {
+            Some(UpdateComponent::App)
+                if !matches!(
+                    self.capture_phase(),
+                    LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed
+                ) =>
+            {
+                Some("Stop capture or replay before installing the update")
+            }
+            Some(UpdateComponent::ModsPlugin) => {
+                match nte_dps_tool::platform::network::game_process_is_running() {
+                    Ok(true) => Some("Close HTGame.exe before installing the Mod loader update"),
+                    Ok(false) => None,
+                    Err(error) => {
+                        log::error!("check game process before Mod loader update failed: {error}");
+                        Some("Game process state could not be checked.")
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn fail_update_operation(&self, message_key: &'static str) {
+        let mut update = self
+            .0
+            .update_runtime
+            .lock()
+            .expect("update runtime lock poisoned");
+        update.status = "error";
+        update.message_key = message_key;
+        update.message_arguments.clear();
+        update.active_component = None;
+        update.downloaded_bytes = 0;
+        update.total_bytes = 0;
+        drop(update);
+        self.bump_settings_revision();
+    }
+
+    fn bump_settings_revision(&self) {
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
     }
 
     pub(crate) fn set_density(&self, density: UiDensity) -> Result<bool, String> {
@@ -478,13 +773,8 @@ impl AppState {
         dps_time_mode: DpsTimeMode,
         passthrough_hotkey: PassthroughHotkey,
     ) -> Result<bool, String> {
-        let previous_filter = self
-            .0
-            .capture_filter
-            .lock()
-            .expect("capture filter lock poisoned")
-            .clone();
-        let config_changed = self.update_ui_config(|config| {
+        self.update_ui_config(|config| {
+            config.capture_filter = filter;
             config.manual_capture_device = manual_capture_device;
             config.server_damage_calibration = server_damage_calibration;
             config.separate_reaction_damage = separate_reaction_damage;
@@ -492,19 +782,7 @@ impl AppState {
             config.auto_round_idle_seconds = auto_round_idle_seconds;
             config.dps_time_mode = dps_time_mode;
             config.passthrough_hotkey = passthrough_hotkey;
-        })?;
-        let filter_changed = previous_filter != filter;
-        if filter_changed {
-            *self
-                .0
-                .capture_filter
-                .lock()
-                .expect("capture filter lock poisoned") = filter;
-        }
-        if filter_changed && !config_changed {
-            self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
-        }
-        Ok(config_changed || filter_changed)
+        })
     }
 
     pub(crate) fn update_global_hotkeys(
@@ -524,6 +802,7 @@ impl AppState {
             .capture_devices
             .lock()
             .expect("capture device cache lock poisoned") = devices;
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
 
@@ -544,6 +823,7 @@ impl AppState {
         let fallback = export.single;
         imported.0 = export.upper.or_else(|| fallback.clone());
         imported.1 = export.lower.or(fallback);
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
     }
 
     pub(crate) fn imported_abyss_teams(&self) -> (Option<TeamDps>, Option<TeamDps>) {
@@ -569,6 +849,7 @@ impl AppState {
         } else {
             imported.1 = Some(team);
         }
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
         true
     }
 
@@ -583,6 +864,7 @@ impl AppState {
         } else {
             imported.1 = None;
         }
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
     }
 
     pub(crate) fn swap_abyss_teams(&self) {
@@ -593,6 +875,7 @@ impl AppState {
             .expect("imported team lock poisoned");
         let (upper, lower) = &mut *imported;
         std::mem::swap(upper, lower);
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
     }
 
     pub(crate) fn export_team_data(&self) -> Option<TeamDpsExport> {
@@ -698,6 +981,7 @@ impl AppState {
         config::save(&self.0.config_path, &candidate)?;
         *self.0.ui_config.lock().expect("UI config lock poisoned") = candidate;
         self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
         Ok(true)
     }
 
@@ -706,6 +990,14 @@ impl AppState {
             capture: self.0.live_capture.revision(),
             presentation: self.0.presentation_revision.load(Ordering::Acquire),
         }
+    }
+
+    pub(crate) fn settings_revision(&self) -> u64 {
+        self.0.settings_revision.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn mod_studio(&self) -> ModStudioWorkspaceService {
+        self.0.mod_studio.clone()
     }
 
     pub(crate) fn uptime_ms(&self) -> u128 {
@@ -947,6 +1239,63 @@ mod tests {
     }
 
     #[test]
+    fn settings_revision_tracks_async_update_status_changes() {
+        let state = AppState::default();
+        let initial = state.settings_revision();
+
+        state.begin_update_check().expect("begin update check");
+
+        assert!(state.settings_revision() > initial);
+        assert_eq!(state.settings_snapshot().updates.status, "checking");
+    }
+
+    #[test]
+    fn update_runtime_projects_available_download_and_prepared_states() {
+        let state = AppState::default();
+        let available = AvailableComponentUpdate {
+            component: UpdateComponent::App,
+            release_id: "release".to_owned(),
+            version: "0.4.0".parse().expect("semantic version"),
+            published_at: "2026-07-31T00:00:00Z".to_owned(),
+            notes: "notes".to_owned(),
+            artifact_url: "https://example.invalid/app.zip".to_owned(),
+            artifact_size: 1_024,
+            artifact_sha256: [7; 32],
+        };
+
+        state.begin_update_check().expect("begin update check");
+        state.finish_update_check(vec![available]);
+        let snapshot = state.settings_snapshot();
+        assert_eq!(snapshot.updates.status, "available");
+        assert_eq!(snapshot.updates.available[0].component, "app");
+
+        state
+            .begin_update_download(UpdateComponent::App)
+            .expect("begin update download");
+        state.update_download_progress(UpdateComponent::App, 512, 1_024);
+        let snapshot = state.settings_snapshot();
+        assert_eq!(snapshot.updates.status, "downloading");
+        assert_eq!(snapshot.updates.downloaded_bytes, "512");
+
+        state.finish_update_download(PreparedUpdate::App {
+            version: "0.4.0".parse().expect("semantic version"),
+            transaction_path: PathBuf::from("transaction.json"),
+            updater_path: PathBuf::from("nte-updater.exe"),
+        });
+        let snapshot = state.settings_snapshot();
+        assert_eq!(snapshot.updates.status, "ready");
+        assert_eq!(
+            snapshot
+                .updates
+                .prepared
+                .as_ref()
+                .map(|item| item.component),
+            Some("app")
+        );
+        assert!(snapshot.updates.install_enabled);
+    }
+
+    #[test]
     fn module_visibility_is_saved_before_the_projection_changes() {
         let config_path = temporary_config_path("module_visibility");
         let state = AppState::new_with_config_path(
@@ -1122,12 +1471,23 @@ mod tests {
         assert_eq!(saved.language, Language::Japanese);
         assert_eq!(saved.theme_preset, ThemePreset::Tactical);
         assert_eq!(saved.accent, AccentColor::Orange);
+        assert_eq!(saved.capture_filter, "udp port 30196");
         assert!(saved.reduce_motion);
         assert_eq!(
             saved.manual_capture_device.as_deref(),
             Some("capture-device")
         );
         assert_eq!(saved.dps_time_mode, DpsTimeMode::RealTime);
+
+        let restored = AppState::new_with_config_path(
+            saved,
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        assert_eq!(
+            restored.settings_snapshot().capture.bpf_filter,
+            "udp port 30196"
+        );
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");

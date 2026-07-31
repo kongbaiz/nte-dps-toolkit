@@ -6,6 +6,8 @@ import {
   adjacentHudModuleMove,
   hudModuleVisible,
   hudOptionEnabled,
+  settingsSectionPending,
+  shouldAcceptSettingsGeneration,
 } from "./settings-view-model";
 
 function hudFixture(): HudConfigSnapshot {
@@ -56,5 +58,21 @@ describe("Settings view model", () => {
     });
     expect(adjacentHudModuleMove(order, "title", "up")).toBeNull();
     expect(adjacentHudModuleMove(order, "timeline", "down")).toBeNull();
+  });
+
+  it("limits pending visuals to the section that owns the mutation", () => {
+    expect(settingsSectionPending("update-preferences", "update")).toBe(true);
+    expect(settingsSectionPending("update-preferences", "interface")).toBe(
+      false,
+    );
+    expect(settingsSectionPending("module:timeline", "hud-modules")).toBe(true);
+    expect(settingsSectionPending("module:timeline", "capture")).toBe(false);
+  });
+
+  it("drops duplicate and stale settings generations", () => {
+    expect(shouldAcceptSettingsGeneration(null, "5")).toBe(true);
+    expect(shouldAcceptSettingsGeneration("5", "6")).toBe(true);
+    expect(shouldAcceptSettingsGeneration("5", "5")).toBe(false);
+    expect(shouldAcceptSettingsGeneration("5", "4")).toBe(false);
   });
 });

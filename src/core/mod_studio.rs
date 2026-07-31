@@ -4,7 +4,13 @@
 //! Source saves and enabled-set changes reuse the existing validation and
 //! atomic storage transactions; deployment remains a separate operation.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use crate::storage::mod_scripts::{
     ModScriptDocument, ModScriptError, ModScriptWorkspace, load_mod_script_workspace,
@@ -27,6 +33,21 @@ pub struct ModStudioDocumentSummary {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModStudioWorkspace {
     pub documents: Vec<ModStudioDocumentSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VersionedModStudioWorkspace {
+    pub generation: u64,
+    pub workspace: ModStudioWorkspace,
+}
+
+#[derive(Clone)]
+pub struct ModStudioWorkspaceService(Arc<ModStudioWorkspaceServiceInner>);
+
+struct ModStudioWorkspaceServiceInner {
+    workspace_directory: PathBuf,
+    transaction: Mutex<()>,
+    generation: AtomicU64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +143,79 @@ pub fn default_mod_studio_workspace_directory() -> PathBuf {
         }
     }
     portable
+}
+
+impl Default for ModStudioWorkspaceService {
+    fn default() -> Self {
+        Self::new(default_mod_studio_workspace_directory())
+    }
+}
+
+impl ModStudioWorkspaceService {
+    pub fn new(workspace_directory: PathBuf) -> Self {
+        Self(Arc::new(ModStudioWorkspaceServiceInner {
+            workspace_directory,
+            transaction: Mutex::new(()),
+            generation: AtomicU64::new(0),
+        }))
+    }
+
+    pub fn load_workspace(&self) -> Result<VersionedModStudioWorkspace, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        self.versioned_workspace()
+    }
+
+    pub fn load_document(&self, id: &str) -> Result<ModStudioDocument, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        load_mod_studio_document(&self.0.workspace_directory, id)
+    }
+
+    pub fn save_document(
+        &self,
+        id: &str,
+        source: &str,
+    ) -> Result<ModStudioDocument, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        let document = save_mod_studio_document(&self.0.workspace_directory, id, source)?;
+        self.bump_generation();
+        Ok(document)
+    }
+
+    pub fn set_document_enabled(
+        &self,
+        id: &str,
+        enabled: bool,
+    ) -> Result<VersionedModStudioWorkspace, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        let workspace = set_mod_studio_document_enabled(&self.0.workspace_directory, id, enabled)?;
+        let generation = self.bump_generation();
+        Ok(VersionedModStudioWorkspace {
+            generation,
+            workspace,
+        })
+    }
+
+    fn lock_transaction(&self) -> Result<std::sync::MutexGuard<'_, ()>, ModStudioError> {
+        self.0.transaction.lock().map_err(|_| {
+            ModStudioError::new(
+                ModStudioErrorCode::FileSystem,
+                "Mod workspace transaction state is unavailable",
+            )
+        })
+    }
+
+    fn versioned_workspace(&self) -> Result<VersionedModStudioWorkspace, ModStudioError> {
+        Ok(VersionedModStudioWorkspace {
+            generation: self.0.generation.load(Ordering::Acquire),
+            workspace: load_mod_studio_workspace(&self.0.workspace_directory)?,
+        })
+    }
+
+    fn bump_generation(&self) -> u64 {
+        let generation = self.0.generation.load(Ordering::Acquire).saturating_add(1);
+        self.0.generation.store(generation, Ordering::Release);
+        generation
+    }
 }
 
 pub fn load_default_mod_studio_workspace() -> Result<ModStudioWorkspace, ModStudioError> {
@@ -573,6 +667,49 @@ mod tests {
         let disabled =
             set_mod_studio_document_enabled(&root, "telemetry", false).expect("disable Mod");
         assert!(!disabled.documents[0].enabled);
+
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn workspace_service_serializes_distinct_enabled_set_mutations() {
+        let root = temp_workspace("enabled-set-service");
+        for id in ["alpha", "beta"] {
+            let source = new_mod_script_template(id).expect("template");
+            save_mod_script(&root, id, &source).expect("initial save");
+        }
+        let service = ModStudioWorkspaceService::new(root.clone());
+        let first_service = service.clone();
+        let first = std::thread::spawn(move || {
+            first_service
+                .set_document_enabled("alpha", true)
+                .expect("enable alpha")
+                .generation
+        });
+        let second_service = service.clone();
+        let second = std::thread::spawn(move || {
+            second_service
+                .set_document_enabled("beta", true)
+                .expect("enable beta")
+                .generation
+        });
+
+        let mut generations = [
+            first.join().expect("alpha worker"),
+            second.join().expect("beta worker"),
+        ];
+        generations.sort_unstable();
+        let workspace = service.load_workspace().expect("final workspace");
+
+        assert_eq!(generations, [1, 2]);
+        assert_eq!(workspace.generation, 2);
+        assert!(
+            workspace
+                .workspace
+                .documents
+                .iter()
+                .all(|document| document.enabled)
+        );
 
         fs::remove_dir_all(root).expect("remove workspace");
     }

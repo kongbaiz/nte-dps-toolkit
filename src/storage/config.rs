@@ -746,6 +746,8 @@ pub struct UiConfig {
     /// Horizontal offset of the island from the screen center, in logical points.
     #[serde(default)]
     pub island_offset_x: f32,
+    #[serde(default = "default_capture_filter")]
+    pub capture_filter: String,
     pub server_damage_calibration: bool,
     #[serde(default)]
     pub separate_reaction_damage: bool,
@@ -816,6 +818,7 @@ impl Default for UiConfig {
             always_on_top: true,
             island_notifications: true,
             island_offset_x: 0.0,
+            capture_filter: default_capture_filter(),
             server_damage_calibration: false,
             separate_reaction_damage: false,
             auto_round_after_idle: false,
@@ -857,6 +860,7 @@ impl UiConfig {
         } else {
             0.0
         };
+        self.capture_filter = sanitize_capture_filter(&self.capture_filter);
         self.main_window_size = sanitize_window_size(self.main_window_size, MAIN_WINDOW_MIN_SIZE);
         self.abyss_window_size =
             sanitize_window_size(self.abyss_window_size, ABYSS_WINDOW_MIN_SIZE);
@@ -907,6 +911,24 @@ const fn default_auto_check_updates() -> bool {
 
 const fn default_auto_round_idle_seconds() -> u32 {
     AUTO_ROUND_IDLE_SECONDS_DEFAULT
+}
+
+fn default_capture_filter() -> String {
+    "udp".to_owned()
+}
+
+pub fn sanitize_capture_filter(filter: &str) -> String {
+    let filter = filter.trim();
+    if filter.is_empty()
+        || filter.len() > 512
+        || filter
+            .chars()
+            .any(|character| matches!(character, '\0' | '\r' | '\n'))
+    {
+        default_capture_filter()
+    } else {
+        filter.to_owned()
+    }
 }
 
 fn new_install_config() -> UiConfig {
@@ -1371,6 +1393,7 @@ mod tests {
         assert!(!config.reduce_motion);
         assert!(config.auto_check_updates);
         assert!(!config.auto_download_updates);
+        assert_eq!(config.capture_filter, "udp");
         assert!(!config.separate_reaction_damage);
         assert!(!config.auto_round_after_idle);
         assert_eq!(
@@ -1405,6 +1428,22 @@ mod tests {
 
         assert_eq!(minimum.auto_round_idle_seconds, AUTO_ROUND_IDLE_SECONDS_MIN);
         assert_eq!(maximum.auto_round_idle_seconds, AUTO_ROUND_IDLE_SECONDS_MAX);
+    }
+
+    #[test]
+    fn capture_filter_is_backward_compatible_trimmed_and_bounded() {
+        let legacy: UiConfig = serde_json::from_str("{}").expect("legacy config");
+        assert_eq!(legacy.capture_filter, "udp");
+
+        let custom = UiConfig {
+            capture_filter: "  udp port 30196  ".to_owned(),
+            ..UiConfig::default()
+        }
+        .sanitized();
+        assert_eq!(custom.capture_filter, "udp port 30196");
+        assert_eq!(sanitize_capture_filter(""), "udp");
+        assert_eq!(sanitize_capture_filter("tcp\nport 80"), "udp");
+        assert_eq!(sanitize_capture_filter(&"x".repeat(513)), "udp");
     }
 
     #[test]

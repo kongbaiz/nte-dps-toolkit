@@ -7,7 +7,7 @@ import {
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const SETTINGS_CONTRACT_VERSION = 2;
+export const SETTINGS_CONTRACT_VERSION = 4;
 export const HUD_SETTING_OPTION_IDS = [
   "title",
   "team_dps",
@@ -34,6 +34,7 @@ export type AccentId = "zinc" | "blue" | "violet" | "orange" | "green";
 export type DensityId = "compact" | "cozy" | "comfortable";
 export type DpsTimeModeId = "time-stop-adjusted" | "real-time";
 export type PassthroughHotkeyId = "home" | "insert" | "f8" | "f9";
+export type UpdateComponentId = "app" | "mods-plugin";
 export type FunctionKey =
   | "F1"
   | "F2"
@@ -66,6 +67,26 @@ export interface UpdateSettings {
   status: string;
   messageKey: string;
   messageArguments: string[];
+  available: AvailableUpdate[];
+  activeComponent: UpdateComponentId | null;
+  downloadedBytes: string;
+  totalBytes: string;
+  prepared: PreparedUpdate | null;
+  installEnabled: boolean;
+  installBlockedMessageKey: string | null;
+}
+
+export interface AvailableUpdate {
+  component: UpdateComponentId;
+  version: string;
+  publishedAt: string;
+  notes: string;
+  artifactSize: string;
+}
+
+export interface PreparedUpdate {
+  component: UpdateComponentId;
+  version: string;
 }
 
 export interface CaptureDevice {
@@ -117,6 +138,7 @@ export interface TeamDataSettings {
 
 export interface SettingsSnapshot {
   contractVersion: number;
+  generation: string;
   adapterVersion: string;
   interface: InterfaceSettings;
   updates: UpdateSettings;
@@ -129,6 +151,13 @@ export interface SettingsSnapshot {
   hudWidthMax: number;
   hud: HudConfigSnapshot;
 }
+
+export interface SettingsSnapshotEvent {
+  event: "snapshot";
+  payload: SettingsSnapshot;
+}
+
+export type SettingsEvent = SettingsSnapshotEvent;
 
 export type InterfaceSettingsInput = Omit<InterfaceSettings, "darkMode">;
 export interface UpdateSettingsInput {
@@ -198,6 +227,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
 
   return {
     contractVersion,
+    generation: decimalString(snapshot.generation, "settings.generation"),
     adapterVersion: string(snapshot.adapterVersion, "settings.adapterVersion"),
     interface: {
       language: enumValue(
@@ -234,23 +264,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
         "settings.interface.islandOffsetX",
       ),
     },
-    updates: {
-      currentVersion: string(
-        updates.currentVersion,
-        "settings.updates.currentVersion",
-      ),
-      autoCheck: boolean(updates.autoCheck, "settings.updates.autoCheck"),
-      autoDownload: boolean(
-        updates.autoDownload,
-        "settings.updates.autoDownload",
-      ),
-      status: string(updates.status, "settings.updates.status"),
-      messageKey: string(updates.messageKey, "settings.updates.messageKey"),
-      messageArguments: stringArray(
-        updates.messageArguments,
-        "settings.updates.messageArguments",
-      ),
-    },
+    updates: parseUpdateSettings(updates),
     capture: {
       bpfFilter: string(capture.bpfFilter, "settings.capture.bpfFilter"),
       devices: array(capture.devices, "settings.capture.devices").map(
@@ -327,6 +341,147 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     hudWidthMin,
     hudWidthMax,
     hud,
+  };
+}
+
+function parseUpdateSettings(updates: Record<string, unknown>): UpdateSettings {
+  const available = array(updates.available, "settings.updates.available").map(
+    (value, index) => {
+      const update = record(value, `settings.updates.available[${index}]`);
+      return {
+        component: enumValue(
+          update.component,
+          ["app", "mods-plugin"] as const,
+          `settings.updates.available[${index}].component`,
+        ),
+        version: string(
+          update.version,
+          `settings.updates.available[${index}].version`,
+        ),
+        publishedAt: string(
+          update.publishedAt,
+          `settings.updates.available[${index}].publishedAt`,
+        ),
+        notes: string(
+          update.notes,
+          `settings.updates.available[${index}].notes`,
+        ),
+        artifactSize: decimalString(
+          update.artifactSize,
+          `settings.updates.available[${index}].artifactSize`,
+        ),
+      };
+    },
+  );
+  if (
+    available.length > 2 ||
+    new Set(available.map((update) => update.component)).size !==
+      available.length
+  ) {
+    throw new TechnicalContractError(
+      "settings.updates.available must contain each stable component at most once",
+    );
+  }
+
+  const activeComponent = nullableEnumValue(
+    updates.activeComponent,
+    ["app", "mods-plugin"] as const,
+    "settings.updates.activeComponent",
+  );
+  const downloadedBytes = decimalString(
+    updates.downloadedBytes,
+    "settings.updates.downloadedBytes",
+  );
+  const totalBytes = decimalString(
+    updates.totalBytes,
+    "settings.updates.totalBytes",
+  );
+  if (compareSettingsGeneration(downloadedBytes, totalBytes) > 0) {
+    throw new TechnicalContractError(
+      "settings.updates.downloadedBytes must not exceed totalBytes",
+    );
+  }
+  const prepared =
+    updates.prepared === null
+      ? null
+      : parsePreparedUpdate(updates.prepared, "settings.updates.prepared");
+  const installEnabled = boolean(
+    updates.installEnabled,
+    "settings.updates.installEnabled",
+  );
+  const installBlockedMessageKey = nullableString(
+    updates.installBlockedMessageKey,
+    "settings.updates.installBlockedMessageKey",
+  );
+  if (
+    installEnabled &&
+    (prepared === null || installBlockedMessageKey !== null)
+  ) {
+    throw new TechnicalContractError(
+      "settings.updates install state is inconsistent",
+    );
+  }
+
+  return {
+    currentVersion: string(
+      updates.currentVersion,
+      "settings.updates.currentVersion",
+    ),
+    autoCheck: boolean(updates.autoCheck, "settings.updates.autoCheck"),
+    autoDownload: boolean(
+      updates.autoDownload,
+      "settings.updates.autoDownload",
+    ),
+    status: string(updates.status, "settings.updates.status"),
+    messageKey: string(updates.messageKey, "settings.updates.messageKey"),
+    messageArguments: stringArray(
+      updates.messageArguments,
+      "settings.updates.messageArguments",
+    ),
+    available,
+    activeComponent,
+    downloadedBytes,
+    totalBytes,
+    prepared,
+    installEnabled,
+    installBlockedMessageKey,
+  };
+}
+
+function parsePreparedUpdate(value: unknown, field: string): PreparedUpdate {
+  const prepared = record(value, field);
+  return {
+    component: enumValue(
+      prepared.component,
+      ["app", "mods-plugin"] as const,
+      `${field}.component`,
+    ),
+    version: string(prepared.version, `${field}.version`),
+  };
+}
+
+function nullableEnumValue<const T extends readonly string[]>(
+  value: unknown,
+  options: T,
+  field: string,
+): T[number] | null {
+  return value === null ? null : enumValue(value, options, field);
+}
+
+export function compareSettingsGeneration(left: string, right: string): number {
+  return left.length === right.length
+    ? left.localeCompare(right)
+    : left.length - right.length;
+}
+
+export function parseSettingsEvent(value: unknown): SettingsEvent {
+  const event = record(value, "settings event");
+  if (event.event !== "snapshot") {
+    throw new TechnicalContractError("Unknown settings event");
+  }
+  return {
+    event: "snapshot",
+    payload: parseSettingsSnapshot(event.payload),
   };
 }
 

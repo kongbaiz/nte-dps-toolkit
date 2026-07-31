@@ -1,4 +1,4 @@
-use tauri::WebviewWindow;
+use tauri::{WebviewWindow, WindowEvent};
 
 use crate::contract::CommandError;
 
@@ -19,6 +19,18 @@ pub(crate) fn show(window: &WebviewWindow) -> Result<(), CommandError> {
     window.show().map_err(window_error)?;
     window.unminimize().map_err(window_error)?;
     window.set_focus().map_err(window_error)
+}
+
+pub(crate) fn bind_close_to_hide(window: &WebviewWindow) {
+    let window = window.clone();
+    window.clone().on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Err(error) = window.hide() {
+                log::error!("hide abyss values window after native close failed: {error}");
+            }
+        }
+    });
 }
 
 fn window_error(error: tauri::Error) -> CommandError {

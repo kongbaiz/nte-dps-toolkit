@@ -1,7 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 import {
   parseSettingsSnapshot,
+  parseSettingsEvent,
   type CaptureSettingsInput,
   type GlobalHotkeyActionId,
   type HotkeyBinding,
@@ -11,9 +12,11 @@ import {
   type LayoutProfileId,
   type SettingsCommandError,
   type SettingsSnapshot,
+  type UpdateComponentId,
   type UpdateSettingsInput,
 } from "@/lib/tauri/settings-contract";
 import {
+  parseSubscriptionReceipt,
   parseTechnicalCommandError,
   TechnicalContractError,
   type HudModuleId,
@@ -23,10 +26,12 @@ const COMMANDS = {
   applyHudPreset: "apply_settings_hud_preset",
   applyLayoutProfile: "apply_settings_layout_profile",
   checkUpdates: "check_settings_updates",
+  downloadUpdate: "download_settings_update",
   clearCaptureFiles: "clear_settings_capture_files",
   exportTeamData: "export_settings_team_data",
   getSnapshot: "get_settings_snapshot",
   importTeamData: "import_settings_team_data",
+  installUpdate: "install_settings_update",
   moveHudModule: "move_settings_hud_module",
   openHudEditor: "open_settings_hud_editor",
   openAbyssValues: "open_settings_abyss_values",
@@ -41,6 +46,8 @@ const COMMANDS = {
   setHotkeysEnabled: "set_settings_hotkeys_enabled",
   setInterface: "set_settings_interface",
   setUpdatePreferences: "set_settings_update_preferences",
+  subscribe: "subscribe_settings",
+  unsubscribe: "unsubscribe_settings",
 } as const;
 
 interface SettingsTransport {
@@ -48,6 +55,7 @@ interface SettingsTransport {
     command: string,
     arguments_?: Record<string, unknown>,
   ): Promise<unknown>;
+  createChannel(onMessage: (message: unknown) => void): unknown;
 }
 
 export interface SettingsClient {
@@ -57,6 +65,8 @@ export interface SettingsClient {
     settings: UpdateSettingsInput,
   ): Promise<SettingsSnapshot>;
   checkUpdates(): Promise<SettingsSnapshot>;
+  downloadUpdate(component: UpdateComponentId): Promise<SettingsSnapshot>;
+  installUpdate(): Promise<SettingsSnapshot>;
   setCapture(settings: CaptureSettingsInput): Promise<SettingsSnapshot>;
   refreshCaptureDevices(): Promise<SettingsSnapshot>;
   setHotkeysEnabled(enabled: boolean): Promise<SettingsSnapshot>;
@@ -87,14 +97,24 @@ export interface SettingsClient {
   setHudWidth(width: number): Promise<SettingsSnapshot>;
   setHudAlwaysOnTop(enabled: boolean): Promise<SettingsSnapshot>;
   openHudEditor(): Promise<SettingsSnapshot>;
+  subscribe(
+    onSnapshot: (snapshot: SettingsSnapshot) => void,
+    onError: (error: SettingsCommandError) => void,
+  ): () => Promise<void>;
 }
 
 const tauriTransport: SettingsTransport = {
   invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
+  createChannel: (onMessage) => {
+    const channel = new Channel<unknown>();
+    channel.onmessage = onMessage;
+    return channel;
+  },
 };
 
 export function createSettingsClient(
   transport: SettingsTransport = tauriTransport,
+  createSubscriptionId: () => string = () => crypto.randomUUID(),
 ): SettingsClient {
   async function snapshotCommand(
     command: string,
@@ -117,6 +137,9 @@ export function createSettingsClient(
     setUpdatePreferences: (settings) =>
       snapshotCommand(COMMANDS.setUpdatePreferences, { settings }),
     checkUpdates: () => snapshotCommand(COMMANDS.checkUpdates),
+    downloadUpdate: (component) =>
+      snapshotCommand(COMMANDS.downloadUpdate, { component }),
+    installUpdate: () => snapshotCommand(COMMANDS.installUpdate),
     setCapture: (settings) =>
       snapshotCommand(COMMANDS.setCapture, { settings }),
     refreshCaptureDevices: () =>
@@ -164,6 +187,37 @@ export function createSettingsClient(
     setHudAlwaysOnTop: (enabled) =>
       snapshotCommand(COMMANDS.setHudAlwaysOnTop, { enabled }),
     openHudEditor: () => snapshotCommand(COMMANDS.openHudEditor),
+    subscribe: (onSnapshot, onError) => {
+      const subscriptionId = createSubscriptionId();
+      let closed = false;
+      const onMessage = (message: unknown) => {
+        if (closed) return;
+        try {
+          onSnapshot(parseSettingsEvent(message).payload);
+        } catch (error) {
+          onError(parseTechnicalCommandError(error));
+        }
+      };
+      const onEvent = transport.createChannel(onMessage);
+      const receipt = transport
+        .invoke(COMMANDS.subscribe, { subscriptionId, onEvent })
+        .then(parseSubscriptionReceipt)
+        .catch((error: unknown) => {
+          if (!closed) onError(parseTechnicalCommandError(error));
+          return undefined;
+        });
+
+      return async () => {
+        if (closed) return;
+        closed = true;
+        const activeReceipt = await receipt;
+        if (activeReceipt) {
+          await transport.invoke(COMMANDS.unsubscribe, {
+            subscriptionId: activeReceipt.subscriptionId,
+          });
+        }
+      };
+    },
   };
 }
 

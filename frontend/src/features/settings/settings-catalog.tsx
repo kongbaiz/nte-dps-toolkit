@@ -41,8 +41,11 @@ import {
   type InterfaceSettingsInput,
   type LayoutProfileId,
   type SettingsSnapshot,
+  type UpdateComponentId,
 } from "@/lib/tauri/settings-contract";
 import { cn } from "@/lib/utils";
+
+import { settingsSectionPending } from "./settings-view-model";
 
 const CONTROL_CLASS_NAME =
   "h-8 w-full min-w-0 rounded-md border bg-background px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -110,6 +113,8 @@ export interface SettingsCatalogActions {
     autoDownload: boolean,
   ): Promise<void>;
   checkUpdates(): Promise<void>;
+  downloadUpdate(component: UpdateComponentId): Promise<void>;
+  installUpdate(): Promise<void>;
   setCapture(settings: CaptureSettingsInput): Promise<void>;
   refreshCaptureDevices(): Promise<void>;
   setHotkeysEnabled(enabled: boolean): Promise<void>;
@@ -127,54 +132,68 @@ export interface SettingsCatalogActions {
 
 export function PrimarySettingsColumn({
   snapshot,
-  pending,
+  pendingAction,
   actions,
 }: {
   snapshot: SettingsSnapshot;
-  pending: boolean;
+  pendingAction: string | null;
   actions: SettingsCatalogActions;
 }) {
   return (
     <div className="flex min-w-0 flex-col gap-3">
       <InterfaceSettingsCard
         snapshot={snapshot}
-        pending={pending}
+        pending={settingsSectionPending(pendingAction, "interface")}
         actions={actions}
       />
       <SoftwareUpdateCard
         snapshot={snapshot}
-        pending={pending}
+        pending={settingsSectionPending(pendingAction, "update")}
         actions={actions}
       />
       <ParseSettingsCard
         snapshot={snapshot}
-        pending={pending}
+        pending={settingsSectionPending(pendingAction, "capture")}
         actions={actions}
       />
-      <HotkeysCard snapshot={snapshot} pending={pending} actions={actions} />
+      <HotkeysCard
+        snapshot={snapshot}
+        pending={settingsSectionPending(pendingAction, "hotkeys")}
+        actions={actions}
+      />
     </div>
   );
 }
 
 export function SecondarySettingsSections({
   snapshot,
-  pending,
+  pendingAction,
   actions,
 }: {
   snapshot: SettingsSnapshot;
-  pending: boolean;
+  pendingAction: string | null;
   actions: SettingsCatalogActions;
 }) {
   return (
     <>
-      <LayoutProfilesCard pending={pending} actions={actions} />
-      <TeamDataCard snapshot={snapshot} pending={pending} actions={actions} />
-      <CaptureFilesCard
-        snapshot={snapshot}
-        pending={pending}
+      <LayoutProfilesCard
+        pending={settingsSectionPending(pendingAction, "layout")}
         actions={actions}
       />
-      <AbyssValuesCard pending={pending} actions={actions} />
+      <TeamDataCard
+        snapshot={snapshot}
+        pending={settingsSectionPending(pendingAction, "team-data")}
+        actions={actions}
+      />
+      <CaptureFilesCard
+        snapshot={snapshot}
+        pending={settingsSectionPending(pendingAction, "capture-files")}
+        actions={actions}
+      />
+      <AbyssValuesCard
+        pending={settingsSectionPending(pendingAction, "abyss-values")}
+        actions={actions}
+      />
     </>
   );
 }
@@ -329,6 +348,15 @@ function SoftwareUpdateCard({
   actions: SettingsCatalogActions;
 }) {
   const update = snapshot.updates;
+  const busy = ["checking", "downloading", "installing", "restarting"].includes(
+    update.status,
+  );
+  const showProgress =
+    update.status === "downloading" && update.activeComponent !== null;
+  const progress = updateProgressPercent(
+    update.downloadedBytes,
+    update.totalBytes,
+  );
   return (
     <Card>
       <CardHeader>
@@ -364,16 +392,116 @@ function SoftwareUpdateCard({
             void actions.setUpdatePreferences(update.autoCheck, autoDownload)
           }
         />
+        {update.available.map((available) => (
+          <section
+            className="flex flex-col gap-2.5 py-3"
+            key={available.component}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Badge variant="outline">
+                  {t(updateComponentLabelKey(available.component))}
+                </Badge>
+                <strong className="text-sm">{available.version}</strong>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {available.publishedAt} ·{" "}
+                {formatByteCount(available.artifactSize)}
+              </span>
+            </div>
+            {available.notes.trim() ? (
+              <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                {available.notes}
+              </p>
+            ) : null}
+            <div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={pending || busy || update.prepared !== null}
+                onClick={() => void actions.downloadUpdate(available.component)}
+              >
+                <Download aria-hidden="true" />
+                {t(
+                  available.component === "app"
+                    ? "Download application update"
+                    : "Download Mod loader update",
+                )}
+              </Button>
+            </div>
+          </section>
+        ))}
+        {showProgress ? (
+          <section className="flex flex-col gap-2 py-3">
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>{t(update.messageKey)}</span>
+              <span>
+                {formatByteCount(update.downloadedBytes)} /{" "}
+                {formatByteCount(update.totalBytes)}
+              </span>
+            </div>
+            <div
+              className="h-2 overflow-hidden rounded-full bg-muted"
+              role="progressbar"
+              aria-label={t(update.messageKey)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width]"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </section>
+        ) : null}
+        {update.prepared ? (
+          <section className="flex flex-col gap-2.5 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Badge>{t("Ready")}</Badge>
+                <span className="text-sm font-medium">
+                  {t(updateComponentLabelKey(update.prepared.component))} ·{" "}
+                  {update.prepared.version}
+                </span>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                disabled={pending || !update.installEnabled}
+                onClick={() => void actions.installUpdate()}
+              >
+                {t(
+                  update.prepared.component === "app"
+                    ? "Install and restart"
+                    : "Install Mod loader update",
+                )}
+              </Button>
+            </div>
+            {update.installBlockedMessageKey ? (
+              <p className="text-xs text-destructive">
+                {t(update.installBlockedMessageKey)}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
       </CardContent>
       <CardFooter className="flex-wrap justify-between gap-3">
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="size-1.5 rounded-full bg-muted-foreground" />
+          <span
+            className={cn(
+              "size-1.5 rounded-full bg-muted-foreground",
+              busy && "animate-pulse bg-primary",
+              update.status === "error" && "bg-destructive",
+            )}
+          />
           {tf(update.messageKey, update.messageArguments)}
         </span>
         <Button
           type="button"
           variant="outline"
-          disabled={pending}
+          disabled={pending || busy || update.prepared !== null}
           onClick={() => void actions.checkUpdates()}
         >
           <RefreshCw
@@ -385,6 +513,29 @@ function SoftwareUpdateCard({
       </CardFooter>
     </Card>
   );
+}
+
+function updateComponentLabelKey(component: UpdateComponentId): string {
+  return component === "app" ? "Application" : "Mod loader";
+}
+
+function updateProgressPercent(downloaded: string, total: string): number {
+  const totalBytes = BigInt(total);
+  if (totalBytes === 0n) return 0;
+  return Number((BigInt(downloaded) * 100n) / totalBytes);
+}
+
+function formatByteCount(value: string): string {
+  const bytes = BigInt(value);
+  const units = [
+    { size: 1024n * 1024n * 1024n, suffix: "GB" },
+    { size: 1024n * 1024n, suffix: "MB" },
+    { size: 1024n, suffix: "KB" },
+  ];
+  const unit = units.find((candidate) => bytes >= candidate.size);
+  if (!unit) return `${bytes} B`;
+  const tenths = (bytes * 10n) / unit.size;
+  return `${tenths / 10n}.${tenths % 10n} ${unit.suffix}`;
 }
 
 function ParseSettingsCard({

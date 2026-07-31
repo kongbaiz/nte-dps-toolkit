@@ -28,7 +28,11 @@ pub fn run() {
             let console_window = app
                 .get_webview_window(windows::console::CONSOLE_WINDOW_LABEL)
                 .expect("configured Console window must exist");
+            let abyss_values_window = app
+                .get_webview_window(windows::abyss_values::ABYSS_VALUES_WINDOW_LABEL)
+                .expect("configured Abyss Values window must exist");
             windows::console::bind_owned_window_lifetime(&console_window, app.handle().clone());
+            windows::abyss_values::bind_close_to_hide(&abyss_values_window);
             console_window.set_title(&nte_dps_tool::storage::i18n::t("NTE Console"))?;
             hud_window.set_always_on_top(state.always_on_top())?;
             if let Err(error) = windows::hud::set_editing_effect(&hud_window, true) {
@@ -60,6 +64,7 @@ pub fn run() {
                     eprintln!("Tauri HUD passthrough hotkey unavailable: {error}");
                 }
             }
+            commands::settings::schedule_completed_update_cleanup();
             commands::settings::schedule_automatic_update_check(state.inner().clone());
 
             if cfg!(debug_assertions) {
@@ -85,9 +90,11 @@ pub fn run() {
             commands::settings::apply_settings_layout_profile,
             commands::settings::clear_settings_capture_files,
             commands::settings::check_settings_updates,
+            commands::settings::download_settings_update,
             commands::settings::export_settings_team_data,
             commands::settings::get_settings_snapshot,
             commands::settings::import_settings_team_data,
+            commands::settings::install_settings_update,
             commands::settings::move_settings_hud_module,
             commands::settings::open_settings_hud_editor,
             commands::settings::open_settings_abyss_values,
@@ -110,10 +117,13 @@ pub fn run() {
             commands::technical::set_hud_width,
             commands::technical::start_hud_capture,
             commands::technical::stop_hud_capture,
+            windows::console::show_console_when_ready,
             channels::technical::subscribe_technical_state,
             channels::technical::unsubscribe_technical_state,
             channels::mod_studio::subscribe_mod_studio_runtime,
             channels::mod_studio::unsubscribe_mod_studio_runtime,
+            channels::settings::subscribe_settings,
+            channels::settings::unsubscribe_settings,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application runtime failed");

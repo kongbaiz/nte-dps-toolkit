@@ -127,6 +127,13 @@ export function acceptEnabledWorkspace(
   state: ModStudioPageState,
   workspace: ModStudioWorkspaceSnapshot,
 ): ModStudioPageState {
+  if (
+    (state.status === "ready" || state.status === "empty") &&
+    compareModStudioSequence(workspace.generation, state.workspace.generation) <
+      0
+  ) {
+    return state;
+  }
   if (state.status !== "ready") {
     return acceptWorkspace(workspace, null);
   }

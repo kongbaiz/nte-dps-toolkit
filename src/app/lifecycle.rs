@@ -1448,6 +1448,7 @@ impl DpsApp {
             always_on_top: self.preferences.always_on_top,
             island_notifications: self.notifications.island_enabled,
             island_offset_x: self.notifications.island_offset_x,
+            capture_filter: self.capture_ui.filter.clone(),
             server_damage_calibration: self.capture_ui.server_damage_calibration,
             separate_reaction_damage: self.preferences.separate_reaction_damage,
             auto_round_after_idle: self.capture_ui.auto_round_after_idle,

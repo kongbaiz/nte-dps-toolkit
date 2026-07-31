@@ -11,6 +11,8 @@ default = ["gui"]
 desktop = [
     "dep:ed25519-dalek",
     "dep:semver",
+    "dep:sha2",
+    "dep:zip",
 ]
 gui = [
     "dep:ed25519-dalek",

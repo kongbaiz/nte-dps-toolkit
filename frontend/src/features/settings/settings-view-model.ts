@@ -1,4 +1,5 @@
 import {
+  compareSettingsGeneration,
   isHudModuleId,
   type HudSettingOptionId,
   type SettingsCommandError,
@@ -18,6 +19,65 @@ export interface HudModuleMove {
   dragged: HudModuleId;
   target: HudModuleId;
   insertAfter: boolean;
+}
+
+export type SettingsPendingSection =
+  | "interface"
+  | "update"
+  | "capture"
+  | "hotkeys"
+  | "layout"
+  | "team-data"
+  | "capture-files"
+  | "abyss-values"
+  | "hud-window"
+  | "hud-modules"
+  | "hud-editor";
+
+export function settingsSectionPending(
+  pendingAction: string | null,
+  section: SettingsPendingSection,
+): boolean {
+  if (pendingAction === null) return false;
+  switch (section) {
+    case "interface":
+      return pendingAction === "interface";
+    case "update":
+      return pendingAction.startsWith("update-");
+    case "capture":
+      return pendingAction === "capture" || pendingAction === "capture-devices";
+    case "hotkeys":
+      return (
+        pendingAction === "hotkeys-enabled" ||
+        pendingAction.startsWith("hotkey:")
+      );
+    case "layout":
+      return pendingAction.startsWith("layout:");
+    case "team-data":
+      return pendingAction.startsWith("team-");
+    case "capture-files":
+      return pendingAction.startsWith("capture-files-");
+    case "abyss-values":
+      return pendingAction === "abyss-values";
+    case "hud-window":
+      return pendingAction === "always-on-top" || pendingAction === "width";
+    case "hud-modules":
+      return (
+        pendingAction.startsWith("option:") ||
+        pendingAction.startsWith("preset:") ||
+        pendingAction.startsWith("module:") ||
+        pendingAction.startsWith("move:")
+      );
+    case "hud-editor":
+      return pendingAction === "open-editor";
+  }
+}
+
+export function shouldAcceptSettingsGeneration(
+  accepted: string | null,
+  incoming: string,
+): boolean {
+  return accepted === null || compareSettingsGeneration(incoming, accepted) > 0;
 }
 
 export function hudOptionEnabled(

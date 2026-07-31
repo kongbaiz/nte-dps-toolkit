@@ -44,7 +44,9 @@ only transient form text and shortcut-recording state.
 
 ## Contract and trust boundary
 
-- `SETTINGS_CONTRACT_VERSION = 2`;
+- Phase 17 introduced `SETTINGS_CONTRACT_VERSION = 2`; the ordered Settings
+  stream raised it to v3 and the completed update transaction projection in
+  phase 18 raises the current contract to v4;
   `ABYSS_VALUES_CONTRACT_VERSION = 1`.
 - Every command is scoped to the stable Console window.
 - Enum-like values, shortcut bindings, BPF text, finite numbers, imported JSON,
@@ -84,4 +86,4 @@ only transient form text and shortcut-recording state.
    alert overlays the page without moving, shrinking, or clipping any card,
    and that its close button dismisses it.
 10. Repeat the page at 820 px and 1440 px widths, 100%/125%/150% DPI, light/dark
-   state, all three theme presets, and reduced motion.
+    state, all three theme presets, and reduced motion.

@@ -15,7 +15,7 @@ pub mod network;
 pub mod passthrough_hotkey;
 #[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod update_http;
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod update_install;
 #[cfg(feature = "gui")]
 pub mod window_attributes;
