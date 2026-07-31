@@ -1,0 +1,170 @@
+import { describe, expect, it } from "vitest";
+
+import { HUD_MODULE_IDS } from "@/lib/tauri/technical-contract";
+
+import { createSettingsClient } from "./settings-client";
+
+function settingsFixture() {
+  return {
+    contractVersion: 2,
+    adapterVersion: "0.3.6",
+    interface: {
+      language: "zh-CN",
+      darkMode: false,
+      themePreset: "zinc",
+      accent: "zinc",
+      density: "cozy",
+      reduceMotion: false,
+      islandNotifications: true,
+      islandOffsetX: 0,
+    },
+    updates: {
+      currentVersion: "0.3.6",
+      autoCheck: true,
+      autoDownload: false,
+      status: "idle",
+      messageKey: "Updates have not been checked in this session",
+      messageArguments: [],
+    },
+    capture: {
+      bpfFilter: "udp",
+      devices: [],
+      manualCaptureDevice: null,
+      serverDamageCalibration: false,
+      separateReactionDamage: false,
+      autoRoundAfterIdle: false,
+      autoRoundIdleSeconds: 30,
+      autoRoundIdleSecondsMin: 5,
+      autoRoundIdleSecondsMax: 600,
+      dpsTimeMode: "time-stop-adjusted",
+      passthroughHotkey: "home",
+    },
+    hotkeys: {
+      enabled: true,
+      bindings: [
+        { action: "capture", binding: null },
+        { action: "reset", binding: null },
+        { action: "hud", binding: null },
+      ],
+    },
+    captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
+    teamData: { upperImported: false, lowerImported: false },
+    alwaysOnTop: true,
+    hudWidthMin: 280,
+    hudWidthMax: 3840,
+    hud: {
+      width: 380,
+      moduleOrder: [...HUD_MODULE_IDS],
+      showTitle: false,
+      showTeamDps: true,
+      showDuration: true,
+      showTotalDamage: true,
+      showCharacterRows: true,
+      showDamageTaken: false,
+      showAbyssHalf: false,
+      showPassthroughState: false,
+      showMiniTimeline: false,
+    },
+  };
+}
+
+describe("settings client", () => {
+  it("uses typed command names and camelCase arguments", async () => {
+    const calls: Array<{
+      command: string;
+      arguments_?: Record<string, unknown>;
+    }> = [];
+    const client = createSettingsClient({
+      invoke: async (command, arguments_) => {
+        calls.push({ command, arguments_ });
+        return settingsFixture();
+      },
+    });
+
+    await client.setHudOption("damage_taken", true);
+    await client.setInterface({
+      language: "ja",
+      themePreset: "tactical",
+      accent: "orange",
+      density: "compact",
+      reduceMotion: true,
+      islandNotifications: false,
+      islandOffsetX: 40,
+    });
+    await client.setHotkeyBinding("capture", {
+      ctrl: true,
+      alt: false,
+      shift: false,
+      key: "F8",
+    });
+    await client.applyHudPreset("detailed");
+    await client.moveHudModule("title", "summary", true);
+    await client.setHudWidth(512);
+
+    expect(calls).toEqual([
+      {
+        command: "set_settings_hud_option",
+        arguments_: { option: "damage_taken", enabled: true },
+      },
+      {
+        command: "set_settings_interface",
+        arguments_: {
+          settings: {
+            language: "ja",
+            themePreset: "tactical",
+            accent: "orange",
+            density: "compact",
+            reduceMotion: true,
+            islandNotifications: false,
+            islandOffsetX: 40,
+          },
+        },
+      },
+      {
+        command: "set_settings_hotkey_binding",
+        arguments_: {
+          action: "capture",
+          binding: {
+            ctrl: true,
+            alt: false,
+            shift: false,
+            key: "F8",
+          },
+        },
+      },
+      {
+        command: "apply_settings_hud_preset",
+        arguments_: { preset: "detailed" },
+      },
+      {
+        command: "move_settings_hud_module",
+        arguments_: {
+          dragged: "title",
+          target: "summary",
+          insertAfter: true,
+        },
+      },
+      {
+        command: "set_settings_hud_width",
+        arguments_: { width: 512 },
+      },
+    ]);
+  });
+
+  it("normalizes Rust command failures", async () => {
+    const client = createSettingsClient({
+      invoke: async () => {
+        throw {
+          code: "hud_config_save_failed",
+          messageKey: "Failed to save HUD configuration.",
+          messageArguments: [],
+        };
+      },
+    });
+
+    await expect(client.getSnapshot()).rejects.toMatchObject({
+      code: "hud_config_save_failed",
+      messageKey: "Failed to save HUD configuration.",
+    });
+  });
+});

@@ -1,28 +1,18 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import {
-  Activity,
-  Backpack,
   Check,
   ChevronDown,
   ChevronLeft,
-  ChevronsLeft,
   Clipboard,
   Code2,
   Copy,
-  Folder,
   FolderOpen,
-  History,
-  LockKeyhole,
   Minus,
-  Puzzle,
+  Moon,
   Radio,
   RefreshCw,
-  Settings,
-  Sparkles,
-  Timeline,
+  Sun,
   TriangleAlert,
-  UserRound,
-  type LucideIcon,
 } from "lucide-react";
 
 import {
@@ -40,6 +30,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
   TooltipContent,
@@ -51,208 +42,118 @@ import type {
   ModStudioCommandError,
   ModStudioDocumentSummary,
 } from "@/lib/tauri/mod-studio-contract";
+import { MOD_STUDIO_MAX_SOURCE_BYTES } from "@/lib/tauri/mod-studio-contract";
 
-import { highlightModSource } from "./mod-source-highlight";
-import { useModStudio } from "./use-mod-studio";
+import type { ModSourceCursor } from "./mod-source-editor";
+import {
+  formatRuntimeTimestamp,
+  runtimeEntryPlainText,
+  runtimeEntryText,
+  visibleRuntimeEntries,
+  type ModRuntimeConsoleFilter,
+} from "./mod-runtime-console-model";
 
-const MAX_MOD_SOURCE_BYTES = 16_384;
+const ModSourceEditor = lazy(async () => {
+  const module = await import("./mod-source-editor");
+  return { default: module.ModSourceEditor };
+});
+import type {
+  ModStudioRuntimeState,
+  ModStudioSourceBuffer,
+} from "./mod-studio-view-model";
+import {
+  useModStudio,
+  type ModStudioEnableState,
+  type ModStudioSaveState,
+  type ModStudioSdkState,
+} from "./use-mod-studio";
 
-interface ConsoleNavItem {
-  labelKey: string;
-  icon: LucideIcon;
-  active?: boolean;
-}
-
-const CONSOLE_NAV_GROUPS: Array<{
-  labelKey: string;
-  items: ConsoleNavItem[];
-}> = [
-  {
-    labelKey: "Common",
-    items: [
-      { labelKey: "Settings", icon: Settings },
-      { labelKey: "History", icon: History },
-    ],
-  },
-  {
-    labelKey: "Review",
-    items: [
-      { labelKey: "Timeline", icon: Timeline },
-      { labelKey: "Skills", icon: Sparkles },
-      { labelKey: "Console Loadout", icon: Backpack },
-      { labelKey: "Mod Studio", icon: Puzzle, active: true },
-    ],
-  },
-  {
-    labelKey: "Advanced",
-    items: [
-      { labelKey: "Character Data", icon: UserRound },
-      { labelKey: "Encrypted INI", icon: LockKeyhole },
-      { labelKey: "Packets", icon: Radio },
-      { labelKey: "Resources", icon: Folder },
-      { labelKey: "Diagnostics", icon: Activity },
-    ],
-  },
-];
-
-export function ModStudioPage() {
-  const { state, refresh, chooseDocument } = useModStudio();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+export function ModStudioWorkspace() {
+  const {
+    state,
+    refresh,
+    chooseDocument,
+    selectedBuffer,
+    selectedSaveState,
+    selectedBufferDirty,
+    dirtyDocumentIds,
+    editSource,
+    revertSource,
+    saveSource,
+    enableStates,
+    setDocumentEnabled,
+    runtimeState,
+    sdkState,
+  } = useModStudio();
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
-  const selectedSummary =
-    state.status === "ready"
-      ? state.workspace.documents.find(
-          (document) => document.id === state.selectedId,
-        )
-      : undefined;
 
   return (
-    <main className="console-light flex h-screen min-h-0 w-screen overflow-hidden bg-background text-foreground select-none">
-      <ConsoleSidebar
-        collapsed={sidebarCollapsed}
-        onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
-      />
-      <section className="flex min-w-0 flex-1 flex-col p-3">
-        <ModStudioHeader onRefresh={refresh} />
-        <div className="mt-3 grid min-h-0 flex-1 grid-cols-[clamp(12rem,21vw,17rem)_minmax(0,1fr)] overflow-hidden border bg-card max-[900px]:grid-cols-[12rem_minmax(0,1fr)]">
-          <ExplorerPane
-            state={state}
-            selectedId={state.status === "ready" ? state.selectedId : null}
-            onSelect={chooseDocument}
-            onRefresh={refresh}
-          />
-          <section className="flex min-h-0 min-w-0 flex-col">
-            {state.status === "ready" ? (
-              <EditorPane
-                selectedId={state.selectedId}
-                selectedSummary={selectedSummary}
-                document={state.document}
-                onRetry={refresh}
-                consoleCollapsed={consoleCollapsed}
-                onToggleConsole={() =>
-                  setConsoleCollapsed((collapsed) => !collapsed)
+    <section className="flex min-w-0 flex-1 flex-col p-3">
+      <ModStudioHeader runtimeState={runtimeState} onRefresh={refresh} />
+      <div className="mt-3 grid min-h-0 flex-1 grid-cols-[clamp(12rem,21vw,17rem)_minmax(0,1fr)] overflow-hidden border bg-card max-[900px]:grid-cols-[12rem_minmax(0,1fr)]">
+        <ExplorerPane
+          state={state}
+          selectedId={state.status === "ready" ? state.selectedId : null}
+          onSelect={chooseDocument}
+          onRefresh={refresh}
+          dirtyDocumentIds={dirtyDocumentIds}
+          enableStates={enableStates}
+          onSetEnabled={(id, enabled) => {
+            void setDocumentEnabled(id, enabled);
+          }}
+        />
+        <section className="flex min-h-0 min-w-0 flex-col">
+          {state.status === "ready" ? (
+            <EditorPane
+              selectedId={state.selectedId}
+              document={state.document}
+              sourceBuffer={selectedBuffer}
+              saveState={selectedSaveState}
+              dirty={selectedBufferDirty}
+              onSourceChange={(source) => {
+                if (selectedBuffer !== null) {
+                  editSource(
+                    state.selectedId,
+                    selectedBuffer.savedSource,
+                    source,
+                  );
                 }
-              />
-            ) : (
-              <EditorPlaceholder loading={state.status === "loading"} />
-            )}
-          </section>
-        </div>
-      </section>
-    </main>
-  );
-}
-
-interface ConsoleSidebarProps {
-  collapsed: boolean;
-  onToggle: () => void;
-}
-
-function ConsoleSidebar({ collapsed, onToggle }: ConsoleSidebarProps) {
-  return (
-    <aside
-      className={cn(
-        "flex w-52 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width] duration-150 max-[900px]:w-14 max-[900px]:px-1.5",
-        collapsed && "w-14 px-1.5",
-      )}
-      aria-label={t("Console navigation")}
-    >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className="mb-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-card text-sm text-muted-foreground hover:bg-muted"
-              aria-label={t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
-              onClick={onToggle}
+              }}
+              onSave={() => {
+                if (selectedBuffer !== null && selectedBufferDirty) {
+                  void saveSource(state.selectedId, selectedBuffer);
+                }
+              }}
+              onRevert={() => {
+                if (selectedBuffer !== null) {
+                  revertSource(state.selectedId, selectedBuffer);
+                }
+              }}
+              onRetry={refresh}
+              consoleCollapsed={consoleCollapsed}
+              runtimeState={runtimeState}
+              sdkState={sdkState}
+              onToggleConsole={() =>
+                setConsoleCollapsed((collapsed) => !collapsed)
+              }
             />
-          }
-        >
-          {collapsed ? (
-            <ChevronLeft className="size-4 rotate-180" aria-hidden="true" />
           ) : (
-            <>
-              <ChevronsLeft className="size-4" aria-hidden="true" />
-              <span className="max-[900px]:sr-only">{t("Collapse")}</span>
-            </>
+            <EditorPlaceholder loading={state.status === "loading"} />
           )}
-        </TooltipTrigger>
-        <TooltipContent>
-          {t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
-        </TooltipContent>
-      </Tooltip>
-
-      <nav className="min-h-0 overflow-y-auto">
-        {CONSOLE_NAV_GROUPS.map((group) => (
-          <div className="mb-3" key={group.labelKey}>
-            <p
-              className={cn(
-                "mb-1 px-2 text-[11px] text-muted-foreground max-[900px]:sr-only",
-                collapsed && "sr-only",
-              )}
-            >
-              {t(group.labelKey)}
-            </p>
-            <div className="flex flex-col gap-0.5">
-              {group.items.map((item) => (
-                <ConsoleNavRow
-                  key={item.labelKey}
-                  item={item}
-                  labelHidden={collapsed}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
-      </nav>
-    </aside>
-  );
-}
-
-function ConsoleNavRow({
-  item,
-  labelHidden,
-}: {
-  item: ConsoleNavItem;
-  labelHidden: boolean;
-}) {
-  const Icon = item.icon;
-  const row = (
-    <div
-      className={cn(
-        "flex h-9 items-center gap-3 rounded-md px-2 text-sm text-muted-foreground max-[900px]:justify-center max-[900px]:px-0",
-        labelHidden && "justify-center px-0",
-        item.active &&
-          "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm",
-      )}
-      aria-current={item.active ? "page" : undefined}
-      aria-disabled={!item.active}
-    >
-      <Icon className="size-[18px] shrink-0" aria-hidden="true" />
-      <span
-        className={cn("truncate max-[900px]:sr-only", labelHidden && "sr-only")}
-      >
-        {t(item.labelKey)}
-      </span>
-    </div>
-  );
-
-  if (!labelHidden) {
-    return row;
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger render={row} />
-      <TooltipContent side="right">{t(item.labelKey)}</TooltipContent>
-    </Tooltip>
+        </section>
+      </div>
+    </section>
   );
 }
 
 function ModStudioHeader({
+  runtimeState,
   onRefresh,
 }: {
+  runtimeState: ModStudioRuntimeState;
   onRefresh: () => void | Promise<void>;
 }) {
+  const runtimeConnected = runtimeState.connection === "connected";
   return (
     <header className="border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -302,20 +203,23 @@ function ModStudioHeader({
           </TooltipContent>
         </Tooltip>
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-        <TriangleAlert
-          className="size-4 text-[var(--console-warning)]"
+        <Radio
+          className={cn(
+            "size-4",
+            runtimeConnected
+              ? "text-[var(--console-success)]"
+              : "text-[var(--console-warning)]",
+          )}
           aria-hidden="true"
         />
         <span className="font-medium">{t("In-game Mod loader")}</span>
         <span className="text-muted-foreground">
           {t(
-            "Loader status is not connected in this read-only migration slice.",
+            runtimeConnected
+              ? "Hot reload connected"
+              : "Waiting for the game Mod loader",
           )}
         </span>
-        <label className="ml-auto flex items-center gap-1 text-muted-foreground">
-          <input type="checkbox" checked={false} disabled />
-          {t("Enable")}
-        </label>
       </div>
     </header>
   );
@@ -328,6 +232,9 @@ interface ExplorerPaneProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onRefresh: () => void | Promise<void>;
+  dirtyDocumentIds: Set<string>;
+  enableStates: Record<string, ModStudioEnableState>;
+  onSetEnabled: (id: string, enabled: boolean) => void;
 }
 
 function ExplorerPane({
@@ -335,6 +242,9 @@ function ExplorerPane({
   selectedId,
   onSelect,
   onRefresh,
+  dirtyDocumentIds,
+  enableStates,
+  onSetEnabled,
 }: ExplorerPaneProps) {
   return (
     <aside className="flex min-h-0 flex-col border-r bg-[var(--console-explorer)]">
@@ -377,7 +287,10 @@ function ExplorerPane({
                 key={document.id}
                 document={document}
                 selected={document.id === selectedId}
+                dirty={dirtyDocumentIds.has(document.id)}
+                enableState={enableStates[document.id] ?? { status: "idle" }}
                 onSelect={() => onSelect(document.id)}
+                onSetEnabled={(enabled) => onSetEnabled(document.id, enabled)}
               />
             ))
           : null}
@@ -402,19 +315,33 @@ function ExplorerPane({
 interface DocumentItemProps {
   document: ModStudioDocumentSummary;
   selected: boolean;
+  dirty: boolean;
+  enableState: ModStudioEnableState;
   onSelect: () => void;
+  onSetEnabled: (enabled: boolean) => void;
 }
 
-function DocumentItem({ document, selected, onSelect }: DocumentItemProps) {
+function DocumentItem({
+  document,
+  selected,
+  dirty,
+  enableState,
+  onSelect,
+  onSetEnabled,
+}: DocumentItemProps) {
+  const enableError =
+    enableState.status === "error"
+      ? tf(enableState.error.messageKey, enableState.error.messageArguments)
+      : null;
+  const switchLabel = t(
+    document.enabled ? "Disable this Mod" : "Enable this Mod",
+  );
   return (
-    <button
-      type="button"
-      aria-current={selected ? "page" : undefined}
+    <div
       className={cn(
-        "relative flex h-10 w-full items-center gap-2 px-3 text-left text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        "relative flex h-10 w-full items-center gap-2 px-3 text-left text-sm hover:bg-muted",
         selected && "bg-muted",
       )}
-      onClick={onSelect}
     >
       {selected ? (
         <span
@@ -422,29 +349,65 @@ function DocumentItem({ document, selected, onSelect }: DocumentItemProps) {
           aria-hidden="true"
         />
       ) : null}
-      <span
-        className={cn(
-          "flex size-4 shrink-0 items-center justify-center rounded-full border text-[10px]",
-          document.enabled && "border-foreground",
-        )}
-        aria-hidden="true"
+      <button
+        type="button"
+        aria-current={selected ? "page" : undefined}
+        className="flex min-w-0 flex-1 items-center gap-2 self-stretch text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={onSelect}
       >
-        {document.enabled ? <Check className="size-3" /> : null}
+        <Code2
+          className="size-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <span className="min-w-0 flex-1 truncate font-mono">
+          {document.id}.nte
+        </span>
+        {dirty ? (
+          <span
+            className="text-muted-foreground"
+            aria-label={t("Unsaved changes")}
+          >
+            ●
+          </span>
+        ) : null}
+        <span className="sr-only">
+          {tf("{0} lines · {1} bytes", [
+            document.lineCount.toString(),
+            document.sourceBytes.toString(),
+          ])}
+        </span>
+      </button>
+      {enableError !== null ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className="flex size-6 items-center justify-center text-destructive"
+                aria-label={enableError}
+              />
+            }
+          >
+            <TriangleAlert className="size-4" aria-hidden="true" />
+          </TooltipTrigger>
+          <TooltipContent>{enableError}</TooltipContent>
+        </Tooltip>
+      ) : null}
+      <span
+        title={
+          dirty
+            ? t("Save or revert changes before changing Mod enablement.")
+            : switchLabel
+        }
+      >
+        <Switch
+          size="sm"
+          checked={document.enabled}
+          disabled={dirty || enableState.status === "saving"}
+          aria-label={switchLabel}
+          onCheckedChange={onSetEnabled}
+        />
       </span>
-      <Code2
-        className="size-4 shrink-0 text-muted-foreground"
-        aria-hidden="true"
-      />
-      <span className="min-w-0 flex-1 truncate font-mono">
-        {document.id}.nte
-      </span>
-      <span className="sr-only">
-        {tf("{0} lines · {1} bytes", [
-          document.lineCount.toString(),
-          document.sourceBytes.toString(),
-        ])}
-      </span>
-    </button>
+    </div>
   );
 }
 
@@ -465,19 +428,33 @@ type ReadyState = Extract<ModStudioState, { status: "ready" }>;
 
 interface EditorPaneProps {
   selectedId: string;
-  selectedSummary?: ModStudioDocumentSummary;
   document: ReadyState["document"];
+  sourceBuffer: ModStudioSourceBuffer | null;
+  saveState: ModStudioSaveState;
+  dirty: boolean;
+  onSourceChange: (source: string) => void;
+  onSave: () => void;
+  onRevert: () => void;
   onRetry: () => void | Promise<void>;
   consoleCollapsed: boolean;
+  runtimeState: ModStudioRuntimeState;
+  sdkState: ModStudioSdkState;
   onToggleConsole: () => void;
 }
 
 function EditorPane({
   selectedId,
-  selectedSummary,
   document,
+  sourceBuffer,
+  saveState,
+  dirty,
+  onSourceChange,
+  onSave,
+  onRevert,
   onRetry,
   consoleCollapsed,
+  runtimeState,
+  sdkState,
   onToggleConsole,
 }: EditorPaneProps) {
   return (
@@ -485,11 +462,31 @@ function EditorPane({
       <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
         <Code2 className="size-4 text-muted-foreground" aria-hidden="true" />
         <span className="font-mono text-sm">{selectedId}.nte</span>
+        {dirty ? (
+          <span
+            className="text-muted-foreground"
+            aria-label={t("Unsaved changes")}
+          >
+            ●
+          </span>
+        ) : null}
         <div className="ml-auto flex gap-2">
-          <Button variant="outline" size="sm" className="h-8" disabled>
-            {t("Save Mod")}
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            disabled={!dirty || saveState.status === "saving"}
+            onClick={onSave}
+          >
+            {t(saveState.status === "saving" ? "Saving Mod..." : "Save Mod")}
           </Button>
-          <Button variant="outline" size="sm" className="h-8" disabled>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            disabled={!dirty || saveState.status === "saving"}
+            onClick={onRevert}
+          >
             {t("Revert changes")}
           </Button>
         </div>
@@ -502,8 +499,8 @@ function EditorPane({
         <span>{t("NTE Mods")}</span>
         <ChevronLeft className="size-3 rotate-180" aria-hidden="true" />
         <span className="font-mono text-foreground">{selectedId}.nte</span>
-        {document.status === "ready"
-          ? extractCapabilityLabels(document.document.source).map((label) => (
+        {document.status === "ready" && sourceBuffer !== null
+          ? extractCapabilityLabels(sourceBuffer.source).map((label) => (
               <span
                 key={label}
                 className="rounded-sm bg-muted px-1.5 py-0.5 text-foreground"
@@ -526,71 +523,143 @@ function EditorPane({
         ) : null}
         {document.status === "ready" ? (
           <SourceEditor
-            source={document.document.source}
-            summary={selectedSummary}
+            documentId={selectedId}
+            source={sourceBuffer?.source ?? document.document.source}
+            dirty={dirty}
+            saveState={saveState}
+            sdkState={sdkState}
+            onChange={onSourceChange}
+            onSave={onSave}
           />
         ) : null}
       </div>
-      <RuntimeConsole collapsed={consoleCollapsed} onToggle={onToggleConsole} />
+      <RuntimeConsole
+        collapsed={consoleCollapsed}
+        runtimeState={runtimeState}
+        onToggle={onToggleConsole}
+      />
     </>
   );
 }
 
 function SourceEditor({
+  documentId,
   source,
-  summary,
+  dirty,
+  saveState,
+  sdkState,
+  onChange,
+  onSave,
 }: {
+  documentId: string;
   source: string;
-  summary?: ModStudioDocumentSummary;
+  dirty: boolean;
+  saveState: ModStudioSaveState;
+  sdkState: ModStudioSdkState;
+  onChange: (source: string) => void;
+  onSave: () => void;
 }) {
-  const lines = useMemo(() => highlightModSource(source), [source]);
-  const sourceBytes =
-    summary?.sourceBytes ?? new TextEncoder().encode(source).length;
+  const [cursor, setCursor] = useState<ModSourceCursor>({
+    line: 1,
+    column: 1,
+  });
+  const [editorTheme, setEditorTheme] = useState<"light" | "dark">("light");
+  const currentSourceBytes = new TextEncoder().encode(source).length;
+  const diagnosticLine =
+    saveState.status === "error" ? saveState.error.diagnosticLine : null;
+  const statusText =
+    saveState.status === "error"
+      ? tf(saveState.error.messageKey, saveState.error.messageArguments)
+      : saveState.status === "saving"
+        ? t("Saving Mod...")
+        : saveState.status === "saved" && !dirty
+          ? t("Mod saved")
+          : dirty
+            ? t("Unsaved changes")
+            : t("Saved");
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[var(--console-editor)]">
-      <div
-        className="min-h-0 flex-1 overflow-auto py-2 font-mono text-[13px] leading-6 select-text"
-        data-mod-source
-        tabIndex={0}
-        aria-label={t("Read-only source preview")}
+    <div
+      className="mod-source-editor-shell flex min-h-0 flex-1 flex-col bg-[var(--editor-background)]"
+      data-editor-theme={editorTheme}
+    >
+      <Suspense
+        fallback={
+          <div
+            className="min-h-0 flex-1 bg-[var(--editor-background)]"
+            role="status"
+            aria-label={t("Loading Mod source")}
+          />
+        }
       >
-        <code className="block min-w-max">
-          {lines.map((line) => (
-            <span className="flex min-h-6" key={line.number}>
-              <span
-                className="sticky left-0 w-12 shrink-0 bg-[var(--console-editor)] pr-3 text-right text-[var(--editor-line-number)] select-none"
-                aria-hidden="true"
-              >
-                {line.number}
-              </span>
-              <span className="pr-5 whitespace-pre">
-                {line.tokens.map((token, index) => (
-                  <span
-                    className={`mod-token-${token.kind}`}
-                    key={`${line.number}-${index}`}
-                  >
-                    {token.text}
-                  </span>
-                ))}
-              </span>
-            </span>
-          ))}
-        </code>
-      </div>
-      <div className="flex h-7 shrink-0 items-center bg-[var(--console-status)] px-2 text-[11px] text-white">
-        <Check className="mr-1 size-3.5" aria-hidden="true" />
-        <span>{t("Source is valid")}</span>
-        <div className="ml-auto flex items-center divide-x divide-white/30">
-          <span className="px-3">{tf("Ln {0}, Col {1}", ["1", "1"])}</span>
+        <ModSourceEditor
+          key={documentId}
+          source={source}
+          diagnosticLine={diagnosticLine}
+          label={t("Mod source editor")}
+          sdkSchema={sdkState.status === "ready" ? sdkState.schema : null}
+          theme={editorTheme}
+          onChange={onChange}
+          onCursorChange={setCursor}
+          onSave={onSave}
+        />
+      </Suspense>
+      <div
+        className="flex h-7 shrink-0 items-center bg-[var(--editor-status-background)] px-2 text-[11px] text-[var(--editor-status-foreground)]"
+        aria-live="polite"
+      >
+        {saveState.status === "error" ? (
+          <TriangleAlert className="mr-1 size-3.5" aria-hidden="true" />
+        ) : (
+          <Check className="mr-1 size-3.5" aria-hidden="true" />
+        )}
+        <span className="truncate">{statusText}</span>
+        <div className="ml-auto flex h-full items-center divide-x divide-[var(--editor-status-border)]">
+          <button
+            type="button"
+            className="flex h-full items-center gap-1 px-2 hover:bg-[var(--editor-status-hover)]"
+            aria-label={t(
+              editorTheme === "light"
+                ? "Switch to dark editor theme"
+                : "Switch to light editor theme",
+            )}
+            onClick={() =>
+              setEditorTheme((current) =>
+                current === "light" ? "dark" : "light",
+              )
+            }
+          >
+            {editorTheme === "light" ? (
+              <Sun className="size-3.5" aria-hidden="true" />
+            ) : (
+              <Moon className="size-3.5" aria-hidden="true" />
+            )}
+            <span>{t(editorTheme === "light" ? "Light" : "Dark")}</span>
+          </button>
           <span className="px-3">
-            {tf("{0} / {1} bytes", [
-              sourceBytes.toString(),
-              MAX_MOD_SOURCE_BYTES.toString(),
+            {tf("Ln {0}, Col {1}", [
+              cursor.line.toString(),
+              cursor.column.toString(),
             ])}
           </span>
-          <span className="px-3">{t("Ctrl+Space")}</span>
-          <span className="pl-3">{t("NTE C++")}</span>
+          <span className="px-3">
+            {tf("{0} / {1} bytes", [
+              currentSourceBytes.toString(),
+              MOD_STUDIO_MAX_SOURCE_BYTES.toString(),
+            ])}
+          </span>
+          <span className="px-3">{t("Ctrl+S")}</span>
+          <span className="pl-3">
+            {sdkState.status === "ready"
+              ? tf("NTE C++ API v{0}", [
+                  sdkState.schema.schemaVersion.toString(),
+                ])
+              : t(
+                  sdkState.status === "loading"
+                    ? "Loading API schema"
+                    : "API schema unavailable",
+                )}
+          </span>
         </div>
       </div>
     </div>
@@ -599,11 +668,57 @@ function SourceEditor({
 
 function RuntimeConsole({
   collapsed,
+  runtimeState,
   onToggle,
 }: {
   collapsed: boolean;
+  runtimeState: ModStudioRuntimeState;
   onToggle: () => void;
 }) {
+  const [filter, setFilter] = useState<ModRuntimeConsoleFilter>("all");
+  const [cleared, setCleared] = useState<{
+    generation: string | null;
+    throughSequence: string | null;
+  }>({ generation: null, throughSequence: null });
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "error">(
+    "idle",
+  );
+  const connected = runtimeState.connection === "connected";
+  const connectionText =
+    runtimeState.error !== null
+      ? tf(runtimeState.error.messageKey, runtimeState.error.messageArguments)
+      : t(
+          connected
+            ? "Hot reload connected"
+            : "Waiting for the game Mod loader",
+        );
+  const entries = useMemo(
+    () =>
+      visibleRuntimeEntries(
+        runtimeState.entries,
+        runtimeState.generation,
+        cleared,
+        filter,
+      ),
+    [cleared, filter, runtimeState.entries, runtimeState.generation],
+  );
+  const copyEntries = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        entries.map((entry) => runtimeEntryPlainText(entry, tf)).join("\n"),
+      );
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("error");
+    }
+  };
+  const clearEntries = () => {
+    setCleared({
+      generation: runtimeState.generation,
+      throughSequence: runtimeState.entries.at(-1)?.sequence ?? null,
+    });
+    setCopyStatus("idle");
+  };
   return (
     <section
       className={cn(
@@ -613,13 +728,38 @@ function RuntimeConsole({
     >
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3 text-xs">
         <span className="font-semibold uppercase">{t("Runtime Console")}</span>
-        <span className="text-muted-foreground" aria-hidden="true">
-          ○
+        <span
+          className={cn(
+            connected
+              ? "text-[var(--console-success)]"
+              : "text-muted-foreground",
+          )}
+          aria-hidden="true"
+        >
+          ●
         </span>
-        <span className="text-muted-foreground">
-          {t("Waiting for the game Mod loader")}
+        <span className="truncate text-muted-foreground" aria-live="polite">
+          {connectionText}
         </span>
         <div className="ml-auto flex items-center gap-1">
+          <label className="sr-only" htmlFor="mod-runtime-filter">
+            {t("Filter runtime console")}
+          </label>
+          <select
+            id="mod-runtime-filter"
+            className="h-7 rounded border bg-background px-1.5 text-[11px]"
+            value={filter}
+            onChange={(event) =>
+              setFilter(event.currentTarget.value as ModRuntimeConsoleFilter)
+            }
+          >
+            <option value="all">{t("All runtime entries")}</option>
+            <option value="log">{t("Logs")}</option>
+            <option value="event">{t("Events")}</option>
+            <option value="info">{t("Info")}</option>
+            <option value="warning">{t("Warnings")}</option>
+            <option value="error">{t("Errors")}</option>
+          </select>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -627,7 +767,8 @@ function RuntimeConsole({
                   type="button"
                   className="flex size-7 items-center justify-center rounded hover:bg-muted"
                   aria-label={t("Copy")}
-                  disabled
+                  disabled={entries.length === 0}
+                  onClick={() => void copyEntries()}
                 />
               }
             >
@@ -642,7 +783,8 @@ function RuntimeConsole({
                   type="button"
                   className="flex size-7 items-center justify-center rounded hover:bg-muted"
                   aria-label={t("Clear runtime console")}
-                  disabled
+                  disabled={runtimeState.entries.length === 0}
+                  onClick={clearEntries}
                 />
               }
             >
@@ -680,9 +822,68 @@ function RuntimeConsole({
           </Tooltip>
         </div>
       </div>
+      <span className="sr-only" aria-live="polite">
+        {copyStatus === "copied"
+          ? t("Runtime console copied")
+          : copyStatus === "error"
+            ? t("Failed to copy runtime console")
+            : ""}
+      </span>
       {collapsed ? null : (
-        <div className="p-3 text-xs text-muted-foreground">
-          {t("Script logs and emitted IPC events appear here.")}
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-3 py-2 font-mono text-[11px]"
+          role="log"
+          aria-label={t("Hot reload status")}
+        >
+          {entries.length === 0 ? (
+            <p className="font-sans text-xs text-muted-foreground">
+              {t(
+                runtimeState.entries.length > 0
+                  ? "No runtime entries match the current filter."
+                  : connected
+                    ? "Runtime connected; waiting for source or enabled-set changes."
+                    : "Script logs and emitted IPC events appear here.",
+              )}
+            </p>
+          ) : (
+            entries.map((entry) => (
+              <div
+                className="flex min-w-0 items-start gap-2 leading-5"
+                key={`${runtimeState.generation}-${entry.sequence}`}
+              >
+                <span
+                  className={cn(
+                    "w-12 shrink-0",
+                    entry.kind === "log" &&
+                      entry.level === "error" &&
+                      "text-destructive",
+                    entry.kind === "log" &&
+                      entry.level === "warning" &&
+                      "text-[var(--console-warning)]",
+                    (entry.kind === "event" || entry.level === "info") &&
+                      "text-muted-foreground",
+                  )}
+                >
+                  [
+                  {entry.kind === "event"
+                    ? "EVENT"
+                    : entry.level === "warning"
+                      ? "WARN"
+                      : entry.level.toUpperCase()}
+                  ]
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {formatRuntimeTimestamp(entry.timestamp100ns)}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  [{entry.modId}]
+                </span>
+                <span className="min-w-0 break-words">
+                  {runtimeEntryText(entry, tf)}
+                </span>
+              </div>
+            ))
+          )}
         </div>
       )}
     </section>

@@ -56,7 +56,7 @@ const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
 const MAX_PLACEMENTS: usize = 64;
@@ -71,13 +71,13 @@ const MOD_EVENT_HISTORY_SIZE: usize = 18;
 const MOD_EVENT_ID_SIZE: usize = 32;
 const MOD_EVENT_NAME_SIZE: usize = 32;
 const MOD_EVENT_VALUE_COUNT: usize = 3;
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 const MOD_LOG_SIZE: usize = 112;
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 const MOD_LOG_HISTORY_SIZE: usize = 18;
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 const MOD_LOG_ID_SIZE: usize = 32;
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
@@ -87,7 +87,7 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "gui")]
 static PLUGIN_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -1372,7 +1372,7 @@ pub struct ModEventSnapshot {
     pub values: Vec<u64>,
 }
 
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModLogLevel {
     Info,
@@ -1380,7 +1380,7 @@ pub(crate) enum ModLogLevel {
     Error,
 }
 
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ModLogSnapshot {
     pub sequence: u64,
@@ -1614,7 +1614,7 @@ pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
     decode_mod_events(&response, request_id)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
     let request_id = MOD_LOG_QUERY_SEQUENCE
         .fetch_add(1, Ordering::Relaxed)
@@ -1973,7 +1973,7 @@ fn decode_mod_events(
     Ok(events)
 }
 
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 fn decode_fixed_utf8(bytes: &[u8], field: &str) -> Result<String, String> {
     let end = bytes
         .iter()
@@ -1993,7 +1993,7 @@ fn decode_fixed_utf8(bytes: &[u8], field: &str) -> Result<String, String> {
     Ok(text.to_owned())
 }
 
-#[cfg(any(feature = "gui", test))]
+#[cfg(any(feature = "desktop", feature = "gui", test))]
 fn decode_mod_logs(
     bytes: &[u8; RESPONSE_SIZE],
     request_id: u64,

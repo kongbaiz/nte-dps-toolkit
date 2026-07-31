@@ -141,6 +141,17 @@ impl LiveCaptureService {
         read(&state)
     }
 
+    /// Clears the current combat projection while keeping capture resources and
+    /// the active capture controller intact.
+    pub fn reset_session(&self) {
+        *self
+            .0
+            .state
+            .lock()
+            .expect("live capture state lock poisoned") = CombatState::default();
+        self.0.bump_revision();
+    }
+
     pub fn request_start(&self, options: CaptureControllerOptions) -> Result<(), CoreError> {
         self.ensure_event_worker()?;
         {

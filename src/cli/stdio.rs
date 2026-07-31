@@ -330,6 +330,7 @@ impl Runtime {
             CaptureControllerOptions {
                 profile,
                 device,
+                filter: "udp".to_owned(),
                 include_incoming: params.include_incoming,
                 server_damage_calibration: params.server_damage_calibration,
                 raw_capture,

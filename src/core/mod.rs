@@ -8,10 +8,14 @@ pub mod capture;
 pub mod hud;
 pub mod live_capture;
 #[cfg(any(feature = "desktop", feature = "gui"))]
+pub mod mod_sdk;
+#[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod mod_studio;
 pub mod reducer;
 pub mod snapshot;
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub mod team_data;
+#[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod update;
 
 /// Stable machine-readable error category shared by both frontends. The GUI

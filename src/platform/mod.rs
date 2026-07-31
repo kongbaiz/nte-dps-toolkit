@@ -13,7 +13,7 @@ pub mod mods_plugin;
 pub mod network;
 #[cfg(windows)]
 pub mod passthrough_hotkey;
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod update_http;
 #[cfg(feature = "gui")]
 pub mod update_install;

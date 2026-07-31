@@ -12,7 +12,8 @@ use windows_sys::Win32::{
     Foundation::{GetLastError, LPARAM, LRESULT, WPARAM},
     UI::{
         Input::KeyboardAndMouse::{
-            GetAsyncKeyState, VK_CONTROL, VK_F8, VK_F9, VK_HOME, VK_INSERT, VK_MENU, VK_SHIFT,
+            GetAsyncKeyState, VK_CONTROL, VK_F1, VK_F2, VK_F3, VK_F4, VK_F5, VK_F6, VK_F7, VK_F8,
+            VK_F9, VK_F10, VK_F11, VK_F12, VK_HOME, VK_INSERT, VK_MENU, VK_SHIFT,
         },
         WindowsAndMessaging::{
             CallNextHookEx, KBDLLHOOKSTRUCT, MSG, PM_REMOVE, PeekMessageW, SetWindowsHookExW,
@@ -21,11 +22,14 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::storage::config::PassthroughHotkey;
+use crate::storage::config::{
+    GlobalHotkeyAction, GlobalHotkeys, HotkeyBinding, HotkeyKey, PassthroughHotkey,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PassthroughHotkeyEvent {
     Toggle,
+    GlobalAction(GlobalHotkeyAction),
     HookInstalled,
     HookInstallFailed { error: u32 },
 }
@@ -40,6 +44,8 @@ static HOOK_STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
 static HOOK_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONFIGURED_KEY: AtomicU32 = AtomicU32::new(VK_HOME as u32);
 static CONFIGURED_KEY_DOWN: AtomicBool = AtomicBool::new(false);
+static GLOBAL_KEY_DOWN: AtomicU32 = AtomicU32::new(0);
+static GLOBAL_HOTKEYS: OnceLock<Mutex<GlobalHotkeys>> = OnceLock::new();
 
 fn virtual_key(hotkey: PassthroughHotkey) -> u32 {
     match hotkey {
@@ -48,6 +54,29 @@ fn virtual_key(hotkey: PassthroughHotkey) -> u32 {
         PassthroughHotkey::F8 => VK_F8 as u32,
         PassthroughHotkey::F9 => VK_F9 as u32,
     }
+}
+
+fn hotkey_virtual_key(key: HotkeyKey) -> u32 {
+    match key {
+        HotkeyKey::F1 => VK_F1 as u32,
+        HotkeyKey::F2 => VK_F2 as u32,
+        HotkeyKey::F3 => VK_F3 as u32,
+        HotkeyKey::F4 => VK_F4 as u32,
+        HotkeyKey::F5 => VK_F5 as u32,
+        HotkeyKey::F6 => VK_F6 as u32,
+        HotkeyKey::F7 => VK_F7 as u32,
+        HotkeyKey::F8 => VK_F8 as u32,
+        HotkeyKey::F9 => VK_F9 as u32,
+        HotkeyKey::F10 => VK_F10 as u32,
+        HotkeyKey::F11 => VK_F11 as u32,
+        HotkeyKey::F12 => VK_F12 as u32,
+    }
+}
+
+fn global_key_bit(virtual_key: u32) -> Option<u32> {
+    (VK_F1 as u32..=VK_F12 as u32)
+        .contains(&virtual_key)
+        .then(|| 1 << (virtual_key - VK_F1 as u32))
 }
 
 fn async_key_down(virtual_key: u32) -> bool {
@@ -59,6 +88,29 @@ fn modifiers_down() -> bool {
     async_key_down(VK_CONTROL as u32)
         || async_key_down(VK_MENU as u32)
         || async_key_down(VK_SHIFT as u32)
+}
+
+fn binding_matches(binding: HotkeyBinding, virtual_key: u32) -> bool {
+    hotkey_virtual_key(binding.key) == virtual_key
+        && binding.ctrl == async_key_down(VK_CONTROL as u32)
+        && binding.alt == async_key_down(VK_MENU as u32)
+        && binding.shift == async_key_down(VK_SHIFT as u32)
+}
+
+fn matching_global_action(virtual_key: u32) -> Option<GlobalHotkeyAction> {
+    let hotkeys = *match GLOBAL_HOTKEYS
+        .get_or_init(|| Mutex::new(GlobalHotkeys::default()))
+        .lock()
+    {
+        Ok(hotkeys) => hotkeys,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    hotkeys.enabled.then_some(())?;
+    GlobalHotkeyAction::all().iter().copied().find(|action| {
+        hotkeys
+            .binding(*action)
+            .is_some_and(|binding| binding_matches(binding, virtual_key))
+    })
 }
 
 fn matches_unmodified_press(configured_key: u32, virtual_key: u32, has_modifiers: bool) -> bool {
@@ -102,6 +154,17 @@ unsafe extern "system" fn low_level_keyboard_proc(
                 }
             }
         }
+
+        if let Some(bit) = global_key_bit(keyboard.vkCode) {
+            if released {
+                GLOBAL_KEY_DOWN.fetch_and(!bit, Ordering::AcqRel);
+            } else if pressed {
+                let initial_press = GLOBAL_KEY_DOWN.fetch_or(bit, Ordering::AcqRel) & bit == 0;
+                if initial_press && let Some(action) = matching_global_action(keyboard.vkCode) {
+                    send_event(PassthroughHotkeyEvent::GlobalAction(action));
+                }
+            }
+        }
     }
 
     // SAFETY: Forwarding the hook parameters exactly as received is required by the API.
@@ -117,11 +180,14 @@ pub struct PassthroughHotkeyHandle {
 impl PassthroughHotkeyHandle {
     pub fn start(
         hotkey: PassthroughHotkey,
+        global_hotkeys: GlobalHotkeys,
     ) -> Result<(Self, Receiver<PassthroughHotkeyEvent>), String> {
         let instance_id = HOOK_INSTANCE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::channel();
         CONFIGURED_KEY.store(virtual_key(hotkey), Ordering::Release);
         CONFIGURED_KEY_DOWN.store(false, Ordering::Release);
+        GLOBAL_KEY_DOWN.store(0, Ordering::Release);
+        Self::set_configuration(hotkey, global_hotkeys);
         {
             let state = HOOK_STATE.get_or_init(|| Mutex::new(HookState::default()));
             let mut state = match state.lock() {
@@ -184,6 +250,20 @@ impl PassthroughHotkeyHandle {
             receiver,
         ))
     }
+
+    pub fn set_configuration(hotkey: PassthroughHotkey, global_hotkeys: GlobalHotkeys) {
+        CONFIGURED_KEY.store(virtual_key(hotkey), Ordering::Release);
+        let mut configured = match GLOBAL_HOTKEYS
+            .get_or_init(|| Mutex::new(GlobalHotkeys::default()))
+            .lock()
+        {
+            Ok(configured) => configured,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *configured = global_hotkeys.sanitized();
+        CONFIGURED_KEY_DOWN.store(false, Ordering::Release);
+        GLOBAL_KEY_DOWN.store(0, Ordering::Release);
+    }
 }
 
 impl Drop for PassthroughHotkeyHandle {
@@ -193,6 +273,7 @@ impl Drop for PassthroughHotkeyHandle {
             let _ = worker.join();
         }
         CONFIGURED_KEY_DOWN.store(false, Ordering::Release);
+        GLOBAL_KEY_DOWN.store(0, Ordering::Release);
         clear_sender(self.instance_id);
     }
 }
@@ -220,6 +301,14 @@ mod tests {
         assert_eq!(virtual_key(PassthroughHotkey::Insert), VK_INSERT as u32);
         assert_eq!(virtual_key(PassthroughHotkey::F8), VK_F8 as u32);
         assert_eq!(virtual_key(PassthroughHotkey::F9), VK_F9 as u32);
+    }
+
+    #[test]
+    fn global_hotkey_keys_map_to_the_windows_function_key_range() {
+        assert_eq!(hotkey_virtual_key(HotkeyKey::F1), VK_F1 as u32);
+        assert_eq!(hotkey_virtual_key(HotkeyKey::F12), VK_F12 as u32);
+        assert_eq!(global_key_bit(VK_F1 as u32), Some(1));
+        assert_eq!(global_key_bit(VK_F12 as u32), Some(1 << 11));
     }
 
     #[test]

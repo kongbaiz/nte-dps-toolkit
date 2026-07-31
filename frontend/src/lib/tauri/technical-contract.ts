@@ -1,4 +1,4 @@
-export const HUD_WINDOW_LABEL = "hud-spike";
+export { HUD_WINDOW_LABEL } from "@/lib/tauri/window-labels";
 export const TECHNICAL_CONTRACT_VERSION = 4;
 export const HUD_SNAPSHOT_VERSION = 2;
 export const HUD_TIMELINE_MAX_BUCKETS = 60;
@@ -207,44 +207,13 @@ export function parseHudSnapshot(value: unknown): HudSnapshot {
     );
   }
 
-  const config = record(hud.config, "hud.config");
-  const moduleOrder = array(config.moduleOrder, "hud.config.moduleOrder");
   const characters = array(hud.characters, "hud.characters");
   const status = record(hud.status, "hud.status");
 
   return {
     version,
     dataState: string(hud.dataState, "hud.dataState"),
-    config: {
-      width: integer(config.width, "hud.config.width"),
-      moduleOrder: moduleOrder.map((module, index) =>
-        string(module, `hud.config.moduleOrder[${index}]`),
-      ),
-      showTitle: boolean(config.showTitle, "hud.config.showTitle"),
-      showTeamDps: boolean(config.showTeamDps, "hud.config.showTeamDps"),
-      showDuration: boolean(config.showDuration, "hud.config.showDuration"),
-      showTotalDamage: boolean(
-        config.showTotalDamage,
-        "hud.config.showTotalDamage",
-      ),
-      showCharacterRows: boolean(
-        config.showCharacterRows,
-        "hud.config.showCharacterRows",
-      ),
-      showDamageTaken: boolean(
-        config.showDamageTaken,
-        "hud.config.showDamageTaken",
-      ),
-      showAbyssHalf: boolean(config.showAbyssHalf, "hud.config.showAbyssHalf"),
-      showPassthroughState: boolean(
-        config.showPassthroughState,
-        "hud.config.showPassthroughState",
-      ),
-      showMiniTimeline: boolean(
-        config.showMiniTimeline,
-        "hud.config.showMiniTimeline",
-      ),
-    },
+    config: parseHudConfigSnapshot(hud.config, "hud.config"),
     summary:
       hud.summary === null ? null : parseHudSummary(hud.summary, "hud.summary"),
     characters: characters.map((character, index) =>
@@ -260,6 +229,56 @@ export function parseHudSnapshot(value: unknown): HudSnapshot {
       hud.timeline === null
         ? null
         : parseHudTimeline(hud.timeline, "hud.timeline"),
+  };
+}
+
+export function parseHudConfigSnapshot(
+  value: unknown,
+  field = "hud.config",
+): HudConfigSnapshot {
+  const config = record(value, field);
+  const moduleOrder = array(config.moduleOrder, `${field}.moduleOrder`).map(
+    (module, index) => string(module, `${field}.moduleOrder[${index}]`),
+  );
+  if (
+    moduleOrder.length !== HUD_MODULE_IDS.length ||
+    new Set(moduleOrder).size !== HUD_MODULE_IDS.length ||
+    moduleOrder.some(
+      (module) => !HUD_MODULE_IDS.includes(module as HudModuleId),
+    )
+  ) {
+    throw new TechnicalContractError(
+      `${field}.moduleOrder must contain every stable HUD module exactly once`,
+    );
+  }
+
+  return {
+    width: integer(config.width, `${field}.width`),
+    moduleOrder,
+    showTitle: boolean(config.showTitle, `${field}.showTitle`),
+    showTeamDps: boolean(config.showTeamDps, `${field}.showTeamDps`),
+    showDuration: boolean(config.showDuration, `${field}.showDuration`),
+    showTotalDamage: boolean(
+      config.showTotalDamage,
+      `${field}.showTotalDamage`,
+    ),
+    showCharacterRows: boolean(
+      config.showCharacterRows,
+      `${field}.showCharacterRows`,
+    ),
+    showDamageTaken: boolean(
+      config.showDamageTaken,
+      `${field}.showDamageTaken`,
+    ),
+    showAbyssHalf: boolean(config.showAbyssHalf, `${field}.showAbyssHalf`),
+    showPassthroughState: boolean(
+      config.showPassthroughState,
+      `${field}.showPassthroughState`,
+    ),
+    showMiniTimeline: boolean(
+      config.showMiniTimeline,
+      `${field}.showMiniTimeline`,
+    ),
   };
 }
 

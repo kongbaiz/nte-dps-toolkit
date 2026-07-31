@@ -31,7 +31,8 @@
         "alwaysOnTop": true,
         "shadow": false,
         "skipTaskbar": true,
-        "center": true
+        "center": true,
+        "visible": false
       },
       {
         "label": "console",
@@ -48,6 +49,23 @@
         "shadow": true,
         "skipTaskbar": false,
         "center": true
+      },
+      {
+        "label": "abyss-values",
+        "title": "NTE Abyss Values",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 480,
+        "resizable": true,
+        "fullscreen": false,
+        "transparent": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "shadow": true,
+        "skipTaskbar": false,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {

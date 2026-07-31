@@ -31,7 +31,7 @@ const snapshot = {
     dataState: "preview",
     config: {
       width: 380,
-      moduleOrder: ["summary", "characters"],
+      moduleOrder: ["title", "summary", "status", "characters", "timeline"],
       showTitle: false,
       showTeamDps: true,
       showDuration: true,
