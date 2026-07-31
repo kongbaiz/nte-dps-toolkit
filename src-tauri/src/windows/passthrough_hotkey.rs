@@ -9,6 +9,7 @@ use std::{
 };
 
 use nte_dps_tool::platform::passthrough_hotkey::{PassthroughHotkeyEvent, PassthroughHotkeyHandle};
+use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::config::GlobalHotkeyAction};
 use tauri::{AppHandle, Manager};
 
 use crate::{state::AppState, windows::hud};
@@ -23,7 +24,8 @@ pub(crate) struct HudPassthroughHotkeyRuntime {
 
 impl HudPassthroughHotkeyRuntime {
     pub(crate) fn start(app: AppHandle, state: AppState) -> Result<Self, String> {
-        let (listener, receiver) = PassthroughHotkeyHandle::start(state.passthrough_hotkey())?;
+        let (listener, receiver) =
+            PassthroughHotkeyHandle::start(state.passthrough_hotkey(), state.global_hotkeys())?;
         let stop = Arc::new(AtomicBool::new(false));
         let dispatcher_stop = Arc::clone(&stop);
         let dispatcher = thread::Builder::new()
@@ -72,8 +74,51 @@ fn run_dispatcher(
                     log::error!("toggle HUD passthrough from hotkey failed: {error:?}");
                 }
             }
+            Ok(PassthroughHotkeyEvent::GlobalAction(action)) => {
+                dispatch_global_action(&app, &state, action);
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotkeyAction) {
+    match action {
+        GlobalHotkeyAction::ToggleCapture => {
+            let phase = state.capture_phase();
+            let result = match phase {
+                LiveCapturePhase::Starting
+                | LiveCapturePhase::Running
+                | LiveCapturePhase::Stopping => state.request_capture_stop(),
+                LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed => {
+                    state.request_capture_start()
+                }
+            };
+            if let Err(error) = result {
+                log::error!("toggle capture from global hotkey failed: {}", error.detail);
+            }
+        }
+        GlobalHotkeyAction::ResetSession => state.reset_session(),
+        GlobalHotkeyAction::ToggleHud => {
+            let Some(window) = app.get_webview_window(hud::HUD_WINDOW_LABEL) else {
+                return;
+            };
+            match window.is_visible() {
+                Ok(true) => {
+                    if let Err(error) = window.hide() {
+                        log::error!("hide HUD from global hotkey failed: {error}");
+                    }
+                }
+                Ok(false) => {
+                    if let Err(error) = window.show() {
+                        log::error!("show HUD from global hotkey failed: {error}");
+                    }
+                }
+                Err(error) => {
+                    log::error!("query HUD visibility from global hotkey failed: {error}")
+                }
+            }
         }
     }
 }

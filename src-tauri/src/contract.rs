@@ -6,7 +6,9 @@ use nte_dps_tool::core::{
     live_capture::{LiveCaptureIssue, LiveCapturePhase, LiveCaptureStatus},
 };
 
+pub(crate) mod abyss_values;
 pub(crate) mod mod_studio;
+pub(crate) mod settings;
 
 pub(crate) const TECHNICAL_CONTRACT_VERSION: u32 = 4;
 
@@ -88,6 +90,8 @@ pub(crate) struct CommandError {
     pub code: &'static str,
     pub message_key: &'static str,
     pub message_arguments: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagnostic_line: Option<u32>,
 }
 
 impl CommandError {
@@ -96,6 +100,7 @@ impl CommandError {
             code: "invalid_subscription_id",
             message_key: "Technical subscription identifier is invalid.",
             message_arguments: Vec::new(),
+            diagnostic_line: None,
         }
     }
 
@@ -104,6 +109,7 @@ impl CommandError {
             code: "invalid_window",
             message_key: "Technical command is not available for this window.",
             message_arguments: Vec::new(),
+            diagnostic_line: None,
         }
     }
 
@@ -112,6 +118,7 @@ impl CommandError {
             code: "window_operation_failed",
             message_key: "HUD window operation failed.",
             message_arguments: Vec::new(),
+            diagnostic_line: None,
         }
     }
 
@@ -120,6 +127,7 @@ impl CommandError {
             code: "passthrough_hotkey_unavailable",
             message_key: "Global hotkeys are not ready; mouse passthrough was not enabled",
             message_arguments: Vec::new(),
+            diagnostic_line: None,
         }
     }
 
@@ -128,6 +136,7 @@ impl CommandError {
             code: "invalid_hud_module",
             message_key: "HUD module is invalid.",
             message_arguments: Vec::new(),
+            diagnostic_line: None,
         }
     }
 
@@ -136,6 +145,79 @@ impl CommandError {
             code: "hud_config_save_failed",
             message_key: "Failed to save HUD configuration.",
             message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn invalid_hud_option() -> Self {
+        Self {
+            code: "invalid_hud_option",
+            message_key: "HUD option is invalid.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn invalid_hud_preset() -> Self {
+        Self {
+            code: "invalid_hud_preset",
+            message_key: "HUD preset is invalid.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn invalid_settings_input() -> Self {
+        Self {
+            code: "invalid_settings_input",
+            message_key: "Settings input is invalid.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn settings_config_save_failed() -> Self {
+        Self {
+            code: "settings_config_save_failed",
+            message_key: "Failed to save settings.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn team_data_invalid() -> Self {
+        Self {
+            code: "team_data_invalid",
+            message_key: "Team DPS data is invalid.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn team_data_unavailable() -> Self {
+        Self {
+            code: "team_data_unavailable",
+            message_key: "No team DPS data is available to export.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn abyss_values_unavailable() -> Self {
+        Self {
+            code: "abyss_values_unavailable",
+            message_key: "Abyss monster values could not be loaded.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn abyss_team_unavailable() -> Self {
+        Self {
+            code: "abyss_team_unavailable",
+            message_key: "The DPS data file has no team usable for this line",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
         }
     }
 
@@ -145,6 +227,7 @@ impl CommandError {
             code: issue.code,
             message_key: issue.message_key,
             message_arguments: issue.message_arguments,
+            diagnostic_line: None,
         }
     }
 }

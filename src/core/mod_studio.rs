@@ -1,18 +1,20 @@
 //! Frontend-neutral read model for the software-side Mod workspace.
 //!
 //! The workspace is available independently from game installation detection.
-//! Mutating operations remain in the existing storage/deployment transaction
-//! until a later Mod Studio slice adds explicit commands for them.
+//! Source saves and enabled-set changes reuse the existing validation and
+//! atomic storage transactions; deployment remains a separate operation.
 
 use std::path::{Path, PathBuf};
 
 use crate::storage::mod_scripts::{
     ModScriptDocument, ModScriptError, ModScriptWorkspace, load_mod_script_workspace,
-    mod_script_workspace_directory, validate_mod_id,
+    mod_script_workspace_directory, save_mod_script, set_mod_enabled, validate_mod_id,
 };
 
 pub const MOD_STUDIO_WORKSPACE_LABEL: &str = "plugins/nte-mods";
 pub const MAX_MOD_STUDIO_DOCUMENTS: usize = 256;
+pub const MAX_MOD_STUDIO_RUNTIME_LOGS: usize = 18;
+pub const MAX_MOD_STUDIO_RUNTIME_EVENTS: usize = 18;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModStudioDocumentSummary {
@@ -35,17 +37,64 @@ pub struct ModStudioDocument {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModStudioRuntimeLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModStudioRuntimeLog {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub mod_id: String,
+    pub level: ModStudioRuntimeLevel,
+    pub message: String,
+    pub message_key: Option<&'static str>,
+    pub message_arguments: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModStudioRuntimeEvent {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub mod_id: String,
+    pub name: String,
+    pub values: Vec<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModStudioRuntimeSnapshot {
+    pub logs: Vec<ModStudioRuntimeLog>,
+    pub events: Vec<ModStudioRuntimeEvent>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModStudioErrorCode {
     FileSystem,
+    WriteFailed,
+    EnabledSetWriteFailed,
     InvalidWorkspace,
     InvalidModId,
     DocumentNotFound,
+    SourceTooLarge,
+    SourceContainsNul,
+    MissingVersionHeader,
+    MissingModDeclaration,
+    MismatchedModDeclaration,
+    MissingViewportTickHandler,
+    InvalidSourceLine,
+    SourceBudgetExceeded,
+    CapabilityMismatch,
+    TooManyEnabledMods,
+    ModSourceMissing,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModStudioError {
     pub code: ModStudioErrorCode,
     pub detail: String,
+    pub diagnostic_line: Option<u32>,
 }
 
 impl ModStudioError {
@@ -53,7 +102,13 @@ impl ModStudioError {
         Self {
             code,
             detail: detail.into(),
+            diagnostic_line: None,
         }
+    }
+
+    fn at_line(mut self, line: usize) -> Self {
+        self.diagnostic_line = Some(line as u32);
+        self
     }
 }
 
@@ -75,6 +130,20 @@ pub fn load_default_mod_studio_workspace() -> Result<ModStudioWorkspace, ModStud
 
 pub fn load_default_mod_studio_document(id: &str) -> Result<ModStudioDocument, ModStudioError> {
     load_mod_studio_document(&default_mod_studio_workspace_directory(), id)
+}
+
+pub fn save_default_mod_studio_document(
+    id: &str,
+    source: &str,
+) -> Result<ModStudioDocument, ModStudioError> {
+    save_mod_studio_document(&default_mod_studio_workspace_directory(), id, source)
+}
+
+pub fn set_default_mod_studio_document_enabled(
+    id: &str,
+    enabled: bool,
+) -> Result<ModStudioWorkspace, ModStudioError> {
+    set_mod_studio_document_enabled(&default_mod_studio_workspace_directory(), id, enabled)
 }
 
 pub fn load_mod_studio_workspace(
@@ -116,6 +185,89 @@ pub fn load_mod_studio_document(
         enabled: document.enabled,
         source: document.source,
     })
+}
+
+pub fn save_mod_studio_document(
+    workspace_directory: &Path,
+    id: &str,
+    source: &str,
+) -> Result<ModStudioDocument, ModStudioError> {
+    let existing = load_mod_studio_document(workspace_directory, id)?;
+    save_mod_script(workspace_directory, id, source).map_err(map_save_error)?;
+    Ok(ModStudioDocument {
+        id: existing.id,
+        enabled: existing.enabled,
+        source: source.to_owned(),
+    })
+}
+
+pub fn set_mod_studio_document_enabled(
+    workspace_directory: &Path,
+    id: &str,
+    enabled: bool,
+) -> Result<ModStudioWorkspace, ModStudioError> {
+    load_mod_studio_document(workspace_directory, id)?;
+    set_mod_enabled(workspace_directory, id, enabled).map_err(map_enabled_set_error)?;
+    load_mod_studio_workspace(workspace_directory)
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioError> {
+    use crate::platform::mods_plugin::{query_mod_events, query_mod_logs};
+
+    let mut logs = query_mod_logs()
+        .map_err(|detail| ModStudioError::new(ModStudioErrorCode::FileSystem, detail))?
+        .into_iter()
+        .map(project_runtime_log)
+        .collect::<Vec<_>>();
+    logs.sort_by_key(|entry| entry.sequence);
+    if logs.len() > MAX_MOD_STUDIO_RUNTIME_LOGS {
+        logs.drain(..logs.len() - MAX_MOD_STUDIO_RUNTIME_LOGS);
+    }
+    let mut events = query_mod_events()
+        .map_err(|detail| ModStudioError::new(ModStudioErrorCode::FileSystem, detail))?
+        .into_iter()
+        .map(project_runtime_event)
+        .collect::<Vec<_>>();
+    events.sort_by_key(|entry| entry.sequence);
+    if events.len() > MAX_MOD_STUDIO_RUNTIME_EVENTS {
+        events.drain(..events.len() - MAX_MOD_STUDIO_RUNTIME_EVENTS);
+    }
+    Ok(ModStudioRuntimeSnapshot { logs, events })
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn project_runtime_log(entry: crate::platform::mods_plugin::ModLogSnapshot) -> ModStudioRuntimeLog {
+    use crate::platform::mods_plugin::ModLogLevel;
+
+    let level = match entry.level {
+        ModLogLevel::Info => ModStudioRuntimeLevel::Info,
+        ModLogLevel::Warning => ModStudioRuntimeLevel::Warning,
+        ModLogLevel::Error => ModStudioRuntimeLevel::Error,
+    };
+    let message_key = runtime_message_key(&entry.message);
+    ModStudioRuntimeLog {
+        sequence: entry.sequence,
+        timestamp_100ns: entry.timestamp_100ns,
+        mod_id: entry.mod_id,
+        level,
+        message: entry.message,
+        message_key,
+        message_arguments: Vec::new(),
+    }
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn project_runtime_event(
+    entry: crate::platform::mods_plugin::ModEventSnapshot,
+) -> ModStudioRuntimeEvent {
+    ModStudioRuntimeEvent {
+        sequence: entry.sequence,
+        timestamp_100ns: entry.timestamp_100ns,
+        mod_id: entry.mod_id,
+        name: entry.name,
+        values: entry.values,
+    }
 }
 
 fn load_bounded_workspace(
@@ -163,6 +315,113 @@ fn map_storage_error(error: ModScriptError) -> ModStudioError {
         | ModScriptError::ModSourceMissing(_) => ModStudioErrorCode::InvalidWorkspace,
     };
     ModStudioError::new(code, storage_error_detail(error))
+}
+
+fn map_save_error(error: ModScriptError) -> ModStudioError {
+    let detail = storage_error_detail(error.clone());
+    match error {
+        ModScriptError::FileSystem(_) => {
+            ModStudioError::new(ModStudioErrorCode::WriteFailed, detail)
+        }
+        ModScriptError::InvalidModId(_) => {
+            ModStudioError::new(ModStudioErrorCode::InvalidModId, detail)
+        }
+        ModScriptError::SourceTooLarge => {
+            ModStudioError::new(ModStudioErrorCode::SourceTooLarge, detail)
+        }
+        ModScriptError::SourceContainsNul => {
+            ModStudioError::new(ModStudioErrorCode::SourceContainsNul, detail)
+        }
+        ModScriptError::MissingVersionHeader => {
+            ModStudioError::new(ModStudioErrorCode::MissingVersionHeader, detail)
+        }
+        ModScriptError::MissingModDeclaration => {
+            ModStudioError::new(ModStudioErrorCode::MissingModDeclaration, detail)
+        }
+        ModScriptError::MismatchedModDeclaration => {
+            ModStudioError::new(ModStudioErrorCode::MismatchedModDeclaration, detail)
+        }
+        ModScriptError::MissingViewportTickHandler => {
+            ModStudioError::new(ModStudioErrorCode::MissingViewportTickHandler, detail)
+        }
+        ModScriptError::InvalidSourceLine(line) => {
+            ModStudioError::new(ModStudioErrorCode::InvalidSourceLine, detail).at_line(line)
+        }
+        ModScriptError::SourceBudgetExceeded => {
+            ModStudioError::new(ModStudioErrorCode::SourceBudgetExceeded, detail)
+        }
+        ModScriptError::CapabilityMismatch => {
+            ModStudioError::new(ModStudioErrorCode::CapabilityMismatch, detail)
+        }
+        ModScriptError::InvalidModSet
+        | ModScriptError::DuplicateModId(_)
+        | ModScriptError::TooManyEnabledMods
+        | ModScriptError::SourceNotUtf8(_)
+        | ModScriptError::ModSourceMissing(_) => {
+            ModStudioError::new(ModStudioErrorCode::InvalidWorkspace, detail)
+        }
+    }
+}
+
+fn map_enabled_set_error(error: ModScriptError) -> ModStudioError {
+    let detail = storage_error_detail(error.clone());
+    match error {
+        ModScriptError::FileSystem(_) => {
+            ModStudioError::new(ModStudioErrorCode::EnabledSetWriteFailed, detail)
+        }
+        ModScriptError::InvalidModId(_) => {
+            ModStudioError::new(ModStudioErrorCode::InvalidModId, detail)
+        }
+        ModScriptError::TooManyEnabledMods => {
+            ModStudioError::new(ModStudioErrorCode::TooManyEnabledMods, detail)
+        }
+        ModScriptError::ModSourceMissing(_) => {
+            ModStudioError::new(ModStudioErrorCode::ModSourceMissing, detail)
+        }
+        ModScriptError::InvalidModSet
+        | ModScriptError::DuplicateModId(_)
+        | ModScriptError::SourceTooLarge
+        | ModScriptError::SourceContainsNul
+        | ModScriptError::SourceNotUtf8(_)
+        | ModScriptError::MissingVersionHeader
+        | ModScriptError::MissingModDeclaration
+        | ModScriptError::MismatchedModDeclaration
+        | ModScriptError::MissingViewportTickHandler
+        | ModScriptError::InvalidSourceLine(_)
+        | ModScriptError::SourceBudgetExceeded
+        | ModScriptError::CapabilityMismatch => {
+            ModStudioError::new(ModStudioErrorCode::InvalidWorkspace, detail)
+        }
+    }
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn runtime_message_key(message: &str) -> Option<&'static str> {
+    match message {
+        "Hot reload applied." => Some("Hot reload applied."),
+        "Mod workspace path is invalid; previous version kept." => {
+            Some("Mod workspace path is invalid; previous version kept.")
+        }
+        "Enabled Mod set is invalid; previous version kept." => {
+            Some("Enabled Mod set is invalid; previous version kept.")
+        }
+        "Enabled Mod set is unreadable; previous version kept." => {
+            Some("Enabled Mod set is unreadable; previous version kept.")
+        }
+        "Mod source path is invalid; previous version kept." => {
+            Some("Mod source path is invalid; previous version kept.")
+        }
+        "Enabled Mod source is missing; previous version kept." => {
+            Some("Enabled Mod source is missing; previous version kept.")
+        }
+        "Compilation failed; previous version kept." => {
+            Some("Compilation failed; previous version kept.")
+        }
+        "Runtime fault trapped; Mod paused until hot reload." => {
+            Some("Runtime fault trapped; Mod paused until hot reload.")
+        }
+        _ => None,
+    }
 }
 
 fn storage_error_detail(error: ModScriptError) -> String {
@@ -248,6 +507,113 @@ mod tests {
         let error = load_mod_studio_document(&root, "telemetry").expect_err("missing document");
 
         assert_eq!(error.code, ModStudioErrorCode::DocumentNotFound);
+    }
+
+    #[test]
+    fn saving_valid_source_updates_the_existing_document() {
+        let root = temp_workspace("save");
+        let original = new_mod_script_template("telemetry").expect("template");
+        save_mod_script(&root, "telemetry", &original).expect("initial save");
+        let updated = format!("{original}// saved edit\n");
+
+        let document =
+            save_mod_studio_document(&root, "telemetry", &updated).expect("save document");
+
+        assert_eq!(document.source, updated);
+        assert_eq!(
+            load_mod_studio_document(&root, "telemetry")
+                .expect("reload")
+                .source,
+            updated
+        );
+
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn rejected_source_preserves_the_previous_saved_file_and_original_line() {
+        let root = temp_workspace("rejected-save");
+        let original = new_mod_script_template("telemetry").expect("template");
+        save_mod_script(&root, "telemetry", &original).expect("initial save");
+        let invalid = original.replace(
+            "nte::ipc::emit(\"post.session.changed\", character);",
+            "this is not valid NTE C++;",
+        );
+        let invalid_line = invalid
+            .lines()
+            .position(|line| line.contains("this is not valid"))
+            .expect("invalid line")
+            + 1;
+
+        let error =
+            save_mod_studio_document(&root, "telemetry", &invalid).expect_err("reject source");
+
+        assert_eq!(error.code, ModStudioErrorCode::InvalidSourceLine);
+        assert_eq!(error.diagnostic_line, Some(invalid_line as u32));
+        assert_eq!(
+            load_mod_studio_document(&root, "telemetry")
+                .expect("reload")
+                .source,
+            original
+        );
+
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn enabled_set_changes_reuse_the_existing_workspace_transaction() {
+        let root = temp_workspace("enabled-set");
+        let source = new_mod_script_template("telemetry").expect("template");
+        save_mod_script(&root, "telemetry", &source).expect("initial save");
+
+        let enabled =
+            set_mod_studio_document_enabled(&root, "telemetry", true).expect("enable Mod");
+        assert!(enabled.documents[0].enabled);
+
+        let disabled =
+            set_mod_studio_document_enabled(&root, "telemetry", false).expect("disable Mod");
+        assert!(!disabled.documents[0].enabled);
+
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn enabled_set_changes_require_an_existing_document() {
+        let root = temp_workspace("missing-enable");
+        fs::create_dir_all(&root).expect("create workspace");
+
+        let error = set_mod_studio_document_enabled(&root, "missing", true)
+            .expect_err("missing document is rejected");
+
+        assert_eq!(error.code, ModStudioErrorCode::DocumentNotFound);
+        assert!(!root.join("nte-mods.enabled").exists());
+
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[test]
+    fn runtime_status_projection_localizes_lifecycle_and_keeps_raw_script_logs() {
+        use crate::platform::mods_plugin::{ModLogLevel, ModLogSnapshot};
+
+        assert_eq!(
+            runtime_message_key("Hot reload applied."),
+            Some("Hot reload applied.")
+        );
+        assert_eq!(
+            runtime_message_key("Runtime fault trapped; Mod paused until hot reload."),
+            Some("Runtime fault trapped; Mod paused until hot reload.")
+        );
+        assert_eq!(runtime_message_key("user script output"), None);
+        let raw = project_runtime_log(ModLogSnapshot {
+            sequence: 7,
+            timestamp_100ns: 70,
+            mod_id: "telemetry".to_owned(),
+            level: ModLogLevel::Info,
+            message: "user script output".to_owned(),
+        });
+        assert_eq!(raw.message, "user script output");
+        assert_eq!(raw.message_key, None);
     }
 
     #[test]

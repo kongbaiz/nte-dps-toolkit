@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::core::mod_sdk::{ModSdkSymbol, ModSdkSymbolKind, mod_sdk_symbols};
+
 #[derive(Clone, Debug)]
 struct ModEditorTarget {
     region: ModsPluginGameRegion,
@@ -263,12 +265,6 @@ impl ModEditorState {
     }
 }
 
-#[derive(Clone, Copy)]
-struct NteCompletion {
-    label: &'static str,
-    insert: &'static str,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NteCompletionKind {
     Declaration,
@@ -323,361 +319,6 @@ struct NteEditorResponse {
     line: usize,
     column: usize,
 }
-
-const NTE_COMPLETIONS: &[NteCompletion] = &[
-    NteCompletion {
-        label: "#include <nte/mod.hpp>",
-        insert: "#include <nte/mod.hpp>",
-    },
-    NteCompletion {
-        label: "NTE_SCRIPT(5);",
-        insert: "NTE_SCRIPT(5);",
-    },
-    NteCompletion {
-        label: "NTE_MOD(\"id\");",
-        insert: "NTE_MOD(\"mod-id\");",
-    },
-    NteCompletion {
-        label: "NTE_REQUIRES(\"capability\");",
-        insert: "NTE_REQUIRES(\"viewport.tick\");",
-    },
-    NteCompletion {
-        label: "NTE_ROUTE_IPC(operation, \"kernel.service\");",
-        insert: "NTE_ROUTE_IPC(12, \"ipc.query_mod_events\");",
-    },
-    NteCompletion {
-        label: "std::uint64_t state = 0;",
-        insert: "std::uint64_t state_name = 0;",
-    },
-    NteCompletion {
-        label: "void on_viewport_tick(const nte::viewport_tick_event& event)",
-        insert: "void on_viewport_tick(const nte::viewport_tick_event& event)\n{\n    \n}",
-    },
-    NteCompletion {
-        label: "event.viewport",
-        insert: "event.viewport",
-    },
-    NteCompletion {
-        label: "nte::game::viewport",
-        insert: "nte::game::viewport",
-    },
-    NteCompletion {
-        label: "nte::game::instance",
-        insert: "nte::game::instance",
-    },
-    NteCompletion {
-        label: "nte::game::local_player",
-        insert: "nte::game::local_player",
-    },
-    NteCompletion {
-        label: "nte::game::player_controller",
-        insert: "nte::game::player_controller",
-    },
-    NteCompletion {
-        label: "nte::game::player_state",
-        insert: "nte::game::player_state",
-    },
-    NteCompletion {
-        label: "nte::game::player_character",
-        insert: "nte::game::player_character",
-    },
-    NteCompletion {
-        label: "nte::memory::read_ptr(base, offset)",
-        insert: "nte::memory::read_ptr(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_u8(base, offset)",
-        insert: "nte::memory::read_u8(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_u16(base, offset)",
-        insert: "nte::memory::read_u16(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_u32(base, offset)",
-        insert: "nte::memory::read_u32(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_u64(base, offset)",
-        insert: "nte::memory::read_u64(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_i32(base, offset)",
-        insert: "nte::memory::read_i32(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_f32_milli(base, offset)",
-        insert: "nte::memory::read_f32_milli(",
-    },
-    NteCompletion {
-        label: "nte::memory::read_fname_hash(base, offset)",
-        insert: "nte::memory::read_fname_hash(",
-    },
-    NteCompletion {
-        label: "nte::memory::tarray_first(base, offset)",
-        insert: "nte::memory::tarray_first(",
-    },
-    NteCompletion {
-        label: "nte::memory::tarray_count(base, offset)",
-        insert: "nte::memory::tarray_count(",
-    },
-    NteCompletion {
-        label: "nte::memory::is_readable(pointer, size)",
-        insert: "nte::memory::is_readable(",
-    },
-    NteCompletion {
-        label: "nte::memory::write_u8(base, offset, value)",
-        insert: "nte::memory::write_u8(",
-    },
-    NteCompletion {
-        label: "nte::memory::write_u16(base, offset, value)",
-        insert: "nte::memory::write_u16(",
-    },
-    NteCompletion {
-        label: "nte::memory::write_u32(base, offset, value)",
-        insert: "nte::memory::write_u32(",
-    },
-    NteCompletion {
-        label: "nte::memory::write_u64(base, offset, value)",
-        insert: "nte::memory::write_u64(",
-    },
-    NteCompletion {
-        label: "nte::memory::write_i32(base, offset, value)",
-        insert: "nte::memory::write_i32(",
-    },
-    NteCompletion {
-        label: "nte::memory::write_f32_milli(base, offset, value)",
-        insert: "nte::memory::write_f32_milli(",
-    },
-    NteCompletion {
-        label: "nte::unreal::find_function(object, \"Owner\", \"Function\")",
-        insert: "nte::unreal::find_function(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_clear(size)",
-        insert: "nte::unreal::params_clear(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_write_u8(offset, value)",
-        insert: "nte::unreal::params_write_u8(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_write_u16(offset, value)",
-        insert: "nte::unreal::params_write_u16(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_write_u32(offset, value)",
-        insert: "nte::unreal::params_write_u32(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_write_u64(offset, value)",
-        insert: "nte::unreal::params_write_u64(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_write_i32(offset, value)",
-        insert: "nte::unreal::params_write_i32(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_write_f32_milli(offset, value)",
-        insert: "nte::unreal::params_write_f32_milli(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_read_u8(offset)",
-        insert: "nte::unreal::params_read_u8(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_read_u16(offset)",
-        insert: "nte::unreal::params_read_u16(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_read_u32(offset)",
-        insert: "nte::unreal::params_read_u32(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_read_u64(offset)",
-        insert: "nte::unreal::params_read_u64(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_read_i32(offset)",
-        insert: "nte::unreal::params_read_i32(",
-    },
-    NteCompletion {
-        label: "nte::unreal::params_read_f32_milli(offset)",
-        insert: "nte::unreal::params_read_f32_milli(",
-    },
-    NteCompletion {
-        label: "nte::unreal::call(object, function)",
-        insert: "nte::unreal::call(",
-    },
-    NteCompletion {
-        label: "nte::unreal::watch(object, function)",
-        insert: "nte::unreal::watch(",
-    },
-    NteCompletion {
-        label: "nte::unreal::watch_array_u64(object, function, element_size, value_offset)",
-        insert: "nte::unreal::watch_array_u64(",
-    },
-    NteCompletion {
-        label: "nte::unreal::watch_class_array_u64(object, function, element_size, value_offset)",
-        insert: "nte::unreal::watch_class_array_u64(",
-    },
-    NteCompletion {
-        label: "nte::unreal::unwatch(object, function)",
-        insert: "nte::unreal::unwatch(",
-    },
-    NteCompletion {
-        label: "nte::event::next()",
-        insert: "nte::event::next()",
-    },
-    NteCompletion {
-        label: "nte::event::object()",
-        insert: "nte::event::object()",
-    },
-    NteCompletion {
-        label: "nte::event::function()",
-        insert: "nte::event::function()",
-    },
-    NteCompletion {
-        label: "nte::event::params_size()",
-        insert: "nte::event::params_size()",
-    },
-    NteCompletion {
-        label: "nte::event::captured_u64()",
-        insert: "nte::event::captured_u64()",
-    },
-    NteCompletion {
-        label: "nte::event::read_u8(offset)",
-        insert: "nte::event::read_u8(",
-    },
-    NteCompletion {
-        label: "nte::event::read_u16(offset)",
-        insert: "nte::event::read_u16(",
-    },
-    NteCompletion {
-        label: "nte::event::read_u32(offset)",
-        insert: "nte::event::read_u32(",
-    },
-    NteCompletion {
-        label: "nte::event::read_u64(offset)",
-        insert: "nte::event::read_u64(",
-    },
-    NteCompletion {
-        label: "nte::event::read_i32(offset)",
-        insert: "nte::event::read_i32(",
-    },
-    NteCompletion {
-        label: "nte::event::read_f32_milli(offset)",
-        insert: "nte::event::read_f32_milli(",
-    },
-    NteCompletion {
-        label: "nte::sdk::player_character(controller)",
-        insert: "nte::sdk::player_character(",
-    },
-    NteCompletion {
-        label: "nte::sdk::player_state(controller)",
-        insert: "nte::sdk::player_state(",
-    },
-    NteCompletion {
-        label: "nte::sdk::game_paused(controller)",
-        insert: "nte::sdk::game_paused(",
-    },
-    NteCompletion {
-        label: "nte::sdk::attack_target(character)",
-        insert: "nte::sdk::attack_target(",
-    },
-    NteCompletion {
-        label: "nte::sdk::current_weapon(character)",
-        insert: "nte::sdk::current_weapon(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_level(character)",
-        insert: "nte::sdk::character_level(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_hp_milli(character)",
-        insert: "nte::sdk::character_hp_milli(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_hp_max_milli(character, fixed)",
-        insert: "nte::sdk::character_hp_max_milli(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_is_alive(character)",
-        insert: "nte::sdk::character_is_alive(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_is_dead(character)",
-        insert: "nte::sdk::character_is_dead(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_is_controlled(character)",
-        insert: "nte::sdk::character_is_controlled(",
-    },
-    NteCompletion {
-        label: "nte::sdk::character_slomo_milli(character)",
-        insert: "nte::sdk::character_slomo_milli(",
-    },
-    NteCompletion {
-        label: "nte::cache::get(key)",
-        insert: "nte::cache::get(",
-    },
-    NteCompletion {
-        label: "nte::cache::remember(key, value)",
-        insert: "nte::cache::remember(",
-    },
-    NteCompletion {
-        label: "nte::equipment::cache_missing()",
-        insert: "nte::equipment::cache_missing()",
-    },
-    NteCompletion {
-        label: "nte::equipment::cache_ready(player_state)",
-        insert: "nte::equipment::cache_ready(",
-    },
-    NteCompletion {
-        label: "nte::equipment::prepare(player_state)",
-        insert: "nte::equipment::prepare(",
-    },
-    NteCompletion {
-        label: "nte::combat_clock::pause_mask(controller)",
-        insert: "nte::combat_clock::pause_mask(",
-    },
-    NteCompletion {
-        label: "nte::combat_clock::state_flags(controller)",
-        insert: "nte::combat_clock::state_flags(",
-    },
-    NteCompletion {
-        label: "nte::combat_clock::forward(pause_mask, state_flags)",
-        insert: "nte::combat_clock::forward(",
-    },
-    NteCompletion {
-        label: "nte::ipc::bind(player_state, controller)",
-        insert: "nte::ipc::bind(",
-    },
-    NteCompletion {
-        label: "nte::ipc::emit(\"event\", value...)",
-        insert: "nte::ipc::emit(\"event.name\", ",
-    },
-    NteCompletion {
-        label: "nte::ipc::emit(\"pre.event\", value...)",
-        insert: "nte::ipc::emit(\"pre.event.name\", ",
-    },
-    NteCompletion {
-        label: "nte::ipc::emit(\"post.event\", value...)",
-        insert: "nte::ipc::emit(\"post.event.name\", ",
-    },
-    NteCompletion {
-        label: "nte::time::now_ms()",
-        insert: "nte::time::now_ms()",
-    },
-    NteCompletion {
-        label: "nte::log::info(\"message\")",
-        insert: "nte::log::info(\"message\")",
-    },
-    NteCompletion {
-        label: "for (std::uint64_t index = 0; index < COUNT; ++index)",
-        insert: "for (std::uint64_t index = 0; index < 1; ++index)\n{\n    \n}",
-    },
-];
 
 impl DpsApp {
     pub(crate) fn mod_editor_contents(&mut self, ui: &mut egui::Ui) {
@@ -1969,9 +1610,7 @@ fn completion_candidates(
         return Vec::new();
     }
     let query = prefix.unwrap_or_default().to_ascii_lowercase();
-    let mut items: Vec<_> = NTE_COMPLETIONS
-        .iter()
-        .copied()
+    let mut items: Vec<_> = mod_sdk_symbols()
         .map(static_completion_item)
         .chain(document_completion_items(source))
         .filter(|item| {
@@ -1993,122 +1632,42 @@ fn completion_candidates(
     items
 }
 
-fn static_completion_item(completion: NteCompletion) -> NteCompletionItem {
-    let kind = static_completion_kind(completion);
-    NteCompletionItem {
-        label: completion.label.to_owned(),
-        insert: completion.insert.to_owned(),
-        kind,
-        detail: completion_detail(completion.label, kind),
-        documentation_key: completion_documentation_key(completion.label),
-    }
-}
-
-fn static_completion_kind(completion: NteCompletion) -> NteCompletionKind {
-    if completion.label.starts_with("#include")
-        || completion.label.starts_with("NTE_")
-        || completion.label.starts_with("std::")
-    {
-        NteCompletionKind::Declaration
-    } else if completion.label.starts_with("void ") || completion.label.starts_with("for ") {
-        NteCompletionKind::Snippet
-    } else if completion.label.contains('(') {
-        NteCompletionKind::Function
-    } else {
-        NteCompletionKind::Property
-    }
-}
-
-fn completion_detail(label: &str, kind: NteCompletionKind) -> String {
-    match kind {
+fn static_completion_item(symbol: ModSdkSymbol) -> NteCompletionItem {
+    let kind = match symbol.kind {
+        ModSdkSymbolKind::Declaration => NteCompletionKind::Declaration,
+        ModSdkSymbolKind::Snippet => NteCompletionKind::Snippet,
+        ModSdkSymbolKind::Function => NteCompletionKind::Function,
+        ModSdkSymbolKind::Property => NteCompletionKind::Property,
+    };
+    let detail = match kind {
         NteCompletionKind::Declaration => t("NTE C++ declaration"),
         NteCompletionKind::Snippet => t("Ready-to-edit code snippet"),
         NteCompletionKind::Function => {
-            format!("{} -> {}", label, completion_return_type(label))
+            format!(
+                "{} -> {}",
+                symbol.label,
+                symbol
+                    .return_type
+                    .expect("function schema entry has a return type")
+            )
         }
         NteCompletionKind::Property => {
-            format!("{}: {}", label, completion_return_type(label))
+            format!(
+                "{}: {}",
+                symbol.label,
+                symbol
+                    .return_type
+                    .expect("property schema entry has a return type")
+            )
         }
-        NteCompletionKind::Variable => label.to_owned(),
-    }
-}
-
-fn completion_return_type(label: &str) -> &'static str {
-    if label.starts_with("nte::game::") || label == "event.viewport" {
-        "std::uintptr_t"
-    } else if label.contains("is_readable")
-        || label.contains("game_paused")
-        || label.contains("character_is_")
-        || label.contains("cache_missing")
-        || label.contains("cache_ready")
-        || label.contains("event::next")
-    {
-        "bool"
-    } else if label.contains("read_u8") {
-        "std::uint8_t"
-    } else if label.contains("read_u16") || label.contains("params_size") {
-        "std::uint16_t"
-    } else if label.contains("read_u32") || label.contains("tarray_count") {
-        "std::uint32_t"
-    } else if label.contains("read_i32") {
-        "std::int32_t"
-    } else if label.contains("read_ptr")
-        || label.contains("tarray_first")
-        || label.contains("find_function")
-        || label.contains("player_character")
-        || label.contains("player_state")
-        || label.contains("attack_target")
-        || label.contains("current_weapon")
-        || label.contains("event::object")
-        || label.contains("event::function")
-    {
-        "std::uintptr_t"
-    } else if label.contains("write_")
-        || label.contains("params_clear")
-        || label.contains("unreal::call")
-        || label.contains("unreal::watch")
-        || label.contains("unreal::unwatch")
-        || label.contains("ipc::bind")
-        || label.contains("ipc::emit")
-        || label.contains("log::info")
-        || label.contains("equipment::prepare")
-        || label.contains("combat_clock::forward")
-    {
-        "bool"
-    } else {
-        "std::uint64_t"
-    }
-}
-
-fn completion_documentation_key(label: &str) -> &'static str {
-    if label.starts_with("#include") || label.starts_with("NTE_") {
-        "Top-level Mod declaration used by the NTE C++ compiler."
-    } else if label.starts_with("void ") || label.starts_with("for ") {
-        "Complete code pattern; edit the placeholder values after insertion."
-    } else if label.starts_with("nte::game::") || label == "event.viewport" {
-        "Stable read-only pointer for the current viewport tick. Requires game.session."
-    } else if label.starts_with("nte::memory::") {
-        "Checked memory primitive. Add the matching memory.read or memory.write capability."
-    } else if label.starts_with("nte::sdk::") {
-        "Whitelisted game SDK read. Requires sdk.read."
-    } else if label.starts_with("nte::unreal::") {
-        "Bounded Unreal reflection or ProcessEvent helper."
-    } else if label.starts_with("nte::event::") {
-        "Reads a subscribed ProcessEvent record. Requires process.event."
-    } else if label.starts_with("nte::cache::") {
-        "Per-Mod integer cache retained while the Mod is active."
-    } else if label.starts_with("nte::ipc::") {
-        "Publishes or binds Mod IPC data. Requires ipc."
-    } else if label.starts_with("nte::equipment::") {
-        "Equipment host helper. Requires equipment."
-    } else if label.starts_with("nte::combat_clock::") {
-        "Combat-clock host helper. Requires combat-clock."
-    } else if label.starts_with("nte::time::") {
-        "Monotonic process time in milliseconds."
-    } else if label.starts_with("nte::log::") {
-        "Prints a Mod message to the runtime console. Requires log."
-    } else {
-        "Symbol available to this Mod source file."
+        NteCompletionKind::Variable => symbol.label.to_owned(),
+    };
+    NteCompletionItem {
+        label: symbol.label.to_owned(),
+        insert: symbol.insert_text.to_owned(),
+        kind,
+        detail,
+        documentation_key: symbol.documentation_key,
     }
 }
 
@@ -2384,9 +1943,7 @@ fn completion_popup_size(
 fn signature_help_at_cursor(source: &str, cursor_char: usize) -> Option<NteSignatureHelp> {
     let cursor_byte = char_to_byte_index(source, cursor_char)?;
     let (name, active_parameter) = active_call_context(source, cursor_byte)?;
-    let item = NTE_COMPLETIONS
-        .iter()
-        .copied()
+    let item = mod_sdk_symbols()
         .map(static_completion_item)
         .chain(document_completion_items(source))
         .find(|item| {
@@ -3135,11 +2692,7 @@ mod tests {
 
         assert!(labels.contains(&"nte::memory::read_f32_milli(base, offset)"));
         assert!(labels.contains(&"nte::memory::read_fname_hash(base, offset)"));
-        assert!(
-            NTE_COMPLETIONS
-                .iter()
-                .any(|item| item.label == "nte::cache::remember(key, value)")
-        );
+        assert!(mod_sdk_symbols().any(|item| item.label == "nte::cache::remember(key, value)"));
     }
 
     #[test]
@@ -3153,7 +2706,7 @@ mod tests {
             "nte::event::captured_u64()",
             "nte::event::read_u64(offset)",
         ] {
-            assert!(NTE_COMPLETIONS.iter().any(|item| item.label == expected));
+            assert!(mod_sdk_symbols().any(|item| item.label == expected));
         }
     }
 
@@ -3179,7 +2732,7 @@ mod tests {
         let source = "void on_viewport_tick() { ";
         let suggestions = completion_candidates(source, source.chars().count(), true);
 
-        assert!(suggestions.len() >= NTE_COMPLETIONS.len());
+        assert!(suggestions.len() >= mod_sdk_symbols().len());
     }
 
     #[test]

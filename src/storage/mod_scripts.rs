@@ -2,7 +2,7 @@
     all(feature = "desktop", not(feature = "gui")),
     allow(
         dead_code,
-        reason = "the first Mod Studio slice reads the shared workspace; later slices reuse the existing save and validation transaction"
+        reason = "the desktop Mod Studio reuses selected workspace transactions while the remaining helpers stay available to the egui migration path"
     )
 )]
 

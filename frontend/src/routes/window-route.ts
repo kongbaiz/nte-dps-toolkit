@@ -1,10 +1,15 @@
-import { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/mod-studio-contract";
-import { HUD_WINDOW_LABEL } from "@/lib/tauri/technical-contract";
+import {
+  ABYSS_VALUES_WINDOW_LABEL,
+  CONSOLE_WINDOW_LABEL,
+  HUD_WINDOW_LABEL,
+} from "@/lib/tauri/window-labels";
 
-export type WindowRoute = "mod-studio" | "technical-hud" | "unsupported";
+export type WindowRoute =
+  "abyss-values" | "console" | "technical-hud" | "unsupported";
 
 const WINDOW_ROUTES = new Map<string, WindowRoute>([
-  [CONSOLE_WINDOW_LABEL, "mod-studio"],
+  [ABYSS_VALUES_WINDOW_LABEL, "abyss-values"],
+  [CONSOLE_WINDOW_LABEL, "console"],
   [HUD_WINDOW_LABEL, "technical-hud"],
 ]);
 

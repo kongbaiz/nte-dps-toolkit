@@ -26,7 +26,7 @@ const snapshot = {
     dataState: "empty",
     config: {
       width: 380,
-      moduleOrder: ["summary", "characters"],
+      moduleOrder: ["title", "summary", "status", "characters", "timeline"],
       showTitle: false,
       showTeamDps: true,
       showDuration: true,
@@ -95,7 +95,11 @@ describe("technical client subscription", () => {
     await expect(
       client.moveModule("timeline", "summary", false),
     ).resolves.toMatchObject({
-      hud: { config: { moduleOrder: ["summary", "characters"] } },
+      hud: {
+        config: {
+          moduleOrder: ["title", "summary", "status", "characters", "timeline"],
+        },
+      },
     });
     expect(invoke).toHaveBeenCalledWith("move_hud_module", {
       dragged: "timeline",

@@ -28,6 +28,7 @@ pub fn run() {
             let console_window = app
                 .get_webview_window(windows::console::CONSOLE_WINDOW_LABEL)
                 .expect("configured Console window must exist");
+            windows::console::bind_owned_window_lifetime(&console_window, app.handle().clone());
             console_window.set_title(&nte_dps_tool::storage::i18n::t("NTE Console"))?;
             hud_window.set_always_on_top(state.always_on_top())?;
             if let Err(error) = windows::hud::set_editing_effect(&hud_window, true) {
@@ -59,6 +60,7 @@ pub fn run() {
                     eprintln!("Tauri HUD passthrough hotkey unavailable: {error}");
                 }
             }
+            commands::settings::schedule_automatic_update_check(state.inner().clone());
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -70,8 +72,36 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::abyss_values::clear_abyss_prediction_team,
+            commands::abyss_values::get_abyss_values_snapshot,
+            commands::abyss_values::import_abyss_prediction_team,
+            commands::abyss_values::swap_abyss_prediction_teams,
             commands::mod_studio::get_mod_studio_document,
+            commands::mod_studio::get_mod_studio_sdk_schema,
             commands::mod_studio::get_mod_studio_workspace,
+            commands::mod_studio::save_mod_studio_document,
+            commands::mod_studio::set_mod_studio_document_enabled,
+            commands::settings::apply_settings_hud_preset,
+            commands::settings::apply_settings_layout_profile,
+            commands::settings::clear_settings_capture_files,
+            commands::settings::check_settings_updates,
+            commands::settings::export_settings_team_data,
+            commands::settings::get_settings_snapshot,
+            commands::settings::import_settings_team_data,
+            commands::settings::move_settings_hud_module,
+            commands::settings::open_settings_hud_editor,
+            commands::settings::open_settings_abyss_values,
+            commands::settings::refresh_settings_capture_devices,
+            commands::settings::refresh_settings_capture_files,
+            commands::settings::set_settings_capture,
+            commands::settings::set_settings_hud_always_on_top,
+            commands::settings::set_settings_hud_module_visibility,
+            commands::settings::set_settings_hud_option,
+            commands::settings::set_settings_hud_width,
+            commands::settings::set_settings_hotkey_binding,
+            commands::settings::set_settings_hotkeys_enabled,
+            commands::settings::set_settings_interface,
+            commands::settings::set_settings_update_preferences,
             commands::technical::get_technical_snapshot,
             commands::technical::move_hud_module,
             commands::technical::set_hud_always_on_top,
@@ -82,6 +112,8 @@ pub fn run() {
             commands::technical::stop_hud_capture,
             channels::technical::subscribe_technical_state,
             channels::technical::unsubscribe_technical_state,
+            channels::mod_studio::subscribe_mod_studio_runtime,
+            channels::mod_studio::unsubscribe_mod_studio_runtime,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri application runtime failed");

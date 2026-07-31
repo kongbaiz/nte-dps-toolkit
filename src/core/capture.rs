@@ -150,6 +150,7 @@ pub enum RawCaptureMode {
 pub struct CaptureControllerOptions {
     pub profile: CaptureProfile,
     pub device: CaptureDeviceSelector,
+    pub filter: String,
     pub include_incoming: bool,
     pub server_damage_calibration: bool,
     pub raw_capture: RawCaptureMode,
@@ -208,7 +209,7 @@ impl CaptureController {
         };
         let device = devices[device_index].clone();
         let local_ip = network.as_ref().map(|network| network.local_ip);
-        let filter = compose_bpf("udp", network.as_ref());
+        let filter = compose_bpf(&options.filter, network.as_ref());
         let raw_capture_directory =
             raw_capture_directory(options.raw_capture, &options.raw_capture_directory);
         let capture = start_capture(
