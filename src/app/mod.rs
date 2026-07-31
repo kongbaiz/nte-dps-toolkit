@@ -1122,7 +1122,7 @@ impl CaptureUiState {
             local_ip: String::new(),
             game_process_detected: false,
             game_network: None,
-            filter: "udp".to_owned(),
+            filter: config.capture_filter.clone(),
             active_capture_filter: None,
             capture_quality_source: CaptureQualitySource::Unknown,
             include_incoming: true,
@@ -2164,6 +2164,7 @@ mod tests {
     #[test]
     fn capture_ui_state_uses_configured_policy_and_fresh_runtime_state() {
         let config = UiConfig {
+            capture_filter: "udp port 30196".to_owned(),
             manual_capture_device: Some("capture-device".to_owned()),
             server_damage_calibration: false,
             auto_round_after_idle: true,
@@ -2191,7 +2192,7 @@ mod tests {
         );
         assert!(state.devices.is_empty());
         assert_eq!(state.selected_device, 0);
-        assert_eq!(state.filter, "udp");
+        assert_eq!(state.filter, "udp port 30196");
         assert!(state.active_capture_filter.is_none());
         assert_eq!(state.capture_quality_source, CaptureQualitySource::Unknown);
         assert!(state.include_incoming);

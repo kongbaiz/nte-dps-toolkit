@@ -6,6 +6,7 @@ import {
 } from "@/lib/tauri/technical-contract";
 
 import {
+  compareSettingsGeneration,
   parseSettingsSnapshot,
   SETTINGS_CONTRACT_VERSION,
 } from "./settings-contract";
@@ -13,6 +14,7 @@ import {
 function settingsFixture(): Record<string, unknown> {
   return {
     contractVersion: SETTINGS_CONTRACT_VERSION,
+    generation: "7",
     adapterVersion: "0.3.6",
     interface: {
       language: "zh-CN",
@@ -31,6 +33,13 @@ function settingsFixture(): Record<string, unknown> {
       status: "idle",
       messageKey: "Updates have not been checked in this session",
       messageArguments: [],
+      available: [],
+      activeComponent: null,
+      downloadedBytes: "0",
+      totalBytes: "0",
+      prepared: null,
+      installEnabled: false,
+      installBlockedMessageKey: null,
     },
     capture: {
       bpfFilter: "udp",
@@ -103,10 +112,90 @@ describe("settings contract", () => {
     const snapshot = parseSettingsSnapshot(settingsFixture());
 
     expect(snapshot.contractVersion).toBe(SETTINGS_CONTRACT_VERSION);
+    expect(snapshot.generation).toBe("7");
     expect(snapshot.hud.moduleOrder).toEqual(HUD_MODULE_IDS);
     expect(snapshot.hud.showTeamDps).toBe(true);
     expect(snapshot.capture.bpfFilter).toBe("udp");
     expect(snapshot.hotkeys.bindings).toHaveLength(3);
+  });
+
+  it("orders decimal generations without unsafe number conversion", () => {
+    expect(compareSettingsGeneration("9", "10")).toBeLessThan(0);
+    expect(
+      compareSettingsGeneration("18446744073709551615", "11"),
+    ).toBeGreaterThan(0);
+    expect(compareSettingsGeneration("7", "7")).toBe(0);
+  });
+
+  it("parses available, downloading and prepared update projections", () => {
+    const fixture = settingsFixture();
+    fixture.updates = {
+      ...(fixture.updates as Record<string, unknown>),
+      status: "downloading",
+      available: [
+        {
+          component: "app",
+          version: "0.4.0",
+          publishedAt: "2026-07-31T00:00:00Z",
+          notes: "Verified release",
+          artifactSize: "2048",
+        },
+      ],
+      activeComponent: "app",
+      downloadedBytes: "1024",
+      totalBytes: "2048",
+      prepared: null,
+    };
+
+    const downloading = parseSettingsSnapshot(fixture);
+    expect(downloading.updates.available[0]?.component).toBe("app");
+    expect(downloading.updates.downloadedBytes).toBe("1024");
+
+    fixture.updates = {
+      ...(fixture.updates as Record<string, unknown>),
+      status: "ready",
+      activeComponent: null,
+      downloadedBytes: "2048",
+      prepared: { component: "app", version: "0.4.0" },
+      installEnabled: true,
+    };
+    expect(parseSettingsSnapshot(fixture).updates.prepared?.version).toBe(
+      "0.4.0",
+    );
+  });
+
+  it("rejects inconsistent update component and progress projections", () => {
+    const duplicate = settingsFixture();
+    duplicate.updates = {
+      ...(duplicate.updates as Record<string, unknown>),
+      available: [
+        {
+          component: "app",
+          version: "0.4.0",
+          publishedAt: "date",
+          notes: "notes",
+          artifactSize: "1",
+        },
+        {
+          component: "app",
+          version: "0.4.1",
+          publishedAt: "date",
+          notes: "notes",
+          artifactSize: "1",
+        },
+      ],
+    };
+    expect(() => parseSettingsSnapshot(duplicate)).toThrow(/at most once/);
+
+    const invalidProgress = settingsFixture();
+    invalidProgress.updates = {
+      ...(invalidProgress.updates as Record<string, unknown>),
+      downloadedBytes: "2",
+      totalBytes: "1",
+    };
+    expect(() => parseSettingsSnapshot(invalidProgress)).toThrow(
+      /must not exceed/,
+    );
   });
 
   it("rejects an unknown version and malformed module order", () => {

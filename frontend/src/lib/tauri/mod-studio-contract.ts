@@ -1,5 +1,5 @@
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const MOD_STUDIO_CONTRACT_VERSION = 4;
+export const MOD_STUDIO_CONTRACT_VERSION = 5;
 export const MOD_STUDIO_SDK_SCHEMA_VERSION = 1;
 export const MOD_STUDIO_MAX_DOCUMENTS = 256;
 export const MOD_STUDIO_MAX_SOURCE_BYTES = 16_384;
@@ -18,6 +18,7 @@ export interface ModStudioDocumentSummary {
 
 export interface ModStudioWorkspaceSnapshot {
   contractVersion: number;
+  generation: string;
   workspaceLabel: string;
   documents: ModStudioDocumentSummary[];
 }
@@ -127,6 +128,7 @@ export function parseModStudioWorkspace(
 
   return {
     contractVersion,
+    generation: u64DecimalString(workspace.generation, "generation", false),
     workspaceLabel: string(workspace.workspaceLabel, "workspaceLabel"),
     documents: parsedDocuments,
   };

@@ -48,7 +48,8 @@
         "alwaysOnTop": false,
         "shadow": true,
         "skipTaskbar": false,
-        "center": true
+        "center": true,
+        "visible": false
       },
       {
         "label": "abyss-values",

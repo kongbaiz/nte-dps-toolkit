@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 import { setFrontendLanguage } from "@/lib/i18n";
+import { settingsPresentationEqual } from "@/lib/settings-presentation-model";
 import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
 
 const DEFAULT_PRESENTATION: InterfaceSettings = {
@@ -20,14 +21,17 @@ const listeners = new Set<() => void>();
 
 window.addEventListener("storage", (event) => {
   if (event.key !== STORAGE_KEY) return;
-  presentation = readStoredPresentation();
-  applyDocumentPresentation(presentation);
-  setFrontendLanguage(presentation.language);
+  const next = readStoredPresentation();
+  if (settingsPresentationEqual(presentation, next)) return;
+  presentation = next;
+  applyDocumentPresentation(next);
+  setFrontendLanguage(next.language);
   revision += 1;
   listeners.forEach((listener) => listener());
 });
 
 export function applySettingsPresentation(next: InterfaceSettings): void {
+  if (settingsPresentationEqual(presentation, next)) return;
   presentation = next;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   applyDocumentPresentation(next);

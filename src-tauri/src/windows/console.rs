@@ -13,6 +13,15 @@ pub(crate) fn validate_window(window: &WebviewWindow) -> Result<(), CommandError
     }
 }
 
+#[tauri::command]
+pub(crate) fn show_console_when_ready(window: WebviewWindow) -> Result<(), CommandError> {
+    validate_window(&window)?;
+    window.show().map_err(|error| {
+        log::error!("show Console after the frontend first paint failed: {error}");
+        CommandError::window_operation_failed()
+    })
+}
+
 /// The Console owns the migration-period HUD window. The HUD starts hidden and
 /// has no native close affordance, so closing the Console must close it as well
 /// to let the desktop process terminate normally.
@@ -26,9 +35,9 @@ pub(crate) fn bind_owned_window_lifetime(window: &WebviewWindow, app: AppHandle)
         }
         if matches!(event, WindowEvent::CloseRequested { .. })
             && let Some(abyss_window) = app.get_webview_window(ABYSS_VALUES_WINDOW_LABEL)
-            && let Err(error) = abyss_window.close()
+            && let Err(error) = abyss_window.destroy()
         {
-            log::error!("close owned abyss values window with Console failed: {error}");
+            log::error!("destroy owned abyss values window with Console failed: {error}");
         }
     });
 }

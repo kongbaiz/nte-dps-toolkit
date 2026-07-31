@@ -5,18 +5,19 @@ use nte_dps_tool::core::{
     mod_studio::{
         MOD_STUDIO_WORKSPACE_LABEL, ModStudioDocument, ModStudioDocumentSummary, ModStudioError,
         ModStudioErrorCode, ModStudioRuntimeEvent as CoreModStudioRuntimeEvent,
-        ModStudioRuntimeLevel, ModStudioRuntimeLog, ModStudioWorkspace,
+        ModStudioRuntimeLevel, ModStudioRuntimeLog, VersionedModStudioWorkspace,
     },
 };
 
 use super::CommandError;
 
-pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 4;
+pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModStudioWorkspaceSnapshot {
     pub contract_version: u32,
+    pub generation: String,
     pub workspace_label: &'static str,
     pub documents: Vec<ModStudioDocumentSummarySnapshot>,
 }
@@ -107,12 +108,18 @@ pub(crate) enum ModStudioRuntimeEvent {
     Batch(ModStudioRuntimeBatchSnapshot),
 }
 
-impl From<ModStudioWorkspace> for ModStudioWorkspaceSnapshot {
-    fn from(workspace: ModStudioWorkspace) -> Self {
+impl From<VersionedModStudioWorkspace> for ModStudioWorkspaceSnapshot {
+    fn from(versioned: VersionedModStudioWorkspace) -> Self {
         Self {
             contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            generation: versioned.generation.to_string(),
             workspace_label: MOD_STUDIO_WORKSPACE_LABEL,
-            documents: workspace.documents.into_iter().map(Into::into).collect(),
+            documents: versioned
+                .workspace
+                .documents
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -309,17 +316,21 @@ mod tests {
 
     #[test]
     fn workspace_snapshot_uses_a_relative_label_and_bounded_numbers() {
-        let snapshot = ModStudioWorkspaceSnapshot::from(ModStudioWorkspace {
-            documents: vec![ModStudioDocumentSummary {
-                id: "telemetry".to_owned(),
-                enabled: true,
-                source_bytes: 1024,
-                line_count: 40,
-            }],
+        let snapshot = ModStudioWorkspaceSnapshot::from(VersionedModStudioWorkspace {
+            generation: 7,
+            workspace: nte_dps_tool::core::mod_studio::ModStudioWorkspace {
+                documents: vec![ModStudioDocumentSummary {
+                    id: "telemetry".to_owned(),
+                    enabled: true,
+                    source_bytes: 1024,
+                    line_count: 40,
+                }],
+            },
         });
         let value = serde_json::to_value(snapshot).expect("serialize workspace");
 
         assert_eq!(value["contractVersion"], MOD_STUDIO_CONTRACT_VERSION);
+        assert_eq!(value["generation"], "7");
         assert_eq!(value["workspaceLabel"], "plugins/nte-mods");
         assert_eq!(value["documents"][0]["sourceBytes"], 1024);
         assert_eq!(value["documents"][0]["lineCount"], 40);

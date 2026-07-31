@@ -6,7 +6,8 @@ import { createSettingsClient } from "./settings-client";
 
 function settingsFixture() {
   return {
-    contractVersion: 2,
+    contractVersion: 4,
+    generation: "0",
     adapterVersion: "0.3.6",
     interface: {
       language: "zh-CN",
@@ -25,6 +26,13 @@ function settingsFixture() {
       status: "idle",
       messageKey: "Updates have not been checked in this session",
       messageArguments: [],
+      available: [],
+      activeComponent: null,
+      downloadedBytes: "0",
+      totalBytes: "0",
+      prepared: null,
+      installEnabled: false,
+      installBlockedMessageKey: null,
     },
     capture: {
       bpfFilter: "udp",
@@ -79,6 +87,7 @@ describe("settings client", () => {
         calls.push({ command, arguments_ });
         return settingsFixture();
       },
+      createChannel: () => ({}),
     });
 
     await client.setHudOption("damage_taken", true);
@@ -100,6 +109,8 @@ describe("settings client", () => {
     await client.applyHudPreset("detailed");
     await client.moveHudModule("title", "summary", true);
     await client.setHudWidth(512);
+    await client.downloadUpdate("mods-plugin");
+    await client.installUpdate();
 
     expect(calls).toEqual([
       {
@@ -148,6 +159,14 @@ describe("settings client", () => {
         command: "set_settings_hud_width",
         arguments_: { width: 512 },
       },
+      {
+        command: "download_settings_update",
+        arguments_: { component: "mods-plugin" },
+      },
+      {
+        command: "install_settings_update",
+        arguments_: undefined,
+      },
     ]);
   });
 
@@ -160,11 +179,65 @@ describe("settings client", () => {
           messageArguments: [],
         };
       },
+      createChannel: () => ({}),
     });
 
     await expect(client.getSnapshot()).rejects.toMatchObject({
       code: "hud_config_save_failed",
       messageKey: "Failed to save HUD configuration.",
     });
+  });
+
+  it("streams settled startup update snapshots and unregisters on cleanup", async () => {
+    let onMessage: (message: unknown) => void = () => {
+      throw new Error("settings channel was not initialized");
+    };
+    const calls: Array<{
+      command: string;
+      arguments_?: Record<string, unknown>;
+    }> = [];
+    const snapshots: ReturnType<typeof settingsFixture>[] = [];
+    const client = createSettingsClient(
+      {
+        invoke: async (command, arguments_) => {
+          calls.push({ command, arguments_ });
+          if (command === "subscribe_settings") {
+            return { subscriptionId: "settings-test", streamIntervalMs: 200 };
+          }
+          return undefined;
+        },
+        createChannel: (callback) => {
+          onMessage = callback;
+          return { channel: true };
+        },
+      },
+      () => "settings-test",
+    );
+
+    const unsubscribe = client.subscribe(
+      (snapshot) =>
+        snapshots.push(snapshot as ReturnType<typeof settingsFixture>),
+      (error) => {
+        throw new Error(error.code);
+      },
+    );
+    onMessage({
+      event: "snapshot",
+      payload: {
+        ...settingsFixture(),
+        updates: {
+          ...settingsFixture().updates,
+          status: "up-to-date",
+          messageKey: "NTE DPS Tool is up to date",
+        },
+      },
+    });
+    await unsubscribe();
+
+    expect(snapshots[0]?.updates.status).toBe("up-to-date");
+    expect(calls.map((call) => call.command)).toEqual([
+      "subscribe_settings",
+      "unsubscribe_settings",
+    ]);
   });
 });

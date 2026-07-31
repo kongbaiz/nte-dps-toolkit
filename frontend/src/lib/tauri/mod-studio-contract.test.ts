@@ -15,7 +15,8 @@ describe("Mod Studio contract", () => {
   it("parses a bounded workspace index without source bodies", () => {
     expect(
       parseModStudioWorkspace({
-        contractVersion: 4,
+        contractVersion: 5,
+        generation: "7",
         workspaceLabel: "plugins/nte-mods",
         documents: [
           {
@@ -27,7 +28,8 @@ describe("Mod Studio contract", () => {
         ],
       }),
     ).toEqual({
-      contractVersion: 4,
+      contractVersion: 5,
+      generation: "7",
       workspaceLabel: "plugins/nte-mods",
       documents: [
         {
@@ -43,14 +45,16 @@ describe("Mod Studio contract", () => {
   it("rejects unknown versions, invalid IDs, and duplicate documents", () => {
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 5,
+        contractVersion: 6,
+        generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [],
       }),
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 4,
+        contractVersion: 5,
+        generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
           {
@@ -64,7 +68,8 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 4,
+        contractVersion: 5,
+        generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
           {
@@ -87,13 +92,13 @@ describe("Mod Studio contract", () => {
   it("parses a requested document body", () => {
     expect(
       parseModStudioDocument({
-        contractVersion: 4,
+        contractVersion: 5,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
       }),
     ).toEqual({
-      contractVersion: 4,
+      contractVersion: 5,
       id: "combat-clock",
       enabled: true,
       source: "NTE_SCRIPT(5);",
@@ -103,7 +108,7 @@ describe("Mod Studio contract", () => {
   it("parses the bounded versioned Mod SDK schema", () => {
     expect(
       parseModStudioSdkSchema({
-        contractVersion: 4,
+        contractVersion: 5,
         schemaVersion: 1,
         symbols: [
           {
@@ -121,7 +126,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModStudioSdkSchema({
-        contractVersion: 4,
+        contractVersion: 5,
         schemaVersion: 2,
         symbols: [],
       }),
@@ -165,7 +170,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 4,
+          contractVersion: 5,
           generation: "2",
           entries: [
             {
@@ -202,7 +207,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 4,
+          contractVersion: 5,
           generation: "2",
           entries: [
             {
@@ -248,7 +253,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 4,
+          contractVersion: 5,
           generation: "3",
           connected: false,
         },

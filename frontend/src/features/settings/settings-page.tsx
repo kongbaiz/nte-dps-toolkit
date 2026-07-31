@@ -45,7 +45,11 @@ import {
   SecondarySettingsSections,
   type SettingsCatalogActions,
 } from "./settings-catalog";
-import { adjacentHudModuleMove, hudModuleVisible } from "./settings-view-model";
+import {
+  adjacentHudModuleMove,
+  hudModuleVisible,
+  settingsSectionPending,
+} from "./settings-view-model";
 import { useSettings } from "./use-settings";
 
 const MODULE_LABEL_KEYS: Record<HudModuleId, string> = {
@@ -98,7 +102,7 @@ export function SettingsPage() {
           <div className="grid grid-cols-1 items-start gap-3 min-[1100px]:grid-cols-2">
             <PrimarySettingsColumn
               snapshot={settings.state.snapshot}
-              pending={settings.pendingAction !== null}
+              pendingAction={settings.pendingAction}
               actions={catalogActions}
             />
             <div className="flex min-w-0 flex-col gap-3">
@@ -113,7 +117,7 @@ export function SettingsPage() {
               />
               <SecondarySettingsSections
                 snapshot={settings.state.snapshot}
-                pending={settings.pendingAction !== null}
+                pendingAction={settings.pendingAction}
                 actions={catalogActions}
               />
             </div>
@@ -148,7 +152,9 @@ function SettingsReady({
   ) => Promise<void>;
   onSetWidth: (width: number) => Promise<void>;
 }) {
-  const pending = pendingAction !== null;
+  const windowPending = settingsSectionPending(pendingAction, "hud-window");
+  const modulesPending = settingsSectionPending(pendingAction, "hud-modules");
+  const editorPending = settingsSectionPending(pendingAction, "hud-editor");
 
   return (
     <div className="flex flex-col gap-3">
@@ -167,14 +173,14 @@ function SettingsReady({
         <CardContent className="flex flex-col gap-5">
           <HudWindowSection
             snapshot={snapshot}
-            disabled={pending}
+            disabled={windowPending}
             onSetAlwaysOnTop={onSetAlwaysOnTop}
             onSetWidth={onSetWidth}
           />
           <Separator />
           <HudModuleOrderSection
             snapshot={snapshot}
-            disabled={pending}
+            disabled={modulesPending}
             onMoveModule={onMoveModule}
             onSetModuleVisibility={onSetModuleVisibility}
           />
@@ -184,7 +190,7 @@ function SettingsReady({
             <EyeOff className="size-4 shrink-0" aria-hidden="true" />
             <span>{t("Hidden until opened")}</span>
           </div>
-          <Button disabled={pending} onClick={() => void onOpenEditor()}>
+          <Button disabled={editorPending} onClick={() => void onOpenEditor()}>
             <MonitorUp className="size-4" aria-hidden="true" />
             {t("Open HUD Editor")}
           </Button>

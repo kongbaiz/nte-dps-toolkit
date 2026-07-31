@@ -1,9 +1,4 @@
-use tauri::WebviewWindow;
-
-use nte_dps_tool::core::mod_studio::{
-    load_default_mod_studio_document, load_default_mod_studio_workspace,
-    save_default_mod_studio_document, set_default_mod_studio_document_enabled,
-};
+use tauri::{State, WebviewWindow};
 
 use crate::{
     contract::{
@@ -12,6 +7,7 @@ use crate::{
             ModStudioDocumentSnapshot, ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
         },
     },
+    state::AppState,
     windows::console,
 };
 
@@ -25,10 +21,12 @@ pub(crate) fn get_mod_studio_sdk_schema(
 
 #[tauri::command]
 pub(crate) async fn get_mod_studio_workspace(
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioWorkspaceSnapshot, CommandError> {
     console::validate_window(&window)?;
-    tauri::async_runtime::spawn_blocking(load_default_mod_studio_workspace)
+    let service = state.mod_studio();
+    tauri::async_runtime::spawn_blocking(move || service.load_workspace())
         .await
         .map_err(|error| {
             log::error!("Mod workspace list task failed: {error}");
@@ -44,10 +42,12 @@ pub(crate) async fn get_mod_studio_workspace(
 #[tauri::command]
 pub(crate) async fn get_mod_studio_document(
     id: String,
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioDocumentSnapshot, CommandError> {
     console::validate_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || load_default_mod_studio_document(&id))
+    let service = state.mod_studio();
+    tauri::async_runtime::spawn_blocking(move || service.load_document(&id))
         .await
         .map_err(|error| {
             log::error!("Mod document task failed: {error}");
@@ -64,10 +64,12 @@ pub(crate) async fn get_mod_studio_document(
 pub(crate) async fn save_mod_studio_document(
     id: String,
     source: String,
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioDocumentSnapshot, CommandError> {
     console::validate_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || save_default_mod_studio_document(&id, &source))
+    let service = state.mod_studio();
+    tauri::async_runtime::spawn_blocking(move || service.save_document(&id, &source))
         .await
         .map_err(|error| {
             log::error!("Mod document save task failed: {error}");
@@ -84,12 +86,12 @@ pub(crate) async fn save_mod_studio_document(
 pub(crate) async fn set_mod_studio_document_enabled(
     id: String,
     enabled: bool,
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioWorkspaceSnapshot, CommandError> {
     console::validate_window(&window)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        set_default_mod_studio_document_enabled(&id, enabled)
-    })
+    let service = state.mod_studio();
+    tauri::async_runtime::spawn_blocking(move || service.set_document_enabled(&id, enabled))
     .await
     .map_err(|error| {
         log::error!("Mod enabled-set task failed: {error}");

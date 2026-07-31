@@ -1,9 +1,11 @@
+use std::time::{Duration, Instant};
+
 use nte_dps_tool::{
     core::{
         team_data::parse_team_data,
         update::{
-            MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, installed_app_version,
-            verify_manifest,
+            MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
+            installed_app_version, verify_manifest,
         },
     },
     platform::update_http,
@@ -13,6 +15,7 @@ use nte_dps_tool::{
             PassthroughHotkey, ThemePreset, UiDensity,
         },
         i18n::Language,
+        update::{self as update_storage, installed_component_versions},
     },
 };
 use tauri::{AppHandle, Manager, State, WebviewWindow};
@@ -25,11 +28,13 @@ use crate::{
             UpdateSettingsInput,
         },
     },
-    state::{AppState, HudPreset, HudSettingOption, UpdateStatusState},
+    state::{AppState, HudPreset, HudSettingOption, UpdateActionError},
     windows::{abyss_values, console, hud},
 };
 
 use super::{parse_hud_module, sanitize_hud_width};
+
+const UPDATE_PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[tauri::command]
 pub(crate) fn set_settings_interface(
@@ -83,7 +88,73 @@ pub(crate) async fn check_settings_updates(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    run_update_check(state.clone()).await;
+    run_update_check(state.clone())
+        .await
+        .map_err(update_action_error)?;
+    Ok(state.settings_snapshot())
+}
+
+#[tauri::command]
+pub(crate) async fn download_settings_update(
+    component: String,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<SettingsSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let component = parse_update_component(&component)?;
+    let state = state.inner().clone();
+    run_update_download(state.clone(), component)
+        .await
+        .map_err(update_action_error)?;
+    Ok(state.settings_snapshot())
+}
+
+#[tauri::command]
+pub(crate) async fn install_settings_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<SettingsSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let state = state.inner().clone();
+    if let Some(message_key) = state.update_install_blocked_message_key() {
+        return Err(CommandError::update_install_blocked(message_key));
+    }
+    let prepared = state.begin_update_install().map_err(update_action_error)?;
+    let version = prepared.version().to_string();
+    match prepared.component() {
+        UpdateComponent::App => match update_storage::launch_prepared_app_update(&prepared) {
+            Ok(_) => {
+                let snapshot = state.settings_snapshot();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    app.exit(0);
+                });
+                return Ok(snapshot);
+            }
+            Err(error) => {
+                log::error!("launch prepared application update failed: {error}");
+                state.fail_update_install();
+            }
+        },
+        UpdateComponent::ModsPlugin => {
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                update_storage::install_prepared_plugin_update(&prepared)
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => state.finish_plugin_update_install(version),
+                Ok(Err(error)) => {
+                    log::error!("install prepared Mod loader update failed: {error}");
+                    state.fail_update_install();
+                }
+                Err(error) => {
+                    log::error!("Mod loader update worker failed: {error}");
+                    state.fail_update_install();
+                }
+            }
+        }
+    }
     Ok(state.settings_snapshot())
 }
 
@@ -92,56 +163,83 @@ pub(crate) fn schedule_automatic_update_check(state: AppState) {
         return;
     }
     tauri::async_runtime::spawn(async move {
-        run_update_check(state).await;
+        if let Err(error) = run_update_check(state).await {
+            log::debug!("automatic update check skipped: {error:?}");
+        }
     });
 }
 
-async fn run_update_check(state: AppState) {
-    state.set_update_status(UpdateStatusState {
-        status: "checking",
-        message_key: "Checking for updates...",
-        message_arguments: Vec::new(),
-    });
+pub(crate) fn schedule_completed_update_cleanup() {
+    update_storage::cleanup_completed_update_staging();
+    match update_storage::mark_update_healthy_from_environment() {
+        Ok(Some(marker)) => {
+            std::thread::spawn(move || update_storage::cleanup_completed_app_update(marker));
+        }
+        Ok(None) => {}
+        Err(error) => log::error!("record application update health failed: {error}"),
+    }
+}
+
+async fn run_update_check(state: AppState) -> Result<(), UpdateActionError> {
+    state.begin_update_check()?;
     let result = tauri::async_runtime::spawn_blocking(check_for_updates).await;
     match result {
-        Ok(Ok(updates)) if updates.is_empty() => {
-            state.set_update_status(UpdateStatusState {
-                status: "up-to-date",
-                message_key: "NTE DPS Tool is up to date",
-                message_arguments: Vec::new(),
-            });
-        }
         Ok(Ok(updates)) => {
-            let update = updates
-                .iter()
-                .find(|update| update.component == UpdateComponent::App)
-                .unwrap_or(&updates[0]);
-            state.set_update_status(UpdateStatusState {
-                status: "available",
-                message_key: match update.component {
-                    UpdateComponent::App => "Version {} is available",
-                    UpdateComponent::ModsPlugin => "Mod loader version {} is available",
-                },
-                message_arguments: vec![update.version.to_string()],
-            });
+            let auto_download = state
+                .auto_download_updates()
+                .then(|| updates.first().map(|update| update.component))
+                .flatten();
+            state.finish_update_check(updates);
+            if let Some(component) = auto_download {
+                run_update_download(state, component).await?;
+            }
         }
-        Ok(Err(error)) => {
+        Ok(Err(CheckSettingsUpdateError::NotConfigured)) => {
+            state.fail_update_check("The official update channel is not configured in this build");
+        }
+        Ok(Err(CheckSettingsUpdateError::Failed(error))) => {
             log::error!("Settings update check failed: {error}");
-            state.set_update_status(UpdateStatusState {
-                status: "error",
-                message_key: "Update check failed.",
-                message_arguments: Vec::new(),
-            });
+            state.fail_update_check("Update check failed.");
         }
         Err(error) => {
             log::error!("Settings update worker failed: {error}");
-            state.set_update_status(UpdateStatusState {
-                status: "error",
-                message_key: "Update check failed.",
-                message_arguments: Vec::new(),
-            });
+            state.fail_update_check("Update check failed.");
         }
     }
+    Ok(())
+}
+
+async fn run_update_download(
+    state: AppState,
+    component: UpdateComponent,
+) -> Result<(), UpdateActionError> {
+    let update = state.begin_update_download(component)?;
+    let progress_state = state.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut last_progress = Instant::now() - UPDATE_PROGRESS_INTERVAL;
+        update_storage::prepare_update(&update, |downloaded, total| {
+            let now = Instant::now();
+            if downloaded == total
+                || now.saturating_duration_since(last_progress) >= UPDATE_PROGRESS_INTERVAL
+            {
+                last_progress = now;
+                progress_state.update_download_progress(component, downloaded, total);
+            }
+        })
+    })
+    .await;
+    match result {
+        Ok(Ok(prepared)) => state.finish_update_download(prepared),
+        Ok(Err(error)) => {
+            log::error!("prepare signed update failed: {error}");
+            state.fail_update_download();
+        }
+        Err(error) => {
+            log::error!("update download worker failed: {error}");
+            state.fail_update_download();
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -519,14 +617,46 @@ fn settings_save_error(error: String) -> CommandError {
     CommandError::settings_config_save_failed()
 }
 
-fn check_for_updates() -> Result<Vec<nte_dps_tool::core::update::AvailableComponentUpdate>, String>
-{
-    let endpoint = UpdateEndpoint::official().map_err(|error| error.to_string())?;
+#[derive(Debug)]
+enum CheckSettingsUpdateError {
+    NotConfigured,
+    Failed(String),
+}
+
+fn check_for_updates()
+-> Result<Vec<nte_dps_tool::core::update::AvailableComponentUpdate>, CheckSettingsUpdateError> {
+    let endpoint = match UpdateEndpoint::official() {
+        Ok(endpoint) => endpoint,
+        Err(UpdateError::ClientNotConfigured) => {
+            return Err(CheckSettingsUpdateError::NotConfigured);
+        }
+        Err(error) => return Err(CheckSettingsUpdateError::Failed(error.to_string())),
+    };
     let manifest = update_http::get_bytes(&endpoint.manifest_url, MAX_MANIFEST_BYTES)
-        .map_err(|error| error.to_string())?;
-    let installed =
-        installed_app_version(env!("CARGO_PKG_VERSION")).map_err(|error| error.to_string())?;
-    verify_manifest(&manifest, &endpoint, &installed).map_err(|error| error.to_string())
+        .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))?;
+    let app = installed_app_version(env!("CARGO_PKG_VERSION"))
+        .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))?
+        .app;
+    let installed = installed_component_versions(app)
+        .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))?;
+    verify_manifest(&manifest, &endpoint, &installed)
+        .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))
+}
+
+fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> {
+    match value {
+        "app" => Ok(UpdateComponent::App),
+        "mods-plugin" => Ok(UpdateComponent::ModsPlugin),
+        _ => Err(CommandError::invalid_settings_input()),
+    }
+}
+
+fn update_action_error(error: UpdateActionError) -> CommandError {
+    match error {
+        UpdateActionError::Busy => CommandError::update_operation_busy(),
+        UpdateActionError::Unavailable => CommandError::update_component_unavailable(),
+        UpdateActionError::NotPrepared => CommandError::update_not_prepared(),
+    }
 }
 
 fn validate_filter(filter: String) -> Result<String, CommandError> {
@@ -686,5 +816,19 @@ mod tests {
             })
             .is_ok()
         );
+    }
+
+    #[test]
+    fn update_component_input_accepts_only_stable_contract_values() {
+        assert_eq!(
+            parse_update_component("app").expect("application update"),
+            UpdateComponent::App
+        );
+        assert_eq!(
+            parse_update_component("mods-plugin").expect("Mods Plugin update"),
+            UpdateComponent::ModsPlugin
+        );
+        assert!(parse_update_component("../app").is_err());
+        assert!(parse_update_component("future").is_err());
     }
 }

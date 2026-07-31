@@ -10,7 +10,7 @@ import {
 } from "./mod-source-intelligence";
 
 const schema: ModStudioSdkSchemaSnapshot = {
-  contractVersion: 4,
+  contractVersion: 5,
   schemaVersion: 1,
   symbols: [
     {

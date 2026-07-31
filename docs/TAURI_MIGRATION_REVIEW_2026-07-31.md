@@ -2,18 +2,17 @@
 
 ## Scope
 
-This review covers the uncommitted Tauri/React migration work through phases
-12-17 on `codex/tauri-react-architecture`, including Mod Studio editing and
+This review covers the Tauri/React migration work through phases 12-17 on
+`codex/tauri-react-architecture`, including Mod Studio editing and
 runtime streaming, Settings integration, capture controls, update checks,
 global hotkeys, and the auxiliary Abyss Values window.
 
-The findings below are open follow-up items. They are documented with their
-trigger, impact, and acceptance condition so later fixes can stay focused and
-independently verifiable.
+The findings below were addressed after the review. Their trigger, impact,
+resolution, and acceptance condition remain documented for regression testing.
 
-## Open findings
+## Resolved findings
 
-### REV-01 [P1] Serialize Mod enabled-set mutations
+### REV-01 [P1] Serialize Mod enabled-set mutations — resolved
 
 - Affected paths:
   - `src/storage/mod_scripts.rs`
@@ -31,11 +30,14 @@ independently verifiable.
 - Required resolution: serialize enabled-set read/modify/write operations at
   the Rust workspace transaction boundary and expose an ordered generation or
   otherwise guarantee ordered frontend application.
+- Resolution: `ModStudioWorkspaceService` now serializes all workspace reads
+  and mutations, returns a monotonic workspace generation, and the React view
+  model discards stale enabled-set responses.
 - Acceptance: repeatedly toggle two or more different Mods in rapid succession
   and confirm that the final UI, enabled-set file, and compiled runtime set all
   contain every requested mutation.
 
-### REV-02 [P1] Persist the custom BPF filter
+### REV-02 [P1] Persist the custom BPF filter — resolved
 
 - Affected paths:
   - `src-tauri/src/state.rs`
@@ -50,10 +52,13 @@ independently verifiable.
 - Required resolution: add a sanitized, backward-compatible BPF field to
   `UiConfig`, initialize `AppState` from it, and save it in the same serialized
   configuration transaction as the other capture settings.
+- Resolution: `UiConfig.capture_filter` defaults to `udp`, is trimmed and
+  bounded during sanitization, and is shared by the egui and Tauri capture
+  paths. Tauri saves it atomically with the remaining capture settings.
 - Acceptance: save a non-default filter, restart, verify the Settings snapshot,
   and confirm that the restored filter is consumed by the next capture start.
 
-### REV-03 [P1] Compare the installed Mods Plugin version during update checks
+### REV-03 [P1] Compare the installed Mods Plugin version during update checks — resolved
 
 - Affected paths:
   - `src-tauri/src/commands/settings.rs`
@@ -68,10 +73,13 @@ independently verifiable.
   manifest includes that component.
 - Required resolution: reuse `storage::update::installed_component_versions`
   and map its failure to the stable Settings update error contract.
+- Resolution: Settings parses the application version, loads the persisted or
+  detected Mods Plugin version through `installed_component_versions`, and
+  passes both installed versions into signed-manifest verification.
 - Acceptance: exercise manifests with older, equal, and newer app/plugin
   versions and confirm that only strictly newer compatible components appear.
 
-### REV-04 [P2] Recreate or hide the Abyss Values window after close
+### REV-04 [P2] Recreate or hide the Abyss Values window after close — resolved
 
 - Affected paths:
   - `src-tauri/src/commands/settings.rs`
@@ -87,10 +95,13 @@ independently verifiable.
 - Required resolution: intercept `CloseRequested` and hide the stable window,
   or recreate it from centralized window configuration when the label is
   absent.
+- Resolution: native close requests now hide the configured stable window;
+  closing Console destroys the owned hidden window so application shutdown is
+  still complete.
 - Acceptance: repeatedly open, native-close, and reopen the window, then close
   Console and confirm that its owned auxiliary window is also closed.
 
-### REV-05 [P2] Deliver startup update-check results to Settings
+### REV-05 [P2] Deliver startup update-check results to Settings — resolved
 
 - Affected paths:
   - `src-tauri/src/commands/settings.rs`
@@ -105,27 +116,29 @@ independently verifiable.
 - Required resolution: publish low-frequency update-status events through a
   stable Settings subscription, or coordinate initial snapshot loading with the
   automatic check lifecycle.
+- Resolution: Settings now mounts through a low-frequency ordered snapshot
+  channel. Rust increments a settings generation for asynchronous update-state
+  changes, and React discards any older command or channel snapshot.
 - Acceptance: test direct networking, a Windows proxy, slow responses, and
   transport failure; verify that checking, current, available, and error states
   all settle in the mounted page without manual refresh.
 
 ## Validation snapshot
 
-Passed during the review:
+Passed after the fixes:
 
 - `git diff --check`;
-- frontend lint, typecheck, 77 tests, and production build;
+- changed-file frontend formatting, full lint, typecheck, 79 tests, and the
+  production build;
 - root and Tauri formatting, check, and tests;
 - GUI and CLI feature checks and tests;
-- CLI dependency isolation scan with zero forbidden GUI/WebView dependencies;
-- Mods Plugin Release x64 clean build with zero warnings and zero errors.
+- GUI and CLI Clippy with `-D warnings`;
+- CLI dependency isolation scan with zero forbidden GUI/WebView dependencies.
 
-Repository-wide gates still reporting existing baseline findings:
+Repository-wide gates still reporting unrelated formatting debt:
 
-- frontend `format:check` reports 15 files, including the generated lockfile;
-  the HEAD lockfile reports the same formatting condition;
-- GUI/CLI Clippy reports `nonminimal_bool` in unchanged lines of
-  `src/app/mod.rs` and `src/engine/parser.rs`.
+- frontend `format:check` reports 53 unchanged files, including the generated
+  lockfile; every frontend file changed by these fixes passes Prettier.
 
 ## Manual acceptance focus
 

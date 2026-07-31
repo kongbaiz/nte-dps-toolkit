@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use nte_dps_tool::{
-    core::hud::HudConfigSnapshot,
+    core::{
+        hud::HudConfigSnapshot,
+        update::{AvailableComponentUpdate, UpdateComponent},
+    },
     engine::capture::CaptureDevice,
     storage::{
         capture_logs::{CaptureLogStats, format_bytes},
@@ -9,15 +12,17 @@ use nte_dps_tool::{
             AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
             HUD_WIDTH_MIN, HotkeyBinding, PassthroughHotkey, ThemePreset, UiConfig, UiDensity,
         },
+        update::PreparedUpdate,
     },
 };
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 2;
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsSnapshot {
     pub contract_version: u32,
+    pub generation: String,
     pub adapter_version: &'static str,
     pub interface: InterfaceSettingsSnapshot,
     pub updates: UpdateSettingsSnapshot,
@@ -29,6 +34,12 @@ pub(crate) struct SettingsSnapshot {
     pub hud_width_min: u16,
     pub hud_width_max: u16,
     pub hud: HudConfigSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "event", content = "payload", rename_all = "camelCase")]
+pub(crate) enum SettingsEvent {
+    Snapshot(SettingsSnapshot),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -53,6 +64,30 @@ pub(crate) struct UpdateSettingsSnapshot {
     pub status: String,
     pub message_key: String,
     pub message_arguments: Vec<String>,
+    pub available: Vec<AvailableUpdateSnapshot>,
+    pub active_component: Option<&'static str>,
+    pub downloaded_bytes: String,
+    pub total_bytes: String,
+    pub prepared: Option<PreparedUpdateSnapshot>,
+    pub install_enabled: bool,
+    pub install_blocked_message_key: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AvailableUpdateSnapshot {
+    pub component: &'static str,
+    pub version: String,
+    pub published_at: String,
+    pub notes: String,
+    pub artifact_size: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreparedUpdateSnapshot {
+    pub component: &'static str,
+    pub version: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -172,20 +207,20 @@ pub(crate) struct CaptureSettingsInput {
 }
 
 impl SettingsSnapshot {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_config(
         config: &UiConfig,
+        generation: u64,
         always_on_top: bool,
-        bpf_filter: String,
         devices: Vec<CaptureDeviceSnapshot>,
         capture_files: CaptureLogStats,
         upper_imported: bool,
         lower_imported: bool,
-        update_status: String,
-        update_message_key: String,
-        update_message_arguments: Vec<String>,
+        updates: UpdateSettingsSnapshot,
     ) -> Self {
         Self {
             contract_version: SETTINGS_CONTRACT_VERSION,
+            generation: generation.to_string(),
             adapter_version: env!("CARGO_PKG_VERSION"),
             interface: InterfaceSettingsSnapshot {
                 language: config.language.code(),
@@ -197,16 +232,9 @@ impl SettingsSnapshot {
                 island_notifications: config.island_notifications,
                 island_offset_x: config.island_offset_x,
             },
-            updates: UpdateSettingsSnapshot {
-                current_version: env!("CARGO_PKG_VERSION"),
-                auto_check: config.auto_check_updates,
-                auto_download: config.auto_download_updates,
-                status: update_status,
-                message_key: update_message_key,
-                message_arguments: update_message_arguments,
-            },
+            updates,
             capture: CaptureSettingsSnapshot {
-                bpf_filter,
+                bpf_filter: config.capture_filter.clone(),
                 devices,
                 manual_capture_device: config.manual_capture_device.clone(),
                 server_damage_calibration: config.server_damage_calibration,
@@ -235,6 +263,69 @@ impl SettingsSnapshot {
             hud_width_max: HUD_WIDTH_MAX,
             hud: HudConfigSnapshot::from(&config.hud),
         }
+    }
+}
+
+impl UpdateSettingsSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_runtime(
+        config: &UiConfig,
+        status: &'static str,
+        message_key: &'static str,
+        message_arguments: Vec<String>,
+        available: &[AvailableComponentUpdate],
+        active_component: Option<UpdateComponent>,
+        downloaded_bytes: u64,
+        total_bytes: u64,
+        prepared: Option<&PreparedUpdate>,
+        install_blocked_message_key: Option<&'static str>,
+    ) -> Self {
+        Self {
+            current_version: env!("CARGO_PKG_VERSION"),
+            auto_check: config.auto_check_updates,
+            auto_download: config.auto_download_updates,
+            status: status.to_owned(),
+            message_key: message_key.to_owned(),
+            message_arguments,
+            available: available
+                .iter()
+                .map(AvailableUpdateSnapshot::from)
+                .collect(),
+            active_component: active_component.map(update_component_id),
+            downloaded_bytes: downloaded_bytes.to_string(),
+            total_bytes: total_bytes.to_string(),
+            prepared: prepared.map(PreparedUpdateSnapshot::from),
+            install_enabled: prepared.is_some() && install_blocked_message_key.is_none(),
+            install_blocked_message_key,
+        }
+    }
+}
+
+impl From<&AvailableComponentUpdate> for AvailableUpdateSnapshot {
+    fn from(update: &AvailableComponentUpdate) -> Self {
+        Self {
+            component: update_component_id(update.component),
+            version: update.version.to_string(),
+            published_at: update.published_at.clone(),
+            notes: update.notes.clone(),
+            artifact_size: update.artifact_size.to_string(),
+        }
+    }
+}
+
+impl From<&PreparedUpdate> for PreparedUpdateSnapshot {
+    fn from(update: &PreparedUpdate) -> Self {
+        Self {
+            component: update_component_id(update.component()),
+            version: update.version().to_string(),
+        }
+    }
+}
+
+pub(crate) const fn update_component_id(component: UpdateComponent) -> &'static str {
+    match component {
+        UpdateComponent::App => "app",
+        UpdateComponent::ModsPlugin => "mods-plugin",
     }
 }
 
@@ -323,21 +414,36 @@ mod tests {
         config.hud.module_order = vec![HudModule::Timeline, HudModule::Title];
         let value = serde_json::to_value(SettingsSnapshot::from_config(
             &config,
+            7,
             false,
-            "udp".to_owned(),
             Vec::new(),
             CaptureLogStats::default(),
             false,
             false,
-            "idle".to_owned(),
-            "Updates have not been checked in this session".to_owned(),
-            Vec::new(),
+            UpdateSettingsSnapshot::from_runtime(
+                &config,
+                "idle",
+                "Updates have not been checked in this session",
+                Vec::new(),
+                &[],
+                None,
+                0,
+                0,
+                None,
+                None,
+            ),
         ))
         .expect("settings snapshot must serialize");
 
         assert_eq!(value["contractVersion"], SETTINGS_CONTRACT_VERSION);
+        assert_eq!(value["generation"], "7");
         assert_eq!(value["interface"]["language"], "zh-CN");
         assert_eq!(value["updates"]["autoCheck"], true);
+        assert_eq!(
+            value["updates"]["available"].as_array().map(Vec::len),
+            Some(0)
+        );
+        assert_eq!(value["updates"]["downloadedBytes"], "0");
         assert_eq!(value["capture"]["bpfFilter"], "udp");
         assert_eq!(value["hotkeys"]["bindings"][0]["action"], "capture");
         assert_eq!(value["hud"]["width"], 512);
