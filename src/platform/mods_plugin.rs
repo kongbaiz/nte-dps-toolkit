@@ -132,15 +132,11 @@ const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
 #[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
 #[cfg(feature = "desktop")]
-const ENEMY_TELEMETRY_MOD_FILE_NAME: &str = "enemy-telemetry.nte";
-#[cfg(feature = "desktop")]
 const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
 #[cfg(feature = "desktop")]
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
 #[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
-#[cfg(feature = "desktop")]
-const ENEMY_TELEMETRY_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/enemy-telemetry.nte");
 #[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
@@ -1260,7 +1256,10 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
 }
 "#;
 #[cfg(feature = "desktop")]
-const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[b"nte_mod_set 1\nload equipment\nload combat-clock\n"];
+const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[
+    b"nte_mod_set 1\nload equipment\nload combat-clock\n",
+    b"nte_mod_set 1\nload combat-clock\nload enemy-telemetry\nload equipment\n",
+];
 #[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V1,
@@ -1282,6 +1281,7 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
 ];
 #[cfg(feature = "desktop")]
+#[allow(dead_code)]
 const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_ENEMY_TELEMETRY_MOD_V1,
     LEGACY_ENEMY_TELEMETRY_MOD_V2,
@@ -2853,11 +2853,6 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
             COMBAT_CLOCK_MOD,
             LEGACY_COMBAT_CLOCK_MOD_PROGRAMS,
         ),
-        (
-            mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME),
-            ENEMY_TELEMETRY_MOD,
-            LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS,
-        ),
     ] {
         if !path.exists() {
             if workspace_initialized {
@@ -3522,8 +3517,8 @@ mod tests {
 
     #[test]
     #[cfg(feature = "desktop")]
-    fn default_workspace_installs_and_enables_enemy_telemetry_mod() {
-        let workspace = deployment_test_directory("enemy-telemetry-defaults");
+    fn default_workspace_installs_only_stable_mods() {
+        let workspace = deployment_test_directory("stable-mod-defaults");
 
         install_default_mod_files(&workspace).unwrap();
 
@@ -3531,25 +3526,22 @@ mod tests {
             fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
             DEFAULT_MOD_SET
         );
-        assert_eq!(
-            fs::read(
-                workspace
-                    .join(MOD_DIRECTORY_NAME)
-                    .join(ENEMY_TELEMETRY_MOD_FILE_NAME)
-            )
-            .unwrap(),
-            ENEMY_TELEMETRY_MOD
-        );
+        let mut installed = fs::read_dir(workspace.join(MOD_DIRECTORY_NAME))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        installed.sort();
+        assert_eq!(installed, ["combat-clock.nte", "equipment.nte"]);
         fs::remove_dir_all(workspace).unwrap();
     }
 
     #[test]
     #[cfg(feature = "desktop")]
     fn default_workspace_upgrades_the_previous_exact_enabled_set() {
-        let workspace = deployment_test_directory("enemy-telemetry-enabled-set-upgrade");
+        let workspace = deployment_test_directory("stable-enabled-set-upgrade");
         fs::write(
             workspace.join(MOD_SET_FILE_NAME),
-            LEGACY_DEFAULT_MOD_SETS[0],
+            LEGACY_DEFAULT_MOD_SETS[1],
         )
         .unwrap();
 
@@ -3584,61 +3576,6 @@ mod tests {
                 .any(|line| line == "equipment")
         );
         fs::remove_dir_all(workspace).unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn default_workspace_upgrades_polling_enemy_telemetry() {
-        for legacy in LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS {
-            let workspace = deployment_test_directory("enemy-telemetry-sampling-upgrade");
-            let mod_directory = workspace.join(MOD_DIRECTORY_NAME);
-            fs::create_dir_all(&mod_directory).unwrap();
-            fs::write(mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME), legacy).unwrap();
-
-            install_default_mod_files(&workspace).unwrap();
-
-            assert_eq!(
-                fs::read(mod_directory.join(ENEMY_TELEMETRY_MOD_FILE_NAME)).unwrap(),
-                ENEMY_TELEMETRY_MOD
-            );
-            fs::remove_dir_all(workspace).unwrap();
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "desktop")]
-    fn enemy_telemetry_uses_only_generic_script_primitives() {
-        let source = std::str::from_utf8(ENEMY_TELEMETRY_MOD).unwrap();
-        validate_mod_source("enemy-telemetry", source).unwrap();
-        assert!(source.contains("NTE_ROUTE_IPC(12, \"ipc.query_mod_events\")"));
-        assert!(source.contains("nte::memory::read_ptr("));
-        assert!(source.contains("nte::memory::read_u32(target, 0x0c)"));
-        assert!(source.contains("object_index << 32"));
-        assert!(source.contains("target ^ shifted_index"));
-        assert!(source.contains("nte::memory::read_fname_hash("));
-        assert!(source.contains("nte::cache::get("));
-        assert!(source.contains("nte::cache::remember("));
-        assert!(source.contains("nte::ipc::emit(\"pre.enemy.identity\""));
-        assert!(source.contains("nte::ipc::emit(\"post.enemy.hit_target\""));
-        assert!(source.contains("nte::ipc::emit(\"post.enemy.cleared\""));
-        assert!(source.contains("NTE_REQUIRES(\"process.event\")"));
-        assert!(source.contains("nte::memory::read_ptr(character, 0x8A0)"));
-        assert!(source.contains("\"NetMulticast_OnSendHandleDamageInfos\""));
-        assert!(source.contains(
-            "nte::unreal::watch_class_array_u64(ability_system, damage_function, 0x160, 0x110)"
-        ));
-        assert!(source.contains("nte::event::captured_u64()"));
-        assert!(!source.contains("nte::event::read_u64(0x110)"));
-        assert!(!source.contains("0x27E8"));
-        assert!(!source.contains("party_index"));
-        assert!(!source.contains("read_f32_milli"));
-        assert!(!source.contains("max_hp"));
-        assert!(!source.contains("nte::unreal::unwatch("));
-        assert!(!source.contains("enemy.vitals"));
-        assert!(!source.contains("NTE_ROUTE_IPC(13,"));
-        assert!(!source.contains("enemy.query_identity"));
-        assert!(!source.contains("nte::ipc::bind("));
-        assert!(!source.contains("nte::sdk::"));
     }
 
     #[test]

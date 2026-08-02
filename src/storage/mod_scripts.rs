@@ -1807,10 +1807,6 @@ mod tests {
                 include_str!("../../plugins/nte-mods/combat-clock.nte"),
             ),
             (
-                "enemy-telemetry",
-                include_str!("../../plugins/nte-mods/enemy-telemetry.nte"),
-            ),
-            (
                 "character-telemetry",
                 include_str!("../../plugins/examples/character-telemetry.nte"),
             ),
