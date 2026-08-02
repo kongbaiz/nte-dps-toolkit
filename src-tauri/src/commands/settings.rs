@@ -5,6 +5,7 @@ use std::{
 
 use nte_dps_tool::{
     core::{
+        mod_studio::MOD_BINDING_DPS_TIME_STOP,
         team_data::{MAX_TEAM_DPS_EXPORT_BYTES, parse_team_data},
         update::{
             MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
@@ -278,6 +279,16 @@ pub(crate) fn set_settings_capture(
     {
         return Err(CommandError::invalid_settings_input());
     }
+    let dps_time_mode = parse_dps_time_mode(&settings.dps_time_mode)?;
+    if dps_time_mode == DpsTimeMode::TimeStopAdjusted
+        && state
+            .mod_studio()
+            .enabled_binding_provider(MOD_BINDING_DPS_TIME_STOP)
+            .map_err(CommandError::from_mod_studio)?
+            .is_none()
+    {
+        return Err(CommandError::required_mod_binding());
+    }
     state
         .update_capture_settings(
             filter,
@@ -286,7 +297,7 @@ pub(crate) fn set_settings_capture(
             settings.separate_reaction_damage,
             settings.auto_round_after_idle,
             settings.auto_round_idle_seconds,
-            parse_dps_time_mode(&settings.dps_time_mode)?,
+            dps_time_mode,
             parse_passthrough_hotkey(&settings.passthrough_hotkey)?,
         )
         .map_err(settings_save_error)?;

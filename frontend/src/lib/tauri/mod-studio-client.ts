@@ -2,6 +2,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 import {
   ModStudioContractError,
+  parseModMarketCatalog,
   parseModStudioCommandError,
   parseModStudioDeployment,
   parseModStudioDirectorySelection,
@@ -11,6 +12,7 @@ import {
   parseModStudioSubscriptionReceipt,
   parseModStudioWorkspace,
   type ModStudioCommandError,
+  type ModMarketCatalogSnapshot,
   type ModStudioDocumentSnapshot,
   type ModStudioDeploymentSnapshot,
   type ModStudioDirectorySelectionSnapshot,
@@ -21,6 +23,9 @@ import {
 } from "@/lib/tauri/mod-studio-contract";
 
 const COMMANDS = {
+  getMarketCatalog: "get_mod_market_catalog",
+  installMarketItem: "install_mod_market_item",
+  deleteDocument: "delete_mod_studio_document",
   chooseGameDirectory: "choose_mod_studio_game_directory",
   createDocument: "create_mod_studio_document",
   getDeployment: "get_mod_studio_deployment",
@@ -44,6 +49,9 @@ interface ModStudioTransport {
 }
 
 export interface ModStudioClient {
+  getMarketCatalog(): Promise<ModMarketCatalogSnapshot>;
+  installMarketItem(id: string): Promise<ModStudioDocumentSnapshot>;
+  deleteDocument(id: string): Promise<ModStudioWorkspaceSnapshot>;
   chooseGameDirectory(
     region: ModStudioGameRegion,
   ): Promise<ModStudioDirectorySelectionSnapshot>;
@@ -98,6 +106,12 @@ export function createModStudioClient(
   }
 
   return {
+    getMarketCatalog: () =>
+      request(COMMANDS.getMarketCatalog, parseModMarketCatalog),
+    installMarketItem: (id) =>
+      request(COMMANDS.installMarketItem, parseModStudioDocument, { id }),
+    deleteDocument: (id) =>
+      request(COMMANDS.deleteDocument, parseModStudioWorkspace, { id }),
     chooseGameDirectory: (region) =>
       request(COMMANDS.chooseGameDirectory, parseModStudioDirectorySelection, {
         region,

@@ -26,7 +26,7 @@ struct ModSdkSymbolSeed {
     insert: &'static str,
 }
 
-pub const MOD_SDK_SCHEMA_VERSION: u32 = 1;
+pub const MOD_SDK_SCHEMA_VERSION: u32 = 2;
 pub const MAX_MOD_SDK_SYMBOLS: usize = 128;
 
 pub fn mod_sdk_symbols() -> impl ExactSizeIterator<Item = ModSdkSymbol> {
@@ -49,6 +49,10 @@ const MOD_SDK_SYMBOL_SEEDS: &[ModSdkSymbolSeed] = &[
     ModSdkSymbolSeed {
         label: "NTE_REQUIRES(\"capability\");",
         insert: "NTE_REQUIRES(\"viewport.tick\");",
+    },
+    ModSdkSymbolSeed {
+        label: "NTE_BIND(\"binding-id\");",
+        insert: "NTE_BIND(\"feature.binding-id\");",
     },
     ModSdkSymbolSeed {
         label: "NTE_ROUTE_IPC(operation, \"kernel.service\");",
@@ -506,7 +510,7 @@ mod tests {
     #[test]
     fn schema_is_bounded_unique_and_keeps_stable_host_entries() {
         let symbols = mod_sdk_symbols().collect::<Vec<_>>();
-        assert_eq!(symbols.len(), 88);
+        assert_eq!(symbols.len(), 89);
         assert!(symbols.len() <= MAX_MOD_SDK_SYMBOLS);
         assert_eq!(
             symbols
@@ -523,6 +527,10 @@ mod tests {
         assert!(symbols.iter().any(|symbol| {
             symbol.label == "nte::ipc::emit(\"event\", value...)"
                 && symbol.kind == ModSdkSymbolKind::Function
+        }));
+        assert!(symbols.iter().any(|symbol| {
+            symbol.label == "NTE_BIND(\"binding-id\");"
+                && symbol.kind == ModSdkSymbolKind::Declaration
         }));
     }
 }

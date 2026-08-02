@@ -2,6 +2,7 @@
 
 NTE_SCRIPT(5);
 NTE_MOD("combat-clock");
+NTE_BIND("feature.dps-time-stop");
 NTE_REQUIRES("viewport.tick");
 NTE_REQUIRES("game.session");
 NTE_REQUIRES("combat-clock");

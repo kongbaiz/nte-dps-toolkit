@@ -19,6 +19,7 @@ const MAX_MOD_VARIABLES: usize = 12;
 const MAX_MOD_STATES: usize = 16;
 const MAX_MOD_STRINGS: usize = 16;
 const MAX_MOD_ROUTES: usize = 16;
+const MAX_MOD_BINDINGS: usize = 16;
 const MAX_MOD_BLOCKS: usize = 8;
 const MAX_MOD_BRANCHES: usize = 8;
 const MAX_MOD_STRING_BYTES: usize = 96;
@@ -127,6 +128,43 @@ pub(crate) fn save_mod_script(
     atomic_write_text(&source_path, source).map_err(ModScriptError::FileSystem)
 }
 
+pub(crate) fn delete_mod_script(
+    workspace_directory: &Path,
+    id: &str,
+) -> Result<(), ModScriptError> {
+    validate_mod_id(id)?;
+    let source_path = workspace_directory
+        .join(MOD_DIRECTORY_NAME)
+        .join(format!("{id}.nte"));
+    if !source_path.is_file() {
+        return Err(ModScriptError::ModSourceMissing(id.to_owned()));
+    }
+
+    let mut enabled_mods = read_enabled_mods(workspace_directory)?;
+    let was_enabled = enabled_mods.remove(id);
+    if was_enabled {
+        write_enabled_mods(workspace_directory, &enabled_mods)?;
+    }
+    if let Err(error) = fs::remove_file(&source_path) {
+        if was_enabled {
+            enabled_mods.insert(id.to_owned());
+            if let Err(rollback_error) = write_enabled_mods(workspace_directory, &enabled_mods) {
+                let rollback_detail = match rollback_error {
+                    ModScriptError::FileSystem(detail) => detail,
+                    _ => "unexpected Mod storage error".to_owned(),
+                };
+                return Err(ModScriptError::FileSystem(format!(
+                    "failed to delete Mod source: {error}; enabled-set rollback also failed: {rollback_detail}"
+                )));
+            }
+        }
+        return Err(ModScriptError::FileSystem(format!(
+            "failed to delete Mod source: {error}"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn set_mod_enabled(
     workspace_directory: &Path,
     id: &str,
@@ -183,6 +221,32 @@ pub(crate) fn validate_mod_source(id: &str, source: &str) -> Result<(), ModScrip
             });
     }
     validate_legacy_mod_source(id, source)
+}
+
+pub(crate) fn mod_source_bindings(id: &str, source: &str) -> Result<Vec<String>, ModScriptError> {
+    validate_mod_source(id, source)?;
+    let cpp = source
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('#'))
+        .is_some_and(|line| line == "NTE_SCRIPT(5);");
+    let mut bindings = Vec::new();
+    for raw in source.lines() {
+        let line = if cpp {
+            strip_cpp_line_comment(raw).trim()
+        } else {
+            raw.trim()
+        };
+        let binding = if cpp {
+            parse_cpp_macro_string(line, "NTE_BIND")
+        } else {
+            parse_call(line, "bind").and_then(parse_string_literal)
+        };
+        if let Some(binding) = binding {
+            bindings.push(binding.to_owned());
+        }
+    }
+    Ok(bindings)
 }
 
 fn validate_legacy_mod_source(id: &str, source: &str) -> Result<(), ModScriptError> {
@@ -281,6 +345,15 @@ fn transpile_cpp_mod_source(
                     &mut output,
                     &mut line_map,
                     &format!("requires({capability:?})"),
+                    line_number,
+                );
+                continue;
+            }
+            if let Some(binding) = parse_cpp_macro_string(line, "NTE_BIND") {
+                push_transpiled_line(
+                    &mut output,
+                    &mut line_map,
+                    &format!("bind({binding:?})"),
                     line_number,
                 );
                 continue;
@@ -631,6 +704,7 @@ struct ModSourceValidator<'a> {
     variables: Vec<&'a str>,
     strings: Vec<&'a str>,
     routes: Vec<u16>,
+    bindings: Vec<&'a str>,
 }
 
 impl<'a> ModSourceValidator<'a> {
@@ -658,6 +732,7 @@ impl<'a> ModSourceValidator<'a> {
             variables: Vec::new(),
             strings: Vec::new(),
             routes: Vec::new(),
+            bindings: Vec::new(),
         }
     }
 
@@ -715,6 +790,21 @@ impl<'a> ModSourceValidator<'a> {
                 return Err(ModSourceValidationFailure::InvalidLine(line.number));
             }
             self.capabilities |= capability;
+            return Ok(());
+        }
+        if let Some(arguments) = parse_call(line.text, "bind") {
+            let Some(binding) =
+                parse_string_literal(arguments).filter(|value| is_mod_binding_id(value))
+            else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            if self.bindings.len() == MAX_MOD_BINDINGS {
+                return Err(ModSourceValidationFailure::BudgetExceeded);
+            }
+            if self.bindings.contains(&binding) {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            self.bindings.push(binding);
             return Ok(());
         }
         if let Some(arguments) = parse_call(line.text, "route_ipc") {
@@ -1404,6 +1494,14 @@ fn is_mod_event_name(name: &str) -> bool {
         })
 }
 
+pub(crate) fn is_mod_binding_id(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 31
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
+        })
+}
+
 fn mod_capability(name: &str) -> Option<u16> {
     Some(match name {
         "viewport.tick" => CAPABILITY_VIEWPORT_TICK,
@@ -1665,6 +1763,24 @@ mod tests {
     }
 
     #[test]
+    fn deletion_disables_then_removes_the_mod_source() {
+        let root = temp_workspace();
+        let source = new_mod_script_template("telemetry").unwrap();
+        save_mod_script(&root, "telemetry", &source).unwrap();
+        set_mod_enabled(&root, "telemetry", true).unwrap();
+
+        delete_mod_script(&root, "telemetry").unwrap();
+
+        assert!(load_mod_script_workspace(&root).unwrap().scripts.is_empty());
+        assert_eq!(
+            fs::read_to_string(root.join(MOD_SET_FILE_NAME)).unwrap(),
+            "nte_mod_set 1\n"
+        );
+        assert!(!root.join(MOD_DIRECTORY_NAME).join("telemetry.nte").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn source_validation_requires_matching_v4_declaration_and_handler() {
         assert_eq!(
             validate_mod_source(
@@ -1827,6 +1943,27 @@ mod tests {
             ),
             Err(ModScriptError::CapabilityMismatch)
         );
+    }
+
+    #[test]
+    fn source_bindings_are_declared_by_the_mod_and_reject_duplicates() {
+        let source = new_mod_script_template("sample").unwrap().replace(
+            "NTE_MOD(\"sample\");",
+            "NTE_MOD(\"sample\");\nNTE_BIND(\"feature.sample\");",
+        );
+        assert_eq!(
+            mod_source_bindings("sample", &source).unwrap(),
+            vec!["feature.sample"]
+        );
+
+        let duplicate = source.replace(
+            "NTE_BIND(\"feature.sample\");",
+            "NTE_BIND(\"feature.sample\");\nNTE_BIND(\"feature.sample\");",
+        );
+        assert!(matches!(
+            mod_source_bindings("sample", &duplicate),
+            Err(ModScriptError::InvalidSourceLine(_))
+        ));
     }
 
     #[test]

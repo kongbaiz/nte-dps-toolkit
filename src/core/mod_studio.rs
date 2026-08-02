@@ -13,15 +13,17 @@ use std::{
 };
 
 use crate::storage::mod_scripts::{
-    ModScriptDocument, ModScriptError, ModScriptWorkspace, load_mod_script_workspace,
-    mod_script_workspace_directory, new_mod_script_template, save_mod_script, set_mod_enabled,
-    validate_mod_id,
+    ModScriptDocument, ModScriptError, ModScriptWorkspace, delete_mod_script, is_mod_binding_id,
+    load_mod_script_workspace, mod_script_workspace_directory, mod_source_bindings,
+    new_mod_script_template, save_mod_script, set_mod_enabled, validate_mod_id,
 };
 
 pub const MOD_STUDIO_WORKSPACE_LABEL: &str = "plugins/nte-mods";
 pub const MAX_MOD_STUDIO_DOCUMENTS: usize = 256;
 pub const MAX_MOD_STUDIO_RUNTIME_LOGS: usize = 18;
 pub const MAX_MOD_STUDIO_RUNTIME_EVENTS: usize = 18;
+pub const MOD_BINDING_DPS_TIME_STOP: &str = "feature.dps-time-stop";
+pub const MOD_BINDING_EMPTY_CURTAIN_EQUIPMENT: &str = "feature.empty-curtain-equipment";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModStudioDocumentSummary {
@@ -96,6 +98,7 @@ pub enum ModStudioErrorCode {
     FileSystem,
     WriteFailed,
     EnabledSetWriteFailed,
+    DeleteFailed,
     InvalidWorkspace,
     InvalidModId,
     DocumentAlreadyExists,
@@ -183,6 +186,32 @@ impl ModStudioWorkspaceService {
         self.0.workspace_directory.clone()
     }
 
+    pub fn enabled_binding_provider(
+        &self,
+        binding: &str,
+    ) -> Result<Option<String>, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        if !is_mod_binding_id(binding) {
+            return Err(ModStudioError::new(
+                ModStudioErrorCode::InvalidWorkspace,
+                "application Mod binding ID is invalid",
+            ));
+        }
+        let workspace = load_bounded_workspace(&self.0.workspace_directory)?;
+        for document in workspace
+            .scripts
+            .into_iter()
+            .filter(|document| document.enabled)
+        {
+            let bindings =
+                mod_source_bindings(&document.id, &document.source).map_err(map_storage_error)?;
+            if bindings.iter().any(|declared| declared == binding) {
+                return Ok(Some(document.id));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn save_document(
         &self,
         id: &str,
@@ -194,6 +223,40 @@ impl ModStudioWorkspaceService {
         Ok(document)
     }
 
+    pub fn install_market_document(
+        &self,
+        id: &str,
+        source: &str,
+    ) -> Result<ModStudioDocument, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        let workspace = load_bounded_workspace(&self.0.workspace_directory)?;
+        if workspace.scripts.iter().any(|document| document.id == id) {
+            return Err(ModStudioError::new(
+                ModStudioErrorCode::DocumentAlreadyExists,
+                format!("Mod document {id:?} already exists"),
+            ));
+        }
+        save_mod_script(&self.0.workspace_directory, id, source).map_err(map_save_error)?;
+        if let Err(error) = set_mod_enabled(&self.0.workspace_directory, id, true) {
+            let rollback = delete_mod_script(&self.0.workspace_directory, id);
+            let mut mapped = map_enabled_set_error(error);
+            if let Err(rollback_error) = rollback {
+                mapped.detail = format!(
+                    "{}; market install rollback failed: {}",
+                    mapped.detail,
+                    storage_error_detail(rollback_error)
+                );
+            }
+            return Err(mapped);
+        }
+        self.bump_generation();
+        Ok(ModStudioDocument {
+            id: id.to_owned(),
+            enabled: true,
+            source: source.to_owned(),
+        })
+    }
+
     pub fn set_document_enabled(
         &self,
         id: &str,
@@ -201,6 +264,18 @@ impl ModStudioWorkspaceService {
     ) -> Result<VersionedModStudioWorkspace, ModStudioError> {
         let _transaction = self.lock_transaction()?;
         let workspace = set_mod_studio_document_enabled(&self.0.workspace_directory, id, enabled)?;
+        let generation = self.bump_generation();
+        Ok(VersionedModStudioWorkspace {
+            generation,
+            workspace,
+        })
+    }
+
+    pub fn delete_document(&self, id: &str) -> Result<VersionedModStudioWorkspace, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        load_mod_studio_document(&self.0.workspace_directory, id)?;
+        delete_mod_script(&self.0.workspace_directory, id).map_err(map_delete_error)?;
+        let workspace = load_mod_studio_workspace(&self.0.workspace_directory)?;
         let generation = self.bump_generation();
         Ok(VersionedModStudioWorkspace {
             generation,
@@ -528,6 +603,22 @@ fn map_enabled_set_error(error: ModScriptError) -> ModStudioError {
     }
 }
 
+fn map_delete_error(error: ModScriptError) -> ModStudioError {
+    let detail = storage_error_detail(error.clone());
+    match error {
+        ModScriptError::FileSystem(_) => {
+            ModStudioError::new(ModStudioErrorCode::DeleteFailed, detail)
+        }
+        ModScriptError::InvalidModId(_) => {
+            ModStudioError::new(ModStudioErrorCode::InvalidModId, detail)
+        }
+        ModScriptError::ModSourceMissing(_) => {
+            ModStudioError::new(ModStudioErrorCode::ModSourceMissing, detail)
+        }
+        _ => ModStudioError::new(ModStudioErrorCode::InvalidWorkspace, detail),
+    }
+}
+
 #[cfg(feature = "desktop")]
 fn runtime_message_key(message: &str) -> Option<&'static str> {
     match message {
@@ -620,6 +711,34 @@ mod tests {
                 enabled: true,
                 source,
             }
+        );
+
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn enabled_binding_provider_is_discovered_from_mod_source() {
+        let root = temp_workspace("binding-provider");
+        let source = new_mod_script_template("provider").unwrap().replace(
+            "NTE_MOD(\"provider\");",
+            "NTE_MOD(\"provider\");\nNTE_BIND(\"button.future-action\");",
+        );
+        save_mod_script(&root, "provider", &source).expect("save provider");
+        let service = ModStudioWorkspaceService::new(root.clone());
+
+        assert_eq!(
+            service
+                .enabled_binding_provider("button.future-action")
+                .expect("disabled lookup"),
+            None
+        );
+        set_mod_enabled(&root, "provider", true).expect("enable provider");
+        assert_eq!(
+            service
+                .enabled_binding_provider("button.future-action")
+                .expect("enabled lookup")
+                .as_deref(),
+            Some("provider")
         );
 
         fs::remove_dir_all(root).expect("remove workspace");
@@ -794,6 +913,42 @@ mod tests {
         assert!(!root.join("nte-mods.enabled").exists());
 
         fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn market_install_enables_the_bound_mod_in_the_same_workspace_transaction() {
+        let root = temp_workspace("market-install");
+        let service = ModStudioWorkspaceService::new(root.clone());
+        let source = new_mod_script_template("sample").expect("market source");
+
+        let installed = service
+            .install_market_document("sample", &source)
+            .expect("install market Mod");
+        let workspace = service.load_workspace().expect("reload workspace");
+
+        assert!(installed.enabled);
+        assert_eq!(workspace.generation, 1);
+        assert_eq!(workspace.workspace.documents.len(), 1);
+        assert!(workspace.workspace.documents[0].enabled);
+        fs::remove_dir_all(root).expect("remove workspace");
+    }
+
+    #[test]
+    fn workspace_service_deletes_enabled_documents_and_advances_generation() {
+        let root = temp_workspace("delete-document");
+        let service = ModStudioWorkspaceService::new(root.clone());
+        service.create_document("telemetry").unwrap();
+        service.set_document_enabled("telemetry", true).unwrap();
+
+        let deleted = service.delete_document("telemetry").unwrap();
+
+        assert!(deleted.workspace.documents.is_empty());
+        assert_eq!(deleted.generation, 3);
+        assert_eq!(
+            service.load_document("telemetry").unwrap_err().code,
+            ModStudioErrorCode::DocumentNotFound
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(feature = "desktop")]

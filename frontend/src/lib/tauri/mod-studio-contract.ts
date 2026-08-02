@@ -1,6 +1,6 @@
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const MOD_STUDIO_CONTRACT_VERSION = 5;
-export const MOD_STUDIO_SDK_SCHEMA_VERSION = 1;
+export const MOD_STUDIO_CONTRACT_VERSION = 9;
+export const MOD_STUDIO_SDK_SCHEMA_VERSION = 2;
 export const MOD_STUDIO_MAX_DOCUMENTS = 256;
 export const MOD_STUDIO_MAX_SOURCE_BYTES = 16_384;
 export const MOD_STUDIO_MAX_SDK_SYMBOLS = 128;
@@ -51,6 +51,35 @@ export interface ModStudioDirectorySelectionSnapshot {
   selected: boolean;
   path: string | null;
   deployment: ModStudioDeploymentSnapshot;
+}
+
+export interface ModMarketItem {
+  id: string;
+  bindings: string[];
+  localizations: {
+    en: ModMarketLocalizedText;
+    "zh-CN": ModMarketLocalizedText;
+    ja: ModMarketLocalizedText;
+  };
+  version: string;
+  author: string;
+  capabilities: string[];
+  packageSize: number;
+  installed: boolean;
+  enabled: boolean;
+  current: boolean;
+}
+
+export interface ModMarketLocalizedText {
+  name: string;
+  summary: string;
+}
+
+export interface ModMarketCatalogSnapshot {
+  contractVersion: number;
+  publishedAt: string;
+  privacyMode: "anonymous-read-only";
+  mods: ModMarketItem[];
 }
 
 export type ModStudioSdkSymbolKind =
@@ -227,6 +256,114 @@ export function parseModStudioDirectorySelection(
     selected,
     path,
     deployment: parseModStudioDeployment(selection.deployment),
+  };
+}
+
+export function parseModMarketCatalog(
+  value: unknown,
+): ModMarketCatalogSnapshot {
+  const catalog = record(value, "Mod Market catalog");
+  const contractVersion = contractVersionOf(catalog);
+  const privacyMode = string(catalog.privacyMode, "privacyMode");
+  if (privacyMode !== "anonymous-read-only") {
+    throw new ModStudioContractError("privacyMode is invalid");
+  }
+  const mods = array(catalog.mods, "mods");
+  if (mods.length === 0 || mods.length > 64) {
+    throw new ModStudioContractError("mods must contain 1-64 entries");
+  }
+  const parsedMods = mods.map((value, index) => {
+    const item = record(value, `mods[${index}]`);
+    const bindings = array(item.bindings, `mods[${index}].bindings`);
+    if (bindings.length === 0 || bindings.length > 16) {
+      throw new ModStudioContractError(
+        `mods[${index}].bindings must contain 1-16 entries`,
+      );
+    }
+    const parsedBindings = bindings.map((binding, bindingIndex) =>
+      identifier(binding, `mods[${index}].bindings[${bindingIndex}]`, 31),
+    );
+    if (new Set(parsedBindings).size !== parsedBindings.length) {
+      throw new ModStudioContractError(
+        `mods[${index}].bindings contains duplicates`,
+      );
+    }
+    const capabilities = array(
+      item.capabilities,
+      `mods[${index}].capabilities`,
+    );
+    if (capabilities.length > 16) {
+      throw new ModStudioContractError(
+        `mods[${index}].capabilities exceeds 16 entries`,
+      );
+    }
+    return {
+      id: modId(item.id, `mods[${index}].id`),
+      bindings: parsedBindings,
+      localizations: parseModMarketLocalizations(
+        item.localizations,
+        `mods[${index}].localizations`,
+      ),
+      version: semver(item.version, `mods[${index}].version`),
+      author: boundedString(item.author, `mods[${index}].author`, 64),
+      capabilities: capabilities.map((capability, capabilityIndex) =>
+        identifier(
+          capability,
+          `mods[${index}].capabilities[${capabilityIndex}]`,
+          64,
+        ),
+      ),
+      packageSize: positiveInteger(
+        item.packageSize,
+        `mods[${index}].packageSize`,
+      ),
+      installed: boolean(item.installed, `mods[${index}].installed`),
+      enabled: boolean(item.enabled, `mods[${index}].enabled`),
+      current: boolean(item.current, `mods[${index}].current`),
+    };
+  });
+  const ids = new Set(parsedMods.map((item) => item.id));
+  if (ids.size !== parsedMods.length) {
+    throw new ModStudioContractError("mods contains duplicate Mod IDs");
+  }
+  if (
+    parsedMods.some((item) => (item.current || item.enabled) && !item.installed)
+  ) {
+    throw new ModStudioContractError(
+      "current or enabled market Mods must be installed",
+    );
+  }
+  return {
+    contractVersion,
+    publishedAt: boundedString(catalog.publishedAt, "publishedAt", 64),
+    privacyMode,
+    mods: parsedMods,
+  };
+}
+
+function parseModMarketLocalizations(
+  value: unknown,
+  field: string,
+): ModMarketItem["localizations"] {
+  const localizations = record(value, field);
+  return {
+    en: parseModMarketLocalizedText(localizations.en, `${field}.en`),
+    "zh-CN": parseModMarketLocalizedText(
+      localizations["zh-CN"],
+      `${field}.zh-CN`,
+    ),
+    ja: parseModMarketLocalizedText(localizations.ja, `${field}.ja`),
+  };
+}
+
+function parseModMarketLocalizedText(
+  value: unknown,
+  field: string,
+): ModMarketLocalizedText {
+  const localized = record(value, field);
+  return {
+    name: boundedString(localized.name, `${field}.name`, 64),
+    summary: boundedString(localized.summary, `${field}.summary`, 280),
   };
 }
 
@@ -503,6 +640,30 @@ function modEventName(value: unknown, field: string): string {
   const parsed = string(value, field);
   if (!/^[a-z0-9._-]{1,31}$/.test(parsed)) {
     throw new ModStudioContractError(`${field} must be a valid event name`);
+  }
+  return parsed;
+}
+
+function semver(value: unknown, field: string): string {
+  const parsed = string(value, field);
+  if (
+    !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(
+      parsed,
+    )
+  ) {
+    throw new ModStudioContractError(`${field} must be a semantic version`);
+  }
+  return parsed;
+}
+
+function identifier(value: unknown, field: string, maxLength: number): string {
+  const parsed = string(value, field);
+  if (
+    parsed.length === 0 ||
+    parsed.length > maxLength ||
+    !/^[a-z0-9._-]+$/.test(parsed)
+  ) {
+    throw new ModStudioContractError(`${field} must be a valid identifier`);
   }
   return parsed;
 }

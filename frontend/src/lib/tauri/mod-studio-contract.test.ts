@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ModStudioContractError,
   compareModStudioSequence,
+  parseModMarketCatalog,
   parseModStudioCommandError,
   parseModStudioDeployment,
   parseModStudioDirectorySelection,
@@ -17,7 +18,7 @@ describe("Mod Studio contract", () => {
   it("parses a bounded workspace index without source bodies", () => {
     expect(
       parseModStudioWorkspace({
-        contractVersion: 5,
+        contractVersion: 9,
         generation: "7",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -30,7 +31,7 @@ describe("Mod Studio contract", () => {
         ],
       }),
     ).toEqual({
-      contractVersion: 5,
+      contractVersion: 9,
       generation: "7",
       workspaceLabel: "plugins/nte-mods",
       documents: [
@@ -47,7 +48,7 @@ describe("Mod Studio contract", () => {
   it("rejects unknown versions, invalid IDs, and duplicate documents", () => {
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 6,
+        contractVersion: 8,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [],
@@ -55,7 +56,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 5,
+        contractVersion: 9,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -70,7 +71,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 5,
+        contractVersion: 9,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -94,22 +95,89 @@ describe("Mod Studio contract", () => {
   it("parses a requested document body", () => {
     expect(
       parseModStudioDocument({
-        contractVersion: 5,
+        contractVersion: 9,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
       }),
     ).toEqual({
-      contractVersion: 5,
+      contractVersion: 9,
       id: "combat-clock",
       enabled: true,
       source: "NTE_SCRIPT(5);",
     });
   });
 
+  it("parses privacy-bounded Mod Market catalog items", () => {
+    expect(
+      parseModMarketCatalog({
+        contractVersion: 9,
+        publishedAt: "2026-08-03T00:00:00Z",
+        privacyMode: "anonymous-read-only",
+        mods: [
+          {
+            id: "combat-clock",
+            bindings: ["feature.dps-time-stop"],
+            localizations: {
+              en: { name: "Combat Clock", summary: "Tracks game pauses." },
+              "zh-CN": { name: "时停扣除", summary: "追踪游戏时停。" },
+              ja: { name: "時間停止控除", summary: "停止を追跡します。" },
+            },
+            version: "1.0.0",
+            author: "NTE",
+            capabilities: ["combat-clock", "ipc"],
+            packageSize: 1024,
+            installed: false,
+            enabled: false,
+            current: false,
+          },
+          {
+            id: "equipment",
+            bindings: ["feature.empty-curtain-equipment"],
+            localizations: {
+              en: { name: "Equipment", summary: "Manages equipment." },
+              "zh-CN": { name: "空幕装备", summary: "管理空幕装备。" },
+              ja: { name: "空幕装備", summary: "装備を管理します。" },
+            },
+            version: "1.0.0",
+            author: "NTE",
+            capabilities: ["equipment", "ipc"],
+            packageSize: 2048,
+            installed: true,
+            enabled: true,
+            current: true,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      privacyMode: "anonymous-read-only",
+      mods: [
+        {
+          id: "combat-clock",
+          bindings: ["feature.dps-time-stop"],
+          packageSize: 1024,
+          localizations: { "zh-CN": { summary: "追踪游戏时停。" } },
+        },
+        {
+          id: "equipment",
+          bindings: ["feature.empty-curtain-equipment"],
+          enabled: true,
+        },
+      ],
+    });
+    expect(() =>
+      parseModMarketCatalog({
+        contractVersion: 9,
+        publishedAt: "2026-08-03T00:00:00Z",
+        privacyMode: "tracks-device",
+        mods: [],
+      }),
+    ).toThrow(ModStudioContractError);
+  });
+
   it("parses bounded deployment state and a validated manual path selection", () => {
     const deployment = {
-      contractVersion: 5,
+      contractVersion: 9,
       installations: 1,
       installed: 1,
       current: 1,
@@ -143,8 +211,8 @@ describe("Mod Studio contract", () => {
   it("parses the bounded versioned Mod SDK schema", () => {
     expect(
       parseModStudioSdkSchema({
-        contractVersion: 5,
-        schemaVersion: 1,
+        contractVersion: 9,
+        schemaVersion: 2,
         symbols: [
           {
             label: "nte::time::now_ms()",
@@ -156,13 +224,13 @@ describe("Mod Studio contract", () => {
         ],
       }),
     ).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       symbols: [{ kind: "function", returnType: "std::uint64_t" }],
     });
     expect(() =>
       parseModStudioSdkSchema({
-        contractVersion: 5,
-        schemaVersion: 2,
+        contractVersion: 9,
+        schemaVersion: 1,
         symbols: [],
       }),
     ).toThrow(ModStudioContractError);
@@ -205,7 +273,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 5,
+          contractVersion: 9,
           generation: "2",
           entries: [
             {
@@ -242,7 +310,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 5,
+          contractVersion: 9,
           generation: "2",
           entries: [
             {
@@ -288,7 +356,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 5,
+          contractVersion: 9,
           generation: "3",
           connected: false,
         },

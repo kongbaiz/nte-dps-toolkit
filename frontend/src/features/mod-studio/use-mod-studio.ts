@@ -76,6 +76,14 @@ export type ModStudioActionState =
       error: ReturnType<typeof parseModStudioCommandError>;
     };
 
+export type ModStudioDeleteState =
+  | { status: "idle" }
+  | { status: "deleting" }
+  | {
+      status: "error";
+      error: ReturnType<typeof parseModStudioCommandError>;
+    };
+
 export function useModStudio(client: ModStudioClient = modStudioClient) {
   const [state, setState] = useState<ModStudioPageState>({
     status: "loading",
@@ -83,6 +91,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
   const workspaceRequest = useRef(0);
   const savingIds = useRef(new Set<string>());
   const enablingIds = useRef(new Set<string>());
+  const deletingIds = useRef(new Set<string>());
   const [buffers, setBuffers] = useState<Record<string, ModStudioSourceBuffer>>(
     {},
   );
@@ -91,6 +100,9 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
   >({});
   const [enableStates, setEnableStates] = useState<
     Record<string, ModStudioEnableState>
+  >({});
+  const [deleteStates, setDeleteStates] = useState<
+    Record<string, ModStudioDeleteState>
   >({});
   const [runtimeState, setRuntimeState] = useState(
     INITIAL_MOD_STUDIO_RUNTIME_STATE,
@@ -402,6 +414,64 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
     [client],
   );
 
+  const deleteDocument = useCallback(
+    async (id: string) => {
+      const buffer = buffers[id];
+      if (
+        deletingIds.current.has(id) ||
+        savingIds.current.has(id) ||
+        enablingIds.current.has(id) ||
+        (buffer !== undefined && isSourceBufferDirty(buffer))
+      ) {
+        return;
+      }
+      deletingIds.current.add(id);
+      setDeleteStates((current) => ({
+        ...current,
+        [id]: { status: "deleting" },
+      }));
+      try {
+        const workspace = await client.deleteDocument(id);
+        setState((current) => {
+          const next = acceptEnabledWorkspace(current, workspace);
+          selectedId.current = selectedIdOf(next);
+          return next;
+        });
+        setBuffers((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+        setSaveStates((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+        setEnableStates((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+        setDeleteStates((current) => {
+          const next = { ...current };
+          delete next[id];
+          return next;
+        });
+      } catch (error) {
+        setDeleteStates((current) => ({
+          ...current,
+          [id]: {
+            status: "error",
+            error: parseModStudioCommandError(error),
+          },
+        }));
+      } finally {
+        deletingIds.current.delete(id);
+      }
+    },
+    [buffers, client],
+  );
+
   const openFolder = useCallback(async () => {
     setFolderState({ status: "working" });
     try {
@@ -514,6 +584,8 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
     enableStates,
     setDocumentEnabled,
     createDocument,
+    deleteDocument,
+    deleteStates,
     createState,
     openFolder,
     folderState,

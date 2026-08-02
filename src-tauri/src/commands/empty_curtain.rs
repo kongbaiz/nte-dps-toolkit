@@ -5,6 +5,7 @@ use nte_dps_tool::{
         empty_curtain::{
             RecommendedLoadoutError, build_drive_calculator_inventory, recommended_loadout,
         },
+        mod_studio::MOD_BINDING_EMPTY_CURTAIN_EQUIPMENT,
         snapshot::{
             CHARACTER_LOADOUT_MAX_JSON_BYTES, CharacterLoadoutError, export_character_loadout_json,
             parse_character_loadout_json, validate_character_loadout,
@@ -376,6 +377,14 @@ fn submit(
     character: HtItemNetId,
     operation: ModsPluginOperation,
 ) -> Result<(), CommandError> {
+    if state
+        .mod_studio()
+        .enabled_binding_provider(MOD_BINDING_EMPTY_CURTAIN_EQUIPMENT)
+        .map_err(CommandError::from_mod_studio)?
+        .is_none()
+    {
+        return Err(CommandError::required_mod_binding());
+    }
     state
         .submit_empty_curtain_operation(character, operation)
         .map(|_| ())

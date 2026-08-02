@@ -107,6 +107,15 @@ pub(crate) struct CommandError {
 }
 
 impl CommandError {
+    pub(crate) fn required_mod_binding() -> Self {
+        Self {
+            code: "required_mod_binding_missing",
+            message_key: "This feature requires an enabled Mod. Open Mod Market to install or enable one.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn main_dps(code: &'static str, message_key: &'static str) -> Self {
         Self {
             code,

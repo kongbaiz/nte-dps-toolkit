@@ -2834,6 +2834,7 @@ fn rollback_default_mod_files(created: &[PathBuf], migrated: &[(PathBuf, Vec<u8>
 fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
     let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
     fs::create_dir_all(&mod_directory)?;
+    let workspace_initialized = workspace_directory.join(MOD_SET_FILE_NAME).is_file();
     let mut created = Vec::new();
     let mut migrated = Vec::new();
     for (path, bytes, legacy) in [
@@ -2859,6 +2860,9 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
         ),
     ] {
         if !path.exists() {
+            if workspace_initialized {
+                continue;
+            }
             if let Err(error) = fs::write(&path, bytes) {
                 rollback_default_mod_files(&created, &migrated);
                 let _ = fs::remove_dir(&mod_directory);
@@ -3554,6 +3558,30 @@ mod tests {
         assert_eq!(
             fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
             DEFAULT_MOD_SET
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn initialized_workspace_does_not_restore_a_deleted_default_mod() {
+        let workspace = deployment_test_directory("deleted-default-mod");
+        install_default_mod_files(&workspace).unwrap();
+        crate::storage::mod_scripts::delete_mod_script(&workspace, "equipment").unwrap();
+
+        install_default_mod_files(&workspace).unwrap();
+
+        assert!(
+            !workspace
+                .join(MOD_DIRECTORY_NAME)
+                .join(EQUIPMENT_MOD_FILE_NAME)
+                .exists()
+        );
+        assert!(
+            !fs::read_to_string(workspace.join(MOD_SET_FILE_NAME))
+                .unwrap()
+                .lines()
+                .any(|line| line == "equipment")
         );
         fs::remove_dir_all(workspace).unwrap();
     }
