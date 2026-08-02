@@ -3,16 +3,94 @@ import { describe, expect, it, vi } from "vitest";
 import { createModStudioClient } from "./mod-studio-client";
 
 const workspace = {
-  contractVersion: 5,
+  contractVersion: 9,
   generation: "0",
   workspaceLabel: "plugins/nte-mods",
   documents: [],
 };
 
 describe("Mod Studio client", () => {
+  it("deletes a workspace Mod through the typed Rust command", async () => {
+    const deletedWorkspace = { ...workspace, generation: "4" };
+    const invoke = vi.fn().mockResolvedValueOnce(deletedWorkspace);
+    const client = createModStudioClient({ invoke, createChannel: vi.fn() });
+
+    await expect(client.deleteDocument("telemetry")).resolves.toEqual(
+      deletedWorkspace,
+    );
+    expect(invoke).toHaveBeenCalledWith("delete_mod_studio_document", {
+      id: "telemetry",
+    });
+  });
+
+  it("loads and installs market items through Rust-owned commands", async () => {
+    const catalog = {
+      contractVersion: 9,
+      publishedAt: "2026-08-03T00:00:00Z",
+      privacyMode: "anonymous-read-only",
+      mods: [
+        {
+          id: "combat-clock",
+          bindings: ["feature.dps-time-stop"],
+          localizations: {
+            en: { name: "Combat Clock", summary: "Tracks game pauses." },
+            "zh-CN": { name: "时停扣除", summary: "追踪游戏时停。" },
+            ja: { name: "時間停止控除", summary: "停止を追跡します。" },
+          },
+          version: "1.0.0",
+          author: "NTE",
+          capabilities: ["combat-clock", "ipc"],
+          packageSize: 1024,
+          installed: false,
+          enabled: false,
+          current: false,
+        },
+        {
+          id: "equipment",
+          bindings: ["feature.empty-curtain-equipment"],
+          localizations: {
+            en: { name: "Equipment", summary: "Manages equipment." },
+            "zh-CN": { name: "空幕装备", summary: "管理空幕装备。" },
+            ja: { name: "空幕装備", summary: "装備を管理します。" },
+          },
+          version: "1.0.0",
+          author: "NTE",
+          capabilities: ["equipment", "ipc"],
+          packageSize: 2048,
+          installed: true,
+          enabled: true,
+          current: true,
+        },
+      ],
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce(catalog)
+      .mockResolvedValueOnce({
+        contractVersion: 9,
+        id: "combat-clock",
+        enabled: true,
+        source: "NTE_SCRIPT(5);",
+      });
+    const client = createModStudioClient({ invoke, createChannel: vi.fn() });
+
+    await expect(client.getMarketCatalog()).resolves.toEqual(catalog);
+    await expect(
+      client.installMarketItem("combat-clock"),
+    ).resolves.toMatchObject({ id: "combat-clock", enabled: true });
+    expect(invoke).toHaveBeenNthCalledWith(
+      1,
+      "get_mod_market_catalog",
+      undefined,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(2, "install_mod_market_item", {
+      id: "combat-clock",
+    });
+  });
+
   it("routes creation, folders, manual game selection, and loader deployment through typed commands", async () => {
     const deployment = {
-      contractVersion: 5,
+      contractVersion: 9,
       installations: 1,
       installed: 0,
       current: 0,
@@ -22,7 +100,7 @@ describe("Mod Studio client", () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce({
-        contractVersion: 5,
+        contractVersion: 9,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
@@ -77,8 +155,8 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(workspace)
       .mockResolvedValueOnce({
-        contractVersion: 5,
-        schemaVersion: 1,
+        contractVersion: 9,
+        schemaVersion: 2,
         symbols: [
           {
             label: "nte::time::now_ms()",
@@ -90,13 +168,13 @@ describe("Mod Studio client", () => {
         ],
       })
       .mockResolvedValueOnce({
-        contractVersion: 5,
+        contractVersion: 9,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
       })
       .mockResolvedValueOnce({
-        contractVersion: 5,
+        contractVersion: 9,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);\n// saved",
@@ -109,7 +187,7 @@ describe("Mod Studio client", () => {
 
     await expect(client.getWorkspace()).resolves.toEqual(workspace);
     await expect(client.getSdkSchema()).resolves.toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       symbols: [{ label: "nte::time::now_ms()" }],
     });
     await expect(client.getDocument("telemetry")).resolves.toMatchObject({
@@ -178,7 +256,7 @@ describe("Mod Studio client", () => {
     deliver?.({
       event: "connection",
       payload: {
-        contractVersion: 5,
+        contractVersion: 9,
         generation: "1",
         connected: true,
       },
@@ -188,7 +266,7 @@ describe("Mod Studio client", () => {
     expect(onEvent).toHaveBeenCalledWith({
       event: "connection",
       payload: {
-        contractVersion: 5,
+        contractVersion: 9,
         generation: "1",
         connected: true,
       },

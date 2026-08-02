@@ -2750,6 +2750,17 @@ namespace nte::mods::runtime
 						continue;
 					}
 					TextView arguments{};
+					if (ParseCppMacro(line, "NTE_BIND", arguments))
+					{
+						TextView binding{};
+						if (!ParseStringLiteral(arguments, binding) ||
+							!IsValidModId(binding) ||
+							!AppendTranslated(output, output_size, "bind(") ||
+							!AppendTranslated(output, output_size, arguments) ||
+							!AppendTranslated(output, output_size, ")\n"))
+							return false;
+						continue;
+					}
 					if (ParseCppMacro(line, "NTE_REQUIRES", arguments))
 					{
 						if (!AppendTranslated(output, output_size, "requires(") ||
@@ -2920,6 +2931,12 @@ namespace nte::mods::runtime
 			{
 				if (indentation != 0)
 					return false;
+				if (ParseCall(line, "bind", arguments))
+				{
+					if (!ParseStringLiteral(arguments, value) || !IsValidModId(value))
+						return false;
+					continue;
+				}
 				if (ParseCall(line, "requires", arguments) ||
 					ParseCall(line, "capability", arguments))
 				{

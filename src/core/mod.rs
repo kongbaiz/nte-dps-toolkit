@@ -15,6 +15,8 @@ pub mod history;
 pub mod hud;
 pub mod live_capture;
 #[cfg(feature = "desktop")]
+pub mod mod_market;
+#[cfg(feature = "desktop")]
 pub mod mod_sdk;
 #[cfg(feature = "desktop")]
 pub mod mod_studio;

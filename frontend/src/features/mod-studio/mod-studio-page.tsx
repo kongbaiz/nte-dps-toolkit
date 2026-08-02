@@ -11,6 +11,8 @@ import {
   Minus,
   Radio,
   RefreshCw,
+  Store,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 
@@ -36,7 +38,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { t, tf } from "@/lib/i18n";
+import { t, tf, useTranslationRevision } from "@/lib/i18n";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import type {
   ModStudioCommandError,
@@ -53,6 +55,7 @@ import {
   visibleRuntimeEntries,
   type ModRuntimeConsoleFilter,
 } from "./mod-runtime-console-model";
+import { ModMarketPanel } from "./mod-market-panel";
 
 const ModSourceEditor = lazy(async () => {
   const module = await import("./mod-source-editor");
@@ -66,12 +69,14 @@ import {
   useModStudio,
   type ModStudioActionState,
   type ModStudioDeploymentState,
+  type ModStudioDeleteState,
   type ModStudioEnableState,
   type ModStudioSaveState,
   type ModStudioSdkState,
 } from "./use-mod-studio";
 
 export function ModStudioWorkspace() {
+  useTranslationRevision();
   const {
     state,
     refresh,
@@ -88,6 +93,8 @@ export function ModStudioWorkspace() {
     runtimeState,
     sdkState,
     createDocument,
+    deleteDocument,
+    deleteStates,
     createState,
     openFolder,
     folderState,
@@ -100,10 +107,13 @@ export function ModStudioWorkspace() {
     setLoaderEnabled,
   } = useModStudio();
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
+  const [activePanel, setActivePanel] = useState<"editor" | "market">("editor");
 
   return (
     <section className="flex min-w-0 flex-1 flex-col p-3">
       <ModStudioHeader
+        activePanel={activePanel}
+        onSelectPanel={setActivePanel}
         runtimeState={runtimeState}
         onRefresh={refresh}
         onOpenFolder={openFolder}
@@ -117,65 +127,73 @@ export function ModStudioWorkspace() {
         onSetLoaderEnabled={setLoaderEnabled}
         dirty={dirtyDocumentIds.size > 0}
       />
-      <div className="mt-3 grid min-h-0 flex-1 grid-cols-[clamp(12rem,21vw,17rem)_minmax(0,1fr)] overflow-hidden border bg-card max-[900px]:grid-cols-[12rem_minmax(0,1fr)]">
-        <ExplorerPane
-          state={state}
-          selectedId={state.status === "ready" ? state.selectedId : null}
-          onSelect={chooseDocument}
-          onRefresh={refresh}
-          dirtyDocumentIds={dirtyDocumentIds}
-          enableStates={enableStates}
-          onSetEnabled={(id, enabled) => {
-            void setDocumentEnabled(id, enabled);
-          }}
-          createState={createState}
-          onCreate={(id) => void createDocument(id)}
-        />
-        <section className="flex min-h-0 min-w-0 flex-col">
-          {state.status === "ready" ? (
-            <EditorPane
-              selectedId={state.selectedId}
-              document={state.document}
-              sourceBuffer={selectedBuffer}
-              saveState={selectedSaveState}
-              dirty={selectedBufferDirty}
-              onSourceChange={(source) => {
-                if (selectedBuffer !== null) {
-                  editSource(
-                    state.selectedId,
-                    selectedBuffer.savedSource,
-                    source,
-                  );
+      {activePanel === "market" ? (
+        <ModMarketPanel onInstalled={refresh} />
+      ) : (
+        <div className="mt-3 grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,clamp(12rem,21vw,17rem))_minmax(0,1fr)] overflow-hidden border bg-card max-[900px]:grid-cols-[minmax(0,12rem)_minmax(0,1fr)]">
+          <ExplorerPane
+            state={state}
+            selectedId={state.status === "ready" ? state.selectedId : null}
+            onSelect={chooseDocument}
+            onRefresh={refresh}
+            dirtyDocumentIds={dirtyDocumentIds}
+            enableStates={enableStates}
+            onSetEnabled={(id, enabled) => {
+              void setDocumentEnabled(id, enabled);
+            }}
+            createState={createState}
+            onCreate={(id) => void createDocument(id)}
+            deleteStates={deleteStates}
+            onDelete={(id) => void deleteDocument(id)}
+          />
+          <section className="flex min-h-0 min-w-0 flex-col">
+            {state.status === "ready" ? (
+              <EditorPane
+                selectedId={state.selectedId}
+                document={state.document}
+                sourceBuffer={selectedBuffer}
+                saveState={selectedSaveState}
+                dirty={selectedBufferDirty}
+                onSourceChange={(source) => {
+                  if (selectedBuffer !== null) {
+                    editSource(
+                      state.selectedId,
+                      selectedBuffer.savedSource,
+                      source,
+                    );
+                  }
+                }}
+                onSave={() => {
+                  if (selectedBuffer !== null && selectedBufferDirty) {
+                    void saveSource(state.selectedId, selectedBuffer);
+                  }
+                }}
+                onRevert={() => {
+                  if (selectedBuffer !== null) {
+                    revertSource(state.selectedId, selectedBuffer);
+                  }
+                }}
+                onRetry={refresh}
+                consoleCollapsed={consoleCollapsed}
+                runtimeState={runtimeState}
+                sdkState={sdkState}
+                onToggleConsole={() =>
+                  setConsoleCollapsed((collapsed) => !collapsed)
                 }
-              }}
-              onSave={() => {
-                if (selectedBuffer !== null && selectedBufferDirty) {
-                  void saveSource(state.selectedId, selectedBuffer);
-                }
-              }}
-              onRevert={() => {
-                if (selectedBuffer !== null) {
-                  revertSource(state.selectedId, selectedBuffer);
-                }
-              }}
-              onRetry={refresh}
-              consoleCollapsed={consoleCollapsed}
-              runtimeState={runtimeState}
-              sdkState={sdkState}
-              onToggleConsole={() =>
-                setConsoleCollapsed((collapsed) => !collapsed)
-              }
-            />
-          ) : (
-            <EditorPlaceholder loading={state.status === "loading"} />
-          )}
-        </section>
-      </div>
+              />
+            ) : (
+              <EditorPlaceholder loading={state.status === "loading"} />
+            )}
+          </section>
+        </div>
+      )}
     </section>
   );
 }
 
 function ModStudioHeader({
+  activePanel,
+  onSelectPanel,
   runtimeState,
   onRefresh,
   onOpenFolder,
@@ -189,6 +207,8 @@ function ModStudioHeader({
   onSetLoaderEnabled,
   dirty,
 }: {
+  activePanel: "editor" | "market";
+  onSelectPanel: (panel: "editor" | "market") => void;
   runtimeState: ModStudioRuntimeState;
   onRefresh: () => void | Promise<void>;
   onOpenFolder: () => void | Promise<void>;
@@ -234,12 +254,51 @@ function ModStudioHeader({
     <header className="border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h1 className="font-heading text-xl font-medium">
-          {t("Mod Code Editor")}
+          {t(activePanel === "editor" ? "Mod Code Editor" : "Mod Market")}
         </h1>
         <p className="text-sm text-muted-foreground">
-          {t("Write, validate and manage NTE C++ Mods in one place.")}
+          {t(
+            activePanel === "editor"
+              ? "Write, validate and manage NTE C++ Mods in one place."
+              : "Browse verified Mods and download them directly into your workspace.",
+          )}
         </p>
       </div>
+      <nav
+        className="mt-3 flex gap-1 border-b"
+        aria-label={t("Mod Studio sections")}
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "rounded-b-none border-b-2",
+            activePanel === "editor"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground",
+          )}
+          aria-current={activePanel === "editor" ? "page" : undefined}
+          onClick={() => onSelectPanel("editor")}
+        >
+          <Code2 aria-hidden="true" />
+          {t("Code Editor")}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "rounded-b-none border-b-2",
+            activePanel === "market"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground",
+          )}
+          aria-current={activePanel === "market" ? "page" : undefined}
+          onClick={() => onSelectPanel("market")}
+        >
+          <Store aria-hidden="true" />
+          {t("Mod Market")}
+        </Button>
+      </nav>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
         <span className="text-muted-foreground">{t("Game client")}</span>
         <select
@@ -487,6 +546,8 @@ interface ExplorerPaneProps {
   onSetEnabled: (id: string, enabled: boolean) => void;
   createState: ModStudioActionState;
   onCreate: (id: string) => void;
+  deleteStates: Record<string, ModStudioDeleteState>;
+  onDelete: (id: string) => void;
 }
 
 function ExplorerPane({
@@ -499,8 +560,11 @@ function ExplorerPane({
   onSetEnabled,
   createState,
   onCreate,
+  deleteStates,
+  onDelete,
 }: ExplorerPaneProps) {
   const [newModId, setNewModId] = useState("");
+  const [deleteCandidate, setDeleteCandidate] = useState<string | null>(null);
   const createError =
     createState.status === "error"
       ? tf(createState.error.messageKey, createState.error.messageArguments)
@@ -513,7 +577,7 @@ function ExplorerPane({
     }
   }, [createState.status]);
   return (
-    <aside className="flex min-h-0 flex-col border-r bg-[var(--console-explorer)]">
+    <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden border-r bg-[var(--console-explorer)]">
       <div className="flex h-10 shrink-0 items-center border-b px-3 text-xs font-semibold uppercase text-muted-foreground">
         {t("Explorer")}
       </div>
@@ -525,7 +589,7 @@ function ExplorerPane({
         />
         {t("NTE Mods").toUpperCase()}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
         {state.status === "loading" ? <ExplorerLoading /> : null}
         {state.status === "error" ? (
           <div className="p-3">
@@ -533,13 +597,13 @@ function ExplorerPane({
           </div>
         ) : null}
         {state.status === "empty" ? (
-          <Empty className="m-3 min-h-48 border bg-background">
+          <Empty className="m-3 min-h-48 min-w-0 border bg-background">
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <FolderOpen aria-hidden="true" />
               </EmptyMedia>
               <EmptyTitle>{t("No Mods in this workspace")}</EmptyTitle>
-              <EmptyDescription>
+              <EmptyDescription className="break-words">
                 {t(
                   "Add .nte files under plugins/nte-mods, then refresh this page.",
                 )}
@@ -557,11 +621,13 @@ function ExplorerPane({
                 enableState={enableStates[document.id] ?? { status: "idle" }}
                 onSelect={() => onSelect(document.id)}
                 onSetEnabled={(enabled) => onSetEnabled(document.id, enabled)}
+                deleteState={deleteStates[document.id] ?? { status: "idle" }}
+                onRequestDelete={() => setDeleteCandidate(document.id)}
               />
             ))
           : null}
       </div>
-      <div className="shrink-0 border-t bg-card p-3">
+      <div className="min-w-0 shrink-0 overflow-hidden border-t bg-card p-3">
         <label className="block text-[11px] font-medium uppercase text-muted-foreground">
           {t("New Mod ID")}
           <input
@@ -593,6 +659,16 @@ function ExplorerPane({
           </p>
         ) : null}
       </div>
+      {deleteCandidate !== null ? (
+        <DeleteModDialog
+          id={deleteCandidate}
+          onCancel={() => setDeleteCandidate(null)}
+          onConfirm={() => {
+            onDelete(deleteCandidate);
+            setDeleteCandidate(null);
+          }}
+        />
+      ) : null}
     </aside>
   );
 }
@@ -604,6 +680,8 @@ interface DocumentItemProps {
   enableState: ModStudioEnableState;
   onSelect: () => void;
   onSetEnabled: (enabled: boolean) => void;
+  deleteState: ModStudioDeleteState;
+  onRequestDelete: () => void;
 }
 
 function DocumentItem({
@@ -613,6 +691,8 @@ function DocumentItem({
   enableState,
   onSelect,
   onSetEnabled,
+  deleteState,
+  onRequestDelete,
 }: DocumentItemProps) {
   const enableError =
     enableState.status === "error"
@@ -677,6 +757,29 @@ function DocumentItem({
           <TooltipContent>{enableError}</TooltipContent>
         </Tooltip>
       ) : null}
+      {deleteState.status === "error" ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className="flex size-6 items-center justify-center text-destructive"
+                aria-label={tf(
+                  deleteState.error.messageKey,
+                  deleteState.error.messageArguments,
+                )}
+              />
+            }
+          >
+            <TriangleAlert className="size-4" aria-hidden="true" />
+          </TooltipTrigger>
+          <TooltipContent>
+            {tf(
+              deleteState.error.messageKey,
+              deleteState.error.messageArguments,
+            )}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       <span
         title={
           dirty
@@ -692,6 +795,69 @@ function DocumentItem({
           onCheckedChange={onSetEnabled}
         />
       </span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive"
+              disabled={dirty || deleteState.status === "deleting"}
+              aria-label={t("Delete Mod")}
+              onClick={onRequestDelete}
+            />
+          }
+        >
+          <Trash2 className="size-4" aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent>
+          {t(
+            dirty
+              ? "Save or revert changes before deleting this Mod."
+              : "Delete Mod",
+          )}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
+
+function DeleteModDialog({
+  id,
+  onCancel,
+  onConfirm,
+}: {
+  id: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-mod-title"
+    >
+      <section className="w-full max-w-md rounded-xl border bg-card p-5 shadow-xl">
+        <h2 id="delete-mod-title" className="text-lg font-semibold">
+          {t("Delete Mod")}
+        </h2>
+        <p className="mt-3 text-sm text-muted-foreground">
+          {tf(
+            "Delete {0}.nte from the Mod workspace? This also disables the Mod.",
+            [id],
+          )}
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" onClick={onCancel}>
+            {t("Cancel")}
+          </Button>
+          <Button variant="destructive" onClick={onConfirm}>
+            <Trash2 aria-hidden="true" />
+            {t("Delete")}
+          </Button>
+        </div>
+      </section>
     </div>
   );
 }

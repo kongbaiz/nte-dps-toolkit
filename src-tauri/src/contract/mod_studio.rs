@@ -1,6 +1,9 @@
 use serde::Serialize;
 
 use nte_dps_tool::core::{
+    mod_market::{
+        ModMarketCatalog, ModMarketError, ModMarketErrorCode, ModMarketItem, ModMarketLocalizations,
+    },
     mod_sdk::{MOD_SDK_SCHEMA_VERSION, ModSdkSymbol, ModSdkSymbolKind, mod_sdk_symbols},
     mod_studio::{
         MOD_STUDIO_WORKSPACE_LABEL, ModStudioDocument, ModStudioDocumentSummary, ModStudioError,
@@ -15,7 +18,7 @@ use nte_dps_tool::platform::mods_plugin::{
 
 use super::CommandError;
 
-pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 5;
+pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,6 +165,96 @@ pub(crate) struct ModStudioDirectorySelectionSnapshot {
     pub deployment: ModStudioDeploymentSnapshot,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModMarketCatalogSnapshot {
+    pub contract_version: u32,
+    pub published_at: String,
+    pub privacy_mode: &'static str,
+    pub mods: Vec<ModMarketItemSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModMarketItemSnapshot {
+    pub id: String,
+    pub bindings: Vec<String>,
+    pub localizations: ModMarketLocalizationsSnapshot,
+    pub version: String,
+    pub author: String,
+    pub capabilities: Vec<String>,
+    pub package_size: u64,
+    pub installed: bool,
+    pub enabled: bool,
+    pub current: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ModMarketLocalizationsSnapshot {
+    pub en: ModMarketLocalizedTextSnapshot,
+    #[serde(rename = "zh-CN")]
+    pub zh_cn: ModMarketLocalizedTextSnapshot,
+    pub ja: ModMarketLocalizedTextSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModMarketLocalizedTextSnapshot {
+    pub name: String,
+    pub summary: String,
+}
+
+impl From<ModMarketLocalizations> for ModMarketLocalizationsSnapshot {
+    fn from(localizations: ModMarketLocalizations) -> Self {
+        Self {
+            en: ModMarketLocalizedTextSnapshot {
+                name: localizations.english.name,
+                summary: localizations.english.summary,
+            },
+            zh_cn: ModMarketLocalizedTextSnapshot {
+                name: localizations.simplified_chinese.name,
+                summary: localizations.simplified_chinese.summary,
+            },
+            ja: ModMarketLocalizedTextSnapshot {
+                name: localizations.japanese.name,
+                summary: localizations.japanese.summary,
+            },
+        }
+    }
+}
+
+impl ModMarketCatalogSnapshot {
+    pub(crate) fn from_catalog(
+        catalog: ModMarketCatalog,
+        local_status: impl Fn(&ModMarketItem) -> (bool, bool, bool),
+    ) -> Self {
+        Self {
+            contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            published_at: catalog.published_at,
+            privacy_mode: "anonymous-read-only",
+            mods: catalog
+                .mods
+                .into_iter()
+                .map(|item| {
+                    let (installed, enabled, current) = local_status(&item);
+                    ModMarketItemSnapshot {
+                        id: item.id,
+                        bindings: item.bindings,
+                        localizations: item.localizations.into(),
+                        version: item.version.to_string(),
+                        author: item.author,
+                        capabilities: item.capabilities,
+                        package_size: item.package_size,
+                        installed,
+                        enabled,
+                        current,
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
 impl From<ModStudioDocumentSummary> for ModStudioDocumentSummarySnapshot {
     fn from(document: ModStudioDocumentSummary) -> Self {
         Self {
@@ -280,6 +373,42 @@ impl ModStudioRuntimeEntrySnapshot {
 }
 
 impl CommandError {
+    pub(crate) fn from_mod_market(error: ModMarketError) -> Self {
+        let (code, message_key) = match error.code {
+            ModMarketErrorCode::InvalidCatalog => (
+                "mod_market_catalog_invalid",
+                "The Mod Market catalog is invalid.",
+            ),
+            ModMarketErrorCode::InvalidSignature => (
+                "mod_market_signature_invalid",
+                "The Mod Market catalog signature is invalid.",
+            ),
+            ModMarketErrorCode::InvalidPackage => (
+                "mod_market_package_invalid",
+                "The downloaded Mod package failed verification.",
+            ),
+            ModMarketErrorCode::ItemNotFound => (
+                "mod_market_item_not_found",
+                "The selected Mod is no longer available in the market.",
+            ),
+        };
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn mod_market_download_failed() -> Self {
+        Self {
+            code: "mod_market_download_failed",
+            message_key: "Failed to connect to the Mod Market.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn from_mod_studio(error: ModStudioError) -> Self {
         let (code, message_key) = match error.code {
             ModStudioErrorCode::FileSystem => (
@@ -292,6 +421,10 @@ impl CommandError {
             ModStudioErrorCode::EnabledSetWriteFailed => (
                 "mod_enabled_set_write_failed",
                 "Failed to update the enabled Mod set.",
+            ),
+            ModStudioErrorCode::DeleteFailed => (
+                "mod_delete_failed",
+                "Failed to delete the Mod from the workspace.",
             ),
             ModStudioErrorCode::InvalidWorkspace => (
                 "mod_workspace_invalid",
@@ -510,13 +643,58 @@ mod tests {
     }
 
     #[test]
+    fn market_snapshot_exposes_no_download_url_hash_or_client_identifier() {
+        let catalog = ModMarketCatalog {
+            published_at: "2026-08-03T00:00:00Z".to_owned(),
+            mods: vec![ModMarketItem {
+                id: "sample".to_owned(),
+                bindings: vec!["feature.sample".to_owned()],
+                localizations: ModMarketLocalizations {
+                    english: nte_dps_tool::core::mod_market::ModMarketLocalizedText {
+                        name: "Sample".to_owned(),
+                        summary: "Sample Mod".to_owned(),
+                    },
+                    simplified_chinese: nte_dps_tool::core::mod_market::ModMarketLocalizedText {
+                        name: "示例".to_owned(),
+                        summary: "示例 Mod".to_owned(),
+                    },
+                    japanese: nte_dps_tool::core::mod_market::ModMarketLocalizedText {
+                        name: "サンプル".to_owned(),
+                        summary: "サンプル Mod".to_owned(),
+                    },
+                },
+                version: "1.0.0".parse().expect("valid test version"),
+                author: "NTE".to_owned(),
+                capabilities: vec!["viewport.tick".to_owned()],
+                package_url: "https://dps.o-na-ni.com/mods/v1/packages/sample-1.0.0.nte".to_owned(),
+                package_size: 1024,
+                package_sha256: [7; 32],
+            }],
+        };
+        let value = serde_json::to_value(ModMarketCatalogSnapshot::from_catalog(catalog, |_| {
+            (false, false, false)
+        }))
+        .expect("serialize market catalog");
+        let serialized = value.to_string();
+
+        assert_eq!(value["privacyMode"], "anonymous-read-only");
+        assert_eq!(value["mods"][0]["bindings"][0], "feature.sample");
+        assert_eq!(value["mods"][0]["localizations"]["zh-CN"]["name"], "示例");
+        assert_eq!(value["mods"][0]["packageSize"], 1024);
+        assert!(!serialized.contains("https://"));
+        assert!(!serialized.contains("sha256"));
+        assert!(!serialized.contains("device"));
+        assert!(!serialized.contains("account"));
+    }
+
+    #[test]
     fn sdk_schema_projects_the_single_rust_symbol_source() {
         let value =
             serde_json::to_value(ModStudioSdkSchemaSnapshot::current()).expect("serialize schema");
 
         assert_eq!(value["contractVersion"], MOD_STUDIO_CONTRACT_VERSION);
         assert_eq!(value["schemaVersion"], MOD_SDK_SCHEMA_VERSION);
-        assert_eq!(value["symbols"].as_array().map(Vec::len), Some(88));
+        assert_eq!(value["symbols"].as_array().map(Vec::len), Some(89));
         assert!(value["symbols"].as_array().is_some_and(|symbols| {
             symbols.iter().any(|symbol| {
                 symbol["label"] == "nte::memory::read_ptr(base, offset)"
@@ -617,5 +795,22 @@ mod tests {
             "At most 16 Mods can be enabled at the same time."
         );
         assert!(!value.to_string().contains("private enabled-set detail"));
+    }
+
+    #[test]
+    fn delete_errors_hide_file_system_details() {
+        let error = CommandError::from_mod_studio(ModStudioError {
+            code: ModStudioErrorCode::DeleteFailed,
+            detail: "private local path".to_owned(),
+            diagnostic_line: None,
+        });
+        let value = serde_json::to_value(error).expect("serialize error");
+
+        assert_eq!(value["code"], "mod_delete_failed");
+        assert_eq!(
+            value["messageKey"],
+            "Failed to delete the Mod from the workspace."
+        );
+        assert!(!value.to_string().contains("private local path"));
     }
 }
