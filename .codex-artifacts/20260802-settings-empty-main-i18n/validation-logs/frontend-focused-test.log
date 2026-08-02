@@ -1,0 +1,10 @@
+$ vitest run "src/lib/tauri/settings-client.test.ts" "src/lib/tauri/settings-contract.test.ts" "src/features/empty-curtain/equipment-canvas-layout.test.ts" "src/features/main-dps/main-dps-model.test.ts" "src/lib/i18n.test.ts"
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  5 passed (5)
+      Tests  30 passed (30)
+   Start at  10:56:39
+   Duration  386ms (transform 394ms, setup 0ms, import 602ms, tests 52ms, environment 0ms)
+

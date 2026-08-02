@@ -6,33 +6,69 @@ use std::{
         Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use nte_dps_tool::{
     core::{
-        CoreError,
+        CoreError, CoreErrorCode,
         capture::{
             CaptureControllerOptions, CaptureDeviceSelector, CaptureProfile, RawCaptureMode,
             enumerate_devices,
         },
-        hud::{HudProjectionOptions, project_hud},
-        live_capture::{LiveCapturePhase, LiveCaptureResources, LiveCaptureService},
+        character_data::{
+            CharacterDataError, CharacterDataProjection, CharacterDataRecordInput,
+            load_character_data, save_character_data_record,
+        },
+        combat_details::CombatDetailFilter,
+        diagnostics::{DiagnosticRun, DiagnosticSnapshot},
+        encrypted_ini::{
+            EncryptedIniDocument, EncryptedIniError, EncryptedIniKey, EncryptedIniSaveOutcome,
+            load_encrypted_ini_document, save_encrypted_ini_document,
+        },
+        history::{PreparedHistoryArchive, auto_round_due, prepare_history_archive},
+        hud::{HudProjectionOptions, HudSnapshot, project_hud},
+        live_capture::{
+            CaptureReplayKind, LiveCapturePhase, LiveCaptureResources, LiveCaptureService,
+            LiveCaptureStatus,
+        },
         mod_studio::ModStudioWorkspaceService,
+        packets::{
+            PacketStreamRevision, PacketsProjection, project_packets_since, project_recent_packets,
+        },
+        skills::{SkillsProjection, SkillsProjectionOptions, SkillsScope, project_skills},
+        snapshot::{InventorySnapshot, inventory_snapshot},
+        timeline::{
+            TimelineProjection, TimelineProjectionOptions, TimelineScope, project_timeline,
+        },
         update::{AvailableComponentUpdate, UpdateComponent},
     },
     engine::{
-        capture::PacketEmissionMode,
-        model::{AbyssHalf, DpsTimeBasis, TeamDps, TeamDpsExport},
+        capture::{
+            CaptureExportDocument, CaptureExportNetwork, CaptureExportOptions, PacketEmissionMode,
+        },
+        model::{
+            AbyssHalf, CaptureQualitySource, CaptureQualitySummary, CombatState,
+            DamageAttributionSummary, DpsTimeBasis, TeamDps, TeamDpsExport,
+        },
+        parser::{
+            CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_equipment_catalog,
+        },
     },
+    platform::mods_plugin::{ModsPluginClient, ModsPluginOperation, ModsPluginSubmitError},
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
             self, AccentColor, DpsTimeMode, GlobalHotkeys, HudConfig, HudModule, PassthroughHotkey,
-            ThemePreset, UiConfig, UiDensity, sanitize_timeline_bucket_seconds,
+            ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
+            sanitize_timeline_bucket_seconds,
+        },
+        history::{
+            HistoryCombatDetails, HistoryRecord, load_history, save_summary,
+            save_summary_with_details,
         },
         i18n::Language,
-        paths::capture_log_dir,
+        paths::{capture_log_dir, software_dir},
         update::PreparedUpdate,
     },
 };
@@ -52,6 +88,7 @@ const HUD_BASE_INITIAL_HEIGHT: u16 = 58;
 // Keeps the five-row module editor and width field fully visible even when
 // every HUD module is hidden. The WebView boundary clips HTML overlays.
 const HUD_EDITOR_MIN_HEIGHT: u16 = 260;
+const HUD_EDITOR_MODULE_HEADER_HEIGHT: u16 = 20;
 const HUD_SUMMARY_HEIGHT: u16 = 64;
 const HUD_CHARACTERS_HEIGHT: u16 = 116;
 const HUD_OPTIONAL_TITLE_HEIGHT: u16 = 22;
@@ -61,10 +98,103 @@ const HUD_MINI_TIMELINE_HEIGHT: u16 = 42;
 #[derive(Clone)]
 pub(crate) struct AppState(Arc<AppStateInner>);
 
+pub(crate) struct ReplayImportReservation {
+    state: AppState,
+    active: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct StreamRevision {
     capture: u64,
     presentation: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MainDpsStreamRevision {
+    pub(crate) capture: u64,
+    pub(crate) packet: u64,
+    pub(crate) presentation: u64,
+    pub(crate) history: u64,
+    pub(crate) main: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct MainDpsReadout {
+    pub(crate) hud: HudSnapshot,
+    pub(crate) has_hits: bool,
+    pub(crate) game_paused: bool,
+    pub(crate) damage_attribution: DamageAttributionSummary,
+    pub(crate) separate_reaction_damage: bool,
+    pub(crate) character_durations: HashMap<u32, f64>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct IslandNoticeState {
+    pub(crate) id: String,
+    pub(crate) tone: &'static str,
+    pub(crate) message_key: &'static str,
+    pub(crate) message_arguments: Vec<String>,
+    pub(crate) undo_token: Option<String>,
+    pub(crate) expires_at: Instant,
+}
+
+#[derive(Clone)]
+struct PausedPresentation {
+    state: CombatState,
+    packet_revision: PacketStreamRevision,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MainDpsDetailRequest {
+    pub(crate) character_id: Option<u32>,
+    pub(crate) filter: CombatDetailFilter,
+    pub(crate) skill_filter: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MainDpsDetailKind {
+    Character,
+    Team,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopWindowKind {
+    MainDps,
+    Hud,
+    Console,
+    AbyssValues,
+    CharacterDetails,
+    TeamDetails,
+}
+
+#[derive(Default)]
+struct MainRoundCache {
+    revision: Option<u64>,
+    records: Vec<HistoryRecord>,
+}
+
+fn next_live_abyss_selection(
+    selected: Option<AbyssHalf>,
+    observed: Option<AbyssHalf>,
+    active: Option<AbyssHalf>,
+) -> (Option<AbyssHalf>, Option<AbyssHalf>) {
+    if active == observed {
+        (selected, observed)
+    } else {
+        (active, active)
+    }
+}
+
+fn selected_round_combat_state(
+    rounds: &[HistoryRecord],
+    selected_round_id: Option<&str>,
+) -> Option<CombatState> {
+    let record_id = selected_round_id?;
+    rounds
+        .iter()
+        .find(|record| record.id == record_id)
+        .and_then(|record| record.details.as_ref())
+        .map(HistoryCombatDetails::to_combat_state)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,19 +225,113 @@ struct AppStateInner {
     always_on_top: AtomicBool,
     presentation_revision: AtomicU64,
     settings_revision: AtomicU64,
+    history_revision: AtomicU64,
+    main_dps_revision: AtomicU64,
+    onboarding_step: AtomicU64,
+    island_notice_revision: AtomicU64,
+    main_processing_paused: AtomicBool,
+    replay_import_reserved: Mutex<bool>,
+    diagnostics_revision: AtomicU64,
+    history_undo_sequence: AtomicU64,
+    session_undo_sequence: AtomicU64,
+    character_data_revision: AtomicU64,
+    empty_curtain_operation_revision: AtomicU64,
     streams: Mutex<HashMap<String, Arc<AtomicBool>>>,
     live_capture: LiveCaptureService,
     mod_studio: ModStudioWorkspaceService,
+    equipment_catalog: Arc<EquipmentCatalog>,
+    mods_plugin: Mutex<ModsPluginClient>,
+    empty_curtain_operation: Mutex<EmptyCurtainOperationState>,
     capture_devices: Mutex<Vec<CaptureDeviceSnapshot>>,
     imported_teams: Mutex<(Option<TeamDps>, Option<TeamDps>)>,
     update_runtime: Mutex<UpdateRuntimeState>,
     selected_abyss_half: Mutex<Option<AbyssHalf>>,
+    main_observed_abyss_half: Mutex<Option<AbyssHalf>>,
+    main_selected_round_id: Mutex<Option<String>>,
+    main_selected_outgoing_revision: AtomicU64,
+    main_character_detail_request: Mutex<MainDpsDetailRequest>,
+    main_team_detail_request: Mutex<MainDpsDetailRequest>,
+    main_paused_presentation: Mutex<Option<PausedPresentation>>,
+    main_round_cache: Mutex<MainRoundCache>,
     passthrough_transaction: Mutex<()>,
-    always_on_top_transaction: Mutex<()>,
     config_transaction: Mutex<()>,
+    history_transaction: Mutex<()>,
+    character_data_transaction: Mutex<()>,
+    encrypted_ini: Mutex<EncryptedIniRuntimeState>,
+    diagnostics_report: Mutex<Option<DiagnosticRun>>,
+    history_undo: Mutex<Option<HistoryUndoEntry>>,
+    session_undo: Mutex<Option<SessionUndoEntry>>,
+    island_notice: Mutex<Option<IslandNoticeState>>,
     ui_config: Mutex<UiConfig>,
     config_path: PathBuf,
+    character_data_path: PathBuf,
 }
+
+#[derive(Clone, Debug)]
+pub(crate) struct EmptyCurtainOperationState {
+    pub status: &'static str,
+    pub message_key: &'static str,
+    pub message_arguments: Vec<String>,
+    request_id: Option<u64>,
+}
+
+#[derive(Default)]
+struct EncryptedIniRuntimeState {
+    generation: u64,
+    path: Option<PathBuf>,
+    document: Option<EncryptedIniDocument>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct EncryptedIniProjection {
+    pub generation: u64,
+    pub display_path: Option<String>,
+    pub file_name: Option<String>,
+    pub key: EncryptedIniKey,
+    pub plaintext: String,
+    pub encrypted_line_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EncryptedIniRuntimeError {
+    NoFile,
+    StaleGeneration,
+    Document(EncryptedIniError),
+}
+
+impl From<EncryptedIniError> for EncryptedIniRuntimeError {
+    fn from(error: EncryptedIniError) -> Self {
+        Self::Document(error)
+    }
+}
+
+impl Default for EmptyCurtainOperationState {
+    fn default() -> Self {
+        Self {
+            status: "idle",
+            message_key: "No equipment operation is pending",
+            message_arguments: Vec::new(),
+            request_id: None,
+        }
+    }
+}
+
+struct HistoryUndoEntry {
+    token: String,
+    record: HistoryRecord,
+    expires_at: Instant,
+}
+
+struct SessionUndoEntry {
+    token: String,
+    state: CombatState,
+    quality_source: CaptureQualitySource,
+    expires_at: Instant,
+}
+
+pub(crate) const HISTORY_UNDO_WINDOW: Duration = Duration::from_secs(5);
+pub(crate) const SESSION_UNDO_WINDOW: Duration = Duration::from_secs(5);
+pub(crate) const ISLAND_NOTICE_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 struct UpdateRuntimeState {
@@ -143,6 +367,14 @@ pub(crate) enum UpdateActionError {
     NotPrepared,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SessionUndoError {
+    Missing,
+    Expired,
+    Busy,
+    NewData,
+}
+
 fn update_is_busy(status: &str) -> bool {
     matches!(
         status,
@@ -156,6 +388,46 @@ impl Default for AppState {
             UiConfig::default(),
             LiveCaptureService::new(LiveCaptureResources::default()),
         )
+    }
+}
+
+impl ReplayImportReservation {
+    pub(crate) fn start(
+        mut self,
+        kind: CaptureReplayKind,
+        path: PathBuf,
+        replace_current: bool,
+    ) -> Result<(), CoreError> {
+        let mut reserved = self
+            .state
+            .0
+            .replay_import_reserved
+            .lock()
+            .expect("replay import reservation lock poisoned");
+        let result = if replace_current {
+            self.state
+                .stop_active_capture_and_wait(Duration::from_secs(5))
+                .and_then(|()| self.state.request_diagnostics_replay(kind, path))
+        } else {
+            self.state.request_diagnostics_replay(kind, path)
+        };
+        *reserved = false;
+        drop(reserved);
+        self.active = false;
+        result
+    }
+}
+
+impl Drop for ReplayImportReservation {
+    fn drop(&mut self) {
+        if self.active {
+            *self
+                .state
+                .0
+                .replay_import_reserved
+                .lock()
+                .expect("replay import reservation lock poisoned") = false;
+        }
     }
 }
 
@@ -175,31 +447,70 @@ impl AppState {
             .iter()
             .map(CaptureDeviceSnapshot::from)
             .collect();
+        let equipment_catalog = load_equipment_catalog(std::path::Path::new(
+            EQUIPMENT_CATALOG_PATH,
+        ))
+        .unwrap_or_else(|error| {
+            log::error!("load Console equipment catalog for Tauri failed: {error:#}");
+            EquipmentCatalog::default()
+        });
         Self(Arc::new(AppStateInner {
             started_at: Instant::now(),
             sequence: AtomicU64::new(0),
             passthrough: AtomicBool::new(false),
             passthrough_hotkey_ready: AtomicBool::new(false),
-            always_on_top: AtomicBool::new(config.always_on_top),
+            always_on_top: AtomicBool::new(
+                config
+                    .hud_always_on_top
+                    .expect("sanitized HUD always-on-top state"),
+            ),
             presentation_revision: AtomicU64::new(0),
             settings_revision: AtomicU64::new(0),
+            history_revision: AtomicU64::new(0),
+            main_dps_revision: AtomicU64::new(0),
+            onboarding_step: AtomicU64::new(0),
+            island_notice_revision: AtomicU64::new(0),
+            main_processing_paused: AtomicBool::new(false),
+            replay_import_reserved: Mutex::new(false),
+            diagnostics_revision: AtomicU64::new(0),
+            history_undo_sequence: AtomicU64::new(0),
+            session_undo_sequence: AtomicU64::new(0),
+            character_data_revision: AtomicU64::new(0),
+            empty_curtain_operation_revision: AtomicU64::new(0),
             streams: Mutex::new(HashMap::new()),
             live_capture,
             mod_studio: ModStudioWorkspaceService::default(),
+            equipment_catalog: Arc::new(equipment_catalog),
+            mods_plugin: Mutex::new(ModsPluginClient::new()),
+            empty_curtain_operation: Mutex::new(EmptyCurtainOperationState::default()),
             capture_devices: Mutex::new(capture_devices),
             imported_teams: Mutex::new((None, None)),
             update_runtime: Mutex::new(UpdateRuntimeState::default()),
             selected_abyss_half: Mutex::new(None),
+            main_observed_abyss_half: Mutex::new(None),
+            main_selected_round_id: Mutex::new(None),
+            main_selected_outgoing_revision: AtomicU64::new(0),
+            main_character_detail_request: Mutex::new(MainDpsDetailRequest::default()),
+            main_team_detail_request: Mutex::new(MainDpsDetailRequest::default()),
+            main_paused_presentation: Mutex::new(None),
+            main_round_cache: Mutex::new(MainRoundCache::default()),
             passthrough_transaction: Mutex::new(()),
-            always_on_top_transaction: Mutex::new(()),
             config_transaction: Mutex::new(()),
+            history_transaction: Mutex::new(()),
+            character_data_transaction: Mutex::new(()),
+            encrypted_ini: Mutex::new(EncryptedIniRuntimeState::default()),
+            diagnostics_report: Mutex::new(None),
+            history_undo: Mutex::new(None),
+            session_undo: Mutex::new(None),
+            island_notice: Mutex::new(None),
             ui_config: Mutex::new(config),
             config_path,
+            character_data_path: software_dir().join(CHARACTER_DATA_PATH),
         }))
     }
 
     pub(crate) fn snapshot(&self) -> TechnicalSnapshot {
-        let sequence = self.0.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        let sequence = self.next_sequence();
         let config = self.ui_config();
         let hud_config = config.hud.clone();
         let supported_locales = Language::all()
@@ -221,14 +532,15 @@ impl AppState {
                 always_on_top: self.always_on_top(),
             },
             capture: self.0.live_capture.status().into(),
-            hud: self.0.live_capture.with_state(|state| {
+            hud: {
+                let state = self.main_presented_combat_state();
                 let selected_abyss_half = *self
                     .0
                     .selected_abyss_half
                     .lock()
                     .expect("HUD abyss selection lock poisoned");
-                project_hud(
-                    state,
+                let mut hud = project_hud(
+                    &state,
                     &hud_config,
                     &HashSet::new(),
                     HudProjectionOptions {
@@ -243,9 +555,575 @@ impl AppState {
                             config.timeline_bucket_seconds,
                         )),
                     },
-                )
-            }),
+                );
+                let resources = self.live_capture_resources();
+                for row in &mut hud.characters {
+                    row.color = resources
+                        .characters
+                        .get(&row.character_id)
+                        .and_then(|character| character.color.clone());
+                }
+                hud
+            },
         }
+    }
+
+    pub(crate) fn next_sequence(&self) -> u64 {
+        self.0.sequence.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub(crate) fn publish_island_notice(
+        &self,
+        tone: &'static str,
+        message_key: &'static str,
+        message_arguments: Vec<String>,
+        undo_token: Option<String>,
+    ) -> String {
+        let revision = self.0.island_notice_revision.fetch_add(1, Ordering::AcqRel) + 1;
+        let id = format!("notice-{revision:016x}");
+        *self
+            .0
+            .island_notice
+            .lock()
+            .expect("island notice lock poisoned") = Some(IslandNoticeState {
+            id: id.clone(),
+            tone,
+            message_key,
+            message_arguments,
+            undo_token,
+            expires_at: Instant::now() + ISLAND_NOTICE_WINDOW,
+        });
+        id
+    }
+
+    pub(crate) fn island_notice(&self) -> Option<IslandNoticeState> {
+        let mut notice = self
+            .0
+            .island_notice
+            .lock()
+            .expect("island notice lock poisoned");
+        if notice
+            .as_ref()
+            .is_some_and(|notice| Instant::now() > notice.expires_at)
+        {
+            notice.take();
+        }
+        notice.clone()
+    }
+
+    pub(crate) fn dismiss_island_notice(&self, id: &str) -> bool {
+        let mut notice = self
+            .0
+            .island_notice
+            .lock()
+            .expect("island notice lock poisoned");
+        if notice.as_ref().is_some_and(|notice| notice.id == id) {
+            notice.take();
+            return true;
+        }
+        false
+    }
+
+    pub(crate) fn ui_config_snapshot(&self) -> UiConfig {
+        self.ui_config()
+    }
+
+    pub(crate) fn capture_device_count(&self) -> usize {
+        self.0
+            .capture_devices
+            .lock()
+            .expect("capture device list lock poisoned")
+            .len()
+    }
+
+    pub(crate) fn set_onboarding_progress(&self, step: usize, done: bool) -> Result<bool, String> {
+        self.0
+            .onboarding_step
+            .store(step.min(3) as u64, Ordering::Release);
+        self.bump_main_dps_revision();
+        self.update_ui_config(|config| config.onboarding_done = done)
+    }
+
+    pub(crate) fn finish_onboarding(&self, preset: HudPreset) -> Result<bool, String> {
+        let changed = self.update_ui_config(|config| {
+            let width = config.hud.width;
+            let module_order = config.hud.module_order.clone();
+            let mut hud = match preset {
+                HudPreset::Minimal => HudConfig::minimal(),
+                HudPreset::Standard => HudConfig::default(),
+                HudPreset::Detailed => HudConfig::detailed(),
+            };
+            hud.width = width;
+            hud.module_order = module_order;
+            config.hud = hud;
+            config.onboarding_done = true;
+        })?;
+        self.0.onboarding_step.store(3, Ordering::Release);
+        self.bump_main_dps_revision();
+        Ok(changed)
+    }
+
+    pub(crate) fn onboarding_step(&self) -> usize {
+        self.0.onboarding_step.load(Ordering::Acquire).min(3) as usize
+    }
+
+    pub(crate) fn console_window_geometry(&self) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+        let config = self.ui_config();
+        (config.console_window_size, config.console_window_position)
+    }
+
+    pub(crate) fn abyss_window_geometry(&self) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+        let config = self.ui_config();
+        (config.abyss_window_size, config.abyss_window_position)
+    }
+
+    pub(crate) fn set_abyss_window_geometry(
+        &self,
+        size: [f32; 2],
+        position: [f32; 2],
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| {
+            config.abyss_window_size = Some(size);
+            config.abyss_window_position = Some(position);
+        })
+    }
+
+    pub(crate) fn set_console_window_geometry(
+        &self,
+        size: [f32; 2],
+        position: [f32; 2],
+    ) -> Result<bool, String> {
+        let _transaction = self
+            .0
+            .config_transaction
+            .lock()
+            .expect("UI config transaction lock poisoned");
+        let previous = self.ui_config();
+        let mut candidate = previous.clone();
+        candidate.console_window_size = Some(size);
+        candidate.console_window_position = Some(position);
+        candidate = candidate.sanitized();
+        if candidate == previous {
+            return Ok(false);
+        }
+        config::save(&self.0.config_path, &candidate)?;
+        *self.0.ui_config.lock().expect("UI config lock poisoned") = candidate;
+        Ok(true)
+    }
+
+    pub(crate) fn set_hit_detail_columns(
+        &self,
+        columns: nte_dps_tool::storage::config::HitDetailColumnsConfig,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| config.hit_detail_columns = columns)
+    }
+
+    pub(crate) fn main_dps_detail_window_geometry(
+        &self,
+        kind: MainDpsDetailKind,
+    ) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+        let config = self.ui_config();
+        match kind {
+            MainDpsDetailKind::Character => (
+                config.hit_detail_window_size,
+                config.hit_detail_window_position,
+            ),
+            MainDpsDetailKind::Team => (
+                config.team_hit_detail_window_size,
+                config.team_hit_detail_window_position,
+            ),
+        }
+    }
+
+    pub(crate) fn set_main_dps_detail_window_geometry(
+        &self,
+        size: [f32; 2],
+        position: [f32; 2],
+        kind: MainDpsDetailKind,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| match kind {
+            MainDpsDetailKind::Character => {
+                config.hit_detail_window_size = Some(size);
+                config.hit_detail_window_position = Some(position);
+            }
+            MainDpsDetailKind::Team => {
+                config.team_hit_detail_window_size = Some(size);
+                config.team_hit_detail_window_position = Some(position);
+            }
+        })
+    }
+
+    pub(crate) fn live_capture_status(&self) -> LiveCaptureStatus {
+        self.0.live_capture.status()
+    }
+
+    pub(crate) fn replay_running(&self) -> bool {
+        self.0.live_capture.replay_running()
+    }
+
+    pub(crate) fn main_processing_paused(&self) -> bool {
+        self.0.main_processing_paused.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn main_paused_event_counts(&self) -> (u64, u64) {
+        let paused = self
+            .0
+            .main_paused_presentation
+            .lock()
+            .expect("main DPS paused presentation lock poisoned")
+            .clone();
+        let Some(paused) = paused else {
+            return (0, 0);
+        };
+        self.0.live_capture.with_state(|live| {
+            let semantic = live
+                .hits_generation
+                .wrapping_sub(paused.state.hits_generation)
+                .wrapping_add(
+                    live.empty_curtain_generation
+                        .wrapping_sub(paused.state.empty_curtain_generation),
+                )
+                .wrapping_add(
+                    live.empty_curtain_characters_generation
+                        .wrapping_sub(paused.state.empty_curtain_characters_generation),
+                );
+            let debug = live
+                .packets_generation
+                .wrapping_sub(paused.state.packets_generation);
+            (semantic, debug)
+        })
+    }
+
+    pub(crate) fn set_main_processing_paused(&self, paused: bool) {
+        if self.main_processing_paused() == paused {
+            return;
+        }
+        if paused {
+            let frozen = self
+                .0
+                .live_capture
+                .with_packet_state(|packet_revision, _, state| PausedPresentation {
+                    state: state.clone(),
+                    packet_revision,
+                });
+            *self
+                .0
+                .main_paused_presentation
+                .lock()
+                .expect("main DPS paused presentation lock poisoned") = Some(frozen);
+        } else {
+            self.0
+                .main_paused_presentation
+                .lock()
+                .expect("main DPS paused presentation lock poisoned")
+                .take();
+        }
+        self.0
+            .main_processing_paused
+            .store(paused, Ordering::Release);
+        self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+        self.bump_main_dps_revision();
+    }
+
+    pub(crate) fn main_selected_round_id(&self) -> Option<String> {
+        let mut selected = self
+            .0
+            .main_selected_round_id
+            .lock()
+            .expect("main DPS selected round lock poisoned");
+        if selected.is_some()
+            && !self.main_processing_paused()
+            && self.0.live_capture.outgoing_hit_revision()
+                != self
+                    .0
+                    .main_selected_outgoing_revision
+                    .load(Ordering::Acquire)
+        {
+            *selected = None;
+            drop(selected);
+            self.bump_main_dps_revision();
+            return None;
+        }
+        selected.clone()
+    }
+
+    pub(crate) fn set_main_selected_round_id(&self, record_id: Option<String>) -> Result<(), ()> {
+        if let Some(id) = record_id.as_deref()
+            && !self
+                .main_round_records()
+                .iter()
+                .any(|record| record.id == id && record.details.is_some())
+        {
+            return Err(());
+        }
+        let mut selected = self
+            .0
+            .main_selected_round_id
+            .lock()
+            .expect("main DPS selected round lock poisoned");
+        if *selected == record_id {
+            return Ok(());
+        }
+        self.0.main_selected_outgoing_revision.store(
+            self.0.live_capture.outgoing_hit_revision(),
+            Ordering::Release,
+        );
+        *selected = record_id;
+        drop(selected);
+        self.bump_main_dps_revision();
+        Ok(())
+    }
+
+    pub(crate) fn main_round_records(&self) -> Vec<HistoryRecord> {
+        let revision = self.history_revision();
+        let mut cache = self
+            .0
+            .main_round_cache
+            .lock()
+            .expect("main DPS round cache lock poisoned");
+        if cache.revision != Some(revision) {
+            cache.records = load_history().records;
+            cache.revision = Some(revision);
+        }
+        let records = cache.records.clone();
+        drop(cache);
+        let stale_selection = self
+            .main_selected_round_id()
+            .is_some_and(|id| !records.iter().any(|record| record.id == id));
+        if stale_selection {
+            *self
+                .0
+                .main_selected_round_id
+                .lock()
+                .expect("main DPS selected round lock poisoned") = None;
+            self.bump_main_dps_revision();
+        }
+        records
+    }
+
+    pub(crate) fn main_dps_readout(
+        &self,
+        rounds: &[HistoryRecord],
+        selected_round_id: Option<&str>,
+    ) -> MainDpsReadout {
+        if let Some(state) = selected_round_combat_state(rounds, selected_round_id) {
+            return self.project_main_readout(&state, false);
+        }
+        let state = self.main_presented_combat_state();
+        self.project_main_readout(&state, !self.main_processing_paused())
+    }
+
+    pub(crate) fn main_dps_detail_request(&self, kind: MainDpsDetailKind) -> MainDpsDetailRequest {
+        match kind {
+            MainDpsDetailKind::Character => self
+                .0
+                .main_character_detail_request
+                .lock()
+                .expect("main DPS character detail request lock poisoned")
+                .clone(),
+            MainDpsDetailKind::Team => self
+                .0
+                .main_team_detail_request
+                .lock()
+                .expect("main DPS team detail request lock poisoned")
+                .clone(),
+        }
+    }
+
+    pub(crate) fn set_main_dps_detail_request(
+        &self,
+        kind: MainDpsDetailKind,
+        request: MainDpsDetailRequest,
+    ) {
+        match kind {
+            MainDpsDetailKind::Character => {
+                *self
+                    .0
+                    .main_character_detail_request
+                    .lock()
+                    .expect("main DPS character detail request lock poisoned") = request;
+            }
+            MainDpsDetailKind::Team => {
+                *self
+                    .0
+                    .main_team_detail_request
+                    .lock()
+                    .expect("main DPS team detail request lock poisoned") = request;
+            }
+        }
+    }
+
+    pub(crate) fn main_dps_detail_state(&self) -> (CombatState, Option<AbyssHalf>) {
+        let state = self.main_presented_combat_state();
+        let selected_half = state.abyss.is_active().then(|| {
+            (*self
+                .0
+                .selected_abyss_half
+                .lock()
+                .expect("main DPS abyss selection lock poisoned"))
+            .or(state.abyss.active_half)
+            .unwrap_or(AbyssHalf::First)
+        });
+        (state, selected_half)
+    }
+
+    pub(crate) fn set_main_selected_abyss_half(&self, half: Option<AbyssHalf>) {
+        let mut selected = self
+            .0
+            .selected_abyss_half
+            .lock()
+            .expect("main DPS abyss selection lock poisoned");
+        if *selected == half {
+            return;
+        }
+        *selected = half;
+        drop(selected);
+        self.bump_main_dps_revision();
+    }
+
+    pub(crate) fn update_main_appearance(
+        &self,
+        dark_mode: bool,
+        opacity: f32,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| {
+            config.dark_mode = dark_mode;
+            config.opacity = opacity;
+        })
+    }
+
+    pub(crate) fn main_window_geometry(&self) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
+        let config = self.ui_config();
+        (config.main_window_size, config.main_window_position)
+    }
+
+    pub(crate) fn set_main_window_geometry(
+        &self,
+        size: Option<[f32; 2]>,
+        position: Option<[f32; 2]>,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| {
+            config.main_window_size = size;
+            config.main_window_position = position;
+        })
+    }
+
+    pub(crate) fn main_dps_stream_revision(&self) -> MainDpsStreamRevision {
+        let selected_history = self.main_selected_round_id().is_some();
+        let paused = self.main_processing_paused();
+        MainDpsStreamRevision {
+            capture: if selected_history {
+                0
+            } else {
+                self.0.live_capture.revision()
+            },
+            packet: if paused && !selected_history {
+                self.0
+                    .live_capture
+                    .with_packet_state(|revision, _, _| revision.generation)
+            } else {
+                0
+            },
+            presentation: self.0.presentation_revision.load(Ordering::Acquire),
+            history: self.history_revision(),
+            main: self.0.main_dps_revision.load(Ordering::Acquire),
+        }
+    }
+
+    fn project_main_readout(&self, state: &CombatState, follow_live_half: bool) -> MainDpsReadout {
+        let config = self.ui_config();
+        let selected_abyss_half = if follow_live_half {
+            self.follow_live_abyss_half(state.abyss.active_half)
+        } else {
+            *self
+                .0
+                .selected_abyss_half
+                .lock()
+                .expect("main DPS abyss selection lock poisoned")
+        };
+        let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
+        let projection_half = state.abyss.is_active().then(|| {
+            selected_abyss_half
+                .or(state.abyss.active_half)
+                .unwrap_or(AbyssHalf::First)
+        });
+        let hud = project_hud(
+            state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                dps_time_basis: DpsTimeBasis::from_subtract_time_stop(subtract_time_stop),
+                separate_reaction_damage: config.separate_reaction_damage,
+                selected_abyss_half,
+                preview_when_empty: false,
+                timeline_bucket_seconds: f64::from(sanitize_timeline_bucket_seconds(
+                    config.timeline_bucket_seconds,
+                )),
+            },
+        );
+        let (damage_attribution, character_durations) = projection_half.map_or_else(
+            || {
+                let durations = hud
+                    .characters
+                    .iter()
+                    .filter_map(|row| {
+                        state.stats.get(&row.character_id).map(|stats| {
+                            (
+                                row.character_id,
+                                state.character_duration_with_time_stop(stats, subtract_time_stop),
+                            )
+                        })
+                    })
+                    .collect();
+                (state.damage_attribution_summary(), durations)
+            },
+            |half| {
+                let party = state.abyss.half(half);
+                let durations = hud
+                    .characters
+                    .iter()
+                    .filter_map(|row| {
+                        party.stats.get(&row.character_id).map(|stats| {
+                            (
+                                row.character_id,
+                                party.character_duration_with_time_stop(stats, subtract_time_stop),
+                            )
+                        })
+                    })
+                    .collect();
+                (party.damage_attribution_summary(), durations)
+            },
+        );
+        MainDpsReadout {
+            hud,
+            has_hits: !state.hits.is_empty(),
+            game_paused: state.is_game_paused(),
+            damage_attribution,
+            separate_reaction_damage: config.separate_reaction_damage,
+            character_durations,
+        }
+    }
+
+    fn follow_live_abyss_half(&self, active_half: Option<AbyssHalf>) -> Option<AbyssHalf> {
+        let mut selected = self
+            .0
+            .selected_abyss_half
+            .lock()
+            .expect("main DPS abyss selection lock poisoned");
+        let mut observed = self
+            .0
+            .main_observed_abyss_half
+            .lock()
+            .expect("main DPS observed abyss half lock poisoned");
+        let (next_selected, next_observed) =
+            next_live_abyss_selection(*selected, *observed, active_half);
+        *selected = next_selected;
+        *observed = next_observed;
+        next_selected
+    }
+
+    fn bump_main_dps_revision(&self) -> u64 {
+        self.0.main_dps_revision.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     pub(crate) fn settings_snapshot(&self) -> SettingsSnapshot {
@@ -296,13 +1174,30 @@ impl AppState {
         )
     }
 
-    pub(crate) fn request_capture_start(&self) -> Result<(), CoreError> {
+    pub(crate) fn request_capture_start(&self, replace_current: bool) -> Result<(), CoreError> {
+        let replay_import_reserved = self
+            .0
+            .replay_import_reserved
+            .lock()
+            .expect("replay import reservation lock poisoned");
+        if *replay_import_reserved {
+            return Err(CoreError::new(
+                CoreErrorCode::CaptureAlreadyRunning,
+                "a replay import dialog is active",
+            ));
+        }
+        if self.session_has_data() && !replace_current {
+            return Err(CoreError::new(
+                CoreErrorCode::CaptureAlreadyRunning,
+                "starting capture requires confirmation before replacing the current session",
+            ));
+        }
         let config = self.ui_config();
         let device = config
             .manual_capture_device
             .clone()
             .map_or(CaptureDeviceSelector::Auto, CaptureDeviceSelector::Name);
-        self.0.live_capture.request_start(CaptureControllerOptions {
+        let result = self.0.live_capture.request_start(CaptureControllerOptions {
             profile: CaptureProfile::Combat,
             device,
             filter: config.capture_filter.clone(),
@@ -311,12 +1206,42 @@ impl AppState {
             raw_capture: RawCaptureMode::Enabled,
             raw_capture_directory: capture_log_dir(),
             expose_raw_capture_path: false,
-            packet_emission: PacketEmissionMode::SummaryOnly,
-        })
+            packet_emission: PacketEmissionMode::FullDebug,
+        });
+        drop(replay_import_reserved);
+        if result.is_ok() {
+            self.return_main_presentation_to_live();
+        }
+        result
     }
 
     pub(crate) fn request_capture_stop(&self) -> Result<(), CoreError> {
         self.0.live_capture.request_stop()
+    }
+
+    pub(crate) fn stop_active_capture_and_wait(&self, timeout: Duration) -> Result<(), CoreError> {
+        if matches!(
+            self.capture_phase(),
+            LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Failed
+        ) || self.replay_running()
+        {
+            self.request_capture_stop()?;
+        }
+        let deadline = Instant::now() + timeout;
+        while matches!(
+            self.capture_phase(),
+            LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+        ) || self.replay_running()
+        {
+            if Instant::now() >= deadline {
+                return Err(CoreError::new(
+                    CoreErrorCode::SystemProbeFailed,
+                    "capture or replay did not stop before the replacement timeout",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
     }
 
     pub(crate) fn capture_phase(&self) -> LiveCapturePhase {
@@ -370,11 +1295,17 @@ impl AppState {
         self.0.always_on_top.load(Ordering::Acquire)
     }
 
-    pub(crate) fn lock_always_on_top_transaction(&self) -> MutexGuard<'_, ()> {
-        self.0
-            .always_on_top_transaction
-            .lock()
-            .expect("always-on-top transaction lock poisoned")
+    pub(crate) fn window_always_on_top(&self, window: DesktopWindowKind) -> bool {
+        let config = self.ui_config();
+        match window {
+            DesktopWindowKind::MainDps => config.main_dps_always_on_top,
+            DesktopWindowKind::Hud => config.hud_always_on_top,
+            DesktopWindowKind::Console => config.console_always_on_top,
+            DesktopWindowKind::AbyssValues => config.abyss_values_always_on_top,
+            DesktopWindowKind::CharacterDetails => config.character_details_always_on_top,
+            DesktopWindowKind::TeamDetails => config.team_details_always_on_top,
+        }
+        .expect("sanitized per-window always-on-top state")
     }
 
     pub(crate) fn hud_width(&self) -> u16 {
@@ -420,7 +1351,13 @@ impl AppState {
         if self.passthrough() {
             content_height
         } else {
-            content_height.max(HUD_EDITOR_MIN_HEIGHT)
+            let editor_headers = hud_config
+                .module_order
+                .iter()
+                .filter(|module| hud_config.module_visible(**module))
+                .count() as u16
+                * HUD_EDITOR_MODULE_HEADER_HEIGHT;
+            (content_height + editor_headers).max(HUD_EDITOR_MIN_HEIGHT)
         }
     }
 
@@ -449,6 +1386,7 @@ impl AppState {
     pub(crate) fn update_interface_settings(
         &self,
         language: Language,
+        dark_mode: bool,
         theme_preset: ThemePreset,
         accent: AccentColor,
         density: UiDensity,
@@ -458,6 +1396,7 @@ impl AppState {
     ) -> Result<bool, String> {
         self.update_ui_config(|config| {
             config.language = language;
+            config.dark_mode = dark_mode;
             config.theme_preset = theme_preset;
             config.accent = accent;
             config.density = density;
@@ -713,6 +1652,10 @@ impl AppState {
         self.install_blocked_message_key_for(&update)
     }
 
+    pub(crate) fn notify_update_install_blocker_changed(&self) {
+        self.bump_settings_revision();
+    }
+
     fn install_blocked_message_key_for(&self, update: &UpdateRuntimeState) -> Option<&'static str> {
         match update.prepared.as_ref().map(PreparedUpdate::component) {
             Some(UpdateComponent::App)
@@ -810,8 +1753,87 @@ impl AppState {
         clear_capture_logs(&capture_log_dir())
     }
 
-    pub(crate) fn reset_session(&self) {
+    pub(crate) fn refresh_capture_file_stats(&self) {
+        self.bump_settings_revision();
+    }
+
+    pub(crate) fn session_has_data(&self) -> bool {
+        self.0.live_capture.with_state(|state| {
+            !state.hits.is_empty()
+                || !state.packets.is_empty()
+                || !state.stats.is_empty()
+                || !state.empty_curtain.is_empty()
+                || state.abyss.is_active()
+        })
+    }
+
+    pub(crate) fn reset_session_with_undo(&self) -> Option<String> {
+        let previous = self.0.live_capture.with_state(Clone::clone);
+        let has_data = !previous.hits.is_empty()
+            || !previous.packets.is_empty()
+            || !previous.stats.is_empty()
+            || !previous.empty_curtain.is_empty()
+            || previous.abyss.is_active();
+        if !has_data {
+            self.0.live_capture.reset_session();
+            self.return_main_presentation_to_live();
+            return None;
+        }
+        let sequence = self.0.session_undo_sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        let token = format!("session-undo-{sequence:016x}");
+        *self
+            .0
+            .session_undo
+            .lock()
+            .expect("session undo lock poisoned") = Some(SessionUndoEntry {
+            token: token.clone(),
+            state: previous,
+            quality_source: self.0.live_capture.quality_source(),
+            expires_at: Instant::now() + SESSION_UNDO_WINDOW,
+        });
         self.0.live_capture.reset_session();
+        self.return_main_presentation_to_live();
+        Some(token)
+    }
+
+    pub(crate) fn clear_session(&self) {
+        self.0
+            .session_undo
+            .lock()
+            .expect("session undo lock poisoned")
+            .take();
+        self.0.live_capture.reset_session();
+        self.return_main_presentation_to_live();
+    }
+
+    pub(crate) fn undo_session_reset(&self, token: &str) -> Result<(), SessionUndoError> {
+        if matches!(
+            self.capture_phase(),
+            LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+        ) || self.replay_running()
+        {
+            return Err(SessionUndoError::Busy);
+        }
+        if self.session_has_data() {
+            return Err(SessionUndoError::NewData);
+        }
+        let mut undo = self
+            .0
+            .session_undo
+            .lock()
+            .expect("session undo lock poisoned");
+        if undo.as_ref().is_none_or(|entry| entry.token != token) {
+            return Err(SessionUndoError::Missing);
+        }
+        let entry = undo.take().expect("validated session undo entry missing");
+        drop(undo);
+        if Instant::now() > entry.expires_at {
+            return Err(SessionUndoError::Expired);
+        }
+        self.0
+            .live_capture
+            .restore_session(entry.state, entry.quality_source);
+        Ok(())
     }
 
     pub(crate) fn import_team_data(&self, export: TeamDpsExport) {
@@ -853,6 +1875,48 @@ impl AppState {
         true
     }
 
+    pub(crate) fn import_current_abyss_team(&self, upper: bool) -> bool {
+        let Some(team) = self.current_abyss_team(upper) else {
+            return false;
+        };
+        let mut imported = self
+            .0
+            .imported_teams
+            .lock()
+            .expect("imported team lock poisoned");
+        if upper {
+            imported.0 = Some(team);
+        } else {
+            imported.1 = Some(team);
+        }
+        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
+        true
+    }
+
+    pub(crate) fn current_abyss_team_availability(&self) -> [bool; 2] {
+        [
+            self.current_abyss_team(true).is_some(),
+            self.current_abyss_team(false).is_some(),
+        ]
+    }
+
+    fn current_abyss_team(&self, upper: bool) -> Option<TeamDps> {
+        let config = self.ui_config();
+        let state = self.main_presented_combat_state();
+        let export = nte_dps_tool::core::team_data::export_team_data(
+            &state,
+            matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+            config.separate_reaction_damage,
+            None,
+            None,
+        )?;
+        if state.abyss.is_active() {
+            if upper { export.upper } else { export.lower }
+        } else {
+            export.single
+        }
+    }
+
     pub(crate) fn clear_abyss_team(&self, upper: bool) {
         let mut imported = self
             .0
@@ -885,15 +1949,14 @@ impl AppState {
             .imported_teams
             .lock()
             .expect("imported team lock poisoned");
-        self.0.live_capture.with_state(|state| {
-            nte_dps_tool::core::team_data::export_team_data(
-                state,
-                matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
-                config.separate_reaction_damage,
-                imported.0.clone(),
-                imported.1.clone(),
-            )
-        })
+        let state = self.main_presented_combat_state();
+        nte_dps_tool::core::team_data::export_team_data(
+            &state,
+            matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+            config.separate_reaction_damage,
+            imported.0.clone(),
+            imported.1.clone(),
+        )
     }
 
     pub(crate) fn set_hud_option(
@@ -950,11 +2013,748 @@ impl AppState {
     }
 
     pub(crate) fn set_always_on_top(&self, enabled: bool) -> Result<bool, String> {
-        let changed = self.update_ui_config(|config| config.always_on_top = enabled)?;
-        if self.0.always_on_top.swap(enabled, Ordering::AcqRel) != enabled {
-            self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+        self.set_window_always_on_top(DesktopWindowKind::Hud, enabled)
+    }
+
+    pub(crate) fn set_window_always_on_top(
+        &self,
+        window: DesktopWindowKind,
+        enabled: bool,
+    ) -> Result<bool, String> {
+        let changed = self.update_ui_config(|config| match window {
+            DesktopWindowKind::MainDps => config.main_dps_always_on_top = Some(enabled),
+            DesktopWindowKind::Hud => {
+                config.always_on_top = enabled;
+                config.hud_always_on_top = Some(enabled);
+            }
+            DesktopWindowKind::Console => config.console_always_on_top = Some(enabled),
+            DesktopWindowKind::AbyssValues => config.abyss_values_always_on_top = Some(enabled),
+            DesktopWindowKind::CharacterDetails => {
+                config.character_details_always_on_top = Some(enabled)
+            }
+            DesktopWindowKind::TeamDetails => config.team_details_always_on_top = Some(enabled),
+        })?;
+        if window == DesktopWindowKind::Hud {
+            self.0.always_on_top.store(enabled, Ordering::Release);
         }
         Ok(changed)
+    }
+
+    pub(crate) fn prepare_current_history_archive(&self) -> Option<PreparedHistoryArchive> {
+        let config = self.ui_config();
+        self.0.live_capture.with_state(|state| {
+            prepare_history_archive(
+                state,
+                CaptureQualitySource::Live,
+                DpsTimeBasis::from_subtract_time_stop(matches!(
+                    config.dps_time_mode,
+                    DpsTimeMode::TimeStopAdjusted
+                )),
+                config.separate_reaction_damage,
+            )
+        })
+    }
+
+    fn prepare_history_details(
+        &self,
+        details: HistoryCombatDetails,
+    ) -> Option<PreparedHistoryArchive> {
+        let config = self.ui_config();
+        let state = details.to_combat_state();
+        state
+            .session_summary(
+                CaptureQualitySource::Live,
+                DpsTimeBasis::from_subtract_time_stop(matches!(
+                    config.dps_time_mode,
+                    DpsTimeMode::TimeStopAdjusted
+                )),
+                config.separate_reaction_damage,
+            )
+            .map(|summary| PreparedHistoryArchive {
+                summary,
+                details: Some(details),
+            })
+    }
+
+    fn persist_history_archive(&self, archive: PreparedHistoryArchive) -> Result<(), String> {
+        self.with_history_transaction(|| {
+            match archive.details {
+                Some(details) => save_summary_with_details(archive.summary, details),
+                None => save_summary(archive.summary),
+            }
+            .map(|_| ())
+        })?;
+        self.bump_history_revision();
+        Ok(())
+    }
+
+    pub(crate) fn archive_current_history_round(&self) -> Result<bool, String> {
+        let config = self.ui_config();
+        let result = self.0.live_capture.archive_and_reset(
+            |state| {
+                prepare_history_archive(
+                    state,
+                    CaptureQualitySource::Live,
+                    DpsTimeBasis::from_subtract_time_stop(matches!(
+                        config.dps_time_mode,
+                        DpsTimeMode::TimeStopAdjusted
+                    )),
+                    config.separate_reaction_damage,
+                )
+            },
+            |archive| self.persist_history_archive(archive),
+        )?;
+        Ok(result.is_some())
+    }
+
+    pub(crate) fn maintain_history_rounds(&self) {
+        let pending = self.0.live_capture.take_pending_abyss_archives();
+        let mut retry = Vec::new();
+        for details in pending {
+            let Some(archive) = self.prepare_history_details(details.clone()) else {
+                continue;
+            };
+            if let Err(error) = self.persist_history_archive(archive) {
+                log::warn!("automatic Abyss History archive failed: {error}");
+                retry.push(details);
+            }
+        }
+        if !retry.is_empty() {
+            self.0.live_capture.restore_pending_abyss_archives(retry);
+            return;
+        }
+
+        let config = self.ui_config();
+        if !config.auto_round_after_idle {
+            return;
+        }
+        let status = self.0.live_capture.status();
+        let due = self.0.live_capture.with_state(|state| {
+            auto_round_due(
+                status.phase == LiveCapturePhase::Running,
+                false,
+                state.abyss.is_active(),
+                state.is_game_paused(),
+                !state.hits.is_empty(),
+                self.0.live_capture.idle_elapsed(),
+                config.auto_round_idle_seconds,
+            )
+        });
+        if due && let Err(error) = self.archive_current_history_round() {
+            log::warn!("automatic idle History archive failed: {error}");
+        }
+    }
+
+    pub(crate) fn with_history_transaction<T>(&self, action: impl FnOnce() -> T) -> T {
+        let _guard = self
+            .0
+            .history_transaction
+            .lock()
+            .expect("history transaction lock poisoned");
+        action()
+    }
+
+    pub(crate) fn history_revision(&self) -> u64 {
+        self.0.history_revision.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn live_capture_resources(&self) -> LiveCaptureResources {
+        self.0.live_capture.resources()
+    }
+
+    pub(crate) fn character_data_snapshot(
+        &self,
+    ) -> Result<(CharacterDataProjection, u64), CharacterDataError> {
+        let _guard = self
+            .0
+            .character_data_transaction
+            .lock()
+            .expect("character data transaction lock poisoned");
+        let projection = load_character_data(&self.0.character_data_path)?;
+        let revision = self.0.character_data_revision.load(Ordering::Acquire);
+        Ok((projection, revision))
+    }
+
+    pub(crate) fn save_character_data_record(
+        &self,
+        input: CharacterDataRecordInput,
+    ) -> Result<(CharacterDataProjection, u64), CharacterDataError> {
+        let _guard = self
+            .0
+            .character_data_transaction
+            .lock()
+            .expect("character data transaction lock poisoned");
+        let projection = save_character_data_record(&self.0.character_data_path, input)?;
+        let revision = self
+            .0
+            .character_data_revision
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        Ok((projection, revision))
+    }
+
+    pub(crate) fn encrypted_ini_snapshot(&self) -> EncryptedIniProjection {
+        let runtime = self
+            .0
+            .encrypted_ini
+            .lock()
+            .expect("encrypted INI runtime lock poisoned");
+        encrypted_ini_projection(&runtime)
+    }
+
+    pub(crate) fn open_encrypted_ini(
+        &self,
+        path: PathBuf,
+    ) -> Result<EncryptedIniProjection, EncryptedIniRuntimeError> {
+        let mut runtime = self
+            .0
+            .encrypted_ini
+            .lock()
+            .expect("encrypted INI runtime lock poisoned");
+        let document = load_encrypted_ini_document(&path)?;
+        runtime.generation = runtime.generation.wrapping_add(1);
+        runtime.path = Some(path);
+        runtime.document = Some(document);
+        Ok(encrypted_ini_projection(&runtime))
+    }
+
+    pub(crate) fn reload_encrypted_ini(
+        &self,
+    ) -> Result<EncryptedIniProjection, EncryptedIniRuntimeError> {
+        let mut runtime = self
+            .0
+            .encrypted_ini
+            .lock()
+            .expect("encrypted INI runtime lock poisoned");
+        let path = runtime
+            .path
+            .clone()
+            .ok_or(EncryptedIniRuntimeError::NoFile)?;
+        let document = load_encrypted_ini_document(&path)?;
+        runtime.generation = runtime.generation.wrapping_add(1);
+        runtime.document = Some(document);
+        Ok(encrypted_ini_projection(&runtime))
+    }
+
+    pub(crate) fn save_encrypted_ini(
+        &self,
+        expected_generation: u64,
+        plaintext: String,
+        key: EncryptedIniKey,
+    ) -> Result<(EncryptedIniProjection, EncryptedIniSaveOutcome), EncryptedIniRuntimeError> {
+        let mut runtime = self
+            .0
+            .encrypted_ini
+            .lock()
+            .expect("encrypted INI runtime lock poisoned");
+        if runtime.generation != expected_generation {
+            return Err(EncryptedIniRuntimeError::StaleGeneration);
+        }
+        let path = runtime
+            .path
+            .clone()
+            .ok_or(EncryptedIniRuntimeError::NoFile)?;
+        let document = runtime
+            .document
+            .as_mut()
+            .ok_or(EncryptedIniRuntimeError::NoFile)?;
+        let outcome = save_encrypted_ini_document(&path, document, plaintext, key)?;
+        runtime.generation = runtime.generation.wrapping_add(1);
+        Ok((encrypted_ini_projection(&runtime), outcome))
+    }
+
+    pub(crate) fn clear_encrypted_ini(&self) -> EncryptedIniProjection {
+        let mut runtime = self
+            .0
+            .encrypted_ini
+            .lock()
+            .expect("encrypted INI runtime lock poisoned");
+        runtime.generation = runtime.generation.wrapping_add(1);
+        runtime.path = None;
+        runtime.document = None;
+        encrypted_ini_projection(&runtime)
+    }
+
+    pub(crate) fn empty_curtain_snapshot(&self) -> InventorySnapshot {
+        self.refresh_empty_curtain_operation();
+        let resources = self.0.live_capture.resources();
+        let observed_at_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        let state = self.main_presented_combat_state();
+        inventory_snapshot(
+            &state.empty_curtain,
+            &state.empty_curtain_characters,
+            &self.0.equipment_catalog,
+            &resources.characters,
+            state.empty_curtain_generation,
+            observed_at_unix_ms,
+        )
+    }
+
+    pub(crate) fn with_empty_curtain<T>(
+        &self,
+        action: impl FnOnce(
+            &[nte_dps_tool::engine::model::EmptyCurtainItem],
+            &[nte_dps_tool::engine::model::EmptyCurtainCharacter],
+            &EquipmentCatalog,
+        ) -> T,
+    ) -> T {
+        let state = self.main_presented_combat_state();
+        action(
+            &state.empty_curtain,
+            &state.empty_curtain_characters,
+            &self.0.equipment_catalog,
+        )
+    }
+
+    pub(crate) fn equipment_catalog(&self) -> Arc<EquipmentCatalog> {
+        Arc::clone(&self.0.equipment_catalog)
+    }
+
+    pub(crate) fn empty_curtain_operation(&self) -> EmptyCurtainOperationState {
+        self.refresh_empty_curtain_operation();
+        self.0
+            .empty_curtain_operation
+            .lock()
+            .expect("Console equipment operation lock poisoned")
+            .clone()
+    }
+
+    pub(crate) fn empty_curtain_revision(&self) -> (u64, u64, u64) {
+        self.refresh_empty_curtain_operation();
+        let (inventory, characters) = if self.main_processing_paused() {
+            let state = self.main_presented_combat_state();
+            (
+                state.empty_curtain_generation,
+                state.empty_curtain_characters_generation,
+            )
+        } else {
+            self.0.live_capture.inventory_revision()
+        };
+        (
+            inventory,
+            characters,
+            self.0
+                .empty_curtain_operation_revision
+                .load(Ordering::Acquire),
+        )
+    }
+
+    pub(crate) fn diagnostics_revision(&self) -> (u64, u64, u64) {
+        let packet_generation = self
+            .0
+            .live_capture
+            .with_packet_state(|revision, _, _| revision.generation);
+        (
+            self.0.live_capture.revision(),
+            packet_generation,
+            self.0.diagnostics_revision.load(Ordering::Acquire),
+        )
+    }
+
+    pub(crate) fn diagnostics_input(&self) -> DiagnosticSnapshot {
+        let config = self.ui_config();
+        let status = self.0.live_capture.status();
+        let replay_running = self.0.live_capture.replay_running();
+        let raw_packet_count = self
+            .0
+            .live_capture
+            .raw_capture_snapshot()
+            .map_or(0, |raw| raw.packet_count as usize);
+        let (parsed_packet_count, hit_count) = self
+            .0
+            .live_capture
+            .with_state(|state| (state.packet_count, state.hits.len()));
+        DiagnosticSnapshot {
+            capture_running: matches!(
+                status.phase,
+                LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+            ) && !replay_running,
+            replay_running,
+            active_capture_filter: self.0.live_capture.active_capture_filter(),
+            raw_packet_count,
+            parsed_packet_count,
+            hit_count,
+            include_incoming: true,
+            server_damage_calibration: config.server_damage_calibration,
+            last_diagnostic: status.issue.map(|issue| format!("{issue:?}")),
+            manual_capture_device: config.manual_capture_device,
+        }
+    }
+
+    pub(crate) fn diagnostics_report(&self) -> Option<DiagnosticRun> {
+        self.0
+            .diagnostics_report
+            .lock()
+            .expect("diagnostics report lock poisoned")
+            .clone()
+    }
+
+    pub(crate) fn store_diagnostics_report(&self, report: DiagnosticRun) {
+        *self
+            .0
+            .diagnostics_report
+            .lock()
+            .expect("diagnostics report lock poisoned") = Some(report);
+        self.0.diagnostics_revision.fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn diagnostics_quality(&self) -> CaptureQualitySummary {
+        self.0.live_capture.quality_summary()
+    }
+
+    pub(crate) fn diagnostics_raw_capture(
+        &self,
+    ) -> Option<nte_dps_tool::engine::capture::RawCaptureSnapshot> {
+        self.0.live_capture.raw_capture_snapshot()
+    }
+
+    pub(crate) fn save_diagnostics_raw_capture(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<(u64, u64), String> {
+        self.0.live_capture.save_last_raw_capture(path)
+    }
+
+    pub(crate) fn begin_replay_import(
+        &self,
+        replace_current: bool,
+    ) -> Result<ReplayImportReservation, CoreError> {
+        let mut reserved = self
+            .0
+            .replay_import_reserved
+            .lock()
+            .expect("replay import reservation lock poisoned");
+        let active = matches!(
+            self.capture_phase(),
+            LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+        ) || self.replay_running();
+        if *reserved || (active && !replace_current) {
+            return Err(CoreError::new(
+                CoreErrorCode::CaptureAlreadyRunning,
+                "capture or replay is already active",
+            ));
+        }
+        if self.session_has_data() && !replace_current {
+            return Err(CoreError::new(
+                CoreErrorCode::CaptureAlreadyRunning,
+                "replay import requires confirmation before replacing the current session",
+            ));
+        }
+        *reserved = true;
+        drop(reserved);
+        Ok(ReplayImportReservation {
+            state: self.clone(),
+            active: true,
+        })
+    }
+
+    fn request_diagnostics_replay(
+        &self,
+        kind: CaptureReplayKind,
+        path: PathBuf,
+    ) -> Result<(), CoreError> {
+        let config = self.ui_config();
+        let local_ip_hint = self
+            .diagnostics_report()
+            .and_then(|run| run.environment.local_ip)
+            .and_then(|local_ip| local_ip.parse().ok());
+        let result = self.0.live_capture.request_replay(
+            kind,
+            path,
+            local_ip_hint,
+            true,
+            config.server_damage_calibration,
+        );
+        if result.is_ok() {
+            self.return_main_presentation_to_live();
+        }
+        result
+    }
+
+    pub(crate) fn diagnostics_capture_export(&self) -> CaptureExportDocument {
+        let config = self.ui_config();
+        let game_network = self
+            .diagnostics_report()
+            .and_then(|run| run.environment.game_connection)
+            .map(|network| CaptureExportNetwork {
+                pid: network.pid,
+                local_ip: network.local_ip,
+                remote_ip: network.remote_ip,
+                remote_port: network.remote_port,
+            });
+        self.0.live_capture.with_state(|state| {
+            CaptureExportDocument::snapshot(
+                state,
+                CaptureExportOptions {
+                    filter: config.capture_filter,
+                    include_incoming: true,
+                    game_network,
+                    dps_time_mode: DpsTimeBasis::from_subtract_time_stop(matches!(
+                        config.dps_time_mode,
+                        DpsTimeMode::TimeStopAdjusted
+                    )),
+                },
+            )
+        })
+    }
+
+    pub(crate) fn diagnostics_has_exportable_state(&self) -> bool {
+        self.0.live_capture.with_state(|state| {
+            !state.hits.is_empty() || !state.packets.is_empty() || !state.empty_curtain.is_empty()
+        })
+    }
+
+    pub(crate) fn submit_empty_curtain_operation(
+        &self,
+        character: nte_dps_tool::engine::model::HtItemNetId,
+        operation: ModsPluginOperation,
+    ) -> Result<u64, ModsPluginSubmitError> {
+        self.refresh_empty_curtain_operation();
+        if self
+            .0
+            .empty_curtain_operation
+            .lock()
+            .expect("Console equipment operation lock poisoned")
+            .request_id
+            .is_some()
+        {
+            return Err(ModsPluginSubmitError::Busy);
+        }
+        let request_id = self
+            .0
+            .mods_plugin
+            .lock()
+            .expect("Mod loader client lock poisoned")
+            .submit(character, operation)?;
+        *self
+            .0
+            .empty_curtain_operation
+            .lock()
+            .expect("Console equipment operation lock poisoned") = EmptyCurtainOperationState {
+            status: "pending",
+            message_key: "Sending equipment request...",
+            message_arguments: Vec::new(),
+            request_id: Some(request_id),
+        };
+        self.0
+            .empty_curtain_operation_revision
+            .fetch_add(1, Ordering::AcqRel);
+        Ok(request_id)
+    }
+
+    fn refresh_empty_curtain_operation(&self) {
+        let response = self
+            .0
+            .mods_plugin
+            .lock()
+            .expect("Mod loader client lock poisoned")
+            .try_recv();
+        let Some(response) = response else {
+            return;
+        };
+        let mut operation = self
+            .0
+            .empty_curtain_operation
+            .lock()
+            .expect("Console equipment operation lock poisoned");
+        if operation.request_id != Some(response.request_id) {
+            return;
+        }
+        *operation = match response.status {
+            Ok(0) => EmptyCurtainOperationState {
+                status: "success",
+                message_key: "Equipment RPC dispatched; waiting for game synchronization",
+                message_arguments: Vec::new(),
+                request_id: None,
+            },
+            Ok(1) => EmptyCurtainOperationState {
+                status: "success",
+                message_key: "Equipment request passed plugin dry-run validation",
+                message_arguments: Vec::new(),
+                request_id: None,
+            },
+            Ok(status) => EmptyCurtainOperationState {
+                status: "error",
+                message_key: "Mod loader rejected the request (status {})",
+                message_arguments: vec![status.to_string()],
+                request_id: None,
+            },
+            Err(error) => EmptyCurtainOperationState {
+                status: "error",
+                message_key: "Mod loader is unavailable: {}",
+                message_arguments: vec![error],
+                request_id: None,
+            },
+        };
+        self.0
+            .empty_curtain_operation_revision
+            .fetch_add(1, Ordering::AcqRel);
+    }
+
+    pub(crate) fn timeline_projection(&self, scope: TimelineScope) -> TimelineProjection {
+        let config = self.ui_config();
+        let resources = self.0.live_capture.resources();
+        let state = self.main_presented_combat_state();
+        project_timeline(
+            &state,
+            &resources.characters,
+            TimelineProjectionOptions {
+                scope,
+                bucket_seconds: config.timeline_bucket_seconds,
+                subtract_time_stop: matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+                language: config.language,
+            },
+        )
+    }
+
+    pub(crate) fn packet_stream_revision(&self) -> PacketStreamRevision {
+        if self.main_processing_paused()
+            && let Some(paused) = self
+                .0
+                .main_paused_presentation
+                .lock()
+                .expect("main DPS paused presentation lock poisoned")
+                .as_ref()
+        {
+            return paused.packet_revision;
+        }
+        self.0
+            .live_capture
+            .with_packet_state(|revision, _, _| revision)
+    }
+
+    pub(crate) fn packets_projection(
+        &self,
+        after: Option<PacketStreamRevision>,
+    ) -> (PacketStreamRevision, bool, PacketsProjection) {
+        if self.main_processing_paused()
+            && let Some(paused) = self
+                .0
+                .main_paused_presentation
+                .lock()
+                .expect("main DPS paused presentation lock poisoned")
+                .as_ref()
+        {
+            let revision = paused.packet_revision;
+            let incremental = after
+                .filter(|cursor| cursor.session_generation == revision.session_generation)
+                .and_then(|cursor| {
+                    project_packets_since(&paused.state, revision, 0, cursor.packet_generation)
+                });
+            return match incremental {
+                Some(projection) => (revision, false, projection),
+                None => (
+                    revision,
+                    true,
+                    project_recent_packets(&paused.state, revision, 0),
+                ),
+            };
+        }
+        self.0
+            .live_capture
+            .with_packet_state(|revision, queued_event_count, state| {
+                let incremental = after
+                    .filter(|cursor| cursor.session_generation == revision.session_generation)
+                    .and_then(|cursor| {
+                        project_packets_since(
+                            state,
+                            revision,
+                            queued_event_count,
+                            cursor.packet_generation,
+                        )
+                    });
+                match incremental {
+                    Some(projection) => (revision, false, projection),
+                    None => (
+                        revision,
+                        true,
+                        project_recent_packets(state, revision, queued_event_count),
+                    ),
+                }
+            })
+    }
+
+    pub(crate) fn skills_projection(&self, scope: SkillsScope) -> SkillsProjection {
+        let config = self.ui_config();
+        let resources = self.0.live_capture.resources();
+        let state = self.main_presented_combat_state();
+        project_skills(
+            &state,
+            &resources.characters,
+            SkillsProjectionOptions {
+                scope,
+                language: config.language,
+            },
+        )
+    }
+
+    pub(crate) fn timeline_preferences(&self) -> (f32, TimelineDpsViewMode) {
+        let config = self.ui_config();
+        (
+            sanitize_timeline_bucket_seconds(config.timeline_bucket_seconds),
+            config.timeline_dps_view_mode,
+        )
+    }
+
+    pub(crate) fn update_timeline_preferences(
+        &self,
+        bucket_seconds: f32,
+        view_mode: TimelineDpsViewMode,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| {
+            config.timeline_bucket_seconds = bucket_seconds;
+            config.timeline_dps_view_mode = view_mode;
+        })
+    }
+
+    pub(crate) fn bump_history_revision(&self) -> u64 {
+        self.0.history_revision.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    pub(crate) fn remember_deleted_history(&self, record: HistoryRecord) -> String {
+        let sequence = self.0.history_undo_sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        let token = format!("history-undo-{sequence}");
+        *self
+            .0
+            .history_undo
+            .lock()
+            .expect("history undo lock poisoned") = Some(HistoryUndoEntry {
+            token: token.clone(),
+            record,
+            expires_at: Instant::now() + HISTORY_UNDO_WINDOW,
+        });
+        token
+    }
+
+    pub(crate) fn take_deleted_history(&self, token: &str) -> Option<HistoryRecord> {
+        let mut undo = self
+            .0
+            .history_undo
+            .lock()
+            .expect("history undo lock poisoned");
+        let matches = undo
+            .as_ref()
+            .is_some_and(|entry| entry.token == token && Instant::now() <= entry.expires_at);
+        matches.then(|| undo.take().expect("checked history undo entry").record)
+    }
+
+    pub(crate) fn set_history_prediction_team(&self, team: TeamDps, upper: bool) {
+        let mut imported = self
+            .0
+            .imported_teams
+            .lock()
+            .expect("imported team lock poisoned");
+        if upper {
+            imported.0 = Some(team);
+        } else {
+            imported.1 = Some(team);
+        }
+        drop(imported);
+        self.bump_settings_revision();
     }
 
     fn ui_config(&self) -> UiConfig {
@@ -987,13 +2787,70 @@ impl AppState {
 
     pub(crate) fn stream_revision(&self) -> StreamRevision {
         StreamRevision {
-            capture: self.0.live_capture.revision(),
+            capture: if self.main_processing_paused() {
+                0
+            } else {
+                self.0.live_capture.revision()
+            },
             presentation: self.0.presentation_revision.load(Ordering::Acquire),
         }
     }
 
     pub(crate) fn settings_revision(&self) -> u64 {
         self.0.settings_revision.load(Ordering::Acquire)
+    }
+
+    fn main_presented_combat_state(&self) -> CombatState {
+        let selected_round_id = self.main_selected_round_id();
+        selected_round_id
+            .as_deref()
+            .and_then(|record_id| {
+                selected_round_combat_state(&self.main_round_records(), Some(record_id))
+            })
+            .unwrap_or_else(|| {
+                if self.main_processing_paused()
+                    && let Some(paused) = self
+                        .0
+                        .main_paused_presentation
+                        .lock()
+                        .expect("main DPS paused presentation lock poisoned")
+                        .as_ref()
+                {
+                    return paused.state.clone();
+                }
+                self.0.live_capture.with_state(Clone::clone)
+            })
+    }
+
+    fn return_main_presentation_to_live(&self) {
+        *self
+            .0
+            .main_selected_round_id
+            .lock()
+            .expect("main DPS selected round lock poisoned") = None;
+        self.0.main_selected_outgoing_revision.store(
+            self.0.live_capture.outgoing_hit_revision(),
+            Ordering::Release,
+        );
+        self.0
+            .main_paused_presentation
+            .lock()
+            .expect("main DPS paused presentation lock poisoned")
+            .take();
+        self.0
+            .main_processing_paused
+            .store(false, Ordering::Release);
+        *self
+            .0
+            .selected_abyss_half
+            .lock()
+            .expect("selected abyss half lock poisoned") = None;
+        *self
+            .0
+            .main_observed_abyss_half
+            .lock()
+            .expect("main DPS observed abyss half lock poisoned") = None;
+        self.bump_main_dps_revision();
     }
 
     pub(crate) fn mod_studio(&self) -> ModStudioWorkspaceService {
@@ -1057,12 +2914,69 @@ impl AppState {
     }
 }
 
+fn encrypted_ini_projection(runtime: &EncryptedIniRuntimeState) -> EncryptedIniProjection {
+    let document = runtime.document.as_ref();
+    EncryptedIniProjection {
+        generation: runtime.generation,
+        display_path: runtime.path.as_ref().map(|path| path.display().to_string()),
+        file_name: runtime
+            .path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned()),
+        key: document.map_or(EncryptedIniKey::Global, EncryptedIniDocument::key),
+        plaintext: document
+            .map(EncryptedIniDocument::plaintext)
+            .unwrap_or_default()
+            .to_owned(),
+        encrypted_line_count: document.map_or(0, EncryptedIniDocument::encrypted_line_count),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, time::SystemTime};
 
     use super::*;
     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
+
+    fn test_hit(damage: f64) -> nte_dps_tool::engine::model::Hit {
+        use nte_dps_tool::engine::model::{Hit, HitCharacterSource, HitDirection};
+
+        Hit {
+            timestamp: 1.0,
+            char_id: 7,
+            char_name: "Fixture".to_owned(),
+            char_known: true,
+            damage,
+            byte_offset: 0,
+            bit_shift: 0,
+            char_source: HitCharacterSource::Packet,
+            direction: HitDirection::Outgoing,
+            target_hp_before: 1_000.0,
+            target_hp_after: 1_000.0 - damage,
+            target_max_hp: 1_000.0,
+            target_hp_percent: 50.0,
+            target_id: None,
+            target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
+            target_context: Vec::new(),
+            gameplay_effect_index: Some(17),
+            gameplay_effect_name: Some("GE_Fixture".to_owned()),
+            ability_name: Some("GA_Fixture".to_owned()),
+            damage_name: Some("Fixture Damage".to_owned()),
+            damage_component: None,
+            attack_type: Some("Skill".to_owned()),
+            damage_attribute: None,
+            follow_up_damage: 0.0,
+            follow_up_timestamp: None,
+            follow_up_damage_name: None,
+            follow_up_attack_type: None,
+            follow_up_damage_attribute: None,
+        }
+    }
 
     fn temporary_config_path(tag: &str) -> PathBuf {
         let directory = std::env::temp_dir().join(format!(
@@ -1085,6 +2999,195 @@ mod tests {
 
         assert!(previous.load(Ordering::Acquire));
         assert!(!current.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn selected_round_drives_timeline_and_skills_projection_input() {
+        let mut selected = CombatState::default();
+        selected.push_hit(test_hit(125.0));
+        let records = vec![HistoryRecord {
+            id: "selected-round".to_owned(),
+            details: HistoryCombatDetails::from_state(&selected),
+            ..Default::default()
+        }];
+
+        let projected = selected_round_combat_state(&records, Some("selected-round"))
+            .expect("selected round combat state");
+        let timeline = project_timeline(
+            &projected,
+            &HashMap::new(),
+            TimelineProjectionOptions {
+                scope: TimelineScope::Whole,
+                bucket_seconds: 1.0,
+                subtract_time_stop: true,
+                language: Language::English,
+            },
+        );
+        let skills = project_skills(
+            &projected,
+            &HashMap::new(),
+            SkillsProjectionOptions {
+                scope: SkillsScope::Whole,
+                language: Language::English,
+            },
+        );
+
+        assert_eq!(timeline.total_damage, 125.0);
+        assert_eq!(skills.total_damage, 125.0);
+        assert!(selected_round_combat_state(&records, Some("other-round")).is_none());
+    }
+
+    #[test]
+    fn pause_freezes_the_presented_state_until_resume() {
+        let config_path = temporary_config_path("pause_freezes_projection");
+        let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut first = CombatState::default();
+        first.push_hit(test_hit(125.0));
+        live_capture.restore_session(first, CaptureQualitySource::Live);
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            live_capture.clone(),
+            config_path.clone(),
+        );
+
+        state.set_main_processing_paused(true);
+        let paused_revision = state.main_dps_stream_revision();
+        let mut second = CombatState::default();
+        second.push_hit(test_hit(300.0));
+        second.push_hit(test_hit(25.0));
+        live_capture.restore_session(second, CaptureQualitySource::Live);
+
+        assert_eq!(state.main_presented_combat_state().total_damage, 125.0);
+        assert!(state.main_paused_event_counts().0 > 0);
+        assert_ne!(state.main_dps_stream_revision(), paused_revision);
+
+        state.set_main_processing_paused(false);
+        assert_eq!(state.main_presented_combat_state().total_damage, 325.0);
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn reset_undo_restores_session_and_rejects_a_wrong_token_without_consuming_it() {
+        let config_path = temporary_config_path("session_reset_undo");
+        let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut previous = CombatState::default();
+        previous.push_hit(test_hit(222.0));
+        live_capture.restore_session(previous, CaptureQualitySource::Live);
+        let state =
+            AppState::new_with_config_path(UiConfig::default(), live_capture, config_path.clone());
+
+        state.set_main_processing_paused(true);
+        let token = state.reset_session_with_undo().expect("reset undo token");
+        assert!(!state.session_has_data());
+        assert!(!state.main_processing_paused());
+        assert_eq!(
+            state.undo_session_reset("wrong-token"),
+            Err(SessionUndoError::Missing)
+        );
+        state
+            .undo_session_reset(&token)
+            .expect("restore reset session");
+        assert_eq!(state.main_presented_combat_state().total_damage, 222.0);
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn onboarding_progress_and_completion_persist() {
+        let config_path = temporary_config_path("onboarding_progress");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+
+        state
+            .set_onboarding_progress(2, false)
+            .expect("save onboarding step");
+        assert_eq!(state.onboarding_step(), 2);
+        state
+            .finish_onboarding(HudPreset::Detailed)
+            .expect("finish onboarding");
+
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
+                .expect("valid saved UI config");
+        assert!(saved.onboarding_done);
+        assert!(saved.hud.show_mini_timeline);
+        assert_eq!(state.onboarding_step(), 3);
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn replay_import_reservation_blocks_live_capture_until_released() {
+        let state = AppState::default();
+        let reservation = state
+            .begin_replay_import(false)
+            .expect("reserve replay import");
+
+        let duplicate_error = match state.begin_replay_import(false) {
+            Ok(_) => panic!("second replay reservation must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(duplicate_error.code, CoreErrorCode::CaptureAlreadyRunning);
+        assert_eq!(
+            state
+                .request_capture_start(false)
+                .expect_err("capture start must respect replay reservation")
+                .code,
+            CoreErrorCode::CaptureAlreadyRunning
+        );
+
+        drop(reservation);
+        assert!(state.begin_replay_import(false).is_ok());
+    }
+
+    #[test]
+    fn capture_file_refresh_advances_settings_generation() {
+        let state = AppState::default();
+        let generation = state.settings_revision();
+
+        state.refresh_capture_file_stats();
+
+        assert!(state.settings_revision() > generation);
+    }
+
+    #[test]
+    fn encrypted_ini_session_orders_save_and_clear_generations() {
+        let config_path = temporary_config_path("encrypted_ini_session");
+        let ini_path = config_path.with_file_name("Engine.ini");
+        fs::write(&ini_path, "Value=1\n").expect("write INI fixture");
+        let state = AppState::default();
+
+        let opened = state
+            .open_encrypted_ini(ini_path.clone())
+            .expect("open INI fixture");
+        assert_eq!(opened.generation, 1);
+        assert_eq!(opened.plaintext, "Value=1");
+        assert!(matches!(
+            state.save_encrypted_ini(0, "Value=2".to_owned(), EncryptedIniKey::Global,),
+            Err(EncryptedIniRuntimeError::StaleGeneration)
+        ));
+
+        let (saved, outcome) = state
+            .save_encrypted_ini(
+                opened.generation,
+                "Value=2".to_owned(),
+                EncryptedIniKey::Global,
+            )
+            .expect("save INI fixture");
+        assert_eq!(outcome, EncryptedIniSaveOutcome::Saved);
+        assert_eq!(saved.generation, 2);
+        assert_eq!(saved.plaintext, "Value=2");
+        assert_eq!(state.clear_encrypted_ini().generation, 3);
+
+        fs::remove_dir_all(config_path.parent().expect("fixture parent"))
+            .expect("remove INI fixture");
     }
 
     #[test]
@@ -1164,7 +3267,10 @@ mod tests {
         assert_eq!(state.hud_width(), 512);
         assert_eq!(
             state.hud_initial_height(),
-            (HUD_BASE_INITIAL_HEIGHT + HUD_SUMMARY_HEIGHT + HUD_CHARACTERS_HEIGHT)
+            (HUD_BASE_INITIAL_HEIGHT
+                + HUD_SUMMARY_HEIGHT
+                + HUD_CHARACTERS_HEIGHT
+                + HUD_EDITOR_MODULE_HEADER_HEIGHT * 2)
                 .max(HUD_EDITOR_MIN_HEIGHT)
         );
         assert_eq!(snapshot.hud.config.width, 512);
@@ -1180,6 +3286,34 @@ mod tests {
 
         assert!(state.passthrough_hotkey_ready());
         assert_eq!(state.stream_revision(), initial_revision);
+    }
+
+    #[test]
+    fn live_abyss_selection_follows_only_real_half_transitions() {
+        assert_eq!(
+            next_live_abyss_selection(None, None, Some(AbyssHalf::First)),
+            (Some(AbyssHalf::First), Some(AbyssHalf::First))
+        );
+        assert_eq!(
+            next_live_abyss_selection(
+                Some(AbyssHalf::First),
+                Some(AbyssHalf::First),
+                Some(AbyssHalf::Second),
+            ),
+            (Some(AbyssHalf::Second), Some(AbyssHalf::Second))
+        );
+        assert_eq!(
+            next_live_abyss_selection(
+                Some(AbyssHalf::First),
+                Some(AbyssHalf::Second),
+                Some(AbyssHalf::Second),
+            ),
+            (Some(AbyssHalf::First), Some(AbyssHalf::Second))
+        );
+        assert_eq!(
+            next_live_abyss_selection(Some(AbyssHalf::Second), Some(AbyssHalf::Second), None,),
+            (None, None)
+        );
     }
 
     #[test]
@@ -1201,6 +3335,7 @@ mod tests {
                 + HUD_OPTIONAL_TITLE_HEIGHT
                 + HUD_OPTIONAL_STATUS_HEIGHT
                 + HUD_MINI_TIMELINE_HEIGHT
+                + HUD_EDITOR_MODULE_HEADER_HEIGHT * 5
         );
     }
 
@@ -1410,6 +3545,7 @@ mod tests {
             state
                 .update_interface_settings(
                     Language::Japanese,
+                    true,
                     ThemePreset::Tactical,
                     AccentColor::Orange,
                     UiDensity::Compact,
@@ -1449,6 +3585,7 @@ mod tests {
 
         let snapshot = state.settings_snapshot();
         assert_eq!(snapshot.interface.language, "ja");
+        assert!(snapshot.interface.dark_mode);
         assert_eq!(snapshot.interface.theme_preset, "tactical");
         assert_eq!(snapshot.capture.bpf_filter, "udp port 30196");
         assert_eq!(
@@ -1592,7 +3729,9 @@ mod tests {
         let saved: UiConfig =
             serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
                 .expect("valid saved UI config");
+        assert_eq!(saved.hud_always_on_top, Some(false));
         assert!(!saved.always_on_top);
+        assert_eq!(saved.main_dps_always_on_top, Some(true));
 
         let revision = state.stream_revision();
         assert!(
@@ -1601,6 +3740,43 @@ mod tests {
                 .expect("same-value always-on-top")
         );
         assert_eq!(state.stream_revision(), revision);
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn desktop_window_always_on_top_preferences_are_independent() {
+        let config_path = temporary_config_path("independent_always_on_top");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+
+        assert!(
+            state
+                .set_window_always_on_top(DesktopWindowKind::MainDps, false)
+                .expect("main DPS always-on-top save")
+        );
+        assert!(
+            state
+                .set_window_always_on_top(DesktopWindowKind::Console, true)
+                .expect("Console always-on-top save")
+        );
+
+        assert!(!state.window_always_on_top(DesktopWindowKind::MainDps));
+        assert!(state.window_always_on_top(DesktopWindowKind::Hud));
+        assert!(state.window_always_on_top(DesktopWindowKind::Console));
+        assert!(!state.window_always_on_top(DesktopWindowKind::AbyssValues));
+
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
+                .expect("valid saved UI config");
+        assert_eq!(saved.main_dps_always_on_top, Some(false));
+        assert_eq!(saved.hud_always_on_top, Some(true));
+        assert_eq!(saved.console_always_on_top, Some(true));
+        assert_eq!(saved.abyss_values_always_on_top, Some(false));
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");
@@ -1633,6 +3809,101 @@ mod tests {
                 .set_hud_window_position([-1920, 84])
                 .expect("same-value HUD position")
         );
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn console_geometry_is_saved_without_publishing_combat_or_settings_state() {
+        let config_path = temporary_config_path("console_geometry");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        let initial_stream_revision = state.stream_revision();
+        let initial_settings_revision = state.settings_revision();
+
+        assert!(
+            state
+                .set_console_window_geometry([1180.0, 760.0], [-1920.0, 84.0])
+                .expect("Console geometry save")
+        );
+        assert_eq!(
+            state.console_window_geometry(),
+            (Some([1180.0, 760.0]), Some([-1920.0, 84.0]))
+        );
+        assert_eq!(state.stream_revision(), initial_stream_revision);
+        assert_eq!(state.settings_revision(), initial_settings_revision);
+
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
+                .expect("valid saved UI config");
+        assert_eq!(saved.console_window_size, Some([1180.0, 760.0]));
+        assert_eq!(saved.console_window_position, Some([-1920.0, 84.0]));
+        assert!(
+            !state
+                .set_console_window_geometry([1180.0, 760.0], [-1920.0, 84.0])
+                .expect("same-value Console geometry")
+        );
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn combat_detail_columns_and_positions_persist_in_the_existing_ui_config() {
+        let config_path = temporary_config_path("combat_detail_preferences");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        let mut columns = nte_dps_tool::storage::config::HitDetailColumnsConfig::default();
+        columns.show_time = false;
+        columns.type_width = u16::MAX;
+        assert!(
+            state
+                .set_hit_detail_columns(columns)
+                .expect("detail columns save")
+        );
+        assert!(!state.ui_config_snapshot().hit_detail_columns.show_time);
+        assert_eq!(
+            state.ui_config_snapshot().hit_detail_columns.type_width,
+            600
+        );
+
+        assert!(
+            state
+                .set_main_dps_detail_window_geometry(
+                    [920.0, 640.0],
+                    [120.0, 80.0],
+                    MainDpsDetailKind::Team,
+                )
+                .expect("team detail geometry save")
+        );
+        assert!(
+            state
+                .set_main_dps_detail_window_geometry(
+                    [840.0, 600.0],
+                    [240.0, 160.0],
+                    MainDpsDetailKind::Character,
+                )
+                .expect("character detail geometry save")
+        );
+        assert_eq!(
+            state.main_dps_detail_window_geometry(MainDpsDetailKind::Character),
+            (Some([840.0, 600.0]), Some([240.0, 160.0]))
+        );
+
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
+                .expect("valid saved UI config");
+        assert_eq!(saved.team_hit_detail_window_position, Some([120.0, 80.0]));
+        assert_eq!(saved.hit_detail_window_position, Some([240.0, 160.0]));
+        assert_eq!(saved.team_hit_detail_window_size, Some([920.0, 640.0]));
+        assert_eq!(saved.hit_detail_window_size, Some([840.0, 600.0]));
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");
@@ -1697,5 +3968,26 @@ mod tests {
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");
+    }
+
+    #[test]
+    fn deleted_history_undo_token_is_opaque_and_single_use() {
+        let state = AppState::default();
+        let record = HistoryRecord {
+            id: "history-record".to_owned(),
+            ..Default::default()
+        };
+
+        let token = state.remember_deleted_history(record);
+
+        assert!(!token.contains("history-record"));
+        assert_eq!(
+            state
+                .take_deleted_history(&token)
+                .expect("active undo record")
+                .id,
+            "history-record"
+        );
+        assert!(state.take_deleted_history(&token).is_none());
     }
 }

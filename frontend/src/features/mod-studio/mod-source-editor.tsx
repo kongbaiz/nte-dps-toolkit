@@ -38,6 +38,10 @@ import {
   type ModSourceCompletionKind,
 } from "./mod-source-intelligence";
 import {
+  MOD_SOURCE_COMPLETION_TRIGGER_CHARACTERS,
+  MOD_SOURCE_SUGGEST_OPTIONS,
+} from "./mod-source-editor-options";
+import {
   MOD_SOURCE_SEMANTIC_TOKEN_TYPES,
   modSourceSemanticTokens,
   type ModSourceSemanticToken,
@@ -159,9 +163,7 @@ export function ModSourceEditor({
         sticky: true,
         above: false,
       },
-      quickSuggestions: false,
-      suggestOnTriggerCharacters: false,
-      wordBasedSuggestions: "off",
+      ...MOD_SOURCE_SUGGEST_OPTIONS,
       "semanticHighlighting.enabled": true,
       parameterHints: {
         enabled: true,
@@ -202,6 +204,7 @@ export function ModSourceEditor({
     const completionProvider = monaco.languages.registerCompletionItemProvider(
       "cpp",
       {
+        triggerCharacters: MOD_SOURCE_COMPLETION_TRIGGER_CHARACTERS,
         provideCompletionItems(candidateModel, position) {
           const schema = schemaRef.current;
           if (candidateModel !== model || schema === null) {

@@ -1,0 +1,4 @@
+tauri-fmt=0
+tauri-check=0
+tauri-test=0
+diff-check=0

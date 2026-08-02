@@ -1,0 +1,10 @@
+BASELINE behavior probe
+disabled_game_client_select=
+True
+disabled_open_mod_folder=
+True
+disabled_create_mod=
+True
+manual_game_directory_command=False
+deployment_contract=False
+exit_status=0

@@ -1,0 +1,1316 @@
+--- a/frontend/src/features/settings/settings-page.tsx
++++ b/frontend/src/features/settings/settings-page.tsx
+@@ -7,7 +7,6 @@
+   GripVertical,
+   MonitorUp,
+   Pin,
+-  RefreshCw,
+   SlidersHorizontal,
+   TriangleAlert,
+   X,
+@@ -73,25 +72,7 @@
+           onDismiss={settings.clearMutationError}
+         />
+       ) : null}
+-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 px-1 py-1">
+-        <h1 className="font-heading text-xl font-medium">{t("Settings")}</h1>
+-        <Button
+-          variant="outline"
+-          disabled={settings.pendingAction !== null}
+-          onClick={() => void settings.refresh()}
+-        >
+-          <RefreshCw
+-            className={cn(
+-              "size-4",
+-              settings.pendingAction === "refresh" && "animate-spin",
+-            )}
+-            aria-hidden="true"
+-          />
+-          {t("Refresh")}
+-        </Button>
+-      </header>
+-
+-      <div className="mt-3 min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
++      <div className="min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
+         {settings.state.status === "loading" ? (
+           <SettingsLoading />
+         ) : settings.state.status === "error" ? (
+@@ -100,7 +81,7 @@
+             onRetry={settings.refresh}
+           />
+         ) : (
+-          <div className="grid grid-cols-1 items-start gap-3 min-[1100px]:grid-cols-2">
++          <div className="grid grid-cols-1 items-start gap-3 min-[900px]:grid-cols-2">
+             <PrimarySettingsColumn
+               snapshot={settings.state.snapshot}
+               pendingAction={settings.pendingAction}
+--- a/frontend/src/features/settings/settings-catalog.tsx
++++ b/frontend/src/features/settings/settings-catalog.tsx
+@@ -124,7 +124,7 @@
+     binding: HotkeyBinding | null,
+   ): Promise<void>;
+   applyLayoutProfile(profile: LayoutProfileId): Promise<void>;
+-  importTeamData(json: string): Promise<void>;
++  importTeamDataFile(): Promise<boolean | null>;
+   exportTeamData(): Promise<boolean | null>;
+   refreshCaptureFiles(): Promise<void>;
+   clearCaptureFiles(): Promise<void>;
+@@ -588,66 +588,88 @@
+         />
+       </SettingsRow>
+       <SettingsRow labelKey="Capture NIC">
+-        <div className="flex min-w-0 flex-wrap gap-2">
+-          <NativeSelect
+-            disabled={pending}
+-            className="min-w-52 flex-1"
+-            ariaLabel={t("Capture NIC")}
+-            value={
+-              settings.manualCaptureDevice === null ? "automatic" : "manual"
+-            }
+-            onChange={(mode) =>
+-              void save({
+-                manualCaptureDevice:
+-                  mode === "automatic"
+-                    ? null
+-                    : (snapshot.capture.devices[0]?.id ?? null),
+-              })
+-            }
+-            options={[
+-              { value: "automatic", label: t("Automatic NIC selection") },
+-              { value: "manual", label: t("Pin capture NIC") },
+-            ]}
+-          />
+-          {settings.manualCaptureDevice !== null ? (
++        <div className="flex min-w-0 flex-col gap-2">
++          <div className="flex min-w-0 flex-wrap gap-2">
+             <NativeSelect
+-              disabled={pending}
++              disabled={pending || snapshot.capture.devices.length === 0}
+               className="min-w-52 flex-1"
+-              ariaLabel={t("Select a NIC")}
+-              value={settings.manualCaptureDevice}
+-              onChange={(manualCaptureDevice) =>
+-                void save({ manualCaptureDevice })
++              ariaLabel={t("Capture NIC")}
++              value={
++                settings.manualCaptureDevice === null ? "automatic" : "manual"
++              }
++              onChange={(mode) =>
++                void save({
++                  manualCaptureDevice:
++                    mode === "automatic"
++                      ? null
++                      : (snapshot.capture.devices[0]?.id ?? null),
++                })
+               }
+               options={[
+-                ...(snapshot.capture.devices.some(
+-                  (device) => device.id === settings.manualCaptureDevice,
+-                )
+-                  ? []
+-                  : [
+-                      {
+-                        value: settings.manualCaptureDevice,
+-                        label: settings.manualCaptureDevice,
+-                      },
+-                    ]),
+-                ...snapshot.capture.devices.map((device) => ({
+-                  value: device.id,
+-                  label: device.label,
+-                })),
++                { value: "automatic", label: t("Automatic NIC selection") },
++                { value: "manual", label: t("Pin capture NIC") },
+               ]}
+             />
++            {settings.manualCaptureDevice !== null &&
++            snapshot.capture.devices.length > 0 ? (
++              <NativeSelect
++                disabled={pending}
++                className="min-w-52 flex-1"
++                ariaLabel={t("Select a NIC")}
++                value={settings.manualCaptureDevice}
++                onChange={(manualCaptureDevice) =>
++                  void save({ manualCaptureDevice })
++                }
++                options={[
++                  ...(snapshot.capture.devices.some(
++                    (device) => device.id === settings.manualCaptureDevice,
++                  )
++                    ? []
++                    : [
++                        {
++                          value: settings.manualCaptureDevice,
++                          label: settings.manualCaptureDevice,
++                        },
++                      ]),
++                  ...snapshot.capture.devices.map((device) => ({
++                    value: device.id,
++                    label: device.label,
++                  })),
++                ]}
++              />
++            ) : null}
++            <Button
++              type="button"
++              variant="outline"
++              disabled={pending}
++              onClick={() => void actions.refreshCaptureDevices()}
++            >
++              <RefreshCw aria-hidden="true" />
++              {t("Refresh NIC List")}
++            </Button>
++          </div>
++          {snapshot.capture.devices.length === 0 ? (
++            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
++              {t(
++                "No usable NIC found; confirm Npcap is installed, then click refresh",
++              )}
++            </p>
++          ) : settings.manualCaptureDevice !== null &&
++            !snapshot.capture.devices.some(
++              (device) => device.id === settings.manualCaptureDevice,
++            ) ? (
++            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
++              {t(
++                "The selected NIC is currently unavailable; reselect or click refresh",
++              )}
++            </p>
+           ) : null}
+-          <Button
+-            type="button"
+-            variant="outline"
+-            disabled={pending}
+-            onClick={() => void actions.refreshCaptureDevices()}
+-          >
+-            <RefreshCw aria-hidden="true" />
+-            {t("Refresh NIC List")}
+-          </Button>
+         </div>
+       </SettingsRow>
+-      <SettingsRow labelKey="Damage Source">
++      <SettingsRow
++        labelKey="Damage Source"
++        descriptionKey="Takes effect after re-capturing or re-importing; only overrides damage when a server HP sync can be unambiguously paired to a single hit"
++      >
+         <LabeledSwitch
+           disabled={pending}
+           labelKey="Calibrate with server-side HP deltas"
+@@ -657,7 +679,10 @@
+           }
+         />
+       </SettingsRow>
+-      <SettingsRow labelKey="Character Damage">
++      <SettingsRow
++        labelKey="Character Damage"
++        descriptionKey="When enabled, confirmed reaction damage is shown separately instead of being added to the attributed character; team total damage is unchanged."
++      >
+         <LabeledSwitch
+           disabled={pending}
+           labelKey="Separate reaction damage from character damage"
+@@ -667,7 +692,10 @@
+           }
+         />
+       </SettingsRow>
+-      <SettingsRow labelKey="Combat Rounds">
++      <SettingsRow
++        labelKey="Combat Rounds"
++        descriptionKey="Outside abyss, archive the current round and clear live combat stats after the configured idle time"
++      >
+         <div className="flex flex-wrap items-center justify-between gap-3">
+           <LabeledSwitch
+             disabled={pending}
+@@ -717,7 +745,10 @@
+           }))}
+         />
+       </SettingsRow>
+-      <SettingsRow labelKey="Passthrough Hotkey">
++      <SettingsRow
++        labelKey="Passthrough Hotkey"
++        descriptionKey="Toggle mouse passthrough while the combat HUD is active"
++      >
+         <NativeSelect
+           disabled={pending}
+           ariaLabel={t("Passthrough Hotkey")}
+@@ -861,7 +892,6 @@
+   pending: boolean;
+   actions: SettingsCatalogActions;
+ }) {
+-  const input = useRef<HTMLInputElement>(null);
+   const exportedTimer = useRef<number | null>(null);
+   const [exported, setExported] = useState(false);
+   const imported =
+@@ -903,23 +933,11 @@
+         ) : null}
+       </CardHeader>
+       <CardContent className="flex flex-wrap gap-2">
+-        <input
+-          ref={input}
+-          className="hidden"
+-          type="file"
+-          accept=".json,application/json"
+-          onChange={(event) => {
+-            const file = event.currentTarget.files?.[0];
+-            event.currentTarget.value = "";
+-            if (!file || file.size > 1024 * 1024) return;
+-            void file.text().then((json) => actions.importTeamData(json));
+-          }}
+-        />
+         <Button
+           type="button"
+           variant="outline"
+           disabled={pending}
+-          onClick={() => input.current?.click()}
++          onClick={() => void actions.importTeamDataFile()}
+         >
+           <Upload aria-hidden="true" />
+           {t("Import DPS Data")}
+--- a/frontend/src/features/settings/use-settings.ts
++++ b/frontend/src/features/settings/use-settings.ts
+@@ -165,6 +165,23 @@
+       mutate("abyss-values", () => client.openAbyssValues()),
+     importTeamData: (json: string) =>
+       mutate("team-import", () => client.importTeamData(json)),
++    importTeamDataFile: async (): Promise<boolean | null> => {
++      if (mutationPending.current) return null;
++      mutationPending.current = true;
++      setPendingAction("team-import");
++      setMutationError(null);
++      try {
++        const result = await client.importTeamDataFile();
++        if (mounted.current) applySnapshot(result.settings);
++        return result.performed;
++      } catch (error) {
++        if (mounted.current) setMutationError(settingsError(error));
++        return null;
++      } finally {
++        mutationPending.current = false;
++        if (mounted.current) setPendingAction(null);
++      }
++    },
+     exportTeamData: async (): Promise<boolean | null> => {
+       if (mutationPending.current) {
+         return null;
+--- a/frontend/src/lib/tauri/settings-client.ts
++++ b/frontend/src/lib/tauri/settings-client.ts
+@@ -3,6 +3,7 @@
+ import {
+   parseSettingsSnapshot,
+   parseSettingsEvent,
++  parseTeamDataImportFileResult,
+   type CaptureSettingsInput,
+   type GlobalHotkeyActionId,
+   type HotkeyBinding,
+@@ -12,6 +13,7 @@
+   type LayoutProfileId,
+   type SettingsCommandError,
+   type SettingsSnapshot,
++  type TeamDataImportFileResult,
+   type UpdateComponentId,
+   type UpdateSettingsInput,
+ } from "@/lib/tauri/settings-contract";
+@@ -31,6 +33,7 @@
+   exportTeamData: "export_settings_team_data",
+   getSnapshot: "get_settings_snapshot",
+   importTeamData: "import_settings_team_data",
++  importTeamDataFile: "import_settings_team_data_file",
+   installUpdate: "install_settings_update",
+   moveHudModule: "move_settings_hud_module",
+   openHudEditor: "open_settings_hud_editor",
+@@ -77,6 +80,7 @@
+   applyLayoutProfile(profile: LayoutProfileId): Promise<SettingsSnapshot>;
+   openAbyssValues(): Promise<SettingsSnapshot>;
+   importTeamData(json: string): Promise<SettingsSnapshot>;
++  importTeamDataFile(): Promise<TeamDataImportFileResult>;
+   exportTeamData(): Promise<boolean>;
+   refreshCaptureFiles(): Promise<SettingsSnapshot>;
+   clearCaptureFiles(): Promise<SettingsSnapshot>;
+@@ -153,6 +157,16 @@
+     openAbyssValues: () => snapshotCommand(COMMANDS.openAbyssValues),
+     importTeamData: (json) =>
+       snapshotCommand(COMMANDS.importTeamData, { json }),
++    importTeamDataFile: async () => {
++      try {
++        return parseTeamDataImportFileResult(
++          await transport.invoke(COMMANDS.importTeamDataFile),
++        );
++      } catch (error) {
++        if (error instanceof TechnicalContractError) throw error;
++        throw parseTechnicalCommandError(error);
++      }
++    },
+     exportTeamData: async () => {
+       try {
+         const value = await transport.invoke(COMMANDS.exportTeamData);
+--- a/frontend/src/lib/tauri/settings-client.test.ts
++++ b/frontend/src/lib/tauri/settings-client.test.ts
+@@ -202,6 +202,23 @@
+     await expect(client.exportTeamData()).resolves.toBe(false);
+   });
+ 
++  it("uses the native team data import command and preserves cancellation", async () => {
++    const calls: string[] = [];
++    const client = createSettingsClient({
++      invoke: async (command) => {
++        calls.push(command);
++        return { performed: false, settings: settingsFixture() };
++      },
++      createChannel: () => ({}),
++    });
++
++    await expect(client.importTeamDataFile()).resolves.toMatchObject({
++      performed: false,
++      settings: { generation: "0" },
++    });
++    expect(calls).toEqual(["import_settings_team_data_file"]);
++  });
++
+   it("streams settled startup update snapshots and unregisters on cleanup", async () => {
+     let onMessage: (message: unknown) => void = () => {
+       throw new Error("settings channel was not initialized");
+--- a/frontend/src/lib/tauri/settings-contract.ts
++++ b/frontend/src/lib/tauri/settings-contract.ts
+@@ -136,6 +136,11 @@
+   lowerImported: boolean;
+ }
+ 
++export interface TeamDataImportFileResult {
++  performed: boolean;
++  settings: SettingsSnapshot;
++}
++
+ export interface SettingsSnapshot {
+   contractVersion: number;
+   generation: string;
+@@ -341,6 +346,16 @@
+     hudWidthMin,
+     hudWidthMax,
+     hud,
++  };
++}
++
++export function parseTeamDataImportFileResult(
++  value: unknown,
++): TeamDataImportFileResult {
++  const result = record(value, "team data import result");
++  return {
++    performed: boolean(result.performed, "teamDataImport.performed"),
++    settings: parseSettingsSnapshot(result.settings),
+   };
+ }
+ 
+--- a/frontend/src/lib/tauri/settings-contract.test.ts
++++ b/frontend/src/lib/tauri/settings-contract.test.ts
+@@ -7,6 +7,7 @@
+ 
+ import {
+   compareSettingsGeneration,
++  parseTeamDataImportFileResult,
+   parseSettingsSnapshot,
+   SETTINGS_CONTRACT_VERSION,
+ } from "./settings-contract";
+@@ -119,6 +120,17 @@
+     expect(snapshot.hotkeys.bindings).toHaveLength(3);
+   });
+ 
++  it("parses native team data import results without a local path", () => {
++    const result = parseTeamDataImportFileResult({
++      performed: true,
++      settings: settingsFixture(),
++    });
++
++    expect(result.performed).toBe(true);
++    expect(result.settings.generation).toBe("7");
++    expect(result).not.toHaveProperty("path");
++  });
++
+   it("orders decimal generations without unsafe number conversion", () => {
+     expect(compareSettingsGeneration("9", "10")).toBeLessThan(0);
+     expect(
+--- a/frontend/src/features/empty-curtain/empty-curtain-page.tsx
++++ b/frontend/src/features/empty-curtain/empty-curtain-page.tsx
+@@ -104,27 +104,12 @@
+ 
+   return (
+     <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+-      <header className="flex flex-wrap items-center justify-between gap-3 border-b px-3 py-3 min-[640px]:px-5">
+-        <div className="min-w-0">
+-          <div className="flex flex-wrap items-center gap-2">
+-            <h1 className="text-base font-semibold">{t("Console Loadout")}</h1>
+-            <Badge variant="outline" className="gap-1.5">
+-              <span className="size-1.5 rounded-full bg-emerald-500" />
+-              {t("Live")}
+-            </Badge>
+-          </div>
+-          <p className="mt-0.5 text-xs text-muted-foreground">
+-            {t("Console inventory follows the current capture")}
+-          </p>
+-        </div>
+-      </header>
+-
+       {model.notice ? (
+         <FloatingNotice error={model.notice} onClose={model.clearNotice} />
+       ) : null}
+ 
+       <div className="min-h-0 flex-1 overflow-hidden">
+-        <div className="mx-auto flex h-full min-h-0 w-full max-w-[1700px] flex-col px-3 py-3 min-[900px]:px-4">
++        <div className="flex h-full min-h-0 w-full flex-col px-3 py-3 min-[900px]:px-4">
+           {!snapshot.hasData ? (
+             <Empty className="min-h-[28rem] flex-1 border border-dashed">
+               <EmptyHeader>
+@@ -134,7 +119,7 @@
+                 <EmptyTitle>{t("No Console equipment data")}</EmptyTitle>
+                 <EmptyDescription>
+                   {t(
+-                    "Start capture or import a replay to inspect Console equipment",
++                    "Start capture or import a replay to collect equipment data.",
+                   )}
+                 </EmptyDescription>
+               </EmptyHeader>
+@@ -176,15 +161,20 @@
+                     : ""}
+                 </span>
+                 <div className="ml-auto flex flex-wrap items-center gap-2">
+-                  <Button
+-                    variant="outline"
+-                    size="sm"
+-                    disabled={model.actionPending}
+-                    onClick={model.exportInventory}
+-                  >
+-                    <Download aria-hidden="true" />
+-                    {t("Export for Drive Calculator")}
+-                  </Button>
++                  {snapshot.items.length > 0 ? (
++                    <Button
++                      variant="outline"
++                      size="sm"
++                      title={t(
++                        "Save the full inventory as a real_inventory.json for NTE Drive Calculator",
++                      )}
++                      disabled={model.actionPending}
++                      onClick={model.exportInventory}
++                    >
++                      <Download aria-hidden="true" />
++                      {t("Export for Drive Calculator")}
++                    </Button>
++                  ) : null}
+                   <Button
+                     variant={charactersOpen ? "secondary" : "outline"}
+                     size="sm"
+@@ -224,7 +214,7 @@
+               ) : null}
+ 
+               <p className="py-2.5 text-xs text-muted-foreground">
+-                {t("Manage equipment from each item card through the plugin")}
++                {t("Right-click equipment to manage it through the plugin")}
+               </p>
+               {visibleItems.length === 0 ? (
+                 <Empty className="min-h-[24rem] flex-1 border">
+@@ -235,7 +225,9 @@
+                     <EmptyTitle>
+                       {t("No equipment matches the current filters")}
+                     </EmptyTitle>
+-                    <EmptyDescription>{t("Clear Filters")}</EmptyDescription>
++                    <EmptyDescription>
++                      {t("Clear the filters to show all recorded equipment.")}
++                    </EmptyDescription>
+                   </EmptyHeader>
+                   <Button
+                     variant="outline"
+@@ -339,6 +331,9 @@
+               variant="outline"
+               size="sm"
+               disabled={pending}
++              title={t(
++                "Import a character Console loadout JSON and switch equipment through the plugin",
++              )}
+               onClick={onImport}
+             >
+               <Upload aria-hidden="true" />
+@@ -390,6 +385,9 @@
+                       variant="ghost"
+                       size="icon-sm"
+                       aria-label={t("Export Loadout")}
++                      title={t(
++                        "Save this character's equipped Console loadout as JSON",
++                      )}
+                       disabled={pending || equipped === 0}
+                       onClick={() => onExport(character.uid)}
+                     >
+@@ -1063,7 +1061,10 @@
+                         key={`${position.row}:${position.column}`}
+                         value={`${position.row}:${position.column}`}
+                       >
+-                        {position.row}, {position.column}
++                        {tf("Row {}, Column {}", [
++                          String(position.row),
++                          String(position.column),
++                        ])}
+                       </option>
+                     ))}
+                   </select>
+--- a/frontend/src/features/empty-curtain/equipment-canvas-grid.tsx
++++ b/frontend/src/features/empty-curtain/equipment-canvas-grid.tsx
+@@ -13,6 +13,7 @@
+   equipmentCanvasIndexAtContent,
+   equipmentCanvasItemTop,
+   equipmentCanvasLayout,
++  equipmentCanvasPointerIntent,
+   equipmentCanvasRenderWindow,
+   equipmentCanvasRenderWindowNeedsRefresh,
+   equipmentCanvasVisibleStatCounts,
+@@ -301,12 +302,29 @@
+         updateHoverOverlay(null);
+       }}
+       onClick={(event) => {
++        if (equipmentCanvasPointerIntent(event.button) !== "focus") return;
+         const index = indexFromPointer(
+           event.target,
+           event.nativeEvent.offsetX,
+           event.nativeEvent.offsetY,
+         );
+         if (index === null) return;
++        focusedIndexRef.current = index;
++        event.currentTarget.setAttribute(
++          "aria-label",
++          tf("Equipment inventory, selected {}", [items[index].name]),
++        );
++        moveFocus(index);
++      }}
++      onContextMenu={(event) => {
++        if (equipmentCanvasPointerIntent(event.button) !== "open") return;
++        const index = indexFromPointer(
++          event.target,
++          event.nativeEvent.offsetX,
++          event.nativeEvent.offsetY,
++        );
++        if (index === null) return;
++        event.preventDefault();
+         focusedIndexRef.current = index;
+         event.currentTarget.setAttribute(
+           "aria-label",
+--- a/frontend/src/features/empty-curtain/equipment-canvas-layout.ts
++++ b/frontend/src/features/empty-curtain/equipment-canvas-layout.ts
+@@ -48,6 +48,16 @@
+   top: number;
+   height: number;
+   overscan: number;
++}
++
++export type EquipmentCanvasPointerIntent = "focus" | "open" | null;
++
++export function equipmentCanvasPointerIntent(
++  button: number,
++): EquipmentCanvasPointerIntent {
++  if (button === 0) return "focus";
++  if (button === 2) return "open";
++  return null;
+ }
+ 
+ export function equipmentCanvasBackingStore(
+--- a/frontend/src/features/empty-curtain/equipment-canvas-layout.test.ts
++++ b/frontend/src/features/empty-curtain/equipment-canvas-layout.test.ts
+@@ -8,6 +8,7 @@
+   equipmentCanvasIndexAtContent,
+   equipmentCanvasItemTop,
+   equipmentCanvasLayout,
++  equipmentCanvasPointerIntent,
+   equipmentCanvasRenderWindow,
+   equipmentCanvasRenderWindowNeedsRefresh,
+   equipmentCanvasVisibleStatCounts,
+@@ -17,6 +18,12 @@
+ } from "./equipment-canvas-layout";
+ 
+ describe("equipment canvas layout", () => {
++  it("keeps primary click for focus and opens management on right-click", () => {
++    expect(equipmentCanvasPointerIntent(0)).toBe("focus");
++    expect(equipmentCanvasPointerIntent(2)).toBe("open");
++    expect(equipmentCanvasPointerIntent(1)).toBeNull();
++  });
++
+   it("keeps hundreds of items in geometry instead of DOM-sized output", () => {
+     const layout = equipmentCanvasLayout(1200, 331);
+     expect(layout.columns).toBe(4);
+--- a/frontend/src/features/main-dps/main-dps-page.tsx
++++ b/frontend/src/features/main-dps/main-dps-page.tsx
+@@ -4,6 +4,7 @@
+   ChevronLeft,
+   ChevronRight,
+   Copy,
++  Eye,
+   EyeOff,
+   X,
+ } from "lucide-react";
+@@ -30,6 +31,8 @@
+   damagePercent,
+   formatDuration,
+   formatMainMetric,
++  mainCaptureStatusTone,
++  mainCharacterListState,
+   roundLabel,
+ } from "./main-dps-model";
+ import { useMainDps } from "./use-main-dps";
+@@ -61,6 +64,13 @@
+       ) ?? [],
+     [hidden, snapshot],
+   );
++  const characterListState = snapshot
++    ? mainCharacterListState(
++        snapshot.readout.damageAttribution.totalDamage,
++        snapshot.readout.characters.length,
++        characters.length,
++      )
++    : "combat-empty";
+ 
+   useEffect(() => {
+     if (snapshot === null) return;
+@@ -74,6 +84,20 @@
+       reduceMotion: snapshot.appearance.reduceMotion,
+     });
+   }, [presentation, snapshot]);
++
++  useEffect(() => {
++    if (context === null) return;
++    const closeOnEscape = (event: KeyboardEvent) => {
++      if (event.key === "Escape") setContext(null);
++    };
++    const close = () => setContext(null);
++    window.addEventListener("keydown", closeOnEscape);
++    window.addEventListener("resize", close);
++    return () => {
++      window.removeEventListener("keydown", closeOnEscape);
++      window.removeEventListener("resize", close);
++    };
++  }, [context]);
+ 
+   if (snapshot === null) {
+     return (
+@@ -113,7 +137,30 @@
+ 
+       <DesktopTitlebar
+         title="NTE DPS TOOL"
+-        status={<span className="size-2 rounded-full bg-emerald-600" />}
++        status={
++          <span
++            className={cn(
++              "size-2 rounded-full",
++              mainCaptureStatusTone(snapshot.capture.phase) === "active" &&
++                "bg-emerald-600",
++              mainCaptureStatusTone(snapshot.capture.phase) === "transition" &&
++                "bg-amber-500",
++              mainCaptureStatusTone(snapshot.capture.phase) === "error" &&
++                "bg-destructive",
++              mainCaptureStatusTone(snapshot.capture.phase) === "idle" &&
++                "bg-muted-foreground/45",
++            )}
++            role="status"
++            aria-label={tf(
++              snapshot.capture.messageKey,
++              snapshot.capture.messageArguments,
++            )}
++            title={tf(
++              snapshot.capture.messageKey,
++              snapshot.capture.messageArguments,
++            )}
++          />
++        }
+       />
+ 
+       <main className="main-dps-content">
+@@ -450,7 +497,7 @@
+               }
+             />
+           )}
+-          {snapshot.readout.characters.length === 0 ? (
++          {characterListState === "combat-empty" ? (
+             <EmptyCombat
+               gameDetected={snapshot.gameDetected}
+               captureRunning={captureRunning}
+@@ -459,8 +506,19 @@
+               setReplayOpen={setReplayOpen}
+               pending={pending}
+               start={() => void mutate("capture", mainDpsClient.startCapture)}
++              redetect={() =>
++                void effect("redetect", async () => {
++                  apply(await mainDpsClient.getSnapshot());
++                })
++              }
+             />
+-          ) : characters.length === 0 ? (
++          ) : characterListState === "unattributed" ? (
++            <div className="m-auto text-sm text-muted-foreground">
++              {t(
++                "No character-attributed damage under the current accounting mode",
++              )}
++            </div>
++          ) : characterListState === "hidden" ? (
+             <div className="m-auto flex flex-col items-center gap-3 text-muted-foreground">
+               <span>{t("All ranking rows are hidden")}</span>
+               <Button variant="outline" onClick={() => setHidden(new Set())}>
+@@ -499,21 +557,42 @@
+ 
+       {context !== null && (
+         <div
+-          className="fixed z-40 min-w-36 rounded-lg border bg-popover p-1 shadow-xl"
+-          style={{ left: context.x, top: context.y }}
++          className="fixed z-40 min-w-52 rounded-lg border bg-popover p-1 shadow-xl"
++          style={{
++            left: Math.max(8, Math.min(context.x, window.innerWidth - 216)),
++            top: Math.max(8, Math.min(context.y, window.innerHeight - 152)),
++          }}
+           onClick={(event) => event.stopPropagation()}
+         >
+           <button
+             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted"
+             onClick={() => {
+-              void navigator.clipboard.writeText(
+-                `${context.row.name}\nDPS ${formatMainMetric(context.row.dps)}\n${t("Total Damage")} ${formatMainMetric(context.row.damage)}`,
++              void effect(`character-details-${context.row.characterId}`, () =>
++                mainDpsClient.openCharacterDetails(context.row.characterId),
+               );
+               setContext(null);
+             }}
+           >
++            <Eye className="size-4" />
++            {t("View combat details")}
++          </button>
++          <button
++            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted"
++            onClick={() => {
++              void navigator.clipboard.writeText(
++                [
++                  tf("Character: {}", [context.row.name]),
++                  tf("DPS: {}", [formatMainMetric(context.row.dps)]),
++                  tf("Damage: {}", [formatMainMetric(context.row.damage)]),
++                  tf("Share: {}%", [context.row.damageSharePercent.toFixed(1)]),
++                  tf("Taken: {}", [formatMainMetric(context.row.damageTaken)]),
++                ].join("\n"),
++              );
++              setContext(null);
++            }}
++          >
+             <Copy className="size-4" />
+-            {t("Copy")}
++            {t("Copy values")}
+           </button>
+           <button
+             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm hover:bg-muted"
+@@ -525,7 +604,7 @@
+             }}
+           >
+             <EyeOff className="size-4" />
+-            {t("Hide")}
++            {t("Hide from ranking")}
+           </button>
+         </div>
+       )}
+@@ -704,6 +783,7 @@
+   setReplayOpen,
+   pending,
+   start,
++  redetect,
+ }: {
+   gameDetected: boolean;
+   captureRunning: boolean;
+@@ -712,6 +792,7 @@
+   setReplayOpen(value: boolean): void;
+   pending: string | null;
+   start(): void;
++  redetect(): void;
+ }) {
+   return (
+     <div className="m-auto flex w-full max-w-[26rem] flex-col gap-3 rounded-xl border bg-card p-5">
+@@ -729,8 +810,13 @@
+           {t("Start HTGame.exe")}
+         </li>
+         <li className="flex items-center gap-3">
+-          <span className="grid size-6 place-items-center text-muted-foreground">
+-            2
++          <span
++            className={cn(
++              "grid size-6 place-items-center",
++              captureRunning ? "text-emerald-600" : "text-muted-foreground",
++            )}
++          >
++            {captureRunning ? <Check className="size-5" /> : "2"}
+           </span>
+           {t("Start live capture")}
+         </li>
+@@ -741,7 +827,17 @@
+           {t("Enter combat and deal damage")}
+         </li>
+       </ol>
+-      <div className="relative flex gap-2">
++      <div className="flex gap-2">
++        {!gameDetected ? (
++          <Button
++            size="sm"
++            variant="outline"
++            disabled={pending !== null}
++            onClick={redetect}
++          >
++            {t("Re-detect")}
++          </Button>
++        ) : null}
+         <Button
+           size="sm"
+           disabled={captureRunning || pending !== null}
+@@ -749,32 +845,39 @@
+         >
+           {t("Start Capture")}
+         </Button>
+-        <Button
+-          size="sm"
+-          variant="outline"
+-          disabled={captureRunning || pending !== null}
+-          aria-expanded={replayOpen}
+-          onClick={() => setReplayOpen(!replayOpen)}
+-        >
+-          {t("Import Replay")}
+-        </Button>
+-        {replayOpen && (
+-          <div className="absolute bottom-11 left-28 z-20 flex min-w-40 flex-col gap-1 rounded-lg border bg-popover p-1 shadow-lg">
+-            <button
+-              className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+-              onClick={() => void importReplay("json")}
+-            >
+-              {t("JSON replay")}
+-            </button>
+-            <button
+-              className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
+-              onClick={() => void importReplay("pcapng")}
+-            >
+-              {t("PCAPNG replay")}
+-            </button>
+-          </div>
+-        )}
++        <div className="relative">
++          <Button
++            size="sm"
++            variant="outline"
++            disabled={captureRunning || pending !== null}
++            aria-expanded={replayOpen}
++            onClick={() => setReplayOpen(!replayOpen)}
++          >
++            {t("Import Replay")}
++          </Button>
++          {replayOpen && (
++            <div className="absolute bottom-11 left-0 z-20 flex min-w-40 flex-col gap-1 rounded-lg border bg-popover p-1 shadow-lg">
++              <button
++                className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
++                onClick={() => void importReplay("json")}
++              >
++                {t("JSON replay")}
++              </button>
++              <button
++                className="rounded-md px-3 py-2 text-left text-sm hover:bg-muted"
++                onClick={() => void importReplay("pcapng")}
++              >
++                {t("PCAPNG replay")}
++              </button>
++            </div>
++          )}
++        </div>
+       </div>
++      {captureRunning ? (
++        <p className="text-xs text-muted-foreground">
++          {t("Waiting for the first damage event...")}
++        </p>
++      ) : null}
+     </div>
+   );
+ }
+--- a/frontend/src/features/main-dps/main-dps-model.ts
++++ b/frontend/src/features/main-dps/main-dps-model.ts
+@@ -61,3 +61,26 @@
+     return candidate !== current;
+   }
+ }
++
++export type MainCaptureStatusTone = "idle" | "active" | "transition" | "error";
++
++export function mainCaptureStatusTone(phase: string): MainCaptureStatusTone {
++  if (phase === "running") return "active";
++  if (phase === "starting" || phase === "stopping") return "transition";
++  if (phase === "failed") return "error";
++  return "idle";
++}
++
++export type MainCharacterListState =
++  "rows" | "hidden" | "unattributed" | "combat-empty";
++
++export function mainCharacterListState(
++  totalDamage: number,
++  sourceRows: number,
++  visibleRows: number,
++): MainCharacterListState {
++  if (visibleRows > 0) return "rows";
++  if (sourceRows > 0) return "hidden";
++  if (totalDamage > 0) return "unattributed";
++  return "combat-empty";
++}
+--- a/frontend/src/features/main-dps/main-dps-model.test.ts
++++ b/frontend/src/features/main-dps/main-dps-model.test.ts
+@@ -5,6 +5,8 @@
+   damagePercent,
+   formatMainMetric,
+   isGenerationNewer,
++  mainCaptureStatusTone,
++  mainCharacterListState,
+   roundLabel,
+ } from "./main-dps-model";
+ 
+@@ -39,4 +41,15 @@
+       false,
+     );
+   });
++
++  it("distinguishes capture and empty ranking presentation states", () => {
++    expect(mainCaptureStatusTone("running")).toBe("active");
++    expect(mainCaptureStatusTone("starting")).toBe("transition");
++    expect(mainCaptureStatusTone("failed")).toBe("error");
++    expect(mainCaptureStatusTone("idle")).toBe("idle");
++    expect(mainCharacterListState(10, 0, 0)).toBe("unattributed");
++    expect(mainCharacterListState(0, 2, 0)).toBe("hidden");
++    expect(mainCharacterListState(0, 0, 0)).toBe("combat-empty");
++    expect(mainCharacterListState(10, 2, 1)).toBe("rows");
++  });
+ });
+--- /dev/null
++++ b/frontend/src/lib/i18n.test.ts
+@@ -0,0 +1,27 @@
++import { afterEach, describe, expect, it } from "vitest";
++
++import { setFrontendLanguage, t } from "./i18n";
++
++const MIGRATION_PARITY_KEYS = [
++  "Boss",
++  "Failed to import team data.",
++  "Team data file dialog failed.",
++  "Toggle mouse passthrough while the combat HUD is active",
++  "DPS: {}",
++  "Share: {}%",
++  "Taken: {}",
++] as const;
++
++afterEach(() => setFrontendLanguage("zh-CN"));
++
++describe("frontend i18n parity", () => {
++  it.each(["zh-CN", "ja"] as const)(
++    "localizes the remaining migrated UI keys in %s",
++    (language) => {
++      setFrontendLanguage(language);
++      for (const key of MIGRATION_PARITY_KEYS) {
++        expect(t(key)).not.toBe(key);
++      }
++    },
++  );
++});
+--- a/src-tauri/src/commands/settings.rs
++++ b/src-tauri/src/commands/settings.rs
+@@ -1,8 +1,11 @@
+-use std::time::{Duration, Instant};
++use std::{
++    fs,
++    time::{Duration, Instant},
++};
+ 
+ use nte_dps_tool::{
+     core::{
+-        team_data::parse_team_data,
++        team_data::{MAX_TEAM_DPS_EXPORT_BYTES, parse_team_data},
+         update::{
+             MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
+             installed_app_version, verify_manifest,
+@@ -26,7 +29,7 @@
+         CommandError,
+         settings::{
+             CaptureSettingsInput, HotkeyBindingSnapshot, InterfaceSettingsInput, SettingsSnapshot,
+-            TeamDataExportResult, UpdateSettingsInput,
++            TeamDataExportResult, TeamDataImportFileResult, UpdateSettingsInput,
+         },
+     },
+     state::{AppState, HudPreset, HudSettingOption, UpdateActionError},
+@@ -394,6 +397,67 @@
+ }
+ 
+ #[tauri::command]
++pub(crate) async fn import_settings_team_data_file(
++    state: State<'_, AppState>,
++    window: WebviewWindow,
++) -> Result<TeamDataImportFileResult, CommandError> {
++    console::validate_window(&window)?;
++
++    #[cfg(windows)]
++    {
++        use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_json_open_path};
++
++        let owner = window
++            .hwnd()
++            .map_err(|_| CommandError::window_operation_failed())?
++            .0 as isize;
++        let title = i18n::t("Import DPS Data");
++        let json = tauri::async_runtime::spawn_blocking(move || {
++            match choose_json_open_path(owner, &title) {
++                Ok(OpenFileDialogOutcome::Selected(path)) => {
++                    let metadata =
++                        fs::metadata(&path).map_err(|_| CommandError::team_data_import_failed())?;
++                    if metadata.len() > MAX_TEAM_DPS_EXPORT_BYTES as u64 {
++                        return Err(CommandError::team_data_invalid());
++                    }
++                    fs::read_to_string(path)
++                        .map(Some)
++                        .map_err(|_| CommandError::team_data_import_failed())
++                }
++                Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
++                Err(code) => {
++                    log::error!("native team DPS import dialog failed with code {code:#010x}");
++                    Err(CommandError::team_data_file_dialog_failed())
++                }
++            }
++        })
++        .await
++        .map_err(|_| CommandError::team_data_import_failed())??;
++
++        let performed = if let Some(json) = json {
++            let export = parse_team_data(&json).map_err(|detail| {
++                log::warn!("reject imported team DPS data: {detail}");
++                CommandError::team_data_invalid()
++            })?;
++            state.import_team_data(export);
++            true
++        } else {
++            false
++        };
++        Ok(TeamDataImportFileResult {
++            performed,
++            settings: state.settings_snapshot(),
++        })
++    }
++
++    #[cfg(not(windows))]
++    {
++        let _ = state;
++        Err(CommandError::team_data_file_dialog_failed())
++    }
++}
++
++#[tauri::command]
+ pub(crate) async fn export_settings_team_data(
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+@@ -428,7 +492,7 @@
+         .await
+         .map_err(|_| CommandError::team_data_export_failed())?;
+ 
+-        return match result {
++        match result {
+             Ok(saved) => Ok(TeamDataExportResult { saved }),
+             Err(Some(code)) => {
+                 log::error!("native team DPS export dialog failed with code {code:#010x}");
+@@ -438,7 +502,7 @@
+                 log::error!("team DPS export file write failed");
+                 Err(CommandError::team_data_export_failed())
+             }
+-        };
++        }
+     }
+ 
+     #[cfg(not(windows))]
+--- a/src-tauri/src/contract/settings.rs
++++ b/src-tauri/src/contract/settings.rs
+@@ -46,6 +46,13 @@
+ #[serde(rename_all = "camelCase")]
+ pub(crate) struct TeamDataExportResult {
+     pub saved: bool,
++}
++
++#[derive(Clone, Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub(crate) struct TeamDataImportFileResult {
++    pub performed: bool,
++    pub settings: SettingsSnapshot,
+ }
+ 
+ #[derive(Clone, Debug, Serialize)]
+@@ -471,4 +478,39 @@
+         assert_eq!(saved["saved"], true);
+         assert_eq!(cancelled["saved"], false);
+     }
+-}
++
++    #[test]
++    fn team_data_file_import_result_keeps_local_paths_out_of_the_contract() {
++        let config = UiConfig::default();
++        let settings = SettingsSnapshot::from_config(
++            &config,
++            8,
++            false,
++            Vec::new(),
++            CaptureLogStats::default(),
++            false,
++            false,
++            UpdateSettingsSnapshot::from_runtime(
++                &config,
++                "idle",
++                "Updates have not been checked in this session",
++                Vec::new(),
++                &[],
++                None,
++                0,
++                0,
++                None,
++                None,
++            ),
++        );
++        let value = serde_json::to_value(TeamDataImportFileResult {
++            performed: true,
++            settings,
++        })
++        .expect("import result must serialize");
++
++        assert_eq!(value["performed"], true);
++        assert_eq!(value["settings"]["generation"], "8");
++        assert!(value.get("path").is_none());
++    }
++}
+--- a/src-tauri/src/commands/empty_curtain.rs
++++ b/src-tauri/src/commands/empty_curtain.rs
+@@ -399,7 +399,7 @@
+         use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_json_save_path};
+         let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
+         let default_file_name = default_file_name.to_owned();
+-        return tauri::async_runtime::spawn_blocking(move || {
++        tauri::async_runtime::spawn_blocking(move || {
+             match choose_json_save_path(owner, &title, &default_file_name) {
+                 Ok(SaveFileDialogOutcome::Selected(path)) => atomic_write_text(&path, &json)
+                     .map(|_| true)
+@@ -412,7 +412,7 @@
+             }
+         })
+         .await
+-        .map_err(|_| file_dialog_error())?;
++        .map_err(|_| file_dialog_error())?
+     }
+     #[cfg(not(windows))]
+     {
+@@ -426,26 +426,24 @@
+     {
+         use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_json_open_path};
+         let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
+-        return tauri::async_runtime::spawn_blocking(move || {
+-            match choose_json_open_path(owner, &title) {
+-                Ok(OpenFileDialogOutcome::Selected(path)) => {
+-                    let metadata = fs::metadata(&path).map_err(|_| file_read_error())?;
+-                    if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
+-                        return Err(character_loadout_error(CharacterLoadoutError::JsonTooLarge));
+-                    }
+-                    fs::read_to_string(path)
+-                        .map(Some)
+-                        .map_err(|_| file_read_error())
++        tauri::async_runtime::spawn_blocking(move || match choose_json_open_path(owner, &title) {
++            Ok(OpenFileDialogOutcome::Selected(path)) => {
++                let metadata = fs::metadata(&path).map_err(|_| file_read_error())?;
++                if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
++                    return Err(character_loadout_error(CharacterLoadoutError::JsonTooLarge));
+                 }
+-                Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
+-                Err(code) => {
+-                    log::error!("native Console equipment open dialog failed: {code:#010x}");
+-                    Err(file_dialog_error())
+-                }
++                fs::read_to_string(path)
++                    .map(Some)
++                    .map_err(|_| file_read_error())
++            }
++            Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
++            Err(code) => {
++                log::error!("native Console equipment open dialog failed: {code:#010x}");
++                Err(file_dialog_error())
+             }
+         })
+         .await
+-        .map_err(|_| file_dialog_error())?;
++        .map_err(|_| file_dialog_error())?
+     }
+     #[cfg(not(windows))]
+     {
+--- a/src-tauri/src/contract/main_dps_detail.rs
++++ b/src-tauri/src/contract/main_dps_detail.rs
+@@ -98,7 +98,7 @@
+             localized_character_name(
+                 character,
+                 language,
+-                &source
++                source
+                     .stats()
+                     .get(&character_id)
+                     .map(|row| row.name.as_str())
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -187,6 +187,7 @@
+             commands::settings::export_settings_team_data,
+             commands::settings::get_settings_snapshot,
+             commands::settings::import_settings_team_data,
++            commands::settings::import_settings_team_data_file,
+             commands::settings::install_settings_update,
+             commands::settings::move_settings_hud_module,
+             commands::settings::open_settings_hud_editor,
+--- a/res/languages/zh-CN.json
++++ b/res/languages/zh-CN.json
+@@ -1801,5 +1801,12 @@
+   "Failed to update the Mod loader files.": "更新 Mod 加载器文件失败。",
+   "Failed to open the Mod folder.": "打开 Mod 文件夹失败。",
+   "History file dialog failed.": "历史文件选择窗口打开失败。",
+-  "History summary restored": "历史摘要已恢复"
++  "History summary restored": "历史摘要已恢复",
++  "Boss": "首领",
++  "Failed to import team data.": "导入队伍数据失败。",
++  "Team data file dialog failed.": "队伍数据文件对话框出错。",
++  "Toggle mouse passthrough while the combat HUD is active": "战斗 HUD 激活时切换鼠标穿透",
++  "DPS: {}": "DPS：{}",
++  "Share: {}%": "占比：{}%",
++  "Taken: {}": "受击：{}"
+ }
+--- a/res/languages/ja.json
++++ b/res/languages/ja.json
+@@ -1801,5 +1801,12 @@
+   "Failed to update the Mod loader files.": "Mod ローダーファイルの更新に失敗しました。",
+   "Failed to open the Mod folder.": "Mod フォルダーを開けませんでした。",
+   "History file dialog failed.": "履歴ファイル選択ダイアログを開けませんでした。",
+-  "History summary restored": "履歴サマリーを復元しました"
++  "History summary restored": "履歴サマリーを復元しました",
++  "Boss": "ボス",
++  "Failed to import team data.": "チームデータのインポートに失敗しました。",
++  "Team data file dialog failed.": "チームデータのファイルダイアログでエラーが発生しました。",
++  "Toggle mouse passthrough while the combat HUD is active": "戦闘 HUD の表示中にマウス透過を切り替えます",
++  "DPS: {}": "DPS：{}",
++  "Share: {}%": "割合：{}%",
++  "Taken: {}": "被ダメージ：{}"
+ }
+--- a/src-tauri/src/contract.rs
++++ b/src-tauri/src/contract.rs
+@@ -347,6 +347,24 @@
+         Self {
+             code: "team_data_export_failed",
+             message_key: "Failed to export team data.",
++            message_arguments: Vec::new(),
++            diagnostic_line: None,
++        }
++    }
++
++    pub(crate) fn team_data_import_failed() -> Self {
++        Self {
++            code: "team_data_import_failed",
++            message_key: "Failed to import team data.",
++            message_arguments: Vec::new(),
++            diagnostic_line: None,
++        }
++    }
++
++    pub(crate) fn team_data_file_dialog_failed() -> Self {
++        Self {
++            code: "team_data_file_dialog_failed",
++            message_key: "Team data file dialog failed.",
+             message_arguments: Vec::new(),
+             diagnostic_line: None,
+         }

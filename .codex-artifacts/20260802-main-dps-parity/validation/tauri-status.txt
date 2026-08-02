@@ -1,0 +1,4 @@
+tauri-cargo-fmt-check=1
+tauri-cargo-check=0
+tauri-cargo-test=0
+tauri-cargo-clippy=101

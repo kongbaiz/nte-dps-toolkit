@@ -1,0 +1,85 @@
+nte-dps-tool v0.3.6 (D:\NTE_DPS_TOOL)
+├── aes v0.8.4
+│   ├── cfg-if v1.0.4
+│   ├── cipher v0.4.4
+│   │   ├── crypto-common v0.1.7
+│   │   │   ├── generic-array v0.14.7
+│   │   │   │   └── typenum v1.20.1
+│   │   │   └── typenum v1.20.1
+│   │   └── inout v0.1.4
+│   │       └── generic-array v0.14.7 (*)
+│   └── cpufeatures v0.2.17
+├── anyhow v1.0.102
+├── base64 v0.22.1
+├── chrono v0.4.45
+│   ├── num-traits v0.2.19
+│   ├── serde v1.0.228
+│   │   ├── serde_core v1.0.228
+│   │   └── serde_derive v1.0.228 (proc-macro)
+│   │       ├── proc-macro2 v1.0.106
+│   │       │   └── unicode-ident v1.0.24
+│   │       ├── quote v1.0.45
+│   │       │   └── proc-macro2 v1.0.106 (*)
+│   │       └── syn v2.0.117
+│   │           ├── proc-macro2 v1.0.106 (*)
+│   │           ├── quote v1.0.45 (*)
+│   │           └── unicode-ident v1.0.24
+│   └── windows-link v0.2.1
+├── crossbeam-channel v0.5.15
+│   └── crossbeam-utils v0.8.21
+├── env_logger v0.11.11
+│   ├── anstream v1.0.0
+│   │   ├── anstyle v1.0.14
+│   │   ├── anstyle-parse v1.0.0
+│   │   │   └── utf8parse v0.2.2
+│   │   ├── anstyle-query v1.1.5
+│   │   │   └── windows-sys v0.61.2
+│   │   │       └── windows-link v0.2.1
+│   │   ├── anstyle-wincon v3.0.11
+│   │   │   ├── anstyle v1.0.14
+│   │   │   ├── once_cell_polyfill v1.70.2
+│   │   │   └── windows-sys v0.61.2 (*)
+│   │   ├── colorchoice v1.0.5
+│   │   ├── is_terminal_polyfill v1.70.2
+│   │   └── utf8parse v0.2.2
+│   ├── anstyle v1.0.14
+│   ├── env_filter v2.0.0
+│   │   ├── log v0.4.32
+│   │   └── regex v1.12.4
+│   │       ├── aho-corasick v1.1.4
+│   │       │   └── memchr v2.8.1
+│   │       ├── memchr v2.8.1
+│   │       ├── regex-automata v0.4.14
+│   │       │   ├── aho-corasick v1.1.4 (*)
+│   │       │   ├── memchr v2.8.1
+│   │       │   └── regex-syntax v0.8.11
+│   │       └── regex-syntax v0.8.11
+│   ├── jiff v0.2.31
+│   └── log v0.4.32
+├── hex v0.4.3
+├── libloading v0.8.9
+│   └── windows-link v0.2.1
+├── pcap-file v2.0.0
+│   ├── byteorder_slice v3.0.0
+│   │   └── byteorder v1.5.0
+│   ├── derive-into-owned v0.2.0 (proc-macro)
+│   │   ├── proc-macro2 v1.0.106 (*)
+│   │   ├── quote v1.0.45 (*)
+│   │   └── syn v1.0.109
+│   │       ├── proc-macro2 v1.0.106 (*)
+│   │       ├── quote v1.0.45 (*)
+│   │       └── unicode-ident v1.0.24
+│   └── thiserror v1.0.69
+│       └── thiserror-impl v1.0.69 (proc-macro)
+│           ├── proc-macro2 v1.0.106 (*)
+│           ├── quote v1.0.45 (*)
+│           └── syn v2.0.117 (*)
+├── serde v1.0.228 (*)
+├── serde_json v1.0.150
+│   ├── itoa v1.0.18
+│   ├── memchr v2.8.1
+│   ├── serde_core v1.0.228
+│   └── zmij v1.0.21
+└── windows-sys v0.60.2
+    └── windows-targets v0.53.5
+        └── windows_x86_64_msvc v0.53.1

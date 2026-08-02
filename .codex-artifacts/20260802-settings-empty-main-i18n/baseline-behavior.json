@@ -1,0 +1,16 @@
+{
+  "settings_browser_file_input": true,
+  "settings_native_import_command": false,
+  "settings_two_column_breakpoint_900": false,
+  "settings_nic_empty_warning": false,
+  "settings_standalone_title": true,
+  "empty_standalone_header": true,
+  "empty_right_click_management": false,
+  "empty_exact_instruction": false,
+  "main_context_detail_action": false,
+  "main_unattributed_state": false,
+  "main_capture_status_tone": false,
+  "main_redetect_action": false,
+  "remaining_i18n_keys_present": false,
+  "scoped_tauri_clippy_patterns_fixed": false
+}

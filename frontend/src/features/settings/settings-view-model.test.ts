@@ -8,6 +8,7 @@ import {
   hudOptionEnabled,
   settingsSectionPending,
   shouldAcceptSettingsGeneration,
+  shouldAcceptSettingsRefresh,
 } from "./settings-view-model";
 
 function hudFixture(): HudConfigSnapshot {
@@ -60,13 +61,14 @@ describe("Settings view model", () => {
     expect(adjacentHudModuleMove(order, "timeline", "down")).toBeNull();
   });
 
-  it("limits pending visuals to the section that owns the mutation", () => {
+  it("blocks every settings section while a serialized mutation is pending", () => {
     expect(settingsSectionPending("update-preferences", "update")).toBe(true);
     expect(settingsSectionPending("update-preferences", "interface")).toBe(
-      false,
+      true,
     );
     expect(settingsSectionPending("module:timeline", "hud-modules")).toBe(true);
-    expect(settingsSectionPending("module:timeline", "capture")).toBe(false);
+    expect(settingsSectionPending("module:timeline", "capture")).toBe(true);
+    expect(settingsSectionPending(null, "capture")).toBe(false);
   });
 
   it("drops duplicate and stale settings generations", () => {
@@ -74,5 +76,12 @@ describe("Settings view model", () => {
     expect(shouldAcceptSettingsGeneration("5", "6")).toBe(true);
     expect(shouldAcceptSettingsGeneration("5", "5")).toBe(false);
     expect(shouldAcceptSettingsGeneration("5", "4")).toBe(false);
+  });
+
+  it("lets a manual refresh settle on the current generation", () => {
+    expect(shouldAcceptSettingsRefresh(null, "5")).toBe(true);
+    expect(shouldAcceptSettingsRefresh("5", "5")).toBe(true);
+    expect(shouldAcceptSettingsRefresh("5", "6")).toBe(true);
+    expect(shouldAcceptSettingsRefresh("5", "4")).toBe(false);
   });
 });

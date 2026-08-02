@@ -1,0 +1,73 @@
+COMMAND: verify original/ against baseline.sha256 and modified-snapshot/ plus workspace against modified-snapshot.sha256
+PASS: original hashes verified (43 files).
+PASS: modified-snapshot hashes verified (44 files).
+PASS: workspace-modified hashes verified (44 files).
+EXIT STATUS: 0
+
+COMMAND: git apply --stat .codex-artifacts\20260802-migration-parity\migration-parity.patch
+ docs/TAURI_MIGRATION_HANDOFF.md                    |    8 
+ docs/TAURI_MIGRATION_PHASE32.md                    |   61 +
+ frontend/src/App.tsx                               |   11 
+ .../features/abyss-values/abyss-values-page.tsx    |   21 +
+ frontend/src/features/console/console-page.tsx     |  112 +++
+ frontend/src/features/island/island-page.tsx       |   96 ++
+ frontend/src/features/main-dps/main-dps-page.tsx   |  392 +++++++++
+ frontend/src/lib/tauri/abyss-values-client.test.ts |    5 
+ frontend/src/lib/tauri/abyss-values-client.ts      |    4 
+ .../lib/tauri/console-window-background.test.ts    |    2 
+ .../src/lib/tauri/console-window-background.ts     |    6 
+ frontend/src/lib/tauri/island-client.ts            |   27 +
+ frontend/src/lib/tauri/island-contract.test.ts     |   39 +
+ frontend/src/lib/tauri/island-contract.ts          |   95 ++
+ frontend/src/lib/tauri/main-dps-client.ts          |   44 +
+ frontend/src/lib/tauri/main-dps-contract.test.ts   |   16 
+ frontend/src/lib/tauri/main-dps-contract.ts        |   81 ++
+ frontend/src/lib/tauri/window-labels.ts            |    4 
+ frontend/src/routes/window-route.test.ts           |    3 
+ frontend/src/routes/window-route.ts                |    9 
+ res/languages/ja.json                              |   30 +
+ res/languages/zh-CN.json                           |   30 +
+ src/core/live_capture.rs                           |   87 ++
+ src-tauri/capabilities/combat-details.json         |    2 
+ src-tauri/capabilities/notification-island.json    |   11 
+ src-tauri/src/channels/main_dps_detail.rs          |    3 
+ src-tauri/src/commands/abyss_values.rs             |   13 
+ src-tauri/src/commands/console_control.rs          |   25 +
+ src-tauri/src/commands/island.rs                   |   71 ++
+ src-tauri/src/commands/main_dps.rs                 |  325 +++++++-
+ src-tauri/src/commands/settings.rs                 |   51 +
+ src-tauri/src/commands/technical.rs                |    2 
+ src-tauri/src/contract/island.rs                   |   52 +
+ src-tauri/src/contract/main_dps.rs                 |   45 +
+ src-tauri/src/contract/main_dps_detail.rs          |   18 
+ src-tauri/src/lib.rs                               |   38 +
+ src-tauri/src/state.rs                             |  826 +++++++++++++++++---
+ src-tauri/src/windows/abyss_values.rs              |   80 ++
+ src-tauri/src/windows/combat_details.rs            |   94 ++
+ src-tauri/src/windows/island.rs                    |   54 +
+ src-tauri/src/windows/main_dps.rs                  |   12 
+ src-tauri/src/windows/mod.rs                       |    1 
+ src-tauri/src/windows/passthrough_hotkey.rs        |   50 +
+ src-tauri/tauri.conf.json                          |   41 +
+ 44 files changed, 2746 insertions(+), 251 deletions(-)
+EXIT STATUS: 0
+
+COMMAND: Get-Content .codex-artifacts\20260802-migration-parity\verification.md -TotalCount 12
+# Migration parity repair verification record
+
+## Roles and inputs
+
+- Original baseline: `original/` with `baseline.sha256` (43 captured pre-task files).
+- Modified artifact: `modified-snapshot/` with `modified-snapshot.sha256` (44 changed files).
+- Patch: `migration-parity.patch` (44 files, 2746 insertions, 251 deletions).
+- Rollback: `rollback.ps1`; `-CheckOnly` verifies every input without editing the workspace.
+- Complete literal transcripts: `verification-behavior.raw.log`, `verification-frontend-tauri.raw.log`, `verification-root-rust.raw.log`, `verification-cli-tree.raw.log`, `verification-tauri-final.raw.log`, and `verification-diff.raw.log`.
+
+## Baseline behavior
+EXIT STATUS: 0
+
+COMMAND: powershell -NoProfile -ExecutionPolicy Bypass -File .codex-artifacts\20260802-migration-parity\rollback.ps1 -CheckOnly
+PASS: rollback inputs verified (44 changed files, 43 original snapshots).
+PASS: no workspace files were changed because -CheckOnly was supplied.
+EXIT STATUS: 0
+

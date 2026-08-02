@@ -738,6 +738,18 @@ pub struct UiConfig {
     #[serde(default)]
     pub auto_download_updates: bool,
     pub always_on_top: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_dps_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abyss_values_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_details_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_details_always_on_top: Option<bool>,
     /// Show notifications in the global "dynamic island" capsule floating
     /// above every window (its own overlay viewport). Off falls back to the
     /// legacy in-window corner toasts.
@@ -816,6 +828,12 @@ impl Default for UiConfig {
             auto_check_updates: true,
             auto_download_updates: false,
             always_on_top: true,
+            main_dps_always_on_top: None,
+            hud_always_on_top: None,
+            console_always_on_top: None,
+            abyss_values_always_on_top: None,
+            character_details_always_on_top: None,
+            team_details_always_on_top: None,
             island_notifications: true,
             island_offset_x: 0.0,
             capture_filter: default_capture_filter(),
@@ -850,6 +868,14 @@ impl Default for UiConfig {
 
 impl UiConfig {
     pub fn sanitized(mut self) -> Self {
+        self.main_dps_always_on_top =
+            Some(self.main_dps_always_on_top.unwrap_or(self.always_on_top));
+        self.hud_always_on_top = Some(self.hud_always_on_top.unwrap_or(self.always_on_top));
+        self.console_always_on_top = Some(self.console_always_on_top.unwrap_or(false));
+        self.abyss_values_always_on_top = Some(self.abyss_values_always_on_top.unwrap_or(false));
+        self.character_details_always_on_top =
+            Some(self.character_details_always_on_top.unwrap_or(false));
+        self.team_details_always_on_top = Some(self.team_details_always_on_top.unwrap_or(false));
         self.opacity = if self.opacity.is_finite() {
             self.opacity.clamp(0.35, 1.0)
         } else {
@@ -1186,6 +1212,34 @@ mod tests {
         let config: UiConfig = serde_json::from_str("{}").expect("legacy config");
 
         assert_eq!(config.hud_window_position, None);
+    }
+
+    #[test]
+    fn legacy_always_on_top_migrates_without_coupling_desktop_windows() {
+        let disabled = serde_json::from_str::<UiConfig>(r#"{"always_on_top":false}"#)
+            .expect("legacy config")
+            .sanitized();
+        assert_eq!(disabled.main_dps_always_on_top, Some(false));
+        assert_eq!(disabled.hud_always_on_top, Some(false));
+        assert_eq!(disabled.console_always_on_top, Some(false));
+        assert_eq!(disabled.abyss_values_always_on_top, Some(false));
+
+        let independent = UiConfig {
+            always_on_top: false,
+            main_dps_always_on_top: Some(true),
+            hud_always_on_top: Some(false),
+            console_always_on_top: Some(true),
+            abyss_values_always_on_top: Some(false),
+            character_details_always_on_top: Some(true),
+            team_details_always_on_top: Some(false),
+            ..UiConfig::default()
+        }
+        .sanitized();
+        assert_eq!(independent.main_dps_always_on_top, Some(true));
+        assert_eq!(independent.hud_always_on_top, Some(false));
+        assert_eq!(independent.console_always_on_top, Some(true));
+        assert_eq!(independent.character_details_always_on_top, Some(true));
+        assert_eq!(independent.team_details_always_on_top, Some(false));
     }
 
     #[test]

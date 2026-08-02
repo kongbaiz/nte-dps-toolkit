@@ -1,0 +1,121 @@
+    Checking nte-dps-tool-tauri v0.3.6 (D:\NTE_DPS_TOOL\src-tauri)
+error: unneeded `return` statement
+   --> src\commands\empty_curtain.rs:402:9
+    |
+402 | /         return tauri::async_runtime::spawn_blocking(move || {
+403 | |             match choose_json_save_path(owner, &title, &default_file_name) {
+404 | |                 Ok(SaveFileDialogOutcome::Selected(path)) => atomic_write_text(&path, &json)
+405 | |                     .map(|_| true)
+...   |
+414 | |         .await
+415 | |         .map_err(|_| file_dialog_error())?;
+    | |__________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_return
+    = note: `-D clippy::needless-return` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_return)]`
+help: remove `return`
+    |
+402 ~         tauri::async_runtime::spawn_blocking(move || {
+403 +             match choose_json_save_path(owner, &title, &default_file_name) {
+404 +                 Ok(SaveFileDialogOutcome::Selected(path)) => atomic_write_text(&path, &json)
+405 +                     .map(|_| true)
+406 +                     .map_err(|_| file_write_error()),
+407 +                 Ok(SaveFileDialogOutcome::Cancelled) => Ok(false),
+408 +                 Err(code) => {
+409 +                     log::error!("native Console equipment save dialog failed: {code:#010x}");
+410 +                     Err(file_dialog_error())
+411 +                 }
+412 +             }
+413 +         })
+414 +         .await
+415 ~         .map_err(|_| file_dialog_error())?
+    |
+
+error: unneeded `return` statement
+   --> src\commands\empty_curtain.rs:429:9
+    |
+429 | /         return tauri::async_runtime::spawn_blocking(move || {
+430 | |             match choose_json_open_path(owner, &title) {
+431 | |                 Ok(OpenFileDialogOutcome::Selected(path)) => {
+432 | |                     let metadata = fs::metadata(&path).map_err(|_| file_read_error())?;
+...   |
+447 | |         .await
+448 | |         .map_err(|_| file_dialog_error())?;
+    | |__________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_return
+help: remove `return`
+    |
+429 ~         tauri::async_runtime::spawn_blocking(move || {
+430 +             match choose_json_open_path(owner, &title) {
+431 +                 Ok(OpenFileDialogOutcome::Selected(path)) => {
+432 +                     let metadata = fs::metadata(&path).map_err(|_| file_read_error())?;
+433 +                     if metadata.len() > CHARACTER_LOADOUT_MAX_JSON_BYTES as u64 {
+434 +                         return Err(character_loadout_error(CharacterLoadoutError::JsonTooLarge));
+435 +                     }
+436 +                     fs::read_to_string(path)
+437 +                         .map(Some)
+438 +                         .map_err(|_| file_read_error())
+439 +                 }
+440 +                 Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
+441 +                 Err(code) => {
+442 +                     log::error!("native Console equipment open dialog failed: {code:#010x}");
+443 +                     Err(file_dialog_error())
+444 +                 }
+445 +             }
+446 +         })
+447 +         .await
+448 ~         .map_err(|_| file_dialog_error())?
+    |
+
+error: unneeded `return` statement
+   --> src\commands\settings.rs:431:9
+    |
+431 | /         return match result {
+432 | |             Ok(saved) => Ok(TeamDataExportResult { saved }),
+433 | |             Err(Some(code)) => {
+434 | |                 log::error!("native team DPS export dialog failed with code {code:#010x}");
+...   |
+441 | |         };
+    | |_________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_return
+help: remove `return`
+    |
+431 ~         match result {
+432 +             Ok(saved) => Ok(TeamDataExportResult { saved }),
+433 +             Err(Some(code)) => {
+434 +                 log::error!("native team DPS export dialog failed with code {code:#010x}");
+435 +                 Err(CommandError::team_data_export_failed())
+436 +             }
+437 +             Err(None) => {
+438 +                 log::error!("team DPS export file write failed");
+439 +                 Err(CommandError::team_data_export_failed())
+440 +             }
+441 ~         }
+    |
+
+error: this expression creates a reference which is immediately dereferenced by the compiler
+   --> src\contract\main_dps_detail.rs:101:17
+    |
+101 | /                 &source
+102 | |                     .stats()
+103 | |                     .get(&character_id)
+104 | |                     .map(|row| row.name.as_str())
+105 | |                     .unwrap_or_else(|| "-"),
+    | |___________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_borrow
+    = note: `-D clippy::needless-borrow` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_borrow)]`
+help: change this to
+    |
+101 ~                 source
+102 +                     .stats()
+103 +                     .get(&character_id)
+104 +                     .map(|row| row.name.as_str())
+105 ~                     .unwrap_or_else(|| "-"),
+    |
+
+error: could not compile `nte-dps-tool-tauri` (lib) due to 4 previous errors

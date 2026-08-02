@@ -9,24 +9,7 @@ pub(crate) fn is_qte_follow_up_damage_hit(hit: &crate::engine::model::Hit) -> bo
 }
 
 pub(crate) fn reaction_text_key_for_hit(hit: &crate::engine::model::Hit) -> Option<u8> {
-    hit.attack_type
-        .as_deref()
-        .and_then(reaction_text_key_from_trigger_attack_type)
-}
-
-pub(crate) fn reaction_text_key_from_trigger_attack_type(attack_type: &str) -> Option<u8> {
-    let reaction = attack_type.strip_prefix("环合·")?;
-    match reaction {
-        "创生" | "创生花" => Some(1),
-        "覆纹" => Some(2),
-        "黯星" => Some(3),
-        "浊燃" | "灼燃" => Some(4),
-        "浸染" => Some(5),
-        "延滞" => Some(6),
-        "盈蓄" => Some(7),
-        "失谐" => Some(8),
-        _ => None,
-    }
+    crate::core::combat_details::reaction_text_key_for_hit(hit)
 }
 
 pub(crate) fn hit_detail_hover_text(
@@ -958,85 +941,11 @@ pub(crate) fn damage_digit_key_for_hit<'a>(
     hit: &'a crate::engine::model::Hit,
     characters: &'a HashMap<u32, CharacterInfo>,
 ) -> Option<&'a str> {
-    if hit.direction.is_incoming() {
-        return Some("HP");
-    }
-    let source_attribute = hit.damage_attribute.as_deref().or_else(|| {
-        characters
-            .get(&hit.char_id)
-            .and_then(|character| character.attribute.as_deref())
-    });
-    let attack_type = hit.attack_type.as_deref();
-
-    if attack_type.is_some_and(|attack_type| attack_type == "倾陷伤害")
-        || hit
-            .damage_name
-            .as_deref()
-            .is_some_and(|damage_name| damage_name.contains("倾陷"))
-    {
-        return Some("真实");
-    }
-
-    attack_type
-        .and_then(|attack_type| mixed_damage_digit_key(attack_type, source_attribute))
-        .or(source_attribute)
+    crate::core::combat_details::damage_digit_key_for_hit(hit, characters)
 }
 
 pub(crate) fn follow_up_damage_digit_key_for_hit(hit: &crate::engine::model::Hit) -> Option<&str> {
-    let source_attribute = hit.follow_up_damage_attribute.as_deref()?;
-    hit.follow_up_attack_type
-        .as_deref()
-        .and_then(|attack_type| mixed_damage_digit_key(attack_type, Some(source_attribute)))
-        .or(Some(source_attribute))
-}
-
-pub(crate) fn mixed_damage_digit_key(
-    attack_type: &str,
-    source_attribute: Option<&str>,
-) -> Option<&'static str> {
-    // 触发环合的那一下伤害（attack_type 形如 "环合·创生"）是造成伤害角色自己打出的
-    // 攻击，跳字应使用该角色的属性字系，而不是环合反应字系。这里返回 None，让调用方
-    // 回退到 source_attribute（造成伤害角色的属性）。只有环合之后产生的反应伤害本体
-    // （attack_type 为不带 "环合·" 前缀的反应名）才使用下面固定的反应字系。
-    if attack_type.starts_with("环合·") {
-        return None;
-    }
-    match attack_type {
-        // 环合反应伤害本体的跳字固定为触发侧属性的字系，与该伤害最终记给环合双方
-        // 哪一名角色无关。每个反应都只用属性对里的一侧：
-        //   创生 (光灵) -> 恒为 Guangling_G（光），不再出现 Guangling_L
-        //   覆纹 (灵咒) -> 恒为 lingzhou_L（灵），不再出现 lingzhou_Z
-        //   黯星 (暗魂) -> 恒为 Anhun_A（暗），不再出现 Anhun_H
-        //   浊燃 (咒暗) -> 恒为 Zhouan_A（暗），不再出现 Zhouan_Z
-        "创生" | "创生花" => Some("Guangling_G"),
-        "覆纹" => Some("lingzhou_L"),
-        "黯星" => Some("Anhun_A"),
-        "浊燃" => Some("Zhouan_A"),
-        "延滞" => match source_attribute? {
-            "光" => Some("Guangxiang_G"),
-            "相" => Some("Guangxiang_X"),
-            _ => None,
-        },
-        "浸染" | "魂相" => match source_attribute? {
-            "魂" => Some("Hunxiang_H"),
-            "相" => Some("Hunxiang_X"),
-            _ => None,
-        },
-        // 盈蓄 / 失谐 only keep the reaction series whose digit PNGs still exist
-        // (the trigger-side ones). The removed `_L`/`_H`/`_Z` sides fall through
-        // to `None`, so the caller uses the credited character's plain element
-        // digits instead of a missing texture.
-        "盈蓄" => match source_attribute? {
-            "光" => Some("Guangling_G"),
-            "相" => Some("Guangxiang_X"),
-            _ => None,
-        },
-        "失谐" => match source_attribute? {
-            "暗" => Some("Anhun_A"),
-            _ => None,
-        },
-        _ => None,
-    }
+    crate::core::combat_details::follow_up_damage_digit_key_for_hit(hit)
 }
 
 pub(crate) fn draw_damage_number(

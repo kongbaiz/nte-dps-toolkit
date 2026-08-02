@@ -1,0 +1,6 @@
+COMMAND source_integrity: SHA256 current source vs reopened modified artifact
+OUTPUT source_matches_modified_artifact=True
+EXIT_STATUS source_integrity=0
+COMMAND final_diff_check: git diff --check -- tracked task files
+EXIT_STATUS final_diff_check=0
+OUTPUT branch=codex/tauri-react-architecture

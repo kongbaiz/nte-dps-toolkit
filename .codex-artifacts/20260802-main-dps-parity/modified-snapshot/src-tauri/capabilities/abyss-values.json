@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "abyss-values",
+  "description": "enables the read-only abyss values window base permissions",
+  "windows": ["abyss-values"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color"
+  ]
+}

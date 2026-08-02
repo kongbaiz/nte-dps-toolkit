@@ -1,0 +1,1154 @@
+--- a/frontend/src/features/console/console-command-palette-model.ts
++++ b/frontend/src/features/console/console-command-palette-model.ts
+@@ -8,6 +8,18 @@
+ import { CONSOLE_PAGE_IDS, type ConsolePageId } from "./console-navigation";
+ 
+ export type ConsoleCommandAction =
++  | {
++      kind: "control";
++      action:
++        | "toggle-capture"
++        | "reset-session"
++        | "toggle-hud"
++        | "toggle-passthrough"
++        | "toggle-processing"
++        | "toggle-pin"
++        | "open-team-details"
++        | "open-capture-logs";
++    }
+   | { kind: "navigate"; page: ConsolePageId }
+   | { kind: "open-abyss" }
+   | { kind: "open-hud-editor" }
+@@ -18,6 +30,7 @@
+   | { kind: "theme-preset"; value: ThemePresetId }
+   | { kind: "accent"; value: AccentId }
+   | { kind: "density"; value: DensityId }
++  | { kind: "toggle-theme" }
+   | { kind: "toggle-reduced-motion" }
+   | { kind: "unavailable" };
+ 
+@@ -84,30 +97,55 @@
+ });
+ 
+ export const CONSOLE_COMMANDS: readonly ConsoleCommandDefinition[] = [
+-  unavailable("capture.toggle", "Start / Stop Capture", "Combat", [
+-    "capture",
+-    "start",
+-    "stop",
+-  ]),
+-  unavailable("session.reset", "Reset Session", "Combat", ["clear", "undo"]),
+-  unavailable("hud.toggle", "Toggle Combat HUD", "Windows", [
+-    "overlay",
+-    "game",
+-  ]),
+-  unavailable("passthrough.toggle", "Toggle Mouse Passthrough", "Windows", [
+-    "mouse",
+-    "click",
+-  ]),
+-  unavailable("capture.pause", "Pause / Resume Processing", "Combat", [
+-    "pause",
+-    "resume",
+-  ]),
+-  unavailable("window.pin", "Toggle Always on Top", "Windows", ["pin", "top"]),
+-  unavailable("theme.toggle", "Toggle Light / Dark Theme", "Appearance", [
+-    "theme",
+-    "light",
+-    "dark",
+-  ]),
++  control(
++    "capture.toggle",
++    "Start / Stop Capture",
++    "Combat",
++    ["capture", "start", "stop"],
++    "toggle-capture",
++  ),
++  control(
++    "session.reset",
++    "Reset Session",
++    "Combat",
++    ["clear", "undo"],
++    "reset-session",
++  ),
++  control(
++    "hud.toggle",
++    "Toggle Combat HUD",
++    "Windows",
++    ["overlay", "game"],
++    "toggle-hud",
++  ),
++  control(
++    "passthrough.toggle",
++    "Toggle Mouse Passthrough",
++    "Windows",
++    ["mouse", "click"],
++    "toggle-passthrough",
++  ),
++  control(
++    "capture.pause",
++    "Pause / Resume Processing",
++    "Combat",
++    ["pause", "resume"],
++    "toggle-processing",
++  ),
++  control(
++    "window.pin",
++    "Toggle Always on Top",
++    "Windows",
++    ["pin", "top"],
++    "toggle-pin",
++  ),
++  {
++    id: "theme.toggle",
++    titleKey: "Toggle Light / Dark Theme",
++    categoryKey: "Appearance",
++    keywords: ["theme", "light", "dark"],
++    action: { kind: "toggle-theme" },
++  },
+   {
+     id: "motion.toggle",
+     titleKey: "Toggle Reduced Motion",
+@@ -134,10 +172,13 @@
+     keywords: ["hud", "overlay", "edit"],
+     action: { kind: "open-hud-editor" },
+   },
+-  unavailable("window.team_details", "Open Team Combat Details", "Windows", [
+-    "hits",
+-    "detail",
+-  ]),
++  control(
++    "window.team_details",
++    "Open Team Combat Details",
++    "Windows",
++    ["hits", "detail"],
++    "open-team-details",
++  ),
+   {
+     id: "import.pcapng",
+     titleKey: "Import PCAPNG",
+@@ -180,11 +221,13 @@
+     keywords: ["capture", "pcapng", "raw"],
+     action: { kind: "export", format: "pcapng" },
+   },
+-  unavailable("capture.open_logs", "Open Capture Logs Folder", "Data", [
+-    "capture",
+-    "logs",
+-    "folder",
+-  ]),
++  control(
++    "capture.open_logs",
++    "Open Capture Logs Folder",
++    "Data",
++    ["capture", "logs", "folder"],
++    "open-capture-logs",
++  ),
+   ...CONSOLE_PAGE_IDS.map((page): ConsoleCommandDefinition => ({
+     id: pageMetadata[page][0],
+     titleKey: pageMetadata[page][1],
+@@ -232,6 +275,22 @@
+     }),
+   ),
+ ];
++
++function control(
++  id: string,
++  titleKey: string,
++  categoryKey: string,
++  keywords: readonly string[],
++  action: Extract<ConsoleCommandAction, { kind: "control" }>["action"],
++): ConsoleCommandDefinition {
++  return {
++    id,
++    titleKey,
++    categoryKey,
++    keywords,
++    action: { kind: "control", action },
++  };
++}
+ 
+ export function filterConsoleCommands(
+   commands: readonly ConsoleCommandDefinition[],
+--- a/frontend/src/features/console/console-command-palette-model.test.ts
++++ b/frontend/src/features/console/console-command-palette-model.test.ts
+@@ -41,9 +41,13 @@
+     ).toContain("console.settings");
+   });
+ 
+-  it("skips visibly unavailable commands during keyboard navigation", () => {
+-    expect(CONSOLE_COMMANDS[0].action.kind).toBe("unavailable");
+-    const next = nextEnabledCommandIndex(CONSOLE_COMMANDS, 0, 1);
++  it("enables implemented controls and skips the remaining unavailable command", () => {
++    expect(CONSOLE_COMMANDS[0].action.kind).toBe("control");
++    const unavailable = CONSOLE_COMMANDS.findIndex(
++      (command) => command.action.kind === "unavailable",
++    );
++    expect(unavailable).toBeGreaterThanOrEqual(0);
++    const next = nextEnabledCommandIndex(CONSOLE_COMMANDS, unavailable, 1);
+     expect(CONSOLE_COMMANDS[next].action.kind).not.toBe("unavailable");
+     const previous = nextEnabledCommandIndex(CONSOLE_COMMANDS, next, -1);
+     expect(CONSOLE_COMMANDS[previous].action.kind).not.toBe("unavailable");
+--- a/frontend/src/features/console/console-page.tsx
++++ b/frontend/src/features/console/console-page.tsx
+@@ -15,6 +15,8 @@
+ import { SkillsPage } from "@/features/skills/skills-page";
+ import { TimelinePage } from "@/features/timeline/timeline-page";
+ import { t, useTranslationRevision } from "@/lib/i18n";
++import { applySettingsPresentation } from "@/lib/settings-presentation";
++import { consoleControlClient } from "@/lib/tauri/console-control-client";
+ import { diagnosticsClient } from "@/lib/tauri/diagnostics-client";
+ import { historyClient } from "@/lib/tauri/history-client";
+ import { settingsClient } from "@/lib/tauri/settings-client";
+@@ -80,6 +82,9 @@
+     setCommandError(null);
+     try {
+       switch (action.kind) {
++        case "control":
++          await consoleControlClient.execute(action.action);
++          return;
+         case "navigate":
+           setActivePage(action.page);
+           return;
+@@ -117,6 +122,14 @@
+         case "density":
+           await updateInterface({ density: action.value });
+           return;
++        case "toggle-theme": {
++          const snapshot = await settingsClient.getSnapshot();
++          await updateInterface(
++            { darkMode: !snapshot.interface.darkMode },
++            snapshot.interface,
++          );
++          return;
++        }
+         case "toggle-reduced-motion": {
+           const snapshot = await settingsClient.getSnapshot();
+           await updateInterface(
+@@ -276,14 +289,15 @@
+   patch: Partial<
+     Pick<
+       InterfaceSettings,
+-      "themePreset" | "accent" | "density" | "reduceMotion"
++      "darkMode" | "themePreset" | "accent" | "density" | "reduceMotion"
+     >
+   >,
+   existing?: InterfaceSettings,
+ ): Promise<void> {
+   const current = existing ?? (await settingsClient.getSnapshot()).interface;
+-  await settingsClient.setInterface({
++  const snapshot = await settingsClient.setInterface({
+     language: current.language,
++    darkMode: patch.darkMode ?? current.darkMode,
+     themePreset: patch.themePreset ?? current.themePreset,
+     accent: patch.accent ?? current.accent,
+     density: patch.density ?? current.density,
+@@ -291,6 +305,7 @@
+     islandNotifications: current.islandNotifications,
+     islandOffsetX: current.islandOffsetX,
+   });
++  applySettingsPresentation(snapshot.interface);
+ }
+ 
+ function commandErrorMessage(error: unknown): string {
+--- a/frontend/src/features/settings/settings-catalog.tsx
++++ b/frontend/src/features/settings/settings-catalog.tsx
+@@ -200,8 +200,7 @@
+ }
+ 
+ function interfaceInput(snapshot: SettingsSnapshot): InterfaceSettingsInput {
+-  const { darkMode: _darkMode, ...settings } = snapshot.interface;
+-  return settings;
++  return { ...snapshot.interface };
+ }
+ 
+ function captureInput(snapshot: SettingsSnapshot): CaptureSettingsInput {
+--- a/frontend/src/lib/tauri/settings-contract.ts
++++ b/frontend/src/lib/tauri/settings-contract.ts
+@@ -164,7 +164,7 @@
+ 
+ export type SettingsEvent = SettingsSnapshotEvent;
+ 
+-export type InterfaceSettingsInput = Omit<InterfaceSettings, "darkMode">;
++export type InterfaceSettingsInput = InterfaceSettings;
+ export interface UpdateSettingsInput {
+   autoCheck: boolean;
+   autoDownload: boolean;
+--- a/frontend/src/lib/tauri/settings-client.test.ts
++++ b/frontend/src/lib/tauri/settings-client.test.ts
+@@ -93,6 +93,7 @@
+     await client.setHudOption("damage_taken", true);
+     await client.setInterface({
+       language: "ja",
++      darkMode: true,
+       themePreset: "tactical",
+       accent: "orange",
+       density: "compact",
+@@ -122,6 +123,7 @@
+         arguments_: {
+           settings: {
+             language: "ja",
++            darkMode: true,
+             themePreset: "tactical",
+             accent: "orange",
+             density: "compact",
+--- a/src-tauri/src/contract/settings.rs
++++ b/src-tauri/src/contract/settings.rs
+@@ -191,6 +191,7 @@
+ #[serde(rename_all = "camelCase")]
+ pub(crate) struct InterfaceSettingsInput {
+     pub language: String,
++    pub dark_mode: bool,
+     pub theme_preset: String,
+     pub accent: String,
+     pub density: String,
+--- a/src-tauri/src/commands/settings.rs
++++ b/src-tauri/src/commands/settings.rs
+@@ -55,6 +55,7 @@
+     state
+         .update_interface_settings(
+             language,
++            settings.dark_mode,
+             parse_theme_preset(&settings.theme_preset)?,
+             parse_accent(&settings.accent)?,
+             parse_density(&settings.density)?,
+@@ -518,6 +519,7 @@
+     window: WebviewWindow,
+ ) -> Result<SettingsSnapshot, CommandError> {
+     console::validate_window(&window)?;
++    state.refresh_capture_file_stats();
+     Ok(state.settings_snapshot())
+ }
+ 
+@@ -528,6 +530,7 @@
+ ) -> Result<SettingsSnapshot, CommandError> {
+     console::validate_window(&window)?;
+     let outcome = state.clear_capture_files();
++    state.refresh_capture_file_stats();
+     if outcome.failed > 0 {
+         log::warn!(
+             "capture log cleanup skipped {} locked or unreadable file(s)",
+--- a/src-tauri/src/commands/diagnostics.rs
++++ b/src-tauri/src/commands/diagnostics.rs
+@@ -184,7 +184,7 @@
+     kind: CaptureReplayKind,
+ ) -> Result<DiagnosticsActionResult, CommandError> {
+     console::validate_window(&window)?;
+-    ensure_inactive(state.inner())?;
++    let reservation = state.begin_replay_import().map_err(capture_error)?;
+ 
+     #[cfg(windows)]
+     {
+@@ -205,9 +205,7 @@
+             };
+             match selection {
+                 Ok(OpenFileDialogOutcome::Selected(path)) => {
+-                    state
+-                        .request_diagnostics_replay(kind, path)
+-                        .map_err(capture_error)?;
++                    reservation.start(kind, path).map_err(capture_error)?;
+                     Ok(DiagnosticsActionResult {
+                         performed: true,
+                         snapshot: snapshot(&state),
+@@ -229,7 +227,7 @@
+ 
+     #[cfg(not(windows))]
+     {
+-        let _ = (state, kind);
++        let _ = (state, kind, reservation);
+         Err(file_dialog_error())
+     }
+ }
+--- a/src-tauri/src/commands/main_dps.rs
++++ b/src-tauri/src/commands/main_dps.rs
+@@ -1,6 +1,6 @@
+ use nte_dps_tool::{
+     core::combat_details::CombatDetailFilter,
+-    core::live_capture::{CaptureReplayKind, LiveCapturePhase},
++    core::live_capture::CaptureReplayKind,
+     engine::model::AbyssHalf,
+     platform::file_dialog::{
+         OpenFileDialogOutcome, choose_json_open_path, choose_pcapng_open_path,
+@@ -133,13 +133,9 @@
+     window: WebviewWindow,
+ ) -> Result<MainDpsActionResult, CommandError> {
+     validate_main_or_detail_window(&window)?;
+-    if matches!(
+-        state.capture_phase(),
+-        LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+-    ) || state.replay_running()
+-    {
+-        return Err(action_unavailable());
+-    }
++    let reservation = state
++        .begin_replay_import()
++        .map_err(CommandError::from_core)?;
+     let kind = match kind.as_str() {
+         "pcapng" => CaptureReplayKind::Pcapng,
+         "json" => CaptureReplayKind::Json,
+@@ -158,8 +154,8 @@
+         };
+         match selection {
+             Ok(OpenFileDialogOutcome::Selected(path)) => {
+-                state
+-                    .request_diagnostics_replay(kind, path)
++                reservation
++                    .start(kind, path)
+                     .map_err(CommandError::from_core)?;
+                 Ok(MainDpsActionResult {
+                     performed: true,
+@@ -300,7 +296,19 @@
+ ) -> Result<(), CommandError> {
+     main_dps::validate_window(&window)?;
+     let filter = parse_detail_filter(&filter)?;
+-    if !snapshot(state.inner()).actions.team_details_available {
++    open_team_details_with_filter(&app, state.inner(), filter)
++}
++
++pub(crate) fn open_team_details(app: &AppHandle, state: &AppState) -> Result<(), CommandError> {
++    open_team_details_with_filter(app, state, CombatDetailFilter::All)
++}
++
++fn open_team_details_with_filter(
++    app: &AppHandle,
++    state: &AppState,
++    filter: CombatDetailFilter,
++) -> Result<(), CommandError> {
++    if !snapshot(state).actions.team_details_available {
+         return Err(action_unavailable());
+     }
+     state.set_main_dps_detail_request(MainDpsDetailRequest {
+@@ -308,7 +316,7 @@
+         filter,
+         skill_filter: None,
+     });
+-    show_combat_details(&app, state.inner())
++    show_combat_details(app, state)
+ }
+ 
+ #[tauri::command]
+--- a/src-tauri/src/commands/mod.rs
++++ b/src-tauri/src/commands/mod.rs
+@@ -4,6 +4,7 @@
+ 
+ pub(crate) mod abyss_values;
+ pub(crate) mod character_data;
++pub(crate) mod console_control;
+ pub(crate) mod diagnostics;
+ pub(crate) mod empty_curtain;
+ pub(crate) mod encrypted_ini;
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -116,6 +116,7 @@
+             commands::abyss_values::swap_abyss_prediction_teams,
+             commands::character_data::get_character_data_snapshot,
+             commands::character_data::save_character_data_record,
++            commands::console_control::execute_console_control,
+             commands::diagnostics::export_diagnostics_json,
+             commands::diagnostics::export_diagnostics_pcapng,
+             commands::diagnostics::get_diagnostics_snapshot,
+--- a/src-tauri/src/state.rs
++++ b/src-tauri/src/state.rs
+@@ -11,7 +11,7 @@
+ 
+ use nte_dps_tool::{
+     core::{
+-        CoreError,
++        CoreError, CoreErrorCode,
+         capture::{
+             CaptureControllerOptions, CaptureDeviceSelector, CaptureProfile, RawCaptureMode,
+             enumerate_devices,
+@@ -97,6 +97,11 @@
+ #[derive(Clone)]
+ pub(crate) struct AppState(Arc<AppStateInner>);
+ 
++pub(crate) struct ReplayImportReservation {
++    state: AppState,
++    active: bool,
++}
++
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub(crate) struct StreamRevision {
+     capture: u64,
+@@ -144,6 +149,18 @@
+     } else {
+         (active, active)
+     }
++}
++
++fn selected_round_combat_state(
++    rounds: &[HistoryRecord],
++    selected_round_id: Option<&str>,
++) -> Option<CombatState> {
++    let record_id = selected_round_id?;
++    rounds
++        .iter()
++        .find(|record| record.id == record_id)
++        .and_then(|record| record.details.as_ref())
++        .map(HistoryCombatDetails::to_combat_state)
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -177,6 +194,7 @@
+     history_revision: AtomicU64,
+     main_dps_revision: AtomicU64,
+     main_processing_paused: AtomicBool,
++    replay_import_reserved: Mutex<bool>,
+     diagnostics_revision: AtomicU64,
+     history_undo_sequence: AtomicU64,
+     character_data_revision: AtomicU64,
+@@ -316,6 +334,35 @@
+     }
+ }
+ 
++impl ReplayImportReservation {
++    pub(crate) fn start(mut self, kind: CaptureReplayKind, path: PathBuf) -> Result<(), CoreError> {
++        let mut reserved = self
++            .state
++            .0
++            .replay_import_reserved
++            .lock()
++            .expect("replay import reservation lock poisoned");
++        let result = self.state.request_diagnostics_replay(kind, path);
++        *reserved = false;
++        drop(reserved);
++        self.active = false;
++        result
++    }
++}
++
++impl Drop for ReplayImportReservation {
++    fn drop(&mut self) {
++        if self.active {
++            *self
++                .state
++                .0
++                .replay_import_reserved
++                .lock()
++                .expect("replay import reservation lock poisoned") = false;
++        }
++    }
++}
++
+ impl AppState {
+     pub(crate) fn new(config: UiConfig, live_capture: LiveCaptureService) -> Self {
+         Self::new_with_config_path(config, live_capture, config::config_path())
+@@ -350,6 +397,7 @@
+             history_revision: AtomicU64::new(0),
+             main_dps_revision: AtomicU64::new(0),
+             main_processing_paused: AtomicBool::new(false),
++            replay_import_reserved: Mutex::new(false),
+             diagnostics_revision: AtomicU64::new(0),
+             history_undo_sequence: AtomicU64::new(0),
+             character_data_revision: AtomicU64::new(0),
+@@ -601,13 +649,7 @@
+         rounds: &[HistoryRecord],
+         selected_round_id: Option<&str>,
+     ) -> MainDpsReadout {
+-        if let Some(record_id) = selected_round_id
+-            && let Some(state) = rounds
+-                .iter()
+-                .find(|record| record.id == record_id)
+-                .and_then(|record| record.details.as_ref())
+-                .map(HistoryCombatDetails::to_combat_state)
+-        {
++        if let Some(state) = selected_round_combat_state(rounds, selected_round_id) {
+             return self.project_main_readout(&state, false);
+         }
+         if self.main_processing_paused()
+@@ -642,16 +684,7 @@
+     }
+ 
+     pub(crate) fn main_dps_detail_state(&self) -> (CombatState, Option<AbyssHalf>) {
+-        let state = self
+-            .main_selected_round_id()
+-            .and_then(|record_id| {
+-                self.main_round_records()
+-                    .iter()
+-                    .find(|record| record.id == record_id)
+-                    .and_then(|record| record.details.as_ref())
+-                    .map(HistoryCombatDetails::to_combat_state)
+-            })
+-            .unwrap_or_else(|| self.0.live_capture.with_state(Clone::clone));
++        let state = self.main_presented_combat_state();
+         let selected_half = state.abyss.is_active().then(|| {
+             (*self
+                 .0
+@@ -864,12 +897,23 @@
+     }
+ 
+     pub(crate) fn request_capture_start(&self) -> Result<(), CoreError> {
++        let replay_import_reserved = self
++            .0
++            .replay_import_reserved
++            .lock()
++            .expect("replay import reservation lock poisoned");
++        if *replay_import_reserved {
++            return Err(CoreError::new(
++                CoreErrorCode::CaptureAlreadyRunning,
++                "a replay import dialog is active",
++            ));
++        }
+         let config = self.ui_config();
+         let device = config
+             .manual_capture_device
+             .clone()
+             .map_or(CaptureDeviceSelector::Auto, CaptureDeviceSelector::Name);
+-        self.0.live_capture.request_start(CaptureControllerOptions {
++        let result = self.0.live_capture.request_start(CaptureControllerOptions {
+             profile: CaptureProfile::Combat,
+             device,
+             filter: config.capture_filter.clone(),
+@@ -879,7 +923,9 @@
+             raw_capture_directory: capture_log_dir(),
+             expose_raw_capture_path: false,
+             packet_emission: PacketEmissionMode::FullDebug,
+-        })
++        });
++        drop(replay_import_reserved);
++        result
+     }
+ 
+     pub(crate) fn request_capture_stop(&self) -> Result<(), CoreError> {
+@@ -1016,6 +1062,7 @@
+     pub(crate) fn update_interface_settings(
+         &self,
+         language: Language,
++        dark_mode: bool,
+         theme_preset: ThemePreset,
+         accent: AccentColor,
+         density: UiDensity,
+@@ -1025,6 +1072,7 @@
+     ) -> Result<bool, String> {
+         self.update_ui_config(|config| {
+             config.language = language;
++            config.dark_mode = dark_mode;
+             config.theme_preset = theme_preset;
+             config.accent = accent;
+             config.density = density;
+@@ -1377,6 +1425,10 @@
+         clear_capture_logs(&capture_log_dir())
+     }
+ 
++    pub(crate) fn refresh_capture_file_stats(&self) {
++        self.bump_settings_revision();
++    }
++
+     pub(crate) fn reset_session(&self) {
+         match self.archive_current_history_round() {
+             Ok(true) => {}
+@@ -1901,7 +1953,33 @@
+         self.0.live_capture.save_last_raw_capture(path)
+     }
+ 
+-    pub(crate) fn request_diagnostics_replay(
++    pub(crate) fn begin_replay_import(&self) -> Result<ReplayImportReservation, CoreError> {
++        let mut reserved = self
++            .0
++            .replay_import_reserved
++            .lock()
++            .expect("replay import reservation lock poisoned");
++        if *reserved
++            || matches!(
++                self.capture_phase(),
++                LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
++            )
++            || self.replay_running()
++        {
++            return Err(CoreError::new(
++                CoreErrorCode::CaptureAlreadyRunning,
++                "capture or replay is already active",
++            ));
++        }
++        *reserved = true;
++        drop(reserved);
++        Ok(ReplayImportReservation {
++            state: self.clone(),
++            active: true,
++        })
++    }
++
++    fn request_diagnostics_replay(
+         &self,
+         kind: CaptureReplayKind,
+         path: PathBuf,
+@@ -2043,21 +2121,17 @@
+     pub(crate) fn timeline_projection(&self, scope: TimelineScope) -> TimelineProjection {
+         let config = self.ui_config();
+         let resources = self.0.live_capture.resources();
+-        self.0.live_capture.with_state(|state| {
+-            project_timeline(
+-                state,
+-                &resources.characters,
+-                TimelineProjectionOptions {
+-                    scope,
+-                    bucket_seconds: config.timeline_bucket_seconds,
+-                    subtract_time_stop: matches!(
+-                        config.dps_time_mode,
+-                        DpsTimeMode::TimeStopAdjusted
+-                    ),
+-                    language: config.language,
+-                },
+-            )
+-        })
++        let state = self.main_presented_combat_state();
++        project_timeline(
++            &state,
++            &resources.characters,
++            TimelineProjectionOptions {
++                scope,
++                bucket_seconds: config.timeline_bucket_seconds,
++                subtract_time_stop: matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
++                language: config.language,
++            },
++        )
+     }
+ 
+     pub(crate) fn packet_stream_revision(&self) -> PacketStreamRevision {
+@@ -2097,16 +2171,15 @@
+     pub(crate) fn skills_projection(&self, scope: SkillsScope) -> SkillsProjection {
+         let config = self.ui_config();
+         let resources = self.0.live_capture.resources();
+-        self.0.live_capture.with_state(|state| {
+-            project_skills(
+-                state,
+-                &resources.characters,
+-                SkillsProjectionOptions {
+-                    scope,
+-                    language: config.language,
+-                },
+-            )
+-        })
++        let state = self.main_presented_combat_state();
++        project_skills(
++            &state,
++            &resources.characters,
++            SkillsProjectionOptions {
++                scope,
++                language: config.language,
++            },
++        )
+     }
+ 
+     pub(crate) fn timeline_preferences(&self) -> (f32, TimelineDpsViewMode) {
+@@ -2211,6 +2284,16 @@
+ 
+     pub(crate) fn settings_revision(&self) -> u64 {
+         self.0.settings_revision.load(Ordering::Acquire)
++    }
++
++    fn main_presented_combat_state(&self) -> CombatState {
++        let selected_round_id = self.main_selected_round_id();
++        selected_round_id
++            .as_deref()
++            .and_then(|record_id| {
++                selected_round_combat_state(&self.main_round_records(), Some(record_id))
++            })
++            .unwrap_or_else(|| self.0.live_capture.with_state(Clone::clone))
+     }
+ 
+     pub(crate) fn mod_studio(&self) -> ModStudioWorkspaceService {
+@@ -2300,6 +2383,44 @@
+     use super::*;
+     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
+ 
++    fn test_hit(damage: f64) -> nte_dps_tool::engine::model::Hit {
++        use nte_dps_tool::engine::model::{Hit, HitCharacterSource, HitDirection};
++
++        Hit {
++            timestamp: 1.0,
++            char_id: 7,
++            char_name: "Fixture".to_owned(),
++            char_known: true,
++            damage,
++            byte_offset: 0,
++            bit_shift: 0,
++            char_source: HitCharacterSource::Packet,
++            direction: HitDirection::Outgoing,
++            target_hp_before: 1_000.0,
++            target_hp_after: 1_000.0 - damage,
++            target_max_hp: 1_000.0,
++            target_hp_percent: 50.0,
++            target_id: None,
++            target_name: None,
++            target_name_en: None,
++            target_name_ja: None,
++            target_monster_id: None,
++            target_context: Vec::new(),
++            gameplay_effect_index: Some(17),
++            gameplay_effect_name: Some("GE_Fixture".to_owned()),
++            ability_name: Some("GA_Fixture".to_owned()),
++            damage_name: Some("Fixture Damage".to_owned()),
++            damage_component: None,
++            attack_type: Some("Skill".to_owned()),
++            damage_attribute: None,
++            follow_up_damage: 0.0,
++            follow_up_timestamp: None,
++            follow_up_damage_name: None,
++            follow_up_attack_type: None,
++            follow_up_damage_attribute: None,
++        }
++    }
++
+     fn temporary_config_path(tag: &str) -> PathBuf {
+         let directory = std::env::temp_dir().join(format!(
+             "nte_tauri_hud_{tag}_{}_{}",
+@@ -2321,6 +2442,74 @@
+ 
+         assert!(previous.load(Ordering::Acquire));
+         assert!(!current.load(Ordering::Acquire));
++    }
++
++    #[test]
++    fn selected_round_drives_timeline_and_skills_projection_input() {
++        let mut selected = CombatState::default();
++        selected.push_hit(test_hit(125.0));
++        let records = vec![HistoryRecord {
++            id: "selected-round".to_owned(),
++            details: HistoryCombatDetails::from_state(&selected),
++            ..Default::default()
++        }];
++
++        let projected = selected_round_combat_state(&records, Some("selected-round"))
++            .expect("selected round combat state");
++        let timeline = project_timeline(
++            &projected,
++            &HashMap::new(),
++            TimelineProjectionOptions {
++                scope: TimelineScope::Whole,
++                bucket_seconds: 1.0,
++                subtract_time_stop: true,
++                language: Language::English,
++            },
++        );
++        let skills = project_skills(
++            &projected,
++            &HashMap::new(),
++            SkillsProjectionOptions {
++                scope: SkillsScope::Whole,
++                language: Language::English,
++            },
++        );
++
++        assert_eq!(timeline.total_damage, 125.0);
++        assert_eq!(skills.total_damage, 125.0);
++        assert!(selected_round_combat_state(&records, Some("other-round")).is_none());
++    }
++
++    #[test]
++    fn replay_import_reservation_blocks_live_capture_until_released() {
++        let state = AppState::default();
++        let reservation = state.begin_replay_import().expect("reserve replay import");
++
++        let duplicate_error = match state.begin_replay_import() {
++            Ok(_) => panic!("second replay reservation must be rejected"),
++            Err(error) => error,
++        };
++        assert_eq!(duplicate_error.code, CoreErrorCode::CaptureAlreadyRunning);
++        assert_eq!(
++            state
++                .request_capture_start()
++                .expect_err("capture start must respect replay reservation")
++                .code,
++            CoreErrorCode::CaptureAlreadyRunning
++        );
++
++        drop(reservation);
++        assert!(state.begin_replay_import().is_ok());
++    }
++
++    #[test]
++    fn capture_file_refresh_advances_settings_generation() {
++        let state = AppState::default();
++        let generation = state.settings_revision();
++
++        state.refresh_capture_file_stats();
++
++        assert!(state.settings_revision() > generation);
+     }
+ 
+     #[test]
+@@ -2707,6 +2896,7 @@
+             state
+                 .update_interface_settings(
+                     Language::Japanese,
++                    true,
+                     ThemePreset::Tactical,
+                     AccentColor::Orange,
+                     UiDensity::Compact,
+@@ -2746,6 +2936,7 @@
+ 
+         let snapshot = state.settings_snapshot();
+         assert_eq!(snapshot.interface.language, "ja");
++        assert!(snapshot.interface.dark_mode);
+         assert_eq!(snapshot.interface.theme_preset, "tactical");
+         assert_eq!(snapshot.capture.bpf_filter, "udp port 30196");
+         assert_eq!(
+--- a/src-tauri/src/channels/timeline.rs
++++ b/src-tauri/src/channels/timeline.rs
+@@ -30,7 +30,7 @@
+     thread::spawn(move || {
+         let mut last_revision = None;
+         while !stop.load(Ordering::Acquire) {
+-            let revision = state.stream_revision();
++            let revision = state.main_dps_stream_revision();
+             if last_revision != Some(revision) {
+                 let event = TimelineEvent::Snapshot(snapshot(&state, scope));
+                 if on_event.send(event).is_err() {
+--- a/src-tauri/src/channels/skills.rs
++++ b/src-tauri/src/channels/skills.rs
+@@ -30,7 +30,7 @@
+     thread::spawn(move || {
+         let mut last_revision = None;
+         while !stop.load(Ordering::Acquire) {
+-            let revision = state.stream_revision();
++            let revision = state.main_dps_stream_revision();
+             if last_revision != Some(revision) {
+                 let event = SkillsEvent::Snapshot(snapshot(&state, scope));
+                 if on_event.send(event).is_err() {
+--- /dev/null
++++ b/frontend/src/lib/tauri/console-control-client.ts
+@@ -0,0 +1,40 @@
++import { invoke } from "@tauri-apps/api/core";
++
++import { parseTechnicalCommandError } from "@/lib/tauri/technical-contract";
++
++export type ConsoleControlAction =
++  | "toggle-capture"
++  | "reset-session"
++  | "toggle-hud"
++  | "toggle-passthrough"
++  | "toggle-processing"
++  | "toggle-pin"
++  | "open-team-details"
++  | "open-capture-logs";
++
++interface ConsoleControlTransport {
++  invoke(
++    command: string,
++    arguments_?: Record<string, unknown>,
++  ): Promise<unknown>;
++}
++
++const tauriTransport: ConsoleControlTransport = {
++  invoke: (command, arguments_) => invoke(command, arguments_),
++};
++
++export function createConsoleControlClient(
++  transport: ConsoleControlTransport = tauriTransport,
++) {
++  return {
++    async execute(action: ConsoleControlAction): Promise<void> {
++      try {
++        await transport.invoke("execute_console_control", { action });
++      } catch (error) {
++        throw parseTechnicalCommandError(error);
++      }
++    },
++  };
++}
++
++export const consoleControlClient = createConsoleControlClient();
+--- /dev/null
++++ b/frontend/src/lib/tauri/console-control-client.test.ts
+@@ -0,0 +1,20 @@
++import { describe, expect, it } from "vitest";
++
++import { createConsoleControlClient } from "./console-control-client";
++
++describe("Console control client", () => {
++  it("uses the typed Console command and camelCase action argument", async () => {
++    const calls: Array<[string, Record<string, unknown> | undefined]> = [];
++    const client = createConsoleControlClient({
++      invoke: async (command, arguments_) => {
++        calls.push([command, arguments_]);
++      },
++    });
++
++    await client.execute("toggle-capture");
++
++    expect(calls).toEqual([
++      ["execute_console_control", { action: "toggle-capture" }],
++    ]);
++  });
++});
+--- /dev/null
++++ b/src-tauri/src/commands/console_control.rs
+@@ -0,0 +1,180 @@
++use std::fs;
++
++use nte_dps_tool::{
++    core::live_capture::LiveCapturePhase, platform::file_dialog::open_directory,
++    storage::paths::capture_log_dir,
++};
++use tauri::{AppHandle, Manager, State, WebviewWindow};
++
++use crate::{
++    contract::CommandError,
++    state::AppState,
++    windows::{console, hud, main_dps},
++};
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum ConsoleControlAction {
++    ToggleCapture,
++    ResetSession,
++    ToggleHud,
++    TogglePassthrough,
++    ToggleProcessing,
++    TogglePin,
++    OpenTeamDetails,
++    OpenCaptureLogs,
++}
++
++#[tauri::command]
++pub(crate) fn execute_console_control(
++    action: String,
++    app: AppHandle,
++    state: State<'_, AppState>,
++    window: WebviewWindow,
++) -> Result<(), CommandError> {
++    console::validate_window(&window)?;
++    match parse_action(&action)? {
++        ConsoleControlAction::ToggleCapture => toggle_capture(&state),
++        ConsoleControlAction::ResetSession => {
++            state.reset_session();
++            state.set_main_processing_paused(false);
++            state
++                .set_main_selected_round_id(None)
++                .expect("live main DPS round is always valid");
++            Ok(())
++        }
++        ConsoleControlAction::ToggleHud => toggle_hud(&app, &state),
++        ConsoleControlAction::TogglePassthrough => toggle_passthrough(&app, &state),
++        ConsoleControlAction::ToggleProcessing => {
++            state.set_main_processing_paused(!state.main_processing_paused());
++            Ok(())
++        }
++        ConsoleControlAction::TogglePin => toggle_pin(&app, &state, &window),
++        ConsoleControlAction::OpenTeamDetails => super::main_dps::open_team_details(&app, &state),
++        ConsoleControlAction::OpenCaptureLogs => open_capture_logs(),
++    }
++}
++
++fn parse_action(action: &str) -> Result<ConsoleControlAction, CommandError> {
++    match action {
++        "toggle-capture" => Ok(ConsoleControlAction::ToggleCapture),
++        "reset-session" => Ok(ConsoleControlAction::ResetSession),
++        "toggle-hud" => Ok(ConsoleControlAction::ToggleHud),
++        "toggle-passthrough" => Ok(ConsoleControlAction::TogglePassthrough),
++        "toggle-processing" => Ok(ConsoleControlAction::ToggleProcessing),
++        "toggle-pin" => Ok(ConsoleControlAction::TogglePin),
++        "open-team-details" => Ok(ConsoleControlAction::OpenTeamDetails),
++        "open-capture-logs" => Ok(ConsoleControlAction::OpenCaptureLogs),
++        _ => Err(CommandError::invalid_settings_input()),
++    }
++}
++
++fn toggle_capture(state: &AppState) -> Result<(), CommandError> {
++    match state.capture_phase() {
++        LiveCapturePhase::Starting | LiveCapturePhase::Running => state
++            .request_capture_stop()
++            .map_err(CommandError::from_core),
++        LiveCapturePhase::Stopping => Ok(()),
++        LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed => state
++            .request_capture_start()
++            .map_err(CommandError::from_core),
++    }
++}
++
++fn toggle_hud(app: &AppHandle, state: &AppState) -> Result<(), CommandError> {
++    let window = app
++        .get_webview_window(hud::HUD_WINDOW_LABEL)
++        .ok_or_else(CommandError::window_operation_failed)?;
++    if window
++        .is_visible()
++        .map_err(|_| CommandError::window_operation_failed())?
++    {
++        window
++            .hide()
++            .map_err(|_| CommandError::window_operation_failed())
++    } else {
++        hud::set_passthrough(&window, state, false)?;
++        window
++            .show()
++            .and_then(|_| window.unminimize())
++            .map_err(|_| CommandError::window_operation_failed())
++    }
++}
++
++fn toggle_passthrough(app: &AppHandle, state: &AppState) -> Result<(), CommandError> {
++    let hud_window = app.get_webview_window(hud::HUD_WINDOW_LABEL);
++    if let Some(window) = hud_window.as_ref()
++        && window
++            .is_visible()
++            .map_err(|_| CommandError::window_operation_failed())?
++    {
++        return hud::toggle_passthrough(window, state);
++    }
++    let main_window = app
++        .get_webview_window(main_dps::MAIN_DPS_WINDOW_LABEL)
++        .ok_or_else(CommandError::window_operation_failed)?;
++    main_dps::toggle_passthrough(&main_window, state)
++}
++
++fn toggle_pin(
++    app: &AppHandle,
++    state: &AppState,
++    console_window: &WebviewWindow,
++) -> Result<(), CommandError> {
++    let _transaction = state.lock_always_on_top_transaction();
++    let previous = state.always_on_top();
++    let enabled = !previous;
++    let mut windows = vec![console_window.clone()];
++    for label in [hud::HUD_WINDOW_LABEL, main_dps::MAIN_DPS_WINDOW_LABEL] {
++        if let Some(window) = app.get_webview_window(label) {
++            windows.push(window);
++        }
++    }
++    let mut changed: Vec<WebviewWindow> = Vec::new();
++    for window in &windows {
++        if window.set_always_on_top(enabled).is_err() {
++            for changed_window in changed {
++                let _ = changed_window.set_always_on_top(previous);
++            }
++            return Err(CommandError::window_operation_failed());
++        }
++        changed.push(window.clone());
++    }
++    if let Err(error) = state.set_always_on_top(enabled) {
++        log::error!("save Console always-on-top preference failed: {error}");
++        for changed_window in changed {
++            let _ = changed_window.set_always_on_top(previous);
++        }
++        return Err(CommandError::hud_config_save_failed());
++    }
++    Ok(())
++}
++
++fn open_capture_logs() -> Result<(), CommandError> {
++    let path = capture_log_dir();
++    fs::create_dir_all(&path).map_err(|error| {
++        log::error!("create capture log directory failed: {error}");
++        CommandError::window_operation_failed()
++    })?;
++    open_directory(&path).map_err(|error| {
++        log::error!("open capture log directory failed: {error}");
++        CommandError::window_operation_failed()
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn console_control_actions_are_bounded_to_stable_ids() {
++        assert_eq!(
++            parse_action("toggle-capture").expect("capture action"),
++            ConsoleControlAction::ToggleCapture
++        );
++        assert_eq!(
++            parse_action("open-capture-logs").expect("logs action"),
++            ConsoleControlAction::OpenCaptureLogs
++        );
++        assert!(parse_action("../toggle-capture").is_err());
++    }
++}

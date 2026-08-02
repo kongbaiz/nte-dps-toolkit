@@ -1,0 +1,32 @@
+warning: linker stdout: 正在创建库 D:\NTE_DPS_TOOL\src-tauri\target\debug\deps\nte_dps_tool_tauri_lib.dll.lib 和对象 D:\NTE_DPS_TOOL\src-tauri\target\debug\deps\nte_dps_tool_tauri_lib.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `nte-dps-tool-tauri` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running unittests src\lib.rs (src-tauri\target\debug\deps\nte_dps_tool_tauri_lib-87e63a60820f63e3.exe)
+
+running 14 tests
+test channels::settings::tests::settings_stream_emits_initial_and_changed_revisions_only ... ok
+test channels::settings::tests::settings_subscription_ids_are_bounded_ascii ... ok
+test commands::settings::tests::hud_preset_input_accepts_only_stable_contract_values ... ok
+test commands::settings::tests::general_settings_inputs_are_strictly_bounded ... ok
+test commands::settings::tests::update_component_input_accepts_only_stable_contract_values ... ok
+test commands::settings::tests::hud_option_input_accepts_only_stable_contract_values ... ok
+test contract::settings::tests::team_data_export_result_distinguishes_save_from_cancel ... ok
+test contract::settings::tests::team_data_file_import_result_keeps_local_paths_out_of_the_contract ... ok
+test contract::settings::tests::settings_snapshot_projects_all_stable_settings_sections ... ok
+test state::tests::settings_revision_tracks_async_update_status_changes ... ok
+test state::tests::console_geometry_is_saved_without_publishing_combat_or_settings_state ... ok
+test state::tests::settings_hud_preset_preserves_width_and_canonical_order ... ok
+test state::tests::settings_hud_option_is_persisted_and_projected ... ok
+test state::tests::non_hud_settings_are_saved_and_projected_from_rust_state ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 99 filtered out; finished in 0.08s
+
+     Running unittests src\main.rs (src-tauri\target\debug\deps\nte_dps_tool_tauri-2223f2ea4b17a481.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

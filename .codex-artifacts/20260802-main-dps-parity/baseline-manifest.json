@@ -1,0 +1,102 @@
+[
+  {
+    "path": "frontend/src/features/main-dps/main-dps-page.tsx",
+    "sha256": "485c55caea0e8859a12c4a067c73618fa2ac6ee12a1f7bc9d0da270ef3a704ae"
+  },
+  {
+    "path": "frontend/src/features/main-dps/use-main-dps.ts",
+    "sha256": "2b1804cf65360397008c78937c4844e7740b50b7ad0d48def3784edc1c36773b"
+  },
+  {
+    "path": "frontend/src/features/mod-studio/mod-studio-page.tsx",
+    "sha256": "f026d5f7f78c4403eaa81165a54b7c4204649b0a03d1d2176290d562e221a313"
+  },
+  {
+    "path": "frontend/src/features/console/console-page.tsx",
+    "sha256": "f1a10f8c8541910f0085d617988c23ce0ed8b582726e3b70b9e0644d7149f596"
+  },
+  {
+    "path": "frontend/src/features/abyss-values/abyss-values-page.tsx",
+    "sha256": "05b730ca767c1dd7719b2201fd2931727e6fbb85e3b2c070a4866fbfd8af62ae"
+  },
+  {
+    "path": "frontend/src/index.css",
+    "sha256": "320d9ebefac8bda69ab44c43d132c276cb977e9cf1522d77e14114fae03a974a"
+  },
+  {
+    "path": "frontend/src/App.tsx",
+    "sha256": "d37904676c1aab6c488935317d676342386c1509e802c82489f5b7579cd8655b"
+  },
+  {
+    "path": "frontend/src/routes/window-route.ts",
+    "sha256": "a735fa13e3051d70d1ac8a685b951ea66bb95f4c9a459e777903cb3cea88a512"
+  },
+  {
+    "path": "frontend/src/routes/window-route.test.ts",
+    "sha256": "ea18b199393ce70e7981703713b8824874604f33e29a96b687a77c3bcc4d0a1a"
+  },
+  {
+    "path": "frontend/src/lib/settings-presentation.ts",
+    "sha256": "967ec01379c6d0f6a4d7b63ebcba1f17262331e3e0fd98f717fcce0934fefdd2"
+  },
+  {
+    "path": "frontend/src/lib/tauri/main-dps-client.ts",
+    "sha256": "b6de7e1dd3ff039eb3eb66c3751309734829d5e75d7dc2587b0806f33d8d52b3"
+  },
+  {
+    "path": "frontend/src/lib/tauri/main-dps-contract.ts",
+    "sha256": "b44e265e0b4f60dad4e3b2a2ca08c9c1d0ae58dec510de99fda8550a61627636"
+  },
+  {
+    "path": "frontend/src/lib/tauri/window-labels.ts",
+    "sha256": "e9aab044608ca625d8bdfddcbf0e9f702b0ef8f9adbc7600c081be9c1ecb2ff0"
+  },
+  {
+    "path": "src-tauri/src/state.rs",
+    "sha256": "7ae3c67ed75302d8ece8a26bb782a804063c77e1e68f42d04a4011f0bd6652ae"
+  },
+  {
+    "path": "src-tauri/src/contract/main_dps.rs",
+    "sha256": "d450fdb43e84edffcc40ced2dc085cc1fd2d6bcf7bc5e0943a7b2ceee7823662"
+  },
+  {
+    "path": "src-tauri/src/commands/main_dps.rs",
+    "sha256": "1501992965b0b3a2f37cbd1da4bd595362cdbeafbdbccc2a4df1626e2da9763c"
+  },
+  {
+    "path": "src-tauri/src/commands/mod.rs",
+    "sha256": "7eb743176d0a82f58dc7134175cb6142d4d54c18ce7efb655eb3a77dd93fc529"
+  },
+  {
+    "path": "src-tauri/src/channels/main_dps.rs",
+    "sha256": "44dea6dbcc93d3c9f036aba5c60bec1cf99e7c850315bb7e7919f06d7cb1a0a1"
+  },
+  {
+    "path": "src-tauri/src/lib.rs",
+    "sha256": "ac4372178bb8551c24e4c3eaf83ed377c602329763a9bf4f26669ee3f74931c2"
+  },
+  {
+    "path": "src-tauri/src/windows/mod.rs",
+    "sha256": "e7e5338318641264b9f86617eeb24c498b233506fd1ed9f8dff316194f58c734"
+  },
+  {
+    "path": "src-tauri/tauri.conf.json",
+    "sha256": "becea1223e7bb9ab7d352ebc4b50c0d757f574eb24c4378d0a8719aecfd6b06c"
+  },
+  {
+    "path": "src-tauri/capabilities/console.json",
+    "sha256": "534441ae1e7c2ebe565ae54c3e96647f22e6a4c1b58bedd8823aec0aa39c49aa"
+  },
+  {
+    "path": "src-tauri/capabilities/main-dps.json",
+    "sha256": "96a5519a2aeca2c43b5d890650ad3df690d70cd411f1ceffcfef199ac6ac18cd"
+  },
+  {
+    "path": "res/languages/zh-CN.json",
+    "sha256": "3233cf3d716c8594ee52490f9567a6d1b8400794fc04fca1b94d64fb5698020e"
+  },
+  {
+    "path": "res/languages/ja.json",
+    "sha256": "8b56b8830c6f21da6fbc654ed63384a73240af416817dc0e1204683d1d4e6f6e"
+  }
+]

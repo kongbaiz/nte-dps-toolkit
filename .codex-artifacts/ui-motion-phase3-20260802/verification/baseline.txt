@@ -1,0 +1,15 @@
+BASELINE cwd=D:\NTE_DPS_TOOL
+COMMAND pnpm --dir frontend typecheck
+$ tsc -b
+EXIT_STATUS typecheck=0
+COMMAND pnpm --dir frontend exec vitest run src/lib/motion.test.ts src/features/technical-hud/technical-view-model.test.ts
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  20:43:04
+   Duration  208ms (transform 71ms, setup 0ms, import 103ms, tests 20ms, environment 0ms)
+
+EXIT_STATUS focused_tests=0

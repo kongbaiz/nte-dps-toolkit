@@ -1,0 +1,157 @@
+diff --git a/src-tauri/src/windows/main_dps.rs b/src-tauri/src/windows/main_dps.rs
+index 56e5f62..be9049d 100644
+--- a/src-tauri/src/windows/main_dps.rs
++++ b/src-tauri/src/windows/main_dps.rs
+@@ -15,6 +15,10 @@ use crate::{
+ pub(crate) const MAIN_DPS_WINDOW_LABEL: &str = "main-dps";
+ const LEGACY_TAURI_MAIN_DPS_DEFAULT_SIZE: [f32; 2] = [670.0, 692.0];
+ const COMPACT_TAURI_MAIN_DPS_DEFAULT_SIZE: [f32; 2] = [670.0, 560.0];
++// Windows moves minimized top-level windows to a large negative sentinel position.
++// The stored value is expressed in logical points, so the exact sentinel varies
++// with DPI; both axes remain far outside any practical monitor arrangement.
++const MINIMIZED_POSITION_LIMIT: f32 = -10_000.0;
+ 
+ pub(crate) fn should_reveal_after_page_load(label: &str, event: PageLoadEvent) -> bool {
+     label == MAIN_DPS_WINDOW_LABEL && matches!(event, PageLoadEvent::Finished)
+@@ -70,6 +74,14 @@ pub(crate) fn show_main_dps_when_ready(window: WebviewWindow) -> Result<(), Comm
+     window.show().map_err(|error| {
+         log::error!("show main DPS after the frontend first paint failed: {error}");
+         CommandError::window_operation_failed()
++    })?;
++    window.unminimize().map_err(|error| {
++        log::error!("restore main DPS after the frontend first paint failed: {error}");
++        CommandError::window_operation_failed()
++    })?;
++    window.set_focus().map_err(|error| {
++        log::error!("focus main DPS after the frontend first paint failed: {error}");
++        CommandError::window_operation_failed()
+     })
+ }
+ 
+@@ -115,17 +127,27 @@ fn restore_geometry(window: &WebviewWindow, state: &AppState) -> Result<(), Stri
+             )))
+             .map_err(|error| error.to_string())?;
+     }
+-    if let Some([x, y]) = position {
++    if let Some([x, y]) = restorable_main_window_position(position) {
+         window
+             .set_position(Position::Logical(LogicalPosition::new(
+                 f64::from(x),
+                 f64::from(y),
+             )))
+             .map_err(|error| error.to_string())?;
++    } else {
++        window.center().map_err(|error| error.to_string())?;
+     }
+     Ok(())
+ }
+ 
++fn restorable_main_window_position(position: Option<[f32; 2]>) -> Option<[f32; 2]> {
++    let [x, y] = position?;
++    (x.is_finite()
++        && y.is_finite()
++        && !(x <= MINIMIZED_POSITION_LIMIT && y <= MINIMIZED_POSITION_LIMIT))
++        .then_some([x, y])
++}
++
+ fn migrate_legacy_default_size(size: [f32; 2]) -> [f32; 2] {
+     if (size[0] - LEGACY_TAURI_MAIN_DPS_DEFAULT_SIZE[0]).abs() < f32::EPSILON
+         && (size[1] - LEGACY_TAURI_MAIN_DPS_DEFAULT_SIZE[1]).abs() < f32::EPSILON
+@@ -137,6 +159,11 @@ fn migrate_legacy_default_size(size: [f32; 2]) -> [f32; 2] {
+ }
+ 
+ fn persist_geometry(window: &WebviewWindow, state: &AppState) {
++    let minimized = window.is_minimized().unwrap_or(false);
++    let maximized = window.is_maximized().unwrap_or(false);
++    if !should_persist_geometry(minimized, maximized) {
++        return;
++    }
+     let scale = window.scale_factor().unwrap_or(1.0).max(f64::EPSILON);
+     let size = window.inner_size().ok().map(|value| {
+         [
+@@ -144,17 +171,25 @@ fn persist_geometry(window: &WebviewWindow, state: &AppState) {
+             (f64::from(value.height) / scale) as f32,
+         ]
+     });
+-    let position = window.outer_position().ok().map(|value| {
+-        [
+-            (f64::from(value.x) / scale) as f32,
+-            (f64::from(value.y) / scale) as f32,
+-        ]
+-    });
++    let position = window
++        .outer_position()
++        .ok()
++        .map(|value| {
++            [
++                (f64::from(value.x) / scale) as f32,
++                (f64::from(value.y) / scale) as f32,
++            ]
++        })
++        .and_then(|position| restorable_main_window_position(Some(position)));
+     if let Err(error) = state.set_main_window_geometry(size, position) {
+         log::error!("persist main DPS geometry failed: {error}");
+     }
+ }
+ 
++fn should_persist_geometry(minimized: bool, maximized: bool) -> bool {
++    !minimized && !maximized
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -175,6 +210,29 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn minimized_windows_sentinel_is_not_restored() {
++        assert_eq!(
++            restorable_main_window_position(Some([-16_000.0, -16_000.0])),
++            None
++        );
++        assert_eq!(
++            restorable_main_window_position(Some([-1920.0, 84.0])),
++            Some([-1920.0, 84.0])
++        );
++        assert_eq!(
++            restorable_main_window_position(Some([f32::NAN, 84.0])),
++            None
++        );
++    }
++
++    #[test]
++    fn transient_minimized_or_maximized_geometry_is_not_persisted() {
++        assert!(should_persist_geometry(false, false));
++        assert!(!should_persist_geometry(true, false));
++        assert!(!should_persist_geometry(false, true));
++    }
++
+     #[test]
+     fn previous_tauri_default_height_moves_to_the_compact_baseline() {
+         assert_eq!(
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index b457665..53f694e 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -22,10 +22,15 @@ pub fn run() {
+     tauri::Builder::default()
+         .manage(AppState::new(ui_config, live_capture))
+         .on_page_load(|webview, payload| {
+-            if windows::main_dps::should_reveal_after_page_load(webview.label(), payload.event())
+-                && let Err(error) = webview.window().show()
+-            {
+-                eprintln!("Tauri main DPS native page-load reveal failed: {error}");
++            if windows::main_dps::should_reveal_after_page_load(webview.label(), payload.event()) {
++                let window = webview.window();
++                let reveal = window
++                    .show()
++                    .and_then(|()| window.unminimize())
++                    .and_then(|()| window.set_focus());
++                if let Err(error) = reveal {
++                    eprintln!("Tauri main DPS native page-load reveal failed: {error}");
++                }
+             }
+         })
+         .setup(|app| {

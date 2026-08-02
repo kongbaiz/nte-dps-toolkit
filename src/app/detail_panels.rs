@@ -904,10 +904,8 @@ impl DpsApp {
     }
 
     pub(crate) fn save_current_history_summary(&mut self, ctx: &egui::Context) {
-        let details = HistoryCombatDetails::from_state(&self.state);
-        let summary_state = details.as_ref().map(HistoryCombatDetails::to_combat_state);
-        let state = summary_state.as_ref().unwrap_or(&self.state);
-        let Some(summary) = state.session_summary(
+        let Some(archive) = crate::core::history::prepare_history_archive(
+            &self.state,
             self.capture_ui.capture_quality_source,
             DpsTimeBasis::from_subtract_time_stop(self.subtract_time_stop_for_dps()),
             self.preferences.separate_reaction_damage,
@@ -919,9 +917,9 @@ impl DpsApp {
             );
             return;
         };
-        let result = match details {
-            Some(details) => history::save_summary_with_details(summary, details),
-            None => history::save_summary(summary),
+        let result = match archive.details {
+            Some(details) => history::save_summary_with_details(archive.summary, details),
+            None => history::save_summary(archive.summary),
         };
         match result {
             Ok(record) => {

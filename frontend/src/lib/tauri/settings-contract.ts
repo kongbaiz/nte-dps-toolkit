@@ -6,6 +6,7 @@ import {
   type HudModuleId,
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
+import { compareDecimalStrings } from "@/lib/decimal-string";
 
 export const SETTINGS_CONTRACT_VERSION = 4;
 export const HUD_SETTING_OPTION_IDS = [
@@ -136,6 +137,11 @@ export interface TeamDataSettings {
   lowerImported: boolean;
 }
 
+export interface TeamDataImportFileResult {
+  performed: boolean;
+  settings: SettingsSnapshot;
+}
+
 export interface SettingsSnapshot {
   contractVersion: number;
   generation: string;
@@ -159,7 +165,7 @@ export interface SettingsSnapshotEvent {
 
 export type SettingsEvent = SettingsSnapshotEvent;
 
-export type InterfaceSettingsInput = Omit<InterfaceSettings, "darkMode">;
+export type InterfaceSettingsInput = InterfaceSettings;
 export interface UpdateSettingsInput {
   autoCheck: boolean;
   autoDownload: boolean;
@@ -344,6 +350,16 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
   };
 }
 
+export function parseTeamDataImportFileResult(
+  value: unknown,
+): TeamDataImportFileResult {
+  const result = record(value, "team data import result");
+  return {
+    performed: boolean(result.performed, "teamDataImport.performed"),
+    settings: parseSettingsSnapshot(result.settings),
+  };
+}
+
 function parseUpdateSettings(updates: Record<string, unknown>): UpdateSettings {
   const available = array(updates.available, "settings.updates.available").map(
     (value, index) => {
@@ -469,9 +485,7 @@ function nullableEnumValue<const T extends readonly string[]>(
 }
 
 export function compareSettingsGeneration(left: string, right: string): number {
-  return left.length === right.length
-    ? left.localeCompare(right)
-    : left.length - right.length;
+  return compareDecimalStrings(left, right);
 }
 
 export function parseSettingsEvent(value: unknown): SettingsEvent {

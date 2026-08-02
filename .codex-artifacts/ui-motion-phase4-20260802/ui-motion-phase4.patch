@@ -1,0 +1,620 @@
+diff --git a/frontend/src/components/nte/window-motion-boundary.tsx b/frontend/src/components/nte/window-motion-boundary.tsx
+--- a/frontend/src/components/nte/window-motion-boundary.tsx
++++ b/frontend/src/components/nte/window-motion-boundary.tsx
+@@ -1,4 +1,5 @@
+ import { listen } from "@tauri-apps/api/event";
++import { getCurrentWindow } from "@tauri-apps/api/window";
+ import {
+   useCallback,
+   useEffect,
+@@ -10,6 +11,7 @@
+ import { MOTION_DURATION, waitForMotion } from "@/lib/motion";
+ 
+ import { WindowMotionContext } from "./window-motion-context";
++import { isWindowMotionTarget } from "./window-motion-target";
+ 
+ const WINDOW_MOTION_ENTER_EVENT = "desktop-window-motion-enter";
+ 
+@@ -24,8 +26,13 @@
+ 
+   useEffect(() => {
+     playEnter();
++    const currentWindowLabel = getCurrentWindow().label;
+     let unlisten: (() => void) | undefined;
+-    void listen(WINDOW_MOTION_ENTER_EVENT, playEnter).then((next) => {
++    void listen<string>(WINDOW_MOTION_ENTER_EVENT, (event) => {
++      if (isWindowMotionTarget(currentWindowLabel, event.payload)) {
++        playEnter();
++      }
++    }).then((next) => {
+       unlisten = next;
+     });
+     return () => unlisten?.();
+@@ -39,9 +46,14 @@
+       await waitForMotion(MOTION_DURATION.base);
+       try {
+         await action();
++        // The source is hidden after a successful window hand-off. Its next
++        // entrance is driven by the targeted native event when it is shown.
++        setPhase("idle");
++      } catch (error) {
++        playEnter();
++        throw error;
+       } finally {
+         transitioning.current = false;
+-        playEnter();
+       }
+     },
+     [playEnter],
+diff --git a/frontend/src/features/main-dps/main-dps-page.tsx b/frontend/src/features/main-dps/main-dps-page.tsx
+--- a/frontend/src/features/main-dps/main-dps-page.tsx
++++ b/frontend/src/features/main-dps/main-dps-page.tsx
+@@ -322,7 +322,7 @@
+             onDismiss={() => setError(null)}
+           />
+         )}
+-        {resetUndoToken !== null && (
++        {!presentation.islandNotifications && resetUndoToken !== null && (
+           <ActionNotice
+             status="success"
+             message={t("Session reset · use Undo within 5 seconds")}
+@@ -334,21 +334,23 @@
+             }}
+           />
+         )}
+-        {actionNotice !== null && (
+-          <ActionNotice
+-            key={actionNotice.id}
+-            status={actionNotice.status}
+-            message={t(mainActionLabelKey(actionNotice.action))}
+-            detail={t(
+-              actionNotice.status === "pending" ? "Working..." : "Completed",
+-            )}
+-            onDismiss={
+-              actionNotice.status === "success"
+-                ? () => setActionNotice(null)
+-                : undefined
+-            }
+-          />
+-        )}
++        {!presentation.islandNotifications &&
++          actionNotice !== null &&
++          isMainActionNoticeWorthy(actionNotice.action) && (
++            <ActionNotice
++              key={actionNotice.id}
++              status={actionNotice.status}
++              message={t(mainActionLabelKey(actionNotice.action))}
++              detail={t(
++                actionNotice.status === "pending" ? "Working..." : "Completed",
++              )}
++              onDismiss={
++                actionNotice.status === "success"
++                  ? () => setActionNotice(null)
++                  : undefined
++              }
++            />
++          )}
+       </div>
+       {confirmation !== null && (
+         <div className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4">
+@@ -988,6 +990,21 @@
+   return "Refresh";
+ }
+ 
++function isMainActionNoticeWorthy(action: string): boolean {
++  return (
++    action === "capture" ||
++    action === "reset" ||
++    action === "undo-reset" ||
++    action === "new-round" ||
++    action === "pause" ||
++    action === "pin" ||
++    action === "passthrough" ||
++    action === "redetect" ||
++    action === "onboarding-finish" ||
++    action.startsWith("import")
++  );
++}
++
+ function Metric({
+   value,
+   format,
+diff --git a/frontend/src/features/technical-hud/technical-hud-page.tsx b/frontend/src/features/technical-hud/technical-hud-page.tsx
+--- a/frontend/src/features/technical-hud/technical-hud-page.tsx
++++ b/frontend/src/features/technical-hud/technical-hud-page.tsx
+@@ -27,6 +27,7 @@
+ import { AnimatedNumber } from "@/components/nte/animated-number";
+ import { useWindowMotion } from "@/components/nte/window-motion-context";
+ import { Switch } from "@/components/ui/switch";
++import { useSettingsPresentation } from "@/lib/settings-presentation";
+ import {
+   Tooltip,
+   TooltipContent,
+@@ -78,6 +79,7 @@
+ ] as const;
+ 
+ export function TechnicalHudPage() {
++  const presentation = useSettingsPresentation();
+   const {
+     state,
+     actionNotice,
+@@ -108,22 +110,26 @@
+ 
+   return (
+     <main className="relative h-screen overflow-hidden select-none">
+-      {actionNotice === null ? null : (
+-        <div className="pointer-events-none absolute inset-x-1 top-1 z-50">
+-          <ActionNotice
+-            key={actionNotice.id}
+-            compact
+-            status={actionNotice.status}
+-            message={t(technicalActionLabelKey(actionNotice.action))}
+-            detail={t(
+-              actionNotice.status === "pending" ? "Working..." : "Completed",
+-            )}
+-            onDismiss={
+-              actionNotice.status === "success" ? clearActionNotice : undefined
+-            }
+-          />
+-        </div>
+-      )}
++      {!presentation.islandNotifications &&
++        actionNotice !== null &&
++        isTechnicalActionNoticeWorthy(actionNotice.action) && (
++          <div className="pointer-events-none absolute inset-x-1 top-1 z-50">
++            <ActionNotice
++              key={actionNotice.id}
++              compact
++              status={actionNotice.status}
++              message={t(technicalActionLabelKey(actionNotice.action))}
++              detail={t(
++                actionNotice.status === "pending" ? "Working..." : "Completed",
++              )}
++              onDismiss={
++                actionNotice.status === "success"
++                  ? clearActionNotice
++                  : undefined
++              }
++            />
++          </div>
++        )}
+       <TechnicalContent
+         state={state}
+         dragFailed={dragFailed}
+@@ -1315,6 +1321,15 @@
+   return "HUD modules";
+ }
+ 
++function isTechnicalActionNoticeWorthy(action: string): boolean {
++  return (
++    action === "passthrough" ||
++    action === "always-on-top" ||
++    action === "start-capture" ||
++    action === "stop-capture"
++  );
++}
++
+ function hudRoleColor(index: number): string {
+   return HUD_ROLE_COLORS[index % HUD_ROLE_COLORS.length];
+ }
+diff --git a/src-tauri/src/commands/main_dps.rs b/src-tauri/src/commands/main_dps.rs
+--- a/src-tauri/src/commands/main_dps.rs
++++ b/src-tauri/src/commands/main_dps.rs
+@@ -33,6 +33,7 @@
+ #[tauri::command]
+ pub(crate) fn start_main_dps_capture(
+     replace_current: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsSnapshot, CommandError> {
+@@ -43,11 +44,19 @@
+     state
+         .request_capture_start(replace_current)
+         .map_err(CommandError::from_core)?;
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        "Starting live capture...",
++        Vec::new(),
++    )?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+ #[tauri::command]
+ pub(crate) fn stop_main_dps_capture(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsSnapshot, CommandError> {
+@@ -55,6 +64,13 @@
+     state
+         .request_capture_stop()
+         .map_err(CommandError::from_core)?;
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        "Stopping live capture...",
++        Vec::new(),
++    )?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+@@ -142,6 +158,7 @@
+ 
+ #[tauri::command]
+ pub(crate) fn start_main_dps_new_round(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsSnapshot, CommandError> {
+@@ -154,17 +171,36 @@
+         log::error!("archive current main DPS round failed: {error}");
+         CommandError::main_dps("round_archive_failed", "Failed to start a new combat round")
+     })?;
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "success",
++        "New combat round started",
++        Vec::new(),
++    )?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+ #[tauri::command]
+ pub(crate) fn set_main_dps_paused(
+     paused: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsSnapshot, CommandError> {
+     main_dps::validate_window(&window)?;
+     state.set_main_processing_paused(paused);
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        if paused {
++            "Processing paused"
++        } else {
++            "Processing resumed"
++        },
++        Vec::new(),
++    )?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+@@ -221,6 +257,7 @@
+     if let Some(hud_window) = app.get_webview_window(hud::HUD_WINDOW_LABEL) {
+         let _ = hud::sync_content_height(&hud_window, state.inner());
+     }
++    island::publish_notice(&app, state.inner(), "success", "Setup complete", Vec::new())?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+@@ -245,6 +282,7 @@
+ pub(crate) async fn import_main_dps_replay(
+     kind: String,
+     replace_current: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsActionResult, CommandError> {
+@@ -275,7 +313,8 @@
+         CaptureReplayKind::Json => "NTE exported capture",
+     });
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let worker_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         let selection = match kind {
+             CaptureReplayKind::Pcapng => choose_pcapng_open_path(owner, &title),
+             CaptureReplayKind::Json => choose_json_open_path(owner, &title),
+@@ -287,12 +326,12 @@
+                     .map_err(CommandError::from_core)?;
+                 Ok(MainDpsActionResult {
+                     performed: true,
+-                    snapshot: snapshot(&state),
++                    snapshot: snapshot(&worker_state),
+                 })
+             }
+             Ok(OpenFileDialogOutcome::Cancelled) => Ok(MainDpsActionResult {
+                 performed: false,
+-                snapshot: snapshot(&state),
++                snapshot: snapshot(&worker_state),
+             }),
+             Err(code) => {
+                 log::error!("native main DPS replay dialog failed: {code:#010x}");
+@@ -301,13 +340,26 @@
+         }
+     })
+     .await
+-    .map_err(|_| CommandError::main_dps("replay_import_failed", "Replay import did not complete"))?
++    .map_err(|_| {
++        CommandError::main_dps("replay_import_failed", "Replay import did not complete")
++    })??;
++    if result.performed {
++        island::publish_notice(
++            &app,
++            &state,
++            "status",
++            "Importing and parsing capture",
++            Vec::new(),
++        )?;
++    }
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+ pub(crate) async fn import_main_dps_replay_path(
+     path: String,
+     replace_current: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsActionResult, CommandError> {
+@@ -350,17 +402,28 @@
+         .begin_replay_import(replace_current)
+         .map_err(CommandError::from_core)?;
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let worker_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         reservation
+             .start(kind, path, replace_current)
+             .map_err(CommandError::from_core)?;
+         Ok(MainDpsActionResult {
+             performed: true,
+-            snapshot: snapshot(&state),
++            snapshot: snapshot(&worker_state),
+         })
+     })
+     .await
+-    .map_err(|_| CommandError::main_dps("replay_import_failed", "Replay import did not complete"))?
++    .map_err(|_| {
++        CommandError::main_dps("replay_import_failed", "Replay import did not complete")
++    })??;
++    island::publish_notice(
++        &app,
++        &state,
++        "status",
++        "Importing and parsing capture",
++        Vec::new(),
++    )?;
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+@@ -416,6 +479,17 @@
+             "Failed to save the window preference",
+         ));
+     }
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        if enabled {
++            "Always-on-top enabled"
++        } else {
++            "Always-on-top disabled"
++        },
++        Vec::new(),
++    )?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+@@ -468,9 +542,12 @@
+     main_dps::set_passthrough(&window, &state, false)?;
+     hud::set_passthrough(&hud_window, &state, false)?;
+     hud_window.show().map_err(window_error)?;
+-    hud_window
+-        .emit(crate::windows::WINDOW_MOTION_ENTER_EVENT, ())
+-        .map_err(window_error)?;
++    app.emit_to(
++        hud::HUD_WINDOW_LABEL,
++        crate::windows::WINDOW_MOTION_ENTER_EVENT,
++        hud::HUD_WINDOW_LABEL,
++    )
++    .map_err(window_error)?;
+     hud_window.unminimize().map_err(window_error)?;
+     hud_window.set_focus().map_err(window_error)?;
+     window.hide().map_err(window_error)?;
+@@ -619,11 +696,27 @@
+ #[tauri::command]
+ pub(crate) fn set_main_dps_passthrough(
+     enabled: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<MainDpsSnapshot, CommandError> {
+     main_dps::validate_window(&window)?;
+     main_dps::set_passthrough(&window, &state, enabled)?;
++    let (message_key, message_arguments) = if enabled {
++        (
++            "Mouse passthrough on; press {} to turn off",
++            vec![state.passthrough_hotkey().label().to_owned()],
++        )
++    } else {
++        ("Mouse passthrough off", Vec::new())
++    };
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        message_key,
++        message_arguments,
++    )?;
+     Ok(snapshot(state.inner()))
+ }
+ 
+@@ -640,9 +733,12 @@
+         .ok_or_else(CommandError::window_operation_failed)?;
+     main_dps::set_passthrough(&main_window, &state, false)?;
+     main_window.show().map_err(window_error)?;
+-    main_window
+-        .emit(crate::windows::WINDOW_MOTION_ENTER_EVENT, ())
+-        .map_err(window_error)?;
++    app.emit_to(
++        main_dps::MAIN_DPS_WINDOW_LABEL,
++        crate::windows::WINDOW_MOTION_ENTER_EVENT,
++        main_dps::MAIN_DPS_WINDOW_LABEL,
++    )
++    .map_err(window_error)?;
+     main_window.unminimize().map_err(window_error)?;
+     main_window.set_focus().map_err(window_error)?;
+     window.hide().map_err(window_error)
+diff --git a/src-tauri/src/commands/technical.rs b/src-tauri/src/commands/technical.rs
+--- a/src-tauri/src/commands/technical.rs
++++ b/src-tauri/src/commands/technical.rs
+@@ -1,9 +1,9 @@
+-use tauri::{State, WebviewWindow};
++use tauri::{AppHandle, State, WebviewWindow};
+ 
+ use crate::{
+     contract::{CommandError, TechnicalSnapshot},
+     state::AppState,
+-    windows::hud,
++    windows::{hud, island},
+ };
+ 
+ use super::{parse_hud_module, sanitize_hud_width};
+@@ -20,22 +20,47 @@
+ #[tauri::command]
+ pub(crate) fn set_hud_passthrough(
+     enabled: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<TechnicalSnapshot, CommandError> {
+     hud::validate_window(&window)?;
+     hud::set_passthrough(&window, &state, enabled)?;
++    let message_key = if enabled {
++        "HUD passthrough on; press {} to enter edit mode"
++    } else {
++        "HUD edit mode on; press {} to return to game passthrough"
++    };
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        message_key,
++        vec![state.passthrough_hotkey().label().to_owned()],
++    )?;
+     Ok(state.snapshot())
+ }
+ 
+ #[tauri::command]
+ pub(crate) fn set_hud_always_on_top(
+     enabled: bool,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<TechnicalSnapshot, CommandError> {
+     hud::validate_window(&window)?;
+     hud::set_always_on_top(&window, &state, enabled)?;
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        if enabled {
++            "Always-on-top enabled"
++        } else {
++            "Always-on-top disabled"
++        },
++        Vec::new(),
++    )?;
+     Ok(state.snapshot())
+ }
+ 
+@@ -100,6 +125,7 @@
+ 
+ #[tauri::command]
+ pub(crate) fn start_hud_capture(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<TechnicalSnapshot, CommandError> {
+@@ -107,11 +133,19 @@
+     state
+         .request_capture_start(false)
+         .map_err(CommandError::from_core)?;
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        "Starting live capture...",
++        Vec::new(),
++    )?;
+     Ok(state.snapshot())
+ }
+ 
+ #[tauri::command]
+ pub(crate) fn stop_hud_capture(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<TechnicalSnapshot, CommandError> {
+@@ -119,5 +153,12 @@
+     state
+         .request_capture_stop()
+         .map_err(CommandError::from_core)?;
++    island::publish_notice(
++        &app,
++        state.inner(),
++        "status",
++        "Stopping live capture...",
++        Vec::new(),
++    )?;
+     Ok(state.snapshot())
+ }
+diff --git a/src-tauri/src/windows/island.rs b/src-tauri/src/windows/island.rs
+--- a/src-tauri/src/windows/island.rs
++++ b/src-tauri/src/windows/island.rs
+@@ -64,6 +64,17 @@
+     window
+         .emit(ISLAND_CHANGED_EVENT, ())
+         .map_err(|_| CommandError::window_operation_failed())
++}
++
++pub(crate) fn publish_notice(
++    app: &AppHandle,
++    state: &AppState,
++    tone: &'static str,
++    message_key: &'static str,
++    message_arguments: Vec<String>,
++) -> Result<(), CommandError> {
++    state.publish_island_notice(tone, message_key, message_arguments, None);
++    show_notice(app, state)
+ }
+ 
+ fn island_physical_size(scale: f64) -> PhysicalSize<u32> {
+diff --git a/frontend/src/components/nte/window-motion-boundary.test.ts b/frontend/src/components/nte/window-motion-boundary.test.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/nte/window-motion-boundary.test.ts
+@@ -0,0 +1,11 @@
++import { describe, expect, it } from "vitest";
++
++import { isWindowMotionTarget } from "./window-motion-target";
++
++describe("window motion target", () => {
++  it("plays the entrance only for the window named by the native event", () => {
++    expect(isWindowMotionTarget("main-dps", "main-dps")).toBe(true);
++    expect(isWindowMotionTarget("console", "main-dps")).toBe(false);
++    expect(isWindowMotionTarget("hud-spike", undefined)).toBe(false);
++  });
++});
+diff --git a/frontend/src/components/nte/window-motion-target.ts b/frontend/src/components/nte/window-motion-target.ts
+new file mode 100644
+--- /dev/null
++++ b/frontend/src/components/nte/window-motion-target.ts
+@@ -0,0 +1,6 @@
++export function isWindowMotionTarget(
++  currentWindowLabel: string,
++  targetWindowLabel: unknown,
++): boolean {
++  return targetWindowLabel === currentWindowLabel;
++}

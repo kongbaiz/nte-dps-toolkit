@@ -1,0 +1,12 @@
+[
+  {
+    "path": "src-tauri/src/windows/main_dps.rs",
+    "sha256": "cfb45a604e1f7645d90e735c35c2db1c01474212892403a9c3de31bdd31e1c91",
+    "bytes": 8433
+  },
+  {
+    "path": "src-tauri/src/lib.rs",
+    "sha256": "b9ae6881703ff45a930d1e96fae17b53e02ee6a8b1bbaed10a9962018eefabdc",
+    "bytes": 12284
+  }
+]

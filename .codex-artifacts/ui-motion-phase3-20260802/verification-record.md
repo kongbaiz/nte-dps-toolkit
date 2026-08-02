@@ -1,0 +1,465 @@
+# UI Motion Phase 3 Verification Record
+
+- Workspace: `D:\NTE_DPS_TOOL`
+- Branch: `codex/tauri-react-architecture`
+- Preserved baseline: 7 existing task files with SHA-256 manifest.
+- Modified set: 7 existing files and 2 FLIP hook files.
+- Desktop UI was not launched; visual, DPI, multi-monitor, transparency and passthrough acceptance remains a manual product check.
+
+## Verified behavior change
+
+Baseline:
+- Console navigation allowed horizontal overflow, exposing a bottom scrollbar when the active row extended past the scrollport.
+- HUD module order updates changed DOM order instantly.
+- The notification island reused its own current-monitor/outer-size state and appeared 24 logical pixels below that monitor's top.
+- HUD and Main DPS popovers and drag insertion markers appeared immediately.
+
+Modified:
+- Navigation clips horizontal overflow, keeps only required vertical scrolling, and places the active indicator inside the scrollport.
+- HUD modules preserve stable keys and animate old-to-new positions with a 300 ms FLIP translation; visibility and order changes share the same path.
+- The island remains a standalone non-focusable always-on-top window, chooses the focused source window's full monitor, falls back to the primary monitor, scales to target-monitor DPI, clamps offsets to screen edges, and anchors 10 logical pixels from the monitor top.
+- The island capsule morphs from a compact black pill, delays content/icon reveal, animates progress and collapses before the native window hides.
+- Popovers and drag insertion markers use short scale/fade feedback; reduced-motion still makes every added effect immediate.
+
+## Baseline commands and literal outputs
+
+```text
+BASELINE cwd=D:\NTE_DPS_TOOL
+COMMAND pnpm --dir frontend typecheck
+$ tsc -b
+EXIT_STATUS typecheck=0
+COMMAND pnpm --dir frontend exec vitest run src/lib/motion.test.ts src/features/technical-hud/technical-view-model.test.ts
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  2 passed (2)
+      Tests  14 passed (14)
+   Start at  20:43:04
+   Duration  208ms (transform 71ms, setup 0ms, import 103ms, tests 20ms, environment 0ms)
+
+EXIT_STATUS focused_tests=0
+```
+
+## Modified commands and literal outputs
+
+```text
+MODIFIED cwd=D:\NTE_DPS_TOOL
+
+COMMAND pnpm exec prettier --check src/index.css src/hooks/use-layout-flip.ts src/hooks/use-layout-flip.test.ts src/features/console/console-sidebar.tsx src/features/technical-hud/technical-hud-page.tsx src/features/island/island-page.tsx src/features/main-dps/main-dps-page.tsx src/lib/motion.ts
+INPUT cwd=D:\NTE_DPS_TOOL\frontend
+--- OUTPUT ---
+Checking formatting...
+All matched files use Prettier code style!
+
+--- END OUTPUT ---
+EXIT_STATUS format_check=0
+
+COMMAND pnpm lint
+INPUT cwd=D:\NTE_DPS_TOOL\frontend
+--- OUTPUT ---
+$ oxlint
+
+--- END OUTPUT ---
+EXIT_STATUS lint=0
+
+COMMAND pnpm typecheck
+INPUT cwd=D:\NTE_DPS_TOOL\frontend
+--- OUTPUT ---
+$ tsc -b
+
+--- END OUTPUT ---
+EXIT_STATUS typecheck=0
+
+COMMAND pnpm exec vitest run src/hooks/use-layout-flip.test.ts src/lib/motion.test.ts src/features/technical-hud/technical-view-model.test.ts src/features/console/console-sidebar-model.test.ts
+INPUT cwd=D:\NTE_DPS_TOOL\frontend
+--- OUTPUT ---
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  4 passed (4)
+      Tests  18 passed (18)
+   Start at  20:50:17
+   Duration  269ms (transform 133ms, setup 0ms, import 243ms, tests 36ms, environment 0ms)
+
+
+--- END OUTPUT ---
+EXIT_STATUS focused_tests=0
+
+COMMAND pnpm build
+INPUT cwd=D:\NTE_DPS_TOOL\frontend
+--- OUTPUT ---
+$ tsc -b && vite build
+[36mvite v8.1.5 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...✓ 3385 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                                      0.72 kB │ gzip:   0.37 kB
+dist/assets/Guangxiang_X_7-h2Ifdt-c.png                              4.11 kB
+dist/assets/Guangxiang_G_7-D1Fe3Xqr.png                              4.12 kB
+dist/assets/fanying02_02-BHsu6pkx.png                                4.12 kB
+dist/assets/Hunxiang_H_7-Cn9XsLX3.png                                4.23 kB
+dist/assets/Guangxiang_G_4-_C0n2pEY.png                              4.23 kB
+dist/assets/Guangxiang_X_4-rVFMBkI8.png                              4.30 kB
+dist/assets/fanying05_01-C7BLDC83.png                                4.31 kB
+dist/assets/Hunxiang_H_4-BMdWloe4.png                                4.51 kB
+dist/assets/Hunxiang_H_3-KTR9reob.png                                4.73 kB
+dist/assets/fanying04_01-B1GODycQ.png                                4.74 kB
+dist/assets/fanying08_01-D-5-66sy.png                                4.75 kB
+dist/assets/Guangxiang_X_3-Dc4bJXRU.png                              4.78 kB
+dist/assets/Guangxiang_G_3-CCWWlxA6.png                              4.78 kB
+dist/assets/fanying08_01-eEXSfAKf.png                                4.83 kB
+dist/assets/fanying06_01-CVMO5ojy.png                                4.86 kB
+dist/assets/fanying04_01-BZURB51Q.png                                4.90 kB
+dist/assets/fanying02_01-BkzzH2q7.png                                4.91 kB
+dist/assets/Hunxiang_X_7-DUDKryOZ.png                                4.92 kB
+dist/assets/Guangxiang_X_5-gyYTmdz-.png                              4.94 kB
+dist/assets/Guangxiang_G_5-DgtrZ7Rh.png                              4.96 kB
+dist/assets/Guangxiang_G_2-2e0vsS52.png                              5.01 kB
+dist/assets/fanying07_01-B6fI_Qj6.png                                5.01 kB
+dist/assets/Guangxiang_X_2-ByVCcvJc.png                              5.03 kB
+dist/assets/crit_ling-BfHbfpmw.png                                   5.04 kB
+dist/assets/Guangxiang_G_0-C1PskBoD.png                              5.07 kB
+dist/assets/Guangxiang_X_0-BVNLVhVV.png                              5.08 kB
+dist/assets/crit_an-CLMdoBjP.png                                     5.11 kB
+dist/assets/crit_zhou-BgWA2PLD.png                                   5.11 kB
+dist/assets/crit_xin_ling-20740TM9.png                               5.12 kB
+dist/assets/crit_hun-Dnwi3Mja.png                                    5.13 kB
+dist/assets/crit_zhou_an-BBNfV2oj.png                                5.13 kB
+dist/assets/Hunxiang_H_5-Ca93hOwo.png                                5.13 kB
+dist/assets/crit_xiang-BE9m-Vbe.png                                  5.15 kB
+dist/assets/fanying07_02-DZuwZBUa.png                                5.17 kB
+dist/assets/Hunxiang_H_0-cOUafjK5.png                                5.20 kB
+dist/assets/Hunxiang_X_4-DgSNTIQC.png                                5.21 kB
+dist/assets/crit_guang-DRrs-QJ1.png                                  5.27 kB
+dist/assets/Hunxiang_H_2-bDqZyY2q.png                                5.30 kB
+dist/assets/Hunxiang_X_3-pT12fwR3.png                                5.34 kB
+dist/assets/Guangxiang_X_6-C7E_bLGz.png                              5.43 kB
+dist/assets/Guangxiang_G_6-pfCXux2p.png                              5.45 kB
+dist/assets/fanying08_02-BdgR0czb.png                                5.51 kB
+dist/assets/Guangxiang_G_9-Cb45Km-D.png                              5.56 kB
+dist/assets/Guangxiang_X_9-RkFObK9x.png                              5.64 kB
+dist/assets/Guangxiang_G_8-hYjd49aF.png                              5.64 kB
+dist/assets/Guangxiang_X_8-BKiKHrNF.png                              5.67 kB
+dist/assets/Hunxiang_X_5-DVhihArn.png                                5.73 kB
+dist/assets/Hunxiang_X_0-BNrDuRUm.png                                5.73 kB
+dist/assets/fanying05_01-CMZ_zagK.png                                5.82 kB
+dist/assets/Hunxiang_H_6-N6D96wFq.png                                5.85 kB
+dist/assets/Hunxiang_H_8-C_20_fyo.png                                5.86 kB
+dist/assets/Hunxiang_H_9-BMKjtcBe.png                                5.93 kB
+dist/assets/Hunxiang_X_2-Bny2m4y5.png                                6.07 kB
+dist/assets/fanying01_02-BsBPalhZ.png                                6.16 kB
+dist/assets/fanying02_01-rYt3c9Ua.png                                6.28 kB
+dist/assets/Hunxiang_X_6-NvxTDAxK.png                                6.38 kB
+dist/assets/Hunxiang_X_8-U0SMhc6X.png                                6.45 kB
+dist/assets/Hunxiang_X_9-63ytszoe.png                                6.58 kB
+dist/assets/fanying04_02-DOk8tdZG.png                                6.78 kB
+dist/assets/fanying01_01-DE8-eg5N.png                                6.98 kB
+dist/assets/fanying01_01-BqNbtTPM.png                                7.02 kB
+dist/assets/fanying07_01-BIOCgnPp.png                                7.05 kB
+dist/assets/UI_avatarbg_Icon_01-CaAzqnka.png                         7.32 kB
+dist/assets/geist-cyrillic-ext-wght-normal-DjL33-gN.woff2            7.42 kB
+dist/assets/fanying05_02-OJz6pb7C.png                                7.56 kB
+dist/assets/UI_avatarbg_Icon_05-DoDCSKfO.png                         7.86 kB
+dist/assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2              8.00 kB
+dist/assets/fanying06_01-Cu3aujDE.png                                8.01 kB
+dist/assets/fanying06_02-ByRJX8qo.png                                8.20 kB
+dist/assets/UI_avatarbg_Icon_02-WpeTeavy.png                         8.72 kB
+dist/assets/fanying02_02-BYg7e_2_.png                                8.89 kB
+dist/assets/fanying03_02-CUKV5hUv.png                                9.01 kB
+dist/assets/Equip01-BEKC42b_.png                                     9.31 kB
+dist/assets/Equip13--HcTtEBk.png                                     9.31 kB
+dist/assets/Equip15-BtQyuWGp.png                                     9.31 kB
+dist/assets/lingzhou_icon_1-ZBazFGZq.png                             9.46 kB
+dist/assets/Equip27-abzXDnJK.png                                     9.51 kB
+dist/assets/Equip28-DaKqUy0H.png                                     9.59 kB
+dist/assets/Equip29-BB_EL5Bs.png                                     9.60 kB
+dist/assets/Equip14-BMce-t8c.png                                     9.60 kB
+dist/assets/Equip42-CIKPfek9.png                                     9.67 kB
+dist/assets/lingzhou_icon_2-AQJ7W6Wl.png                             9.73 kB
+dist/assets/Equip41-B3ElnRbp.png                                     9.79 kB
+dist/assets/fanying03_01-D01lIAk6.png                               10.31 kB
+dist/assets/UI_avatarbg_Icon_03-aAEV7HSm.png                        10.40 kB
+dist/assets/Equip39-3M_iuJO3.png                                    10.61 kB
+dist/assets/Equip11-553ik1Gx.png                                    11.03 kB
+dist/assets/UI_avatarbg_Icon_06-X87ivfz_.png                        11.07 kB
+dist/assets/Equip25-CNyTj8SE.png                                    11.11 kB
+dist/assets/Equip12-BzJnooAU.png                                    11.73 kB
+dist/assets/Equip02-WnOLMrtp.png                                    11.93 kB
+dist/assets/Equip30-CGA0Q7ye.png                                    12.03 kB
+dist/assets/Equip40-BbpbXwqu.png                                    12.05 kB
+dist/assets/Equip26-C73mmwdO.png                                    12.12 kB
+dist/assets/Equip16-Dx01OKvw.png                                    12.20 kB
+dist/assets/Equip04-CVzKVVgk.png                                    12.68 kB
+dist/assets/Equip06-B4B6tTTB.png                                    12.83 kB
+dist/assets/Equip03-CXVH04_R.png                                    12.85 kB
+dist/assets/UI_avatarbg_Icon_04-zoRI0o1x.png                        12.92 kB
+dist/assets/Equip18-B9quBhaT.png                                    13.01 kB
+dist/assets/Equip32-CQVGnvS9.png                                    13.11 kB
+dist/assets/Equip05-CFNoHZkn.png                                    13.39 kB
+dist/assets/Equip31-D-DYpbNH.png                                    13.40 kB
+dist/assets/Equip17-BZnx4UPY.png                                    13.47 kB
+dist/assets/Equip20-C8nYqdCe.png                                    13.59 kB
+dist/assets/Equip34-CicmTuHm.png                                    13.88 kB
+dist/assets/Equip33-IY528uP_.png                                    13.94 kB
+dist/assets/Equip19-B5v22Yx5.png                                    14.10 kB
+dist/assets/Equip08-DS_GO8-h.png                                    14.10 kB
+dist/assets/Equip09-BVQJj20L.png                                    14.32 kB
+dist/assets/Equip36-C01CjSA5.png                                    14.38 kB
+dist/assets/Equip23-CuLzNVC9.png                                    14.52 kB
+dist/assets/Equip22-CoV1jHfu.png                                    14.54 kB
+dist/assets/Equip37-CGOJpPTZ.png                                    14.77 kB
+dist/assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2               15.08 kB
+dist/assets/mon_37--yGTHtpZ.png                                     15.76 kB
+dist/assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2              16.51 kB
+dist/assets/mon_13_2-BJYoNHMG.png                                   18.93 kB
+dist/assets/mon_21-DzmR4Di1.png                                     21.74 kB
+dist/assets/mon_08-DyuggJSA.png                                     25.43 kB
+dist/assets/mon_33-Bqlve_o6.png                                     28.87 kB
+dist/assets/geist-latin-wght-normal-BgDaEnEv.woff2                  29.40 kB
+dist/assets/mon_18_2-CV6M0vwI.png                                   30.23 kB
+dist/assets/mon_27-CEs6bNNN.png                                     30.93 kB
+dist/assets/mon_25-F0hfNiRd.png                                     30.96 kB
+dist/assets/mon_17-DIxoi1L7.png                                     31.26 kB
+dist/assets/mon_25_blue-vLGyP-sV.png                                31.27 kB
+dist/assets/UI_YH_kongmuicon__83-DkIBENxL.png                       32.06 kB
+dist/assets/Boss_16-4twGo1Ny.png                                    32.36 kB
+dist/assets/mon_24-B0_RChW5.png                                     32.76 kB
+dist/assets/mon_02_Ghost_BP-C5P2hqbC.png                            32.90 kB
+dist/assets/Boss_07-B0rvcD9y.png                                    32.91 kB
+dist/assets/Boss_08-CX74-hZl.png                                    33.39 kB
+dist/assets/mon_23-Cr25RrdA.png                                     33.47 kB
+dist/assets/mon_20-BFFmSDkF.png                                     33.52 kB
+dist/assets/UI_YH_kongmuicon__73-Zcij9gg4.png                       33.76 kB
+dist/assets/Boss_15-U0KEUWUt.png                                    34.06 kB
+dist/assets/mon_35-CgobGfUw.png                                     34.16 kB
+dist/assets/UI_YH_kongmuicon__63-BC7WJjzE.png                       34.39 kB
+dist/assets/UI_YH_kongmuicon__29-BnmENzj8.png                       34.44 kB
+dist/assets/mon_05-0AKvkIMV.png                                     34.45 kB
+dist/assets/UI_YH_kongmuicon__55-DXe9ZCWQ.png                       34.51 kB
+dist/assets/UI_YH_kongmuicon__21-DcbSVNN3.png                       34.56 kB
+dist/assets/UI_YH_kongmuicon__57-DcsL808N.png                       34.58 kB
+dist/assets/UI_YH_kongmuicon__51-CzGJ8Lo0.png                       34.63 kB
+dist/assets/mon_35_red-ClNbx7TV.png                                 34.63 kB
+dist/assets/UI_YH_kongmuicon__59-BK5MHE5N.png                       34.83 kB
+dist/assets/mon_04-D29kAR7B.png                                     34.89 kB
+dist/assets/UI_YH_kongmuicon__81-DfYKYTN5.png                       35.00 kB
+dist/assets/UI_YH_kongmuicon__25-DX9nO22Z.png                       35.03 kB
+dist/assets/boss_33-ChWJ5gjG.png                                    35.08 kB
+dist/assets/UI_YH_kongmuicon__23-CuZ2tW3j.png                       35.09 kB
+dist/assets/UI_YH_kongmuicon__27-BMjIQiHf.png                       35.18 kB
+dist/assets/UI_YH_kongmuicon__11-DaJNEjdi.png                       35.19 kB
+dist/assets/mon_03-Cut_0FfA.png                                     35.35 kB
+dist/assets/UI_YH_kongmuicon__49-DtUSAaKo.png                       35.42 kB
+dist/assets/UI_YH_kongmuicon__41-BqQvjnop.png                       35.59 kB
+dist/assets/UI_YH_kongmuicon__01-D0AdyYvD.png                       35.74 kB
+dist/assets/UI_YH_kongmuicon__35-D_VEnn2X.png                       35.88 kB
+dist/assets/UI_YH_kongmuicon__37-dYxxG12l.png                       36.11 kB
+dist/assets/UI_YH_kongmuicon__31-CpqCKZFb.png                       36.16 kB
+dist/assets/UI_YH_kongmuicon__47-CsUUaGxd.png                       36.17 kB
+dist/assets/UI_YH_kongmuicon__09-By5hvBel.png                       36.18 kB
+dist/assets/UI_YH_kongmuicon__05-BtR9O5AK.png                       36.29 kB
+dist/assets/UI_YH_kongmuicon__13-DbMtH3tv.png                       36.35 kB
+dist/assets/UI_YH_kongmuicon__03-BmFVUKkr.png                       36.37 kB
+dist/assets/UI_YH_kongmuicon__15-CjIX4GsN.png                       36.40 kB
+dist/assets/UI_YH_kongmuicon__19-DxnvreQY.png                       36.47 kB
+dist/assets/UI_YH_kongmuicon__53-C1dHsxXi.png                       36.51 kB
+dist/assets/UI_YH_kongmuicon__17-D2YW88b9.png                       36.56 kB
+dist/assets/UI_YH_kongmuicon__43-DF998mti.png                       36.63 kB
+dist/assets/UI_YH_kongmuicon__61-DxE0DOW4.png                       36.66 kB
+dist/assets/UI_YH_kongmuicon__07-G5gwSsyC.png                       36.67 kB
+dist/assets/UI_YH_kongmuicon__71-7ep1ales.png                       36.68 kB
+dist/assets/UI_YH_kongmuicon__39-BvxrlPYx.png                       36.73 kB
+dist/assets/YH_UI_guaiwuzhuizhong_touxiangkuang_07-qPHRfTYP.png     36.79 kB
+dist/assets/mon_51-52R1u6Ar.png                                     37.21 kB
+dist/assets/mon_38_2-DiqnOwrb.png                                   37.29 kB
+dist/assets/UI_YH_kongmuicon__33-r-bKiOaH.png                       38.21 kB
+dist/assets/mon_02-DgQmcohx.png                                     38.21 kB
+dist/assets/UI_YH_kongmuicon__45-CpTPR9F9.png                       38.22 kB
+dist/assets/mon_38-Ck8PEowr.png                                     38.31 kB
+dist/assets/Boss_13-BTrixvE6.png                                    38.95 kB
+dist/assets/Boss_09-Csz2odVC.png                                    39.26 kB
+dist/assets/mon_11-GKAFFCNU.png                                     39.32 kB
+dist/assets/mon_18-D9ecYz0u.png                                     40.11 kB
+dist/assets/mon_39_2-CsuVnAEA.png                                   40.40 kB
+dist/assets/Boss_10-CXff3M_i.png                                    40.50 kB
+dist/assets/mon_26-BAScSHzY.png                                     40.83 kB
+dist/assets/mon_19-CSTxaudn.png                                     40.91 kB
+dist/assets/Boss_18-3ou4Mjhn.png                                    41.63 kB
+dist/assets/mon_29-D_pgEr0y.png                                     42.50 kB
+dist/assets/mon_22-CVKTTnQp.png                                     42.54 kB
+dist/assets/mon_39-CrdXNgIQ.png                                     42.56 kB
+dist/assets/mon_12-CU-jL9Rj.png                                     42.66 kB
+dist/assets/mon_01-C-S9n7mx.png                                     42.88 kB
+dist/assets/mon_30-CD5to38p.png                                     43.07 kB
+dist/assets/boss_19-B3G8pncr.png                                    43.41 kB
+dist/assets/mon_48-BWDK_qwO.png                                     43.77 kB
+dist/assets/mon_030_BP_Rain-CgGPkWta.png                            46.73 kB
+dist/assets/Boss_26-Dk4ivvqZ.png                                    47.38 kB
+dist/assets/Boss_17-CjNa-VUP.png                                    47.68 kB
+dist/assets/mon_nanally-akL-jy_x.png                                47.71 kB
+dist/assets/Boss_05-CxuBZcV7.png                                    48.10 kB
+dist/assets/mon_15-hnQur-oz.png                                     48.33 kB
+dist/assets/mon_030_BP_Snow-dBefyXuq.png                            50.56 kB
+dist/assets/mon_16-DVKmPds5.png                                     51.45 kB
+dist/assets/mon_14-tv6TUVqI.png                                     56.78 kB
+dist/assets/mon_41-Bgf1Z81-.png                                     59.78 kB
+dist/assets/Boss_06-DPYyQCrH.png                                    60.93 kB
+dist/assets/player_046_256-j74pJ7MV.png                             86.16 kB
+dist/assets/player_015_256-Bjvq0AOm.png                             89.51 kB
+dist/assets/player_003_256-C9FDojSJ.png                            103.31 kB
+dist/assets/player_012_256-Bo0dTnyy.png                            109.64 kB
+dist/assets/player_073_256-CRtgRJoZ.png                            114.74 kB
+dist/assets/player_010_256-BC7hxgfA.png                            114.79 kB
+dist/assets/player_008_256-Jbi1dw07.png                            115.62 kB
+dist/assets/player_004_256-BJol8YOA.png                            118.27 kB
+dist/assets/player_005_256-BGG2VQRl.png                            118.45 kB
+dist/assets/player_009_256-CejwNMjl.png                            118.73 kB
+dist/assets/player_028_256-edSmMch2.png                            119.92 kB
+dist/assets/player_haiyue_256-DQT3tt4L.png                         124.82 kB
+dist/assets/player_019_256-104bQS62.png                            127.71 kB
+dist/assets/player_027_256-DCQp1jng.png                            129.37 kB
+dist/assets/player_020_256-CFbPtHqz.png                            129.64 kB
+dist/assets/player_kaesi1_256-DxfjnF7P.png                         131.20 kB
+dist/assets/player_021_256-Bez4hng5.png                            132.04 kB
+dist/assets/player_yiluoyi_256-B12gXPc1.png                        137.25 kB
+dist/assets/player_104_256-CSDBwczd.png                            140.62 kB
+dist/assets/codicon-Brq4_Ui5.ttf                                   140.95 kB
+dist/assets/player_zhenhong_256-D_13PhDH.png                       150.15 kB
+dist/assets/player_013_256-E8aOxQhR.png                            173.51 kB
+dist/assets/editor.worker-Bbk1whK-.js                              300.45 kB
+dist/assets/index-D5GRZ-kP.css                                     122.41 kB │ gzip:  20.81 kB
+dist/assets/mod-source-editor-hvuj3vCU.css                         139.23 kB │ gzip:  20.63 kB
+dist/assets/main-dps-model-DMWwL3GZ.js                               1.09 kB │ gzip:   0.61 kB
+dist/assets/island-page-wzLmL_VV.js                                  4.44 kB │ gzip:   1.87 kB
+dist/assets/cpp-C7h46wYY.js                                          4.74 kB │ gzip:   2.02 kB
+dist/assets/abyss-values-model-BKoUG690.js                           6.23 kB │ gzip:   2.17 kB
+dist/assets/abyss-values-page-BivvuhXW.js                           23.06 kB │ gzip:   6.92 kB
+dist/assets/character-avatar-dzVWn6PG.js                            26.58 kB │ gzip:   6.66 kB
+dist/assets/main-dps-page-RGWVCP3e.js                               27.30 kB │ gzip:   7.94 kB
+dist/assets/technical-contract-Bgu86hMp.js                          50.55 kB │ gzip:  17.10 kB
+dist/assets/i18n-DvGAvngF.js                                       267.22 kB │ gzip:  87.95 kB
+dist/assets/main-dps-detail-page-Be3YOQnS.js                       542.05 kB │ gzip: 367.64 kB
+dist/assets/index-DFlQod8T.js                                      659.32 kB │ gzip: 195.60 kB
+dist/assets/mod-source-editor-D31uqQhW.js                        3,353.17 kB │ gzip: 852.93 kB
+
+[32m✓ built in 992ms[39m
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+--- END OUTPUT ---
+EXIT_STATUS frontend_build=0
+
+COMMAND cargo fmt --check --manifest-path src-tauri/Cargo.toml
+INPUT cwd=D:\NTE_DPS_TOOL
+--- OUTPUT ---
+
+--- END OUTPUT ---
+EXIT_STATUS tauri_fmt_check=0
+
+COMMAND cargo check --manifest-path src-tauri/Cargo.toml
+INPUT cwd=D:\NTE_DPS_TOOL
+--- OUTPUT ---
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.34s
+
+--- END OUTPUT ---
+EXIT_STATUS tauri_check=0
+
+COMMAND cargo test --manifest-path src-tauri/Cargo.toml windows::island::tests
+INPUT cwd=D:\NTE_DPS_TOOL
+--- OUTPUT ---
+warning: linker stdout: 正在创建库 D:\NTE_DPS_TOOL\src-tauri\target\debug\deps\nte_dps_tool_tauri_lib.dll.lib 和对象 D:\NTE_DPS_TOOL\src-tauri\target\debug\deps\nte_dps_tool_tauri_lib.dll.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `nte-dps-tool-tauri` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running unittests src\lib.rs (src-tauri\target\debug\deps\nte_dps_tool_tauri_lib-87e63a60820f63e3.exe)
+
+running 4 tests
+test windows::island::tests::centers_island_against_the_monitor_not_an_app_window ... ok
+test windows::island::tests::clamps_large_offsets_inside_screen_edges ... ok
+test windows::island::tests::keeps_secondary_monitor_origin_and_dpi_scale ... ok
+test windows::island::tests::preserves_logical_island_size_across_monitor_dpi ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 120 filtered out; finished in 0.00s
+
+     Running unittests src\main.rs (src-tauri\target\debug\deps\nte_dps_tool_tauri-2223f2ea4b17a481.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+--- END OUTPUT ---
+EXIT_STATUS island_tests=0
+
+```
+
+## Artifact reopen and rollback execution
+
+```text
+ARTIFACT VERIFICATION cwd=D:\NTE_DPS_TOOL
+
+COMMAND git -c core.autocrlf=false apply --check --whitespace=error-all D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase3-20260802\ui-motion-phase3.patch
+INPUT cwd=D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase3-20260802\verification\patch-tree
+--- OUTPUT ---
+
+--- END OUTPUT ---
+EXIT_STATUS patch_check=0
+
+COMMAND git -c core.autocrlf=false apply --whitespace=error-all D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase3-20260802\ui-motion-phase3.patch
+INPUT cwd=D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase3-20260802\verification\patch-tree
+--- OUTPUT ---
+
+--- END OUTPUT ---
+EXIT_STATUS patch_apply=0
+
+PROBE patch_tree_hashes files=9 mismatches=0
+LITERAL_OUTPUT 
+EXIT_STATUS patch_tree_hashes=0
+
+PROBE zip_tree_hashes files=9 mismatches=0
+LITERAL_OUTPUT 
+EXIT_STATUS zip_tree_hashes=0
+
+COMMAND powershell -File rollback.ps1 -WorkspaceRoot D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase3-20260802\verification\rollback-tree
+INPUT cwd=D:\NTE_DPS_TOOL
+--- OUTPUT ---
+Rollback restored 7 files and removed 2 phase-three files.
+
+--- END OUTPUT ---
+EXIT_STATUS rollback_execute=0
+
+PROBE rollback_hashes originals_mismatches=0 new_files_remaining=0
+LITERAL_OUTPUT originals=; new=
+EXIT_STATUS rollback_hashes=0
+```
+
+## Task diff whitespace probe
+
+```text
+COMMAND git diff --check -- frontend/src/index.css frontend/src/features/console/console-sidebar.tsx frontend/src/features/technical-hud/technical-hud-page.tsx frontend/src/features/island/island-page.tsx frontend/src/features/main-dps/main-dps-page.tsx frontend/src/lib/motion.ts src-tauri/src/windows/island.rs
+INPUT cwd=D:\NTE_DPS_TOOL
+--- OUTPUT ---
+warning: in the working copy of 'frontend/src/features/console/console-sidebar.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/features/technical-hud/technical-hud-page.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/index.css', LF will be replaced by CRLF the next time Git touches it
+--- END OUTPUT ---
+EXIT_STATUS git_diff_check=0
+```
+
+## Final status
+
+- Prettier, Oxlint, TypeScript and Vite build: exit 0.
+- Frontend focused tests: 4 files, 18 tests passed.
+- Tauri rustfmt and cargo check: exit 0.
+- Island monitor/DPI geometry tests: 4 passed.
+- Patch/ZIP SHA-256 mismatches: 0.
+- Rollback restored 7 originals and removed 2 new files; mismatches: 0.
+- Vite retained its existing large-chunk advisory; production build completed.

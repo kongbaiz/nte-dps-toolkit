@@ -4,6 +4,8 @@
 //! with the headless CLI build; the window/hotkey/drop bridges only exist for
 //! the GUI.
 
+#[cfg(all(windows, any(feature = "desktop", feature = "gui")))]
+pub mod file_dialog;
 #[cfg(feature = "gui")]
 pub mod file_drop;
 #[cfg(feature = "gui")]

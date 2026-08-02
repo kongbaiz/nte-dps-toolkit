@@ -1,0 +1,10 @@
+COMMAND: & D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase4-20260802\rollback.ps1
+Rollback complete: original files restored and phase-created files removed.
+EXIT: 
+COMMAND: git apply --check D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase4-20260802\ui-motion-phase4.patch
+EXIT: 0
+COMMAND: git apply D:\NTE_DPS_TOOL\.codex-artifacts\ui-motion-phase4-20260802\ui-motion-phase4.patch
+EXIT: 0
+CORRECTION: restore exact modified bytes from verified modified-files.zip extraction after git line-ending normalization
+corrected modified verification: 8/8 exact hashes
+reverse patch check after exact-byte restore: exit 0

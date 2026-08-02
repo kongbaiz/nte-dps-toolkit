@@ -1,0 +1,10 @@
+$ vitest run
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  62 passed (62)
+      Tests  212 passed (212)
+   Start at  07:01:01
+   Duration  1.54s (transform 3.92s, setup 0ms, import 6.13s, tests 458ms, environment 7ms)
+

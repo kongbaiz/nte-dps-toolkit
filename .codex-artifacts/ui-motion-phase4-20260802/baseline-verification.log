@@ -1,0 +1,61 @@
+BASELINE 2026-08-02T21:03:23.0712273+08:00
+
+COMMAND: pnpm exec prettier --check src/components/nte/window-motion-boundary.tsx src/features/main-dps/main-dps-page.tsx src/features/main-dps/use-main-dps.ts src/features/technical-hud/technical-hud-page.tsx src/features/technical-hud/use-technical-state.ts
+Checking formatting...
+All matched files use Prettier code style!
+EXIT: 0
+
+COMMAND: pnpm run typecheck
+$ tsc -b
+EXIT: 0
+
+COMMAND: pnpm exec vitest run src/features/main-dps/main-dps-model.test.ts src/features/technical-hud/technical-view-model.test.ts
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  2 passed (2)
+      Tests  15 passed (15)
+   Start at  21:03:29
+   Duration  275ms (transform 134ms, setup 0ms, import 194ms, tests 19ms, environment 0ms)
+
+EXIT: 0
+
+COMMAND: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+`cargo metadata` exited with an error: error: manifest path `src-tauri/Cargo.toml` does not exist
+
+This utility formats all bin and lib files of the current crate using rustfmt.
+
+Usage: cargo fmt [OPTIONS] [-- <rustfmt_options>...]
+
+Arguments:
+  [rustfmt_options]...  Options passed to rustfmt
+
+Options:
+  -q, --quiet
+          No output printed to stdout
+  -v, --verbose
+          Use verbose output
+      --version
+          Print rustfmt version and exit
+  -p, --package <package>...
+          Specify package to format
+      --manifest-path <manifest-path>
+          Specify path to Cargo.toml
+      --message-format <message-format>
+          Specify message-format: short|json|human
+      --all
+          Format all packages, and also their local path-based dependencies
+      --check
+          Run rustfmt in check mode
+  -h, --help
+          Print help
+
+EXIT: 1
+
+CORRECTED COMMAND: cargo fmt --check --manifest-path D:\NTE_DPS_TOOL\src-tauri\Cargo.toml
+EXIT: 0
+
+CORRECTED COMMAND: cargo check --manifest-path D:\NTE_DPS_TOOL\src-tauri\Cargo.toml
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.34s
+EXIT: 0

@@ -1,0 +1,11 @@
+{
+  "browser_file_input": true,
+  "browser_blob_export": true,
+  "native_import_command": false,
+  "native_export_command": false,
+  "capture_json_enabled": false,
+  "history_context_menu": false,
+  "separate_compare_warnings": false,
+  "neutral_delta": false,
+  "display_row_limit_6": false
+}

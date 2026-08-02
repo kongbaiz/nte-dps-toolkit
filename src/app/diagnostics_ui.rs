@@ -144,7 +144,7 @@ pub(crate) fn draw_diagnostic_report(
         ui.painter().text(
             egui::pos2(left, rect.center().y - 8.0),
             egui::Align2::LEFT_CENTER,
-            format!("{} · {}", check.status.label(), check.title),
+            format!("{} · {}", t(check.status.label_key()), check.title),
             egui::FontId::proportional(12.0),
             color,
         );

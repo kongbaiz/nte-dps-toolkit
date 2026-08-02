@@ -1,0 +1,15 @@
+{
+  "frontend/src/features/history/history-page.tsx": "ff5625bbc03937654a4b8f219f9314cc17110375f6ef5390d784a49fe56fa5ba",
+  "frontend/src/features/history/use-history.ts": "97c00238280a6c70f514e7c6eb1c0e764f87de059a8f31603671d8c72479aa08",
+  "frontend/src/features/history/history-view-model.ts": "7fb470895649b7c2f23833f49f5f7ad854c068f7167e9867fe916508768c9e71",
+  "frontend/src/features/history/history-view-model.test.ts": "b91009df61b78ee335d3ebbe008cd8dc67addabdc9340a6bc4c32a0b3844f776",
+  "frontend/src/lib/tauri/history-client.ts": "85c38c6e5912672942bd45741a6cc68e992b26ce7f3119787957de45780dc95a",
+  "frontend/src/lib/tauri/history-client.test.ts": "86bab240c1aae45029b2a1a420c52eec3816b6d869e070dd9d0d92f404ccf007",
+  "frontend/src/lib/tauri/history-contract.ts": "5ab4d4797c7b1cdd1e304c8c9a4f8a37b74f5b62836d4e4f77b13161500ed9c9",
+  "frontend/src/lib/tauri/history-contract.test.ts": "939bd5977dc53487021e1b64cef9ef55300f89b2cd511c811f35acfd1a470f27",
+  "src-tauri/src/commands/history.rs": "039309b488878644c305786c6167ccdfd572c0391159730bae54547349df75be",
+  "src-tauri/src/contract/history.rs": "f45032a3cb0fcbdffe175fbfa7cb687cae2a3475ab3d109c405c2b5b969eea24",
+  "src-tauri/src/lib.rs": "25cc97c3d5b266e74551cd5f413521ab6f101bcdc873d048a8092f0184af05af",
+  "res/languages/zh-CN.json": "139bdc6993dc35658523159ea80e4a8a9f2a7440ba201c3e7160597d543f4586",
+  "res/languages/ja.json": "0820966b3b4002a17197a0821403da93fe9f936f307de281f906531863059eca"
+}

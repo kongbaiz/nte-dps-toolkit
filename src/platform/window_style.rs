@@ -6,6 +6,10 @@ use libloading::Library;
 use windows_sys::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GWL_EXSTYLE, GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW,
+    WS_EX_LAYERED,
+};
 use windows_sys::{Win32::Foundation::HWND, core::BOOL};
 
 /// DWM sentinel that suppresses the system-drawn one-pixel window border.
@@ -123,6 +127,32 @@ pub fn apply_borderless_rounding(hwnd: isize) -> Result<(), i32> {
     Ok(())
 }
 
+/// Apply the main desktop window's uniform opacity without involving WebView
+/// layout or repaint work. The alpha is clamped to the established UI range.
+pub fn apply_uniform_opacity(hwnd: isize, opacity: f32) -> Result<(), String> {
+    let hwnd = hwnd as HWND;
+    let alpha = opacity_alpha(opacity);
+    // SAFETY: `hwnd` belongs to the active desktop window. The style update and
+    // alpha call are synchronous and do not retain pointers.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if style & WS_EX_LAYERED as isize == 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED as isize);
+        }
+        if SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA) == 0 {
+            return Err(format!(
+                "SetLayeredWindowAttributes failed: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn opacity_alpha(opacity: f32) -> u8 {
+    (opacity.clamp(0.35, 1.0) * 255.0).round() as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +181,12 @@ mod tests {
                 animation_id: 0,
             }
         );
+    }
+
+    #[test]
+    fn opacity_alpha_uses_the_established_desktop_bounds() {
+        assert_eq!(opacity_alpha(0.0), 89);
+        assert_eq!(opacity_alpha(0.5), 128);
+        assert_eq!(opacity_alpha(2.0), 255);
     }
 }

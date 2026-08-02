@@ -1,0 +1,3 @@
+task-prettier-check=0
+root-cargo-fmt-final=0
+git-diff-check=0

@@ -291,6 +291,12 @@ impl EngineEventSink {
     pub fn take_dropped_debug_packets(&self) -> u64 {
         self.dropped_debug_packets.swap(0, Ordering::Relaxed)
     }
+
+    pub fn pending_len(&self) -> usize {
+        self.reliable
+            .len()
+            .saturating_add(self.debug.as_ref().map_or(0, Sender::len))
+    }
 }
 
 impl From<Sender<EngineEvent>> for EngineEventSink {
@@ -343,6 +349,15 @@ impl Drop for CaptureHandle {
 #[derive(Clone)]
 pub struct RawCaptureBuffer {
     inner: Arc<Mutex<RawCaptureData>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RawCaptureSnapshot {
+    pub path: Option<PathBuf>,
+    pub packet_count: u64,
+    pub captured_bytes: u64,
+    pub write_error: bool,
+    pub writing: bool,
 }
 
 struct RawCaptureData {
@@ -425,6 +440,22 @@ impl RawCaptureBuffer {
         self.inner
             .lock()
             .map_or(0, |capture| capture.packet_count as usize)
+    }
+
+    pub fn snapshot(&self) -> RawCaptureSnapshot {
+        self.inner.lock().map_or_else(
+            |_| RawCaptureSnapshot {
+                write_error: true,
+                ..RawCaptureSnapshot::default()
+            },
+            |capture| RawCaptureSnapshot {
+                path: capture.path.clone(),
+                packet_count: capture.packet_count,
+                captured_bytes: capture.captured_bytes,
+                write_error: capture.write_error.is_some(),
+                writing: capture.writer.is_some(),
+            },
+        )
     }
 
     pub fn path(&self) -> Option<PathBuf> {

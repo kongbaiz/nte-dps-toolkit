@@ -15,7 +15,7 @@ use crate::storage::paths::software_dir;
 pub const HISTORY_RECORD_VERSION: u32 = 1;
 pub const MAX_HISTORY_RECORDS: usize = 200;
 const MAX_HISTORY_DETAIL_HITS: usize = 100_000;
-const MAX_HISTORY_IMPORT_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_HISTORY_IMPORT_BYTES: u64 = 128 * 1024 * 1024;
 
 static HISTORY_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -425,6 +425,10 @@ pub fn import_record(path: &Path) -> Result<HistoryRecord, String> {
     import_record_to_dir(&history_dir(), path)
 }
 
+pub fn import_record_json(json: &str) -> Result<HistoryRecord, String> {
+    import_record_json_to_dir(&history_dir(), json)
+}
+
 pub fn import_record_to_dir(directory: &Path, source_path: &Path) -> Result<HistoryRecord, String> {
     let metadata = fs::metadata(source_path).map_err(|error| error.to_string())?;
     if !metadata.is_file() {
@@ -434,7 +438,22 @@ pub fn import_record_to_dir(directory: &Path, source_path: &Path) -> Result<Hist
         return Err("History record exceeds the supported file size".to_owned());
     }
     let text = fs::read_to_string(source_path).map_err(|error| error.to_string())?;
-    let mut record = parse_history_record(&text, source_path)?;
+    import_record_text_to_dir(directory, &text, source_path)
+}
+
+pub fn import_record_json_to_dir(directory: &Path, json: &str) -> Result<HistoryRecord, String> {
+    if json.len() as u64 > MAX_HISTORY_IMPORT_BYTES {
+        return Err("History record exceeds the supported file size".to_owned());
+    }
+    import_record_text_to_dir(directory, json, Path::new("import.json"))
+}
+
+fn import_record_text_to_dir(
+    directory: &Path,
+    text: &str,
+    source_path: &Path,
+) -> Result<HistoryRecord, String> {
+    let mut record = parse_history_record(text, source_path)?;
     record.version = HISTORY_RECORD_VERSION;
     record.id = generate_record_id(Utc::now());
 
@@ -999,6 +1018,20 @@ mod tests {
         assert_eq!(loaded.records.len(), 2);
         let _ = fs::remove_dir_all(source_directory);
         let _ = fs::remove_dir_all(destination_directory);
+    }
+
+    #[test]
+    fn json_text_import_uses_the_same_validation_and_fresh_id_rules() {
+        let directory = temp_history_dir("import_json_text");
+        let json = r#"{"version":1,"id":"external-id","saved_at":"2026-01-01T00:00:00Z","summary":{"total_damage":42.0}}"#;
+
+        let imported = import_record_json_to_dir(&directory, json).unwrap();
+
+        assert_ne!(imported.id, "external-id");
+        assert_eq!(imported.summary.total_damage, 42.0);
+        assert_eq!(load_history_from_dir(&directory).records.len(), 1);
+        assert!(import_record_json_to_dir(&directory, "{not json").is_err());
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
