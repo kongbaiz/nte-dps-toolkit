@@ -3,9 +3,22 @@ use nte_dps_tool::storage::config::{HUD_WIDTH_MAX, HUD_WIDTH_MIN, HudModule};
 use crate::contract::CommandError;
 
 pub(crate) mod abyss_values;
+pub(crate) mod character_data;
+pub(crate) mod console_control;
+pub(crate) mod desktop_window;
+pub(crate) mod diagnostics;
+pub(crate) mod empty_curtain;
+pub(crate) mod encrypted_ini;
+pub(crate) mod history;
+pub(crate) mod island;
+pub(crate) mod main_dps;
 pub(crate) mod mod_studio;
+pub(crate) mod packets;
+pub(crate) mod resources;
 pub(crate) mod settings;
+pub(crate) mod skills;
 pub(crate) mod technical;
+pub(crate) mod timeline;
 
 pub(crate) fn parse_hud_module(module: &str) -> Result<HudModule, CommandError> {
     match module {

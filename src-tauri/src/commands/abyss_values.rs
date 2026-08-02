@@ -17,6 +17,7 @@ pub(crate) async fn get_abyss_values_snapshot(
 ) -> Result<AbyssValuesSnapshot, CommandError> {
     abyss_values::validate_window(&window)?;
     let teams = state.imported_abyss_teams();
+    let current_team_available = state.current_abyss_team_availability();
     let dataset = tauri::async_runtime::spawn_blocking(AbyssMonsterDataset::load)
         .await
         .map_err(|error| {
@@ -27,7 +28,11 @@ pub(crate) async fn get_abyss_values_snapshot(
             log::error!("load abyss values failed: {error}");
             CommandError::abyss_values_unavailable()
         })?;
-    Ok(AbyssValuesSnapshot::new(dataset, teams))
+    Ok(AbyssValuesSnapshot::new(
+        dataset,
+        teams,
+        current_team_available,
+    ))
 }
 
 #[tauri::command]
@@ -44,6 +49,19 @@ pub(crate) fn import_abyss_prediction_team(
         CommandError::team_data_invalid()
     })?;
     if !state.import_abyss_team(export, upper) {
+        return Err(CommandError::abyss_team_unavailable());
+    }
+    Ok(state.imported_abyss_teams().into())
+}
+
+#[tauri::command]
+pub(crate) fn import_current_abyss_prediction_team(
+    half: String,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<AbyssPredictionTeamsSnapshot, CommandError> {
+    abyss_values::validate_window(&window)?;
+    if !state.import_current_abyss_team(parse_half(&half)?) {
         return Err(CommandError::abyss_team_unavailable());
     }
     Ok(state.imported_abyss_teams().into())

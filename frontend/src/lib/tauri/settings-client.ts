@@ -3,6 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   parseSettingsSnapshot,
   parseSettingsEvent,
+  parseTeamDataImportFileResult,
   type CaptureSettingsInput,
   type GlobalHotkeyActionId,
   type HotkeyBinding,
@@ -12,6 +13,7 @@ import {
   type LayoutProfileId,
   type SettingsCommandError,
   type SettingsSnapshot,
+  type TeamDataImportFileResult,
   type UpdateComponentId,
   type UpdateSettingsInput,
 } from "@/lib/tauri/settings-contract";
@@ -31,6 +33,7 @@ const COMMANDS = {
   exportTeamData: "export_settings_team_data",
   getSnapshot: "get_settings_snapshot",
   importTeamData: "import_settings_team_data",
+  importTeamDataFile: "import_settings_team_data_file",
   installUpdate: "install_settings_update",
   moveHudModule: "move_settings_hud_module",
   openHudEditor: "open_settings_hud_editor",
@@ -77,7 +80,8 @@ export interface SettingsClient {
   applyLayoutProfile(profile: LayoutProfileId): Promise<SettingsSnapshot>;
   openAbyssValues(): Promise<SettingsSnapshot>;
   importTeamData(json: string): Promise<SettingsSnapshot>;
-  exportTeamData(): Promise<string>;
+  importTeamDataFile(): Promise<TeamDataImportFileResult>;
+  exportTeamData(): Promise<boolean>;
   refreshCaptureFiles(): Promise<SettingsSnapshot>;
   clearCaptureFiles(): Promise<SettingsSnapshot>;
   setHudOption(
@@ -153,15 +157,30 @@ export function createSettingsClient(
     openAbyssValues: () => snapshotCommand(COMMANDS.openAbyssValues),
     importTeamData: (json) =>
       snapshotCommand(COMMANDS.importTeamData, { json }),
+    importTeamDataFile: async () => {
+      try {
+        return parseTeamDataImportFileResult(
+          await transport.invoke(COMMANDS.importTeamDataFile),
+        );
+      } catch (error) {
+        if (error instanceof TechnicalContractError) throw error;
+        throw parseTechnicalCommandError(error);
+      }
+    },
     exportTeamData: async () => {
       try {
         const value = await transport.invoke(COMMANDS.exportTeamData);
-        if (typeof value !== "string") {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          !("saved" in value) ||
+          typeof value.saved !== "boolean"
+        ) {
           throw new TechnicalContractError(
-            "team data export must be a JSON string",
+            "team data export result must contain a saved boolean",
           );
         }
-        return value;
+        return value.saved;
       } catch (error) {
         if (error instanceof TechnicalContractError) {
           throw error;

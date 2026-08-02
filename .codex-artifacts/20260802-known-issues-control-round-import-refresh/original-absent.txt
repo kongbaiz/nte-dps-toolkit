@@ -1,0 +1,3 @@
+frontend/src/lib/tauri/console-control-client.ts
+frontend/src/lib/tauri/console-control-client.test.ts
+src-tauri/src/commands/console_control.rs

@@ -94,6 +94,10 @@ export function predictedSeconds(
   return team && team.dps > 0 && hp > 0 ? hp / team.dps : null;
 }
 
+export function teamHeaderMembers(team: AbyssTeam): AbyssTeam["members"] {
+  return team.members.slice(0, 4);
+}
+
 export function summarizeWaves(
   monsters: readonly AbyssMonster[],
 ): AbyssWaveSummary[] {

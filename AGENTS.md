@@ -6,27 +6,67 @@
 
 1. **先确认影响层再动手**：修改前先判断工作属于 Rust 领域核心、Tauri 适配层、React 前端、Windows 平台层、Mod 系统、资源或文档，并遵守 §4 的边界。
 2. **Rust 核心保持唯一事实源**：抓包、协议解析、战斗归并、历史、资源、更新、Mod IPC 和系统集成继续由 Rust 实现；React 负责展示与交互。
-3. **迁移必须小步进行**：一次只迁移一个窗口或一个页签。完成编译和自动化验证后，停止并交付人工验证清单；人工验收通过后再进入下一阶段。
+3. **Tauri/React 是唯一现行桌面 UI**：新功能、交互修复和视觉规范落在 Tauri/React；Rust 保持业务权威；legacy egui 只做阻断构建或关键回归修复。
 4. **保持 CLI 纯净**：`nte-core` 的 CLI-only 依赖树不得出现 Tauri、WebView、React 构建、egui、eframe、wgpu 或窗口库。
 5. **跨边界只传稳定契约**：Rust 与 React、游戏 Mod 与桌面程序之间只传显式 DTO、事件、命令和错误码；禁止把内部领域类型、裸指针、窗口句柄或可变状态直接暴露给前端。
 6. **高频数据必须批量传输**：逐包、逐 hit、逐帧 IPC 属于禁止实现；使用有序 Channel、状态代次、增量批次、分页和节流。
-7. **文案统一走 i18n**：英文字符串作为稳定 key，简体中文继续以 `res/languages/zh-CN.json` 为源；Rust egui 与 React 前端都从同一份翻译资源生成或加载。
+7. **文案统一走 i18n**：英文字符串作为稳定 key，简体中文继续以 `res/languages/zh-CN.json` 为源；React 与桌面 Rust 契约使用同一翻译资源或稳定 key。
 8. **信任边界完整校验一次**：网络字节、文件、Tauri command 参数、Mod manifest、FFI 和系统调用在入口完成校验；边界内部保持类型驱动和简洁实现。
-9. **默认禁止清单**（除非用户当次明确要求）：`git commit`、`git push`、批量重构、整仓格式化、同时迁移多个窗口、升级大版本依赖、改写更新协议、修改 `vendor/`。
+9. **默认禁止清单**（除非用户当次明确要求）：`git commit`、`git push`、批量重构、整仓格式化、同时改动多个独立窗口或主题、升级大版本依赖、改写更新协议、修改 `vendor/`。
 10. **改完必验证**：执行与影响面匹配的 Rust、Tauri、TypeScript、前端构建和测试命令；任何未运行项都要在最终回复中写明原因。
 11. **UI 由用户人工验收**：智能体不启动桌面程序、不模拟点击、不截图验证。透明、穿透、置顶、快捷键、多屏 DPI 和窗口恢复必须列入人工验证。
 12. **保留无关工作树内容**：只修改当前任务直接涉及的文件；发现其他问题只记录，不顺手修复。
+13. **局部修复默认走 25 分钟快速通道**：小范围 UI、交互、窗口切换、展示算法和既有契约内的修复按 §0.1 执行；禁止把局部修复扩展成全仓审计、通用框架、依赖清理或完整发布验证。
+
+## 0.1 25 分钟快速通道
+
+### 适用条件
+
+用户一次指出 1～4 个明确的局部差异，并且修改满足以下条件时，默认目标为从开始执行到交付不超过 25 分钟：
+
+- 只涉及现有页面、组件、窗口 command、展示投影或小型确定性算法；
+- 继续使用既有 DTO、command、配置字段和依赖；
+- 预计净改动不超过 200 行、直接涉及不超过 8 个源码或测试文件；
+- 不涉及协议解析、reducer 语义、历史迁移、更新安装、原生插件、`unsafe`、发布或 CI。
+
+用户描述为“简单修改”“这几个差异”“直接修复”时，优先按快速通道判断，不先做全仓架构审计。
+
+### 时间预算
+
+1. **0～3 分钟：定位**。只看用户指出的入口、相邻实现、当前相关 diff 和最近对照代码；找到唯一事实源后立即动手。
+2. **3～15 分钟：实现**。优先最小直接修复；第三处重复出现前不抽通用 Hook、trait、service 或新模块。
+3. **15～22 分钟：定向验证**。先跑修改模块的 focused test/typecheck/check；同一套全量测试在代码未变化时不得重复运行。
+4. **22～25 分钟：交付**。检查任务 diff，给出简短结果和受影响行为的人工验收点。
+
+到第 20 分钟仍未完成时，立即停止扩展范围：保留已确认实现，只补阻断交付的编译或测试；文档整理、命名清理、依赖瘦身和额外抽象另列后续项。若单次干净编译或外部工具等待本身越过预算，最终回复只报告该实际阻塞，不再追加其它验证矩阵。
+
+### 快速通道验证矩阵
+
+- **React 局部改动**：任务文件 Prettier、`typecheck`、最相关的 Vitest；只有改到入口、路由、资源导入或构建配置时才跑 `build`。
+- **Tauri command/窗口局部改动**：任务 Rust 文件 rustfmt check、`cargo check --manifest-path src-tauri/Cargo.toml`；只有改到可测试状态机、契约或共享状态时才跑对应 focused test。
+- **根 Rust 小算法或投影**：任务文件 rustfmt check、精确测试过滤器、相关 Binary 的一次 `cargo check`；不默认跑全量 test/Clippy/CLI tree。
+- **前后端同时改动但契约不变**：分别跑一次前端 typecheck/focused test 和 Tauri check，不追加 no-bundle 打包。
+
+只有以下情况进入 §15 完整矩阵：新增或修改依赖/Feature、DTO 或配置 schema、协议解析或 reducer、历史迁移、更新器、原生/FFI/`unsafe`、发布/CI、跨 Binary 共享边界，或用户明确要求全量验证。
+
+### 快速通道范围纪律
+
+- 修 bug 时保留现有函数名、模块边界和依赖；除非修复本身要求，不顺手重命名共享 API、清理 Feature 或移动文件。
+- 两处调用允许少量重复，第三处才评估抽象；抽象必须比直接修复更少代码且不增加验证层级。
+- 普通局部修复不新增阶段文档、handoff 章节、截图、性能报告、补丁包或回滚包；用户明确要求、配置/数据迁移或破坏性操作时再生成。
+- 工作树很脏时只保存和检查任务文件的前后 diff，不重复输出整仓 status，也不为无关改动建立基线快照。
+- 颜色、布局等可枚举结果在实现完成后先用一个小探针确认实际样例，再进入最终验证，避免产物生成后返工。
 
 ## 1. 适用范围与优先级
 
-- 本文适用于整个 `NTE DPS TOOL` 仓库，包括 Rust 核心、现有 egui GUI、Tauri 主程序、React 前端、原生 Mods Plugin、资源、构建、测试和文档。
+- 本文适用于整个 `NTE DPS TOOL` 仓库，包括 Rust 核心、Tauri 主程序、React 前端、legacy egui 兼容代码、原生 Mods Plugin、资源、构建、测试和文档。
 - 优先级：用户当次明确指令 > 更深层目录中的 `AGENTS.md` > 本文。
 - 本文中的“必须 / 禁止”是规范性要求；描述性架构与代码现状不一致时，以代码为准，并报告偏差。
-- 迁移期允许 egui 与 Tauri 并存，但同一业务规则只能有一个 Rust 实现。
+- Tauri/React 是产品 UI；legacy egui 不作为新功能入口、视觉基线或业务规则副本，其隔离与删除应作为独立清理任务处理。
 
-## 2. 项目定位与迁移目标
+## 2. 项目定位与产品架构
 
-`NTE DPS TOOL` 是 Windows 桌面实时 DPS 工具。Rust 负责 Npcap 抓包、UE 网络协议解析、战斗模型、资源、历史、更新、Mod IPC 和 Windows 集成；桌面界面逐步从 `eframe/egui` 迁移到：
+`NTE DPS TOOL` 是 Windows 桌面实时 DPS 工具。Rust 负责 Npcap 抓包、UE 网络协议解析、战斗模型、资源、历史、更新、Mod IPC 和 Windows 集成；现行桌面界面采用：
 
 ```text
 Tauri 2
@@ -37,15 +77,15 @@ Tailwind CSS
 shadcn/ui
 ```
 
-目标产物保持：
+产品产物保持：
 
-- `nte-dps-tool`：最终由 Tauri 承载的完整桌面程序；
+- `nte-dps-tool`：由 Tauri 承载的完整桌面程序；
 - `nte-core`：无 GUI 的 stdio sidecar，Feature `cli`；
 - `nte-updater`：现有签名更新事务的独立执行程序；
 - `dwmapi.dll`：游戏侧 NTE Mods Plugin；
-- 迁移期 egui GUI：仅用于尚未迁移的窗口和行为对照，按阶段退出。
+- `gui` Feature 下的 egui 代码：冻结的兼容与后续清理对象，不承载新增产品功能。
 
-迁移目标不是把 Rust 业务代码翻译成 TypeScript，而是把 UI 表达层替换为 Web 技术，并建立稳定的前后端契约。
+业务规则不翻译到 TypeScript。Rust 核心保持唯一事实源，Tauri 只做命令、Channel、窗口和平台适配，React 负责产品展示与交互；新增桌面能力必须通过稳定契约跨越边界。
 
 ## 3. 不可破坏的约束
 
@@ -61,7 +101,7 @@ shadcn/ui
 
 ## 4. 总体架构与目录边界
 
-### 4.1 目标分层
+### 4.1 运行分层
 
 ```mermaid
 flowchart LR
@@ -101,13 +141,13 @@ flowchart LR
 - `src/platform/`：Win32、网络、热键、Mod IPC；
 - `src/storage/`：配置、历史、资源、i18n、文件；
 - `src/api/`、`src/cli/`：`nte-core` 对外协议；
-- `src/app/`：迁移期 egui UI，只处理尚未迁移的界面。
+- `src/app/`：冻结的 legacy egui 兼容 UI，只接受阻断构建、安全或关键回归修复。
 
-领域逻辑从 egui 页面抽离时，先放入既有 `core`、`engine`、`storage` 或 `platform` 归属，不放进 `src-tauri`。
+业务逻辑不得新增到 `src/app/`。可复用规则放入既有 `core`、`engine`、`storage` 或 `platform` 归属；`src-tauri` 只保留适配代码。
 
 ### 4.3 Tauri crate
 
-目标目录：
+规范目录：
 
 ```text
 src-tauri/
@@ -135,7 +175,7 @@ src-tauri/
 
 ### 4.4 React 前端
 
-目标目录：
+规范目录：
 
 ```text
 frontend/
@@ -285,7 +325,7 @@ frontend/
 
 - 英文字符串是稳定 key。
 - 简体中文值继续维护在 `res/languages/zh-CN.json`。
-- 迁移期 egui 使用 `t()` / `tf()`；React 使用统一的 `t()` 封装读取同一资源。
+- React 使用统一的 `t()` 封装读取翻译资源；Rust command 和契约返回稳定 code/key。legacy egui 仅复用既有 `t()` / `tf()`，不新增平行翻译源。
 - 新增用户可见文案必须同时补中文值。
 - Rust `core`、`engine` 和契约层返回稳定 code/key，不调用 UI 翻译函数。
 - 动态参数使用命名或显式占位符，禁止字符串拼接改变语序。
@@ -330,9 +370,9 @@ frontend/
 - Tauri HUD 不注册全局 F12；HUD 进入穿透状态后，通过现有控制台入口恢复编辑状态。
 - React 只发出意图，不直接维护 Win32 状态机。
 
-### 11.2 HUD 验证门槛
+### 11.2 HUD 产品验收门槛
 
-Tauri HUD 替换 egui HUD 前，必须人工验证：
+Tauri HUD 涉及透明、穿透、置顶、拖拽、缩放或窗口状态改动时，必须人工验证：
 
 1. WebView2 背景透明且没有白边、黑底或系统窗口残影；
 2. 快速角落缩放、拖动和模式切换稳定；
@@ -343,11 +383,12 @@ Tauri HUD 替换 egui HUD 前，必须人工验证：
 7. 抓包高负载时 HUD 更新平滑；
 8. 关闭、更新和崩溃恢复不遗留幽灵窗口。
 
-### 11.3 迁移期 egui
+### 11.3 Legacy egui 边界
 
-- 当前 `wgpu + DX12 DxgiFromVisual + vendor/egui-winit` 透明修复在 egui HUD 退出前保持完整。
-- 只在 Tauri HUD 人工验收完成并删除最后一个 egui 入口时，整体移除 `eframe`、`egui`、`wgpu` 和 `vendor/egui-winit`。
-- 迁移页面时禁止顺手改动透明补丁。
+- `src/app/`、相关 `gui` Feature 和 `vendor/egui-winit` 在独立清理任务前保持可构建。
+- legacy egui 只处理阻断构建、安全或关键回归问题，不新增产品功能，也不追求与 Tauri/React 的双向视觉同步。
+- 清理必须先确认产品入口与发行构建不再依赖 legacy egui，再在单一范围内移除 Feature、依赖、入口和本地 fork。
+- Tauri/React 的现行行为、产品需求和用户验收截图是 UI 验收基线。
 
 ## 12. 抓包、解析与历史
 
@@ -369,35 +410,41 @@ Tauri HUD 替换 egui HUD 前，必须人工验证：
 - 不引入 Next.js；桌面前端采用 Vite SPA，除非用户明确改变架构。
 - 不为少量状态引入大型全局状态框架或异步运行时。
 - 保留 release profile 的小体积、LTO 和 `panic = "abort"` 意图。
-- WebView2/Tauri、React、Tailwind 和 shadcn 的大版本升级必须先检查 API、窗口行为、构建产物和迁移说明。
-- `vendor/egui-winit-0.34.3` 是迁移期唯一允许的本地 fork；不以此为先例新增 fork。
+- WebView2/Tauri、React、Tailwind 和 shadcn 的大版本升级必须先检查 API、窗口行为、构建产物和兼容说明。
+- `vendor/egui-winit-0.34.3` 仅服务于 legacy 清理前的构建兼容；不以此为先例新增本地 fork。
 
-## 14. 迁移阶段
+## 14. 项目变更与交付规范
 
-迁移必须按以下顺序或用户明确调整后的顺序执行，每阶段结束后停止：
+### 14.1 变更分类
 
-1. **技术验证**：Tauri shell、typed command、Channel、透明 HUD、穿透、置顶、控制台恢复入口；
-2. **Mod 工坊**：Monaco、多文件、补全、控制台、热更新；
-3. **Console 页签**：设置、历史、时间线、技能、空幕、资源、诊断等逐页迁移；
-4. **Console 窗口替换**：动态 Sidebar、命令面板、Mod 页面；
-5. **主 DPS 窗口**：标题区、角色卡、团队统计、控制区；
-6. **详情窗口**：角色命中、团队命中、深渊总览；
-7. **HUD**：完成专项验收后替换；
-8. **清理阶段**：移除已无入口的 egui 代码、GUI feature 和透明 fork。
+- **局部修复**：满足 §0.1 时使用 25 分钟快速通道，只做定向实现与验证。
+- **产品功能**：限定一个领域或一组紧密关联的窗口，保持 Rust 规则唯一，并补齐契约、状态和 UI 验收。
+- **契约或数据变更**：涉及 DTO、配置、历史、数据库或导入格式时，显式版本化并验证向后兼容。
+- **平台或发行变更**：涉及窗口系统、FFI、更新器、Feature、依赖、CI 或打包时，执行 §15 的完整影响面矩阵。
 
-每阶段：
+### 14.2 实现顺序
 
-- 只覆盖一个窗口或页签；
-- 保持 Rust 规则唯一；
-- 保留旧界面作为对照直到该阶段验收；
-- 不同时进行主题、快捷键、更新器和布局的多主题重构；
-- 输出入口、操作步骤和预期表现的人工验证清单。
+1. 检查当前相关 diff、现行入口、相邻实现和唯一事实源。
+2. 领域规则先落到 Rust 对应层；纯展示规则留在 React feature 内。
+3. 跨边界变化先定义或更新 DTO、command、Channel、事件和错误语义。
+4. React 只实现权威状态的投影、交互和 loading/empty/error/stale 表达。
+5. 先执行定向验证，再依据变更分类决定是否进入完整矩阵；代码未变化时不重复同一验证。
+
+### 14.3 完成标准
+
+- 用户要求的行为已实现，相关测试或探针覆盖正常、边界和回归场景。
+- 没有在 React、Tauri adapter 或 legacy egui 中复制 Rust 领域规则。
+- 新增或变更的异步 UI 具备适用的 loading、empty、error 和 stale 状态。
+- UI 改动提供本次实际受影响的人工验收步骤；平台级改动覆盖 §11 专项。
+- 任务 diff 不包含无关清理、重构、依赖升级或生成产物。
 
 ## 15. 验证要求
 
+本节是高影响修改的完整验证矩阵，不是 §0.1 局部修复的默认路径。快速通道按影响面执行最窄验证；完整矩阵最多在最终代码确定后运行一次。
+
 ### 15.1 Rust 基线
 
-每次 Rust 改动必须运行：
+非快速通道的 Rust 改动运行：
 
 ```powershell
 cargo fmt --check
@@ -432,7 +479,7 @@ raw-window-handle
 
 ### 15.2 Tauri
 
-创建 `src-tauri` 后，涉及 Tauri 的改动必须运行：
+非快速通道或涉及契约、共享状态、capability、打包的 Tauri 改动运行：
 
 ```powershell
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
@@ -444,7 +491,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ### 15.3 React
 
-创建 `frontend` 后，使用 lockfile 对应的 package runner 执行：
+非快速通道、完整页面功能或入口/路由/构建改动，使用 lockfile 对应的 package runner 执行：
 
 ```text
 format/check
@@ -482,7 +529,9 @@ MSBuild.exe .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Confi
 - 窄窗口和 DPI；
 - loading/empty/error；
 - 透明、穿透、置顶、快捷键、拖拽或多窗口专项；
-- 新旧界面对照点。
+- 现行产品基线或用户验收截图的对照点。
+
+快速通道只列出本次实际受影响的 2～5 个检查点，不复制完整通用清单。
 
 ## 16. 禁止事项
 
@@ -490,7 +539,8 @@ MSBuild.exe .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Confi
 
 - `git commit`、`git push`、创建 PR；
 - 批量移动、拆分、合并或重命名 Rust 模块；
-- 一次性翻写全部 egui 页面；
+- 在 legacy egui 中新增产品功能；
+- 为维持双 UI 一致而把 Tauri/React 行为复制回 egui；
 - 在 React 中复制 Rust 领域算法；
 - 在 `src-tauri` 中复制 reducer、历史或解析逻辑；
 - 每个 hit、包或动画帧执行一次 Tauri `invoke` / global event；
@@ -510,11 +560,12 @@ MSBuild.exe .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Confi
 
 - 未经用户明确要求不提交、不推送。
 - 用户要求提交时，只暂存任务相关文件；提交信息以动词开头并描述实际改动。
-- 最终回复固定包含：
+- 非快速通道最终回复固定包含：
   1. 改动摘要与影响范围；
   2. 改动文件清单；
   3. 已运行验证命令及结果；
   4. 未运行验证及原因；
   5. 需人工验证的点。
+- 快速通道最终回复压缩为：改了什么、验证结果、2～5 个手工检查点；不复述调查过程，不附加未请求的审计材料。
 - 不把秘密、完整本机路径、PCAP 内容或资源 key 写入回复。
 - 若创建或切换分支，明确报告分支名。

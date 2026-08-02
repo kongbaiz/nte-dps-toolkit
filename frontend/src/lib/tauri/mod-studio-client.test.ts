@@ -10,6 +10,68 @@ const workspace = {
 };
 
 describe("Mod Studio client", () => {
+  it("routes creation, folders, manual game selection, and loader deployment through typed commands", async () => {
+    const deployment = {
+      contractVersion: 5,
+      installations: 1,
+      installed: 0,
+      current: 0,
+      sourceAvailable: true,
+      games: [{ region: "global", installed: false, current: false }],
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce({
+        contractVersion: 5,
+        id: "telemetry",
+        enabled: false,
+        source: "NTE_SCRIPT(5);",
+      })
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(deployment)
+      .mockResolvedValueOnce({
+        selected: true,
+        path: "D:\\Game",
+        deployment,
+      })
+      .mockResolvedValueOnce({
+        ...deployment,
+        installed: 1,
+        current: 1,
+        games: [{ region: "global", installed: true, current: true }],
+      });
+    const client = createModStudioClient({ invoke, createChannel: vi.fn() });
+
+    await client.createDocument("telemetry");
+    await client.openFolder();
+    await client.getDeployment("global", "D:\\Game");
+    await client.chooseGameDirectory("global");
+    await client.setLoaderEnabled("global", true, "D:\\Game");
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "create_mod_studio_document", {
+      id: "telemetry",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      "open_mod_studio_folder",
+      undefined,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(3, "get_mod_studio_deployment", {
+      region: "global",
+      gameDirectory: "D:\\Game",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(
+      4,
+      "choose_mod_studio_game_directory",
+      { region: "global" },
+    );
+    expect(invoke).toHaveBeenNthCalledWith(5, "set_mod_studio_loader_enabled", {
+      region: "global",
+      enabled: true,
+      gameDirectory: "D:\\Game",
+    });
+  });
+
   it("uses typed commands for workspace and on-demand source", async () => {
     const invoke = vi
       .fn()

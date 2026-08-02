@@ -1,0 +1,641 @@
+diff --git a/src/core/live_capture.rs b/src/core/live_capture.rs
+--- a/src/core/live_capture.rs
++++ b/src/core/live_capture.rs
+@@ -19,7 +19,7 @@
+     time::{Duration, Instant},
+ };
+ 
+-use crossbeam_channel::{Receiver, bounded, select};
++use crossbeam_channel::{Receiver, RecvError, TryRecvError, bounded, select_biased};
+ 
+ use super::{
+     CoreError, CoreErrorCode,
+@@ -880,17 +880,49 @@
+     debug_receiver: Receiver<EngineEvent>,
+ ) {
+     loop {
+-        let event = select! {
+-            recv(reliable_receiver) -> event => event,
+-            recv(debug_receiver) -> event => event,
+-        };
+-        let Ok(event) = event else {
++        let defer_debug = match inner.upgrade() {
++            Some(inner) => inner
++                .replay
++                .lock()
++                .expect("capture replay lock poisoned")
++                .is_some(),
++            None => break,
++        };
++        let Ok(event) = next_engine_event(&reliable_receiver, &debug_receiver, defer_debug) else {
+             break;
+         };
+         let Some(inner) = inner.upgrade() else {
+             break;
+         };
+         inner.process_event(event);
++    }
++}
++
++/// Preserve the legacy UI's reliable-first replay behavior. Semantic events
++/// and `CaptureStopped` must not wait behind thousands of optional full packet
++/// payloads; the bounded debug lane is intentionally allowed to fill and drop
++/// those payloads while a replay burst is still producing authoritative data.
++fn next_engine_event(
++    reliable_receiver: &Receiver<EngineEvent>,
++    debug_receiver: &Receiver<EngineEvent>,
++    defer_debug: bool,
++) -> Result<EngineEvent, RecvError> {
++    if defer_debug {
++        return reliable_receiver.recv();
++    }
++    match reliable_receiver.try_recv() {
++        Ok(event) => return Ok(event),
++        Err(TryRecvError::Disconnected) => return debug_receiver.recv(),
++        Err(TryRecvError::Empty) => {}
++    }
++    match debug_receiver.try_recv() {
++        Ok(event) => return Ok(event),
++        Err(TryRecvError::Disconnected) => return reliable_receiver.recv(),
++        Err(TryRecvError::Empty) => {}
++    }
++    select_biased! {
++        recv(reliable_receiver) -> event => event,
++        recv(debug_receiver) -> event => event,
+     }
+ }
+ 
+@@ -959,6 +991,85 @@
+     }
+ 
+     #[test]
++    fn event_worker_prioritizes_reliable_replay_events() {
++        let (reliable_sender, reliable_receiver) = bounded(2);
++        let (debug_sender, debug_receiver) = bounded(2);
++        debug_sender
++            .send(EngineEvent::Status("debug".to_owned()))
++            .expect("debug event");
++        reliable_sender
++            .send(EngineEvent::Status("reliable".to_owned()))
++            .expect("reliable event");
++
++        let EngineEvent::Status(first) =
++            next_engine_event(&reliable_receiver, &debug_receiver, false).expect("first event")
++        else {
++            panic!("test events are status values")
++        };
++        let EngineEvent::Status(second) =
++            next_engine_event(&reliable_receiver, &debug_receiver, false).expect("second event")
++        else {
++            panic!("test events are status values")
++        };
++
++        assert_eq!(first, "reliable");
++        assert_eq!(second, "debug");
++    }
++
++    #[test]
++    fn replay_bursts_defer_optional_debug_packets() {
++        let (reliable_sender, reliable_receiver) = bounded(1);
++        let (debug_sender, debug_receiver) = bounded(1);
++        debug_sender
++            .send(EngineEvent::Status("debug".to_owned()))
++            .expect("debug event");
++        let producer = thread::spawn(move || {
++            thread::sleep(Duration::from_millis(10));
++            reliable_sender
++                .send(EngineEvent::Status("reliable".to_owned()))
++                .expect("reliable event");
++        });
++
++        let EngineEvent::Status(event) =
++            next_engine_event(&reliable_receiver, &debug_receiver, true)
++                .expect("reliable replay event")
++        else {
++            panic!("test event is a status value")
++        };
++
++        producer.join().expect("producer");
++        assert_eq!(event, "reliable");
++        assert_eq!(debug_receiver.len(), 1);
++    }
++
++    #[test]
++    #[ignore = "set NTE_TEST_CAPTURE to a local pcapng path"]
++    fn stress_replay_finishes_before_optional_debug_drain() {
++        let path =
++            PathBuf::from(std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set"));
++        let (resources, warnings) = LiveCaptureResources::load(Language::SimplifiedChinese);
++        assert!(warnings.is_empty(), "resource warnings: {warnings:#?}");
++        let service = LiveCaptureService::new(resources);
++        let started = Instant::now();
++
++        service
++            .request_replay(CaptureReplayKind::Pcapng, path, None, true, false)
++            .expect("start replay");
++        let deadline = started + Duration::from_secs(120);
++        while service.status().phase != LiveCapturePhase::Stopped {
++            assert!(Instant::now() < deadline, "replay timed out");
++            thread::sleep(Duration::from_millis(5));
++        }
++
++        let pending_events = service.with_packet_state(|_, pending, _| pending);
++        let dropped_debug_packets = service.0.sender.take_dropped_debug_packets();
++        println!(
++            "replay reached stopped in {:?}: pending_events={pending_events}, dropped_debug_packets={dropped_debug_packets}",
++            started.elapsed()
++        );
++    }
++
++    #[test]
+     fn inventory_events_advance_only_the_inventory_projection() {
+         let service = LiveCaptureService::new(LiveCaptureResources::default());
+         let initial_revision = service.revision();
+diff --git a/src-tauri/src/windows/island.rs b/src-tauri/src/windows/island.rs
+--- a/src-tauri/src/windows/island.rs
++++ b/src-tauri/src/windows/island.rs
+@@ -58,11 +58,23 @@
+             .set_position(position)
+             .map_err(|_| CommandError::window_operation_failed())?;
+     }
++    // Reassert native overlay attributes on every wake. Windows can lower a
++    // hidden always-on-top WebView after display changes or main/HUD switches.
++    window
++        .set_always_on_top(true)
++        .map_err(|_| CommandError::window_operation_failed())?;
++    window
++        .set_skip_taskbar(true)
++        .map_err(|_| CommandError::window_operation_failed())?;
++    if window.is_minimized().unwrap_or(false) {
++        window
++            .unminimize()
++            .map_err(|_| CommandError::window_operation_failed())?;
++    }
+     window
+         .show()
+         .map_err(|_| CommandError::window_operation_failed())?;
+-    window
+-        .emit(ISLAND_CHANGED_EVENT, ())
++    app.emit_to(ISLAND_WINDOW_LABEL, ISLAND_CHANGED_EVENT, ())
+         .map_err(|_| CommandError::window_operation_failed())
+ }
+ 
+@@ -75,6 +87,19 @@
+ ) -> Result<(), CommandError> {
+     state.publish_island_notice(tone, message_key, message_arguments, None);
+     show_notice(app, state)
++}
++
++pub(crate) fn publish_notice_best_effort(
++    app: &AppHandle,
++    state: &AppState,
++    tone: &'static str,
++    message_key: &'static str,
++    message_arguments: Vec<String>,
++) {
++    state.publish_island_notice(tone, message_key, message_arguments, None);
++    if let Err(error) = show_notice(app, state) {
++        log::warn!("show notification island failed: {error:?}");
++    }
+ }
+ 
+ fn island_physical_size(scale: f64) -> PhysicalSize<u32> {
+diff --git a/src-tauri/src/channels/main_dps.rs b/src-tauri/src/channels/main_dps.rs
+--- a/src-tauri/src/channels/main_dps.rs
++++ b/src-tauri/src/channels/main_dps.rs
+@@ -1,12 +1,13 @@
+ use std::{sync::atomic::Ordering, thread, time::Duration};
+ 
+-use tauri::{State, WebviewWindow, ipc::Channel};
++use nte_dps_tool::core::live_capture::LiveCapturePhase;
++use tauri::{AppHandle, State, WebviewWindow, ipc::Channel};
+ 
+ use crate::{
+     commands::main_dps::snapshot,
+     contract::{CommandError, SubscriptionReceipt, main_dps::MainDpsEvent},
+     state::AppState,
+-    windows::main_dps,
++    windows::{island, main_dps},
+ };
+ 
+ pub(crate) const MAIN_DPS_STREAM_INTERVAL_MS: u32 = 100;
+@@ -16,6 +17,7 @@
+ pub(crate) fn subscribe_main_dps(
+     subscription_id: String,
+     on_event: Channel<MainDpsEvent>,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<SubscriptionReceipt, CommandError> {
+@@ -29,6 +31,7 @@
+         let mut last_game_detected = None;
+         let mut last_empty = true;
+         let mut empty_probe_ticks = 0_u8;
++        let mut last_capture_lifecycle = None;
+         while !stop.load(Ordering::Acquire) {
+             let revision = state.main_dps_stream_revision();
+             if last_revision != Some(revision) {
+@@ -36,6 +39,11 @@
+                 last_game_detected = Some(next.game_detected);
+                 last_empty = next.readout.data_state == "empty";
+                 empty_probe_ticks = 0;
++                let lifecycle = (state.capture_phase(), state.replay_running());
++                if let Some(previous) = last_capture_lifecycle {
++                    publish_capture_transition(&app, &state, previous, lifecycle);
++                }
++                last_capture_lifecycle = Some(lifecycle);
+                 if on_event.send(MainDpsEvent::Snapshot(next)).is_err() {
+                     break;
+                 }
+@@ -66,6 +74,45 @@
+         subscription_id,
+         stream_interval_ms: MAIN_DPS_STREAM_INTERVAL_MS,
+     })
++}
++
++fn publish_capture_transition(
++    app: &AppHandle,
++    state: &AppState,
++    previous: (LiveCapturePhase, bool),
++    current: (LiveCapturePhase, bool),
++) {
++    let notice = capture_transition_notice(previous, current);
++    if let Some((tone, message_key)) = notice {
++        island::publish_notice_best_effort(app, state, tone, message_key, Vec::new());
++    }
++}
++
++fn capture_transition_notice(
++    previous: (LiveCapturePhase, bool),
++    current: (LiveCapturePhase, bool),
++) -> Option<(&'static str, &'static str)> {
++    if previous.1 && !current.1 && current.0 == LiveCapturePhase::Stopped {
++        return Some((
++            "success",
++            "Import complete; see parse quality on the diagnostics page",
++        ));
++    }
++    if current.0 == LiveCapturePhase::Failed && previous.0 != LiveCapturePhase::Failed {
++        return Some(("error", "Capture failed"));
++    }
++    if previous.0 == LiveCapturePhase::Starting && current.0 == LiveCapturePhase::Running {
++        return Some(("success", "Live capture started, BPF is being determined"));
++    }
++    if matches!(
++        previous.0,
++        LiveCapturePhase::Running | LiveCapturePhase::Stopping
++    ) && current.0 == LiveCapturePhase::Stopped
++        && !previous.1
++    {
++        return Some(("success", "Capture stopped"));
++    }
++    None
+ }
+ 
+ #[tauri::command]
+@@ -104,4 +151,24 @@
+         assert!(validate_subscription_id(&"a".repeat(65)).is_err());
+     }
+ 
++    #[test]
++    fn capture_lifecycle_notices_cover_replay_and_live_completion() {
++        assert_eq!(
++            capture_transition_notice(
++                (LiveCapturePhase::Running, true),
++                (LiveCapturePhase::Stopped, false),
++            ),
++            Some((
++                "success",
++                "Import complete; see parse quality on the diagnostics page",
++            ))
++        );
++        assert_eq!(
++            capture_transition_notice(
++                (LiveCapturePhase::Stopping, false),
++                (LiveCapturePhase::Stopped, false),
++            ),
++            Some(("success", "Capture stopped"))
++        );
++    }
+ }
+diff --git a/src-tauri/src/commands/history.rs b/src-tauri/src/commands/history.rs
+--- a/src-tauri/src/commands/history.rs
++++ b/src-tauri/src/commands/history.rs
+@@ -3,7 +3,7 @@
+     import_record_json, load_history, restore_record, save_summary, save_summary_with_details,
+ };
+ use nte_dps_tool::storage::{i18n, io_util::atomic_write_text};
+-use tauri::{State, WebviewWindow};
++use tauri::{AppHandle, State, WebviewWindow};
+ 
+ use crate::{
+     contract::{
+@@ -14,7 +14,7 @@
+         },
+     },
+     state::AppState,
+-    windows::console,
++    windows::{console, island},
+ };
+ 
+ #[tauri::command]
+@@ -74,6 +74,7 @@
+ 
+ #[tauri::command]
+ pub(crate) async fn save_current_history_summary(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<HistorySnapshot, CommandError> {
+@@ -86,7 +87,7 @@
+         )
+     })?;
+     let state_for_task = state.clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         state_for_task.with_history_transaction(|| {
+             let result = match archive.details {
+                 Some(details) => save_summary_with_details(archive.summary, details),
+@@ -101,12 +102,21 @@
+         })
+     })
+     .await
+-    .map_err(history_task_failed)?
++    .map_err(history_task_failed)??;
++    island::publish_notice_best_effort(
++        &app,
++        &state,
++        "success",
++        "History summary saved",
++        Vec::new(),
++    );
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+ pub(crate) async fn import_history_record_json(
+     json: String,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<HistorySnapshot, CommandError> {
+@@ -118,7 +128,8 @@
+         ));
+     }
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let notice_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         state.with_history_transaction(|| {
+             import_record_json(&json).map_err(history_import_error)?;
+             let revision = state.bump_history_revision();
+@@ -126,18 +137,28 @@
+         })
+     })
+     .await
+-    .map_err(history_task_failed)?
++    .map_err(history_task_failed)??;
++    island::publish_notice_best_effort(
++        &app,
++        &notice_state,
++        "success",
++        "History summary imported",
++        Vec::new(),
++    );
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+ pub(crate) async fn delete_history_record(
+     record_id: String,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<HistoryDeleteSnapshot, CommandError> {
+     console::validate_window(&window)?;
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let notice_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         state.with_history_transaction(|| {
+             let record = find_record(&record_id)?;
+             if !delete_record(&record_id).map_err(|error| {
+@@ -159,18 +180,28 @@
+         })
+     })
+     .await
+-    .map_err(history_task_failed)?
++    .map_err(history_task_failed)??;
++    island::publish_notice_best_effort(
++        &app,
++        &notice_state,
++        "success",
++        "History summary deleted",
++        Vec::new(),
++    );
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+ pub(crate) async fn restore_deleted_history_record(
+     undo_token: String,
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<HistorySnapshot, CommandError> {
+     console::validate_window(&window)?;
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let notice_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         state.with_history_transaction(|| {
+             let record = state.take_deleted_history(&undo_token).ok_or_else(|| {
+                 CommandError::history(
+@@ -190,7 +221,15 @@
+         })
+     })
+     .await
+-    .map_err(history_task_failed)?
++    .map_err(history_task_failed)??;
++    island::publish_notice_best_effort(
++        &app,
++        &notice_state,
++        "success",
++        "History summary restored",
++        Vec::new(),
++    );
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+diff --git a/src-tauri/src/commands/encrypted_ini.rs b/src-tauri/src/commands/encrypted_ini.rs
+--- a/src-tauri/src/commands/encrypted_ini.rs
++++ b/src-tauri/src/commands/encrypted_ini.rs
+@@ -2,7 +2,7 @@
+     core::encrypted_ini::{EncryptedIniError, EncryptedIniSaveOutcome},
+     storage::i18n,
+ };
+-use tauri::{State, WebviewWindow};
++use tauri::{AppHandle, State, WebviewWindow};
+ 
+ use crate::{
+     contract::{
+@@ -13,7 +13,7 @@
+         },
+     },
+     state::{AppState, EncryptedIniRuntimeError},
+-    windows::console,
++    windows::{console, island},
+ };
+ 
+ #[tauri::command]
+@@ -27,6 +27,7 @@
+ 
+ #[tauri::command]
+ pub(crate) async fn open_encrypted_ini(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<OpenEncryptedIniResult, CommandError> {
+@@ -39,25 +40,38 @@
+         let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
+         let title = i18n::t("Open Encrypted INI");
+         let state = state.inner().clone();
+-        tauri::async_runtime::spawn_blocking(move || match choose_ini_open_path(owner, &title) {
+-            Ok(OpenFileDialogOutcome::Selected(path)) => state
+-                .open_encrypted_ini(path)
+-                .map(|snapshot| OpenEncryptedIniResult {
+-                    opened: true,
+-                    snapshot: snapshot.into(),
+-                })
+-                .map_err(encrypted_ini_error),
+-            Ok(OpenFileDialogOutcome::Cancelled) => Ok(OpenEncryptedIniResult {
+-                opened: false,
+-                snapshot: state.encrypted_ini_snapshot().into(),
+-            }),
+-            Err(code) => {
+-                log::error!("native encrypted INI open dialog failed: {code:#010x}");
+-                Err(file_dialog_error())
++        let notice_state = state.clone();
++        let result = tauri::async_runtime::spawn_blocking(move || {
++            match choose_ini_open_path(owner, &title) {
++                Ok(OpenFileDialogOutcome::Selected(path)) => state
++                    .open_encrypted_ini(path)
++                    .map(|snapshot| OpenEncryptedIniResult {
++                        opened: true,
++                        snapshot: snapshot.into(),
++                    })
++                    .map_err(encrypted_ini_error),
++                Ok(OpenFileDialogOutcome::Cancelled) => Ok(OpenEncryptedIniResult {
++                    opened: false,
++                    snapshot: state.encrypted_ini_snapshot().into(),
++                }),
++                Err(code) => {
++                    log::error!("native encrypted INI open dialog failed: {code:#010x}");
++                    Err(file_dialog_error())
++                }
+             }
+         })
+         .await
+-        .map_err(|_| operation_error())?
++        .map_err(|_| operation_error())??;
++        if result.opened {
++            island::publish_notice_best_effort(
++                &app,
++                &notice_state,
++                "success",
++                "Encrypted INI opened",
++                Vec::new(),
++            );
++        }
++        Ok(result)
+     }
+ 
+     #[cfg(not(windows))]
+@@ -69,23 +83,34 @@
+ 
+ #[tauri::command]
+ pub(crate) async fn reload_encrypted_ini(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<EncryptedIniSnapshot, CommandError> {
+     console::validate_window(&window)?;
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let notice_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         state
+             .reload_encrypted_ini()
+             .map(EncryptedIniSnapshot::from)
+             .map_err(encrypted_ini_error)
+     })
+     .await
+-    .map_err(|_| operation_error())?
++    .map_err(|_| operation_error())??;
++    island::publish_notice_best_effort(
++        &app,
++        &notice_state,
++        "success",
++        "Encrypted INI reloaded",
++        Vec::new(),
++    );
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+ pub(crate) async fn save_encrypted_ini(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+     request: SaveEncryptedIniRequest,
+@@ -95,7 +120,8 @@
+         parse_generation(&request.expected_generation).ok_or_else(invalid_request_error)?;
+     let key = parse_encrypted_ini_key(&request.key).ok_or_else(invalid_request_error)?;
+     let state = state.inner().clone();
+-    tauri::async_runtime::spawn_blocking(move || {
++    let notice_state = state.clone();
++    let result = tauri::async_runtime::spawn_blocking(move || {
+         state
+             .save_encrypted_ini(expected_generation, request.plaintext, key)
+             .map(|(snapshot, outcome)| SaveEncryptedIniResult {
+@@ -105,16 +131,37 @@
+             .map_err(encrypted_ini_error)
+     })
+     .await
+-    .map_err(|_| operation_error())?
++    .map_err(|_| operation_error())??;
++    island::publish_notice_best_effort(
++        &app,
++        &notice_state,
++        "success",
++        if result.saved {
++            "Encrypted INI saved"
++        } else {
++            "Encrypted INI unchanged"
++        },
++        Vec::new(),
++    );
++    Ok(result)
+ }
+ 
+ #[tauri::command]
+ pub(crate) fn clear_encrypted_ini(
++    app: AppHandle,
+     state: State<'_, AppState>,
+     window: WebviewWindow,
+ ) -> Result<EncryptedIniSnapshot, CommandError> {
+     console::validate_window(&window)?;
+-    Ok(state.clear_encrypted_ini().into())
++    let snapshot = state.clear_encrypted_ini().into();
++    island::publish_notice_best_effort(
++        &app,
++        state.inner(),
++        "success",
++        "Encrypted INI editor cleared",
++        Vec::new(),
++    );
++    Ok(snapshot)
+ }
+ 
+ fn encrypted_ini_error(error: EncryptedIniRuntimeError) -> CommandError {

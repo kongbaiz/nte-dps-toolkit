@@ -505,6 +505,9 @@ fn mods_plugin_update_error_detail(error: &ModsPluginDeploymentError) -> String 
         }
         ModsPluginDeploymentError::GameProcessProbe(_) => t("Mod loader status check failed"),
         ModsPluginDeploymentError::GameInstallationNotFound => t("Game installation not detected"),
+        ModsPluginDeploymentError::InvalidGameDirectory => {
+            t("The selected folder does not contain HTGame.exe.")
+        }
         ModsPluginDeploymentError::Registry(_) => t("Game installation not detected"),
         ModsPluginDeploymentError::PluginSourceNotFound => {
             t("Mod loader file plugins/dwmapi.dll was not found")

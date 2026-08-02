@@ -3,6 +3,7 @@ import { useSyncExternalStore } from "react";
 import { setFrontendLanguage } from "@/lib/i18n";
 import { settingsPresentationEqual } from "@/lib/settings-presentation-model";
 import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
+import { syncConsoleWindowBackground } from "@/lib/tauri/console-window-background";
 
 const DEFAULT_PRESENTATION: InterfaceSettings = {
   language: "zh-CN",
@@ -47,11 +48,23 @@ export function bootstrapSettingsPresentation(): void {
 
 function applyDocumentPresentation(next: InterfaceSettings) {
   const root = document.documentElement;
+  const isConsole = root.dataset.windowRoute === "console";
+  const isOpaqueDesktop =
+    isConsole ||
+    root.dataset.windowRoute === "main-dps" ||
+    root.dataset.windowRoute === "abyss-values" ||
+    root.dataset.windowRoute === "combat-details";
   root.classList.toggle("dark", next.darkMode);
+  root.classList.toggle("console-light", isOpaqueDesktop && !next.darkMode);
   root.dataset.themePreset = next.themePreset;
   root.dataset.accent = next.accent;
   root.dataset.density = next.density;
   root.classList.toggle("reduce-motion", next.reduceMotion);
+  if (isOpaqueDesktop) {
+    void syncConsoleWindowBackground(next.darkMode).catch((error: unknown) => {
+      console.error("sync Console window background failed", error);
+    });
+  }
 }
 
 export function useSettingsPresentation(): InterfaceSettings {

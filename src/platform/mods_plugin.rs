@@ -1426,6 +1426,7 @@ pub enum ModsPluginDeploymentError {
     GameRunning,
     GameProcessProbe(String),
     GameInstallationNotFound,
+    InvalidGameDirectory,
     Registry(String),
     PluginSourceNotFound,
     ConflictingDwmapi,
@@ -1443,6 +1444,9 @@ impl fmt::Display for ModsPluginDeploymentError {
             }
             Self::GameInstallationNotFound => {
                 formatter.write_str("game installation was not found")
+            }
+            Self::InvalidGameDirectory => {
+                formatter.write_str("selected directory does not contain HTGame.exe")
             }
             Self::Registry(error) => write!(formatter, "game registry lookup failed: {error}"),
             Self::PluginSourceNotFound => formatter.write_str("Mod loader source was not found"),
@@ -2053,8 +2057,16 @@ fn decode_mod_logs(
 pub fn inspect_plugin_deployment(
     current_plugin: Option<&[u8]>,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
+    inspect_plugin_deployment_with_manual(current_plugin, None)
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub fn inspect_plugin_deployment_with_manual(
+    current_plugin: Option<&[u8]>,
+    manual: Option<(ModsPluginGameRegion, &Path)>,
+) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     prepare_mod_workspace()?;
-    let installations = match game_installation_directories() {
+    let installations = match game_installation_directories_with_manual(manual) {
         Ok(installations) => installations,
         Err(ModsPluginDeploymentError::GameInstallationNotFound) => Vec::new(),
         Err(error) => return Err(error),
@@ -2067,9 +2079,20 @@ pub fn install_mods_plugin(
     region: ModsPluginGameRegion,
     plugin: &[u8],
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
+    install_mods_plugin_with_manual(region, plugin, None)
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub fn install_mods_plugin_with_manual(
+    region: ModsPluginGameRegion,
+    plugin: &[u8],
+    manual_directory: Option<&Path>,
+) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     ensure_game_is_closed()?;
     let workspace = prepare_mod_workspace()?;
-    let installations = game_installation_directories()?;
+    let installations = game_installation_directories_with_manual(
+        manual_directory.map(|directory| (region, directory)),
+    )?;
     let directory = selected_game_directory(&installations, region)?;
     migrate_legacy_mod_workspace(std::slice::from_ref(directory), &workspace)?;
     install_plugin_to_directories(std::slice::from_ref(directory), plugin)?;
@@ -2080,9 +2103,19 @@ pub fn install_mods_plugin(
 pub fn remove_mods_plugin(
     region: ModsPluginGameRegion,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
+    remove_mods_plugin_with_manual(region, None)
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub fn remove_mods_plugin_with_manual(
+    region: ModsPluginGameRegion,
+    manual_directory: Option<&Path>,
+) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     ensure_game_is_closed()?;
     let workspace = prepare_mod_workspace()?;
-    let installations = game_installation_directories()?;
+    let installations = game_installation_directories_with_manual(
+        manual_directory.map(|directory| (region, directory)),
+    )?;
     let directory = selected_game_directory(&installations, region)?;
     migrate_legacy_mod_workspace(std::slice::from_ref(directory), &workspace)?;
     remove_plugin_from_directories(std::slice::from_ref(directory))?;
@@ -2205,6 +2238,43 @@ fn game_installation_directories()
         return Err(ModsPluginDeploymentError::GameInstallationNotFound);
     }
     Ok(directories)
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn game_installation_directories_with_manual(
+    manual: Option<(ModsPluginGameRegion, &Path)>,
+) -> Result<Vec<(ModsPluginGameRegion, PathBuf)>, ModsPluginDeploymentError> {
+    let mut directories = match game_installation_directories() {
+        Ok(directories) => directories,
+        Err(ModsPluginDeploymentError::GameInstallationNotFound) => Vec::new(),
+        Err(_) if manual.is_some() => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    if let Some((region, selected)) = manual {
+        let directory = resolve_manual_game_directory(selected)?;
+        directories.retain(|(candidate, _)| *candidate != region);
+        directories.push((region, directory));
+    }
+    if directories.is_empty() {
+        return Err(ModsPluginDeploymentError::GameInstallationNotFound);
+    }
+    Ok(directories)
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn resolve_manual_game_directory(selected: &Path) -> Result<PathBuf, ModsPluginDeploymentError> {
+    for directory in [
+        selected.to_path_buf(),
+        selected.join(GAME_BINARY_RELATIVE_PATH),
+        selected
+            .join("Neverness To Everness")
+            .join(GAME_BINARY_RELATIVE_PATH),
+    ] {
+        if directory.join(GAME_EXECUTABLE_NAME).is_file() {
+            return directory.canonicalize().map_err(file_system_error);
+        }
+    }
+    Err(ModsPluginDeploymentError::InvalidGameDirectory)
 }
 
 #[cfg(any(feature = "desktop", feature = "gui"))]
@@ -3578,6 +3648,31 @@ mod tests {
                 ..Default::default()
             }
         );
+    }
+
+    #[test]
+    #[cfg(any(feature = "desktop", feature = "gui"))]
+    fn manual_game_directory_accepts_install_root_or_binary_directory() {
+        let root = deployment_test_directory("manual-game-directory");
+        let binary = root.join(GAME_BINARY_RELATIVE_PATH);
+        fs::create_dir_all(&binary).unwrap();
+        fs::write(binary.join(GAME_EXECUTABLE_NAME), b"fixture").unwrap();
+        let canonical_binary = binary.canonicalize().unwrap();
+
+        assert_eq!(
+            resolve_manual_game_directory(&root).unwrap(),
+            canonical_binary
+        );
+        assert_eq!(
+            resolve_manual_game_directory(&binary).unwrap(),
+            canonical_binary
+        );
+        assert_eq!(
+            resolve_manual_game_directory(&root.join("missing")),
+            Err(ModsPluginDeploymentError::InvalidGameDirectory)
+        );
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

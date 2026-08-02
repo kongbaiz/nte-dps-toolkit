@@ -14,6 +14,7 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import {
   Tooltip,
@@ -24,6 +25,11 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 import type { ConsolePageId } from "./console-navigation";
+import {
+  CONSOLE_SIDEBAR_COLLAPSE_QUERY,
+  consoleSidebarRowClasses,
+  resolveConsoleSidebarPresentation,
+} from "./console-sidebar-model";
 
 interface ConsoleNavItem {
   labelKey: string;
@@ -39,26 +45,38 @@ const CONSOLE_NAV_GROUPS: Array<{
     labelKey: "Common",
     items: [
       { labelKey: "Settings", icon: Settings, pageId: "settings" },
-      { labelKey: "History", icon: History },
+      { labelKey: "History", icon: History, pageId: "history" },
     ],
   },
   {
     labelKey: "Review",
     items: [
-      { labelKey: "Timeline", icon: Timeline },
-      { labelKey: "Skills", icon: Sparkles },
-      { labelKey: "Console Loadout", icon: Backpack },
+      { labelKey: "Timeline", icon: Timeline, pageId: "timeline" },
+      { labelKey: "Skills", icon: Sparkles, pageId: "skills" },
+      {
+        labelKey: "Console Loadout",
+        icon: Backpack,
+        pageId: "empty-curtain",
+      },
       { labelKey: "Mod Studio", icon: Puzzle, pageId: "mod-studio" },
     ],
   },
   {
     labelKey: "Advanced",
     items: [
-      { labelKey: "Character Data", icon: UserRound },
-      { labelKey: "Encrypted INI", icon: LockKeyhole },
-      { labelKey: "Packets", icon: Radio },
-      { labelKey: "Resources", icon: Folder },
-      { labelKey: "Diagnostics", icon: Activity },
+      {
+        labelKey: "Character Data",
+        icon: UserRound,
+        pageId: "character-data",
+      },
+      {
+        labelKey: "Encrypted INI",
+        icon: LockKeyhole,
+        pageId: "encrypted-ini",
+      },
+      { labelKey: "Packets", icon: Radio, pageId: "packets" },
+      { labelKey: "Resources", icon: Folder, pageId: "resources" },
+      { labelKey: "Diagnostics", icon: Activity, pageId: "diagnostics" },
     ],
   },
 ];
@@ -76,46 +94,58 @@ export function ConsoleSidebar({
   onNavigate,
   onToggle,
 }: ConsoleSidebarProps) {
+  const automaticallyCollapsed = useConsoleSidebarAutoCollapsed();
+  const presentation = resolveConsoleSidebarPresentation(
+    collapsed,
+    automaticallyCollapsed,
+  );
+
   return (
     <aside
       className={cn(
-        "flex w-52 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width] duration-150 max-[900px]:w-14 max-[900px]:px-1.5",
-        collapsed && "w-14 px-1.5",
+        "flex w-52 shrink-0 flex-col border-r bg-sidebar px-3 py-3 text-sidebar-foreground transition-[width,padding] duration-[var(--motion-duration-slow)] [transition-timing-function:var(--motion-ease-emphasized)]",
+        presentation.collapsed && "w-14 px-1.5",
       )}
       aria-label={t("Console navigation")}
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className="mb-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-card text-sm text-muted-foreground hover:bg-muted"
-              aria-label={t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
-              onClick={onToggle}
-            />
-          }
-        >
-          {collapsed ? (
-            <ChevronLeft className="size-4 rotate-180" aria-hidden="true" />
-          ) : (
-            <>
-              <ChevronsLeft className="size-4" aria-hidden="true" />
-              <span className="max-[900px]:sr-only">{t("Collapse")}</span>
-            </>
-          )}
-        </TooltipTrigger>
-        <TooltipContent>
-          {t(collapsed ? "Expand sidebar" : "Collapse sidebar")}
-        </TooltipContent>
-      </Tooltip>
+      {presentation.allowToggle && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="mb-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border bg-card text-sm text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted active:scale-[0.97]"
+                aria-label={t(
+                  presentation.collapsed
+                    ? "Expand sidebar"
+                    : "Collapse sidebar",
+                )}
+                onClick={onToggle}
+              />
+            }
+          >
+            {presentation.collapsed ? (
+              <ChevronLeft className="size-4 rotate-180" aria-hidden="true" />
+            ) : (
+              <>
+                <ChevronsLeft className="size-4" aria-hidden="true" />
+                <span>{t("Collapse")}</span>
+              </>
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {t(presentation.collapsed ? "Expand sidebar" : "Collapse sidebar")}
+          </TooltipContent>
+        </Tooltip>
+      )}
 
-      <nav className="min-h-0 overflow-y-auto">
+      <nav className="console-sidebar-scroll min-h-0 overflow-x-hidden overflow-y-auto overscroll-contain">
         {CONSOLE_NAV_GROUPS.map((group) => (
           <div className="mb-3" key={group.labelKey}>
             <p
               className={cn(
-                "mb-1 px-2 text-[11px] text-muted-foreground max-[900px]:sr-only",
-                collapsed && "sr-only",
+                "mb-1 px-2 text-[11px] text-muted-foreground",
+                presentation.collapsed && "sr-only",
               )}
             >
               {t(group.labelKey)}
@@ -126,7 +156,7 @@ export function ConsoleSidebar({
                   active={item.pageId === activePage}
                   item={item}
                   key={item.labelKey}
-                  labelHidden={collapsed}
+                  labelHidden={presentation.collapsed}
                   onNavigate={onNavigate}
                 />
               ))}
@@ -154,11 +184,9 @@ function ConsoleNavRow({
     <button
       type="button"
       className={cn(
-        "flex h-9 w-full items-center gap-3 rounded-md px-2 text-sm text-muted-foreground max-[900px]:justify-center max-[900px]:px-0",
-        "enabled:hover:bg-sidebar-accent enabled:hover:text-sidebar-accent-foreground disabled:cursor-default disabled:opacity-45",
+        "console-nav-row group/nav-row flex h-9 w-full items-center gap-3 rounded-md px-2 text-sm",
         labelHidden && "justify-center px-0",
-        active &&
-          "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm",
+        consoleSidebarRowClasses(active, item.pageId === undefined),
       )}
       aria-current={active ? "page" : undefined}
       disabled={item.pageId === undefined}
@@ -168,10 +196,10 @@ function ConsoleNavRow({
         }
       }}
     >
-      <Icon className="size-[18px] shrink-0" aria-hidden="true" />
-      <span
-        className={cn("truncate max-[900px]:sr-only", labelHidden && "sr-only")}
-      >
+      <span className="grid size-[18px] shrink-0 place-items-center transition-transform duration-200 ease-out group-hover/nav-row:scale-110 group-active/nav-row:scale-95">
+        <Icon className="size-[18px]" aria-hidden="true" />
+      </span>
+      <span className={cn("truncate", labelHidden && "sr-only")}>
         {t(item.labelKey)}
       </span>
     </button>
@@ -186,4 +214,22 @@ function ConsoleNavRow({
       <TooltipContent side="right">{t(item.labelKey)}</TooltipContent>
     </Tooltip>
   );
+}
+
+function useConsoleSidebarAutoCollapsed(): boolean {
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window.matchMedia !== "function") return false;
+    return window.matchMedia(CONSOLE_SIDEBAR_COLLAPSE_QUERY).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia(CONSOLE_SIDEBAR_COLLAPSE_QUERY);
+    const update = () => setCollapsed(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, []);
+
+  return collapsed;
 }

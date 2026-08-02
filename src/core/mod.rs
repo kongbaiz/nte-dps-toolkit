@@ -5,16 +5,28 @@
 //! `CoreError` codes at their own display boundary.
 
 pub mod capture;
+pub mod character_data;
+pub mod combat_details;
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub mod diagnostics;
+pub mod empty_curtain;
+pub mod encrypted_ini;
+pub mod history;
 pub mod hud;
 pub mod live_capture;
 #[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod mod_sdk;
 #[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod mod_studio;
+pub mod packets;
 pub mod reducer;
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub mod resource_audit;
+pub mod skills;
 pub mod snapshot;
 #[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod team_data;
+pub mod timeline;
 #[cfg(any(feature = "desktop", feature = "gui"))]
 pub mod update;
 

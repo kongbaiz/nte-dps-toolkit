@@ -14,6 +14,7 @@ const COMMANDS = {
   clearTeam: "clear_abyss_prediction_team",
   getSnapshot: "get_abyss_values_snapshot",
   importTeam: "import_abyss_prediction_team",
+  importCurrentTeam: "import_current_abyss_prediction_team",
   swapTeams: "swap_abyss_prediction_teams",
 } as const;
 
@@ -27,6 +28,7 @@ interface AbyssValuesTransport {
 export interface AbyssValuesClient {
   getSnapshot(): Promise<AbyssValuesSnapshot>;
   importTeam(half: AbyssHalfId, json: string): Promise<AbyssPredictionTeams>;
+  importCurrentTeam(half: AbyssHalfId): Promise<AbyssPredictionTeams>;
   clearTeam(half: AbyssHalfId): Promise<AbyssPredictionTeams>;
   swapTeams(): Promise<AbyssPredictionTeams>;
 }
@@ -60,6 +62,8 @@ export function createAbyssValuesClient(
         half,
         json,
       }),
+    importCurrentTeam: (half) =>
+      command(COMMANDS.importCurrentTeam, parseAbyssPredictionTeams, { half }),
     clearTeam: (half) =>
       command(COMMANDS.clearTeam, parseAbyssPredictionTeams, { half }),
     swapTeams: () => command(COMMANDS.swapTeams, parseAbyssPredictionTeams),

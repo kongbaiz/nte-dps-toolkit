@@ -216,111 +216,14 @@ pub(crate) fn load_character_avatars(
     textures
 }
 
-pub(crate) fn fill_missing_character_colors_from_avatars(
-    characters: &mut HashMap<u32, CharacterInfo>,
-    root: &std::path::Path,
-) {
-    let mut avatar_colors = HashMap::<String, Color32>::new();
-    for character in characters.values_mut() {
-        if character
-            .color
-            .as_deref()
-            .and_then(parse_hex_color)
-            .is_some()
-        {
-            continue;
-        }
-        let Some(avatar) = character.avatar.as_deref() else {
-            continue;
-        };
-        let color = avatar_colors
-            .entry(avatar.to_owned())
-            .or_insert_with(|| {
-                avatar_accent_color(root, avatar).unwrap_or_else(|| {
-                    deterministic_character_fallback_color(avatar.as_bytes(), false)
-                })
-            })
-            .to_owned();
-        character.color = Some(format!(
-            "#{:02X}{:02X}{:02X}",
-            color.r(),
-            color.g(),
-            color.b()
-        ));
-    }
-}
-
-pub(crate) fn avatar_accent_color(root: &std::path::Path, resource_path: &str) -> Option<Color32> {
-    let path = root.join(resource_path);
-    let bytes = std::fs::read(&path)
-        .map(std::borrow::Cow::Owned)
-        .or_else(|_| read_resource_bytes(Path::new(resource_path)))
-        .ok()?;
-    let image = image::load_from_memory(bytes.as_ref()).ok()?.to_rgba8();
-    let mut red = 0.0_f64;
-    let mut green = 0.0_f64;
-    let mut blue = 0.0_f64;
-    let mut total_weight = 0.0_f64;
-    for pixel in image.pixels() {
-        let [r, g, b, a] = pixel.0;
-        if a < 128 {
-            continue;
-        }
-        let rf = f64::from(r) / 255.0;
-        let gf = f64::from(g) / 255.0;
-        let bf = f64::from(b) / 255.0;
-        let max = rf.max(gf).max(bf);
-        let min = rf.min(gf).min(bf);
-        let saturation = if max <= f64::EPSILON {
-            0.0
-        } else {
-            (max - min) / max
-        };
-        if !(0.16..=0.96).contains(&max) || saturation < 0.16 {
-            continue;
-        }
-        let mid_luma_weight = 1.0 - ((max - 0.58).abs() / 0.58).clamp(0.0, 0.85);
-        let weight = saturation.powf(1.35) * mid_luma_weight.max(0.25) * f64::from(a) / 255.0;
-        red += rf * weight;
-        green += gf * weight;
-        blue += bf * weight;
-        total_weight += weight;
-    }
-    if total_weight <= f64::EPSILON {
-        return None;
-    }
-    let mut r = red / total_weight;
-    let mut g = green / total_weight;
-    let mut b = blue / total_weight;
-    let max = r.max(g).max(b).max(0.001);
-    let min = r.min(g).min(b);
-    let saturation = (max - min) / max;
-    if saturation < 0.24 {
-        let mean = (r + g + b) / 3.0;
-        r = mean + (r - mean) * 1.45;
-        g = mean + (g - mean) * 1.45;
-        b = mean + (b - mean) * 1.45;
-    }
-    let max = r.max(g).max(b).max(0.001);
-    if max < 0.46 {
-        let scale = 0.46 / max;
-        r *= scale;
-        g *= scale;
-        b *= scale;
-    }
-    Some(Color32::from_rgb(
-        (r.clamp(0.0, 0.92) * 255.0).round() as u8,
-        (g.clamp(0.0, 0.92) * 255.0).round() as u8,
-        (b.clamp(0.0, 0.92) * 255.0).round() as u8,
-    ))
+pub(crate) fn assign_missing_character_colors(characters: &mut HashMap<u32, CharacterInfo>) {
+    crate::storage::resource::assign_missing_character_colors(characters);
 }
 
 pub(crate) fn deterministic_character_fallback_color(seed: &[u8], dark_mode: bool) -> Color32 {
-    let hash = seed.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    });
-    let palette = theme_tokens(dark_mode, AccentColor::Zinc).dataviz;
-    palette[hash as usize % palette.len()]
+    let [red, green, blue] =
+        crate::storage::resource::deterministic_character_fallback_rgb(seed, dark_mode);
+    Color32::from_rgb(red, green, blue)
 }
 
 pub(crate) fn load_image_texture(

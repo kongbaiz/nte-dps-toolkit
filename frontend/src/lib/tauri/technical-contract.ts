@@ -1,6 +1,6 @@
 export { HUD_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const TECHNICAL_CONTRACT_VERSION = 4;
-export const HUD_SNAPSHOT_VERSION = 2;
+export const TECHNICAL_CONTRACT_VERSION = 5;
+export const HUD_SNAPSHOT_VERSION = 3;
 export const HUD_TIMELINE_MAX_BUCKETS = 60;
 export const HUD_MODULE_IDS = [
   "title",
@@ -60,6 +60,7 @@ export interface HudCharacterSnapshot {
   dps: number;
   damageSharePercent: number;
   damageTaken: number;
+  color: string | null;
 }
 
 export interface HudStatusSnapshot {
@@ -318,6 +319,7 @@ function parseHudCharacter(
       `${field}.damageSharePercent`,
     ),
     damageTaken: finiteNumber(character.damageTaken, `${field}.damageTaken`),
+    color: nullableString(character.color, `${field}.color`),
   };
 }
 

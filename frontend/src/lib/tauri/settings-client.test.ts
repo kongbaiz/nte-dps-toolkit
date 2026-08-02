@@ -93,6 +93,7 @@ describe("settings client", () => {
     await client.setHudOption("damage_taken", true);
     await client.setInterface({
       language: "ja",
+      darkMode: true,
       themePreset: "tactical",
       accent: "orange",
       density: "compact",
@@ -122,6 +123,7 @@ describe("settings client", () => {
         arguments_: {
           settings: {
             language: "ja",
+            darkMode: true,
             themePreset: "tactical",
             accent: "orange",
             density: "compact",
@@ -186,6 +188,37 @@ describe("settings client", () => {
       code: "hud_config_save_failed",
       messageKey: "Failed to save HUD configuration.",
     });
+  });
+
+  it("distinguishes a saved export from a cancelled save dialog", async () => {
+    const results = [{ saved: true }, { saved: false }];
+    const client = createSettingsClient({
+      invoke: async (command) => {
+        expect(command).toBe("export_settings_team_data");
+        return results.shift();
+      },
+      createChannel: () => ({}),
+    });
+
+    await expect(client.exportTeamData()).resolves.toBe(true);
+    await expect(client.exportTeamData()).resolves.toBe(false);
+  });
+
+  it("uses the native team data import command and preserves cancellation", async () => {
+    const calls: string[] = [];
+    const client = createSettingsClient({
+      invoke: async (command) => {
+        calls.push(command);
+        return { performed: false, settings: settingsFixture() };
+      },
+      createChannel: () => ({}),
+    });
+
+    await expect(client.importTeamDataFile()).resolves.toMatchObject({
+      performed: false,
+      settings: { generation: "0" },
+    });
+    expect(calls).toEqual(["import_settings_team_data_file"]);
   });
 
   it("streams settled startup update snapshots and unregisters on cleanup", async () => {

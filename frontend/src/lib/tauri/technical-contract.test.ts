@@ -8,7 +8,7 @@ import {
 } from "./technical-contract";
 
 const snapshot = {
-  contractVersion: 4,
+  contractVersion: 5,
   sequence: "9007199254740993",
   bridgeStatus: "ready",
   adapterVersion: "0.3.6",
@@ -27,7 +27,7 @@ const snapshot = {
     issue: null,
   },
   hud: {
-    version: 2,
+    version: 3,
     dataState: "preview",
     config: {
       width: 380,
@@ -58,6 +58,7 @@ const snapshot = {
         dps: 35171.92,
         damageSharePercent: 54.65,
         damageTaken: 0,
+        color: "#A72648",
       },
     ],
     status: {
@@ -114,10 +115,10 @@ describe("technical contract", () => {
       parseTechnicalEvent({ event: "future_event", payload: snapshot }),
     ).toThrow("Unknown technical event");
     expect(() =>
-      parseTechnicalSnapshot({ ...snapshot, contractVersion: 4 }),
+      parseTechnicalSnapshot({ ...snapshot, contractVersion: 5 }),
     ).not.toThrow();
     expect(() =>
-      parseTechnicalSnapshot({ ...snapshot, contractVersion: 5 }),
+      parseTechnicalSnapshot({ ...snapshot, contractVersion: 6 }),
     ).toThrow("Unsupported technical contract version");
   });
 

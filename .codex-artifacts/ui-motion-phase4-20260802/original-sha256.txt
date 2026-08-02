@@ -1,0 +1,8 @@
+ee9eb3f74b3ff0033a61684d8a301f7be5d72f06ebea590d1c120128ef10386f  frontend/src/components/nte/window-motion-boundary.tsx
+2532b8c6966428d02672b3ab6d8f91159a31977379fa486017a211bd76f44d6b  frontend/src/features/main-dps/main-dps-page.tsx
+bf6890ca6a659859c20ec8b8b72d18c37c71305486c11cb0dea185b6c0e93a84  frontend/src/features/main-dps/use-main-dps.ts
+43af0362b7d2aa5061667f21fbbd7919e90b091af24f671362e29a3beb19552d  frontend/src/features/technical-hud/technical-hud-page.tsx
+90f94d24778b2d3bf8fc6255fe50c4e139e88dd08f8dd23e64a7014921684860  frontend/src/features/technical-hud/use-technical-state.ts
+0cdf1e45f3e5c840bb50f29ffd70c130ecd45290ab41b27b3a9b7470db8c7fbb  src-tauri/src/commands/main_dps.rs
+1494ae477d23681c11e6ed3526b474dd3ff3d675700531398c7518b4b75fef9b  src-tauri/src/commands/technical.rs
+7739995c9e030fa1325f3e4ca8ce54278a96cdfb0ee5affb4ac35b292775733d  src-tauri/src/windows/island.rs

@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import {
+  Check,
   Download,
   HardDrive,
   Keyboard,
@@ -123,8 +124,8 @@ export interface SettingsCatalogActions {
     binding: HotkeyBinding | null,
   ): Promise<void>;
   applyLayoutProfile(profile: LayoutProfileId): Promise<void>;
-  importTeamData(json: string): Promise<void>;
-  exportTeamData(): Promise<string | null>;
+  importTeamDataFile(): Promise<boolean | null>;
+  exportTeamData(): Promise<boolean | null>;
   refreshCaptureFiles(): Promise<void>;
   clearCaptureFiles(): Promise<void>;
   openAbyssValues(): Promise<void>;
@@ -199,8 +200,7 @@ export function SecondarySettingsSections({
 }
 
 function interfaceInput(snapshot: SettingsSnapshot): InterfaceSettingsInput {
-  const { darkMode: _darkMode, ...settings } = snapshot.interface;
-  return settings;
+  return { ...snapshot.interface };
 }
 
 function captureInput(snapshot: SettingsSnapshot): CaptureSettingsInput {
@@ -587,66 +587,88 @@ function ParseSettingsCard({
         />
       </SettingsRow>
       <SettingsRow labelKey="Capture NIC">
-        <div className="flex min-w-0 flex-wrap gap-2">
-          <NativeSelect
-            disabled={pending}
-            className="min-w-52 flex-1"
-            ariaLabel={t("Capture NIC")}
-            value={
-              settings.manualCaptureDevice === null ? "automatic" : "manual"
-            }
-            onChange={(mode) =>
-              void save({
-                manualCaptureDevice:
-                  mode === "automatic"
-                    ? null
-                    : (snapshot.capture.devices[0]?.id ?? null),
-              })
-            }
-            options={[
-              { value: "automatic", label: t("Automatic NIC selection") },
-              { value: "manual", label: t("Pin capture NIC") },
-            ]}
-          />
-          {settings.manualCaptureDevice !== null ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex min-w-0 flex-wrap gap-2">
             <NativeSelect
-              disabled={pending}
+              disabled={pending || snapshot.capture.devices.length === 0}
               className="min-w-52 flex-1"
-              ariaLabel={t("Select a NIC")}
-              value={settings.manualCaptureDevice}
-              onChange={(manualCaptureDevice) =>
-                void save({ manualCaptureDevice })
+              ariaLabel={t("Capture NIC")}
+              value={
+                settings.manualCaptureDevice === null ? "automatic" : "manual"
+              }
+              onChange={(mode) =>
+                void save({
+                  manualCaptureDevice:
+                    mode === "automatic"
+                      ? null
+                      : (snapshot.capture.devices[0]?.id ?? null),
+                })
               }
               options={[
-                ...(snapshot.capture.devices.some(
-                  (device) => device.id === settings.manualCaptureDevice,
-                )
-                  ? []
-                  : [
-                      {
-                        value: settings.manualCaptureDevice,
-                        label: settings.manualCaptureDevice,
-                      },
-                    ]),
-                ...snapshot.capture.devices.map((device) => ({
-                  value: device.id,
-                  label: device.label,
-                })),
+                { value: "automatic", label: t("Automatic NIC selection") },
+                { value: "manual", label: t("Pin capture NIC") },
               ]}
             />
+            {settings.manualCaptureDevice !== null &&
+            snapshot.capture.devices.length > 0 ? (
+              <NativeSelect
+                disabled={pending}
+                className="min-w-52 flex-1"
+                ariaLabel={t("Select a NIC")}
+                value={settings.manualCaptureDevice}
+                onChange={(manualCaptureDevice) =>
+                  void save({ manualCaptureDevice })
+                }
+                options={[
+                  ...(snapshot.capture.devices.some(
+                    (device) => device.id === settings.manualCaptureDevice,
+                  )
+                    ? []
+                    : [
+                        {
+                          value: settings.manualCaptureDevice,
+                          label: settings.manualCaptureDevice,
+                        },
+                      ]),
+                  ...snapshot.capture.devices.map((device) => ({
+                    value: device.id,
+                    label: device.label,
+                  })),
+                ]}
+              />
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={() => void actions.refreshCaptureDevices()}
+            >
+              <RefreshCw aria-hidden="true" />
+              {t("Refresh NIC List")}
+            </Button>
+          </div>
+          {snapshot.capture.devices.length === 0 ? (
+            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+              {t(
+                "No usable NIC found; confirm Npcap is installed, then click refresh",
+              )}
+            </p>
+          ) : settings.manualCaptureDevice !== null &&
+            !snapshot.capture.devices.some(
+              (device) => device.id === settings.manualCaptureDevice,
+            ) ? (
+            <p className="text-xs leading-relaxed text-amber-600 dark:text-amber-300">
+              {t(
+                "The selected NIC is currently unavailable; reselect or click refresh",
+              )}
+            </p>
           ) : null}
-          <Button
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => void actions.refreshCaptureDevices()}
-          >
-            <RefreshCw aria-hidden="true" />
-            {t("Refresh NIC List")}
-          </Button>
         </div>
       </SettingsRow>
-      <SettingsRow labelKey="Damage Source">
+      <SettingsRow
+        labelKey="Damage Source"
+        descriptionKey="Takes effect after re-capturing or re-importing; only overrides damage when a server HP sync can be unambiguously paired to a single hit"
+      >
         <LabeledSwitch
           disabled={pending}
           labelKey="Calibrate with server-side HP deltas"
@@ -656,7 +678,10 @@ function ParseSettingsCard({
           }
         />
       </SettingsRow>
-      <SettingsRow labelKey="Character Damage">
+      <SettingsRow
+        labelKey="Character Damage"
+        descriptionKey="When enabled, confirmed reaction damage is shown separately instead of being added to the attributed character; team total damage is unchanged."
+      >
         <LabeledSwitch
           disabled={pending}
           labelKey="Separate reaction damage from character damage"
@@ -666,7 +691,10 @@ function ParseSettingsCard({
           }
         />
       </SettingsRow>
-      <SettingsRow labelKey="Combat Rounds">
+      <SettingsRow
+        labelKey="Combat Rounds"
+        descriptionKey="Outside abyss, archive the current round and clear live combat stats after the configured idle time"
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <LabeledSwitch
             disabled={pending}
@@ -716,7 +744,10 @@ function ParseSettingsCard({
           }))}
         />
       </SettingsRow>
-      <SettingsRow labelKey="Passthrough Hotkey">
+      <SettingsRow
+        labelKey="Passthrough Hotkey"
+        descriptionKey="Toggle mouse passthrough while the combat HUD is active"
+      >
         <NativeSelect
           disabled={pending}
           ariaLabel={t("Passthrough Hotkey")}
@@ -860,9 +891,33 @@ function TeamDataCard({
   pending: boolean;
   actions: SettingsCatalogActions;
 }) {
-  const input = useRef<HTMLInputElement>(null);
+  const exportedTimer = useRef<number | null>(null);
+  const [exported, setExported] = useState(false);
   const imported =
     snapshot.teamData.upperImported || snapshot.teamData.lowerImported;
+  useEffect(
+    () => () => {
+      if (exportedTimer.current !== null) {
+        window.clearTimeout(exportedTimer.current);
+      }
+    },
+    [],
+  );
+
+  const exportTeamData = async () => {
+    setExported(false);
+    const saved = await actions.exportTeamData();
+    if (saved !== true) return;
+    setExported(true);
+    if (exportedTimer.current !== null) {
+      window.clearTimeout(exportedTimer.current);
+    }
+    exportedTimer.current = window.setTimeout(() => {
+      setExported(false);
+      exportedTimer.current = null;
+    }, 2400);
+  };
+
   return (
     <Card>
       <CardHeader>
@@ -877,23 +932,11 @@ function TeamDataCard({
         ) : null}
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
-        <input
-          ref={input}
-          className="hidden"
-          type="file"
-          accept=".json,application/json"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = "";
-            if (!file || file.size > 1024 * 1024) return;
-            void file.text().then((json) => actions.importTeamData(json));
-          }}
-        />
         <Button
           type="button"
           variant="outline"
           disabled={pending}
-          onClick={() => input.current?.click()}
+          onClick={() => void actions.importTeamDataFile()}
         >
           <Upload aria-hidden="true" />
           {t("Import DPS Data")}
@@ -902,15 +945,24 @@ function TeamDataCard({
           type="button"
           variant="outline"
           disabled={pending}
-          onClick={() =>
-            void actions.exportTeamData().then((json) => {
-              if (json) downloadText("nte-team-dps.json", json);
-            })
-          }
+          onClick={() => void exportTeamData()}
         >
-          <Download aria-hidden="true" />
+          {exported ? (
+            <Check aria-hidden="true" />
+          ) : (
+            <Download aria-hidden="true" />
+          )}
           {t("Export Team Data")}
         </Button>
+        <span
+          aria-live="polite"
+          className={cn(
+            "self-center text-xs text-emerald-600 transition-opacity",
+            exported ? "opacity-100" : "pointer-events-none opacity-0",
+          )}
+        >
+          {t("Team data exported")}
+        </span>
       </CardContent>
       <CardFooter className="text-xs text-muted-foreground">
         {t(
@@ -1156,17 +1208,6 @@ function submitOnEnter(
     event.preventDefault();
     submit();
   }
-}
-
-function downloadText(filename: string, contents: string) {
-  const url = URL.createObjectURL(
-    new Blob([contents], { type: "application/json;charset=utf-8" }),
-  );
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
 }
 
 function replaceSequential(message: string, values: readonly string[]) {

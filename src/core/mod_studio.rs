@@ -14,7 +14,8 @@ use std::{
 
 use crate::storage::mod_scripts::{
     ModScriptDocument, ModScriptError, ModScriptWorkspace, load_mod_script_workspace,
-    mod_script_workspace_directory, save_mod_script, set_mod_enabled, validate_mod_id,
+    mod_script_workspace_directory, new_mod_script_template, save_mod_script, set_mod_enabled,
+    validate_mod_id,
 };
 
 pub const MOD_STUDIO_WORKSPACE_LABEL: &str = "plugins/nte-mods";
@@ -97,6 +98,7 @@ pub enum ModStudioErrorCode {
     EnabledSetWriteFailed,
     InvalidWorkspace,
     InvalidModId,
+    DocumentAlreadyExists,
     DocumentNotFound,
     SourceTooLarge,
     SourceContainsNul,
@@ -168,6 +170,17 @@ impl ModStudioWorkspaceService {
     pub fn load_document(&self, id: &str) -> Result<ModStudioDocument, ModStudioError> {
         let _transaction = self.lock_transaction()?;
         load_mod_studio_document(&self.0.workspace_directory, id)
+    }
+
+    pub fn create_document(&self, id: &str) -> Result<ModStudioDocument, ModStudioError> {
+        let _transaction = self.lock_transaction()?;
+        let document = create_mod_studio_document(&self.0.workspace_directory, id)?;
+        self.bump_generation();
+        Ok(document)
+    }
+
+    pub fn workspace_directory(&self) -> PathBuf {
+        self.0.workspace_directory.clone()
     }
 
     pub fn save_document(
@@ -292,6 +305,32 @@ pub fn save_mod_studio_document(
         id: existing.id,
         enabled: existing.enabled,
         source: source.to_owned(),
+    })
+}
+
+pub fn create_mod_studio_document(
+    workspace_directory: &Path,
+    id: &str,
+) -> Result<ModStudioDocument, ModStudioError> {
+    validate_mod_id(id).map_err(|error| {
+        ModStudioError::new(
+            ModStudioErrorCode::InvalidModId,
+            storage_error_detail(error),
+        )
+    })?;
+    let workspace = load_bounded_workspace(workspace_directory)?;
+    if workspace.scripts.iter().any(|document| document.id == id) {
+        return Err(ModStudioError::new(
+            ModStudioErrorCode::DocumentAlreadyExists,
+            format!("Mod document {id:?} already exists"),
+        ));
+    }
+    let source = new_mod_script_template(id).map_err(map_save_error)?;
+    save_mod_script(workspace_directory, id, &source).map_err(map_save_error)?;
+    Ok(ModStudioDocument {
+        id: id.to_owned(),
+        enabled: false,
+        source,
     })
 }
 
@@ -601,6 +640,35 @@ mod tests {
         let error = load_mod_studio_document(&root, "telemetry").expect_err("missing document");
 
         assert_eq!(error.code, ModStudioErrorCode::DocumentNotFound);
+    }
+
+    #[test]
+    fn creating_a_document_uses_the_shared_template_and_preserves_existing_files() {
+        let root = temp_workspace("create");
+        let service = ModStudioWorkspaceService::new(root.clone());
+
+        let created = service.create_document("telemetry").expect("create Mod");
+        assert_eq!(created.id, "telemetry");
+        assert!(!created.enabled);
+        assert_eq!(
+            created.source,
+            new_mod_script_template("telemetry").expect("template")
+        );
+        assert_eq!(service.load_workspace().expect("workspace").generation, 1);
+
+        let error = service
+            .create_document("telemetry")
+            .expect_err("duplicate Mod");
+        assert_eq!(error.code, ModStudioErrorCode::DocumentAlreadyExists);
+        assert_eq!(
+            service
+                .load_document("telemetry")
+                .expect("existing Mod")
+                .source,
+            created.source
+        );
+
+        fs::remove_dir_all(root).expect("remove workspace");
     }
 
     #[test]

@@ -1,9 +1,9 @@
-use tauri::{State, WebviewWindow};
+use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
     contract::{CommandError, TechnicalSnapshot},
     state::AppState,
-    windows::hud,
+    windows::{hud, island},
 };
 
 use super::{parse_hud_module, sanitize_hud_width};
@@ -20,22 +20,47 @@ pub(crate) fn get_technical_snapshot(
 #[tauri::command]
 pub(crate) fn set_hud_passthrough(
     enabled: bool,
+    app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
     hud::set_passthrough(&window, &state, enabled)?;
+    let message_key = if enabled {
+        "HUD passthrough on; press {} to enter edit mode"
+    } else {
+        "HUD edit mode on; press {} to return to game passthrough"
+    };
+    island::publish_notice(
+        &app,
+        state.inner(),
+        "status",
+        message_key,
+        vec![state.passthrough_hotkey().label().to_owned()],
+    )?;
     Ok(state.snapshot())
 }
 
 #[tauri::command]
 pub(crate) fn set_hud_always_on_top(
     enabled: bool,
+    app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
     hud::set_always_on_top(&window, &state, enabled)?;
+    island::publish_notice(
+        &app,
+        state.inner(),
+        "status",
+        if enabled {
+            "Always-on-top enabled"
+        } else {
+            "Always-on-top disabled"
+        },
+        Vec::new(),
+    )?;
     Ok(state.snapshot())
 }
 
@@ -100,18 +125,27 @@ pub(crate) fn set_hud_width(
 
 #[tauri::command]
 pub(crate) fn start_hud_capture(
+    app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
     state
-        .request_capture_start()
+        .request_capture_start(false)
         .map_err(CommandError::from_core)?;
+    island::publish_notice(
+        &app,
+        state.inner(),
+        "status",
+        "Starting live capture...",
+        Vec::new(),
+    )?;
     Ok(state.snapshot())
 }
 
 #[tauri::command]
 pub(crate) fn stop_hud_capture(
+    app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
@@ -119,5 +153,12 @@ pub(crate) fn stop_hud_capture(
     state
         .request_capture_stop()
         .map_err(CommandError::from_core)?;
+    island::publish_notice(
+        &app,
+        state.inner(),
+        "status",
+        "Stopping live capture...",
+        Vec::new(),
+    )?;
     Ok(state.snapshot())
 }

@@ -1,0 +1,315 @@
+--- a/frontend/src/features/main-dps/main-dps-page.tsx
++++ b/frontend/src/features/main-dps/main-dps-page.tsx
+@@ -1,4 +1,5 @@
+-import { useEffect, useMemo, useState } from "react";
++import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
++import { createPortal } from "react-dom";
+ import {
+   Check,
+   ChevronLeft,
+@@ -27,6 +28,7 @@
+ import { cn } from "@/lib/utils";
+ 
+ import {
++  appearancePanelPosition,
+   characterAccent,
+   damagePercent,
+   formatDuration,
+@@ -45,6 +47,11 @@
+   const { snapshot, error, pending, setError, apply, mutate, effect } =
+     useMainDps();
+   const [appearanceOpen, setAppearanceOpen] = useState(false);
++  const [appearancePosition, setAppearancePosition] = useState<{
++    left: number;
++    top: number;
++  } | null>(null);
++  const appearanceButtonRef = useRef<HTMLButtonElement>(null);
+   const [replayOpen, setReplayOpen] = useState(false);
+   const [abyssCollapsed, setAbyssCollapsed] = useState(false);
+   const [hidden, setHidden] = useState<Set<number>>(() => new Set());
+@@ -98,6 +105,34 @@
+       window.removeEventListener("resize", close);
+     };
+   }, [context]);
++
++  useLayoutEffect(() => {
++    if (!appearanceOpen) return;
++
++    const updatePosition = () => {
++      const anchor = appearanceButtonRef.current?.getBoundingClientRect();
++      if (anchor === undefined) return;
++      setAppearancePosition(
++        appearancePanelPosition(anchor, {
++          width: window.innerWidth,
++          height: window.innerHeight,
++        }),
++      );
++    };
++    const closeOnEscape = (event: KeyboardEvent) => {
++      if (event.key === "Escape") setAppearanceOpen(false);
++    };
++
++    updatePosition();
++    window.addEventListener("resize", updatePosition);
++    window.addEventListener("scroll", updatePosition, true);
++    window.addEventListener("keydown", closeOnEscape);
++    return () => {
++      window.removeEventListener("resize", updatePosition);
++      window.removeEventListener("scroll", updatePosition, true);
++      window.removeEventListener("keydown", closeOnEscape);
++    };
++  }, [appearanceOpen]);
+ 
+   if (snapshot === null) {
+     return (
+@@ -267,85 +302,112 @@
+                 {t(snapshot.passthrough ? "Passthrough on" : "Passthrough")}
+               </Button>
+               <Button
++                ref={appearanceButtonRef}
+                 size="sm"
+                 variant="outline"
+                 aria-expanded={appearanceOpen}
+-                onClick={() => setAppearanceOpen((open) => !open)}
++                onClick={() => {
++                  if (appearanceOpen) {
++                    setAppearanceOpen(false);
++                    setAppearancePosition(null);
++                    return;
++                  }
++                  const anchor =
++                    appearanceButtonRef.current?.getBoundingClientRect();
++                  if (anchor !== undefined) {
++                    setAppearancePosition(
++                      appearancePanelPosition(anchor, {
++                        width: window.innerWidth,
++                        height: window.innerHeight,
++                      }),
++                    );
++                  }
++                  setAppearanceOpen(true);
++                }}
+               >
+                 {t("Appearance")}
+               </Button>
+-              {appearanceOpen && (
+-                <div className="absolute right-0 top-9 z-20 flex min-w-44 flex-col gap-2 rounded-xl border bg-popover p-3 shadow-lg">
+-                  <span className="text-xs text-muted-foreground">
+-                    {t("Theme Preset")}
+-                  </span>
+-                  <div className="grid grid-cols-2 gap-2">
+-                    {([false, true] as const).map((dark) => (
+-                      <Button
+-                        key={String(dark)}
+-                        size="sm"
+-                        variant={
+-                          snapshot.appearance.darkMode === dark
+-                            ? "default"
+-                            : "outline"
+-                        }
+-                        onClick={() =>
+-                          void mutate("appearance", async () => {
+-                            const next = await mainDpsClient.setAppearance(
+-                              dark,
+-                              snapshot.appearance.opacity,
+-                            );
+-                            applySettingsPresentation({
+-                              ...presentation,
+-                              darkMode: dark,
+-                            });
+-                            setAppearanceOpen(false);
+-                            return next;
+-                          })
+-                        }
+-                      >
+-                        {t(dark ? "Dark" : "Light")}
+-                      </Button>
+-                    ))}
+-                  </div>
+-                  <label className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
+-                    <span className="flex justify-between">
+-                      <span>{t("Opacity")}</span>
+-                      <span>
+-                        {Math.round(snapshot.appearance.opacity * 100)}%
++              {appearanceOpen &&
++                appearancePosition !== null &&
++                createPortal(
++                  <div
++                    role="dialog"
++                    aria-label={t("Appearance")}
++                    className="fixed z-50 flex w-44 flex-col gap-2 rounded-xl border bg-popover p-3 shadow-lg"
++                    style={appearancePosition}
++                  >
++                    <span className="text-xs text-muted-foreground">
++                      {t("Theme Preset")}
++                    </span>
++                    <div className="grid grid-cols-2 gap-2">
++                      {([false, true] as const).map((dark) => (
++                        <Button
++                          key={String(dark)}
++                          size="sm"
++                          variant={
++                            snapshot.appearance.darkMode === dark
++                              ? "default"
++                              : "outline"
++                          }
++                          onClick={() =>
++                            void mutate("appearance", async () => {
++                              const next = await mainDpsClient.setAppearance(
++                                dark,
++                                snapshot.appearance.opacity,
++                              );
++                              applySettingsPresentation({
++                                ...presentation,
++                                darkMode: dark,
++                              });
++                              setAppearanceOpen(false);
++                              setAppearancePosition(null);
++                              return next;
++                            })
++                          }
++                        >
++                          {t(dark ? "Dark" : "Light")}
++                        </Button>
++                      ))}
++                    </div>
++                    <label className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
++                      <span className="flex justify-between">
++                        <span>{t("Opacity")}</span>
++                        <span>
++                          {Math.round(snapshot.appearance.opacity * 100)}%
++                        </span>
+                       </span>
+-                    </span>
+-                    <input
+-                      type="range"
+-                      min="35"
+-                      max="100"
+-                      defaultValue={Math.round(
+-                        snapshot.appearance.opacity * 100,
+-                      )}
+-                      onPointerUp={(event) =>
+-                        void mutate("appearance", () =>
+-                          mainDpsClient.setAppearance(
+-                            snapshot.appearance.darkMode,
+-                            Number(event.currentTarget.value) / 100,
+-                          ),
+-                        )
+-                      }
+-                      onKeyUp={(event) => {
+-                        if (
+-                          event.key === "ArrowLeft" ||
+-                          event.key === "ArrowRight"
+-                        )
++                      <input
++                        type="range"
++                        min="35"
++                        max="100"
++                        defaultValue={Math.round(
++                          snapshot.appearance.opacity * 100,
++                        )}
++                        onPointerUp={(event) =>
+                           void mutate("appearance", () =>
+                             mainDpsClient.setAppearance(
+                               snapshot.appearance.darkMode,
+                               Number(event.currentTarget.value) / 100,
+                             ),
+-                          );
+-                      }}
+-                    />
+-                  </label>
+-                </div>
+-              )}
++                          )
++                        }
++                        onKeyUp={(event) => {
++                          if (
++                            event.key === "ArrowLeft" ||
++                            event.key === "ArrowRight"
++                          )
++                            void mutate("appearance", () =>
++                              mainDpsClient.setAppearance(
++                                snapshot.appearance.darkMode,
++                                Number(event.currentTarget.value) / 100,
++                              ),
++                            );
++                        }}
++                      />
++                    </label>
++                  </div>,
++                  document.body,
++                )}
+             </div>
+           </section>
+         )}
+--- a/frontend/src/features/main-dps/main-dps-model.ts
++++ b/frontend/src/features/main-dps/main-dps-model.ts
+@@ -84,3 +84,37 @@
+   if (totalDamage > 0) return "unattributed";
+   return "combat-empty";
+ }
++
++export interface FloatingPanelAnchor {
++  left: number;
++  right: number;
++  top: number;
++  bottom: number;
++}
++
++export interface FloatingPanelViewport {
++  width: number;
++  height: number;
++}
++
++export function appearancePanelPosition(
++  anchor: FloatingPanelAnchor,
++  viewport: FloatingPanelViewport,
++  panel = { width: 176, height: 160 },
++): { left: number; top: number } {
++  const margin = 8;
++  const gap = 6;
++  const maxLeft = Math.max(margin, viewport.width - panel.width - margin);
++  const left = Math.min(Math.max(margin, anchor.right - panel.width), maxLeft);
++  const below = anchor.bottom + gap;
++  const above = anchor.top - gap - panel.height;
++  const maxTop = Math.max(margin, viewport.height - panel.height - margin);
++  const top =
++    below + panel.height <= viewport.height - margin
++      ? below
++      : above >= margin
++        ? above
++        : Math.min(Math.max(margin, below), maxTop);
++
++  return { left, top };
++}
+--- a/frontend/src/features/main-dps/main-dps-model.test.ts
++++ b/frontend/src/features/main-dps/main-dps-model.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, expect, it } from "vitest";
+ 
+ import {
++  appearancePanelPosition,
+   characterAccent,
+   damagePercent,
+   formatMainMetric,
+@@ -52,4 +53,20 @@
+     expect(mainCharacterListState(0, 0, 0)).toBe("combat-empty");
+     expect(mainCharacterListState(10, 2, 1)).toBe("rows");
+   });
++
++  it("keeps the appearance panel inside a compact main window", () => {
++    expect(
++      appearancePanelPosition(
++        { left: 350, right: 412, top: 48, bottom: 76 },
++        { width: 420, height: 360 },
++      ),
++    ).toEqual({ left: 236, top: 82 });
++
++    expect(
++      appearancePanelPosition(
++        { left: 350, right: 412, top: 320, bottom: 348 },
++        { width: 420, height: 360 },
++      ),
++    ).toEqual({ left: 236, top: 154 });
++  });
+ });

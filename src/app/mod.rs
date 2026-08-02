@@ -32,8 +32,7 @@ use crate::engine::model::{
     DamageAttributionSummary, DpsTimeBasis, EngineEvent, HitDirection, HitDirectionSummary,
     PartyCombatState, SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION,
     TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember, TimeStopEvent, TimelineMarkerKind,
-    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_unbalance_damage_hit, reaction_damage_for_hit,
-    summarize_combat_segments, summarize_hit_directions,
+    TimelineSeries, UNBALANCE_ATTACK_TYPE, summarize_combat_segments, summarize_hit_directions,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
@@ -330,52 +329,7 @@ impl ConsoleTab {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum HitDetailFilter {
-    #[default]
-    All,
-    Outgoing,
-    Incoming,
-    CharacterAttributed,
-    CharacterDirect,
-    ReactionDamage,
-    SharedMechanics,
-    Unattributed,
-    QteType(String),
-}
-
-impl HitDetailFilter {
-    fn matches(&self, hit: &crate::engine::model::Hit) -> bool {
-        match self {
-            Self::All => true,
-            Self::Outgoing => !hit.direction.is_incoming(),
-            Self::Incoming => hit.direction.is_incoming(),
-            Self::CharacterAttributed => {
-                hit.direction.is_outgoing() && hit.char_known && !is_unbalance_damage_hit(hit)
-            }
-            Self::CharacterDirect => {
-                hit.direction.is_outgoing()
-                    && hit.char_known
-                    && !is_unbalance_damage_hit(hit)
-                    && hit.total_damage() > reaction_damage_for_hit(hit)
-            }
-            Self::ReactionDamage => {
-                hit.direction.is_outgoing() && hit.char_known && reaction_damage_for_hit(hit) > 0.0
-            }
-            Self::SharedMechanics => !hit.direction.is_incoming() && is_unbalance_damage_hit(hit),
-            Self::Unattributed => {
-                !hit.direction.is_incoming()
-                    && !is_unbalance_damage_hit(hit)
-                    && !(hit.direction.is_outgoing() && hit.char_known)
-            }
-            Self::QteType(attack_type) => {
-                !hit.direction.is_incoming()
-                    && (hit.attack_type.as_deref() == Some(attack_type)
-                        || hit.follow_up_attack_type.as_deref() == Some(attack_type))
-            }
-        }
-    }
-}
+pub(crate) use crate::core::combat_details::CombatDetailFilter as HitDetailFilter;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct QteTypeFilterSummary {
@@ -2054,15 +2008,17 @@ mod tests {
         PendingCaptureExport, QteTypeFilterSummary, SkillBreakdownCache, SkillDamageSummary,
         SkillSummaryCache, TimeStopPresentation, TimelineCache, UiConfigSavePlan, UiPreferences,
         WindowState, adjusted_cached_index, aggregate_character_skill_damage,
-        build_hit_detail_cache, build_team_dps_export, cached_hit_row, character_color,
-        compare_cached_team_hits, comparison_skill_display_name, damage_digit_key_for_hit,
-        damage_digit_resource_path, damage_number_digits_text,
-        fill_missing_character_colors_from_avatars, follow_up_damage_digit_key_for_hit,
-        hit_detail_filter_available, hit_type_display_text, hit_type_label, is_party_member_row,
-        mixed_damage_digit_key, parse_hex_color, qte_type_filter_label, reaction_text_key_for_hit,
-        reaction_text_key_from_trigger_attack_type, reaction_text_resource_path,
-        resolve_cached_hit, skill_display_name, skill_summary_display_text,
-        snapshot_team_from_stats, summarize_qte_type_filters, translate_reaction_label,
+        assign_missing_character_colors, build_hit_detail_cache, build_team_dps_export,
+        cached_hit_row, character_color, compare_cached_team_hits, comparison_skill_display_name,
+        damage_digit_key_for_hit, damage_digit_resource_path, damage_number_digits_text,
+        follow_up_damage_digit_key_for_hit, hit_detail_filter_available, hit_type_display_text,
+        hit_type_label, is_party_member_row, parse_hex_color, qte_type_filter_label,
+        reaction_text_key_for_hit, reaction_text_resource_path, resolve_cached_hit,
+        skill_display_name, skill_summary_display_text, snapshot_team_from_stats,
+        summarize_qte_type_filters, translate_reaction_label,
+    };
+    use crate::core::combat_details::{
+        mixed_damage_digit_key, reaction_text_key_from_trigger_attack_type,
     };
     use crate::engine::model::{
         CaptureQualitySource, CharacterInfo, CharacterStats, CombatSessionSkillSummary,
@@ -3240,7 +3196,7 @@ mod tests {
     }
 
     #[test]
-    fn character_avatar_colors_fill_missing_table_colors() {
+    fn character_catalog_colors_fill_missing_table_colors() {
         let mut characters = HashMap::from([
             (
                 1004,
@@ -3264,7 +3220,7 @@ mod tests {
             ),
         ]);
 
-        fill_missing_character_colors_from_avatars(&mut characters, std::path::Path::new("."));
+        assign_missing_character_colors(&mut characters);
 
         let first = character_color(1004, &characters, 0, false);
         let second = character_color(1020, &characters, 1, false);
@@ -3288,7 +3244,7 @@ mod tests {
     }
 
     #[test]
-    fn character_table_color_wins_over_avatar_color() {
+    fn explicit_character_table_color_wins_over_catalog_assignment() {
         let mut characters = HashMap::from([(
             1010,
             CharacterInfo {
@@ -3300,7 +3256,7 @@ mod tests {
             },
         )]);
 
-        fill_missing_character_colors_from_avatars(&mut characters, std::path::Path::new("."));
+        assign_missing_character_colors(&mut characters);
 
         assert_eq!(
             characters

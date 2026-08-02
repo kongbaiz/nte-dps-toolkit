@@ -4,7 +4,7 @@ import {
   type TechnicalCommandError,
 } from "./technical-contract";
 
-export const ABYSS_VALUES_CONTRACT_VERSION = 1;
+export const ABYSS_VALUES_CONTRACT_VERSION = 2;
 
 export type AbyssHalfId = "upper" | "lower";
 
@@ -15,6 +15,10 @@ export interface AbyssValuesSnapshot {
   monsterCount: number;
   seasons: AbyssSeason[];
   teams: AbyssPredictionTeams;
+  currentTeamAvailable: {
+    upper: boolean;
+    lower: boolean;
+  };
 }
 
 export interface AbyssSeason {
@@ -89,6 +93,10 @@ export function parseAbyssValuesSnapshot(value: unknown): AbyssValuesSnapshot {
   const seasonCount = integer(snapshot.seasonCount, "seasonCount");
   const floorCount = integer(snapshot.floorCount, "floorCount");
   const monsterCount = integer(snapshot.monsterCount, "monsterCount");
+  const currentTeamAvailable = record(
+    snapshot.currentTeamAvailable,
+    "currentTeamAvailable",
+  );
   if (seasonCount !== seasons.length) {
     throw new TechnicalContractError("seasonCount does not match seasons");
   }
@@ -105,6 +113,10 @@ export function parseAbyssValuesSnapshot(value: unknown): AbyssValuesSnapshot {
     monsterCount,
     seasons,
     teams: parseAbyssPredictionTeams(snapshot.teams),
+    currentTeamAvailable: {
+      upper: boolean(currentTeamAvailable.upper, "currentTeamAvailable.upper"),
+      lower: boolean(currentTeamAvailable.lower, "currentTeamAvailable.lower"),
+    },
   };
 }
 

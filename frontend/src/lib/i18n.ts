@@ -39,6 +39,10 @@ export function setFrontendLanguage(next: SettingsLanguage): void {
   listeners.forEach((listener) => listener());
 }
 
+export function currentFrontendLanguage(): SettingsLanguage {
+  return language;
+}
+
 export function useTranslationRevision(): number {
   return useSyncExternalStore(
     (listener) => {

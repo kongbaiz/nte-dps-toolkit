@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createTechnicalClient } from "./technical-client";
 
 const snapshot = {
-  contractVersion: 4,
+  contractVersion: 5,
   sequence: "1",
   bridgeStatus: "ready",
   adapterVersion: "0.3.6",
@@ -22,7 +22,7 @@ const snapshot = {
     issue: null,
   },
   hud: {
-    version: 2,
+    version: 3,
     dataState: "empty",
     config: {
       width: 380,

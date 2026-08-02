@@ -15,7 +15,7 @@ use crate::{
     storage::config::{HudConfig, HudModule},
 };
 
-pub const HUD_SNAPSHOT_VERSION: u32 = 2;
+pub const HUD_SNAPSHOT_VERSION: u32 = 3;
 pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
 const HUD_PREVIEW_ROW_COUNT: usize = 4;
 
@@ -124,6 +124,7 @@ pub struct HudCharacterSnapshot {
     pub dps: f64,
     pub damage_share_percent: f64,
     pub damage_taken: f64,
+    pub color: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -334,6 +335,7 @@ fn project_readout(
                 dps: finite_nonnegative(dps),
                 damage_share_percent: percentage(row.damage, total_damage),
                 damage_taken: finite_nonnegative(row.damage_taken),
+                color: None,
             }
         })
         .collect::<Vec<_>>();
@@ -377,6 +379,7 @@ fn preview_readout() -> (HudSummarySnapshot, Vec<HudCharacterSnapshot>) {
             dps: damage / duration_seconds,
             damage_share_percent: percentage(damage, total_damage),
             damage_taken: 0.0,
+            color: None,
         })
         .collect();
 

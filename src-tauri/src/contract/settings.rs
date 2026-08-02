@@ -42,6 +42,19 @@ pub(crate) enum SettingsEvent {
     Snapshot(SettingsSnapshot),
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TeamDataExportResult {
+    pub saved: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TeamDataImportFileResult {
+    pub performed: bool,
+    pub settings: SettingsSnapshot,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InterfaceSettingsSnapshot {
@@ -178,6 +191,7 @@ pub(crate) struct TeamDataSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct InterfaceSettingsInput {
     pub language: String,
+    pub dark_mode: bool,
     pub theme_preset: String,
     pub accent: String,
     pub density: String,
@@ -453,5 +467,51 @@ mod tests {
             Some(5)
         );
         assert!(value.get("contract_version").is_none());
+    }
+
+    #[test]
+    fn team_data_export_result_distinguishes_save_from_cancel() {
+        let saved = serde_json::to_value(TeamDataExportResult { saved: true })
+            .expect("saved result must serialize");
+        let cancelled = serde_json::to_value(TeamDataExportResult { saved: false })
+            .expect("cancelled result must serialize");
+
+        assert_eq!(saved["saved"], true);
+        assert_eq!(cancelled["saved"], false);
+    }
+
+    #[test]
+    fn team_data_file_import_result_keeps_local_paths_out_of_the_contract() {
+        let config = UiConfig::default();
+        let settings = SettingsSnapshot::from_config(
+            &config,
+            8,
+            false,
+            Vec::new(),
+            CaptureLogStats::default(),
+            false,
+            false,
+            UpdateSettingsSnapshot::from_runtime(
+                &config,
+                "idle",
+                "Updates have not been checked in this session",
+                Vec::new(),
+                &[],
+                None,
+                0,
+                0,
+                None,
+                None,
+            ),
+        );
+        let value = serde_json::to_value(TeamDataImportFileResult {
+            performed: true,
+            settings,
+        })
+        .expect("import result must serialize");
+
+        assert_eq!(value["performed"], true);
+        assert_eq!(value["settings"]["generation"], "8");
+        assert!(value.get("path").is_none());
     }
 }

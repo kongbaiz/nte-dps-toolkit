@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::history::{abyss_event_starts_new_round, auto_round_due};
 
 fn key_pressed_without_repeat(events: &[egui::Event], key: egui::Key) -> bool {
     events.iter().any(|event| {
@@ -28,34 +29,6 @@ fn should_warn_hud_without_capture(
     has_session_data: bool,
 ) -> bool {
     !capture_running && !replay_running && !has_session_data
-}
-
-fn abyss_event_starts_new_round(current_floor: Option<u32>, event: &AbyssEvent) -> bool {
-    matches!(event, AbyssEvent::RestartDetected { .. })
-        || matches!(
-            event,
-            AbyssEvent::Stage {
-                floor: Some(next_floor),
-                ..
-            } if current_floor.is_some_and(|floor| floor != *next_floor)
-        )
-}
-
-fn auto_round_due(
-    capture_running: bool,
-    paused: bool,
-    abyss_active: bool,
-    game_paused: bool,
-    has_hits: bool,
-    idle_elapsed: Option<Duration>,
-    idle_seconds: u32,
-) -> bool {
-    capture_running
-        && !paused
-        && !abyss_active
-        && !game_paused
-        && has_hits
-        && idle_elapsed.is_some_and(|elapsed| elapsed >= Duration::from_secs(idle_seconds.into()))
 }
 
 fn replay_auto_round_due(
@@ -127,7 +100,7 @@ impl DpsApp {
                     )),
                 ),
             };
-        fill_missing_character_colors_from_avatars(&mut characters, &data_root);
+        assign_missing_character_colors(&mut characters);
         let characters = Arc::new(characters);
         let equipment_catalog_path = data_root.join(EQUIPMENT_CATALOG_PATH);
         let (equipment_catalog, equipment_load_error) =
@@ -1446,6 +1419,12 @@ impl DpsApp {
             auto_check_updates: self.update_client.auto_check,
             auto_download_updates: self.update_client.auto_download,
             always_on_top: self.preferences.always_on_top,
+            main_dps_always_on_top: self.saved_ui_config.main_dps_always_on_top,
+            hud_always_on_top: Some(self.preferences.always_on_top),
+            console_always_on_top: self.saved_ui_config.console_always_on_top,
+            abyss_values_always_on_top: self.saved_ui_config.abyss_values_always_on_top,
+            character_details_always_on_top: self.saved_ui_config.character_details_always_on_top,
+            team_details_always_on_top: self.saved_ui_config.team_details_always_on_top,
             island_notifications: self.notifications.island_enabled,
             island_offset_x: self.notifications.island_offset_x,
             capture_filter: self.capture_ui.filter.clone(),
@@ -3440,6 +3419,7 @@ impl DpsApp {
             include_incoming: self.capture_ui.include_incoming,
             server_damage_calibration: self.capture_ui.server_damage_calibration,
             last_diagnostic: self.notifications.diagnostic.clone(),
+            manual_capture_device: self.capture_ui.manual_capture_device.clone(),
         }
     }
 }

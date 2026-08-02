@@ -9,7 +9,7 @@ use nte_dps_tool::engine::{
 };
 use serde::Serialize;
 
-pub(crate) const ABYSS_VALUES_CONTRACT_VERSION: u32 = 1;
+pub(crate) const ABYSS_VALUES_CONTRACT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +20,7 @@ pub(crate) struct AbyssValuesSnapshot {
     pub monster_count: u32,
     pub seasons: Vec<AbyssSeasonSnapshot>,
     pub teams: AbyssPredictionTeamsSnapshot,
+    pub current_team_available: AbyssCurrentTeamAvailabilitySnapshot,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -83,6 +84,13 @@ pub(crate) struct AbyssPredictionTeamsSnapshot {
     pub lower: Option<AbyssTeamSnapshot>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AbyssCurrentTeamAvailabilitySnapshot {
+    pub upper: bool,
+    pub lower: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AbyssTeamSnapshot {
@@ -102,6 +110,7 @@ impl AbyssValuesSnapshot {
     pub(crate) fn new(
         dataset: AbyssMonsterDataset,
         teams: (Option<TeamDps>, Option<TeamDps>),
+        current_team_available: [bool; 2],
     ) -> Self {
         let season_count = dataset.seasons.len();
         let floor_count = dataset
@@ -126,6 +135,10 @@ impl AbyssValuesSnapshot {
                 .map(AbyssSeasonSnapshot::from)
                 .collect(),
             teams: AbyssPredictionTeamsSnapshot::from(teams),
+            current_team_available: AbyssCurrentTeamAvailabilitySnapshot {
+                upper: current_team_available[0],
+                lower: current_team_available[1],
+            },
         }
     }
 }

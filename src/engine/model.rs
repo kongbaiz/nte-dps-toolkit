@@ -2068,6 +2068,7 @@ pub struct CombatState {
     pub hits: VecDeque<Hit>,
     pub hits_generation: u64,
     pub packets: VecDeque<PacketDebug>,
+    pub packets_generation: u64,
     pub packet_count: usize,
     pub packets_with_hits: usize,
     pub stats: HashMap<u32, CharacterStats>,
@@ -2080,6 +2081,7 @@ pub struct CombatState {
     pub empty_curtain: Vec<EmptyCurtainItem>,
     pub empty_curtain_characters: Vec<EmptyCurtainCharacter>,
     pub empty_curtain_generation: u64,
+    pub empty_curtain_characters_generation: u64,
     pub time_stop_events: Vec<TimeStopEvent>,
     time_stop: TimeStopTracker,
     enemy_telemetry: EnemyTelemetryTracker,
@@ -2156,6 +2158,7 @@ impl CombatState {
 
     pub fn push_packet(&mut self, packet: PacketDebug) {
         self.packets.push_back(packet);
+        self.packets_generation = self.packets_generation.wrapping_add(1);
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
         }
@@ -2168,6 +2171,8 @@ impl CombatState {
 
     pub fn replace_empty_curtain_characters(&mut self, characters: Vec<EmptyCurtainCharacter>) {
         self.empty_curtain_characters = characters;
+        self.empty_curtain_characters_generation =
+            self.empty_curtain_characters_generation.wrapping_add(1);
     }
 
     fn apply_enemy_target_projection_result(&mut self, result: EnemyTargetProjectionResult) {
@@ -2261,10 +2266,12 @@ impl CombatState {
         let empty_curtain = std::mem::take(&mut self.empty_curtain);
         let empty_curtain_characters = std::mem::take(&mut self.empty_curtain_characters);
         let empty_curtain_generation = self.empty_curtain_generation;
+        let empty_curtain_characters_generation = self.empty_curtain_characters_generation;
         *self = Self::default();
         self.empty_curtain = empty_curtain;
         self.empty_curtain_characters = empty_curtain_characters;
         self.empty_curtain_generation = empty_curtain_generation;
+        self.empty_curtain_characters_generation = empty_curtain_characters_generation;
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
@@ -3779,6 +3786,7 @@ mod tests {
             character_id: 1020,
         }]);
         let inventory_generation = state.empty_curtain_generation;
+        let character_generation = state.empty_curtain_characters_generation;
 
         state.clear_battle_preserving_inventory();
 
@@ -3788,6 +3796,10 @@ mod tests {
         assert_eq!(state.empty_curtain.len(), 1);
         assert_eq!(state.empty_curtain_characters.len(), 1);
         assert_eq!(state.empty_curtain_generation, inventory_generation);
+        assert_eq!(
+            state.empty_curtain_characters_generation,
+            character_generation
+        );
     }
 
     #[test]

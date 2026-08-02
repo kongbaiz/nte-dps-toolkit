@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::{CoreError, CoreErrorCode};
 use crate::engine::capture::{
     CaptureDevice, CaptureHandle, CaptureOutput, CaptureResources, EngineEventSink,
-    PacketEmissionMode, list_devices, start_capture,
+    PacketEmissionMode, RawCaptureBuffer, RawCaptureSnapshot, list_devices, start_capture,
 };
 use crate::engine::model::CharacterInfo;
 use crate::engine::parser::AbilityCatalog;
@@ -162,8 +162,10 @@ pub struct CaptureControllerOptions {
 #[derive(Default)]
 pub struct CaptureController {
     capture: Option<CaptureHandle>,
+    last_raw_capture: Option<RawCaptureBuffer>,
     profile: Option<CaptureProfile>,
     expose_raw_capture_path: bool,
+    active_filter: Option<String>,
 }
 
 impl CaptureController {
@@ -180,6 +182,26 @@ impl CaptureController {
             return None;
         }
         self.capture.as_ref()?.raw_capture().path()
+    }
+
+    pub fn active_filter(&self) -> Option<String> {
+        self.active_filter.clone()
+    }
+
+    pub fn raw_capture_snapshot(&self) -> Option<RawCaptureSnapshot> {
+        self.capture
+            .as_ref()
+            .map(|capture| capture.raw_capture())
+            .or_else(|| self.last_raw_capture.clone())
+            .map(|capture| capture.snapshot())
+    }
+
+    pub fn save_last_raw_capture(&self, path: &Path) -> Result<(u64, u64), String> {
+        let raw_capture = self
+            .last_raw_capture
+            .as_ref()
+            .ok_or_else(|| "no completed raw capture is available".to_owned())?;
+        raw_capture.save(path)
     }
 
     pub fn start(
@@ -215,7 +237,7 @@ impl CaptureController {
         let capture = start_capture(
             device,
             local_ip,
-            filter,
+            filter.clone(),
             options.include_incoming,
             options.server_damage_calibration,
             CaptureResources {
@@ -229,8 +251,10 @@ impl CaptureController {
             },
         );
         self.capture = Some(capture);
+        self.last_raw_capture = None;
         self.profile = Some(options.profile);
         self.expose_raw_capture_path = options.expose_raw_capture_path;
+        self.active_filter = Some(filter);
         Ok(())
     }
 
@@ -241,24 +265,33 @@ impl CaptureController {
                 "capture is not running",
             ));
         };
+        let raw_capture = capture.raw_capture();
         capture.stop();
+        self.last_raw_capture = Some(raw_capture);
         self.profile = None;
         self.expose_raw_capture_path = false;
+        self.active_filter = None;
         Ok(())
     }
 
     pub fn stop_if_running(&mut self) {
         if let Some(mut capture) = self.capture.take() {
+            let raw_capture = capture.raw_capture();
             capture.stop();
+            self.last_raw_capture = Some(raw_capture);
         }
         self.profile = None;
         self.expose_raw_capture_path = false;
+        self.active_filter = None;
     }
 
     pub fn capture_stopped(&mut self) {
-        self.capture = None;
+        if let Some(capture) = self.capture.take() {
+            self.last_raw_capture = Some(capture.raw_capture());
+        }
         self.profile = None;
         self.expose_raw_capture_path = false;
+        self.active_filter = None;
     }
 }
 

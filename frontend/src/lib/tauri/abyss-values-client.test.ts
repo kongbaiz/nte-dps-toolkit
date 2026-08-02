@@ -24,6 +24,7 @@ describe("abyss values client", () => {
 
     await client.getSnapshot();
     await client.importTeam("upper", '{"version":1}');
+    await client.importCurrentTeam("lower");
     await client.clearTeam("lower");
     await client.swapTeams();
 
@@ -32,6 +33,10 @@ describe("abyss values client", () => {
       {
         command: "import_abyss_prediction_team",
         arguments_: { half: "upper", json: '{"version":1}' },
+      },
+      {
+        command: "import_current_abyss_prediction_team",
+        arguments_: { half: "lower" },
       },
       {
         command: "clear_abyss_prediction_team",

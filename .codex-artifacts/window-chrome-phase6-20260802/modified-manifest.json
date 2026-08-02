@@ -1,0 +1,34 @@
+[
+  {
+    "path": "frontend/src/components/nte/desktop-titlebar.tsx",
+    "sha256": "24A11FF374559602421C27C3307A3187816C5FBF738AC49974B9C333E26890F7"
+  },
+  {
+    "path": "frontend/src/lib/tauri/desktop-window-client.ts",
+    "sha256": "51C637416C4D98D3A897A55ACF8D4DE61B45F4683A3441235F58150990B4C30A"
+  },
+  {
+    "path": "frontend/src/lib/tauri/desktop-window-client.test.ts",
+    "sha256": "D6126D8E30ED4FF50ACE5CF2CFDF2DA8C43E49C61E21E725A064A60DA877F871"
+  },
+  {
+    "path": "frontend/src/features/main-dps/main-dps-page.tsx",
+    "sha256": "0219DA7AFAACFB6EE17CD8FC0EEB21FB7EE9917F2E3AE44E6BF2E3C13339D168"
+  },
+  {
+    "path": "frontend/src/main.tsx",
+    "sha256": "963F28DF4E4F35DF1374D339590F03FEA8E7528FB2674825DAE50358197F538A"
+  },
+  {
+    "path": "frontend/src/lib/browser-context-menu.ts",
+    "sha256": "EB29A732CAC986BF4782362FC9CA263746CB49000A43E4D7FFD6D094469CDE01"
+  },
+  {
+    "path": "frontend/src/lib/browser-context-menu.test.ts",
+    "sha256": "9594E53D606BEA5C9A26F888CD000D6D17FEFF4CF04AE799756C98EBFB6E7EE3"
+  },
+  {
+    "path": "src-tauri/capabilities/desktop-window-topmost.json",
+    "sha256": "D0AA4CE21CF92FFF1EE1D1C6E674CD7ABDC0E2A7749B337D5EE66F5DE2719591"
+  }
+]

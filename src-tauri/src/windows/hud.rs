@@ -438,7 +438,6 @@ pub(crate) fn set_always_on_top(
     state: &AppState,
     enabled: bool,
 ) -> Result<(), CommandError> {
-    let _transaction = state.lock_always_on_top_transaction();
     let previous = state.always_on_top();
     window.set_always_on_top(enabled).map_err(|error| {
         log::error!("set_always_on_top failed: {error}");

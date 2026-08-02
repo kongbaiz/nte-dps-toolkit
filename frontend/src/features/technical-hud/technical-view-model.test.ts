@@ -23,7 +23,7 @@ import {
 } from "./technical-view-model";
 
 const snapshot = (sequence: string): TechnicalSnapshot => ({
-  contractVersion: 4,
+  contractVersion: 5,
   sequence,
   bridgeStatus: "ready",
   adapterVersion: "0.3.6",
@@ -42,7 +42,7 @@ const snapshot = (sequence: string): TechnicalSnapshot => ({
     issue: null,
   },
   hud: {
-    version: 2,
+    version: 3,
     dataState: "empty",
     config: {
       width: 380,
@@ -143,6 +143,7 @@ describe("technical HUD projection", () => {
         dps: 35172,
         damageSharePercent: 54.6,
         damageTaken: 0,
+        color: "#A72648",
       },
     ];
 

@@ -1,3 +1,11 @@
+pub(crate) mod diagnostics;
+pub(crate) mod empty_curtain;
+pub(crate) mod history;
+pub(crate) mod main_dps;
+pub(crate) mod main_dps_detail;
 pub(crate) mod mod_studio;
+pub(crate) mod packets;
 pub(crate) mod settings;
+pub(crate) mod skills;
 pub(crate) mod technical;
+pub(crate) mod timeline;

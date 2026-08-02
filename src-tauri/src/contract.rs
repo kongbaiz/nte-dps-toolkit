@@ -7,10 +7,22 @@ use nte_dps_tool::core::{
 };
 
 pub(crate) mod abyss_values;
+pub(crate) mod character_data;
+pub(crate) mod diagnostics;
+pub(crate) mod empty_curtain;
+pub(crate) mod encrypted_ini;
+pub(crate) mod history;
+pub(crate) mod island;
+pub(crate) mod main_dps;
+pub(crate) mod main_dps_detail;
 pub(crate) mod mod_studio;
+pub(crate) mod packets;
+pub(crate) mod resources;
 pub(crate) mod settings;
+pub(crate) mod skills;
+pub(crate) mod timeline;
 
-pub(crate) const TECHNICAL_CONTRACT_VERSION: u32 = 4;
+pub(crate) const TECHNICAL_CONTRACT_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +107,99 @@ pub(crate) struct CommandError {
 }
 
 impl CommandError {
+    pub(crate) fn main_dps(code: &'static str, message_key: &'static str) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn history(code: &'static str, message_key: &'static str) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn timeline(code: &'static str, message_key: &'static str) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn skills(code: &'static str, message_key: &'static str) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn empty_curtain(
+        code: &'static str,
+        message_key: &'static str,
+        message_arguments: Vec<String>,
+    ) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments,
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn character_data(
+        code: &'static str,
+        message_key: &'static str,
+        message_arguments: Vec<String>,
+    ) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments,
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn encrypted_ini(
+        code: &'static str,
+        message_key: &'static str,
+        message_arguments: Vec<String>,
+    ) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments,
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn resources(code: &'static str, message_key: &'static str) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn diagnostics(code: &'static str, message_key: &'static str) -> Self {
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn invalid_subscription_id() -> Self {
         Self {
             code: "invalid_subscription_id",
@@ -239,6 +344,33 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn team_data_export_failed() -> Self {
+        Self {
+            code: "team_data_export_failed",
+            message_key: "Failed to export team data.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn team_data_import_failed() -> Self {
+        Self {
+            code: "team_data_import_failed",
+            message_key: "Failed to import team data.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn team_data_file_dialog_failed() -> Self {
+        Self {
+            code: "team_data_file_dialog_failed",
+            message_key: "Team data file dialog failed.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn abyss_values_unavailable() -> Self {
         Self {
             code: "abyss_values_unavailable",
@@ -360,7 +492,10 @@ mod tests {
         assert_eq!(value["window"]["alwaysOnTop"], true);
         assert_eq!(value["capture"]["phase"], "idle");
         assert_eq!(value["hud"]["dataState"], "preview");
-        assert_eq!(value["hud"]["version"], 2);
+        assert_eq!(
+            value["hud"]["version"],
+            nte_dps_tool::core::hud::HUD_SNAPSHOT_VERSION
+        );
         assert_eq!(value["hud"]["characters"][0]["hits"], "38");
         assert_eq!(value["hud"]["timeline"]["buckets"][0]["hits"], "1");
         assert!(value.get("contract_version").is_none());

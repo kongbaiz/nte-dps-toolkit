@@ -1,8 +1,8 @@
 use std::path::Path;
 
+pub(crate) use crate::core::character_data::CHARACTER_ATTRIBUTES;
+use crate::core::character_data::{CharacterDataRecordInput, apply_character_data_record};
 use crate::storage::resource::read_resource_text;
-
-pub(crate) const CHARACTER_ATTRIBUTES: [&str; 6] = ["灵", "咒", "光", "魂", "暗", "相"];
 
 #[derive(Clone, Default)]
 pub(crate) struct CharacterEditForm {
@@ -122,53 +122,22 @@ impl CharacterEditorState {
     }
 
     pub(crate) fn apply_form(&mut self) -> Result<String, String> {
-        let id = self
-            .form
-            .id
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| "角色 ID 必须是正整数".to_owned())?
-            .to_string();
-        if self.form.name_zh.trim().is_empty() && self.form.name_en.trim().is_empty() {
-            return Err("中文名和英文名至少填写一项".to_owned());
-        }
-        let color = self.form.color.trim();
-        if !color.is_empty() && !is_hex_color(color) {
-            return Err("颜色必须是 #RRGGBB 格式".to_owned());
-        }
-        let attribute = self.form.attribute.trim();
-        if !attribute.is_empty() && !CHARACTER_ATTRIBUTES.contains(&attribute) {
-            return Err(format!(
-                "角色属性必须是：{}",
-                CHARACTER_ATTRIBUTES.join("、")
-            ));
-        }
-        if let Some(selected_id) = &self.selected_id
-            && selected_id != &id
-        {
-            return Err("现有角色 ID 不允许直接修改，请新增记录".to_owned());
-        }
-        let characters = self
-            .document
-            .get_mut("characters")
-            .and_then(serde_json::Value::as_object_mut)
-            .ok_or_else(|| "characters.json 缺少 characters 对象".to_owned())?;
-        let row = characters
-            .entry(id.clone())
-            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-        let row = row
-            .as_object_mut()
-            .ok_or_else(|| format!("ID {id} 的数据不是 JSON 对象"))?;
-        set_json_string(row, "name_zh", self.form.name_zh.trim());
-        set_json_string(row, "name_en", self.form.name_en.trim());
-        set_json_string(row, "codename", self.form.codename.trim());
-        set_optional_json_string(row, "attribute", attribute);
-        row.insert(
-            "verified".to_owned(),
-            serde_json::Value::Bool(self.form.verified),
-        );
-        set_optional_json_string(row, "color", color);
-        set_optional_json_string(row, "avatar", self.form.avatar.trim());
+        let record = apply_character_data_record(
+            &mut self.document,
+            CharacterDataRecordInput {
+                original_id: self.selected_id.clone(),
+                id: self.form.id.clone(),
+                name_zh: self.form.name_zh.clone(),
+                name_en: self.form.name_en.clone(),
+                codename: self.form.codename.clone(),
+                attribute: self.form.attribute.clone(),
+                verified: self.form.verified,
+                color: self.form.color.clone(),
+                avatar: self.form.avatar.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        let id = record.id.to_string();
         self.selected_id = Some(id.clone());
         self.form.id = id.clone();
         self.dirty = false;
@@ -199,28 +168,4 @@ pub(crate) fn json_string_field(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_owned()
-}
-
-fn set_json_string(row: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: &str) {
-    row.insert(key.to_owned(), serde_json::Value::String(value.to_owned()));
-}
-
-fn set_optional_json_string(
-    row: &mut serde_json::Map<String, serde_json::Value>,
-    key: &str,
-    value: &str,
-) {
-    if value.is_empty() {
-        row.remove(key);
-    } else {
-        set_json_string(row, key, value);
-    }
-}
-
-fn is_hex_color(value: &str) -> bool {
-    value.len() == 7
-        && value.starts_with('#')
-        && value.as_bytes()[1..]
-            .iter()
-            .all(|byte| byte.is_ascii_hexdigit())
 }

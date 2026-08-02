@@ -36,41 +36,9 @@ export type SettingsPendingSection =
 
 export function settingsSectionPending(
   pendingAction: string | null,
-  section: SettingsPendingSection,
+  _section: SettingsPendingSection,
 ): boolean {
-  if (pendingAction === null) return false;
-  switch (section) {
-    case "interface":
-      return pendingAction === "interface";
-    case "update":
-      return pendingAction.startsWith("update-");
-    case "capture":
-      return pendingAction === "capture" || pendingAction === "capture-devices";
-    case "hotkeys":
-      return (
-        pendingAction === "hotkeys-enabled" ||
-        pendingAction.startsWith("hotkey:")
-      );
-    case "layout":
-      return pendingAction.startsWith("layout:");
-    case "team-data":
-      return pendingAction.startsWith("team-");
-    case "capture-files":
-      return pendingAction.startsWith("capture-files-");
-    case "abyss-values":
-      return pendingAction === "abyss-values";
-    case "hud-window":
-      return pendingAction === "always-on-top" || pendingAction === "width";
-    case "hud-modules":
-      return (
-        pendingAction.startsWith("option:") ||
-        pendingAction.startsWith("preset:") ||
-        pendingAction.startsWith("module:") ||
-        pendingAction.startsWith("move:")
-      );
-    case "hud-editor":
-      return pendingAction === "open-editor";
-  }
+  return pendingAction !== null;
 }
 
 export function shouldAcceptSettingsGeneration(
@@ -78,6 +46,15 @@ export function shouldAcceptSettingsGeneration(
   incoming: string,
 ): boolean {
   return accepted === null || compareSettingsGeneration(incoming, accepted) > 0;
+}
+
+export function shouldAcceptSettingsRefresh(
+  accepted: string | null,
+  incoming: string,
+): boolean {
+  return (
+    accepted === null || compareSettingsGeneration(incoming, accepted) >= 0
+  );
 }
 
 export function hudOptionEnabled(

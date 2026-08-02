@@ -8,6 +8,10 @@ use nte_dps_tool::core::{
         ModStudioRuntimeLevel, ModStudioRuntimeLog, VersionedModStudioWorkspace,
     },
 };
+use nte_dps_tool::platform::mods_plugin::{
+    ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
+    ModsPluginGameStatus,
+};
 
 use super::CommandError;
 
@@ -124,6 +128,40 @@ impl From<VersionedModStudioWorkspace> for ModStudioWorkspaceSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ModStudioGameRegionSnapshot {
+    China,
+    Global,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModStudioGameStatusSnapshot {
+    pub region: ModStudioGameRegionSnapshot,
+    pub installed: bool,
+    pub current: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModStudioDeploymentSnapshot {
+    pub contract_version: u32,
+    pub installations: u32,
+    pub installed: u32,
+    pub current: u32,
+    pub source_available: bool,
+    pub games: Vec<ModStudioGameStatusSnapshot>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModStudioDirectorySelectionSnapshot {
+    pub selected: bool,
+    pub path: Option<String>,
+    pub deployment: ModStudioDeploymentSnapshot,
+}
+
 impl From<ModStudioDocumentSummary> for ModStudioDocumentSummarySnapshot {
     fn from(document: ModStudioDocumentSummary) -> Self {
         Self {
@@ -131,6 +169,38 @@ impl From<ModStudioDocumentSummary> for ModStudioDocumentSummarySnapshot {
             enabled: document.enabled,
             source_bytes: document.source_bytes,
             line_count: document.line_count,
+        }
+    }
+}
+
+impl From<ModsPluginGameRegion> for ModStudioGameRegionSnapshot {
+    fn from(region: ModsPluginGameRegion) -> Self {
+        match region {
+            ModsPluginGameRegion::China => Self::China,
+            ModsPluginGameRegion::Global => Self::Global,
+        }
+    }
+}
+
+impl From<ModsPluginGameStatus> for ModStudioGameStatusSnapshot {
+    fn from(status: ModsPluginGameStatus) -> Self {
+        Self {
+            region: status.region.into(),
+            installed: status.installed,
+            current: status.current,
+        }
+    }
+}
+
+impl From<ModsPluginDeploymentStatus> for ModStudioDeploymentSnapshot {
+    fn from(status: ModsPluginDeploymentStatus) -> Self {
+        Self {
+            contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            installations: status.installations as u32,
+            installed: status.installed as u32,
+            current: status.current as u32,
+            source_available: status.source_available,
+            games: status.games.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -230,6 +300,10 @@ impl CommandError {
             ModStudioErrorCode::InvalidModId => {
                 ("invalid_mod_id", "The Mod identifier is invalid.")
             }
+            ModStudioErrorCode::DocumentAlreadyExists => (
+                "mod_document_already_exists",
+                "A Mod with this ID already exists.",
+            ),
             ModStudioErrorCode::DocumentNotFound => (
                 "mod_document_not_found",
                 "The selected Mod document no longer exists.",
@@ -300,6 +374,71 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn from_mod_studio_deployment(error: ModsPluginDeploymentError) -> Self {
+        let (code, message_key) = match error {
+            ModsPluginDeploymentError::GameRunning => (
+                "mod_loader_game_running",
+                "Close HTGame.exe before changing the Mod loader.",
+            ),
+            ModsPluginDeploymentError::GameProcessProbe(_) => (
+                "mod_loader_game_probe_failed",
+                "Failed to check whether HTGame.exe is running.",
+            ),
+            ModsPluginDeploymentError::GameInstallationNotFound => (
+                "mod_loader_game_not_found",
+                "Game installation not detected",
+            ),
+            ModsPluginDeploymentError::InvalidGameDirectory => (
+                "mod_loader_game_directory_invalid",
+                "The selected folder does not contain HTGame.exe.",
+            ),
+            ModsPluginDeploymentError::Registry(_) => (
+                "mod_loader_registry_failed",
+                "Failed to locate the game installation from the registry.",
+            ),
+            ModsPluginDeploymentError::PluginSourceNotFound => (
+                "mod_loader_source_not_found",
+                "Mod loader file plugins/dwmapi.dll was not found",
+            ),
+            ModsPluginDeploymentError::ConflictingDwmapi => (
+                "mod_loader_conflict",
+                "The game directory already contains an unmanaged dwmapi.dll.",
+            ),
+            ModsPluginDeploymentError::InstalledPluginChanged => (
+                "mod_loader_changed",
+                "The installed dwmapi.dll was replaced outside this tool.",
+            ),
+            ModsPluginDeploymentError::FileSystem(_) => (
+                "mod_loader_file_failed",
+                "Failed to update the Mod loader files.",
+            ),
+        };
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn mod_studio_file_dialog_failed() -> Self {
+        Self {
+            code: "mod_studio_file_dialog_failed",
+            message_key: "The native file dialog failed",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn mod_studio_folder_open_failed() -> Self {
+        Self {
+            code: "mod_studio_folder_open_failed",
+            message_key: "Failed to open the Mod folder.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn invalid_mod_runtime_subscription_id() -> Self {
         Self {
             code: "invalid_mod_runtime_subscription_id",
@@ -348,6 +487,26 @@ mod tests {
 
         assert_eq!(value["id"], "telemetry");
         assert_eq!(value["source"], "NTE_SCRIPT(5);");
+    }
+
+    #[test]
+    fn deployment_snapshot_uses_stable_regions_and_omits_game_paths() {
+        let snapshot = ModStudioDeploymentSnapshot::from(ModsPluginDeploymentStatus {
+            installations: 1,
+            installed: 1,
+            current: 1,
+            source_available: true,
+            games: vec![ModsPluginGameStatus {
+                region: ModsPluginGameRegion::Global,
+                installed: true,
+                current: true,
+            }],
+        });
+        let value = serde_json::to_value(snapshot).expect("serialize deployment");
+
+        assert_eq!(value["contractVersion"], MOD_STUDIO_CONTRACT_VERSION);
+        assert_eq!(value["games"][0]["region"], "global");
+        assert!(value.get("path").is_none());
     }
 
     #[test]

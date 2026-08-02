@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   technicalClient,
@@ -19,6 +19,12 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
   const [state, setState] = useState<TechnicalPageState>({
     status: "loading",
   });
+  const [actionNotice, setActionNotice] = useState<{
+    id: number;
+    action: string;
+    status: "pending" | "success";
+  } | null>(null);
+  const actionId = useRef(0);
 
   const applySnapshot = useCallback((snapshot: TechnicalSnapshot) => {
     setState((current) => acceptSnapshot(current, snapshot));
@@ -31,87 +37,84 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
     });
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      applySnapshot(await client.getSnapshot());
-    } catch (error) {
-      applyError(error);
-    }
-  }, [applyError, applySnapshot, client]);
+  useEffect(() => {
+    if (actionNotice?.status !== "success") return;
+    const timer = window.setTimeout(() => setActionNotice(null), 1_800);
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
 
-  const setPassthrough = useCallback(
-    async (enabled: boolean) => {
+  const runAction = useCallback(
+    async (action: string, request: () => Promise<TechnicalSnapshot>) => {
+      const id = ++actionId.current;
+      setActionNotice({ id, action, status: "pending" });
       try {
-        applySnapshot(await client.setPassthrough(enabled));
+        applySnapshot(await request());
+        if (actionId.current === id) {
+          setActionNotice({ id, action, status: "success" });
+        }
       } catch (error) {
+        if (actionId.current === id) setActionNotice(null);
         applyError(error);
       }
     },
-    [applyError, applySnapshot, client],
+    [applyError, applySnapshot],
+  );
+
+  const refresh = useCallback(async () => {
+    await runAction("refresh", () => client.getSnapshot());
+  }, [client, runAction]);
+
+  const setPassthrough = useCallback(
+    async (enabled: boolean) => {
+      await runAction("passthrough", () => client.setPassthrough(enabled));
+    },
+    [client, runAction],
   );
 
   const setAlwaysOnTop = useCallback(
     async (enabled: boolean) => {
-      try {
-        applySnapshot(await client.setAlwaysOnTop(enabled));
-      } catch (error) {
-        applyError(error);
-      }
+      await runAction("always-on-top", () => client.setAlwaysOnTop(enabled));
     },
-    [applyError, applySnapshot, client],
+    [client, runAction],
   );
 
   const setHudModuleVisibility = useCallback(
     async (module: HudModuleId, visible: boolean) => {
-      try {
-        applySnapshot(await client.setModuleVisibility(module, visible));
-      } catch (error) {
-        applyError(error);
-      }
+      await runAction("hud-modules", () =>
+        client.setModuleVisibility(module, visible),
+      );
     },
-    [applyError, applySnapshot, client],
+    [client, runAction],
   );
 
   const moveHudModule = useCallback(
     async (dragged: HudModuleId, target: HudModuleId, insertAfter: boolean) => {
-      try {
-        applySnapshot(await client.moveModule(dragged, target, insertAfter));
-      } catch (error) {
-        applyError(error);
-      }
+      await runAction("module-order", () =>
+        client.moveModule(dragged, target, insertAfter),
+      );
     },
-    [applyError, applySnapshot, client],
+    [client, runAction],
   );
 
   const setHudWidth = useCallback(
     async (width: number) => {
-      try {
-        applySnapshot(await client.setWidth(width));
-      } catch (error) {
-        applyError(error);
-      }
+      await runAction("hud-width", () => client.setWidth(width));
     },
-    [applyError, applySnapshot, client],
+    [client, runAction],
   );
 
   const startCapture = useCallback(async () => {
-    try {
-      applySnapshot(await client.startCapture());
-    } catch (error) {
-      applyError(error);
-    }
-  }, [applyError, applySnapshot, client]);
+    await runAction("start-capture", () => client.startCapture());
+  }, [client, runAction]);
 
   const stopCapture = useCallback(async () => {
-    try {
-      applySnapshot(await client.stopCapture());
-    } catch (error) {
-      applyError(error);
-    }
-  }, [applyError, applySnapshot, client]);
+    await runAction("stop-capture", () => client.stopCapture());
+  }, [client, runAction]);
+
+  const clearActionNotice = useCallback(() => setActionNotice(null), []);
 
   useEffect(() => {
-    void refresh();
+    void client.getSnapshot().then(applySnapshot).catch(applyError);
     const unsubscribe = client.subscribe(applySnapshot, applyError);
 
     return () => {
@@ -119,10 +122,12 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
         console.error("technical subscription cleanup failed", error);
       });
     };
-  }, [applyError, applySnapshot, client, refresh]);
+  }, [applyError, applySnapshot, client]);
 
   return {
     state,
+    actionNotice,
+    clearActionNotice,
     refresh,
     setPassthrough,
     setAlwaysOnTop,

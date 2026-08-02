@@ -1,0 +1,43 @@
+[baseline_hash]
+command=Get-FileHash -Algorithm SHA256 -LiteralPath 'D:\NTE_DPS_TOOL\.codex-artifacts\20260802-agents-project-standard\AGENTS.before.md'
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=sha256=4ed35e4086046a1bba7d20b63b16a3ddada45ad46bf9e14a33a5541b017d4802
+exit_status=0
+
+[modified_hash]
+command=Get-FileHash -Algorithm SHA256 -LiteralPath 'D:\NTE_DPS_TOOL\AGENTS.md'
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=sha256=4deab0771ff8be0ff1acc60f8b91f8c845cb81d59d1501fbcdf7d1771e744000
+exit_status=0
+
+[diff_check]
+command=git diff --check -- AGENTS.md
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=warning: in the working copy of 'AGENTS.md', LF will be replaced by CRLF the next time Git touches it
+exit_status=0
+
+[markdown_fences]
+command=count lines matching ^` and require an even number
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=fence_count=20
+exit_status=0
+
+[required_sections]
+command=search required steady-state project markers
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=all_required_markers_present
+exit_status=0
+
+[obsolete_terms]
+command=search obsolete functional-migration wording
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=obsolete_terms_absent
+exit_status=0
+
+[rollback_smoke]
+command=powershell -NoProfile -ExecutionPolicy Bypass -File 'D:\NTE_DPS_TOOL\.codex-artifacts\20260802-agents-project-standard\rollback.ps1' -Target 'D:\NTE_DPS_TOOL\.codex-artifacts\20260802-agents-project-standard\rollback-smoke.md'
+input=D:\NTE_DPS_TOOL\AGENTS.md
+output=rollback_sha256=4ed35e4086046a1bba7d20b63b16a3ddada45ad46bf9e14a33a5541b017d4802
+rollback_hash_verification=passed
+exit_status=0
+

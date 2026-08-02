@@ -1,13 +1,17 @@
 use std::borrow::Cow;
+#[cfg(any(feature = "desktop", feature = "gui"))]
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+#[cfg(any(feature = "desktop", feature = "gui"))]
+use crate::engine::model::CharacterInfo;
 use anyhow::{Context, Result, anyhow};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 const MODS_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 21] = [
     b"NTE_DPS_TOOL_MODS_PLUGIN_V1",
     b"game.session",
@@ -42,8 +46,8 @@ pub(crate) fn resource_file_path(path: &Path) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-#[cfg(feature = "gui")]
-pub(crate) fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
     let relative_path = Path::new(MODS_PLUGIN_PATH);
     let candidates = [
         super::paths::software_dir().join(relative_path),
@@ -52,7 +56,7 @@ pub(crate) fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
     read_first_compatible_mods_plugin(&candidates)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 fn read_first_compatible_mods_plugin(candidates: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
     let mut incompatible = None;
     for candidate in candidates {
@@ -77,7 +81,7 @@ fn read_first_compatible_mods_plugin(candidates: &[PathBuf]) -> std::io::Result<
     Ok(None)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", feature = "gui"))]
 fn mods_plugin_supports_bundled_mods(plugin: &[u8]) -> bool {
     MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS
         .iter()
@@ -106,6 +110,125 @@ pub(crate) fn read_resource_bytes(path: &Path) -> Result<Cow<'static, [u8]>> {
     }
 
     Err(anyhow!("找不到资源 {}", path.display()))
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+const DISTINCT_CHARACTER_PALETTE: [[u8; 3]; 32] = [
+    [0xE8, 0x17, 0x4B],
+    [0x17, 0xE8, 0x17],
+    [0xE0, 0x5C, 0xD5],
+    [0x17, 0xC5, 0xE8],
+    [0xE8, 0x4B, 0x17],
+    [0x17, 0x17, 0xE8],
+    [0x1F, 0xA3, 0x61],
+    [0x11, 0x54, 0xB0],
+    [0xA3, 0x56, 0x1F],
+    [0xB4, 0xE0, 0x5C],
+    [0xA3, 0x1F, 0x61],
+    [0x61, 0x1F, 0xA3],
+    [0x4F, 0xEE, 0xD3],
+    [0xE8, 0xB4, 0x17],
+    [0xC5, 0x17, 0xE8],
+    [0x4F, 0xEE, 0x76],
+    [0x11, 0x7B, 0xB0],
+    [0xE8, 0xE8, 0x17],
+    [0x40, 0xA3, 0x1F],
+    [0xE0, 0xA9, 0x5C],
+    [0x17, 0x4B, 0xE8],
+    [0x1F, 0xA3, 0x98],
+    [0xE8, 0x17, 0x91],
+    [0xE0, 0x67, 0x5C],
+    [0xA3, 0xA3, 0x1F],
+    [0xE8, 0x80, 0x17],
+    [0x91, 0xE8, 0x17],
+    [0x17, 0xE8, 0xA2],
+    [0x4F, 0x91, 0xEE],
+    [0xA3, 0x1F, 0x35],
+    [0xA3, 0x1F, 0x8D],
+    [0x9E, 0x4F, 0xEE],
+];
+
+/// Assign every character without an explicit color a unique catalog-wide
+/// accent. Character identity and catalog order are the only inputs; combat
+/// rank, avatar pixels, and attributes cannot make teammates converge.
+#[cfg(any(feature = "desktop", feature = "gui"))]
+pub(crate) fn assign_missing_character_colors(characters: &mut HashMap<u32, CharacterInfo>) {
+    let mut character_ids = characters.keys().copied().collect::<Vec<_>>();
+    character_ids.sort_unstable();
+    let mut used = characters
+        .values()
+        .filter_map(|character| character.color.as_deref())
+        .filter_map(parse_character_hex_rgb)
+        .collect::<HashSet<_>>();
+
+    for (catalog_index, character_id) in character_ids.into_iter().enumerate() {
+        let Some(character) = characters.get_mut(&character_id) else {
+            continue;
+        };
+        if character
+            .color
+            .as_deref()
+            .and_then(parse_character_hex_rgb)
+            .is_some()
+        {
+            continue;
+        }
+        let color = available_character_rgb(catalog_index, character_id, &used);
+        used.insert(color);
+        character.color = Some(format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2]));
+    }
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn parse_character_hex_rgb(value: &str) -> Option<[u8; 3]> {
+    let value = value.strip_prefix('#')?;
+    if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some([
+        u8::from_str_radix(&value[0..2], 16).ok()?,
+        u8::from_str_radix(&value[2..4], 16).ok()?,
+        u8::from_str_radix(&value[4..6], 16).ok()?,
+    ])
+}
+
+#[cfg(any(feature = "desktop", feature = "gui"))]
+fn available_character_rgb(
+    catalog_index: usize,
+    character_id: u32,
+    used: &HashSet<[u8; 3]>,
+) -> [u8; 3] {
+    for offset in 0..DISTINCT_CHARACTER_PALETTE.len() {
+        let color =
+            DISTINCT_CHARACTER_PALETTE[(catalog_index + offset) % DISTINCT_CHARACTER_PALETTE.len()];
+        if !used.contains(&color) {
+            return color;
+        }
+    }
+
+    let mut salt = 0_u32;
+    loop {
+        let hash = character_id
+            .wrapping_mul(0x9E37_79B9)
+            .wrapping_add(salt.wrapping_mul(0x85EB_CA6B));
+        let color = [
+            48 + (hash & 0xAF) as u8,
+            48 + ((hash >> 8) & 0xAF) as u8,
+            48 + ((hash >> 16) & 0xAF) as u8,
+        ];
+        if !used.contains(&color) {
+            return color;
+        }
+        salt = salt.wrapping_add(1);
+    }
+}
+
+#[cfg(feature = "gui")]
+pub(crate) fn deterministic_character_fallback_rgb(seed: &[u8], _dark_mode: bool) -> [u8; 3] {
+    let hash = seed.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    });
+    DISTINCT_CHARACTER_PALETTE[hash as usize % DISTINCT_CHARACTER_PALETTE.len()]
 }
 
 fn bundled_resource_for_path(path: &Path) -> Option<&'static [u8]> {
@@ -158,6 +281,55 @@ fn embedded_resource_key(path: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    #[cfg(any(feature = "desktop", feature = "gui"))]
+    fn character_colors_are_unique_and_independent_of_hashmap_order() {
+        let character = |id| CharacterInfo {
+            name_zh: format!("角色{id}"),
+            name_en: format!("Character {id}"),
+            color: None,
+            avatar: None,
+            attribute: Some("同属性".to_owned()),
+        };
+        let ids = (1000..1022).collect::<Vec<_>>();
+        let mut forward = ids
+            .iter()
+            .copied()
+            .map(|id| (id, character(id)))
+            .collect::<HashMap<_, _>>();
+        let mut reverse = ids
+            .iter()
+            .rev()
+            .copied()
+            .map(|id| (id, character(id)))
+            .collect::<HashMap<_, _>>();
+
+        assign_missing_character_colors(&mut forward);
+        assign_missing_character_colors(&mut reverse);
+
+        let colors = ids
+            .iter()
+            .map(|id| forward[id].color.as_deref().unwrap())
+            .collect::<HashSet<_>>();
+        assert_eq!(colors.len(), ids.len());
+        for id in ids {
+            assert_eq!(forward[&id].color, reverse[&id].color);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "gui")]
+    fn deterministic_character_fallback_is_stable() {
+        assert_eq!(
+            deterministic_character_fallback_rgb(&1010_u32.to_le_bytes(), false),
+            deterministic_character_fallback_rgb(&1010_u32.to_le_bytes(), false)
+        );
+        assert_eq!(
+            deterministic_character_fallback_rgb(&1010_u32.to_le_bytes(), false),
+            [0x40, 0xA3, 0x1F]
+        );
+    }
 
     #[test]
     #[cfg(not(feature = "external_resources"))]

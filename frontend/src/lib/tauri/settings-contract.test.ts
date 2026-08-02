@@ -7,6 +7,7 @@ import {
 
 import {
   compareSettingsGeneration,
+  parseTeamDataImportFileResult,
   parseSettingsSnapshot,
   SETTINGS_CONTRACT_VERSION,
 } from "./settings-contract";
@@ -117,6 +118,17 @@ describe("settings contract", () => {
     expect(snapshot.hud.showTeamDps).toBe(true);
     expect(snapshot.capture.bpfFilter).toBe("udp");
     expect(snapshot.hotkeys.bindings).toHaveLength(3);
+  });
+
+  it("parses native team data import results without a local path", () => {
+    const result = parseTeamDataImportFileResult({
+      performed: true,
+      settings: settingsFixture(),
+    });
+
+    expect(result.performed).toBe(true);
+    expect(result.settings.generation).toBe("7");
+    expect(result).not.toHaveProperty("path");
   });
 
   it("orders decimal generations without unsafe number conversion", () => {

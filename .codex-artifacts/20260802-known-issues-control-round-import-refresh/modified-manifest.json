@@ -1,0 +1,74 @@
+[
+  {
+    "path": "frontend/src/features/console/console-command-palette-model.ts",
+    "sha256": "2329df757c7c2cf71e57c7ce27e97f7ffef6c81cd4fa3c9837cffb5191f553b0"
+  },
+  {
+    "path": "frontend/src/features/console/console-command-palette-model.test.ts",
+    "sha256": "1799fbf6b27682e1b04f0214800f706ca8b5a2753930d76c4ae60bdcdfcf16b9"
+  },
+  {
+    "path": "frontend/src/features/console/console-page.tsx",
+    "sha256": "5ad69963107d62e2725509e546bb2f30e8f563495379e559d3eebca6ce27a382"
+  },
+  {
+    "path": "frontend/src/features/settings/settings-catalog.tsx",
+    "sha256": "c6cee26c298d4289b82cea8ca4a6abe58a3bf0c64ad79b2a8ea729e1b3e2322d"
+  },
+  {
+    "path": "frontend/src/lib/tauri/settings-contract.ts",
+    "sha256": "c65413eba84b09a8331860eea55411a1c7961695232880451f77c3d5718a99ee"
+  },
+  {
+    "path": "frontend/src/lib/tauri/settings-client.test.ts",
+    "sha256": "010a866ff350ef635cbf66fd9bd7167cc34723b73436778216c9bb0dc11184d9"
+  },
+  {
+    "path": "src-tauri/src/contract/settings.rs",
+    "sha256": "714e192830f69e15447f1146861a3d0dcb83b5766adc6101fcc46d5b27af12d3"
+  },
+  {
+    "path": "src-tauri/src/commands/settings.rs",
+    "sha256": "e5906964824eb10e82b59bd42bc10d9ef1a63d4de0826d17ea0e3788d17cf71c"
+  },
+  {
+    "path": "src-tauri/src/commands/diagnostics.rs",
+    "sha256": "d34597f7d85d9868696e86ebee473e53e8305cd01364954fe467e0777703b5cf"
+  },
+  {
+    "path": "src-tauri/src/commands/main_dps.rs",
+    "sha256": "397dccd3d01e55a6ea66fb3e6475cfbf4e64d0314c30119e2ba5e97cb6494d48"
+  },
+  {
+    "path": "src-tauri/src/commands/mod.rs",
+    "sha256": "9b191bf1ed55a72bcf2fd5ab3e796094777244c6ff1d8dfd4d1255579891825b"
+  },
+  {
+    "path": "src-tauri/src/lib.rs",
+    "sha256": "d3d40a452b3ea26bbd2158f3e9798498ab0538919e2082803d44af6fa8fbd9a7"
+  },
+  {
+    "path": "src-tauri/src/state.rs",
+    "sha256": "086e45f574a592a666af36f3c3da5033099b7803ea49cbbaa1741b7b6035ef94"
+  },
+  {
+    "path": "src-tauri/src/channels/timeline.rs",
+    "sha256": "58775229f16a9c81b226526b124359e76d95885e66d797ee7eb596a6466b7493"
+  },
+  {
+    "path": "src-tauri/src/channels/skills.rs",
+    "sha256": "6c3009d98e676446732d407944f9aedad09299b413215681dc3f8921edf9613f"
+  },
+  {
+    "path": "frontend/src/lib/tauri/console-control-client.ts",
+    "sha256": "e43aa7e4bde54959b4359d734318ce4f96d8db1fb035e0c4736387668ec85bb8"
+  },
+  {
+    "path": "frontend/src/lib/tauri/console-control-client.test.ts",
+    "sha256": "ebc3078ad6fac8e0f041bee84b24d8c6bff8452dc1aa19f64b5b47315df48537"
+  },
+  {
+    "path": "src-tauri/src/commands/console_control.rs",
+    "sha256": "076d76968fed3f0bb7d8424f4a71f7c6d9c021e2cbaa24c39f3658b17badd67d"
+  }
+]

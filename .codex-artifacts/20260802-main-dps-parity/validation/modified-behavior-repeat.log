@@ -1,0 +1,11 @@
+detail_actions_enabled_from_hits=true
+team_detail_command_wired=true
+attribution_buttons_wired=true
+detail_route_present=true
+auto_half_transition_test=true
+compact_height_container_queries=true
+monaco_follows_interface_theme=true
+neutral_native_dark_tint=true
+console_custom_titlebar=true
+abyss_custom_titlebar=true
+detail_custom_titlebar=true

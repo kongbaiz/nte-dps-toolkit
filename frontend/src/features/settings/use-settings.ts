@@ -22,6 +22,7 @@ import type { HudModuleId } from "@/lib/tauri/technical-contract";
 
 import {
   shouldAcceptSettingsGeneration,
+  shouldAcceptSettingsRefresh,
   type SettingsPageState,
 } from "./settings-view-model";
 
@@ -34,6 +35,7 @@ export function useSettings(client: SettingsClient = settingsClient) {
     useState<SettingsCommandError | null>(null);
   const mounted = useRef(true);
   const mutationPending = useRef(false);
+  const mutationQueue = useRef<Promise<void>>(Promise.resolve());
   const loadGeneration = useRef(0);
   const acceptedGeneration = useRef<string | null>(null);
 
@@ -44,34 +46,39 @@ export function useSettings(client: SettingsClient = settingsClient) {
     };
   }, []);
 
-  const applySnapshot = useCallback((snapshot: SettingsSnapshot) => {
-    if (
-      !shouldAcceptSettingsGeneration(
-        acceptedGeneration.current,
-        snapshot.generation,
-      )
-    ) {
-      return;
-    }
-    acceptedGeneration.current = snapshot.generation;
-    applySettingsPresentation(snapshot.interface);
-    loadGeneration.current += 1;
-    setState({ status: "ready", snapshot });
-  }, []);
+  const applySnapshot = useCallback(
+    (snapshot: SettingsSnapshot, refresh = false) => {
+      const accepted = refresh
+        ? shouldAcceptSettingsRefresh(
+            acceptedGeneration.current,
+            snapshot.generation,
+          )
+        : shouldAcceptSettingsGeneration(
+            acceptedGeneration.current,
+            snapshot.generation,
+          );
+      if (!accepted) return;
+      acceptedGeneration.current = snapshot.generation;
+      applySettingsPresentation(snapshot.interface);
+      loadGeneration.current += 1;
+      setState({ status: "ready", snapshot });
+    },
+    [],
+  );
 
   const refresh = useCallback(async () => {
-    const generation = ++loadGeneration.current;
-    setState({ status: "loading" });
+    if (mutationPending.current) return;
+    mutationPending.current = true;
+    setPendingAction("refresh");
     setMutationError(null);
     try {
       const snapshot = await client.getSnapshot();
-      if (mounted.current && generation === loadGeneration.current) {
-        applySnapshot(snapshot);
-      }
+      if (mounted.current) applySnapshot(snapshot, true);
     } catch (error) {
-      if (mounted.current && generation === loadGeneration.current) {
-        setState({ status: "error", error: settingsError(error) });
-      }
+      if (mounted.current) setMutationError(settingsError(error));
+    } finally {
+      mutationPending.current = false;
+      if (mounted.current) setPendingAction(null);
     }
   }, [applySnapshot, client]);
 
@@ -96,31 +103,35 @@ export function useSettings(client: SettingsClient = settingsClient) {
   }, [applySnapshot, client]);
 
   const mutate = useCallback(
-    async (
-      action: string | null,
+    (
+      action: string,
       command: () => Promise<SettingsSnapshot>,
     ): Promise<void> => {
-      if (mutationPending.current) {
-        return;
-      }
-      mutationPending.current = true;
-      if (action !== null) setPendingAction(action);
-      setMutationError(null);
-      try {
-        const snapshot = await command();
+      const run = async () => {
+        mutationPending.current = true;
         if (mounted.current) {
-          applySnapshot(snapshot);
+          setPendingAction(action);
+          setMutationError(null);
         }
-      } catch (error) {
-        if (mounted.current) {
-          setMutationError(settingsError(error));
+        try {
+          const snapshot = await command();
+          if (mounted.current) {
+            applySnapshot(snapshot);
+          }
+        } catch (error) {
+          if (mounted.current) {
+            setMutationError(settingsError(error));
+          }
+        } finally {
+          mutationPending.current = false;
+          if (mounted.current) {
+            setPendingAction(null);
+          }
         }
-      } finally {
-        mutationPending.current = false;
-        if (mounted.current) {
-          setPendingAction(null);
-        }
-      }
+      };
+      const pending = mutationQueue.current.then(run, run);
+      mutationQueue.current = pending;
+      return pending;
     },
     [applySnapshot],
   );
@@ -132,9 +143,9 @@ export function useSettings(client: SettingsClient = settingsClient) {
     clearMutationError: () => setMutationError(null),
     refresh,
     setInterface: (settings: InterfaceSettingsInput) =>
-      mutate(null, () => client.setInterface(settings)),
+      mutate("interface", () => client.setInterface(settings)),
     setUpdatePreferences: (autoCheck: boolean, autoDownload: boolean) =>
-      mutate(null, () =>
+      mutate("update-preferences", () =>
         client.setUpdatePreferences({ autoCheck, autoDownload }),
       ),
     checkUpdates: () => mutate("update-check", () => client.checkUpdates()),
@@ -144,22 +155,42 @@ export function useSettings(client: SettingsClient = settingsClient) {
       ),
     installUpdate: () => mutate("update-install", () => client.installUpdate()),
     setCapture: (settings: CaptureSettingsInput) =>
-      mutate(null, () => client.setCapture(settings)),
+      mutate("capture", () => client.setCapture(settings)),
     refreshCaptureDevices: () =>
       mutate("capture-devices", () => client.refreshCaptureDevices()),
     setHotkeysEnabled: (enabled: boolean) =>
-      mutate(null, () => client.setHotkeysEnabled(enabled)),
+      mutate("hotkeys-enabled", () => client.setHotkeysEnabled(enabled)),
     setHotkeyBinding: (
       action: GlobalHotkeyActionId,
       binding: HotkeyBinding | null,
-    ) => mutate(null, () => client.setHotkeyBinding(action, binding)),
+    ) =>
+      mutate(`hotkey:${action}`, () =>
+        client.setHotkeyBinding(action, binding),
+      ),
     applyLayoutProfile: (profile: LayoutProfileId) =>
       mutate(`layout:${profile}`, () => client.applyLayoutProfile(profile)),
     openAbyssValues: () =>
       mutate("abyss-values", () => client.openAbyssValues()),
     importTeamData: (json: string) =>
       mutate("team-import", () => client.importTeamData(json)),
-    exportTeamData: async (): Promise<string | null> => {
+    importTeamDataFile: async (): Promise<boolean | null> => {
+      if (mutationPending.current) return null;
+      mutationPending.current = true;
+      setPendingAction("team-import");
+      setMutationError(null);
+      try {
+        const result = await client.importTeamDataFile();
+        if (mounted.current) applySnapshot(result.settings);
+        return result.performed;
+      } catch (error) {
+        if (mounted.current) setMutationError(settingsError(error));
+        return null;
+      } finally {
+        mutationPending.current = false;
+        if (mounted.current) setPendingAction(null);
+      }
+    },
+    exportTeamData: async (): Promise<boolean | null> => {
       if (mutationPending.current) {
         return null;
       }
@@ -185,11 +216,13 @@ export function useSettings(client: SettingsClient = settingsClient) {
     clearCaptureFiles: () =>
       mutate("capture-files-clear", () => client.clearCaptureFiles()),
     setHudOption: (option: HudSettingOptionId, enabled: boolean) =>
-      mutate(null, () => client.setHudOption(option, enabled)),
+      mutate(`option:${option}`, () => client.setHudOption(option, enabled)),
     applyHudPreset: (preset: HudPresetId) =>
       mutate(`preset:${preset}`, () => client.applyHudPreset(preset)),
     setHudModuleVisibility: (module: HudModuleId, visible: boolean) =>
-      mutate(null, () => client.setHudModuleVisibility(module, visible)),
+      mutate(`module:${module}`, () =>
+        client.setHudModuleVisibility(module, visible),
+      ),
     moveHudModule: (
       dragged: HudModuleId,
       target: HudModuleId,
@@ -199,9 +232,9 @@ export function useSettings(client: SettingsClient = settingsClient) {
         client.moveHudModule(dragged, target, insertAfter),
       ),
     setHudWidth: (width: number) =>
-      mutate(null, () => client.setHudWidth(width)),
+      mutate("width", () => client.setHudWidth(width)),
     setHudAlwaysOnTop: (enabled: boolean) =>
-      mutate(null, () => client.setHudAlwaysOnTop(enabled)),
+      mutate("always-on-top", () => client.setHudAlwaysOnTop(enabled)),
     openHudEditor: () => mutate("open-editor", () => client.openHudEditor()),
   };
 }

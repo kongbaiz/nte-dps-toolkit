@@ -1,4 +1,5 @@
-import { useEffect, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -6,7 +7,6 @@ import {
   GripVertical,
   MonitorUp,
   Pin,
-  RefreshCw,
   SlidersHorizontal,
   TriangleAlert,
   X,
@@ -31,6 +31,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useHudModulePointerReorder } from "@/hooks/use-hud-module-pointer-reorder";
 import { t, tf } from "@/lib/i18n";
 import {
   isHudModuleId,
@@ -72,25 +73,7 @@ export function SettingsPage() {
           onDismiss={settings.clearMutationError}
         />
       ) : null}
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 px-1 py-1">
-        <h1 className="font-heading text-xl font-medium">{t("Settings")}</h1>
-        <Button
-          variant="outline"
-          disabled={settings.pendingAction !== null}
-          onClick={() => void settings.refresh()}
-        >
-          <RefreshCw
-            className={cn(
-              "size-4",
-              settings.state.status === "loading" && "animate-spin",
-            )}
-            aria-hidden="true"
-          />
-          {t("Refresh")}
-        </Button>
-      </header>
-
-      <div className="mt-3 min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
+      <div className="min-h-0 flex-1 overflow-y-auto p-px pr-1 pb-1">
         {settings.state.status === "loading" ? (
           <SettingsLoading />
         ) : settings.state.status === "error" ? (
@@ -99,7 +82,7 @@ export function SettingsPage() {
             onRetry={settings.refresh}
           />
         ) : (
-          <div className="grid grid-cols-1 items-start gap-3 min-[1100px]:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-3 min-[900px]:grid-cols-2">
             <PrimarySettingsColumn
               snapshot={settings.state.snapshot}
               pendingAction={settings.pendingAction}
@@ -347,31 +330,18 @@ function HudModuleOrderSection({
     visible: boolean,
   ) => Promise<void>;
 }) {
-  const [dragged, setDragged] = useState<HudModuleId | null>(null);
   const order = snapshot.hud.moduleOrder.filter(isHudModuleId);
+  const reorder = useHudModulePointerReorder({
+    modules: order,
+    disabled,
+    onMove: onMoveModule,
+  });
 
   const moveAdjacent = (module: HudModuleId, direction: "up" | "down") => {
     const move = adjacentHudModuleMove(order, module, direction);
     if (move !== null) {
       void onMoveModule(move.dragged, move.target, move.insertAfter);
     }
-  };
-
-  const dropModule = (
-    event: DragEvent<HTMLDivElement>,
-    target: HudModuleId,
-  ) => {
-    event.preventDefault();
-    if (dragged === null || dragged === target) {
-      setDragged(null);
-      return;
-    }
-    const insertAfter =
-      event.clientY >=
-      event.currentTarget.getBoundingClientRect().top +
-        event.currentTarget.getBoundingClientRect().height / 2;
-    void onMoveModule(dragged, target, insertAfter);
-    setDragged(null);
   };
 
   return (
@@ -384,34 +354,50 @@ function HudModuleOrderSection({
           )}
         </p>
       </div>
-      <div className="mt-3 grid grid-cols-1 overflow-hidden rounded-md border min-[720px]:grid-cols-2">
+      <div className="mt-3 flex flex-col overflow-hidden rounded-md border">
         {order.map((module, index) => {
           const visible = hudModuleVisible(snapshot.hud, module);
+          const selectedTarget =
+            reorder.dropTarget?.module === module ? reorder.dropTarget : null;
           return (
             <div
+              ref={(row) => reorder.setModuleRow(module, row)}
               className={cn(
-                "flex min-h-10 items-center gap-2 px-2 py-1.5 transition-colors min-[720px]:border-b-0",
+                "relative flex min-h-10 items-center gap-2 px-2 py-1.5 transition-colors",
                 index + 1 < order.length && "border-b",
-                index % 2 === 0 && "min-[720px]:border-r",
-                index < order.length - (order.length % 2 === 0 ? 2 : 1) &&
-                  "min-[720px]:border-b",
-                dragged === module && "bg-muted opacity-45",
+                reorder.draggedModule === module && "bg-muted opacity-45",
               )}
-              draggable={!disabled}
               key={module}
-              onDragEnd={() => setDragged(null)}
-              onDragOver={(event) => event.preventDefault()}
-              onDragStart={(event) => {
-                setDragged(module);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", module);
-              }}
-              onDrop={(event) => dropModule(event, module)}
             >
-              <GripVertical
-                className="size-4 shrink-0 cursor-grab text-muted-foreground"
-                aria-hidden="true"
-              />
+              {selectedTarget ? (
+                <span
+                  className={cn(
+                    "pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-primary",
+                    selectedTarget.insertAfter ? "-bottom-px" : "-top-px",
+                  )}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <button
+                type="button"
+                className={cn(
+                  "grid size-6 shrink-0 touch-none cursor-grab place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing disabled:cursor-default disabled:opacity-40",
+                  reorder.draggedModule === module && "cursor-grabbing",
+                )}
+                disabled={disabled}
+                aria-label={tf("Drag {} to reorder", [
+                  t(MODULE_LABEL_KEYS[module]),
+                ])}
+                onPointerDown={(event) =>
+                  reorder.startPointerDrag(event, module)
+                }
+                onPointerMove={reorder.movePointerDrag}
+                onPointerUp={reorder.finishPointerDrag}
+                onPointerCancel={reorder.cancelPointerDrag}
+                onLostPointerCapture={reorder.losePointerCapture}
+              >
+                <GripVertical className="size-4" aria-hidden="true" />
+              </button>
               <span className="min-w-0 flex-1 truncate text-sm">
                 {t(MODULE_LABEL_KEYS[module])}
               </span>
@@ -502,26 +488,29 @@ function MutationError({
   error: SettingsCommandError;
   onDismiss: () => void;
 }) {
-  return (
-    <Alert
-      className="fixed top-16 right-5 z-50 w-[min(28rem,calc(100vw-2rem))] bg-background/96 shadow-lg backdrop-blur-sm"
-      variant="destructive"
-    >
-      <TriangleAlert aria-hidden="true" />
-      <AlertTitle>{t("Setting was not saved")}</AlertTitle>
-      <AlertDescription>
-        {tf(error.messageKey, error.messageArguments)}
-      </AlertDescription>
-      <AlertAction>
-        <Button
-          aria-label={t("Dismiss")}
-          size="icon-xs"
-          variant="ghost"
-          onClick={onDismiss}
-        >
-          <X aria-hidden="true" />
-        </Button>
-      </AlertAction>
-    </Alert>
+  return createPortal(
+    <div className="pointer-events-none fixed inset-x-0 top-4 z-[100] flex justify-center px-4">
+      <Alert
+        className="pointer-events-auto w-full max-w-lg bg-background pr-10 shadow-xl"
+        variant="destructive"
+      >
+        <TriangleAlert aria-hidden="true" />
+        <AlertTitle>{t("Setting was not saved")}</AlertTitle>
+        <AlertDescription>
+          {tf(error.messageKey, error.messageArguments)}
+        </AlertDescription>
+        <AlertAction>
+          <Button
+            aria-label={t("Dismiss")}
+            size="icon-xs"
+            variant="ghost"
+            onClick={onDismiss}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        </AlertAction>
+      </Alert>
+    </div>,
+    document.body,
   );
 }

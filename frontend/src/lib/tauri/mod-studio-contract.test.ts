@@ -4,6 +4,8 @@ import {
   ModStudioContractError,
   compareModStudioSequence,
   parseModStudioCommandError,
+  parseModStudioDeployment,
+  parseModStudioDirectorySelection,
   parseModStudioDocument,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
@@ -103,6 +105,39 @@ describe("Mod Studio contract", () => {
       enabled: true,
       source: "NTE_SCRIPT(5);",
     });
+  });
+
+  it("parses bounded deployment state and a validated manual path selection", () => {
+    const deployment = {
+      contractVersion: 5,
+      installations: 1,
+      installed: 1,
+      current: 1,
+      sourceAvailable: true,
+      games: [{ region: "global", installed: true, current: true }],
+    };
+
+    expect(parseModStudioDeployment(deployment)).toEqual(deployment);
+    expect(
+      parseModStudioDirectorySelection({
+        selected: true,
+        path: "D:\\Game",
+        deployment,
+      }),
+    ).toMatchObject({ selected: true, path: "D:\\Game" });
+    expect(() =>
+      parseModStudioDirectorySelection({
+        selected: false,
+        path: "D:\\Game",
+        deployment,
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModStudioDeployment({
+        ...deployment,
+        installed: 2,
+      }),
+    ).toThrow(ModStudioContractError);
   });
 
   it("parses the bounded versioned Mod SDK schema", () => {

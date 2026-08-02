@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -7,11 +7,10 @@ import {
   Code2,
   Copy,
   FolderOpen,
+  MapPin,
   Minus,
-  Moon,
   Radio,
   RefreshCw,
-  Sun,
   TriangleAlert,
 } from "lucide-react";
 
@@ -38,9 +37,11 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { t, tf } from "@/lib/i18n";
+import { useSettingsPresentation } from "@/lib/settings-presentation";
 import type {
   ModStudioCommandError,
   ModStudioDocumentSummary,
+  ModStudioGameRegion,
 } from "@/lib/tauri/mod-studio-contract";
 import { MOD_STUDIO_MAX_SOURCE_BYTES } from "@/lib/tauri/mod-studio-contract";
 
@@ -63,6 +64,8 @@ import type {
 } from "./mod-studio-view-model";
 import {
   useModStudio,
+  type ModStudioActionState,
+  type ModStudioDeploymentState,
   type ModStudioEnableState,
   type ModStudioSaveState,
   type ModStudioSdkState,
@@ -84,12 +87,36 @@ export function ModStudioWorkspace() {
     setDocumentEnabled,
     runtimeState,
     sdkState,
+    createDocument,
+    createState,
+    openFolder,
+    folderState,
+    selectedRegion,
+    setSelectedRegion,
+    manualGameDirectory,
+    deploymentState,
+    chooseGameDirectory,
+    useAutomaticGameDirectory,
+    setLoaderEnabled,
   } = useModStudio();
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
 
   return (
     <section className="flex min-w-0 flex-1 flex-col p-3">
-      <ModStudioHeader runtimeState={runtimeState} onRefresh={refresh} />
+      <ModStudioHeader
+        runtimeState={runtimeState}
+        onRefresh={refresh}
+        onOpenFolder={openFolder}
+        folderState={folderState}
+        selectedRegion={selectedRegion}
+        onSelectRegion={setSelectedRegion}
+        manualGameDirectory={manualGameDirectory}
+        deploymentState={deploymentState}
+        onChooseGameDirectory={chooseGameDirectory}
+        onUseAutomaticGameDirectory={useAutomaticGameDirectory}
+        onSetLoaderEnabled={setLoaderEnabled}
+        dirty={dirtyDocumentIds.size > 0}
+      />
       <div className="mt-3 grid min-h-0 flex-1 grid-cols-[clamp(12rem,21vw,17rem)_minmax(0,1fr)] overflow-hidden border bg-card max-[900px]:grid-cols-[12rem_minmax(0,1fr)]">
         <ExplorerPane
           state={state}
@@ -101,6 +128,8 @@ export function ModStudioWorkspace() {
           onSetEnabled={(id, enabled) => {
             void setDocumentEnabled(id, enabled);
           }}
+          createState={createState}
+          onCreate={(id) => void createDocument(id)}
         />
         <section className="flex min-h-0 min-w-0 flex-col">
           {state.status === "ready" ? (
@@ -149,11 +178,58 @@ export function ModStudioWorkspace() {
 function ModStudioHeader({
   runtimeState,
   onRefresh,
+  onOpenFolder,
+  folderState,
+  selectedRegion,
+  onSelectRegion,
+  manualGameDirectory,
+  deploymentState,
+  onChooseGameDirectory,
+  onUseAutomaticGameDirectory,
+  onSetLoaderEnabled,
+  dirty,
 }: {
   runtimeState: ModStudioRuntimeState;
   onRefresh: () => void | Promise<void>;
+  onOpenFolder: () => void | Promise<void>;
+  folderState: ModStudioActionState;
+  selectedRegion: ModStudioGameRegion;
+  onSelectRegion: (region: ModStudioGameRegion) => void;
+  manualGameDirectory: string | null;
+  deploymentState: ModStudioDeploymentState;
+  onChooseGameDirectory: () => void | Promise<void>;
+  onUseAutomaticGameDirectory: () => void;
+  onSetLoaderEnabled: (enabled: boolean) => void | Promise<void>;
+  dirty: boolean;
 }) {
   const runtimeConnected = runtimeState.connection === "connected";
+  const [riskOpen, setRiskOpen] = useState(false);
+  const selectedGame =
+    deploymentState.status === "ready"
+      ? (deploymentState.snapshot.games.find(
+          (game) => game.region === selectedRegion,
+        ) ?? null)
+      : null;
+  const loaderEnabled = selectedGame?.installed ?? false;
+  const deploymentBusy =
+    deploymentState.status === "loading" ||
+    (deploymentState.status === "ready" &&
+      deploymentState.operation !== "idle");
+  const loaderInteractive =
+    !dirty &&
+    !deploymentBusy &&
+    deploymentState.status === "ready" &&
+    (selectedGame !== null || manualGameDirectory !== null) &&
+    (loaderEnabled || deploymentState.snapshot.sourceAvailable);
+  const actionError =
+    deploymentState.status === "error"
+      ? tf(
+          deploymentState.error.messageKey,
+          deploymentState.error.messageArguments,
+        )
+      : folderState.status === "error"
+        ? tf(folderState.error.messageKey, folderState.error.messageArguments)
+        : null;
   return (
     <header className="border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -169,10 +245,14 @@ function ModStudioHeader({
         <select
           className="h-8 rounded-md border bg-background px-3 text-sm"
           aria-label={t("Game client")}
-          defaultValue="cn"
-          disabled
+          value={selectedRegion}
+          disabled={dirty || deploymentBusy}
+          onChange={(event) =>
+            onSelectRegion(event.target.value as ModStudioGameRegion)
+          }
         >
-          <option value="cn">{t("China client")}</option>
+          <option value="china">{t("China client")}</option>
+          <option value="global">{t("Global client")}</option>
         </select>
         <Button
           variant="outline"
@@ -183,25 +263,46 @@ function ModStudioHeader({
           <RefreshCw className="size-4" aria-hidden="true" />
           {t("Refresh")}
         </Button>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8"
-                disabled
-                aria-label={t("Open Mod folder")}
-              />
-            }
-          >
-            <FolderOpen aria-hidden="true" />
-            {t("Open Mod folder")}
-          </TooltipTrigger>
-          <TooltipContent>
-            {t("Folder command will be connected in the next migration slice.")}
-          </TooltipContent>
-        </Tooltip>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          disabled={folderState.status === "working"}
+          aria-label={t("Open Mod folder")}
+          onClick={() => void onOpenFolder()}
+        >
+          <FolderOpen aria-hidden="true" />
+          {t("Open Mod folder")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          disabled={dirty || deploymentBusy}
+          onClick={() => void onChooseGameDirectory()}
+        >
+          <MapPin aria-hidden="true" />
+          {t("Choose game folder")}
+        </Button>
+        {manualGameDirectory !== null ? (
+          <>
+            <span
+              className="max-w-64 truncate font-mono text-xs text-muted-foreground"
+              title={manualGameDirectory}
+            >
+              {manualGameDirectory}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8"
+              disabled={dirty || deploymentBusy}
+              onClick={onUseAutomaticGameDirectory}
+            >
+              {t("Use automatic detection")}
+            </Button>
+          </>
+        ) : null}
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Radio
           className={cn(
@@ -213,6 +314,23 @@ function ModStudioHeader({
           aria-hidden="true"
         />
         <span className="font-medium">{t("In-game Mod loader")}</span>
+        <Switch
+          size="sm"
+          checked={loaderEnabled}
+          disabled={!loaderInteractive}
+          aria-label={t("Enable")}
+          onCheckedChange={(enabled) => {
+            if (enabled) {
+              setRiskOpen(true);
+            } else {
+              void onSetLoaderEnabled(false);
+            }
+          }}
+        />
+        <span className="text-muted-foreground">
+          {t(deploymentStatusKey(deploymentState, selectedRegion))}
+        </span>
+        <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">
           {t(
             runtimeConnected
@@ -221,7 +339,139 @@ function ModStudioHeader({
           )}
         </span>
       </div>
+      {actionError !== null ? (
+        <p className="mt-2 text-sm text-destructive" role="alert">
+          {actionError}
+        </p>
+      ) : folderState.status === "done" ? (
+        <p className="mt-2 text-sm text-muted-foreground">
+          {t("Mod folder opened")}
+        </p>
+      ) : null}
+      {riskOpen ? (
+        <ModLoaderRiskDialog
+          onCancel={() => setRiskOpen(false)}
+          onConfirm={() => {
+            setRiskOpen(false);
+            void onSetLoaderEnabled(true);
+          }}
+        />
+      ) : null}
     </header>
+  );
+}
+
+function deploymentStatusKey(
+  state: ModStudioDeploymentState,
+  region: ModStudioGameRegion,
+): string {
+  if (state.status === "loading") {
+    return "Checking Mod loader status...";
+  }
+  if (state.status === "error") {
+    return state.error.messageKey;
+  }
+  if (state.operation === "choosing") {
+    return "Checking Mod loader status...";
+  }
+  if (state.operation === "updating") {
+    return "Updating the Mod loader...";
+  }
+  const game = state.snapshot.games.find(
+    (candidate) => candidate.region === region,
+  );
+  if (game === undefined) {
+    return "Game installation not detected";
+  }
+  if (!state.snapshot.sourceAvailable) {
+    return "Mod loader file plugins/dwmapi.dll was not found";
+  }
+  if (!game.installed) {
+    return "Mod loader is not installed";
+  }
+  if (!game.current) {
+    return "Mod loader is installed, but the installed copy differs from this app version";
+  }
+  return "Mod loader is installed for the selected game client";
+}
+
+function ModLoaderRiskDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const [remainingSeconds, setRemainingSeconds] = useState(5);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      const remaining = Math.max(
+        0,
+        5 - Math.floor((Date.now() - started) / 1000),
+      );
+      setRemainingSeconds(remaining);
+      if (remaining === 0) {
+        window.clearInterval(timer);
+      }
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mod-loader-risk-title"
+    >
+      <section className="w-full max-w-lg rounded-xl border border-destructive bg-card p-5 shadow-xl">
+        <h2
+          id="mod-loader-risk-title"
+          className="text-lg font-semibold text-destructive"
+        >
+          {t("Warning: third-party game plugin")}
+        </h2>
+        <p className="mt-3 font-medium text-[var(--console-success)]">
+          {t(
+            "This loader runs only the restricted mods listed in nte-mods.enabled. Keep only the mods you use enabled.",
+          )}
+        </p>
+        <div className="mt-3 flex flex-col gap-2 text-sm text-destructive">
+          <p>
+            {t(
+              "Enabling this option installs a third-party mod into the game directory.",
+            )}
+          </p>
+          <p>
+            {t(
+              "It installs only dwmapi.dll beside HTGame.exe. The DLL reads restricted Python-style .nte programs from the software plugins directory and watches saved enable or source changes at runtime. With no enabled Mod, it removes its hook and closes IPC.",
+            )}
+          </p>
+          <p>
+            {t(
+              "Changing the game directory may trigger integrity or anti-cheat checks and may cause client or account risk. Enable it only after accepting these risks.",
+            )}
+          </p>
+        </div>
+        {remainingSeconds > 0 ? (
+          <p className="mt-3 text-sm font-medium text-[var(--console-warning)]">
+            {tf(
+              "Please read the warning. Enable unlocks in {} seconds; you can close this dialog at any time.",
+              [remainingSeconds.toString()],
+            )}
+          </p>
+        ) : null}
+        <div className="mt-4 flex gap-2">
+          <Button disabled={remainingSeconds > 0} onClick={onConfirm}>
+            {t("Accept Risk and Enable")}
+          </Button>
+          <Button variant="outline" onClick={onCancel}>
+            {t("Cancel")}
+          </Button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -235,6 +485,8 @@ interface ExplorerPaneProps {
   dirtyDocumentIds: Set<string>;
   enableStates: Record<string, ModStudioEnableState>;
   onSetEnabled: (id: string, enabled: boolean) => void;
+  createState: ModStudioActionState;
+  onCreate: (id: string) => void;
 }
 
 function ExplorerPane({
@@ -245,7 +497,21 @@ function ExplorerPane({
   dirtyDocumentIds,
   enableStates,
   onSetEnabled,
+  createState,
+  onCreate,
 }: ExplorerPaneProps) {
+  const [newModId, setNewModId] = useState("");
+  const createError =
+    createState.status === "error"
+      ? tf(createState.error.messageKey, createState.error.messageArguments)
+      : null;
+  const createEnabled =
+    newModId.trim().length > 0 && createState.status !== "working";
+  useEffect(() => {
+    if (createState.status === "done") {
+      setNewModId("");
+    }
+  }, [createState.status]);
   return (
     <aside className="flex min-h-0 flex-col border-r bg-[var(--console-explorer)]">
       <div className="flex h-10 shrink-0 items-center border-b px-3 text-xs font-semibold uppercase text-muted-foreground">
@@ -301,12 +567,31 @@ function ExplorerPane({
           <input
             className="mt-1 h-8 w-full rounded-md border bg-background px-2 text-sm"
             placeholder="character-telemetry"
-            disabled
+            value={newModId}
+            disabled={createState.status === "working"}
+            onChange={(event) => setNewModId(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && createEnabled) {
+                event.preventDefault();
+                onCreate(newModId.trim());
+              }
+            }}
           />
         </label>
-        <Button variant="outline" size="sm" className="mt-2 h-8" disabled>
+        <Button
+          variant="outline"
+          size="sm"
+          className="mt-2 h-8"
+          disabled={!createEnabled}
+          onClick={() => onCreate(newModId.trim())}
+        >
           + {t("Create Mod")}
         </Button>
+        {createError !== null ? (
+          <p className="mt-2 text-xs text-destructive" role="alert">
+            {createError}
+          </p>
+        ) : null}
       </div>
     </aside>
   );
@@ -563,7 +848,7 @@ function SourceEditor({
     line: 1,
     column: 1,
   });
-  const [editorTheme, setEditorTheme] = useState<"light" | "dark">("light");
+  const editorTheme = useSettingsPresentation().darkMode ? "dark" : "light";
   const currentSourceBytes = new TextEncoder().encode(source).length;
   const diagnosticLine =
     saveState.status === "error" ? saveState.error.diagnosticLine : null;
@@ -615,27 +900,9 @@ function SourceEditor({
         )}
         <span className="truncate">{statusText}</span>
         <div className="ml-auto flex h-full items-center divide-x divide-[var(--editor-status-border)]">
-          <button
-            type="button"
-            className="flex h-full items-center gap-1 px-2 hover:bg-[var(--editor-status-hover)]"
-            aria-label={t(
-              editorTheme === "light"
-                ? "Switch to dark editor theme"
-                : "Switch to light editor theme",
-            )}
-            onClick={() =>
-              setEditorTheme((current) =>
-                current === "light" ? "dark" : "light",
-              )
-            }
-          >
-            {editorTheme === "light" ? (
-              <Sun className="size-3.5" aria-hidden="true" />
-            ) : (
-              <Moon className="size-3.5" aria-hidden="true" />
-            )}
-            <span>{t(editorTheme === "light" ? "Light" : "Dark")}</span>
-          </button>
+          <span className="px-3">
+            {t(editorTheme === "light" ? "Light" : "Dark")}
+          </span>
           <span className="px-3">
             {tf("Ln {0}, Col {1}", [
               cursor.line.toString(),

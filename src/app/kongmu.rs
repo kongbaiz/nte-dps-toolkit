@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, HashSet};
 
+use crate::core::empty_curtain::{
+    RecommendedLoadoutError, build_drive_calculator_inventory as build_drive_inventory,
+    recommended_loadout,
+};
 use crate::core::snapshot::{
     CHARACTER_LOADOUT_MAX_JSON_BYTES, CharacterLoadoutError, ItemUid, ValidatedCharacterLoadout,
     export_character_loadout_json, parse_character_loadout_json, validate_character_loadout,
@@ -1066,6 +1070,9 @@ pub(crate) fn plugin_deployment_error_text(error: &ModsPluginDeploymentError) ->
         ModsPluginDeploymentError::GameInstallationNotFound => t(
             "No supported game installation was found. Repair or reinstall the official launcher registration, then try again.",
         ),
+        ModsPluginDeploymentError::InvalidGameDirectory => {
+            t("The selected folder does not contain HTGame.exe.")
+        }
         ModsPluginDeploymentError::Registry(error) => tf(
             "Failed to locate the game installation from the registry: {}",
             &[error],
@@ -1598,92 +1605,22 @@ fn build_one_key_plan(
     items: &[EmptyCurtainItem],
     catalog: &EquipmentCatalog,
 ) -> Result<ModsPluginOperation, OneKeyPlanError> {
-    let plan = catalog
-        .plans
-        .get(&character.character_id)
-        .ok_or(OneKeyPlanError::MissingTemplate)?;
-    let mut selected = HashSet::new();
-    let mut placements = Vec::with_capacity(plan.recommended_modules.len());
-
-    for planned in &plan.recommended_modules {
-        let geometry = &catalog
-            .items
-            .get(&planned.item_id)
-            .expect("validated equipment plan must reference a module")
-            .geometry;
-        let item = items
-            .iter()
-            .filter(|item| {
-                !selected.contains(&item.id)
-                    && (item.character_net_id.is_none()
-                        || item.character_net_id == Some(character.net_id))
-                    && catalog.items.get(&item.item_id).is_some_and(|definition| {
-                        definition.kind == EquipmentKind::Module && definition.geometry == *geometry
-                    })
-            })
-            .max_by_key(|item| {
-                let definition = catalog
-                    .items
-                    .get(&item.item_id)
-                    .expect("candidate equipment must have catalog metadata");
-                (
-                    item.item_id == planned.item_id,
-                    equipment_quality_rank(&definition.quality),
-                    item.level,
-                    item.id.solt,
-                    item.id.serial,
-                )
-            })
-            .ok_or(OneKeyPlanError::MissingEquipment)?;
-        selected.insert(item.id);
-        placements.push(ModsPluginPlacement {
-            equipment: item.id,
-            row: planned.row,
-            column: planned.column,
-        });
-    }
-
-    let recommended_core = catalog
-        .items
-        .get(&plan.recommended_core)
-        .expect("validated equipment plan must reference a cassette");
-    let core = items
-        .iter()
-        .filter(|item| {
-            (item.character_net_id.is_none() || item.character_net_id == Some(character.net_id))
-                && catalog
-                    .items
-                    .get(&item.item_id)
-                    .is_some_and(|definition| definition.kind == EquipmentKind::Core)
-        })
-        .max_by_key(|item| {
-            let definition = catalog
-                .items
-                .get(&item.item_id)
-                .expect("candidate equipment must have catalog metadata");
-            (
-                item.item_id == plan.recommended_core,
-                definition.suit == recommended_core.suit,
-                equipment_quality_rank(&definition.quality),
-                item.level,
-                item.id.solt,
-                item.id.serial,
-            )
-        })
-        .ok_or(OneKeyPlanError::MissingEquipment)?;
+    let loadout = recommended_loadout(character, items, catalog).map_err(|error| match error {
+        RecommendedLoadoutError::MissingTemplate => OneKeyPlanError::MissingTemplate,
+        RecommendedLoadoutError::MissingEquipment => OneKeyPlanError::MissingEquipment,
+    })?;
     Ok(ModsPluginOperation::EquipOneKey {
-        placements,
-        core: core.id,
+        placements: loadout
+            .placements
+            .into_iter()
+            .map(|placement| ModsPluginPlacement {
+                equipment: placement.equipment,
+                row: placement.row,
+                column: placement.column,
+            })
+            .collect(),
+        core: loadout.core,
     })
-}
-
-fn equipment_quality_rank(quality: &str) -> u8 {
-    match quality {
-        "blue" => 0,
-        "purple" => 1,
-        "orange" => 2,
-        _ => unreachable!("equipment quality is validated at resource load"),
-    }
 }
 
 fn show_module_placement_window(
@@ -2607,57 +2544,10 @@ fn build_drive_calculator_inventory(
     items: &[EmptyCurtainItem],
     catalog: &EquipmentCatalog,
 ) -> Vec<serde_json::Value> {
-    let mut records = Vec::with_capacity(items.len());
-    for item in items {
-        let Some(definition) = catalog.items.get(&item.item_id) else {
-            continue;
-        };
-        let uid = format!("{}_{}", item.id.solt, item.id.serial);
-        let quality = calculator_quality(&definition.quality);
-        let sub_stats = calculator_stat_map(&item.sub_stats, catalog);
-        let record = match definition.kind {
-            EquipmentKind::Module => {
-                let area = definition.grid.unwrap_or(1);
-                serde_json::json!({
-                    "uid": uid,
-                    "item_type": "drive",
-                    "quality": quality,
-                    "area": area,
-                    "shape_id": module_shape_id(&definition.geometry, area),
-                    "set_name": "未知套装",
-                    "main_stats": calculator_stat_map(&item.main_stats, catalog),
-                    "sub_stats": sub_stats,
-                })
-            }
-            EquipmentKind::Core => {
-                let set_name = definition
-                    .suit
-                    .as_deref()
-                    .and_then(|suit| catalog.suits.get(suit))
-                    .map(|suit| calculator_set_name(&suit.name_zh))
-                    .unwrap_or_else(|| "未知套装".to_owned());
-                let main_stat = item
-                    .main_stats
-                    .first()
-                    .and_then(|stat| calculator_stat_key(&stat.property, catalog))
-                    .unwrap_or_else(|| "未知主词条".to_owned());
-                serde_json::json!({
-                    "uid": uid,
-                    "item_type": "tape",
-                    "quality": quality,
-                    "area": 15,
-                    "shape_id": "TAPE_15",
-                    "set_name": set_name,
-                    "main_stats": main_stat,
-                    "sub_stats": sub_stats,
-                })
-            }
-        };
-        records.push(record);
-    }
-    records
+    build_drive_inventory(items, catalog)
 }
 
+#[cfg(test)]
 fn calculator_quality(quality: &str) -> &'static str {
     match quality {
         "blue" => "Blue",
@@ -2671,6 +2561,7 @@ fn calculator_quality(quality: &str) -> &'static str {
 /// exactly; the four right-angle (`ZhiJiao`) and two Z (`Z3`/`Z4`) variants map to
 /// its L/Trap orientations 1:1. An unknown id falls back to the horizontal bar of
 /// the matching area so the piece still occupies the right number of cells.
+#[cfg(test)]
 fn module_shape_id(geometry: &str, area: u32) -> String {
     let mapped = match geometry {
         "Hen2" => "H_2",
@@ -2696,6 +2587,7 @@ fn module_shape_id(geometry: &str, area: u32) -> String {
 
 /// Strip the decorative 「」 brackets to match the calculator's set-name keys, and
 /// correct the one set this app spells differently.
+#[cfg(test)]
 fn calculator_set_name(name_zh: &str) -> String {
     let stripped = name_zh.trim_start_matches('「').trim_end_matches('」');
     match stripped {
@@ -2704,73 +2596,12 @@ fn calculator_set_name(name_zh: &str) -> String {
     }
 }
 
-fn calculator_stat_map(
-    stats: &[EquipmentStat],
-    catalog: &EquipmentCatalog,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut map = serde_json::Map::new();
-    for stat in stats {
-        let Some(key) = calculator_stat_key(&stat.property, catalog) else {
-            continue;
-        };
-        let percent = catalog
-            .attributes
-            .get(&stat.property)
-            .is_some_and(|attribute| attribute.percent);
-        map.insert(
-            key,
-            serde_json::json!(calculator_stat_value(stat.value, percent)),
-        );
-    }
-    map
-}
-
 /// Scale to the calculator's stored magnitude (percent stats as whole numbers,
 /// e.g. 0.125 -> 12.5) and round off f32 noise to two decimals.
+#[cfg(test)]
 fn calculator_stat_value(value: f32, percent: bool) -> f64 {
     let scaled = f64::from(value) * if percent { 100.0 } else { 1.0 };
     (scaled * 100.0).round() / 100.0
-}
-
-/// Translate this app's internal attribute id to the exact Chinese stat key the
-/// Drive Calculator scores on. An unmapped attribute falls back to its localized
-/// name so nothing is silently dropped.
-fn calculator_stat_key(property: &str, catalog: &EquipmentCatalog) -> Option<String> {
-    let mapped = match property {
-        "AtkBase" | "AtkAdd" => "攻击力",
-        "AtkUp" => "攻击力%",
-        "HPMaxBase" | "HPMaxAdd" => "生命值",
-        "HPMaxUp" => "生命值%",
-        "DefBase" | "DefAdd" => "防御力",
-        "DefUp" => "防御力%",
-        "CritBase" | "CritAdd" => "暴击率%",
-        "CritDamageBase" | "CritDamageAdd" => "暴击伤害%",
-        "DamageUpGeneralBase" | "DamageUpGeneralAdd" => "伤害增加%",
-        "Mag" | "MagBase" | "MagAdd" | "MagUp" => "环合强度",
-        "UnbalIntensity" | "UnbalIntensityBase" | "UnbalIntensityAdd" | "UnbalIntensityUp" => {
-            "倾陷强度"
-        }
-        "HealUp" => "治疗加成",
-        "DamageUpCosmosBase" => "光属性异能伤害增强%",
-        "DamageUpNatureBase" => "灵属性异能伤害增强%",
-        "DamageUpIncantationBase" => "咒属性异能伤害增强%",
-        "DamageUpChaosBase" => "暗属性异能伤害增强%",
-        "DamageUpPsycheBase" => "魂属性异能伤害增强%",
-        "DamageUpLakshanaBase" => "相属性异能伤害增强%",
-        "DamageUpPsychicallyBase" => "心灵伤害增强%",
-        // Drive main-stat reaction bonuses the calculator keeps but doesn't score.
-        "ReactionGeneralDamageUp" => "环合伤害增强",
-        "ReactionGuangLingDamageUp" => "创生伤害增强",
-        "ReactionZhouAnDamageUp" => "浊燃伤害增强",
-        "ReactionAnHunDamageUp" => "黯星伤害增强",
-        _ => {
-            return catalog
-                .attributes
-                .get(property)
-                .map(|attribute| attribute.name(Language::SimplifiedChinese).to_owned());
-        }
-    };
-    Some(mapped.to_owned())
 }
 
 #[cfg(test)]

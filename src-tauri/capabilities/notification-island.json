@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notification-island",
+  "description": "enables the floating notification island",
+  "windows": ["notification-island"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color"
+  ]
+}

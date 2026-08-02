@@ -5,10 +5,12 @@ import {
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import {
   GripHorizontal,
   GripVertical,
+  AppWindow,
   LoaderCircle,
   MousePointer2,
   Pin,
@@ -21,14 +23,26 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { ActionNotice } from "@/components/nte/action-notice";
+import { AnimatedNumber } from "@/components/nte/animated-number";
+import { useWindowMotion } from "@/components/nte/window-motion-context";
 import { Switch } from "@/components/ui/switch";
+import { useSettingsPresentation } from "@/lib/settings-presentation";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { t, tf } from "@/lib/i18n";
-import { startHudWindowDragging } from "@/lib/tauri/hud-window-client";
+import { characterAvatarUrl } from "@/lib/character-avatar";
+import { characterAccent } from "@/lib/character-color";
+import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
+import { useHudModulePointerReorder } from "@/hooks/use-hud-module-pointer-reorder";
+import { useLayoutFlip } from "@/hooks/use-layout-flip";
+import {
+  showMainDpsFromHud,
+  startHudWindowDragging,
+} from "@/lib/tauri/hud-window-client";
 import { cn } from "@/lib/utils";
 import type {
   HudCharacterSnapshot,
@@ -65,8 +79,11 @@ const HUD_ROLE_COLORS = [
 ] as const;
 
 export function TechnicalHudPage() {
+  const presentation = useSettingsPresentation();
   const {
     state,
+    actionNotice,
+    clearActionNotice,
     refresh,
     setPassthrough,
     setAlwaysOnTop,
@@ -92,7 +109,27 @@ export function TechnicalHudPage() {
   };
 
   return (
-    <main className="h-screen overflow-hidden select-none">
+    <main className="relative h-screen overflow-hidden select-none">
+      {!presentation.islandNotifications &&
+        actionNotice !== null &&
+        isTechnicalActionNoticeWorthy(actionNotice.action) && (
+          <div className="pointer-events-none absolute inset-x-1 top-1 z-50">
+            <ActionNotice
+              key={actionNotice.id}
+              compact
+              status={actionNotice.status}
+              message={t(technicalActionLabelKey(actionNotice.action))}
+              detail={t(
+                actionNotice.status === "pending" ? "Working..." : "Completed",
+              )}
+              onDismiss={
+                actionNotice.status === "success"
+                  ? clearActionNotice
+                  : undefined
+              }
+            />
+          </div>
+        )}
       <TechnicalContent
         state={state}
         dragFailed={dragFailed}
@@ -146,11 +183,10 @@ function TechnicalContent({
 }: TechnicalContentProps) {
   if (state.status === "loading") {
     return (
-      <p className="hud-text-halo flex items-center gap-2 text-sm text-white/80">
-        <Radio
-          className="size-4 animate-pulse text-cyan-200"
-          aria-hidden="true"
-        />
+      <p className="motion-route-loading hud-text-halo flex items-center gap-2 text-sm text-white/80">
+        <span className="animate-pulse">
+          <Radio className="size-4 text-cyan-200" aria-hidden="true" />
+        </span>
         {t("Waiting for Rust bridge...")}
       </p>
     );
@@ -181,7 +217,7 @@ function TechnicalContent({
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col gap-1.5 p-1",
+        "motion-content-ready flex h-full w-full flex-col gap-1.5 p-1",
         surfaceTone === "blurred" &&
           "overflow-hidden rounded-md bg-background/40",
       )}
@@ -216,7 +252,7 @@ function TechnicalContent({
         </p>
       ) : null}
 
-      <HudProjection snapshot={snapshot} />
+      <HudProjection snapshot={snapshot} onModuleMove={onHudModuleMove} />
     </div>
   );
 }
@@ -254,6 +290,7 @@ function HudEditorRail({
   onCaptureStop,
 }: HudEditorRailProps) {
   const status = captureMessage(snapshot.capture);
+  const { transitionToWindow } = useWindowMotion();
   return (
     <div className="flex min-w-0 items-center gap-1">
       <div
@@ -286,6 +323,23 @@ function HudEditorRail({
         onMove={onHudModuleMove}
         onWidthChange={onHudWidthChange}
       />
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-white/75 hover:bg-white/10 hover:text-white"
+              aria-label={t("Main Window")}
+              onClick={() => void transitionToWindow(showMainDpsFromHud)}
+            />
+          }
+        >
+          <AppWindow aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent>{t("Main Window")}</TooltipContent>
+      </Tooltip>
 
       <Tooltip>
         <TooltipTrigger
@@ -336,6 +390,8 @@ function HudModuleControls({
   onWidthChange: (width: number) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [pendingModule, setPendingModule] = useState<HudModuleId | null>(null);
   const [movePending, setMovePending] = useState(false);
   const [widthPending, setWidthPending] = useState(false);
@@ -348,6 +404,12 @@ function HudModuleControls({
   } | null>(null);
   const modules = hudModulesInOrder(hud.config);
   const pending = pendingModule !== null || movePending || widthPending;
+  useDismissibleLayer({
+    open,
+    layerRef: menuRef,
+    triggerRef,
+    onDismiss: () => setOpen(false),
+  });
 
   const setVisibility = async (module: HudModuleId, visible: boolean) => {
     setPendingModule(module);
@@ -492,6 +554,7 @@ function HudModuleControls({
         <TooltipTrigger
           render={
             <Button
+              ref={triggerRef}
               variant="ghost"
               size="icon-xs"
               className={cn(
@@ -500,6 +563,7 @@ function HudModuleControls({
               )}
               aria-label={t("HUD modules")}
               aria-expanded={open}
+              aria-haspopup="menu"
               onClick={() => setOpen((current) => !current)}
             />
           }
@@ -511,9 +575,10 @@ function HudModuleControls({
 
       {open ? (
         <div
-          role="group"
+          ref={menuRef}
+          role="menu"
           aria-label={t("HUD modules")}
-          className="absolute top-full right-0 z-30 mt-1 w-48 rounded-md bg-slate-950/90 p-2 text-white shadow-lg ring-1 ring-white/15"
+          className="motion-popover absolute top-full right-0 z-30 mt-1 w-48 rounded-md bg-slate-950/90 p-2 text-white shadow-lg ring-1 ring-white/15"
         >
           <p className="mb-1.5 text-[10px] font-semibold tracking-wide text-cyan-100/80">
             {t("HUD modules")}
@@ -542,7 +607,7 @@ function HudModuleControls({
                     <span
                       aria-hidden="true"
                       className={cn(
-                        "pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-cyan-300",
+                        "motion-drop-indicator pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-cyan-300",
                         dropTarget.insertAfter ? "-bottom-0.5" : "-top-0.5",
                       )}
                     />
@@ -710,7 +775,9 @@ function HudCaptureControl({
         ) : action === "stop" ? (
           <Square aria-hidden="true" />
         ) : (
-          <LoaderCircle className="animate-spin" aria-hidden="true" />
+          <span className="animate-spin">
+            <LoaderCircle aria-hidden="true" />
+          </span>
         )}
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
@@ -718,9 +785,39 @@ function HudCaptureControl({
   );
 }
 
-function HudProjection({ snapshot }: { snapshot: TechnicalSnapshot }) {
+function HudProjection({
+  snapshot,
+  onModuleMove,
+}: {
+  snapshot: TechnicalSnapshot;
+  onModuleMove: (
+    dragged: HudModuleId,
+    target: HudModuleId,
+    insertAfter: boolean,
+  ) => Promise<void>;
+}) {
   const hud = snapshot.hud;
   const tone = hudDataTone(hud.dataState);
+  const modules = visibleHudModules(hud);
+  const moduleLayoutKey = modules.join("|");
+  const [movePending, setMovePending] = useState(false);
+  const moveModule = async (
+    dragged: HudModuleId,
+    target: HudModuleId,
+    insertAfter: boolean,
+  ) => {
+    setMovePending(true);
+    try {
+      await onModuleMove(dragged, target, insertAfter);
+    } finally {
+      setMovePending(false);
+    }
+  };
+  const reorder = useHudModulePointerReorder({
+    modules,
+    disabled: movePending,
+    onMove: moveModule,
+  });
 
   if (tone === "empty") {
     return (
@@ -748,35 +845,174 @@ function HudProjection({ snapshot }: { snapshot: TechnicalSnapshot }) {
 
   return (
     <div className="flex flex-col gap-1">
-      {visibleHudModules(hud).map((module) => {
-        switch (module) {
-          case "title":
-            return <HudTitle key={module} />;
-          case "summary":
-            return <HudSummary key={module} hud={hud} />;
-          case "status":
-            return (
-              <HudStatus
-                key={module}
-                hud={hud}
-                passthrough={snapshot.window.passthrough}
-              />
-            );
-          case "characters":
-            return <HudCharacters key={module} hud={hud} />;
-          case "timeline":
-            return hud.timeline === null ? null : (
-              <HudMiniTimeline
-                key={module}
-                timeline={hud.timeline}
-                interactive={!snapshot.window.passthrough}
-              />
-            );
-          default:
-            return null;
-        }
+      {modules.map((module) => {
+        const content = renderHudModule(
+          hud,
+          module,
+          snapshot.window.passthrough,
+        );
+        if (content === null) return null;
+        return (
+          <HudLayoutModule
+            key={module}
+            module={module}
+            layoutKey={moduleLayoutKey}
+          >
+            {snapshot.window.passthrough ? (
+              content
+            ) : (
+              <HudEditableModule
+                module={module}
+                modules={modules}
+                draggedModule={reorder.draggedModule}
+                dropTarget={reorder.dropTarget}
+                movePending={movePending}
+                onModuleRowChange={reorder.setModuleRow}
+                onPointerDragStart={reorder.startPointerDrag}
+                onPointerDragMove={reorder.movePointerDrag}
+                onPointerDragEnd={reorder.finishPointerDrag}
+                onPointerDragCancel={reorder.cancelPointerDrag}
+                onPointerCaptureLost={reorder.losePointerCapture}
+                onMove={moveModule}
+              >
+                {content}
+              </HudEditableModule>
+            )}
+          </HudLayoutModule>
+        );
       })}
     </div>
+  );
+}
+
+function HudLayoutModule({
+  module,
+  layoutKey,
+  children,
+}: {
+  module: HudModuleId;
+  layoutKey: string;
+  children: ReactNode;
+}) {
+  const ref = useLayoutFlip<HTMLDivElement>(layoutKey);
+  return (
+    <div ref={ref} className="hud-layout-module" data-hud-module={module}>
+      {children}
+    </div>
+  );
+}
+
+function renderHudModule(
+  hud: HudSnapshot,
+  module: HudModuleId,
+  passthrough: boolean,
+): ReactNode {
+  switch (module) {
+    case "title":
+      return <HudTitle />;
+    case "summary":
+      return <HudSummary hud={hud} />;
+    case "status":
+      return <HudStatus hud={hud} passthrough={passthrough} />;
+    case "characters":
+      return <HudCharacters hud={hud} />;
+    case "timeline":
+      return hud.timeline === null ? null : (
+        <HudMiniTimeline timeline={hud.timeline} interactive={!passthrough} />
+      );
+    default:
+      return null;
+  }
+}
+
+function HudEditableModule({
+  module,
+  modules,
+  draggedModule,
+  dropTarget,
+  movePending,
+  onModuleRowChange,
+  onPointerDragStart,
+  onPointerDragMove,
+  onPointerDragEnd,
+  onPointerDragCancel,
+  onPointerCaptureLost,
+  onMove,
+  children,
+}: {
+  module: HudModuleId;
+  modules: HudModuleId[];
+  draggedModule: HudModuleId | null;
+  dropTarget: { module: HudModuleId; insertAfter: boolean } | null;
+  movePending: boolean;
+  onModuleRowChange: (module: HudModuleId, row: HTMLElement | null) => void;
+  onPointerDragStart: (
+    event: PointerEvent<HTMLElement>,
+    module: HudModuleId,
+  ) => void;
+  onPointerDragMove: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDragEnd: (event: PointerEvent<HTMLElement>) => void;
+  onPointerDragCancel: () => void;
+  onPointerCaptureLost: () => void;
+  onMove: (
+    dragged: HudModuleId,
+    target: HudModuleId,
+    insertAfter: boolean,
+  ) => Promise<void>;
+  children: ReactNode;
+}) {
+  const selectedTarget = dropTarget?.module === module ? dropTarget : null;
+  const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const direction =
+      event.key === "ArrowUp"
+        ? "up"
+        : event.key === "ArrowDown"
+          ? "down"
+          : null;
+    if (direction === null || movePending) return;
+    const intent = hudModuleKeyboardMove(modules, module, direction);
+    if (intent === null) return;
+    event.preventDefault();
+    void onMove(module, intent.target, intent.insertAfter);
+  };
+
+  return (
+    <section
+      ref={(row) => onModuleRowChange(module, row)}
+      className={cn(
+        "relative rounded-sm border border-dashed border-emerald-500/70",
+        draggedModule === module && "opacity-45",
+      )}
+    >
+      {selectedTarget ? (
+        <span
+          className={cn(
+            "motion-drop-indicator pointer-events-none absolute inset-x-0 z-20 h-0.5 bg-emerald-300",
+            selectedTarget.insertAfter ? "-bottom-px" : "-top-px",
+          )}
+          aria-hidden="true"
+        />
+      ) : null}
+      <button
+        type="button"
+        className={cn(
+          "hud-text-halo flex h-5 w-full touch-none cursor-grab select-none items-center gap-1 bg-emerald-400/15 px-1.5 text-left text-[10px] font-medium text-emerald-100 active:cursor-grabbing",
+          draggedModule === module && "cursor-grabbing",
+        )}
+        disabled={movePending}
+        aria-label={tf("Drag {} to reorder", [t(hudModuleLabelKey(module))])}
+        onPointerDown={(event) => onPointerDragStart(event, module)}
+        onPointerMove={onPointerDragMove}
+        onPointerUp={onPointerDragEnd}
+        onPointerCancel={onPointerDragCancel}
+        onLostPointerCapture={onPointerCaptureLost}
+        onKeyDown={moveWithKeyboard}
+      >
+        <GripVertical className="size-3" aria-hidden="true" />
+        <span>{t(hudModuleLabelKey(module))}</span>
+      </button>
+      <div className="px-1 py-0.5">{children}</div>
+    </section>
   );
 }
 
@@ -805,18 +1041,28 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
           <>
             <p className="hud-text-halo text-[10px] text-white/60">
               {t("Team DPS")}
-              {hud.config.showDuration
-                ? ` · ${formatHudDuration(summary.durationSeconds)}`
-                : ""}
+              {hud.config.showDuration ? (
+                <>
+                  {" · "}
+                  <AnimatedNumber
+                    value={summary.durationSeconds}
+                    format={formatHudDuration}
+                  />
+                </>
+              ) : null}
             </p>
             <p className="hud-text-halo truncate font-mono text-[26px] leading-8 font-semibold text-cyan-200">
-              {formatHudNumber(summary.teamDps)}
+              <AnimatedNumber
+                value={summary.teamDps}
+                format={formatHudNumber}
+              />
             </p>
           </>
         ) : hud.config.showDuration ? (
           <HudMetric
             label={t("Duration")}
-            value={formatHudDuration(summary.durationSeconds)}
+            value={summary.durationSeconds}
+            format={formatHudDuration}
           />
         ) : null}
       </div>
@@ -827,7 +1073,7 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
             {summaryLabel(hud)}
           </p>
           <p className="hud-text-halo truncate font-mono text-sm leading-8 text-white/90">
-            {summaryValue(hud)}
+            <HudSummaryValue hud={hud} />
           </p>
         </div>
       ) : null}
@@ -840,9 +1086,10 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
           {hud.characters.map((character, index) => (
             <span
               key={character.characterId}
+              className="motion-bar"
               style={{
                 width: `${character.damageSharePercent}%`,
-                backgroundColor: hudRoleColor(index),
+                backgroundColor: hudCharacterColor(character, index),
               }}
             />
           ))}
@@ -852,12 +1099,20 @@ function HudSummary({ hud }: { hud: HudSnapshot }) {
   );
 }
 
-function HudMetric({ label, value }: { label: string; value: string }) {
+function HudMetric({
+  label,
+  value,
+  format,
+}: {
+  label: string;
+  value: number;
+  format(value: number): string;
+}) {
   return (
     <>
       <p className="hud-text-halo text-[10px] text-white/60">{label}</p>
       <p className="hud-text-halo font-mono text-sm leading-8 text-white/90">
-        {value}
+        <AnimatedNumber value={value} format={format} />
       </p>
     </>
   );
@@ -901,7 +1156,8 @@ function HudCharacters({ hud }: { hud: HudSnapshot }) {
         <HudCharacterRow
           key={character.characterId}
           character={character}
-          color={hudRoleColor(index)}
+          color={hudCharacterColor(character, index)}
+          index={index}
         />
       ))}
     </section>
@@ -911,18 +1167,27 @@ function HudCharacters({ hud }: { hud: HudSnapshot }) {
 function HudCharacterRow({
   character,
   color,
+  index,
 }: {
   character: HudCharacterSnapshot;
   color: string;
+  index: number;
 }) {
   const projectedName = hudCharacterName(character);
   const name =
     character.previewLabelSuffix === null
       ? projectedName || t("Character")
       : `${t("Character")} ${projectedName}`;
+  const avatar =
+    character.previewLabelSuffix === null
+      ? characterAvatarUrl(character.characterId)
+      : null;
 
   return (
-    <div className="grid h-6 min-w-0 grid-cols-[5.5rem_1fr_3.2rem_2.5rem] items-center gap-1.5">
+    <div
+      className="motion-list-item grid h-6 min-w-0 grid-cols-[5.5rem_1fr_3.2rem_2.5rem] items-center gap-1.5"
+      style={{ "--motion-index": index } as CSSProperties}
+    >
       <div className="flex min-w-0 items-center gap-1.5">
         <span
           className="h-6 w-0.5 shrink-0 rounded-full"
@@ -930,11 +1195,20 @@ function HudCharacterRow({
           aria-hidden="true"
         />
         <span
-          className="grid size-4 shrink-0 place-items-center rounded-full text-[9px] font-semibold text-slate-950"
+          className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border border-white/30 text-[9px] font-semibold text-white"
           style={{ backgroundColor: color }}
-          aria-hidden="true"
+          title={name}
         >
-          {name.slice(0, 1)}
+          <span aria-hidden="true">{name.slice(0, 1)}</span>
+          {avatar ? (
+            <img
+              className="absolute inset-0 size-full object-cover"
+              src={avatar}
+              alt=""
+              draggable={false}
+              onError={(event) => event.currentTarget.remove()}
+            />
+          ) : null}
         </span>
         <span className="hud-text-halo truncate text-xs text-white">
           {name}
@@ -946,7 +1220,7 @@ function HudCharacterRow({
         aria-label={`${name} ${character.damageSharePercent.toFixed(1)}%`}
       >
         <div
-          className="h-full rounded-full"
+          className="motion-bar h-full rounded-full"
           style={{
             width: `${character.damageSharePercent}%`,
             backgroundColor: color,
@@ -955,10 +1229,13 @@ function HudCharacterRow({
       </div>
 
       <span className="hud-text-halo text-right font-mono text-xs text-white/90">
-        {formatHudNumber(character.dps)}
+        <AnimatedNumber value={character.dps} format={formatHudNumber} />
       </span>
       <span className="hud-text-halo text-right text-[10px]" style={{ color }}>
-        {character.damageSharePercent.toFixed(1)}%
+        <AnimatedNumber
+          value={character.damageSharePercent}
+          format={(value) => `${value.toFixed(1)}%`}
+        />
       </span>
     </div>
   );
@@ -1005,21 +1282,63 @@ function summaryLabel(hud: HudSnapshot): string {
   return t(hud.config.showTotalDamage ? "Total Damage" : "Total Damage Taken");
 }
 
-function summaryValue(hud: HudSnapshot): string {
+function HudSummaryValue({ hud }: { hud: HudSnapshot }) {
   const summary = hud.summary;
   if (summary === null) {
-    return "";
+    return null;
   }
   if (hud.config.showTotalDamage && hud.config.showDamageTaken) {
-    return `${formatHudNumber(summary.totalDamage)} / ${formatHudNumber(
-      summary.totalDamageTaken,
-    )}`;
+    return (
+      <>
+        <AnimatedNumber value={summary.totalDamage} format={formatHudNumber} />
+        {" / "}
+        <AnimatedNumber
+          value={summary.totalDamageTaken}
+          format={formatHudNumber}
+        />
+      </>
+    );
   }
-  return formatHudNumber(
-    hud.config.showTotalDamage ? summary.totalDamage : summary.totalDamageTaken,
+  return (
+    <AnimatedNumber
+      value={
+        hud.config.showTotalDamage
+          ? summary.totalDamage
+          : summary.totalDamageTaken
+      }
+      format={formatHudNumber}
+    />
+  );
+}
+
+function technicalActionLabelKey(action: string): string {
+  if (action === "refresh") return "Refresh technical state";
+  if (action === "passthrough") return "Mouse passthrough";
+  if (action === "always-on-top") return "Always on top";
+  if (action === "hud-width") return "HUD Width";
+  if (action === "start-capture") return "Start Capture";
+  if (action === "stop-capture") return "Stop Capture";
+  return "HUD modules";
+}
+
+function isTechnicalActionNoticeWorthy(action: string): boolean {
+  return (
+    action === "passthrough" ||
+    action === "always-on-top" ||
+    action === "start-capture" ||
+    action === "stop-capture"
   );
 }
 
 function hudRoleColor(index: number): string {
   return HUD_ROLE_COLORS[index % HUD_ROLE_COLORS.length];
+}
+
+function hudCharacterColor(
+  character: HudCharacterSnapshot,
+  index: number,
+): string {
+  return character.previewLabelSuffix === null
+    ? characterAccent(character.characterId, character.color)
+    : hudRoleColor(index);
 }

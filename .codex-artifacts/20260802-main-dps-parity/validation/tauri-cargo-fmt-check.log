@@ -1,0 +1,85 @@
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\contract\main_dps_detail.rs:43:
+             .take(limit.clamp(1, MAIN_DPS_DETAIL_PAGE_LIMIT))
+             .enumerate()
+             .map(|(index, hit)| {
+[31m-                MainDpsHitSnapshot::from_hit(
+[0m[31m-                    hit,
+[0m[31m-                    offset + index,
+[0m[31m-                    &resources.characters,
+[0m[31m-                    language,
+[0m[31m-                )
+[0m[32m+                MainDpsHitSnapshot::from_hit(hit, offset + index, &resources.characters, language)
+[0m             })
+             .collect();
+         let character_name = request.character_id.map(|character_id| {
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\contract\main_dps_detail.rs:128:
+                 .or(hit.gameplay_effect_name.as_deref())
+                 .unwrap_or("-")
+                 .to_owned(),
+[31m-            target: localized_target_name(hit, language).unwrap_or("-").to_owned(),
+[0m[32m+            target: localized_target_name(hit, language)
+[0m[32m+                .unwrap_or("-")
+[0m[32m+                .to_owned(),
+[0m         }
+     }
+ }
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\state.rs:12:
+ use nte_dps_tool::{
+     core::{
+         CoreError,
+[31m-        combat_details::CombatDetailFilter,
+[0m         capture::{
+             CaptureControllerOptions, CaptureDeviceSelector, CaptureProfile, RawCaptureMode,
+             enumerate_devices,
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\state.rs:21:
+             CharacterDataError, CharacterDataProjection, CharacterDataRecordInput,
+             load_character_data, save_character_data_record,
+         },
+[32m+        combat_details::CombatDetailFilter,
+[0m         diagnostics::{DiagnosticRun, DiagnosticSnapshot},
+         encrypted_ini::{
+             EncryptedIniDocument, EncryptedIniError, EncryptedIniKey, EncryptedIniSaveOutcome,
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\state.rs:599:
+                 .selected_abyss_half
+                 .lock()
+                 .expect("main DPS abyss selection lock poisoned"))
+[31m-                .or(state.abyss.active_half)
+[0m[31m-                .unwrap_or(AbyssHalf::First)
+[0m[32m+            .or(state.abyss.active_half)
+[0m[32m+            .unwrap_or(AbyssHalf::First)
+[0m         });
+         (state, selected_half)
+     }
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\state.rs:2415:
+             (Some(AbyssHalf::First), Some(AbyssHalf::Second))
+         );
+         assert_eq!(
+[31m-            next_live_abyss_selection(
+[0m[31m-                Some(AbyssHalf::Second),
+[0m[31m-                Some(AbyssHalf::Second),
+[0m[31m-                None,
+[0m[31m-            ),
+[0m[32m+            next_live_abyss_selection(Some(AbyssHalf::Second), Some(AbyssHalf::Second), None,),
+[0m             (None, None)
+         );
+     }
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\windows\main_dps.rs:6:
+     contract::CommandError,
+     state::AppState,
+     windows::{
+[31m-        abyss_values::ABYSS_VALUES_WINDOW_LABEL, console::CONSOLE_WINDOW_LABEL,
+[0m[31m-        combat_details::COMBAT_DETAILS_WINDOW_LABEL,
+[0m[31m-        hud::HUD_WINDOW_LABEL,
+[0m[32m+        abyss_values::ABYSS_VALUES_WINDOW_LABEL, combat_details::COMBAT_DETAILS_WINDOW_LABEL,
+[0m[32m+        console::CONSOLE_WINDOW_LABEL, hud::HUD_WINDOW_LABEL,
+[0m     },
+ };
+ 
+Diff in \\?\D:\NTE_DPS_TOOL\src-tauri\src\windows\mod.rs:1:
+ pub(crate) mod abyss_values;
+[31m-pub(crate) mod console;
+[0m pub(crate) mod combat_details;
+[32m+pub(crate) mod console;
+[0m pub(crate) mod hud;
+ pub(crate) mod main_dps;
+ #[cfg(windows)]

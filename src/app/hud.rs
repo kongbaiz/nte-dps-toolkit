@@ -140,33 +140,7 @@ pub(crate) fn hit_type_label(hit: &crate::engine::model::Hit) -> &str {
 /// Field Buff`, `HP Sync Damage`) are this tool's own labels with no official
 /// game term, so they're translated by hand instead.
 fn attack_type_translation_key(label: &str) -> Option<&'static str> {
-    match label {
-        "创生" => Some("Blossom"),
-        "创生花" => Some("Blossom Damage"),
-        "覆纹" => Some("Hexed"),
-        "覆纹追加攻击" => Some("Hexed Follow-up Attack"),
-        "延滞" => Some("Remora"),
-        "黯星" => Some("Nova"),
-        "浊燃" => Some("Scorch"),
-        "浸染" => Some("Stain"),
-        "盈蓄" => Some("Charge"),
-        "失谐" => Some("Discord"),
-        "环合" => Some("Esper Cycle"),
-        "环合伤害" => Some("Reaction Damage"),
-        "倾陷伤害" => Some("Break Damage"),
-        "普攻" => Some("Basic Attack"),
-        "E技能" => Some("Skill"),
-        "Q技能" => Some("Ultimate"),
-        "闪避反击" => Some("Parry Attack"),
-        "格挡反击" => Some("Block Counter"),
-        "载具伤害" => Some("Vehicle Damage"),
-        "深渊场地Buff" => Some("Abyss Field Buff"),
-        "HP同步伤害" => Some("HP Sync Damage"),
-        "Passive Damage" => Some("Passive Damage"),
-        "Special Damage" => Some("Special Damage"),
-        "Awakening Damage" => Some("Awakening Damage"),
-        _ => None,
-    }
+    crate::core::skills::skill_label_translation_key(label)
 }
 
 /// Translates an attack-type/reaction label for display, including the

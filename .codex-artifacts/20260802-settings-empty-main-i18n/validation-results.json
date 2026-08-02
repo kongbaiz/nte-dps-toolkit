@@ -1,0 +1,177 @@
+[
+  {
+    "id": "root-fmt",
+    "command": "cargo fmt --check",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.866,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\root-fmt.log"
+  },
+  {
+    "id": "root-check",
+    "command": "cargo check",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.439,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\root-check.log"
+  },
+  {
+    "id": "root-test",
+    "command": "cargo test",
+    "exitStatus": 0,
+    "elapsedSeconds": 1.64,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\root-test.log"
+  },
+  {
+    "id": "gui-check",
+    "command": "cargo check --bin nte-dps-tool --features gui",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.448,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\gui-check.log"
+  },
+  {
+    "id": "gui-test",
+    "command": "cargo test --features gui",
+    "exitStatus": 0,
+    "elapsedSeconds": 1.504,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\gui-test.log"
+  },
+  {
+    "id": "gui-clippy",
+    "command": "cargo clippy --bin nte-dps-tool --features gui -- -D warnings",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.455,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\gui-clippy.log"
+  },
+  {
+    "id": "cli-check",
+    "command": "cargo check --bin nte-core --no-default-features --features cli",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.244,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\cli-check.log"
+  },
+  {
+    "id": "cli-test",
+    "command": "cargo test --no-default-features --features cli",
+    "exitStatus": 0,
+    "elapsedSeconds": 1.057,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\cli-test.log"
+  },
+  {
+    "id": "cli-clippy",
+    "command": "cargo clippy --bin nte-core --no-default-features --features cli -- -D warnings",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.279,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\cli-clippy.log"
+  },
+  {
+    "id": "cli-tree",
+    "command": "cargo tree -e normal --no-default-features --features cli",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.184,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\cli-tree.log"
+  },
+  {
+    "id": "tauri-fmt",
+    "command": "cargo fmt --check --manifest-path src-tauri/Cargo.toml",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.222,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\tauri-fmt.log"
+  },
+  {
+    "id": "tauri-check",
+    "command": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.492,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\tauri-check.log"
+  },
+  {
+    "id": "tauri-focused-test",
+    "command": "cargo test --manifest-path src-tauri/Cargo.toml settings",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.536,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\tauri-focused-test.log"
+  },
+  {
+    "id": "tauri-test",
+    "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "exitStatus": 0,
+    "elapsedSeconds": 1.307,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\tauri-test.log"
+  },
+  {
+    "id": "tauri-clippy",
+    "command": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.543,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\tauri-clippy.log"
+  },
+  {
+    "id": "frontend-focused-test",
+    "command": "pnpm --dir frontend test -- src/lib/tauri/settings-client.test.ts src/lib/tauri/settings-contract.test.ts src/features/empty-curtain/equipment-canvas-layout.test.ts src/features/main-dps/main-dps-model.test.ts src/lib/i18n.test.ts",
+    "exitStatus": 0,
+    "elapsedSeconds": 1.28,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\frontend-focused-test.log"
+  },
+  {
+    "id": "frontend-typecheck",
+    "command": "pnpm --dir frontend typecheck",
+    "exitStatus": 0,
+    "elapsedSeconds": 4.893,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\frontend-typecheck.log"
+  },
+  {
+    "id": "frontend-lint",
+    "command": "pnpm --dir frontend lint",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.506,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\frontend-lint.log"
+  },
+  {
+    "id": "frontend-test",
+    "command": "pnpm --dir frontend test",
+    "exitStatus": 0,
+    "elapsedSeconds": 2.432,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\frontend-test.log"
+  },
+  {
+    "id": "frontend-build",
+    "command": "pnpm --dir frontend build",
+    "exitStatus": 0,
+    "elapsedSeconds": 6.174,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\frontend-build.log"
+  },
+  {
+    "id": "frontend-prettier",
+    "command": "pnpm --dir frontend exec prettier --check src/features/settings/settings-page.tsx src/features/settings/settings-catalog.tsx src/features/settings/use-settings.ts src/lib/tauri/settings-client.ts src/lib/tauri/settings-client.test.ts src/lib/tauri/settings-contract.ts src/lib/tauri/settings-contract.test.ts src/features/empty-curtain/empty-curtain-page.tsx src/features/empty-curtain/equipment-canvas-grid.tsx src/features/empty-curtain/equipment-canvas-layout.ts src/features/empty-curtain/equipment-canvas-layout.test.ts src/features/main-dps/main-dps-page.tsx src/features/main-dps/main-dps-model.ts src/features/main-dps/main-dps-model.test.ts src/lib/i18n.test.ts",
+    "exitStatus": 0,
+    "elapsedSeconds": 1.045,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\frontend-prettier.log"
+  },
+  {
+    "id": "i18n-audit",
+    "command": "python .codex-artifacts/20260802-settings-empty-main-i18n/audit_production_i18n.py",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.07,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\i18n-audit.log"
+  },
+  {
+    "id": "diff-check",
+    "command": "git diff --check",
+    "exitStatus": 0,
+    "elapsedSeconds": 0.102,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\diff-check.log"
+  },
+  {
+    "id": "cli-tree-audit",
+    "command": "inspect cli-tree.log for tauri/wry/webview2-com/eframe/egui/wgpu/rfd/raw-window-handle",
+    "exitStatus": 0,
+    "elapsedSeconds": 0,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\cli-tree-audit.log"
+  },
+  {
+    "id": "tauri-debug-build",
+    "command": ".\\frontend\\node_modules\\.bin\\tauri.cmd build --debug --no-bundle",
+    "exitStatus": 0,
+    "elapsedSeconds": 28.7,
+    "log": "D:\\NTE_DPS_TOOL\\.codex-artifacts\\20260802-settings-empty-main-i18n\\validation-logs\\tauri-debug-build.log"
+  }
+]

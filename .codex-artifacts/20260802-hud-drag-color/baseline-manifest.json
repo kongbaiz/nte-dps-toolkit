@@ -1,0 +1,54 @@
+[
+  {
+    "path": "frontend/src/features/technical-hud/technical-hud-page.tsx",
+    "sha256": "27781da52e1e041e13ea09689e257f0eda5e93c70ebec050813a45ef94594210"
+  },
+  {
+    "path": "frontend/src/features/settings/settings-page.tsx",
+    "sha256": "beb59f1402e0f88e28f9c1f8fa0a8937710e4aec2db9c2e0abaf491d4a069f77"
+  },
+  {
+    "path": "frontend/src/lib/character-color.ts",
+    "sha256": "c748c4456c46aeb270c277572757c1ddc533c3934f140662330d4d7ff1444875"
+  },
+  {
+    "path": "src/storage/resource.rs",
+    "sha256": "eddbae6e9bbdfb25b38ad82e2b2ce290a75e18bd997ef6393f0c0b56152efca0"
+  },
+  {
+    "path": "src-tauri/src/commands/settings.rs",
+    "sha256": "b06428f073bd71f210f9297979844b8552f3d010266a5f54b1395d73ee71386e"
+  },
+  {
+    "path": "src-tauri/src/commands/main_dps.rs",
+    "sha256": "4adab083d72ff39f5c74af7725c53943cf4696444d66f8c3b4d466f61605aaa8"
+  },
+  {
+    "path": "docs/TAURI_MIGRATION_HANDOFF.md",
+    "sha256": "dbc0f0f19f5e8a3864eeca81efcea2414674df57723e9491ef716383cc297df2"
+  },
+  {
+    "path": "src/app/resources.rs",
+    "sha256": "b816dfb9bfc897ccf040f36f3bc2a6280fa7e901d38df44352e4abecc9b54cd1"
+  },
+  {
+    "path": "src/app/lifecycle.rs",
+    "sha256": "b27354271464877e71a50e7a576b27e79c8eac6936580ecefc3e9c14a2eb3d4c"
+  },
+  {
+    "path": "src/app/mod.rs",
+    "sha256": "605e2c0c5d4c25ad1bb01980a9d4466e82ceb6c9b252f5fc8273b2267d48dd11"
+  },
+  {
+    "path": "src/core/live_capture.rs",
+    "sha256": "86813c943b496a389176f856d00db28108f92c85edd22a9f97d93c55c7d65d74"
+  },
+  {
+    "path": "frontend/src/features/main-dps/main-dps-model.test.ts",
+    "sha256": "b03983ccd4436c2410aaead71bfe855d47c246eb150aee628f5428ede07a7204"
+  },
+  {
+    "path": "Cargo.toml",
+    "sha256": "89870e3ca7a54b9040d586d2b62b818ad07ed160699f5b6a8782be4017acbc6e"
+  }
+]

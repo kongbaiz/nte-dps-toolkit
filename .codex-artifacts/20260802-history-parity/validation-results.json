@@ -1,0 +1,142 @@
+[
+  {
+    "name": "root-fmt",
+    "command": "cargo fmt --check",
+    "exit_status": 0,
+    "duration_ms": 1139,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/root-fmt.log"
+  },
+  {
+    "name": "root-check",
+    "command": "cargo check",
+    "exit_status": 0,
+    "duration_ms": 799,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/root-check.log"
+  },
+  {
+    "name": "root-test",
+    "command": "cargo test",
+    "exit_status": 0,
+    "duration_ms": 1920,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/root-test.log"
+  },
+  {
+    "name": "gui-check",
+    "command": "cargo check --bin nte-dps-tool --features gui",
+    "exit_status": 0,
+    "duration_ms": 706,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/gui-check.log"
+  },
+  {
+    "name": "gui-test",
+    "command": "cargo test --features gui",
+    "exit_status": 0,
+    "duration_ms": 1776,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/gui-test.log"
+  },
+  {
+    "name": "gui-clippy",
+    "command": "cargo clippy --bin nte-dps-tool --features gui -- -D warnings",
+    "exit_status": 0,
+    "duration_ms": 805,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/gui-clippy.log"
+  },
+  {
+    "name": "cli-check",
+    "command": "cargo check --bin nte-core --no-default-features --features cli",
+    "exit_status": 0,
+    "duration_ms": 568,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/cli-check.log"
+  },
+  {
+    "name": "cli-test",
+    "command": "cargo test --no-default-features --features cli",
+    "exit_status": 0,
+    "duration_ms": 1306,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/cli-test.log"
+  },
+  {
+    "name": "cli-clippy",
+    "command": "cargo clippy --bin nte-core --no-default-features --features cli -- -D warnings",
+    "exit_status": 0,
+    "duration_ms": 529,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/cli-clippy.log"
+  },
+  {
+    "name": "tauri-fmt",
+    "command": "cargo fmt --check --manifest-path src-tauri/Cargo.toml",
+    "exit_status": 0,
+    "duration_ms": 495,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/tauri-fmt.log"
+  },
+  {
+    "name": "tauri-check",
+    "command": "cargo check --manifest-path src-tauri/Cargo.toml",
+    "exit_status": 0,
+    "duration_ms": 820,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/tauri-check.log"
+  },
+  {
+    "name": "tauri-test",
+    "command": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "exit_status": 0,
+    "duration_ms": 1587,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/tauri-test.log"
+  },
+  {
+    "name": "tauri-clippy",
+    "command": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "exit_status": 1,
+    "duration_ms": 4306,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/tauri-clippy.log"
+  },
+  {
+    "name": "frontend-typecheck",
+    "command": "pnpm --dir frontend typecheck",
+    "exit_status": 0,
+    "duration_ms": 5270,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/frontend-typecheck.log"
+  },
+  {
+    "name": "frontend-lint",
+    "command": "pnpm --dir frontend lint",
+    "exit_status": 0,
+    "duration_ms": 882,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/frontend-lint.log"
+  },
+  {
+    "name": "frontend-test",
+    "command": "pnpm --dir frontend test",
+    "exit_status": 0,
+    "duration_ms": 2788,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/frontend-test.log"
+  },
+  {
+    "name": "frontend-build",
+    "command": "pnpm --dir frontend build",
+    "exit_status": 0,
+    "duration_ms": 6545,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/frontend-build.log"
+  },
+  {
+    "name": "history-prettier",
+    "command": "pnpm --dir frontend exec prettier --check src/features/history/history-page.tsx src/features/history/use-history.ts src/features/history/history-view-model.ts src/features/history/history-view-model.test.ts src/lib/tauri/history-client.ts src/lib/tauri/history-client.test.ts src/lib/tauri/history-contract.ts src/lib/tauri/history-contract.test.ts",
+    "exit_status": 0,
+    "duration_ms": 1220,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/history-prettier.log"
+  },
+  {
+    "name": "i18n-parity",
+    "command": "cargo test japanese_locale_covers_every_simplified_chinese_key",
+    "exit_status": 0,
+    "duration_ms": 843,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/i18n-parity.log"
+  },
+  {
+    "name": "diff-check",
+    "command": "git diff --check",
+    "exit_status": 0,
+    "duration_ms": 399,
+    "log": ".codex-artifacts/20260802-history-parity/validation-logs/diff-check.log"
+  }
+]

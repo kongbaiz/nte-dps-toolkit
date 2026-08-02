@@ -1,0 +1,3040 @@
+--- a/docs/TAURI_MIGRATION_HANDOFF.md
++++ b/docs/TAURI_MIGRATION_HANDOFF.md
+@@ -608,6 +608,8 @@
+ ## 第 31 步补充：主 DPS 窗口
+ 
+ 主 DPS 窗口已按用户提供的新版截图迁移到 `main-dps` Tauri 窗口；Rust 继续提供实时/历史
+-投影和抓包控制，React 负责响应式展示。主窗口现为桌面生命周期所有者，Console 关闭改为隐藏。
+-本阶段的完整契约、行为与人工验收步骤见 `docs/TAURI_MIGRATION_PHASE31.md`。角色/队伍命中和
+-深渊总览详情窗口尚未在本阶段替换，相关按钮保持禁用，继续使用旧 egui 作为后续对照。
++投影和抓包控制，React 负责响应式展示。主窗口现为桌面生命周期所有者，Console、深渊数值和
++命中详情窗口关闭时隐藏，并与主窗口共享自绘标题栏。主窗口已补齐短高度自适应、完整控制区折叠、
++伤害归属/角色/队伍详情入口、深渊半场自动跟随，以及与旧窗口一致的中性深色层级；Monaco 直接
++跟随界面主题。本阶段的完整契约、行为与人工验收步骤见 `docs/TAURI_MIGRATION_PHASE31.md`。
++深渊总览详情仍继续使用旧 egui 作为后续独立窗口迁移对照。
+--- a/docs/TAURI_MIGRATION_PHASE31.md
++++ b/docs/TAURI_MIGRATION_PHASE31.md
+@@ -3,7 +3,8 @@
+ ## 本阶段范围
+ 
+ 本阶段按用户提供的新版主窗口截图，一次完成主 DPS 窗口的 UI 与既有主流程接入。旧 egui
+-主窗口继续保留为行为对照；角色命中、队伍命中和深渊总览详情窗口仍属于后续独立迁移阶段。
++主窗口继续保留为行为对照；角色命中与队伍命中复用独立 Tauri 详情窗口，深渊总览继续按后续
++独立窗口阶段迁移。
+ 
+ ## 契约与窗口边界
+ 
+@@ -12,8 +13,8 @@
+   和显式 command，React 不复制伤害、DPS、时停或历史计算；
+ - 版本 2 补充伤害归属、角色有效战斗时长和当前语言角色名；角色名在 Rust 契约边界根据
+   `UiConfig.language` 从同一角色资源选择，语言切换通过 presentation revision 主动刷新；
+-- 主窗口成为桌面进程的所有者。Console 关闭时隐藏并保留页面状态，主窗口关闭时销毁 HUD、
+-  Console 和深渊数值窗口；
++- 主窗口成为桌面进程的所有者。Console、深渊数值和命中详情窗口关闭时隐藏并保留页面状态，
++  主窗口关闭时统一销毁所有从属窗口；这些窗口与主窗口共享无系统装饰的自绘标题栏；
+ - 主窗口启动为隐藏状态，React 完成两帧绘制后再显示，避免首帧黑屏；窗口尺寸、位置、置顶、
+   主题和透明度继续写回现有 `UiConfig`；
+ - “HUD”切换到独立 HUD 编辑窗口，“穿透”只切换主窗口鼠标穿透，并由既有全局热键恢复，
+@@ -22,15 +23,19 @@
+ ## 页面行为
+ 
+ - 自绘标题栏保留运行状态点、居中标题和最小化、最大化、关闭按钮；
+-- 标题栏显式调用 Tauri 原生拖动 API，并保持拖动权限最小化到主窗口；默认尺寸收紧为
++- 标题栏显式调用 Tauri 原生拖动 API，并按窗口 capability 最小化授权；默认尺寸收紧为
+   `670 × 560`，旧版 `670 × 692` 默认尺寸会在恢复时迁移到紧凑基线；
+-- 工具栏接入开始/停止、重置、新一轮、暂停/恢复、深渊行折叠、HUD、Console、置顶、穿透和外观；
++- 工具栏接入开始/停止、重置、新一轮、暂停/恢复、主控制区折叠、HUD、Console、置顶、穿透和外观；
+ - 战斗轮次支持实时数据与可回放历史快照，并用前后箭头和原生选择框切换；
+ - 摘要区展示队伍 DPS、总伤害、总受击和战斗时间；深渊激活时恢复层数、上半/下半选择及
+-  挑战成功状态；
++  挑战成功状态，检测到活跃半场切换时自动跟随下半，同时保留同一半场内的手动查看；
+ - 队伍区恢复伤害归属条、属性图标、角色色条、头像、名称、命中、有效战斗时长、伤害、占比、
+   DPS、受击和占比进度条；始终一名角色占一行，四行在可用高度内等高伸缩，队伍区不滚动；
+-  右键菜单支持复制和暂时隐藏，全部隐藏时提供恢复入口；详情按钮在对应窗口迁移前保持禁用；
++  说明文案与标题同行，短高度下按容器高度逐级收紧头像、次要信息和间距；
++- 伤害归属板块、角色行和队伍明细按钮会打开独立命中详情窗口并应用对应筛选；右键菜单支持
++  复制和暂时隐藏，全部隐藏时提供恢复入口；
++- 深色主题恢复旧窗口的中性黑灰层级、浅色主按钮和边框对比；Mod 工坊 Monaco 编辑器直接
++  跟随界面主题，不再维护独立主题开关；
+ - 空状态复刻新版截图的三步引导，接入实时抓包及 JSON/PCAPNG 原生文件选择回放；
+ - 错误使用顶部居中浮层，不改变页面布局。主数据 Channel 在空状态下低频探测游戏进程变化，
+   实战状态只按 Rust revision 推送。
+@@ -45,15 +50,19 @@
+ 4. 点击开始并产生伤害，确认归属条、属性图标、角色头像、排序、DPS、伤害、占比、命中、
+    有效时长、受击和进度条随 Rust 快照更新；
+ 5. 点击暂停后确认显示冻结，恢复后追上缓冲事件；点击新一轮确认当前轮次归档并清空实时轮；
+-6. 用前后箭头和选择框切换实时/历史轮次；深渊战斗中检查层数、上半、下半、挑战成功及折叠；
++6. 用前后箭头和选择框切换实时/历史轮次；深渊战斗中检查层数、上半、下半、挑战成功；完成
++   上半后在下半造成伤害，确认页面自动跟随下半；折叠后确认战斗轮次以上的控制区全部隐藏；
+ 7. 停止抓包后分别导入 JSON 和 PCAPNG，确认先出现原生文件位置窗口，取消不产生成功状态；
+-8. 右键角色检查复制和隐藏，隐藏全部后点击“显示所有角色”；详情按钮保持禁用；
++8. 点击伤害归属板块、角色行和队伍战斗明细，确认独立详情窗口打开且筛选正确；右键角色检查
++   复制和隐藏，隐藏全部后点击“显示所有角色”；
+ 9. 检查置顶、穿透热键恢复、HUD 切换及 HUD 编辑栏返回主窗口；关闭 Console 只隐藏，关闭主
+    窗口后进程正常退出；
+-10. 切换浅色/深色和透明度，并在窄窗口、宽窗口、100%、125%、150% DPI、多显示器下检查
+-    紧凑工具栏、500px 以下摘要两列/以上四列、四名角色固定单列且随高度等高伸缩、窗口位置
+-    恢复和文本截断；
+-11. 分别切换简体中文、日文和英文，检查主窗口、队伍角色名称、回放菜单、错误浮层和深渊
++10. 切换浅色/深色和透明度，并在窄窗口、宽窗口、低高度、100%、125%、150% DPI、多显示器下
++    检查紧凑工具栏、四项摘要、四名角色固定单列且随高度等高伸缩、头像与次要信息逐级收紧、
++    窗口位置恢复和文本截断；
++11. 检查主窗口、Console、深渊数值、命中详情和 Monaco 的底色、控件层级与标题栏一致，深色
++    模式对照旧窗口的中性黑灰风格；
++12. 分别切换简体中文、日文和英文，检查主窗口、队伍角色名称、回放菜单、错误浮层和深渊
+     半场文案同步更新。
+ 
+ 桌面 UI 仍由用户人工启动验收；自动化验证不替代原生透明度、鼠标穿透、置顶、文件对话框、
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -16,6 +16,11 @@
+     default: module.MainDpsPage,
+   })),
+ );
++const MainDpsDetailPage = lazy(() =>
++  import("@/features/main-dps/main-dps-detail-page").then((module) => ({
++    default: module.MainDpsDetailPage,
++  })),
++);
+ 
+ function App() {
+   const windowLabel = getCurrentWindow().label;
+@@ -30,6 +35,12 @@
+       );
+     case "console":
+       return <ConsolePage />;
++    case "combat-details":
++      return (
++        <Suspense fallback={null}>
++          <MainDpsDetailPage />
++        </Suspense>
++      );
+     case "main-dps":
+       return (
+         <Suspense fallback={null}>
+--- a/frontend/src/components/nte/desktop-titlebar.tsx
++++ b/frontend/src/components/nte/desktop-titlebar.tsx
+@@ -0,0 +1,87 @@
++import { Maximize2, Minus, X } from "lucide-react";
++import type { PointerEvent, ReactNode } from "react";
++
++import { t } from "@/lib/i18n";
++import { desktopWindowClient } from "@/lib/tauri/desktop-window-client";
++import { cn } from "@/lib/utils";
++
++export function DesktopTitlebar({
++  title,
++  status,
++  onError,
++}: {
++  title: string;
++  status?: ReactNode;
++  onError?(error: unknown): void;
++}) {
++  const run = (operation: () => Promise<void>) => {
++    void operation().catch((error: unknown) => {
++      if (onError) onError(error);
++      else console.error("desktop titlebar operation failed", error);
++    });
++  };
++  const startDragging = (event: PointerEvent<HTMLElement>) => {
++    if (
++      event.button !== 0 ||
++      !event.isPrimary ||
++      (event.target as HTMLElement).closest("button") !== null
++    )
++      return;
++    run(desktopWindowClient.startDragging);
++  };
++
++  return (
++    <header className="desktop-titlebar" onPointerDown={startDragging}>
++      <span className="absolute left-3 flex items-center">{status}</span>
++      <strong className="pointer-events-none truncate px-32 text-base font-medium">
++        {title}
++      </strong>
++      <div className="absolute right-1 flex h-full items-center">
++        <TitleButton
++          label={t("Minimize")}
++          onClick={() => run(desktopWindowClient.minimize)}
++        >
++          <Minus />
++        </TitleButton>
++        <TitleButton
++          label={t("Maximize")}
++          onClick={() => run(desktopWindowClient.toggleMaximized)}
++        >
++          <Maximize2 />
++        </TitleButton>
++        <TitleButton
++          label={t("Close")}
++          danger
++          onClick={() => run(desktopWindowClient.close)}
++        >
++          <X />
++        </TitleButton>
++      </div>
++    </header>
++  );
++}
++
++function TitleButton({
++  label,
++  danger = false,
++  onClick,
++  children,
++}: {
++  label: string;
++  danger?: boolean;
++  onClick(): void;
++  children: ReactNode;
++}) {
++  return (
++    <button
++      className={cn(
++        "grid h-full w-10 place-items-center [&_svg]:size-3.5",
++        danger ? "hover:bg-destructive hover:text-white" : "hover:bg-muted",
++      )}
++      aria-label={label}
++      onClick={onClick}
++    >
++      {children}
++    </button>
++  );
++}
+--- a/frontend/src/features/abyss-values/abyss-values-page.tsx
++++ b/frontend/src/features/abyss-values/abyss-values-page.tsx
+@@ -17,6 +17,7 @@
+ 
+ import statDisplayNames from "@res/data/abyss/monster_stat_names_zh_cn.json";
+ 
++import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
+ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+ import { Badge } from "@/components/ui/badge";
+ import { Button } from "@/components/ui/button";
+@@ -120,47 +121,50 @@
+   );
+ 
+   return (
+-    <main
++    <div
+       className={cn(
+-        "flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground",
++        "desktop-window-shell",
+         !presentation.darkMode && "console-light",
+       )}
+     >
+-      {mutationError ? (
+-        <FloatingError
+-          error={mutationError}
+-          onDismiss={() => setMutationError(null)}
+-        />
+-      ) : null}
+-      {state.status === "loading" ? (
+-        <AbyssValuesLoading />
+-      ) : state.status === "error" ? (
+-        <AbyssValuesError error={state.error} onRetry={load} />
+-      ) : (
+-        <AbyssValuesReady
+-          snapshot={state.snapshot}
+-          selectedFloorKey={selectedFloorKey}
+-          expandedSeason={expandedSeason}
+-          selectedPackId={selectedPackId}
+-          query={query}
+-          pending={pending}
+-          onReload={load}
+-          onQueryChange={setQuery}
+-          onExpandSeason={setExpandedSeason}
+-          onSelectFloor={(key) => {
+-            setSelectedFloorKey(key);
+-            setExpandedSeason(key.season);
+-            setSelectedPackId(null);
+-          }}
+-          onSelectMonster={setSelectedPackId}
+-          onSwapTeams={() => updateTeams(() => client.swapTeams())}
+-          onClearTeam={(half) => updateTeams(() => client.clearTeam(half))}
+-          onImportTeam={(half, json) =>
+-            updateTeams(() => client.importTeam(half, json))
+-          }
+-        />
+-      )}
+-    </main>
++      <DesktopTitlebar title={t("Abyss monster values")} />
++      <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
++        {mutationError ? (
++          <FloatingError
++            error={mutationError}
++            onDismiss={() => setMutationError(null)}
++          />
++        ) : null}
++        {state.status === "loading" ? (
++          <AbyssValuesLoading />
++        ) : state.status === "error" ? (
++          <AbyssValuesError error={state.error} onRetry={load} />
++        ) : (
++          <AbyssValuesReady
++            snapshot={state.snapshot}
++            selectedFloorKey={selectedFloorKey}
++            expandedSeason={expandedSeason}
++            selectedPackId={selectedPackId}
++            query={query}
++            pending={pending}
++            onReload={load}
++            onQueryChange={setQuery}
++            onExpandSeason={setExpandedSeason}
++            onSelectFloor={(key) => {
++              setSelectedFloorKey(key);
++              setExpandedSeason(key.season);
++              setSelectedPackId(null);
++            }}
++            onSelectMonster={setSelectedPackId}
++            onSwapTeams={() => updateTeams(() => client.swapTeams())}
++            onClearTeam={(half) => updateTeams(() => client.clearTeam(half))}
++            onImportTeam={(half, json) =>
++              updateTeams(() => client.importTeam(half, json))
++            }
++          />
++        )}
++      </main>
++    </div>
+   );
+ }
+ 
+--- a/frontend/src/features/console/console-page.tsx
++++ b/frontend/src/features/console/console-page.tsx
+@@ -1,5 +1,6 @@
+ import { Activity, useState } from "react";
+ 
++import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
+ import { CharacterDataPage } from "@/features/character-data/character-data-page";
+ import { DiagnosticsPage } from "@/features/diagnostics/diagnostics-page";
+ import { EncryptedIniPage } from "@/features/encrypted-ini/encrypted-ini-page";
+@@ -11,7 +12,7 @@
+ import { SettingsPage } from "@/features/settings/settings-page";
+ import { SkillsPage } from "@/features/skills/skills-page";
+ import { TimelinePage } from "@/features/timeline/timeline-page";
+-import { useTranslationRevision } from "@/lib/i18n";
++import { t, useTranslationRevision } from "@/lib/i18n";
+ 
+ import {
+   consolePageActivityMode,
+@@ -25,101 +26,104 @@
+   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+ 
+   return (
+-    <main className="flex size-full min-h-0 overflow-hidden bg-background text-foreground select-none">
+-      <ConsoleSidebar
+-        activePage={activePage}
+-        collapsed={sidebarCollapsed}
+-        onNavigate={setActivePage}
+-        onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
+-      />
+-      <Activity
+-        name="console-timeline"
+-        mode={consolePageActivityMode(activePage, "timeline")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <TimelinePage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-skills"
+-        mode={consolePageActivityMode(activePage, "skills")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <SkillsPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-empty-curtain"
+-        mode={consolePageActivityMode(activePage, "empty-curtain")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <EmptyCurtainPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-character-data"
+-        mode={consolePageActivityMode(activePage, "character-data")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <CharacterDataPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-encrypted-ini"
+-        mode={consolePageActivityMode(activePage, "encrypted-ini")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <EncryptedIniPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-history"
+-        mode={consolePageActivityMode(activePage, "history")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <HistoryPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-packets"
+-        mode={consolePageActivityMode(activePage, "packets")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <PacketsPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-settings"
+-        mode={consolePageActivityMode(activePage, "settings")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <SettingsPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-resources"
+-        mode={consolePageActivityMode(activePage, "resources")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <ResourcesPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-diagnostics"
+-        mode={consolePageActivityMode(activePage, "diagnostics")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <DiagnosticsPage />
+-        </div>
+-      </Activity>
+-      <Activity
+-        name="console-mod-studio"
+-        mode={consolePageActivityMode(activePage, "mod-studio")}
+-      >
+-        <div className="flex min-h-0 min-w-0 flex-1">
+-          <ModStudioWorkspace />
+-        </div>
+-      </Activity>
+-    </main>
++    <div className="desktop-window-shell">
++      <DesktopTitlebar title={t("NTE Console")} />
++      <main className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-foreground select-none">
++        <ConsoleSidebar
++          activePage={activePage}
++          collapsed={sidebarCollapsed}
++          onNavigate={setActivePage}
++          onToggle={() => setSidebarCollapsed((collapsed) => !collapsed)}
++        />
++        <Activity
++          name="console-timeline"
++          mode={consolePageActivityMode(activePage, "timeline")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <TimelinePage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-skills"
++          mode={consolePageActivityMode(activePage, "skills")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <SkillsPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-empty-curtain"
++          mode={consolePageActivityMode(activePage, "empty-curtain")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <EmptyCurtainPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-character-data"
++          mode={consolePageActivityMode(activePage, "character-data")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <CharacterDataPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-encrypted-ini"
++          mode={consolePageActivityMode(activePage, "encrypted-ini")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <EncryptedIniPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-history"
++          mode={consolePageActivityMode(activePage, "history")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <HistoryPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-packets"
++          mode={consolePageActivityMode(activePage, "packets")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <PacketsPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-settings"
++          mode={consolePageActivityMode(activePage, "settings")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <SettingsPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-resources"
++          mode={consolePageActivityMode(activePage, "resources")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <ResourcesPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-diagnostics"
++          mode={consolePageActivityMode(activePage, "diagnostics")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <DiagnosticsPage />
++          </div>
++        </Activity>
++        <Activity
++          name="console-mod-studio"
++          mode={consolePageActivityMode(activePage, "mod-studio")}
++        >
++          <div className="flex min-h-0 min-w-0 flex-1">
++            <ModStudioWorkspace />
++          </div>
++        </Activity>
++      </main>
++    </div>
+   );
+ }
+--- a/frontend/src/features/main-dps/main-dps-detail-page.tsx
++++ b/frontend/src/features/main-dps/main-dps-detail-page.tsx
+@@ -0,0 +1,169 @@
++import { RefreshCw } from "lucide-react";
++import { useCallback, useEffect, useState } from "react";
++
++import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
++import { Button } from "@/components/ui/button";
++import { t, tf, useTranslationRevision } from "@/lib/i18n";
++import { useSettingsPresentation } from "@/lib/settings-presentation";
++import { mainDpsDetailClient } from "@/lib/tauri/main-dps-detail-client";
++import type { MainDpsDetailSnapshot } from "@/lib/tauri/main-dps-detail-contract";
++
++import { formatMainMetric } from "./main-dps-model";
++
++export function MainDpsDetailPage() {
++  useTranslationRevision();
++  useSettingsPresentation();
++  const [snapshot, setSnapshot] = useState<MainDpsDetailSnapshot | null>(null);
++  const [error, setError] = useState<string | null>(null);
++  const [pending, setPending] = useState(false);
++
++  const load = useCallback(async () => {
++    setPending(true);
++    setError(null);
++    try {
++      setSnapshot(await mainDpsDetailClient.getSnapshot());
++    } catch (loadError) {
++      setError(
++        loadError instanceof Error ? loadError.message : String(loadError),
++      );
++    } finally {
++      setPending(false);
++    }
++  }, []);
++
++  const loadMore = useCallback(async () => {
++    if (snapshot === null || pending) return;
++    setPending(true);
++    setError(null);
++    try {
++      const next = await mainDpsDetailClient.getSnapshot(snapshot.rows.length);
++      setSnapshot((current) =>
++        current !== null &&
++        current.kind === next.kind &&
++        current.characterId === next.characterId &&
++        current.filter === next.filter
++          ? { ...next, offset: 0, rows: [...current.rows, ...next.rows] }
++          : next,
++      );
++    } catch (loadError) {
++      setError(
++        loadError instanceof Error ? loadError.message : String(loadError),
++      );
++    } finally {
++      setPending(false);
++    }
++  }, [pending, snapshot]);
++
++  useEffect(() => {
++    void load();
++    let unlisten: (() => void) | null = null;
++    void mainDpsDetailClient
++      .subscribeRequested(() => void load())
++      .then((value) => {
++        unlisten = value;
++      });
++    return () => unlisten?.();
++  }, [load]);
++
++  const title =
++    snapshot?.kind === "character"
++      ? tf("{} Combat Details", [snapshot.characterName ?? t("Character")])
++      : t("Team Combat Details");
++
++  return (
++    <div className="desktop-window-shell">
++      <DesktopTitlebar title={title} />
++      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
++        <div className="flex items-center justify-between gap-3 border-b pb-3">
++          <div className="min-w-0">
++            <h1 className="truncate text-lg font-semibold">{title}</h1>
++            <p className="text-sm text-muted-foreground">
++              {snapshot === null
++                ? t("Loading")
++                : tf("{} hits · {} damage", [
++                    String(snapshot.totalHits),
++                    formatMainMetric(snapshot.totalDamage),
++                  ])}
++            </p>
++          </div>
++          <Button size="sm" variant="outline" disabled={pending} onClick={load}>
++            <RefreshCw className={pending ? "animate-spin" : ""} />
++            {t("Refresh")}
++          </Button>
++        </div>
++
++        {error !== null ? (
++          <div className="m-auto rounded-lg border border-destructive/30 px-4 py-3 text-sm text-destructive">
++            {error}
++          </div>
++        ) : snapshot === null ? (
++          <div className="m-auto size-7 animate-spin rounded-full border-2 border-muted border-t-foreground" />
++        ) : snapshot.rows.length === 0 ? (
++          <div className="m-auto text-sm text-muted-foreground">
++            {t("No matching combat hits")}
++          </div>
++        ) : (
++          <div className="flex min-h-0 flex-1 flex-col gap-2">
++            <div className="min-h-0 flex-1 overflow-auto rounded-lg border bg-card">
++              <table className="w-full table-fixed text-sm">
++                <thead className="sticky top-0 z-10 bg-muted text-left text-xs text-muted-foreground">
++                  <tr>
++                    <th className="w-28 px-3 py-2 font-medium">{t("Time")}</th>
++                    <th className="w-36 px-3 py-2 font-medium">
++                      {t("Character")}
++                    </th>
++                    <th className="px-3 py-2 font-medium">{t("Skill")}</th>
++                    <th className="px-3 py-2 font-medium">{t("Target")}</th>
++                    <th className="w-32 px-3 py-2 text-right font-medium">
++                      {t("Damage")}
++                    </th>
++                  </tr>
++                </thead>
++                <tbody>
++                  {snapshot.rows.map((row) => (
++                    <tr key={row.id} className="border-t hover:bg-muted/50">
++                      <td className="truncate px-3 py-2 font-mono text-xs text-muted-foreground">
++                        {row.timestamp.toFixed(3)}
++                      </td>
++                      <td className="truncate px-3 py-2">
++                        {row.characterName}
++                      </td>
++                      <td className="truncate px-3 py-2" title={row.skill}>
++                        {row.skill}
++                      </td>
++                      <td className="truncate px-3 py-2" title={row.target}>
++                        {row.target}
++                      </td>
++                      <td className="px-3 py-2 text-right font-mono tabular-nums">
++                        {row.direction === "incoming" ? "−" : ""}
++                        {formatMainMetric(row.damage)}
++                      </td>
++                    </tr>
++                  ))}
++                </tbody>
++              </table>
++            </div>
++            <div className="flex items-center justify-between text-xs text-muted-foreground">
++              <span>
++                {tf("Showing {} of {} hits", [
++                  String(snapshot.rows.length),
++                  String(snapshot.totalHits),
++                ])}
++              </span>
++              {snapshot.rows.length < snapshot.totalHits ? (
++                <Button
++                  size="sm"
++                  variant="outline"
++                  disabled={pending}
++                  onClick={loadMore}
++                >
++                  {t("Load more")}
++                </Button>
++              ) : null}
++            </div>
++          </div>
++        )}
++      </main>
++    </div>
++  );
++}
+--- a/frontend/src/features/main-dps/main-dps-page.tsx
++++ b/frontend/src/features/main-dps/main-dps-page.tsx
+@@ -5,11 +5,10 @@
+   ChevronRight,
+   Copy,
+   EyeOff,
+-  Maximize2,
+-  Minus,
+   X,
+ } from "lucide-react";
+ 
++import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
+ import { Button } from "@/components/ui/button";
+ import { characterAttributeUrl } from "@/lib/character-attribute";
+ import { characterAvatarUrl } from "@/lib/character-avatar";
+@@ -18,10 +17,8 @@
+   applySettingsPresentation,
+   useSettingsPresentation,
+ } from "@/lib/settings-presentation";
+-import {
+-  mainDpsClient,
+-  startMainDpsWindowDragging,
+-} from "@/lib/tauri/main-dps-client";
++import { mainDpsClient } from "@/lib/tauri/main-dps-client";
++import type { MainDpsDetailFilter } from "@/lib/tauri/main-dps-detail-contract";
+ import type {
+   MainDpsCharacter,
+   MainDpsSnapshot,
+@@ -88,17 +85,6 @@
+   }
+ 
+   const captureRunning = snapshot.actions.canStopCapture;
+-  const startWindowDragging = (event: React.PointerEvent<HTMLElement>) => {
+-    if (
+-      event.button !== 0 ||
+-      !event.isPrimary ||
+-      (event.target as HTMLElement).closest("button") !== null
+-    )
+-      return;
+-    void startMainDpsWindowDragging().catch((dragError: unknown) => {
+-      console.error("main DPS window dragging failed", dragError);
+-    });
+-  };
+   const importReplay = async (kind: "json" | "pcapng") => {
+     setReplayOpen(false);
+     await effect(`import-${kind}`, async () => {
+@@ -123,216 +109,199 @@
+         </div>
+       )}
+ 
+-      <header className="main-dps-titlebar" onPointerDown={startWindowDragging}>
+-        <span className="absolute left-3 size-2 rounded-full bg-emerald-600" />
+-        <strong className="pointer-events-none text-base font-medium">
+-          NTE DPS TOOL
+-        </strong>
+-        <div className="absolute right-1 flex h-full items-center">
+-          <TitleButton
+-            label={t("Minimize")}
+-            onClick={() => void effect("minimize", mainDpsClient.minimize)}
+-          >
+-            <Minus />
+-          </TitleButton>
+-          <TitleButton
+-            label={t("Maximize")}
+-            onClick={() =>
+-              void effect("maximize", mainDpsClient.toggleMaximized)
+-            }
+-          >
+-            <Maximize2 />
+-          </TitleButton>
+-          <TitleButton
+-            label={t("Close")}
+-            danger
+-            onClick={() => void effect("close", mainDpsClient.close)}
+-          >
+-            <X />
+-          </TitleButton>
+-        </div>
+-      </header>
++      <DesktopTitlebar
++        title="NTE DPS TOOL"
++        status={<span className="size-2 rounded-full bg-emerald-600" />}
++      />
+ 
+       <main className="main-dps-content">
+-        <section className="flex flex-wrap items-center justify-between gap-1.5">
+-          <div className="flex flex-wrap gap-1.5">
+-            <Button
+-              size="sm"
+-              onClick={() =>
+-                void mutate(
+-                  "capture",
+-                  captureRunning
+-                    ? mainDpsClient.stopCapture
+-                    : mainDpsClient.startCapture,
+-                )
+-              }
+-              disabled={
+-                pending !== null ||
+-                (!captureRunning && !snapshot.actions.canStartCapture)
+-              }
+-            >
+-              {t(captureRunning ? "Stop" : "Start")}
+-            </Button>
+-            <Button
+-              size="sm"
+-              variant="outline"
+-              disabled={pending !== null || !snapshot.actions.canReset}
+-              onClick={() => void mutate("reset", mainDpsClient.reset)}
+-            >
+-              {t("Reset")}
+-            </Button>
+-            <Button
+-              size="sm"
+-              variant="outline"
+-              disabled={pending !== null || !snapshot.actions.canStartNewRound}
+-              onClick={() => void mutate("new-round", mainDpsClient.newRound)}
+-            >
+-              {t("New Round")}
+-            </Button>
+-            <Button
+-              size="sm"
+-              variant="outline"
+-              disabled={
+-                pending !== null ||
+-                (!snapshot.actions.canPause && !snapshot.actions.canResume)
+-              }
+-              onClick={() =>
+-                void mutate("pause", () =>
+-                  mainDpsClient.setPaused(!snapshot.processingPaused),
+-                )
+-              }
+-            >
+-              {t(snapshot.processingPaused ? "Resume" : "Pause")}
+-            </Button>
+-            {snapshot.readout.abyss.detected && (
++        {!abyssCollapsed && (
++          <section className="main-dps-toolbar flex flex-wrap items-center justify-between gap-1.5">
++            <div className="flex flex-wrap gap-1.5">
++              <Button
++                size="sm"
++                onClick={() =>
++                  void mutate(
++                    "capture",
++                    captureRunning
++                      ? mainDpsClient.stopCapture
++                      : mainDpsClient.startCapture,
++                  )
++                }
++                disabled={
++                  pending !== null ||
++                  (!captureRunning && !snapshot.actions.canStartCapture)
++                }
++              >
++                {t(captureRunning ? "Stop" : "Start")}
++              </Button>
+               <Button
+                 size="sm"
+                 variant="outline"
+-                onClick={() => setAbyssCollapsed((collapsed) => !collapsed)}
+-              >
+-                {t(abyssCollapsed ? "Expand" : "Collapse")}
+-              </Button>
+-            )}
+-            <Button
+-              size="sm"
+-              variant="outline"
+-              onClick={() => void effect("hud", mainDpsClient.openHud)}
+-            >
+-              {t("HUD")}
+-            </Button>
+-            <Button
+-              size="sm"
+-              variant="outline"
+-              onClick={() => void effect("console", mainDpsClient.openConsole)}
+-            >
+-              {t("Console")}
+-            </Button>
+-          </div>
+-          <div className="relative flex gap-1.5">
+-            <Button
+-              size="sm"
+-              variant={snapshot.alwaysOnTop ? "default" : "outline"}
+-              onClick={() =>
+-                void mutate("pin", () =>
+-                  mainDpsClient.setAlwaysOnTop(!snapshot.alwaysOnTop),
+-                )
+-              }
+-            >
+-              {t("Pin")}
+-            </Button>
+-            <Button
+-              size="sm"
+-              variant={snapshot.passthrough ? "default" : "outline"}
+-              onClick={() =>
+-                void mutate("passthrough", () =>
+-                  mainDpsClient.setPassthrough(!snapshot.passthrough),
+-                )
+-              }
+-            >
+-              {t(snapshot.passthrough ? "Passthrough on" : "Passthrough")}
+-            </Button>
+-            <Button
+-              size="sm"
+-              variant="outline"
+-              aria-expanded={appearanceOpen}
+-              onClick={() => setAppearanceOpen((open) => !open)}
+-            >
+-              {t("Appearance")}
+-            </Button>
+-            {appearanceOpen && (
+-              <div className="absolute right-0 top-9 z-20 flex min-w-44 flex-col gap-2 rounded-xl border bg-popover p-3 shadow-lg">
+-                <span className="text-xs text-muted-foreground">
+-                  {t("Theme Preset")}
+-                </span>
+-                <div className="grid grid-cols-2 gap-2">
+-                  {([false, true] as const).map((dark) => (
+-                    <Button
+-                      key={String(dark)}
+-                      size="sm"
+-                      variant={
+-                        snapshot.appearance.darkMode === dark
+-                          ? "default"
+-                          : "outline"
+-                      }
+-                      onClick={() =>
+-                        void mutate("appearance", async () => {
+-                          const next = await mainDpsClient.setAppearance(
+-                            dark,
+-                            snapshot.appearance.opacity,
+-                          );
+-                          applySettingsPresentation({
+-                            ...presentation,
+-                            darkMode: dark,
+-                          });
+-                          setAppearanceOpen(false);
+-                          return next;
+-                        })
+-                      }
+-                    >
+-                      {t(dark ? "Dark" : "Light")}
+-                    </Button>
+-                  ))}
+-                </div>
+-                <label className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
+-                  <span className="flex justify-between">
+-                    <span>{t("Opacity")}</span>
+-                    <span>
+-                      {Math.round(snapshot.appearance.opacity * 100)}%
++                disabled={pending !== null || !snapshot.actions.canReset}
++                onClick={() => void mutate("reset", mainDpsClient.reset)}
++              >
++                {t("Reset")}
++              </Button>
++              <Button
++                size="sm"
++                variant="outline"
++                disabled={
++                  pending !== null || !snapshot.actions.canStartNewRound
++                }
++                onClick={() => void mutate("new-round", mainDpsClient.newRound)}
++              >
++                {t("New Round")}
++              </Button>
++              <Button
++                size="sm"
++                variant="outline"
++                disabled={
++                  pending !== null ||
++                  (!snapshot.actions.canPause && !snapshot.actions.canResume)
++                }
++                onClick={() =>
++                  void mutate("pause", () =>
++                    mainDpsClient.setPaused(!snapshot.processingPaused),
++                  )
++                }
++              >
++                {t(snapshot.processingPaused ? "Resume" : "Pause")}
++              </Button>
++              {snapshot.readout.abyss.detected && (
++                <Button
++                  size="sm"
++                  variant="outline"
++                  onClick={() => setAbyssCollapsed((collapsed) => !collapsed)}
++                >
++                  {t(abyssCollapsed ? "Expand" : "Collapse")}
++                </Button>
++              )}
++              <Button
++                size="sm"
++                variant="outline"
++                onClick={() => void effect("hud", mainDpsClient.openHud)}
++              >
++                {t("HUD")}
++              </Button>
++              <Button
++                size="sm"
++                variant="outline"
++                onClick={() =>
++                  void effect("console", mainDpsClient.openConsole)
++                }
++              >
++                {t("Console")}
++              </Button>
++            </div>
++            <div className="relative flex gap-1.5">
++              <Button
++                size="sm"
++                variant={snapshot.alwaysOnTop ? "default" : "outline"}
++                onClick={() =>
++                  void mutate("pin", () =>
++                    mainDpsClient.setAlwaysOnTop(!snapshot.alwaysOnTop),
++                  )
++                }
++              >
++                {t("Pin")}
++              </Button>
++              <Button
++                size="sm"
++                variant={snapshot.passthrough ? "default" : "outline"}
++                onClick={() =>
++                  void mutate("passthrough", () =>
++                    mainDpsClient.setPassthrough(!snapshot.passthrough),
++                  )
++                }
++              >
++                {t(snapshot.passthrough ? "Passthrough on" : "Passthrough")}
++              </Button>
++              <Button
++                size="sm"
++                variant="outline"
++                aria-expanded={appearanceOpen}
++                onClick={() => setAppearanceOpen((open) => !open)}
++              >
++                {t("Appearance")}
++              </Button>
++              {appearanceOpen && (
++                <div className="absolute right-0 top-9 z-20 flex min-w-44 flex-col gap-2 rounded-xl border bg-popover p-3 shadow-lg">
++                  <span className="text-xs text-muted-foreground">
++                    {t("Theme Preset")}
++                  </span>
++                  <div className="grid grid-cols-2 gap-2">
++                    {([false, true] as const).map((dark) => (
++                      <Button
++                        key={String(dark)}
++                        size="sm"
++                        variant={
++                          snapshot.appearance.darkMode === dark
++                            ? "default"
++                            : "outline"
++                        }
++                        onClick={() =>
++                          void mutate("appearance", async () => {
++                            const next = await mainDpsClient.setAppearance(
++                              dark,
++                              snapshot.appearance.opacity,
++                            );
++                            applySettingsPresentation({
++                              ...presentation,
++                              darkMode: dark,
++                            });
++                            setAppearanceOpen(false);
++                            return next;
++                          })
++                        }
++                      >
++                        {t(dark ? "Dark" : "Light")}
++                      </Button>
++                    ))}
++                  </div>
++                  <label className="mt-1 flex flex-col gap-1 text-xs text-muted-foreground">
++                    <span className="flex justify-between">
++                      <span>{t("Opacity")}</span>
++                      <span>
++                        {Math.round(snapshot.appearance.opacity * 100)}%
++                      </span>
+                     </span>
+-                  </span>
+-                  <input
+-                    type="range"
+-                    min="35"
+-                    max="100"
+-                    defaultValue={Math.round(snapshot.appearance.opacity * 100)}
+-                    onPointerUp={(event) =>
+-                      void mutate("appearance", () =>
+-                        mainDpsClient.setAppearance(
+-                          snapshot.appearance.darkMode,
+-                          Number(event.currentTarget.value) / 100,
+-                        ),
+-                      )
+-                    }
+-                    onKeyUp={(event) => {
+-                      if (
+-                        event.key === "ArrowLeft" ||
+-                        event.key === "ArrowRight"
+-                      )
++                    <input
++                      type="range"
++                      min="35"
++                      max="100"
++                      defaultValue={Math.round(
++                        snapshot.appearance.opacity * 100,
++                      )}
++                      onPointerUp={(event) =>
+                         void mutate("appearance", () =>
+                           mainDpsClient.setAppearance(
+                             snapshot.appearance.darkMode,
+                             Number(event.currentTarget.value) / 100,
+                           ),
+-                        );
+-                    }}
+-                  />
+-                </label>
+-              </div>
+-            )}
+-          </div>
+-        </section>
+-
+-        <section className="grid grid-cols-[auto_auto_minmax(9rem,1fr)_auto] items-center gap-1.5 sm:grid-cols-[auto_auto_minmax(14rem,1fr)_auto]">
++                        )
++                      }
++                      onKeyUp={(event) => {
++                        if (
++                          event.key === "ArrowLeft" ||
++                          event.key === "ArrowRight"
++                        )
++                          void mutate("appearance", () =>
++                            mainDpsClient.setAppearance(
++                              snapshot.appearance.darkMode,
++                              Number(event.currentTarget.value) / 100,
++                            ),
++                          );
++                      }}
++                    />
++                  </label>
++                </div>
++              )}
++            </div>
++          </section>
++        )}
++
++        <section className="grid grid-cols-[auto_auto_minmax(9rem,1fr)_auto_auto] items-center gap-1.5 sm:grid-cols-[auto_auto_minmax(14rem,1fr)_auto_auto]">
+           <span className="text-muted-foreground">{t("Combat Round")}</span>
+           <Button
+             size="icon-sm"
+@@ -381,6 +350,15 @@
+           >
+             <ChevronRight />
+           </Button>
++          {abyssCollapsed && (
++            <Button
++              size="sm"
++              variant="outline"
++              onClick={() => setAbyssCollapsed(false)}
++            >
++              {t("Expand")}
++            </Button>
++          )}
+         </section>
+ 
+         {snapshot.readout.abyss.detected && !abyssCollapsed && (
+@@ -419,7 +397,7 @@
+           </section>
+         )}
+ 
+-        <section className="grid grid-cols-2 gap-1.5 min-[500px]:grid-cols-4">
++        <section className="main-dps-metrics grid grid-cols-2 gap-1.5 min-[500px]:grid-cols-4">
+           <Metric
+             value={formatMainMetric(snapshot.readout.summary.teamDps)}
+             label={t("Team DPS")}
+@@ -439,25 +417,35 @@
+           />
+         </section>
+ 
+-        <section className="flex min-h-0 flex-1 flex-col gap-2">
+-          <div className="flex items-center justify-between">
++        <section className="main-dps-team-section flex min-h-0 flex-1 flex-col gap-2">
++          <div className="flex min-w-0 items-center gap-3">
+             <h1 className="text-base font-medium">{t("Team")}</h1>
++            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
++              {t(
++                "Click a character to view details; right-click to copy data or hide the character",
++              )}
++            </span>
+             <Button
+               size="sm"
+               variant="outline"
+               disabled={!snapshot.actions.teamDetailsAvailable}
++              onClick={() =>
++                void effect("team-details", () =>
++                  mainDpsClient.openTeamDetails("all"),
++                )
++              }
+             >
+               {t("Team Combat Details")}
+             </Button>
+           </div>
+-          <p className="text-xs text-muted-foreground">
+-            {t(
+-              "Click a character to view details; right-click to copy data or hide the character",
+-            )}
+-          </p>
+           {snapshot.readout.damageAttribution.totalDamage > 0 && (
+             <DamageAttributionStrip
+               attribution={snapshot.readout.damageAttribution}
++              onOpen={(filter) =>
++                void effect(`team-details-${filter}`, () =>
++                  mainDpsClient.openTeamDetails(filter),
++                )
++              }
+             />
+           )}
+           {snapshot.readout.characters.length === 0 ? (
+@@ -491,6 +479,11 @@
+                   key={row.characterId}
+                   row={row}
+                   index={index}
++                  onClick={() =>
++                    void effect(`character-details-${row.characterId}`, () =>
++                      mainDpsClient.openCharacterDetails(row.characterId),
++                    )
++                  }
+                   onContext={(event) => {
+                     event.preventDefault();
+                     setContext({ x: event.clientX, y: event.clientY, row });
+@@ -538,30 +531,6 @@
+   );
+ }
+ 
+-function TitleButton({
+-  label,
+-  danger = false,
+-  onClick,
+-  children,
+-}: {
+-  label: string;
+-  danger?: boolean;
+-  onClick(): void;
+-  children: React.ReactNode;
+-}) {
+-  return (
+-    <button
+-      className={cn(
+-        "grid h-full w-10 place-items-center [&_svg]:size-3.5",
+-        danger ? "hover:bg-destructive hover:text-white" : "hover:bg-muted",
+-      )}
+-      aria-label={label}
+-      onClick={onClick}
+-    >
+-      {children}
+-    </button>
+-  );
+-}
+ function Metric({
+   value,
+   label,
+@@ -572,7 +541,7 @@
+   danger?: boolean;
+ }) {
+   return (
+-    <div className="rounded-lg border bg-card px-2 py-1.5 text-center">
++    <div className="main-dps-metric rounded-lg border bg-card px-2 py-1.5 text-center">
+       <div className={cn("text-xl tabular-nums", danger && "text-destructive")}>
+         {value}
+       </div>
+@@ -583,10 +552,12 @@
+ function CharacterRow({
+   row,
+   index,
++  onClick,
+   onContext,
+ }: {
+   row: MainDpsCharacter;
+   index: number;
++  onClick(): void;
+   onContext(event: React.MouseEvent): void;
+ }) {
+   const avatar = characterAvatarUrl(row.characterId);
+@@ -595,15 +566,16 @@
+   return (
+     <button
+       type="button"
+-      className="main-dps-character-row grid grid-cols-[1.25rem_auto_minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-lg border bg-card px-2 py-1.5 text-left transition-colors hover:bg-muted/60"
++      className="main-dps-character-row grid items-center gap-2 overflow-hidden rounded-lg border bg-card text-left transition-colors hover:bg-muted/60"
+       style={{ "--main-dps-character-accent": accent } as React.CSSProperties}
++      onClick={onClick}
+       onContextMenu={onContext}
+     >
+       <span
+         className="absolute inset-y-0 left-0 w-[3px] rounded-l-lg bg-[var(--main-dps-character-accent)]"
+         aria-hidden="true"
+       />
+-      <span className="grid size-5 place-items-center text-[0.625rem] font-medium text-[var(--main-dps-character-accent)]">
++      <span className="main-dps-character-attribute grid size-5 place-items-center text-[0.625rem] font-medium text-[var(--main-dps-character-accent)]">
+         {attribute === null ? (
+           `#${index + 1}`
+         ) : (
+@@ -647,8 +619,10 @@
+ 
+ function DamageAttributionStrip({
+   attribution,
++  onOpen,
+ }: {
+   attribution: MainDpsSnapshot["readout"]["damageAttribution"];
++  onOpen(filter: MainDpsDetailFilter): void;
+ }) {
+   const percentage = (damage: number) =>
+     `${damagePercent(damage, attribution.totalDamage).toFixed(1)}%`;
+@@ -663,12 +637,16 @@
+           : "Character attributed",
+       ),
+       value: percentage(characterDamage),
++      filter: attribution.separateReactionDamage
++        ? ("characterDirect" as const)
++        : ("characterAttributed" as const),
+     },
+     ...(attribution.separateReactionDamage
+       ? [
+           {
+             label: t("Reaction Damage"),
+             value: percentage(attribution.characterReactionDamage),
++            filter: "reactionDamage" as const,
+           },
+         ]
+       : attribution.characterReactionDamage > 0
+@@ -681,32 +659,37 @@
+                 ).toFixed(1),
+               ]),
+               value: null,
++              filter: "reactionDamage" as const,
+             },
+           ]
+         : []),
+     {
+       label: t("Shared mechanics"),
+       value: percentage(attribution.sharedDamage),
++      filter: "sharedMechanics" as const,
+     },
+     {
+       label: t("Unattributed"),
+       value: percentage(attribution.unattributedDamage),
++      filter: "unattributed" as const,
+     },
+   ];
+ 
+   return (
+-    <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
++    <div className="main-dps-attribution flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+       <span className="font-medium text-muted-foreground">
+         {t("Damage attribution")}
+       </span>
+       {items.map((item) => (
+-        <span
++        <button
++          type="button"
+           key={item.label}
+-          className="rounded-md border bg-background px-2 py-1 whitespace-nowrap"
++          className="rounded-md border bg-background px-2 py-1 whitespace-nowrap transition-colors hover:bg-muted"
++          onClick={() => onOpen(item.filter)}
+         >
+           {item.label}
+           {item.value !== null && ` ${item.value}`}
+-        </span>
++        </button>
+       ))}
+     </div>
+   );
+--- a/frontend/src/features/mod-studio/mod-studio-page.tsx
++++ b/frontend/src/features/mod-studio/mod-studio-page.tsx
+@@ -8,10 +8,8 @@
+   Copy,
+   FolderOpen,
+   Minus,
+-  Moon,
+   Radio,
+   RefreshCw,
+-  Sun,
+   TriangleAlert,
+ } from "lucide-react";
+ 
+@@ -38,6 +36,7 @@
+ } from "@/components/ui/tooltip";
+ import { cn } from "@/lib/utils";
+ import { t, tf } from "@/lib/i18n";
++import { useSettingsPresentation } from "@/lib/settings-presentation";
+ import type {
+   ModStudioCommandError,
+   ModStudioDocumentSummary,
+@@ -563,7 +562,7 @@
+     line: 1,
+     column: 1,
+   });
+-  const [editorTheme, setEditorTheme] = useState<"light" | "dark">("light");
++  const editorTheme = useSettingsPresentation().darkMode ? "dark" : "light";
+   const currentSourceBytes = new TextEncoder().encode(source).length;
+   const diagnosticLine =
+     saveState.status === "error" ? saveState.error.diagnosticLine : null;
+@@ -615,27 +614,9 @@
+         )}
+         <span className="truncate">{statusText}</span>
+         <div className="ml-auto flex h-full items-center divide-x divide-[var(--editor-status-border)]">
+-          <button
+-            type="button"
+-            className="flex h-full items-center gap-1 px-2 hover:bg-[var(--editor-status-hover)]"
+-            aria-label={t(
+-              editorTheme === "light"
+-                ? "Switch to dark editor theme"
+-                : "Switch to light editor theme",
+-            )}
+-            onClick={() =>
+-              setEditorTheme((current) =>
+-                current === "light" ? "dark" : "light",
+-              )
+-            }
+-          >
+-            {editorTheme === "light" ? (
+-              <Sun className="size-3.5" aria-hidden="true" />
+-            ) : (
+-              <Moon className="size-3.5" aria-hidden="true" />
+-            )}
+-            <span>{t(editorTheme === "light" ? "Light" : "Dark")}</span>
+-          </button>
++          <span className="px-3">
++            {t(editorTheme === "light" ? "Light" : "Dark")}
++          </span>
+           <span className="px-3">
+             {tf("Ln {0}, Col {1}", [
+               cursor.line.toString(),
+--- a/frontend/src/index.css
++++ b/frontend/src/index.css
+@@ -50,38 +50,38 @@
+ 
+ :root {
+   color-scheme: dark;
+-  --background: oklch(0.12 0.025 250);
+-  --foreground: oklch(0.96 0.01 240);
+-  --card: oklch(0.16 0.028 250);
+-  --card-foreground: oklch(0.96 0.01 240);
+-  --popover: oklch(0.18 0.03 250);
+-  --popover-foreground: oklch(0.96 0.01 240);
+-  --primary: oklch(0.82 0.11 207);
+-  --primary-foreground: oklch(0.14 0.025 250);
+-  --secondary: oklch(0.23 0.035 250);
+-  --secondary-foreground: oklch(0.92 0.01 240);
+-  --muted: oklch(0.22 0.028 250);
+-  --muted-foreground: oklch(0.67 0.025 245);
+-  --accent: oklch(0.27 0.055 238);
+-  --accent-foreground: oklch(0.96 0.01 240);
++  --background: oklch(0.09 0 0);
++  --foreground: oklch(0.97 0 0);
++  --card: oklch(0.145 0 0);
++  --card-foreground: oklch(0.97 0 0);
++  --popover: oklch(0.17 0 0);
++  --popover-foreground: oklch(0.97 0 0);
++  --primary: oklch(0.985 0 0);
++  --primary-foreground: oklch(0.145 0 0);
++  --secondary: oklch(0.19 0 0);
++  --secondary-foreground: oklch(0.97 0 0);
++  --muted: oklch(0.2 0 0);
++  --muted-foreground: oklch(0.69 0 0);
++  --accent: oklch(0.235 0 0);
++  --accent-foreground: oklch(0.985 0 0);
+   --destructive: oklch(0.68 0.18 25);
+-  --border: oklch(0.95 0.01 240 / 12%);
+-  --input: oklch(0.95 0.01 240 / 16%);
+-  --ring: oklch(0.78 0.11 207);
++  --border: oklch(0.985 0 0 / 13%);
++  --input: oklch(0.985 0 0 / 18%);
++  --ring: oklch(0.7 0 0);
+   --chart-1: oklch(0.82 0.11 207);
+   --chart-2: oklch(0.72 0.15 285);
+   --chart-3: oklch(0.76 0.13 165);
+   --chart-4: oklch(0.78 0.14 80);
+   --chart-5: oklch(0.68 0.18 25);
+   --radius: 0.7rem;
+-  --sidebar: oklch(0.15 0.025 250);
+-  --sidebar-foreground: oklch(0.96 0.01 240);
+-  --sidebar-primary: oklch(0.82 0.11 207);
+-  --sidebar-primary-foreground: oklch(0.14 0.025 250);
+-  --sidebar-accent: oklch(0.23 0.035 250);
+-  --sidebar-accent-foreground: oklch(0.96 0.01 240);
+-  --sidebar-border: oklch(0.95 0.01 240 / 12%);
+-  --sidebar-ring: oklch(0.78 0.11 207);
++  --sidebar: oklch(0.12 0 0);
++  --sidebar-foreground: oklch(0.97 0 0);
++  --sidebar-primary: oklch(0.985 0 0);
++  --sidebar-primary-foreground: oklch(0.145 0 0);
++  --sidebar-accent: oklch(0.2 0 0);
++  --sidebar-accent-foreground: oklch(0.97 0 0);
++  --sidebar-border: oklch(0.985 0 0 / 13%);
++  --sidebar-ring: oklch(0.7 0 0);
+   --hud-role-1: oklch(0.82 0.14 205);
+   --hud-role-2: oklch(0.78 0.15 285);
+   --hud-role-3: oklch(0.8 0.14 155);
+@@ -89,24 +89,25 @@
+ }
+ 
+ .dark {
+-  --background: oklch(0.12 0.025 250);
+-  --foreground: oklch(0.96 0.01 240);
+-  --card: oklch(0.16 0.028 250);
+-  --card-foreground: oklch(0.96 0.01 240);
+-  --popover: oklch(0.18 0.03 250);
+-  --popover-foreground: oklch(0.96 0.01 240);
+-  --primary: oklch(0.82 0.11 207);
+-  --primary-foreground: oklch(0.14 0.025 250);
+-  --secondary: oklch(0.23 0.035 250);
+-  --secondary-foreground: oklch(0.92 0.01 240);
+-  --muted: oklch(0.22 0.028 250);
+-  --muted-foreground: oklch(0.67 0.025 245);
+-  --accent: oklch(0.27 0.055 238);
+-  --accent-foreground: oklch(0.96 0.01 240);
++  color-scheme: dark;
++  --background: oklch(0.09 0 0);
++  --foreground: oklch(0.97 0 0);
++  --card: oklch(0.145 0 0);
++  --card-foreground: oklch(0.97 0 0);
++  --popover: oklch(0.17 0 0);
++  --popover-foreground: oklch(0.97 0 0);
++  --primary: oklch(0.985 0 0);
++  --primary-foreground: oklch(0.145 0 0);
++  --secondary: oklch(0.19 0 0);
++  --secondary-foreground: oklch(0.97 0 0);
++  --muted: oklch(0.2 0 0);
++  --muted-foreground: oklch(0.69 0 0);
++  --accent: oklch(0.235 0 0);
++  --accent-foreground: oklch(0.985 0 0);
+   --destructive: oklch(0.68 0.18 25);
+-  --border: oklch(0.95 0.01 240 / 12%);
+-  --input: oklch(0.95 0.01 240 / 16%);
+-  --ring: oklch(0.78 0.11 207);
++  --border: oklch(0.985 0 0 / 13%);
++  --input: oklch(0.985 0 0 / 18%);
++  --ring: oklch(0.7 0 0);
+ }
+ 
+ .console-light {
+@@ -342,13 +343,16 @@
+ 
+   html[data-window-route="console"],
+   html[data-window-route="console"] body,
+-  html[data-window-route="console"] #root {
+-    background: var(--background) !important;
+-  }
+-
++  html[data-window-route="console"] #root,
+   html[data-window-route="main-dps"],
+   html[data-window-route="main-dps"] body,
+-  html[data-window-route="main-dps"] #root {
++  html[data-window-route="main-dps"] #root,
++  html[data-window-route="abyss-values"],
++  html[data-window-route="abyss-values"] body,
++  html[data-window-route="abyss-values"] #root,
++  html[data-window-route="combat-details"],
++  html[data-window-route="combat-details"] body,
++  html[data-window-route="combat-details"] #root {
+     background: var(--background) !important;
+   }
+ 
+@@ -398,16 +402,19 @@
+ }
+ 
+ @layer components {
+-  .main-dps-root {
++  .desktop-window-shell {
+     display: flex;
++    width: 100%;
+     height: 100%;
+     min-width: 0;
++    min-height: 0;
+     flex-direction: column;
+     overflow: hidden;
+     background: var(--background);
+-  }
+-
+-  .main-dps-titlebar {
++    color: var(--foreground);
++  }
++
++  .desktop-titlebar {
+     position: relative;
+     display: flex;
+     height: 2.375rem;
+@@ -419,6 +426,15 @@
+     user-select: none;
+   }
+ 
++  .main-dps-root {
++    display: flex;
++    height: 100%;
++    min-width: 0;
++    flex-direction: column;
++    overflow: hidden;
++    background: var(--background);
++  }
++
+   .main-dps-content {
+     display: flex;
+     min-height: 0;
+@@ -449,6 +465,8 @@
+     min-height: 0;
+     container-name: main-dps-character-row;
+     container-type: size;
++    grid-template-columns: 1.25rem auto minmax(0, 1fr) auto;
++    padding: 0.375rem 0.5rem;
+   }
+ 
+   @container main-dps-character-row (max-height: 3.25rem) {
+@@ -460,6 +478,75 @@
+       width: 2rem;
+       height: 2rem;
+     }
++
++    .main-dps-character-row {
++      grid-template-columns: 1rem 2rem minmax(0, 1fr) auto;
++      gap: 0.375rem;
++      padding-block: 0.125rem;
++    }
++  }
++
++  @container main-dps-character-row (max-height: 2.25rem) {
++    .main-dps-character-avatar {
++      display: none;
++    }
++
++    .main-dps-character-row {
++      grid-template-columns: 1rem minmax(0, 1fr) auto;
++      padding-block: 0;
++    }
++  }
++
++  @media (max-height: 560px) {
++    .main-dps-content {
++      gap: 0.25rem;
++      padding: 0.375rem 0.5rem;
++    }
++
++    .main-dps-metrics {
++      grid-template-columns: repeat(4, minmax(0, 1fr));
++      gap: 0.25rem;
++    }
++
++    .main-dps-toolbar {
++      flex-wrap: nowrap;
++      justify-content: flex-start;
++      overflow-x: auto;
++      scrollbar-width: none;
++    }
++
++    .main-dps-toolbar > div {
++      flex: none;
++      flex-wrap: nowrap;
++    }
++
++    .main-dps-metric {
++      padding-block: 0.125rem;
++    }
++
++    .main-dps-metric > div:first-child {
++      font-size: 1rem;
++      line-height: 1.25rem;
++    }
++
++    .main-dps-team-section {
++      gap: 0.25rem;
++    }
++
++    .main-dps-attribution {
++      flex-wrap: nowrap;
++      gap: 0.25rem;
++      overflow-x: auto;
++      scrollbar-width: none;
++    }
++
++    .main-dps-attribution button {
++      padding-block: 0.125rem;
++    }
++
++    .main-dps-team-list {
++      gap: 0.2rem;
++    }
+   }
+ 
+   @media (max-width: 540px) {
+--- a/frontend/src/lib/settings-presentation.ts
++++ b/frontend/src/lib/settings-presentation.ts
+@@ -49,7 +49,11 @@
+ function applyDocumentPresentation(next: InterfaceSettings) {
+   const root = document.documentElement;
+   const isConsole = root.dataset.windowRoute === "console";
+-  const isOpaqueDesktop = isConsole || root.dataset.windowRoute === "main-dps";
++  const isOpaqueDesktop =
++    isConsole ||
++    root.dataset.windowRoute === "main-dps" ||
++    root.dataset.windowRoute === "abyss-values" ||
++    root.dataset.windowRoute === "combat-details";
+   root.classList.toggle("dark", next.darkMode);
+   root.classList.toggle("console-light", isOpaqueDesktop && !next.darkMode);
+   root.dataset.themePreset = next.themePreset;
+--- a/frontend/src/lib/tauri/console-window-background.test.ts
++++ b/frontend/src/lib/tauri/console-window-background.test.ts
+@@ -8,7 +8,7 @@
+ describe("Console window background", () => {
+   it("matches the opaque light and dark presentation colors", () => {
+     expect(consoleWindowBackgroundColor(false)).toEqual([246, 247, 248, 255]);
+-    expect(consoleWindowBackgroundColor(true)).toEqual([1, 6, 15, 255]);
++    expect(consoleWindowBackgroundColor(true)).toEqual([9, 9, 11, 255]);
+   });
+ 
+   it("updates both opaque desktop window layers", async () => {
+@@ -24,7 +24,14 @@
+       windowLabel: "main-dps",
+       setBackgroundColor,
+     });
+-    expect(setBackgroundColor).toHaveBeenCalledWith([1, 6, 15, 255]);
++    expect(setBackgroundColor).toHaveBeenCalledWith([9, 9, 11, 255]);
++
++    setBackgroundColor.mockClear();
++    await syncConsoleWindowBackground(true, {
++      windowLabel: "combat-details",
++      setBackgroundColor,
++    });
++    expect(setBackgroundColor).toHaveBeenCalledWith([9, 9, 11, 255]);
+ 
+     setBackgroundColor.mockClear();
+     await syncConsoleWindowBackground(false, {
+--- a/frontend/src/lib/tauri/console-window-background.ts
++++ b/frontend/src/lib/tauri/console-window-background.ts
+@@ -2,6 +2,8 @@
+ import type { Color } from "@tauri-apps/api/window";
+ 
+ import {
++  ABYSS_VALUES_WINDOW_LABEL,
++  COMBAT_DETAILS_WINDOW_LABEL,
+   CONSOLE_WINDOW_LABEL,
+   MAIN_DPS_WINDOW_LABEL,
+ } from "@/lib/tauri/window-labels";
+@@ -12,10 +14,12 @@
+ }
+ 
+ export function consoleWindowBackgroundColor(darkMode: boolean): Color {
+-  return darkMode ? [1, 6, 15, 255] : [246, 247, 248, 255];
++  return darkMode ? [9, 9, 11, 255] : [246, 247, 248, 255];
+ }
+ 
+ const OPAQUE_DESKTOP_WINDOW_LABELS = [
++  ABYSS_VALUES_WINDOW_LABEL,
++  COMBAT_DETAILS_WINDOW_LABEL,
+   CONSOLE_WINDOW_LABEL,
+   MAIN_DPS_WINDOW_LABEL,
+ ];
+--- a/frontend/src/lib/tauri/desktop-window-client.test.ts
++++ b/frontend/src/lib/tauri/desktop-window-client.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, it, vi } from "vitest";
++
++import { createDesktopWindowClient } from "./desktop-window-client";
++
++describe("desktop window client", () => {
++  it("routes every custom titlebar action through the current Tauri window", async () => {
++    const handle = {
++      startDragging: vi.fn(async () => undefined),
++      minimize: vi.fn(async () => undefined),
++      toggleMaximize: vi.fn(async () => undefined),
++      close: vi.fn(async () => undefined),
++    };
++    const client = createDesktopWindowClient(() => handle);
++
++    await client.startDragging();
++    await client.minimize();
++    await client.toggleMaximized();
++    await client.close();
++
++    expect(handle.startDragging).toHaveBeenCalledOnce();
++    expect(handle.minimize).toHaveBeenCalledOnce();
++    expect(handle.toggleMaximize).toHaveBeenCalledOnce();
++    expect(handle.close).toHaveBeenCalledOnce();
++  });
++});
+--- a/frontend/src/lib/tauri/desktop-window-client.ts
++++ b/frontend/src/lib/tauri/desktop-window-client.ts
+@@ -0,0 +1,23 @@
++import { getCurrentWindow } from "@tauri-apps/api/window";
++
++export interface DesktopWindowHandle {
++  startDragging(): Promise<void>;
++  minimize(): Promise<void>;
++  toggleMaximize(): Promise<void>;
++  close(): Promise<void>;
++}
++
++type WindowProvider = () => DesktopWindowHandle;
++
++export function createDesktopWindowClient(
++  currentWindow: WindowProvider = getCurrentWindow,
++) {
++  return {
++    startDragging: () => currentWindow().startDragging(),
++    minimize: () => currentWindow().minimize(),
++    toggleMaximized: () => currentWindow().toggleMaximize(),
++    close: () => currentWindow().close(),
++  };
++}
++
++export const desktopWindowClient = createDesktopWindowClient();
+--- a/frontend/src/lib/tauri/main-dps-client.ts
++++ b/frontend/src/lib/tauri/main-dps-client.ts
+@@ -8,6 +8,7 @@
+   type MainDpsCommandError,
+   type MainDpsSnapshot,
+ } from "@/lib/tauri/main-dps-contract";
++import type { MainDpsDetailFilter } from "@/lib/tauri/main-dps-detail-contract";
+ 
+ const command = (name: string, arguments_?: Record<string, unknown>) =>
+   invoke<unknown>(name, arguments_);
+@@ -43,6 +44,10 @@
+     snapshot("set_main_dps_appearance", { darkMode, opacity }),
+   openConsole: () => command("open_main_dps_console"),
+   openHud: () => command("open_main_dps_hud"),
++  openCharacterDetails: (characterId: number) =>
++    command("open_main_dps_character_details", { characterId }),
++  openTeamDetails: (filter: MainDpsDetailFilter = "all") =>
++    command("open_main_dps_team_details", { filter }),
+   setPassthrough: (enabled: boolean) =>
+     snapshot("set_main_dps_passthrough", { enabled }),
+   minimize: () => command("minimize_main_dps_window"),
+--- a/frontend/src/lib/tauri/main-dps-detail-client.ts
++++ b/frontend/src/lib/tauri/main-dps-detail-client.ts
+@@ -0,0 +1,20 @@
++import { invoke } from "@tauri-apps/api/core";
++import { listen, type UnlistenFn } from "@tauri-apps/api/event";
++
++import {
++  parseMainDpsDetailSnapshot,
++  type MainDpsDetailSnapshot,
++} from "@/lib/tauri/main-dps-detail-contract";
++
++const DETAIL_CHANGED_EVENT = "main-dps-detail-requested";
++
++export const mainDpsDetailClient = {
++  async getSnapshot(offset = 0, limit = 200): Promise<MainDpsDetailSnapshot> {
++    return parseMainDpsDetailSnapshot(
++      await invoke<unknown>("get_main_dps_detail_snapshot", { offset, limit }),
++    );
++  },
++  subscribeRequested(onRequested: () => void): Promise<UnlistenFn> {
++    return listen(DETAIL_CHANGED_EVENT, onRequested);
++  },
++};
+--- a/frontend/src/lib/tauri/main-dps-detail-contract.test.ts
++++ b/frontend/src/lib/tauri/main-dps-detail-contract.test.ts
+@@ -0,0 +1,50 @@
++import { describe, expect, it } from "vitest";
++
++import { parseMainDpsDetailSnapshot } from "./main-dps-detail-contract";
++
++describe("main DPS detail contract", () => {
++  it("parses a bounded page from the native detail projection", () => {
++    const snapshot = parseMainDpsDetailSnapshot({
++      contractVersion: 1,
++      generation: "12",
++      kind: "character",
++      characterId: 1004,
++      characterName: "角色",
++      filter: "all",
++      totalHits: 1,
++      totalDamage: 123,
++      offset: 0,
++      rows: [
++        {
++          id: "1:0",
++          timestamp: 1,
++          characterId: 1004,
++          characterName: "角色",
++          direction: "outgoing",
++          damage: 123,
++          skill: "Skill",
++          target: "Target",
++        },
++      ],
++    });
++    expect(snapshot.kind).toBe("character");
++    expect(snapshot.rows[0]?.damage).toBe(123);
++  });
++
++  it("rejects unknown filters", () => {
++    expect(() =>
++      parseMainDpsDetailSnapshot({
++        contractVersion: 1,
++        generation: "1",
++        kind: "team",
++        characterId: null,
++        characterName: null,
++        filter: "future",
++        totalHits: 0,
++        totalDamage: 0,
++        offset: 0,
++        rows: [],
++      }),
++    ).toThrow(/filter/);
++  });
++});
+--- a/frontend/src/lib/tauri/main-dps-detail-contract.ts
++++ b/frontend/src/lib/tauri/main-dps-detail-contract.ts
+@@ -0,0 +1,134 @@
++import { TechnicalContractError } from "@/lib/tauri/technical-contract";
++
++export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 1;
++
++export type MainDpsDetailFilter =
++  | "all"
++  | "outgoing"
++  | "incoming"
++  | "characterAttributed"
++  | "characterDirect"
++  | "reactionDamage"
++  | "sharedMechanics"
++  | "unattributed";
++
++export interface MainDpsDetailSnapshot {
++  contractVersion: number;
++  generation: string;
++  kind: "character" | "team";
++  characterId: number | null;
++  characterName: string | null;
++  filter: MainDpsDetailFilter;
++  totalHits: number;
++  totalDamage: number;
++  offset: number;
++  rows: MainDpsHit[];
++}
++
++export interface MainDpsHit {
++  id: string;
++  timestamp: number;
++  characterId: number;
++  characterName: string;
++  direction: "outgoing" | "incoming" | "unknown";
++  damage: number;
++  skill: string;
++  target: string;
++}
++
++export function parseMainDpsDetailSnapshot(
++  value: unknown,
++): MainDpsDetailSnapshot {
++  const source = object(value, "main DPS detail snapshot");
++  const contractVersion = integer(source.contractVersion, "contractVersion");
++  if (contractVersion !== MAIN_DPS_DETAIL_CONTRACT_VERSION)
++    throw new TechnicalContractError(
++      `Unsupported main DPS detail contract: ${contractVersion}`,
++    );
++  return {
++    contractVersion,
++    generation: text(source.generation, "generation"),
++    kind: oneOf(source.kind, ["character", "team"] as const, "kind"),
++    characterId: nullableInteger(source.characterId, "characterId"),
++    characterName: nullableText(source.characterName, "characterName"),
++    filter: oneOf(
++      source.filter,
++      [
++        "all",
++        "outgoing",
++        "incoming",
++        "characterAttributed",
++        "characterDirect",
++        "reactionDamage",
++        "sharedMechanics",
++        "unattributed",
++      ] as const,
++      "filter",
++    ),
++    totalHits: integer(source.totalHits, "totalHits"),
++    totalDamage: finite(source.totalDamage, "totalDamage"),
++    offset: integer(source.offset, "offset"),
++    rows: list(source.rows, "rows").slice(0, 250).map(parseHit),
++  };
++}
++
++function parseHit(value: unknown): MainDpsHit {
++  const source = object(value, "detail hit");
++  return {
++    id: text(source.id, "hit.id"),
++    timestamp: finite(source.timestamp, "hit.timestamp"),
++    characterId: integer(source.characterId, "hit.characterId"),
++    characterName: text(source.characterName, "hit.characterName"),
++    direction: oneOf(
++      source.direction,
++      ["outgoing", "incoming", "unknown"] as const,
++      "hit.direction",
++    ),
++    damage: finite(source.damage, "hit.damage"),
++    skill: text(source.skill, "hit.skill"),
++    target: text(source.target, "hit.target"),
++  };
++}
++
++function object(value: unknown, field: string): Record<string, unknown> {
++  if (typeof value !== "object" || value === null || Array.isArray(value))
++    throw new TechnicalContractError(`${field} must be an object`);
++  return value as Record<string, unknown>;
++}
++function list(value: unknown, field: string): unknown[] {
++  if (!Array.isArray(value))
++    throw new TechnicalContractError(`${field} must be an array`);
++  return value;
++}
++function text(value: unknown, field: string): string {
++  if (typeof value !== "string")
++    throw new TechnicalContractError(`${field} must be a string`);
++  return value;
++}
++function nullableText(value: unknown, field: string): string | null {
++  return value === null ? null : text(value, field);
++}
++function finite(value: unknown, field: string): number {
++  if (typeof value !== "number" || !Number.isFinite(value))
++    throw new TechnicalContractError(`${field} must be finite`);
++  return value;
++}
++function integer(value: unknown, field: string): number {
++  const number = finite(value, field);
++  if (!Number.isInteger(number))
++    throw new TechnicalContractError(`${field} must be an integer`);
++  return number;
++}
++function nullableInteger(value: unknown, field: string): number | null {
++  return value === null ? null : integer(value, field);
++}
++function oneOf<const T extends readonly string[]>(
++  value: unknown,
++  values: T,
++  field: string,
++): T[number] {
++  const candidate = text(value, field);
++  if (!values.includes(candidate))
++    throw new TechnicalContractError(`${field} is unsupported`);
++  return candidate as T[number];
++}
+--- a/frontend/src/lib/tauri/window-labels.ts
++++ b/frontend/src/lib/tauri/window-labels.ts
+@@ -1,4 +1,5 @@
+ export const ABYSS_VALUES_WINDOW_LABEL = "abyss-values";
+ export const CONSOLE_WINDOW_LABEL = "console";
++export const COMBAT_DETAILS_WINDOW_LABEL = "combat-details";
+ export const HUD_WINDOW_LABEL = "hud-spike";
+ export const MAIN_DPS_WINDOW_LABEL = "main-dps";
+--- a/frontend/src/routes/window-route.test.ts
++++ b/frontend/src/routes/window-route.test.ts
+@@ -7,6 +7,7 @@
+     expect(resolveWindowRoute("main-dps")).toBe("main-dps");
+     expect(resolveWindowRoute("hud-spike")).toBe("technical-hud");
+     expect(resolveWindowRoute("console")).toBe("console");
++    expect(resolveWindowRoute("combat-details")).toBe("combat-details");
+     expect(resolveWindowRoute("abyss-values")).toBe("abyss-values");
+   });
+ 
+--- a/frontend/src/routes/window-route.ts
++++ b/frontend/src/routes/window-route.ts
+@@ -1,16 +1,23 @@
+ import {
+   ABYSS_VALUES_WINDOW_LABEL,
+   CONSOLE_WINDOW_LABEL,
++  COMBAT_DETAILS_WINDOW_LABEL,
+   HUD_WINDOW_LABEL,
+   MAIN_DPS_WINDOW_LABEL,
+ } from "@/lib/tauri/window-labels";
+ 
+ export type WindowRoute =
+-  "abyss-values" | "console" | "main-dps" | "technical-hud" | "unsupported";
++  | "abyss-values"
++  | "combat-details"
++  | "console"
++  | "main-dps"
++  | "technical-hud"
++  | "unsupported";
+ 
+ const WINDOW_ROUTES = new Map<string, WindowRoute>([
+   [ABYSS_VALUES_WINDOW_LABEL, "abyss-values"],
+   [CONSOLE_WINDOW_LABEL, "console"],
++  [COMBAT_DETAILS_WINDOW_LABEL, "combat-details"],
+   [HUD_WINDOW_LABEL, "technical-hud"],
+   [MAIN_DPS_WINDOW_LABEL, "main-dps"],
+ ]);
+--- a/res/languages/ja.json
++++ b/res/languages/ja.json
+@@ -1782,5 +1782,10 @@
+   "Replay import did not complete": "リプレイのインポートが完了しませんでした",
+   "This action is not available right now": "この操作は現在利用できません",
+   "s": "秒",
+-  "Main Window": "メインウィンドウ"
++  "Main Window": "メインウィンドウ",
++  "{} Combat Details": "{} の戦闘詳細",
++  "{} hits · {} damage": "{} ヒット・{} ダメージ",
++  "No matching combat hits": "条件に一致する戦闘ヒットはありません",
++  "Load more": "さらに読み込む",
++  "Showing {} of {} hits": "{} / {} ヒットを表示"
+ }
+--- a/res/languages/zh-CN.json
++++ b/res/languages/zh-CN.json
+@@ -1782,5 +1782,10 @@
+   "Replay import did not complete": "回放导入未完成",
+   "This action is not available right now": "当前操作不可用",
+   "s": "秒",
+-  "Main Window": "主窗口"
++  "Main Window": "主窗口",
++  "{} Combat Details": "{} 战斗明细",
++  "{} hits · {} damage": "{} 次命中 · {} 伤害",
++  "No matching combat hits": "没有符合条件的战斗命中",
++  "Load more": "加载更多",
++  "Showing {} of {} hits": "已显示 {} / {} 次命中"
+ }
+--- a/src-tauri/capabilities/abyss-values.json
++++ b/src-tauri/capabilities/abyss-values.json
+@@ -3,5 +3,10 @@
+   "identifier": "abyss-values",
+   "description": "enables the read-only abyss values window base permissions",
+   "windows": ["abyss-values"],
+-  "permissions": ["core:default"]
++  "permissions": [
++    "core:default",
++    "core:window:allow-start-dragging",
++    "core:window:allow-set-background-color",
++    "core:webview:allow-set-webview-background-color"
++  ]
+ }
+--- a/src-tauri/capabilities/combat-details.json
++++ b/src-tauri/capabilities/combat-details.json
+@@ -0,0 +1,12 @@
++{
++  "$schema": "../gen/schemas/desktop-schema.json",
++  "identifier": "combat-details",
++  "description": "enables the combat details window base permissions",
++  "windows": ["combat-details"],
++  "permissions": [
++    "core:default",
++    "core:window:allow-start-dragging",
++    "core:window:allow-set-background-color",
++    "core:webview:allow-set-webview-background-color"
++  ]
++}
+--- a/src-tauri/capabilities/console.json
++++ b/src-tauri/capabilities/console.json
+@@ -5,6 +5,7 @@
+   "windows": ["console"],
+   "permissions": [
+     "core:default",
++    "core:window:allow-start-dragging",
+     "core:window:allow-set-background-color",
+     "core:webview:allow-set-webview-background-color"
+   ]
+--- a/src-tauri/src/commands/main_dps.rs
++++ b/src-tauri/src/commands/main_dps.rs
+@@ -1,4 +1,5 @@
+ use nte_dps_tool::{
++    core::combat_details::CombatDetailFilter,
+     core::live_capture::{CaptureReplayKind, LiveCapturePhase},
+     engine::model::AbyssHalf,
+     platform::file_dialog::{
+@@ -12,10 +13,13 @@
+     contract::{
+         CommandError,
+         main_dps::{MainDpsActionResult, MainDpsSnapshot},
++        main_dps_detail::MainDpsDetailSnapshot,
+     },
+-    state::AppState,
+-    windows::{console, hud, main_dps},
++    state::{AppState, MainDpsDetailRequest},
++    windows::{combat_details, console, hud, main_dps},
+ };
++
++const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
+ 
+ #[tauri::command]
+ pub(crate) fn get_main_dps_snapshot(
+@@ -264,6 +268,63 @@
+ }
+ 
+ #[tauri::command]
++pub(crate) fn open_main_dps_character_details(
++    character_id: u32,
++    app: AppHandle,
++    state: State<'_, AppState>,
++    window: WebviewWindow,
++) -> Result<(), CommandError> {
++    main_dps::validate_window(&window)?;
++    if !snapshot(state.inner())
++        .readout
++        .characters
++        .iter()
++        .any(|row| row.character_id == character_id)
++    {
++        return Err(action_unavailable());
++    }
++    state.set_main_dps_detail_request(MainDpsDetailRequest {
++        character_id: Some(character_id),
++        filter: CombatDetailFilter::All,
++    });
++    show_combat_details(&app)
++}
++
++#[tauri::command]
++pub(crate) fn open_main_dps_team_details(
++    filter: String,
++    app: AppHandle,
++    state: State<'_, AppState>,
++    window: WebviewWindow,
++) -> Result<(), CommandError> {
++    main_dps::validate_window(&window)?;
++    let filter = parse_detail_filter(&filter)?;
++    if !snapshot(state.inner()).actions.team_details_available {
++        return Err(action_unavailable());
++    }
++    state.set_main_dps_detail_request(MainDpsDetailRequest {
++        character_id: None,
++        filter,
++    });
++    show_combat_details(&app)
++}
++
++#[tauri::command]
++pub(crate) fn get_main_dps_detail_snapshot(
++    offset: usize,
++    limit: Option<usize>,
++    state: State<'_, AppState>,
++    window: WebviewWindow,
++) -> Result<MainDpsDetailSnapshot, CommandError> {
++    combat_details::validate_window(&window)?;
++    Ok(MainDpsDetailSnapshot::from_state(
++        state.inner(),
++        offset,
++        limit.unwrap_or(MAIN_DPS_DETAIL_DEFAULT_LIMIT),
++    ))
++}
++
++#[tauri::command]
+ pub(crate) fn set_main_dps_passthrough(
+     enabled: bool,
+     state: State<'_, AppState>,
+@@ -318,6 +379,27 @@
+     MainDpsSnapshot::from_state(state)
+ }
+ 
++fn show_combat_details(app: &AppHandle) -> Result<(), CommandError> {
++    let details = app
++        .get_webview_window(combat_details::COMBAT_DETAILS_WINDOW_LABEL)
++        .ok_or_else(CommandError::window_operation_failed)?;
++    combat_details::show(&details)
++}
++
++fn parse_detail_filter(value: &str) -> Result<CombatDetailFilter, CommandError> {
++    match value {
++        "all" => Ok(CombatDetailFilter::All),
++        "outgoing" => Ok(CombatDetailFilter::Outgoing),
++        "incoming" => Ok(CombatDetailFilter::Incoming),
++        "characterAttributed" => Ok(CombatDetailFilter::CharacterAttributed),
++        "characterDirect" => Ok(CombatDetailFilter::CharacterDirect),
++        "reactionDamage" => Ok(CombatDetailFilter::ReactionDamage),
++        "sharedMechanics" => Ok(CombatDetailFilter::SharedMechanics),
++        "unattributed" => Ok(CombatDetailFilter::Unattributed),
++        _ => Err(action_unavailable()),
++    }
++}
++
+ fn action_unavailable() -> CommandError {
+     CommandError::main_dps(
+         "action_unavailable",
+@@ -333,3 +415,22 @@
+     log::error!("main DPS window operation failed: {error}");
+     CommandError::window_operation_failed()
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn detail_filter_ids_are_bounded_to_the_shared_contract() {
++        assert_eq!(
++            parse_detail_filter("characterDirect").expect("character filter"),
++            CombatDetailFilter::CharacterDirect
++        );
++        assert_eq!(
++            parse_detail_filter("sharedMechanics").expect("shared filter"),
++            CombatDetailFilter::SharedMechanics
++        );
++        assert!(parse_detail_filter("../all").is_err());
++        assert!(parse_detail_filter("qteType").is_err());
++    }
++}
+--- a/src-tauri/src/contract.rs
++++ b/src-tauri/src/contract.rs
+@@ -13,6 +13,7 @@
+ pub(crate) mod encrypted_ini;
+ pub(crate) mod history;
+ pub(crate) mod main_dps;
++pub(crate) mod main_dps_detail;
+ pub(crate) mod mod_studio;
+ pub(crate) mod packets;
+ pub(crate) mod resources;
+--- a/src-tauri/src/contract/main_dps_detail.rs
++++ b/src-tauri/src/contract/main_dps_detail.rs
+@@ -0,0 +1,191 @@
++use serde::Serialize;
++
++use nte_dps_tool::{
++    core::combat_details::CombatDetailFilter,
++    engine::model::{CharacterInfo, Hit, HitDirection},
++    storage::i18n::Language,
++};
++
++use crate::state::{AppState, MainDpsDetailRequest};
++
++pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 1;
++pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
++
++#[derive(Clone, Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub(crate) struct MainDpsDetailSnapshot {
++    pub contract_version: u32,
++    pub generation: String,
++    pub kind: &'static str,
++    pub character_id: Option<u32>,
++    pub character_name: Option<String>,
++    pub filter: &'static str,
++    pub total_hits: usize,
++    pub total_damage: f64,
++    pub offset: usize,
++    pub rows: Vec<MainDpsHitSnapshot>,
++}
++
++impl MainDpsDetailSnapshot {
++    pub(crate) fn from_state(state: &AppState, offset: usize, limit: usize) -> Self {
++        let request = state.main_dps_detail_request();
++        let resources = state.live_capture_resources();
++        let language = state.ui_config_snapshot().language;
++        let (combat, selected_half) = state.main_dps_detail_state();
++        let hits = selected_half
++            .map(|half| &combat.abyss.half(half).hits)
++            .unwrap_or(&combat.hits);
++        let matching = hits.iter().filter(|hit| request.matches(hit));
++        let total_hits = matching.clone().count();
++        let total_damage = matching.clone().map(Hit::total_damage).sum();
++        let rows = matching
++            .skip(offset)
++            .take(limit.clamp(1, MAIN_DPS_DETAIL_PAGE_LIMIT))
++            .enumerate()
++            .map(|(index, hit)| {
++                MainDpsHitSnapshot::from_hit(hit, offset + index, &resources.characters, language)
++            })
++            .collect();
++        let character_name = request.character_id.map(|character_id| {
++            localized_character_name(
++                resources.characters.get(&character_id),
++                language,
++                &character_id.to_string(),
++            )
++        });
++
++        Self {
++            contract_version: MAIN_DPS_DETAIL_CONTRACT_VERSION,
++            generation: state.next_sequence().to_string(),
++            kind: if request.character_id.is_some() {
++                "character"
++            } else {
++                "team"
++            },
++            character_id: request.character_id,
++            character_name,
++            filter: filter_id(&request.filter),
++            total_hits,
++            total_damage,
++            offset,
++            rows,
++        }
++    }
++}
++
++impl MainDpsDetailRequest {
++    fn matches(&self, hit: &Hit) -> bool {
++        self.character_id
++            .is_none_or(|character_id| hit.char_id == character_id)
++            && self.filter.matches(hit)
++    }
++}
++
++#[derive(Clone, Debug, Serialize)]
++#[serde(rename_all = "camelCase")]
++pub(crate) struct MainDpsHitSnapshot {
++    pub id: String,
++    pub timestamp: f64,
++    pub character_id: u32,
++    pub character_name: String,
++    pub direction: &'static str,
++    pub damage: f64,
++    pub skill: String,
++    pub target: String,
++}
++
++impl MainDpsHitSnapshot {
++    fn from_hit(
++        hit: &Hit,
++        index: usize,
++        characters: &std::collections::HashMap<u32, CharacterInfo>,
++        language: Language,
++    ) -> Self {
++        Self {
++            id: format!("{}:{index}", hit.timestamp.to_bits()),
++            timestamp: hit.timestamp,
++            character_id: hit.char_id,
++            character_name: localized_character_name(
++                characters.get(&hit.char_id),
++                language,
++                &hit.char_name,
++            ),
++            direction: match hit.direction {
++                HitDirection::Outgoing => "outgoing",
++                HitDirection::Incoming => "incoming",
++                HitDirection::Unknown => "unknown",
++            },
++            damage: hit.total_damage(),
++            skill: hit
++                .ability_name
++                .as_deref()
++                .or(hit.damage_name.as_deref())
++                .or(hit.gameplay_effect_name.as_deref())
++                .unwrap_or("-")
++                .to_owned(),
++            target: localized_target_name(hit, language)
++                .unwrap_or("-")
++                .to_owned(),
++        }
++    }
++}
++
++fn localized_character_name(
++    info: Option<&CharacterInfo>,
++    language: Language,
++    fallback: &str,
++) -> String {
++    let candidate = info.map(|value| match language {
++        Language::SimplifiedChinese => value.name_zh.trim(),
++        Language::English | Language::Japanese => value.name_en.trim(),
++    });
++    candidate
++        .filter(|value| !value.is_empty())
++        .unwrap_or(fallback)
++        .to_owned()
++}
++
++fn localized_target_name(hit: &Hit, language: Language) -> Option<&str> {
++    let value = match language {
++        Language::SimplifiedChinese => hit.target_name.as_deref(),
++        Language::English => hit.target_name_en.as_deref().or(hit.target_name.as_deref()),
++        Language::Japanese => hit
++            .target_name_ja
++            .as_deref()
++            .or(hit.target_name_en.as_deref())
++            .or(hit.target_name.as_deref()),
++    }?;
++    (!value.trim().is_empty()).then_some(value)
++}
++
++pub(crate) fn filter_id(filter: &CombatDetailFilter) -> &'static str {
++    match filter {
++        CombatDetailFilter::All => "all",
++        CombatDetailFilter::Outgoing => "outgoing",
++        CombatDetailFilter::Incoming => "incoming",
++        CombatDetailFilter::CharacterAttributed => "characterAttributed",
++        CombatDetailFilter::CharacterDirect => "characterDirect",
++        CombatDetailFilter::ReactionDamage => "reactionDamage",
++        CombatDetailFilter::SharedMechanics => "sharedMechanics",
++        CombatDetailFilter::Unattributed => "unattributed",
++        CombatDetailFilter::QteType(_) => "qteType",
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn detail_filters_have_stable_frontend_ids() {
++        assert_eq!(filter_id(&CombatDetailFilter::All), "all");
++        assert_eq!(
++            filter_id(&CombatDetailFilter::CharacterDirect),
++            "characterDirect"
++        );
++        assert_eq!(
++            filter_id(&CombatDetailFilter::SharedMechanics),
++            "sharedMechanics"
++        );
++    }
++}
+--- a/src-tauri/src/contract/main_dps.rs
++++ b/src-tauri/src/contract/main_dps.rs
+@@ -116,8 +116,8 @@
+                     && !processing_paused,
+                 can_resume: live_round_selected && processing_paused,
+                 can_import_replay,
+-                character_details_available: false,
+-                team_details_available: false,
++                character_details_available: has_hits,
++                team_details_available: has_hits,
+             },
+             game_detected,
+         }
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -35,6 +35,9 @@
+             let abyss_values_window = app
+                 .get_webview_window(windows::abyss_values::ABYSS_VALUES_WINDOW_LABEL)
+                 .expect("configured Abyss Values window must exist");
++            let combat_details_window = app
++                .get_webview_window(windows::combat_details::COMBAT_DETAILS_WINDOW_LABEL)
++                .expect("configured combat details window must exist");
+             windows::main_dps::initialize(
+                 &main_dps_window,
+                 app.handle().clone(),
+@@ -42,6 +45,7 @@
+             );
+             windows::console::bind_close_to_hide(&console_window);
+             windows::abyss_values::bind_close_to_hide(&abyss_values_window);
++            windows::combat_details::bind_close_to_hide(&combat_details_window);
+             console_window.set_title(&nte_dps_tool::storage::i18n::t("NTE Console"))?;
+             main_dps_window.set_always_on_top(state.always_on_top())?;
+             hud_window.set_always_on_top(state.always_on_top())?;
+@@ -128,9 +132,12 @@
+             commands::history::set_history_prediction_team,
+             commands::main_dps::close_main_dps_window,
+             commands::main_dps::get_main_dps_snapshot,
++            commands::main_dps::get_main_dps_detail_snapshot,
+             commands::main_dps::import_main_dps_replay,
+             commands::main_dps::minimize_main_dps_window,
+             commands::main_dps::open_main_dps_console,
++            commands::main_dps::open_main_dps_character_details,
++            commands::main_dps::open_main_dps_team_details,
+             commands::main_dps::open_main_dps_hud,
+             commands::main_dps::reset_main_dps_session,
+             commands::main_dps::select_main_dps_abyss_half,
+--- a/src-tauri/src/state.rs
++++ b/src-tauri/src/state.rs
+@@ -20,6 +20,7 @@
+             CharacterDataError, CharacterDataProjection, CharacterDataRecordInput,
+             load_character_data, save_character_data_record,
+         },
++        combat_details::CombatDetailFilter,
+         diagnostics::{DiagnosticRun, DiagnosticSnapshot},
+         encrypted_ini::{
+             EncryptedIniDocument, EncryptedIniError, EncryptedIniKey, EncryptedIniSaveOutcome,
+@@ -120,10 +121,28 @@
+     pub(crate) character_durations: HashMap<u32, f64>,
+ }
+ 
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub(crate) struct MainDpsDetailRequest {
++    pub(crate) character_id: Option<u32>,
++    pub(crate) filter: CombatDetailFilter,
++}
++
+ #[derive(Default)]
+ struct MainRoundCache {
+     revision: Option<u64>,
+     records: Vec<HistoryRecord>,
++}
++
++fn next_live_abyss_selection(
++    selected: Option<AbyssHalf>,
++    observed: Option<AbyssHalf>,
++    active: Option<AbyssHalf>,
++) -> (Option<AbyssHalf>, Option<AbyssHalf>) {
++    if active == observed {
++        (selected, observed)
++    } else {
++        (active, active)
++    }
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -171,7 +190,9 @@
+     imported_teams: Mutex<(Option<TeamDps>, Option<TeamDps>)>,
+     update_runtime: Mutex<UpdateRuntimeState>,
+     selected_abyss_half: Mutex<Option<AbyssHalf>>,
++    main_observed_abyss_half: Mutex<Option<AbyssHalf>>,
+     main_selected_round_id: Mutex<Option<String>>,
++    main_detail_request: Mutex<MainDpsDetailRequest>,
+     main_frozen_readout: Mutex<Option<MainDpsReadout>>,
+     main_round_cache: Mutex<MainRoundCache>,
+     passthrough_transaction: Mutex<()>,
+@@ -342,7 +363,9 @@
+             imported_teams: Mutex::new((None, None)),
+             update_runtime: Mutex::new(UpdateRuntimeState::default()),
+             selected_abyss_half: Mutex::new(None),
++            main_observed_abyss_half: Mutex::new(None),
+             main_selected_round_id: Mutex::new(None),
++            main_detail_request: Mutex::new(MainDpsDetailRequest::default()),
+             main_frozen_readout: Mutex::new(None),
+             main_round_cache: Mutex::new(MainRoundCache::default()),
+             passthrough_transaction: Mutex::new(()),
+@@ -437,7 +460,7 @@
+             let frozen = self
+                 .0
+                 .live_capture
+-                .with_state(|state| self.project_main_readout(state));
++                .with_state(|state| self.project_main_readout(state, true));
+             *self
+                 .0
+                 .main_frozen_readout
+@@ -526,7 +549,7 @@
+                 .and_then(|record| record.details.as_ref())
+                 .map(HistoryCombatDetails::to_combat_state)
+         {
+-            return self.project_main_readout(&state);
++            return self.project_main_readout(&state, false);
+         }
+         if self.main_processing_paused()
+             && let Some(readout) = self
+@@ -540,7 +563,46 @@
+         }
+         self.0
+             .live_capture
+-            .with_state(|state| self.project_main_readout(state))
++            .with_state(|state| self.project_main_readout(state, true))
++    }
++
++    pub(crate) fn main_dps_detail_request(&self) -> MainDpsDetailRequest {
++        self.0
++            .main_detail_request
++            .lock()
++            .expect("main DPS detail request lock poisoned")
++            .clone()
++    }
++
++    pub(crate) fn set_main_dps_detail_request(&self, request: MainDpsDetailRequest) {
++        *self
++            .0
++            .main_detail_request
++            .lock()
++            .expect("main DPS detail request lock poisoned") = request;
++    }
++
++    pub(crate) fn main_dps_detail_state(&self) -> (CombatState, Option<AbyssHalf>) {
++        let state = self
++            .main_selected_round_id()
++            .and_then(|record_id| {
++                self.main_round_records()
++                    .iter()
++                    .find(|record| record.id == record_id)
++                    .and_then(|record| record.details.as_ref())
++                    .map(HistoryCombatDetails::to_combat_state)
++            })
++            .unwrap_or_else(|| self.0.live_capture.with_state(Clone::clone));
++        let selected_half = state.abyss.is_active().then(|| {
++            (*self
++                .0
++                .selected_abyss_half
++                .lock()
++                .expect("main DPS abyss selection lock poisoned"))
++            .or(state.abyss.active_half)
++            .unwrap_or(AbyssHalf::First)
++        });
++        (state, selected_half)
+     }
+ 
+     pub(crate) fn set_main_selected_abyss_half(&self, half: Option<AbyssHalf>) {
+@@ -598,13 +660,17 @@
+         }
+     }
+ 
+-    fn project_main_readout(&self, state: &CombatState) -> MainDpsReadout {
++    fn project_main_readout(&self, state: &CombatState, follow_live_half: bool) -> MainDpsReadout {
+         let config = self.ui_config();
+-        let selected_abyss_half = *self
+-            .0
+-            .selected_abyss_half
+-            .lock()
+-            .expect("main DPS abyss selection lock poisoned");
++        let selected_abyss_half = if follow_live_half {
++            self.follow_live_abyss_half(state.abyss.active_half)
++        } else {
++            *self
++                .0
++                .selected_abyss_half
++                .lock()
++                .expect("main DPS abyss selection lock poisoned")
++        };
+         let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
+         let projection_half = state.abyss.is_active().then(|| {
+             selected_abyss_half
+@@ -668,6 +734,24 @@
+         }
+     }
+ 
++    fn follow_live_abyss_half(&self, active_half: Option<AbyssHalf>) -> Option<AbyssHalf> {
++        let mut selected = self
++            .0
++            .selected_abyss_half
++            .lock()
++            .expect("main DPS abyss selection lock poisoned");
++        let mut observed = self
++            .0
++            .main_observed_abyss_half
++            .lock()
++            .expect("main DPS observed abyss half lock poisoned");
++        let (next_selected, next_observed) =
++            next_live_abyss_selection(*selected, *observed, active_half);
++        *selected = next_selected;
++        *observed = next_observed;
++        next_selected
++    }
++
+     fn bump_main_dps_revision(&self) -> u64 {
+         self.0.main_dps_revision.fetch_add(1, Ordering::AcqRel) + 1
+     }
+@@ -2309,6 +2393,34 @@
+     }
+ 
+     #[test]
++    fn live_abyss_selection_follows_only_real_half_transitions() {
++        assert_eq!(
++            next_live_abyss_selection(None, None, Some(AbyssHalf::First)),
++            (Some(AbyssHalf::First), Some(AbyssHalf::First))
++        );
++        assert_eq!(
++            next_live_abyss_selection(
++                Some(AbyssHalf::First),
++                Some(AbyssHalf::First),
++                Some(AbyssHalf::Second),
++            ),
++            (Some(AbyssHalf::Second), Some(AbyssHalf::Second))
++        );
++        assert_eq!(
++            next_live_abyss_selection(
++                Some(AbyssHalf::First),
++                Some(AbyssHalf::Second),
++                Some(AbyssHalf::Second),
++            ),
++            (Some(AbyssHalf::First), Some(AbyssHalf::Second))
++        );
++        assert_eq!(
++            next_live_abyss_selection(Some(AbyssHalf::Second), Some(AbyssHalf::Second), None,),
++            (None, None)
++        );
++    }
++
++    #[test]
+     fn detailed_hud_initial_height_reserves_optional_modules() {
+         let config = UiConfig {
+             hud: HudConfig::detailed(),
+--- a/src-tauri/src/windows/combat_details.rs
++++ b/src-tauri/src/windows/combat_details.rs
+@@ -0,0 +1,44 @@
++use tauri::{Emitter, WebviewWindow, WindowEvent};
++
++use crate::contract::CommandError;
++
++pub(crate) const COMBAT_DETAILS_WINDOW_LABEL: &str = "combat-details";
++pub(crate) const COMBAT_DETAILS_CHANGED_EVENT: &str = "main-dps-detail-requested";
++
++pub(crate) fn validate_window(window: &WebviewWindow) -> Result<(), CommandError> {
++    if window.label() == COMBAT_DETAILS_WINDOW_LABEL {
++        Ok(())
++    } else {
++        Err(CommandError::invalid_window())
++    }
++}
++
++pub(crate) fn show(window: &WebviewWindow) -> Result<(), CommandError> {
++    window.show().map_err(window_error)?;
++    window.unminimize().map_err(window_error)?;
++    window.set_focus().map_err(window_error)?;
++    window
++        .emit(COMBAT_DETAILS_CHANGED_EVENT, ())
++        .map_err(window_error)
++}
++
++pub(crate) fn bind_close_to_hide(window: &WebviewWindow) {
++    let webview = window.as_ref().clone();
++    if let Err(error) = webview.set_auto_resize(true) {
++        log::warn!("enable native combat details WebView auto-resize failed: {error}");
++    }
++    let close_window = window.clone();
++    window.on_window_event(move |event| {
++        if let WindowEvent::CloseRequested { api, .. } = event {
++            api.prevent_close();
++            if let Err(error) = close_window.hide() {
++                log::error!("hide combat details window failed: {error}");
++            }
++        }
++    });
++}
++
++fn window_error(error: tauri::Error) -> CommandError {
++    log::error!("combat details window operation failed: {error}");
++    CommandError::window_operation_failed()
++}
+--- a/src-tauri/src/windows/main_dps.rs
++++ b/src-tauri/src/windows/main_dps.rs
+@@ -6,8 +6,8 @@
+     contract::CommandError,
+     state::AppState,
+     windows::{
+-        abyss_values::ABYSS_VALUES_WINDOW_LABEL, console::CONSOLE_WINDOW_LABEL,
+-        hud::HUD_WINDOW_LABEL,
++        abyss_values::ABYSS_VALUES_WINDOW_LABEL, combat_details::COMBAT_DETAILS_WINDOW_LABEL,
++        console::CONSOLE_WINDOW_LABEL, hud::HUD_WINDOW_LABEL,
+     },
+ };
+ 
+@@ -87,6 +87,7 @@
+                 HUD_WINDOW_LABEL,
+                 CONSOLE_WINDOW_LABEL,
+                 ABYSS_VALUES_WINDOW_LABEL,
++                COMBAT_DETAILS_WINDOW_LABEL,
+             ] {
+                 if let Some(owned) = app.get_webview_window(label)
+                     && let Err(error) = owned.destroy()
+--- a/src-tauri/src/windows/mod.rs
++++ b/src-tauri/src/windows/mod.rs
+@@ -1,4 +1,5 @@
+ pub(crate) mod abyss_values;
++pub(crate) mod combat_details;
+ pub(crate) mod console;
+ pub(crate) mod hud;
+ pub(crate) mod main_dps;
+--- a/src-tauri/tauri.conf.json
++++ b/src-tauri/tauri.conf.json
+@@ -63,7 +63,7 @@
+         "fullscreen": false,
+         "transparent": false,
+         "backgroundColor": "#f6f7f8",
+-        "decorations": true,
++        "decorations": false,
+         "alwaysOnTop": false,
+         "shadow": true,
+         "skipTaskbar": false,
+@@ -80,7 +80,25 @@
+         "resizable": true,
+         "fullscreen": false,
+         "transparent": false,
+-        "decorations": true,
++        "decorations": false,
++        "alwaysOnTop": false,
++        "shadow": true,
++        "skipTaskbar": false,
++        "center": true,
++        "visible": false
++      },
++      {
++        "label": "combat-details",
++        "title": "NTE DPS TOOL - Combat Details",
++        "width": 880,
++        "height": 620,
++        "minWidth": 620,
++        "minHeight": 420,
++        "resizable": true,
++        "fullscreen": false,
++        "transparent": false,
++        "backgroundColor": "#f6f7f8",
++        "decorations": false,
+         "alwaysOnTop": false,
+         "shadow": true,
+         "skipTaskbar": false,
+--- a/src/app/mod.rs
++++ b/src/app/mod.rs
+@@ -32,8 +32,7 @@
+     DamageAttributionSummary, DpsTimeBasis, EngineEvent, HitDirection, HitDirectionSummary,
+     PartyCombatState, SkillBreakdown, SkillBreakdownRow, TEAM_DPS_EXPORT_VERSION,
+     TEAM_DPS_MAX_MEMBERS, TeamDps, TeamDpsExport, TeamDpsMember, TimeStopEvent, TimelineMarkerKind,
+-    TimelineSeries, UNBALANCE_ATTACK_TYPE, is_unbalance_damage_hit, reaction_damage_for_hit,
+-    summarize_combat_segments, summarize_hit_directions,
++    TimelineSeries, UNBALANCE_ATTACK_TYPE, summarize_combat_segments, summarize_hit_directions,
+ };
+ use crate::engine::parser::{
+     AbilityCatalog, CHARACTER_DATA_PATH, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
+@@ -330,52 +329,7 @@
+     }
+ }
+ 
+-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+-pub(crate) enum HitDetailFilter {
+-    #[default]
+-    All,
+-    Outgoing,
+-    Incoming,
+-    CharacterAttributed,
+-    CharacterDirect,
+-    ReactionDamage,
+-    SharedMechanics,
+-    Unattributed,
+-    QteType(String),
+-}
+-
+-impl HitDetailFilter {
+-    fn matches(&self, hit: &crate::engine::model::Hit) -> bool {
+-        match self {
+-            Self::All => true,
+-            Self::Outgoing => !hit.direction.is_incoming(),
+-            Self::Incoming => hit.direction.is_incoming(),
+-            Self::CharacterAttributed => {
+-                hit.direction.is_outgoing() && hit.char_known && !is_unbalance_damage_hit(hit)
+-            }
+-            Self::CharacterDirect => {
+-                hit.direction.is_outgoing()
+-                    && hit.char_known
+-                    && !is_unbalance_damage_hit(hit)
+-                    && hit.total_damage() > reaction_damage_for_hit(hit)
+-            }
+-            Self::ReactionDamage => {
+-                hit.direction.is_outgoing() && hit.char_known && reaction_damage_for_hit(hit) > 0.0
+-            }
+-            Self::SharedMechanics => !hit.direction.is_incoming() && is_unbalance_damage_hit(hit),
+-            Self::Unattributed => {
+-                !hit.direction.is_incoming()
+-                    && !is_unbalance_damage_hit(hit)
+-                    && !(hit.direction.is_outgoing() && hit.char_known)
+-            }
+-            Self::QteType(attack_type) => {
+-                !hit.direction.is_incoming()
+-                    && (hit.attack_type.as_deref() == Some(attack_type)
+-                        || hit.follow_up_attack_type.as_deref() == Some(attack_type))
+-            }
+-        }
+-    }
+-}
++pub(crate) use crate::core::combat_details::CombatDetailFilter as HitDetailFilter;
+ 
+ #[derive(Clone, Debug, PartialEq)]
+ pub(crate) struct QteTypeFilterSummary {
+--- a/src/core/combat_details.rs
++++ b/src/core/combat_details.rs
+@@ -0,0 +1,105 @@
++use crate::engine::model::{Hit, is_unbalance_damage_hit, reaction_damage_for_hit};
++
++/// Stable, frontend-neutral filtering for combat hit detail projections.
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub enum CombatDetailFilter {
++    #[default]
++    All,
++    Outgoing,
++    Incoming,
++    CharacterAttributed,
++    CharacterDirect,
++    ReactionDamage,
++    SharedMechanics,
++    Unattributed,
++    QteType(String),
++}
++
++impl CombatDetailFilter {
++    pub fn matches(&self, hit: &Hit) -> bool {
++        match self {
++            Self::All => true,
++            Self::Outgoing => !hit.direction.is_incoming(),
++            Self::Incoming => hit.direction.is_incoming(),
++            Self::CharacterAttributed => {
++                hit.direction.is_outgoing() && hit.char_known && !is_unbalance_damage_hit(hit)
++            }
++            Self::CharacterDirect => {
++                hit.direction.is_outgoing()
++                    && hit.char_known
++                    && !is_unbalance_damage_hit(hit)
++                    && hit.total_damage() > reaction_damage_for_hit(hit)
++            }
++            Self::ReactionDamage => {
++                hit.direction.is_outgoing() && hit.char_known && reaction_damage_for_hit(hit) > 0.0
++            }
++            Self::SharedMechanics => !hit.direction.is_incoming() && is_unbalance_damage_hit(hit),
++            Self::Unattributed => {
++                !hit.direction.is_incoming()
++                    && !is_unbalance_damage_hit(hit)
++                    && !(hit.direction.is_outgoing() && hit.char_known)
++            }
++            Self::QteType(attack_type) => {
++                !hit.direction.is_incoming()
++                    && (hit.attack_type.as_deref() == Some(attack_type)
++                        || hit.follow_up_attack_type.as_deref() == Some(attack_type))
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::engine::model::{HitCharacterSource, HitDirection};
++
++    fn hit(direction: HitDirection, known: bool, attack_type: Option<&str>) -> Hit {
++        Hit {
++            timestamp: 1.0,
++            char_id: 1,
++            char_name: "Character".to_owned(),
++            char_known: known,
++            damage: 100.0,
++            byte_offset: 0,
++            bit_shift: 0,
++            char_source: HitCharacterSource::Packet,
++            direction,
++            target_hp_before: 1000.0,
++            target_hp_after: 900.0,
++            target_max_hp: 1000.0,
++            target_hp_percent: 90.0,
++            target_id: None,
++            target_name: None,
++            target_name_en: None,
++            target_name_ja: None,
++            target_monster_id: None,
++            target_context: Vec::new(),
++            gameplay_effect_index: None,
++            gameplay_effect_name: None,
++            ability_name: None,
++            damage_name: None,
++            damage_component: None,
++            attack_type: attack_type.map(str::to_owned),
++            damage_attribute: None,
++            follow_up_damage: 0.0,
++            follow_up_timestamp: None,
++            follow_up_damage_name: None,
++            follow_up_attack_type: None,
++            follow_up_damage_attribute: None,
++        }
++    }
++
++    #[test]
++    fn attribution_filters_share_the_existing_engine_classification() {
++        let direct = hit(HitDirection::Outgoing, true, None);
++        assert!(CombatDetailFilter::CharacterAttributed.matches(&direct));
++        assert!(CombatDetailFilter::CharacterDirect.matches(&direct));
++
++        let shared = hit(HitDirection::Outgoing, true, Some("倾陷伤害"));
++        assert!(CombatDetailFilter::SharedMechanics.matches(&shared));
++        assert!(!CombatDetailFilter::CharacterAttributed.matches(&shared));
++
++        let unknown = hit(HitDirection::Unknown, false, None);
++        assert!(CombatDetailFilter::Unattributed.matches(&unknown));
++    }
++}
+--- a/src/core/mod.rs
++++ b/src/core/mod.rs
+@@ -6,6 +6,7 @@
+ 
+ pub mod capture;
+ pub mod character_data;
++pub mod combat_details;
+ #[cfg(any(feature = "desktop", feature = "gui"))]
+ pub mod diagnostics;
+ pub mod empty_curtain;

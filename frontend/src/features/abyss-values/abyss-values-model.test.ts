@@ -16,6 +16,7 @@ import {
   predictedSeconds,
   requiredDps,
   summarizeWaves,
+  teamHeaderMembers,
 } from "./abyss-values-model";
 
 function monster(overrides: Partial<AbyssMonster> = {}): AbyssMonster {
@@ -94,5 +95,17 @@ describe("abyss values view model", () => {
 
     expect(monsterImageUrl("mon_019_BP")).toBeTruthy();
     expect(monsterImageUrl("mon_030_BP")).toBeTruthy();
+  });
+
+  it("keeps the original four-avatar team header order", () => {
+    const members = Array.from({ length: 6 }, (_, index) => ({
+      id: 1000 + index,
+      dps: 100 - index,
+      name: `角色${index}`,
+    }));
+
+    expect(
+      teamHeaderMembers({ dps: 500, members }).map((row) => row.id),
+    ).toEqual([1000, 1001, 1002, 1003]);
   });
 });

@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { ModStudioSdkSchemaSnapshot } from "@/lib/tauri/mod-studio-contract";
 
 import {
+  MOD_SOURCE_COMPLETION_TRIGGER_CHARACTERS,
+  MOD_SOURCE_SUGGEST_OPTIONS,
+} from "./mod-source-editor-options";
+
+import {
   modSourceCompletion,
   modSourceHover,
   modSourceOccurrences,
@@ -31,6 +36,19 @@ const schema: ModStudioSdkSchemaSnapshot = {
 };
 
 describe("Mod source intelligence", () => {
+  it("keeps automatic completion enabled for code and namespace triggers", () => {
+    expect(MOD_SOURCE_SUGGEST_OPTIONS).toMatchObject({
+      quickSuggestions: {
+        other: true,
+        comments: false,
+        strings: false,
+      },
+      suggestOnTriggerCharacters: true,
+      wordBasedSuggestions: "off",
+    });
+    expect(MOD_SOURCE_COMPLETION_TRIGGER_CHARACTERS).toEqual([":", "."]);
+  });
+
   it("filters schema completions and replaces only the active token", () => {
     const source = "auto value = nte::memory::read_ + suffix;";
     const cursor = source.indexOf(" + suffix");

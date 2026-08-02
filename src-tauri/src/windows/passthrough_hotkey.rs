@@ -10,9 +10,12 @@ use std::{
 
 use nte_dps_tool::platform::passthrough_hotkey::{PassthroughHotkeyEvent, PassthroughHotkeyHandle};
 use nte_dps_tool::{core::live_capture::LiveCapturePhase, storage::config::GlobalHotkeyAction};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-use crate::{state::AppState, windows::hud};
+use crate::{
+    state::AppState,
+    windows::{hud, main_dps},
+};
 
 const HOTKEY_EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -67,6 +70,14 @@ fn run_dispatcher(
                 restore_editing_after_hook_failure(&app, &state);
             }
             Ok(PassthroughHotkeyEvent::Toggle) => {
+                if let Some(main_window) = app.get_webview_window(main_dps::MAIN_DPS_WINDOW_LABEL)
+                    && main_window.is_visible().unwrap_or(false)
+                {
+                    if let Err(error) = main_dps::toggle_passthrough(&main_window, &state) {
+                        log::error!("toggle main DPS passthrough from hotkey failed: {error:?}");
+                    }
+                    continue;
+                }
                 let Some(window) = app.get_webview_window(hud::HUD_WINDOW_LABEL) else {
                     continue;
                 };
@@ -87,19 +98,48 @@ fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotke
     match action {
         GlobalHotkeyAction::ToggleCapture => {
             let phase = state.capture_phase();
+            if matches!(
+                phase,
+                LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed
+            ) && state.session_has_data()
+            {
+                request_main_confirmation(app, "start");
+                return;
+            }
             let result = match phase {
                 LiveCapturePhase::Starting
                 | LiveCapturePhase::Running
                 | LiveCapturePhase::Stopping => state.request_capture_stop(),
                 LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed => {
-                    state.request_capture_start()
+                    state.request_capture_start(false)
                 }
             };
             if let Err(error) = result {
                 log::error!("toggle capture from global hotkey failed: {}", error.detail);
             }
         }
-        GlobalHotkeyAction::ResetSession => state.reset_session(),
+        GlobalHotkeyAction::ResetSession => {
+            let active = matches!(
+                state.capture_phase(),
+                LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+            ) || state.replay_running();
+            if active {
+                request_main_confirmation(app, "reset");
+            } else {
+                let undo_token = state.reset_session_with_undo();
+                state.publish_island_notice(
+                    "success",
+                    if undo_token.is_some() {
+                        "Session reset · use Undo within 5 seconds"
+                    } else {
+                        "Stats reset"
+                    },
+                    Vec::new(),
+                    undo_token,
+                );
+                let _ = super::island::show_notice(app, state);
+            }
+        }
         GlobalHotkeyAction::ToggleHud => {
             let Some(window) = app.get_webview_window(hud::HUD_WINDOW_LABEL) else {
                 return;
@@ -123,14 +163,34 @@ fn dispatch_global_action(app: &AppHandle, state: &AppState, action: GlobalHotke
     }
 }
 
+fn request_main_confirmation(app: &AppHandle, action: &'static str) {
+    let Some(window) = app.get_webview_window(main_dps::MAIN_DPS_WINDOW_LABEL) else {
+        return;
+    };
+    if let Err(error) = window.show() {
+        log::error!("show main DPS confirmation window failed: {error}");
+        return;
+    }
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    if let Err(error) = window.emit(main_dps::MAIN_DPS_CONFIRMATION_EVENT, action) {
+        log::error!("emit main DPS confirmation request failed: {error}");
+    }
+}
+
 fn restore_editing_after_hook_failure(app: &AppHandle, state: &AppState) {
     if !state.passthrough() {
         return;
     }
-    let Some(window) = app.get_webview_window(hud::HUD_WINDOW_LABEL) else {
-        return;
-    };
-    if let Err(error) = hud::set_passthrough(&window, state, false) {
+    if let Some(window) = app.get_webview_window(main_dps::MAIN_DPS_WINDOW_LABEL)
+        && window.is_visible().unwrap_or(false)
+    {
+        if let Err(error) = main_dps::set_passthrough(&window, state, false) {
+            log::error!("restore main DPS editing after hotkey hook failure failed: {error:?}");
+        }
+    } else if let Some(window) = app.get_webview_window(hud::HUD_WINDOW_LABEL)
+        && let Err(error) = hud::set_passthrough(&window, state, false)
+    {
         log::error!("restore HUD editing after hotkey hook failure failed: {error:?}");
     }
 }

@@ -30,6 +30,29 @@ export interface ModStudioDocumentSnapshot {
   source: string;
 }
 
+export type ModStudioGameRegion = "china" | "global";
+
+export interface ModStudioGameStatus {
+  region: ModStudioGameRegion;
+  installed: boolean;
+  current: boolean;
+}
+
+export interface ModStudioDeploymentSnapshot {
+  contractVersion: number;
+  installations: number;
+  installed: number;
+  current: number;
+  sourceAvailable: boolean;
+  games: ModStudioGameStatus[];
+}
+
+export interface ModStudioDirectorySelectionSnapshot {
+  selected: boolean;
+  path: string | null;
+  deployment: ModStudioDeploymentSnapshot;
+}
+
 export type ModStudioSdkSymbolKind =
   "declaration" | "snippet" | "function" | "property";
 
@@ -149,6 +172,61 @@ export function parseModStudioDocument(
     id: modId(document.id, "id"),
     enabled: boolean(document.enabled, "enabled"),
     source,
+  };
+}
+
+export function parseModStudioDeployment(
+  value: unknown,
+): ModStudioDeploymentSnapshot {
+  const deployment = record(value, "Mod loader deployment");
+  const games = array(deployment.games, "games").map((game, index) => {
+    const parsed = record(game, `games[${index}]`);
+    return {
+      region: gameRegion(parsed.region, `games[${index}].region`),
+      installed: boolean(parsed.installed, `games[${index}].installed`),
+      current: boolean(parsed.current, `games[${index}].current`),
+    };
+  });
+  if (new Set(games.map((game) => game.region)).size !== games.length) {
+    throw new ModStudioContractError("games contains duplicate regions");
+  }
+  const installations = nonNegativeInteger(
+    deployment.installations,
+    "installations",
+  );
+  const installed = nonNegativeInteger(deployment.installed, "installed");
+  const current = nonNegativeInteger(deployment.current, "current");
+  if (installed > installations || current > installed) {
+    throw new ModStudioContractError(
+      "Mod loader deployment counts are invalid",
+    );
+  }
+  return {
+    contractVersion: contractVersionOf(deployment),
+    installations,
+    installed,
+    current,
+    sourceAvailable: boolean(deployment.sourceAvailable, "sourceAvailable"),
+    games,
+  };
+}
+
+export function parseModStudioDirectorySelection(
+  value: unknown,
+): ModStudioDirectorySelectionSnapshot {
+  const selection = record(value, "Game directory selection");
+  const selected = boolean(selection.selected, "selected");
+  const path =
+    selection.path === null
+      ? null
+      : boundedString(selection.path, "path", 32_768);
+  if (selected !== (path !== null)) {
+    throw new ModStudioContractError("selected and path do not match");
+  }
+  return {
+    selected,
+    path,
+    deployment: parseModStudioDeployment(selection.deployment),
   };
 }
 
@@ -425,6 +503,14 @@ function modEventName(value: unknown, field: string): string {
   const parsed = string(value, field);
   if (!/^[a-z0-9._-]{1,31}$/.test(parsed)) {
     throw new ModStudioContractError(`${field} must be a valid event name`);
+  }
+  return parsed;
+}
+
+function gameRegion(value: unknown, field: string): ModStudioGameRegion {
+  const parsed = string(value, field);
+  if (parsed !== "china" && parsed !== "global") {
+    throw new ModStudioContractError(`${field} is invalid`);
   }
   return parsed;
 }

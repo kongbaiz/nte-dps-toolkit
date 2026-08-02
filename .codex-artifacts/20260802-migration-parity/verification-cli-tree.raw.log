@@ -1,0 +1,7 @@
+
+COMMAND: cargo tree -e normal --no-default-features --features cli
+OUTPUT: dependency tree saved to cli-dependency-tree.txt
+EXIT STATUS: 0
+COMMAND: scan cli-dependency-tree.txt for banned GUI dependencies
+OUTPUT: PASS: CLI dependency tree contains none of tauri, wry, webview2-com, eframe, egui, wgpu, rfd, raw-window-handle
+EXIT STATUS: 0

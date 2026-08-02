@@ -1,0 +1,58 @@
+[
+  {
+    "Path": "frontend/src/features/main-dps/main-dps-detail-page.tsx",
+    "Sha256": "555D5930CBCB211C5378E37E1376B3D29ACFC73C8B81CBBEC4409C7DAB12F350"
+  },
+  {
+    "Path": "frontend/src/features/main-dps/main-dps-page.tsx",
+    "Sha256": "4D3856E09E0996CFEAE090B7637BF7D508723D096DCD001195F06614F6555406"
+  },
+  {
+    "Path": "frontend/src/lib/tauri/main-dps-client.ts",
+    "Sha256": "F08EB086CCE1602809150B4C95DEA4926E00AD13D5F99D356406F6D5BBF08EFD"
+  },
+  {
+    "Path": "frontend/src/lib/tauri/main-dps-detail-client.ts",
+    "Sha256": "984E27AC25ED65FE131CA0F2B4F2DBF3B726A97EFEF060CC84DAE38691281EED"
+  },
+  {
+    "Path": "frontend/src/lib/tauri/main-dps-detail-contract.ts",
+    "Sha256": "0593C5C53AF6B0190C232D6F460AF2ACC8143ABBBD349A82E5A3528DA26B8C18"
+  },
+  {
+    "Path": "frontend/src/lib/tauri/main-dps-detail-contract.test.ts",
+    "Sha256": "223C6DD2A3B010A27CBD308A89C213C8CA89303BD209496C44DCA8F3E00A8898"
+  },
+  {
+    "Path": "src-tauri/capabilities/abyss-values.json",
+    "Sha256": "E4F8344E0DF47996AB64A8CB48C7D281CF5CCDB77DB0B23C5A3ECACAD0574100"
+  },
+  {
+    "Path": "src-tauri/capabilities/combat-details.json",
+    "Sha256": "8F89A188F365E881C6D502CBF8134D3D6F41CD91ED2AC019D1126A103B6D3292"
+  },
+  {
+    "Path": "src-tauri/capabilities/console.json",
+    "Sha256": "0215C37980A4D5DF908896D4CD43D9D15A7364F537E80F1E7F341009CA03D443"
+  },
+  {
+    "Path": "src-tauri/capabilities/main-dps.json",
+    "Sha256": "5795C5CF2FE6135B9D678C541103448B2991152022058B33133B5F244CC47247"
+  },
+  {
+    "Path": "src-tauri/src/commands/main_dps.rs",
+    "Sha256": "CE3A8F1E8976BBB289D31F4CF77F1E43AA2DA36042DA5E201957BB30D839FB35"
+  },
+  {
+    "Path": "src-tauri/src/contract/main_dps_detail.rs",
+    "Sha256": "0D90D8630837069357ECA8304D5F0476F97BFB3B3B2F71671EBA6A6C53E7872A"
+  },
+  {
+    "Path": "src-tauri/src/lib.rs",
+    "Sha256": "75F9D83F61F0FD9C5D94979DB07A38FF8D2A8383045A906FA3A7FA5165B7B4B3"
+  },
+  {
+    "Path": "src-tauri/src/state.rs",
+    "Sha256": "55149EA81875F050EAD3B978DC13CF09F4C07DCEC311EFD23F4FCFC634EE76D7"
+  }
+]

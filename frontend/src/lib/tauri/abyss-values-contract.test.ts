@@ -58,6 +58,10 @@ export function abyssValuesFixture(): Record<string, unknown> {
       },
       lower: null,
     },
+    currentTeamAvailable: {
+      upper: true,
+      lower: false,
+    },
   };
 }
 
@@ -71,6 +75,10 @@ describe("abyss values contract", () => {
       rawProps: { HPMaxBase: 1000, CritBase: 0.2 },
     });
     expect(snapshot.teams.upper?.dps).toBe(500);
+    expect(snapshot.currentTeamAvailable).toEqual({
+      upper: true,
+      lower: false,
+    });
   });
 
   it("rejects version, count, and numeric drift", () => {

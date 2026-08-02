@@ -3,10 +3,7 @@ use std::{sync::atomic::Ordering, thread, time::Duration};
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
-    contract::{
-        CommandError, SubscriptionReceipt,
-        settings::SettingsEvent,
-    },
+    contract::{CommandError, SubscriptionReceipt, settings::SettingsEvent},
     state::AppState,
     windows::console,
 };
@@ -29,7 +26,13 @@ pub(crate) fn subscribe_settings(
     let stop = state.begin_stream(stream_key.clone());
     thread::spawn(move || {
         let mut last_revision = None;
+        let mut last_install_blocker = None;
         while !stop.load(Ordering::Acquire) {
+            let install_blocker = state.update_install_blocked_message_key();
+            if install_blocker_changed(last_install_blocker, install_blocker) {
+                state.notify_update_install_blocker_changed();
+            }
+            last_install_blocker = Some(install_blocker);
             let revision = state.settings_revision();
             if should_emit_snapshot(last_revision, revision) {
                 if on_event
@@ -73,6 +76,13 @@ fn should_emit_snapshot(last_revision: Option<u64>, current_revision: u64) -> bo
     last_revision != Some(current_revision)
 }
 
+fn install_blocker_changed(
+    previous: Option<Option<&'static str>>,
+    current: Option<&'static str>,
+) -> bool {
+    previous.is_some_and(|previous| previous != current)
+}
+
 fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
     let valid_length = (1..=64).contains(&subscription_id.len());
     let valid_characters = subscription_id
@@ -102,5 +112,17 @@ mod tests {
         assert!(should_emit_snapshot(None, 0));
         assert!(!should_emit_snapshot(Some(3), 3));
         assert!(should_emit_snapshot(Some(3), 4));
+    }
+
+    #[test]
+    fn settings_stream_advances_when_the_runtime_install_blocker_changes() {
+        assert!(!install_blocker_changed(None, None));
+        assert!(!install_blocker_changed(Some(None), None));
+        assert!(install_blocker_changed(Some(None), Some("capture")));
+        assert!(!install_blocker_changed(
+            Some(Some("capture")),
+            Some("capture")
+        ));
+        assert!(install_blocker_changed(Some(Some("capture")), None));
     }
 }

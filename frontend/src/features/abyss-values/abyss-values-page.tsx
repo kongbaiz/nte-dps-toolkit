@@ -17,11 +17,13 @@ import {
 
 import statDisplayNames from "@res/data/abyss/monster_stat_names_zh_cn.json";
 
+import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
+import { characterAvatarUrl } from "@/lib/character-avatar";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import {
   abyssValuesClient,
@@ -52,6 +54,7 @@ import {
   predictedSeconds,
   requiredDps,
   summarizeWaves,
+  teamHeaderMembers,
   type AbyssFloorKey,
 } from "./abyss-values-model";
 
@@ -120,47 +123,53 @@ export function AbyssValuesPage({
   );
 
   return (
-    <main
+    <div
       className={cn(
-        "flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground",
+        "desktop-window-shell",
         !presentation.darkMode && "console-light",
       )}
     >
-      {mutationError ? (
-        <FloatingError
-          error={mutationError}
-          onDismiss={() => setMutationError(null)}
-        />
-      ) : null}
-      {state.status === "loading" ? (
-        <AbyssValuesLoading />
-      ) : state.status === "error" ? (
-        <AbyssValuesError error={state.error} onRetry={load} />
-      ) : (
-        <AbyssValuesReady
-          snapshot={state.snapshot}
-          selectedFloorKey={selectedFloorKey}
-          expandedSeason={expandedSeason}
-          selectedPackId={selectedPackId}
-          query={query}
-          pending={pending}
-          onReload={load}
-          onQueryChange={setQuery}
-          onExpandSeason={setExpandedSeason}
-          onSelectFloor={(key) => {
-            setSelectedFloorKey(key);
-            setExpandedSeason(key.season);
-            setSelectedPackId(null);
-          }}
-          onSelectMonster={setSelectedPackId}
-          onSwapTeams={() => updateTeams(() => client.swapTeams())}
-          onClearTeam={(half) => updateTeams(() => client.clearTeam(half))}
-          onImportTeam={(half, json) =>
-            updateTeams(() => client.importTeam(half, json))
-          }
-        />
-      )}
-    </main>
+      <DesktopTitlebar title={t("Abyss monster values")} />
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
+        {mutationError ? (
+          <FloatingError
+            error={mutationError}
+            onDismiss={() => setMutationError(null)}
+          />
+        ) : null}
+        {state.status === "loading" ? (
+          <AbyssValuesLoading />
+        ) : state.status === "error" ? (
+          <AbyssValuesError error={state.error} onRetry={load} />
+        ) : (
+          <AbyssValuesReady
+            snapshot={state.snapshot}
+            selectedFloorKey={selectedFloorKey}
+            expandedSeason={expandedSeason}
+            selectedPackId={selectedPackId}
+            query={query}
+            pending={pending}
+            onReload={load}
+            onQueryChange={setQuery}
+            onExpandSeason={setExpandedSeason}
+            onSelectFloor={(key) => {
+              setSelectedFloorKey(key);
+              setExpandedSeason(key.season);
+              setSelectedPackId(null);
+            }}
+            onSelectMonster={setSelectedPackId}
+            onSwapTeams={() => updateTeams(() => client.swapTeams())}
+            onClearTeam={(half) => updateTeams(() => client.clearTeam(half))}
+            onImportTeam={(half, json) =>
+              updateTeams(() => client.importTeam(half, json))
+            }
+            onImportCurrent={(half) =>
+              updateTeams(() => client.importCurrentTeam(half))
+            }
+          />
+        )}
+      </main>
+    </div>
   );
 }
 
@@ -179,6 +188,7 @@ function AbyssValuesReady({
   onSwapTeams,
   onClearTeam,
   onImportTeam,
+  onImportCurrent,
 }: {
   snapshot: AbyssValuesSnapshot;
   selectedFloorKey: AbyssFloorKey | null;
@@ -194,6 +204,7 @@ function AbyssValuesReady({
   onSwapTeams: () => void;
   onClearTeam: (half: AbyssHalfId) => void;
   onImportTeam: (half: AbyssHalfId, json: string) => void;
+  onImportCurrent: (half: AbyssHalfId) => void;
 }) {
   const selectedFloor = findFloor(snapshot.seasons, selectedFloorKey);
   const filteredMonsters = useMemo(
@@ -240,12 +251,14 @@ function AbyssValuesReady({
               selectedMonster={selectedMonster}
               query={query}
               teams={snapshot.teams}
+              currentTeamAvailable={snapshot.currentTeamAvailable}
               pending={pending}
               onQueryChange={onQueryChange}
               onSelectMonster={onSelectMonster}
               onSwapTeams={onSwapTeams}
               onClearTeam={onClearTeam}
               onImportTeam={onImportTeam}
+              onImportCurrent={onImportCurrent}
             />
           ) : (
             <div className="grid h-full place-items-center text-sm text-muted-foreground">
@@ -352,24 +365,28 @@ function AbyssFloorContent({
   selectedMonster,
   query,
   teams,
+  currentTeamAvailable,
   pending,
   onQueryChange,
   onSelectMonster,
   onSwapTeams,
   onClearTeam,
   onImportTeam,
+  onImportCurrent,
 }: {
   floor: AbyssFloor;
   monsters: AbyssMonster[];
   selectedMonster: AbyssMonster | null;
   query: string;
   teams: AbyssPredictionTeams;
+  currentTeamAvailable: AbyssValuesSnapshot["currentTeamAvailable"];
   pending: boolean;
   onQueryChange: (query: string) => void;
   onSelectMonster: (packId: string) => void;
   onSwapTeams: () => void;
   onClearTeam: (half: AbyssHalfId) => void;
   onImportTeam: (half: AbyssHalfId, json: string) => void;
+  onImportCurrent: (half: AbyssHalfId) => void;
 }) {
   const upper = monstersForHalf(monsters, 0);
   const lower = monstersForHalf(monsters, 1);
@@ -423,6 +440,7 @@ function AbyssFloorContent({
                 title={t("Ascending Line")}
                 monsters={upper}
                 team={teams.upper}
+                canImportCurrent={currentTeamAvailable.upper}
                 selectedPackId={selectedMonster?.packId ?? null}
                 recommendedElements={floor.recommendedElements.firstHalf}
                 maxSeconds={floor.maxSeconds}
@@ -431,12 +449,14 @@ function AbyssFloorContent({
                 onSelectMonster={onSelectMonster}
                 onClearTeam={onClearTeam}
                 onImportTeam={onImportTeam}
+                onImportCurrent={onImportCurrent}
               />
               <AbyssLineSection
                 half="lower"
                 title={t("Descending Line")}
                 monsters={lower}
                 team={teams.lower}
+                canImportCurrent={currentTeamAvailable.lower}
                 selectedPackId={selectedMonster?.packId ?? null}
                 recommendedElements={floor.recommendedElements.secondHalf}
                 maxSeconds={floor.maxSeconds}
@@ -445,6 +465,7 @@ function AbyssFloorContent({
                 onSelectMonster={onSelectMonster}
                 onClearTeam={onClearTeam}
                 onImportTeam={onImportTeam}
+                onImportCurrent={onImportCurrent}
               />
             </>
           ) : null}
@@ -454,6 +475,7 @@ function AbyssFloorContent({
               title={t("Full floor config")}
               monsters={unassigned}
               team={null}
+              canImportCurrent={false}
               selectedPackId={selectedMonster?.packId ?? null}
               recommendedElements={[]}
               maxSeconds={floor.maxSeconds}
@@ -463,6 +485,7 @@ function AbyssFloorContent({
               onSelectMonster={onSelectMonster}
               onClearTeam={onClearTeam}
               onImportTeam={onImportTeam}
+              onImportCurrent={onImportCurrent}
             />
           ) : null}
         </>
@@ -486,6 +509,7 @@ function AbyssLineSection({
   title,
   monsters,
   team,
+  canImportCurrent,
   selectedPackId,
   recommendedElements,
   maxSeconds,
@@ -495,11 +519,13 @@ function AbyssLineSection({
   onSelectMonster,
   onClearTeam,
   onImportTeam,
+  onImportCurrent,
 }: {
   half: AbyssHalfId;
   title: string;
   monsters: AbyssMonster[];
   team: AbyssTeam | null;
+  canImportCurrent: boolean;
   selectedPackId: string | null;
   recommendedElements: string[];
   maxSeconds: number | null;
@@ -509,6 +535,7 @@ function AbyssLineSection({
   onSelectMonster: (packId: string) => void;
   onClearTeam: (half: AbyssHalfId) => void;
   onImportTeam: (half: AbyssHalfId, json: string) => void;
+  onImportCurrent: (half: AbyssHalfId) => void;
 }) {
   const defaultTarget =
     thresholds.reduce(
@@ -554,11 +581,12 @@ function AbyssLineSection({
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {team ? (
               <>
+                <AbyssTeamAvatars team={team} />
                 <span className="text-muted-foreground">
-                  DPS {formatStatValue(team.dps)}
-                  {estimate !== null
-                    ? ` · ${tf("Est. {}", [formatSeconds(estimate)])}`
-                    : ""}
+                  {estimate === null
+                    ? t("Est. —")
+                    : tf("Est. {}", [formatSeconds(estimate)])}
+                  {` · ${formatStatValue(team.dps)} DPS`}
                 </span>
                 <Button
                   aria-label={t("Clear")}
@@ -570,7 +598,20 @@ function AbyssLineSection({
                   <X aria-hidden="true" />
                 </Button>
               </>
-            ) : null}
+            ) : canImportCurrent ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={pending}
+                onClick={() => onImportCurrent(half)}
+              >
+                {t("Predict with Current Team")}
+              </Button>
+            ) : (
+              <span className="text-muted-foreground">
+                {t("Import data to predict clear time")}
+              </span>
+            )}
             <span className="text-muted-foreground">{t("Target")}</span>
             <input
               className="h-7 w-[68px] rounded-md border bg-background px-2 text-right tabular-nums outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
@@ -639,8 +680,6 @@ function AbyssLineSection({
         </div>
       ) : null}
 
-      {team ? <TeamRoster team={team} /> : null}
-
       <div className="mt-2 grid grid-cols-6 gap-1.5">
         {slots.map((monster, index) =>
           index === 5 && monsters.length > 6 ? (
@@ -675,28 +714,32 @@ function AbyssLineSection({
   );
 }
 
-function TeamRoster({ team }: { team: AbyssTeam }) {
+function AbyssTeamAvatars({ team }: { team: AbyssTeam }) {
   return (
-    <div className="mt-2 grid grid-cols-4 gap-1.5">
-      {team.members.slice(0, 4).map((member) => (
-        <div
-          className="flex min-w-0 items-center gap-2 rounded-md border bg-background px-2 py-1"
-          key={member.id}
-        >
-          <span className="grid size-6 shrink-0 place-items-center rounded-md bg-muted text-xs font-medium">
-            {(member.name || String(member.id)).slice(0, 1)}
+    <span className="flex items-center gap-1" aria-label={t("Team")}>
+      {teamHeaderMembers(team).map((member) => {
+        const avatar = characterAvatarUrl(member.id);
+        const initial = (member.name || String(member.id)).slice(0, 1);
+        return (
+          <span
+            className="relative grid size-6 shrink-0 place-items-center overflow-hidden rounded-md border bg-muted text-[10px] font-medium"
+            key={member.id}
+            title={member.name || String(member.id)}
+          >
+            <span aria-hidden="true">{initial}</span>
+            {avatar ? (
+              <img
+                className="absolute inset-0 size-full object-cover"
+                src={avatar}
+                alt=""
+                draggable={false}
+                onError={(event) => event.currentTarget.remove()}
+              />
+            ) : null}
           </span>
-          <span className="min-w-0">
-            <span className="block truncate text-xs font-medium">
-              {member.name || member.id}
-            </span>
-            <span className="block truncate font-mono text-[10px] text-muted-foreground">
-              DPS {formatStatValue(member.dps)}
-            </span>
-          </span>
-        </div>
-      ))}
-    </div>
+        );
+      })}
+    </span>
   );
 }
 

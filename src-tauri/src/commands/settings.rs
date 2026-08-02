@@ -1,8 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    fs,
+    time::{Duration, Instant},
+};
 
 use nte_dps_tool::{
     core::{
-        team_data::parse_team_data,
+        team_data::{MAX_TEAM_DPS_EXPORT_BYTES, parse_team_data},
         update::{
             MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
             installed_app_version, verify_manifest,
@@ -14,22 +17,23 @@ use nte_dps_tool::{
             AccentColor, DpsTimeMode, GlobalHotkeyAction, HotkeyBinding, HotkeyKey,
             PassthroughHotkey, ThemePreset, UiDensity,
         },
-        i18n::Language,
+        i18n::{self, Language},
+        io_util::atomic_write_text,
         update::{self as update_storage, installed_component_versions},
     },
 };
-use tauri::{AppHandle, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use crate::{
     contract::{
         CommandError,
         settings::{
             CaptureSettingsInput, HotkeyBindingSnapshot, InterfaceSettingsInput, SettingsSnapshot,
-            UpdateSettingsInput,
+            TeamDataExportResult, TeamDataImportFileResult, UpdateSettingsInput,
         },
     },
     state::{AppState, HudPreset, HudSettingOption, UpdateActionError},
-    windows::{abyss_values, console, hud},
+    windows::{abyss_values, combat_details, console, hud, island, main_dps},
 };
 
 use super::{parse_hud_module, sanitize_hud_width};
@@ -51,6 +55,7 @@ pub(crate) fn set_settings_interface(
     state
         .update_interface_settings(
             language,
+            settings.dark_mode,
             parse_theme_preset(&settings.theme_preset)?,
             parse_accent(&settings.accent)?,
             parse_density(&settings.density)?,
@@ -60,10 +65,23 @@ pub(crate) fn set_settings_interface(
         )
         .map_err(settings_save_error)?;
     nte_dps_tool::storage::i18n::set_language(language);
+    if let Some(error) = nte_dps_tool::storage::ability_names::reload(language) {
+        log::warn!("reload localized ability names after language change failed: {error}");
+    }
+    state.bump_history_revision();
     if let Some(console_window) = app.get_webview_window(console::CONSOLE_WINDOW_LABEL)
         && let Err(error) = console_window.set_title(&nte_dps_tool::storage::i18n::t("NTE Console"))
     {
         log::warn!("refresh Console title after language change failed: {error}");
+    }
+    if let Some(island_window) = app.get_webview_window(island::ISLAND_WINDOW_LABEL) {
+        if settings.island_notifications && state.island_notice().is_some() {
+            island::show_notice(&app, state.inner())?;
+        } else if !settings.island_notifications {
+            island_window
+                .hide()
+                .map_err(|_| CommandError::window_operation_failed())?;
+        }
     }
     Ok(state.settings_snapshot())
 }
@@ -337,6 +355,11 @@ pub(crate) fn apply_settings_layout_profile(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let hud_window = hud_window(&app)?;
+    let abyss_window = app.get_webview_window(abyss_values::ABYSS_VALUES_WINDOW_LABEL);
+    let detail_windows = [
+        app.get_webview_window(combat_details::CHARACTER_DETAILS_WINDOW_LABEL),
+        app.get_webview_window(combat_details::TEAM_DETAILS_WINDOW_LABEL),
+    ];
     match profile.as_str() {
         "combat" => {
             if !state.passthrough_hotkey_ready() {
@@ -350,6 +373,13 @@ pub(crate) fn apply_settings_layout_profile(
                 .map_err(settings_save_error)?;
             hud_window.show().map_err(window_operation_error)?;
             hud::set_passthrough(&hud_window, &state, true)?;
+            window.hide().map_err(window_operation_error)?;
+            if let Some(window) = abyss_window.as_ref() {
+                window.hide().map_err(window_operation_error)?;
+            }
+            for detail_window in detail_windows.iter().flatten() {
+                detail_window.hide().map_err(window_operation_error)?;
+            }
         }
         "review" => {
             state
@@ -358,6 +388,15 @@ pub(crate) fn apply_settings_layout_profile(
             hud::set_passthrough(&hud_window, &state, false)?;
             hud_window.hide().map_err(window_operation_error)?;
             window.set_focus().map_err(window_operation_error)?;
+            window
+                .emit(console::CONSOLE_NAVIGATE_EVENT, "timeline")
+                .map_err(window_operation_error)?;
+            if let Some(window) = abyss_window.as_ref() {
+                window.hide().map_err(window_operation_error)?;
+            }
+            for detail_window in detail_windows.iter().flatten() {
+                detail_window.hide().map_err(window_operation_error)?;
+            }
         }
         "research" => {
             state
@@ -366,6 +405,21 @@ pub(crate) fn apply_settings_layout_profile(
             hud::set_passthrough(&hud_window, &state, false)?;
             hud_window.hide().map_err(window_operation_error)?;
             window.set_focus().map_err(window_operation_error)?;
+            window
+                .emit(console::CONSOLE_NAVIGATE_EVENT, "packets")
+                .map_err(window_operation_error)?;
+            if let Some(window) = abyss_window.as_ref() {
+                window.hide().map_err(window_operation_error)?;
+            }
+            for detail_window in detail_windows.iter().flatten() {
+                detail_window.hide().map_err(window_operation_error)?;
+            }
+            if super::main_dps::snapshot(state.inner())
+                .actions
+                .team_details_available
+            {
+                super::main_dps::open_team_details(&app, state.inner())?;
+            }
         }
         _ => return Err(CommandError::invalid_settings_input()),
     }
@@ -389,18 +443,119 @@ pub(crate) fn import_settings_team_data(
 }
 
 #[tauri::command]
-pub(crate) fn export_settings_team_data(
+pub(crate) async fn import_settings_team_data_file(
     state: State<'_, AppState>,
     window: WebviewWindow,
-) -> Result<String, CommandError> {
+) -> Result<TeamDataImportFileResult, CommandError> {
+    console::validate_window(&window)?;
+
+    #[cfg(windows)]
+    {
+        use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_json_open_path};
+
+        let owner = window
+            .hwnd()
+            .map_err(|_| CommandError::window_operation_failed())?
+            .0 as isize;
+        let title = i18n::t("Import DPS Data");
+        let json = tauri::async_runtime::spawn_blocking(move || {
+            match choose_json_open_path(owner, &title) {
+                Ok(OpenFileDialogOutcome::Selected(path)) => {
+                    let metadata =
+                        fs::metadata(&path).map_err(|_| CommandError::team_data_import_failed())?;
+                    if metadata.len() > MAX_TEAM_DPS_EXPORT_BYTES as u64 {
+                        return Err(CommandError::team_data_invalid());
+                    }
+                    fs::read_to_string(path)
+                        .map(Some)
+                        .map_err(|_| CommandError::team_data_import_failed())
+                }
+                Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
+                Err(code) => {
+                    log::error!("native team DPS import dialog failed with code {code:#010x}");
+                    Err(CommandError::team_data_file_dialog_failed())
+                }
+            }
+        })
+        .await
+        .map_err(|_| CommandError::team_data_import_failed())??;
+
+        let performed = if let Some(json) = json {
+            let export = parse_team_data(&json).map_err(|detail| {
+                log::warn!("reject imported team DPS data: {detail}");
+                CommandError::team_data_invalid()
+            })?;
+            state.import_team_data(export);
+            true
+        } else {
+            false
+        };
+        Ok(TeamDataImportFileResult {
+            performed,
+            settings: state.settings_snapshot(),
+        })
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err(CommandError::team_data_file_dialog_failed())
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn export_settings_team_data(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<TeamDataExportResult, CommandError> {
     console::validate_window(&window)?;
     let export = state
         .export_team_data()
         .ok_or_else(CommandError::team_data_unavailable)?;
-    serde_json::to_string(&export).map_err(|error| {
+    let json = serde_json::to_string_pretty(&export).map_err(|error| {
         log::error!("serialize team DPS export failed: {error}");
         CommandError::team_data_unavailable()
-    })
+    })?;
+
+    #[cfg(windows)]
+    {
+        use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_json_save_path};
+
+        let owner = window
+            .hwnd()
+            .map_err(|_| CommandError::window_operation_failed())?
+            .0 as isize;
+        let title = i18n::t("Export Team Data");
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            match choose_json_save_path(owner, &title, "nte-team-dps.json") {
+                Ok(SaveFileDialogOutcome::Selected(path)) => atomic_write_text(&path, &json)
+                    .map(|_| true)
+                    .map_err(|_| None),
+                Ok(SaveFileDialogOutcome::Cancelled) => Ok(false),
+                Err(code) => Err(Some(code)),
+            }
+        })
+        .await
+        .map_err(|_| CommandError::team_data_export_failed())?;
+
+        match result {
+            Ok(saved) => Ok(TeamDataExportResult { saved }),
+            Err(Some(code)) => {
+                log::error!("native team DPS export dialog failed with code {code:#010x}");
+                Err(CommandError::team_data_export_failed())
+            }
+            Err(None) => {
+                log::error!("team DPS export file write failed");
+                Err(CommandError::team_data_export_failed())
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = json;
+        Err(CommandError::team_data_export_failed())
+    }
 }
 
 #[tauri::command]
@@ -409,6 +564,7 @@ pub(crate) fn refresh_settings_capture_files(
     window: WebviewWindow,
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
+    state.refresh_capture_file_stats();
     Ok(state.settings_snapshot())
 }
 
@@ -419,6 +575,7 @@ pub(crate) fn clear_settings_capture_files(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let outcome = state.clear_capture_files();
+    state.refresh_capture_file_stats();
     if outcome.failed > 0 {
         log::warn!(
             "capture log cleanup skipped {} locked or unreadable file(s)",
@@ -438,7 +595,7 @@ pub(crate) fn open_settings_abyss_values(
     let abyss_window = app
         .get_webview_window(abyss_values::ABYSS_VALUES_WINDOW_LABEL)
         .ok_or_else(CommandError::window_operation_failed)?;
-    abyss_values::show(&abyss_window)?;
+    abyss_values::show(&abyss_window, state.inner())?;
     Ok(state.settings_snapshot())
 }
 
@@ -558,10 +715,18 @@ pub(crate) fn open_settings_hud_editor(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let hud_window = hud_window(&app)?;
+    let main_window = app
+        .get_webview_window(main_dps::MAIN_DPS_WINDOW_LABEL)
+        .ok_or_else(CommandError::window_operation_failed)?;
+    main_dps::set_passthrough(&main_window, &state, false)?;
     hud::set_passthrough(&hud_window, &state, false)?;
     hud_window.show().map_err(window_operation_error)?;
     hud_window.unminimize().map_err(window_operation_error)?;
     hud_window.set_focus().map_err(window_operation_error)?;
+    if let Err(error) = main_window.hide() {
+        let _ = hud_window.hide();
+        return Err(window_operation_error(error));
+    }
     Ok(state.settings_snapshot())
 }
 

@@ -1,0 +1,22 @@
+[
+  {
+    "path": "frontend/src/features/main-dps/main-dps-page.tsx",
+    "sha256": "d588769f89481089121170f6b6c9446cf07f50ff84eab8b0433486f620140930"
+  },
+  {
+    "path": "frontend/src/features/main-dps/main-dps-detail-page.tsx",
+    "sha256": "109e388dcc36d26c84eb3a6c83a70502b27990a1f0f5eb6f29a789ae05d5550e"
+  },
+  {
+    "path": "frontend/src/features/technical-hud/technical-hud-page.tsx",
+    "sha256": "bdf2befcafc71bc6ee9f143841565cb10855c687a9d46746fb9b87a0f0abe222"
+  },
+  {
+    "path": "frontend/src/hooks/use-dismissible-layer.ts",
+    "sha256": "58fc1ba3db4f712c805019106b3fac74a6419c40f0017c0ed42ef350f8c0ce46"
+  },
+  {
+    "path": "frontend/src/hooks/use-dismissible-layer.test.ts",
+    "sha256": "ce9ada7afcf2c4d44f2575086eb97f09a624a0721717b4065bbbf3d55be8f2f2"
+  }
+]

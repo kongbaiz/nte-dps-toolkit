@@ -1,0 +1,4 @@
+tauri-cargo-fmt-check-rerun=0
+tauri-cargo-check-rerun=0
+tauri-cargo-test-rerun=0
+cli-tree-forbidden=0
