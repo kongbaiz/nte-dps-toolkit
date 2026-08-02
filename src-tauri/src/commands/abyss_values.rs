@@ -102,8 +102,8 @@ mod tests {
 
     #[test]
     fn parses_stable_half_identifiers() {
-        assert_eq!(parse_half("upper").expect("upper is valid"), true);
-        assert_eq!(parse_half("lower").expect("lower is valid"), false);
+        assert!(parse_half("upper").expect("upper is valid"));
+        assert!(!parse_half("lower").expect("lower is valid"));
         assert!(parse_half("first").is_err());
     }
 }

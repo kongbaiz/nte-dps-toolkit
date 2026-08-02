@@ -73,7 +73,7 @@ describe("Timeline UI model", () => {
     ).toBeNull();
   });
 
-  it("round-trips pointer time and clamps zoom like the egui timeline", () => {
+  it("round-trips pointer time and clamps zoom at the established timeline bounds", () => {
     const model = buildTimelineChartModel(
       TIMELINE_UI_PREVIEW,
       800,

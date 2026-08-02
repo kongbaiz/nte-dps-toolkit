@@ -7,12 +7,12 @@ stable machine-facing values; clients must branch on numeric JSON-RPC codes and
 `error.data.domain_code`, not on human-readable `message` or `detail` text.
 
 The supported distribution is `nte-core-windows-x64.zip`. It contains
-`nte-core.exe`, `CLI_PROTOCOL.md`, `CLI_PROTOCOL_ZH.md`, `examples/`,
-`THIRD_PARTY_LICENSES.md`, and `licenses/`.
+`nte-core.exe`, `CLI_PROTOCOL.md`, `CLI_PROTOCOL_ZH.md`, `examples/`, and
+`THIRD_PARTY_LICENSES.md`.
 The sidecar is intended for third-party tools running on the same Windows
 machine. It never listens on or opens a TCP/HTTP port. The CLI executable embeds
-only the core JSON resources required by capture parsing and contains no GUI
-images, fonts, application icon, or GUI dependency stack. Distribution and
+only the core JSON resources required by capture parsing and contains no desktop
+UI images, fonts, application icon, or windowing dependency stack. Distribution and
 integration remain subject to the repository's AGPL/commercial dual-license
 terms.
 

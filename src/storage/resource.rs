@@ -1,17 +1,17 @@
 use std::borrow::Cow;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use crate::engine::model::CharacterInfo;
 use anyhow::{Context, Result, anyhow};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MODS_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 21] = [
     b"NTE_DPS_TOOL_MODS_PLUGIN_V1",
     b"game.session",
@@ -46,7 +46,7 @@ pub(crate) fn resource_file_path(path: &Path) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
     let relative_path = Path::new(MODS_PLUGIN_PATH);
     let candidates = [
@@ -56,7 +56,7 @@ pub fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
     read_first_compatible_mods_plugin(&candidates)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn read_first_compatible_mods_plugin(candidates: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
     let mut incompatible = None;
     for candidate in candidates {
@@ -81,7 +81,7 @@ fn read_first_compatible_mods_plugin(candidates: &[PathBuf]) -> std::io::Result<
     Ok(None)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn mods_plugin_supports_bundled_mods(plugin: &[u8]) -> bool {
     MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS
         .iter()
@@ -112,7 +112,7 @@ pub(crate) fn read_resource_bytes(path: &Path) -> Result<Cow<'static, [u8]>> {
     Err(anyhow!("找不到资源 {}", path.display()))
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const DISTINCT_CHARACTER_PALETTE: [[u8; 3]; 32] = [
     [0xE8, 0x17, 0x4B],
     [0x17, 0xE8, 0x17],
@@ -151,7 +151,7 @@ const DISTINCT_CHARACTER_PALETTE: [[u8; 3]; 32] = [
 /// Assign every character without an explicit color a unique catalog-wide
 /// accent. Character identity and catalog order are the only inputs; combat
 /// rank, avatar pixels, and attributes cannot make teammates converge.
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub(crate) fn assign_missing_character_colors(characters: &mut HashMap<u32, CharacterInfo>) {
     let mut character_ids = characters.keys().copied().collect::<Vec<_>>();
     character_ids.sort_unstable();
@@ -179,7 +179,7 @@ pub(crate) fn assign_missing_character_colors(characters: &mut HashMap<u32, Char
     }
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn parse_character_hex_rgb(value: &str) -> Option<[u8; 3]> {
     let value = value.strip_prefix('#')?;
     if value.len() != 6 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -192,7 +192,7 @@ fn parse_character_hex_rgb(value: &str) -> Option<[u8; 3]> {
     ])
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn available_character_rgb(
     catalog_index: usize,
     character_id: u32,
@@ -221,14 +221,6 @@ fn available_character_rgb(
         }
         salt = salt.wrapping_add(1);
     }
-}
-
-#[cfg(feature = "gui")]
-pub(crate) fn deterministic_character_fallback_rgb(seed: &[u8], _dark_mode: bool) -> [u8; 3] {
-    let hash = seed.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-    });
-    DISTINCT_CHARACTER_PALETTE[hash as usize % DISTINCT_CHARACTER_PALETTE.len()]
 }
 
 fn bundled_resource_for_path(path: &Path) -> Option<&'static [u8]> {
@@ -283,7 +275,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn character_colors_are_unique_and_independent_of_hashmap_order() {
         let character = |id| CharacterInfo {
             name_zh: format!("角色{id}"),
@@ -316,19 +308,6 @@ mod tests {
         for id in ids {
             assert_eq!(forward[&id].color, reverse[&id].color);
         }
-    }
-
-    #[test]
-    #[cfg(feature = "gui")]
-    fn deterministic_character_fallback_is_stable() {
-        assert_eq!(
-            deterministic_character_fallback_rgb(&1010_u32.to_le_bytes(), false),
-            deterministic_character_fallback_rgb(&1010_u32.to_le_bytes(), false)
-        );
-        assert_eq!(
-            deterministic_character_fallback_rgb(&1010_u32.to_le_bytes(), false),
-            [0x40, 0xA3, 0x1F]
-        );
     }
 
     #[test]
@@ -368,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn mods_plugin_loader_reads_the_first_compatible_candidate() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -390,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn mods_plugin_loader_skips_an_incompatible_runtime_package() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -414,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn mods_plugin_loader_reports_an_incompatible_runtime_package() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -436,7 +415,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn compatible_mods_plugin() -> Vec<u8> {
         MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS
             .iter()
@@ -445,11 +424,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(
-        feature = "cli",
-        not(feature = "gui"),
-        not(feature = "external_resources")
-    ))]
+    #[cfg(all(feature = "cli", not(feature = "external_resources")))]
     fn cli_bundle_contains_only_core_data_resources() {
         for path in [
             "res/data/characters/characters.json",
@@ -469,8 +444,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "gui", not(feature = "external_resources")))]
-    fn gui_bundle_keeps_full_visual_resources() {
+    #[cfg(all(feature = "desktop", not(feature = "external_resources")))]
+    fn desktop_bundle_keeps_full_visual_resources() {
         assert!(bundled_resource("res/images/characters/player_003_256.png").is_some());
         assert!(bundled_resource("res/icons/app-icon.png").is_some());
     }

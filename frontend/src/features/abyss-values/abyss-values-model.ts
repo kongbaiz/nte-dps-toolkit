@@ -185,7 +185,7 @@ export function monsterImageStemCandidates(monsterId: string): string[] {
   // Resource filenames normalize numeric path segments (`019` -> `19`,
   // `030` -> `30`) while the authoritative monster ids preserve their UE
   // zero padding. Keep raw candidates first for exact assets, then mirror the
-  // canonicalization used by the egui portrait loader.
+  // canonicalization used by the shared portrait resource loader.
   const candidates = rawCandidates.flatMap((candidate) => [
     candidate,
     canonicalMonsterImageStem(candidate),

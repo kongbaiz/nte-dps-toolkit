@@ -3249,11 +3249,13 @@ mod tests {
 
     #[test]
     fn initial_window_and_hud_projection_follow_loaded_config() {
-        let mut config = UiConfig::default();
-        config.always_on_top = false;
+        let mut config = UiConfig {
+            always_on_top: false,
+            passthrough_hotkey: PassthroughHotkey::F8,
+            ..UiConfig::default()
+        };
         config.hud.width = 512;
         config.hud.show_total_damage = false;
-        config.passthrough_hotkey = PassthroughHotkey::F8;
 
         let state = AppState::new(
             config,
@@ -3860,9 +3862,11 @@ mod tests {
             LiveCaptureService::new(LiveCaptureResources::default()),
             config_path.clone(),
         );
-        let mut columns = nte_dps_tool::storage::config::HitDetailColumnsConfig::default();
-        columns.show_time = false;
-        columns.type_width = u16::MAX;
+        let columns = nte_dps_tool::storage::config::HitDetailColumnsConfig {
+            show_time: false,
+            type_width: u16::MAX,
+            ..Default::default()
+        };
         assert!(
             state
                 .set_hit_detail_columns(columns)

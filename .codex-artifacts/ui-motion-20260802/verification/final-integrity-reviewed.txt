@@ -1,8 +1,0 @@
-COMMAND final_diff_check: git diff --check -- frontend/src/index.css frontend/src/components/ui/button.tsx frontend/src/components/ui/switch.tsx frontend/src/features/console/console-page.tsx frontend/src/features/console/console-sidebar.tsx
-EXIT_STATUS final_diff_check=0
-COMMAND final_css_probe: inspect D:\NTE_DPS_TOOL\frontend\dist\assets\index-2hnlwev5.css
-OUTPUT motion_tokens=True
-OUTPUT page_animation=True
-OUTPUT reduced_motion=True
-OUTPUT dialog_selector=True
-EXIT_STATUS final_css_probe=0

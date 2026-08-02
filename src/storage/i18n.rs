@@ -10,8 +10,8 @@
 //! `NTE_Assets` localization when a match existed, and left at their original value
 //! otherwise; both simply live as entries in the locale JSON.
 //!
-//! The store is a process-wide [`RwLock`] because egui draws immediate-mode on the
-//! UI thread while background workers may also format status text. Swapping the
+//! The store is a process-wide [`RwLock`] because desktop commands and background
+//! workers may both format status text. Swapping the
 //! language (settings dropdown / startup) reloads the map in place.
 
 use std::collections::HashMap;

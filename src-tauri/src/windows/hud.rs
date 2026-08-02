@@ -17,7 +17,7 @@ use nte_dps_tool::storage::config::{HUD_WIDTH_MAX, HUD_WIDTH_MIN};
 use crate::{contract::CommandError, state::AppState};
 
 pub(crate) const HUD_WINDOW_LABEL: &str = "hud-spike";
-// Keep native edge-resize persistence aligned with the existing egui config debounce.
+// Keep native edge-resize persistence aligned with the shared config debounce.
 const HUD_WIDTH_SAVE_DELAY: Duration = Duration::from_millis(350);
 const HUD_POSITION_SAVE_DELAY: Duration = Duration::from_millis(350);
 const MIN_REACHABLE_WIDTH: i64 = 64;

@@ -12,7 +12,7 @@
 //!
 //! i.e. self-describing open tags (optionally with attributes), the generic UE
 //! close `</>`, and occasionally a named close `</Title>`. Our UI draws these
-//! names as plain `egui` labels, so nothing strips the tags for us the way the
+//! names as plain desktop labels, so nothing strips the tags for us the way the
 //! game's rich-text widget would.
 //!
 //! Most rows carry clean names already (e.g. `度恶`), but a handful bake the

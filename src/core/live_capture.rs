@@ -87,7 +87,7 @@ impl LiveCaptureResources {
         let mut warnings = Vec::new();
         let characters = match load_characters(Path::new(CHARACTER_DATA_PATH)) {
             Ok(characters) => {
-                #[cfg(any(feature = "desktop", feature = "gui"))]
+                #[cfg(feature = "desktop")]
                 let characters = {
                     let mut characters = characters;
                     crate::storage::resource::assign_missing_character_colors(&mut characters);
@@ -898,7 +898,7 @@ fn engine_event_loop(
     }
 }
 
-/// Preserve the legacy UI's reliable-first replay behavior. Semantic events
+/// Preserve the established reliable-first replay behavior. Semantic events
 /// and `CaptureStopped` must not wait behind thousands of optional full packet
 /// payloads; the bounded debug lane is intentionally allowed to fill and drop
 /// those payloads while a replay burst is still producing authoritative data.
@@ -1095,7 +1095,7 @@ mod tests {
         service.0.process_event(hit(321.0));
 
         let result: Result<Option<()>, &str> = service.archive_and_reset(
-            |state| (!state.hits.is_empty()).then(|| state.total_damage),
+            |state| (!state.hits.is_empty()).then_some(state.total_damage),
             |_| Err("disk full"),
         );
 
@@ -1109,7 +1109,7 @@ mod tests {
         service.0.process_event(hit(321.0));
 
         let result: Result<Option<f64>, &str> = service.archive_and_reset(
-            |state| (!state.hits.is_empty()).then(|| state.total_damage),
+            |state| (!state.hits.is_empty()).then_some(state.total_damage),
             Ok,
         );
 
