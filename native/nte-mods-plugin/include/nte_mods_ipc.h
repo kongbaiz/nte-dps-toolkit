@@ -10,6 +10,9 @@
 #define NTE_MOD_EVENT_ID_SIZE 32u
 #define NTE_MOD_EVENT_NAME_SIZE 32u
 #define NTE_MOD_EVENT_VALUE_COUNT 3u
+#define NTE_MOD_LOG_HISTORY_SIZE 18u
+#define NTE_MOD_LOG_ID_SIZE 32u
+#define NTE_MOD_LOG_MESSAGE_SIZE 56u
 #define NTE_MODS_IPC_VERSION 7u
 #define NTE_MODS_PIPE_NAME L"\\\\.\\pipe\\nte-mods-plugin-v7"
 #define NTE_MODS_IPC_MAGIC 0x5145544Eu
@@ -49,7 +52,15 @@ typedef enum NteModsIpcOperation
     NTE_MODS_IPC_SET_ITEM_LOCKED = 10,
     NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS = 11,
     NTE_MODS_IPC_QUERY_MOD_EVENTS = 12,
+    NTE_MODS_IPC_QUERY_MOD_LOGS = 13,
 } NteModsIpcOperation;
+
+typedef enum NteModLogLevel
+{
+    NTE_MOD_LOG_INFO = 1,
+    NTE_MOD_LOG_WARNING = 2,
+    NTE_MOD_LOG_ERROR = 3,
+} NteModLogLevel;
 
 typedef struct NteItemNetId
 {
@@ -101,11 +112,22 @@ typedef struct NteModEvent
     uint64_t values[NTE_MOD_EVENT_VALUE_COUNT];
 } NteModEvent;
 
+typedef struct NteModLogEntry
+{
+    uint64_t sequence;
+    uint64_t timestamp_100ns;
+    char mod_id[NTE_MOD_LOG_ID_SIZE];
+    uint32_t level;
+    uint32_t reserved;
+    char message[NTE_MOD_LOG_MESSAGE_SIZE];
+} NteModLogEntry;
+
 typedef union NteModsIpcPayload
 {
     NteCombatClockTransition
         combat_clock_transitions[NTE_COMBAT_CLOCK_HISTORY_SIZE];
     NteModEvent mod_events[NTE_MOD_EVENT_HISTORY_SIZE];
+    NteModLogEntry mod_logs[NTE_MOD_LOG_HISTORY_SIZE];
     uint8_t bytes[
         NTE_COMBAT_CLOCK_HISTORY_SIZE * sizeof(NteCombatClockTransition)];
 } NteModsIpcPayload;
@@ -126,6 +148,7 @@ static_assert(sizeof(NteItemNetId) == 8);
 static_assert(sizeof(NteEquipmentPlacement) == 16);
 static_assert(sizeof(NteCombatClockTransition) == 32);
 static_assert(sizeof(NteModEvent) == 112);
+static_assert(sizeof(NteModLogEntry) == 112);
 static_assert(sizeof(NteModsIpcPayload) == 2048);
 static_assert(sizeof(NteModsIpcRequest) == NTE_MODS_IPC_REQUEST_SIZE);
 static_assert(sizeof(NteModsIpcResponse) == NTE_MODS_IPC_RESPONSE_SIZE);

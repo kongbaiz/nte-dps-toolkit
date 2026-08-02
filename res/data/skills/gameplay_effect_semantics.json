@@ -32,6 +32,15 @@
       "damage_name_zh": "觉醒追加攻击",
       "damage_name_ja": "覚醒追加攻撃"
     },
+    "GE_Player_Nanally_UltraSkill1_Damage": {
+      "owner_character_id": 1010
+    },
+    "GE_Player_Nanally_UltraSkill2_Damage": {
+      "owner_character_id": 1010
+    },
+    "GE_Player_Nanally_UltraSkill3_Damage": {
+      "owner_character_id": 1010
+    },
     "GE_Player_Nanally_ExtraAtk1_Damage": {
       "owner_character_id": 1010,
       "show_parent_ability": false,

@@ -28,21 +28,22 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use crate::engine::model::{
     AbyssEvent, AbyssHalf, CharacterInfo, CombatState, DpsTimeBasis, EmptyCurtainCharacter,
     EmptyCurtainItem, EmptyCurtainPlacement, EngineEvent, Hit, HitCharacterSource,
-    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, PacketDebug, PacketObservation,
-    PartyCombatState, TimeStopEvent,
+    HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, ModScriptEvent,
+    ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState, TimeStopEvent,
 };
 use crate::engine::parser::{
-    AbilityCatalog, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
+    AbilityCatalog, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
     GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH, GameplayEffectSkill,
     ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot, ParsedGameplayEffect,
     SKILL_DAMAGE_DATA_PATH, classify_attack_type, declared_character_ids_from_evidence,
     find_data_file, find_declared_character_evidence, find_final_tower_character_evidence,
-    load_equipment_catalog, load_gameplay_effect_mapping, matches_shifted_bytes_at,
-    normalize_damage_name, parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
-    parse_empty_curtain_character_owners, parse_empty_curtain_compact_module_placements,
-    parse_empty_curtain_equipment_snapshot, parse_empty_curtain_item_additions,
-    parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
-    parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
+    load_enemy_catalog, load_equipment_catalog, load_gameplay_effect_mapping,
+    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
+    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
+    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
+    parse_empty_curtain_item_additions, parse_empty_curtain_item_removals,
+    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
+    valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
     CombatClockTransitionSnapshot, query_combat_clock_transitions, query_mod_events,
@@ -63,6 +64,11 @@ const RAW_CAPTURE_FLUSH_INTERVAL: u64 = 256;
 const NTE_COMBAT_CLOCK_BLOCK_TYPE: u32 = 0x4e54_4543;
 const NTE_COMBAT_CLOCK_BLOCK_MAGIC: &[u8; 8] = b"NTECLK01";
 const NTE_COMBAT_CLOCK_BLOCK_SIZE: usize = 40;
+const NTE_MOD_SCRIPT_BLOCK_TYPE: u32 = 0x4e54_454d;
+const NTE_MOD_SCRIPT_BLOCK_MAGIC: &[u8; 8] = b"NTEMOD01";
+const NTE_MOD_SCRIPT_BLOCK_SIZE: usize = 120;
+const NTE_MOD_SCRIPT_STRING_CAPACITY: usize = 32;
+const NTE_MOD_SCRIPT_VALUE_CAPACITY: usize = 3;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
 const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
@@ -285,6 +291,12 @@ impl EngineEventSink {
     pub fn take_dropped_debug_packets(&self) -> u64 {
         self.dropped_debug_packets.swap(0, Ordering::Relaxed)
     }
+
+    pub fn pending_len(&self) -> usize {
+        self.reliable
+            .len()
+            .saturating_add(self.debug.as_ref().map_or(0, Sender::len))
+    }
 }
 
 impl From<Sender<EngineEvent>> for EngineEventSink {
@@ -337,6 +349,15 @@ impl Drop for CaptureHandle {
 #[derive(Clone)]
 pub struct RawCaptureBuffer {
     inner: Arc<Mutex<RawCaptureData>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RawCaptureSnapshot {
+    pub path: Option<PathBuf>,
+    pub packet_count: u64,
+    pub captured_bytes: u64,
+    pub write_error: bool,
+    pub writing: bool,
 }
 
 struct RawCaptureData {
@@ -402,10 +423,39 @@ impl RawCaptureBuffer {
         }
     }
 
+    fn push_mod_script_event(&self, event: &ModScriptEvent) {
+        if let Ok(mut capture) = self.inner.lock() {
+            let result = capture
+                .writer
+                .as_mut()
+                .map(|writer| writer.write_mod_script_event(event));
+            if let Some(Err(error)) = result {
+                capture.write_error = Some(error);
+                capture.writer = None;
+            }
+        }
+    }
+
     pub fn packet_count(&self) -> usize {
         self.inner
             .lock()
             .map_or(0, |capture| capture.packet_count as usize)
+    }
+
+    pub fn snapshot(&self) -> RawCaptureSnapshot {
+        self.inner.lock().map_or_else(
+            |_| RawCaptureSnapshot {
+                write_error: true,
+                ..RawCaptureSnapshot::default()
+            },
+            |capture| RawCaptureSnapshot {
+                path: capture.path.clone(),
+                packet_count: capture.packet_count,
+                captured_bytes: capture.captured_bytes,
+                write_error: capture.write_error.is_some(),
+                writing: capture.writer.is_some(),
+            },
+        )
     }
 
     pub fn path(&self) -> Option<PathBuf> {
@@ -543,6 +593,15 @@ impl RawCaptureWriter {
             .map_err(|error| error.to_string())
     }
 
+    fn write_mod_script_event(&mut self, event: &ModScriptEvent) -> Result<(), String> {
+        let payload = encode_mod_script_block(event)
+            .ok_or_else(|| "invalid ModScript event for raw capture".to_owned())?;
+        self.writer
+            .write_pcapng_block(UnknownBlock::new(NTE_MOD_SCRIPT_BLOCK_TYPE, 0, &payload))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     fn finish(mut self) -> Result<(u64, u64), String> {
         self.writer
             .get_mut()
@@ -596,6 +655,95 @@ fn decode_combat_clock_block(value: &[u8]) -> Option<CombatClockTransitionSnapsh
         reserved_value,
         state_flags,
     })
+}
+
+fn encode_mod_script_block(event: &ModScriptEvent) -> Option<[u8; NTE_MOD_SCRIPT_BLOCK_SIZE]> {
+    if !valid_mod_script_block_identifier(&event.mod_id)
+        || !valid_mod_script_block_identifier(&event.name)
+        || event.values.len() > NTE_MOD_SCRIPT_VALUE_CAPACITY
+        || event.timestamp_100ns < FILETIME_UNIX_EPOCH_100NS
+    {
+        return None;
+    }
+    let mut payload = [0_u8; NTE_MOD_SCRIPT_BLOCK_SIZE];
+    payload[0..8].copy_from_slice(NTE_MOD_SCRIPT_BLOCK_MAGIC);
+    payload[8..16].copy_from_slice(&event.sequence.to_le_bytes());
+    payload[16..24].copy_from_slice(&event.timestamp_100ns.to_le_bytes());
+    payload[24] = match event.phase {
+        ModScriptEventPhase::Event => 0,
+        ModScriptEventPhase::Preprocess => 1,
+        ModScriptEventPhase::Postprocess => 2,
+    };
+    payload[25] = event.values.len() as u8;
+    payload[26] = event.mod_id.len() as u8;
+    payload[27] = event.name.len() as u8;
+    for (index, value) in event.values.iter().enumerate() {
+        let start = 32 + index * 8;
+        payload[start..start + 8].copy_from_slice(&value.to_le_bytes());
+    }
+    payload[56..56 + event.mod_id.len()].copy_from_slice(event.mod_id.as_bytes());
+    payload[88..88 + event.name.len()].copy_from_slice(event.name.as_bytes());
+    Some(payload)
+}
+
+fn decode_mod_script_block(value: &[u8]) -> Option<ModScriptEvent> {
+    if value.len() != NTE_MOD_SCRIPT_BLOCK_SIZE
+        || &value[0..8] != NTE_MOD_SCRIPT_BLOCK_MAGIC
+        || value[28..32] != [0; 4]
+    {
+        return None;
+    }
+    let phase = match value[24] {
+        0 => ModScriptEventPhase::Event,
+        1 => ModScriptEventPhase::Preprocess,
+        2 => ModScriptEventPhase::Postprocess,
+        _ => return None,
+    };
+    let value_count = usize::from(value[25]);
+    let mod_id_length = usize::from(value[26]);
+    let name_length = usize::from(value[27]);
+    let timestamp_100ns =
+        u64::from_le_bytes(value[16..24].try_into().expect("fixed ModScript timestamp"));
+    if value_count > NTE_MOD_SCRIPT_VALUE_CAPACITY
+        || mod_id_length == 0
+        || mod_id_length >= NTE_MOD_SCRIPT_STRING_CAPACITY
+        || name_length == 0
+        || name_length >= NTE_MOD_SCRIPT_STRING_CAPACITY
+        || timestamp_100ns < FILETIME_UNIX_EPOCH_100NS
+        || value[32 + value_count * 8..56]
+            .iter()
+            .any(|byte| *byte != 0)
+        || value[56 + mod_id_length..88].iter().any(|byte| *byte != 0)
+        || value[88 + name_length..120].iter().any(|byte| *byte != 0)
+    {
+        return None;
+    }
+    let mod_id = std::str::from_utf8(&value[56..56 + mod_id_length]).ok()?;
+    let name = std::str::from_utf8(&value[88..88 + name_length]).ok()?;
+    if !valid_mod_script_block_identifier(mod_id) || !valid_mod_script_block_identifier(name) {
+        return None;
+    }
+    let values = value[32..32 + value_count * 8]
+        .chunks_exact(8)
+        .map(|bytes| u64::from_le_bytes(bytes.try_into().expect("fixed ModScript value")))
+        .collect();
+    Some(ModScriptEvent {
+        sequence: u64::from_le_bytes(value[8..16].try_into().expect("fixed ModScript sequence")),
+        timestamp_100ns,
+        mod_id: mod_id.to_owned(),
+        phase,
+        name: name.to_owned(),
+        values,
+        enemy_identity: None,
+    })
+}
+
+fn valid_mod_script_block_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() < NTE_MOD_SCRIPT_STRING_CAPACITY
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
 }
 
 fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
@@ -653,6 +801,18 @@ fn run_plugin_monitor(
     raw_capture: &RawCaptureBuffer,
     sender: &EngineEventSink,
 ) {
+    let mut resource_warnings = Vec::new();
+    let enemy_catalog = load_resource(
+        ENEMY_CATALOG_PATH,
+        &mut resource_warnings,
+        load_enemy_catalog,
+    );
+    if !resource_warnings.is_empty() {
+        let _ = sender.send(EngineEvent::Warning(format!(
+            "enemy telemetry catalog: {}",
+            resource_warnings.join("; ")
+        )));
+    }
     let mut last_sequence = 0;
     let mut last_mod_event_sequence = 0;
     let mut tracker = GamePauseIntervalTracker::default();
@@ -744,13 +904,25 @@ fn run_plugin_monitor(
                     continue;
                 }
                 last_mod_event_sequence = event.sequence;
-                let event = crate::engine::model::ModScriptEvent::from_bridge(
+                if event.mod_id == "enemy-telemetry"
+                    && event.timestamp_100ns < capture_started_100ns
+                {
+                    continue;
+                }
+                let mut event = crate::engine::model::ModScriptEvent::from_bridge(
                     event.sequence,
                     event.timestamp_100ns,
                     event.mod_id,
                     event.name,
                     event.values,
                 );
+                if event.mod_id == "enemy-telemetry"
+                    && matches!(event.name.as_str(), "enemy.identity" | "enemy.hit_target")
+                    && let [_, config_hash, _] = event.values.as_slice()
+                {
+                    event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
+                }
+                raw_capture.push_mod_script_event(&event);
                 if sender.send(EngineEvent::ModScript(event)).is_err() {
                     return;
                 }
@@ -1740,13 +1912,41 @@ struct InventoryBitPayload {
     bit_len: usize,
 }
 
+struct InventoryFragment {
+    bunch: SingleBunch,
+    packet_order: i64,
+}
+
 #[derive(Default)]
 struct InventoryConnectionState {
     known_channels: HashSet<u16>,
-    fragments: HashMap<(u16, u16), SingleBunch>,
+    fragments: HashMap<(u16, u16), InventoryFragment>,
     fragment_order: VecDeque<(u16, u16)>,
+    latest_packet_order: Option<i64>,
     character_ids: HashMap<HtItemNetId, u32>,
     module_placements: HashMap<HtItemNetId, (String, EmptyCurtainPlacement)>,
+}
+
+fn unwrap_inventory_packet_id(packet_id: u16, reference: Option<i64>) -> i64 {
+    const PACKET_ID_BITS: u32 = 14;
+    const PACKET_ID_MODULUS: i64 = 1 << PACKET_ID_BITS;
+    const PACKET_ID_HALF_RANGE: i64 = PACKET_ID_MODULUS / 2;
+    const PACKET_ID_MASK: u16 = (1 << PACKET_ID_BITS) - 1;
+
+    // UE transport packet IDs wrap at 14 bits. Keep a connection-local unwrapped order so
+    // out-of-order delivery remains distinguishable from a later reuse of a bunch sequence.
+    let raw = i64::from(packet_id & PACKET_ID_MASK);
+    let Some(reference) = reference else {
+        return raw;
+    };
+    let base = reference - reference.rem_euclid(PACKET_ID_MODULUS);
+    let mut unwrapped = base + raw;
+    if unwrapped - reference > PACKET_ID_HALF_RANGE {
+        unwrapped -= PACKET_ID_MODULUS;
+    } else if reference - unwrapped > PACKET_ID_HALF_RANGE {
+        unwrapped += PACKET_ID_MODULUS;
+    }
+    unwrapped
 }
 
 impl InventoryConnectionState {
@@ -1756,23 +1956,39 @@ impl InventoryConnectionState {
             .any(|(net_id, character_id)| other.character_ids.get(net_id) == Some(character_id))
     }
 
-    fn push_bunches(&mut self, bunches: Vec<SingleBunch>) -> Vec<InventoryBitPayload> {
-        let mut added = false;
+    fn push_bunches(
+        &mut self,
+        packet_id: u16,
+        bunches: Vec<SingleBunch>,
+    ) -> Vec<InventoryBitPayload> {
+        let packet_order = unwrap_inventory_packet_id(packet_id, self.latest_packet_order);
+        if self
+            .latest_packet_order
+            .is_none_or(|latest| packet_order > latest)
+        {
+            self.latest_packet_order = Some(packet_order);
+        }
+        let mut completed = Vec::new();
         for bunch in bunches {
             let channel = reliable_bunch_channel(bunch.prefix);
             self.known_channels.insert(channel);
             let key = (channel, bunch.sequence);
-            if self.fragments.get(&key) == Some(&bunch) {
-                continue;
+            if let Some(stored) = self.fragments.get_mut(&key) {
+                if stored.bunch == bunch {
+                    let packet_order_changed = packet_order > stored.packet_order;
+                    if packet_order_changed {
+                        stored.packet_order = packet_order;
+                    }
+                    if packet_order_changed {
+                        completed.extend(self.take_completed_streams());
+                    }
+                    continue;
+                }
+                if packet_order <= stored.packet_order {
+                    continue;
+                }
             }
-            if matches!(bunch.partial_flags, 0x09 | 0x0d) {
-                // A partial start begins a new generation on its channel. Older unmatched
-                // continuations must not complete the new stream before its real tail arrives.
-                self.fragments
-                    .retain(|(stored_channel, _), _| *stored_channel != channel);
-                self.fragment_order
-                    .retain(|(stored_channel, _)| *stored_channel != channel);
-            } else if self.fragments.contains_key(&key) {
+            if self.fragments.contains_key(&key) {
                 self.fragment_order.retain(|stored| *stored != key);
             }
             while self.fragments.len() >= MAX_INVENTORY_FRAGMENTS_PER_CONNECTION {
@@ -1782,27 +1998,32 @@ impl InventoryConnectionState {
                 self.fragments.remove(&oldest);
             }
             self.fragment_order.push_back(key);
-            self.fragments.insert(key, bunch);
-            added = true;
+            self.fragments.insert(
+                key,
+                InventoryFragment {
+                    bunch,
+                    packet_order,
+                },
+            );
+            completed.extend(self.take_completed_streams());
         }
-        if !added {
-            return Vec::new();
-        }
-        self.take_completed_streams()
+        completed
     }
 
     fn take_completed_streams(&mut self) -> Vec<InventoryBitPayload> {
         let mut starts = self
             .fragments
             .iter()
-            .filter_map(|(key, bunch)| matches!(bunch.partial_flags, 0x09 | 0x0d).then_some(*key))
+            .filter_map(|(key, fragment)| {
+                matches!(fragment.bunch.partial_flags, 0x09 | 0x0d).then_some(*key)
+            })
             .collect::<Vec<_>>();
         starts.sort_unstable();
 
         let mut completed = Vec::new();
         let mut consumed = HashSet::new();
         for start @ (channel, initial_sequence) in starts {
-            let Some(initial) = self.fragments.get(&start) else {
+            let Some(initial) = self.fragments.get(&start).map(|fragment| &fragment.bunch) else {
                 continue;
             };
             if initial.partial_flags == 0x0d {
@@ -1819,11 +2040,20 @@ impl InventoryConnectionState {
             let mut sequence = initial_sequence;
             let mut is_complete = false;
             let mut chain_keys = Vec::new();
+            let mut previous_packet_order = None;
             for index in 0..1024 {
                 let key = (channel, sequence);
-                let Some(fragment) = self.fragments.get(&key) else {
+                let Some(stored) = self.fragments.get(&key) else {
                     break;
                 };
+                // Bunches may arrive out of order, but their original transport packet order must
+                // still move forward across one reconstructed stream. This keeps recent future
+                // fragments while preventing stale fragments from an older generation joining it.
+                if previous_packet_order.is_some_and(|previous| previous > stored.packet_order) {
+                    break;
+                }
+                previous_packet_order = Some(stored.packet_order);
+                let fragment = &stored.bunch;
                 let valid_flag = if index == 0 {
                     fragment.partial_flags == 0x09
                 } else {
@@ -2153,7 +2383,7 @@ impl EmptyCurtainDecoder {
             let known_channels = state.known_channels.iter().copied().collect::<Vec<_>>();
             let bunches = parse_inventory_bunches(packet, &known_channels);
             let recognized = !bunches.is_empty();
-            (state.push_bunches(bunches), recognized)
+            (state.push_bunches(packet.packet_id, bunches), recognized)
         };
 
         let mut items_changed = false;
@@ -2753,12 +2983,19 @@ impl PacketDecoder {
         {
             return None;
         }
-        let source_index = self.recent_confirmed_hits.iter().rev().position(|hit| {
-            !hit.direction.is_incoming()
-                && hit.target_max_hp > 0.0
-                && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
-        })?;
-        let source_index = self.recent_confirmed_hits.len() - 1 - source_index;
+        let mut candidates = self
+            .recent_confirmed_hits
+            .iter()
+            .enumerate()
+            .filter(|(_, hit)| {
+                !hit.direction.is_incoming()
+                    && hit.target_max_hp > 0.0
+                    && hit.target_hp_after - current_hp >= MIN_FOLLOW_UP_RESIDUAL_DAMAGE
+            });
+        let (source_index, _) = candidates.next()?;
+        if candidates.next().is_some() {
+            return None;
+        }
         let source = self.recent_confirmed_hits[source_index].clone();
         self.recent_confirmed_hits[source_index].target_hp_after = current_hp;
         self.recent_confirmed_hits[source_index].target_hp_percent = if source.target_max_hp > 0.0 {
@@ -2985,12 +3222,15 @@ fn damage_record_source_character(hit: &Hit, evidence: &[(u32, u8, usize)]) -> O
     (before == after).then_some(before)
 }
 
-fn reattribute_creation_flower_from_damage_record(
+/// Uses the two character anchors that bracket a damage record to recover its
+/// exact outgoing owner. This record-local evidence is stronger than a
+/// packet-wide bit alignment or the connection's last single-character owner.
+fn reattribute_hit_from_damage_record_owner(
     hit: &mut Hit,
     evidence: &[(u32, u8, usize)],
     characters: &HashMap<u32, CharacterInfo>,
 ) {
-    if hit.direction.is_incoming() || hit.attack_type.as_deref() != Some("创生花") {
+    if !hit.direction.is_outgoing() {
         return;
     }
     let Some(character_id) = damage_record_source_character(hit, evidence) else {
@@ -3381,9 +3621,9 @@ impl PacketDecoder {
                 previous_hit_bit_offset,
             );
             previous_hit_bit_offset = Some(hit_bit_offset);
+            reattribute_hit_from_damage_record_owner(hit, &evidence, characters);
             reattribute_hit_from_gameplay_effect_semantics(hit, &self.ability_catalog, characters);
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
-            reattribute_creation_flower_from_damage_record(hit, &evidence, characters);
             if hit
                 .attack_type
                 .as_deref()
@@ -3950,8 +4190,20 @@ pub fn import_pcapng(
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
             let mut game_pause = GamePauseIntervalTracker::default();
+            let mut resource_warnings = Vec::new();
+            let enemy_catalog = load_resource(
+                ENEMY_CATALOG_PATH,
+                &mut resource_warnings,
+                load_enemy_catalog,
+            );
             if let Some(warning) = decoder.resource_warning() {
                 let _ = sender.send(EngineEvent::Warning(warning));
+            }
+            if !resource_warnings.is_empty() {
+                let _ = sender.send(EngineEvent::Warning(format!(
+                    "enemy telemetry catalog: {}",
+                    resource_warnings.join("; ")
+                )));
             }
             let mut packet_count = 0;
             let mut supported_count = 0;
@@ -3971,6 +4223,23 @@ pub fn import_pcapng(
                                 game_pause.apply_transition(timestamp, transition.pause_type_mask)
                         {
                             send_game_pause_transition(&sender, event)
+                                .map_err(|error| error.to_string())?;
+                        }
+                        continue;
+                    }
+                    Block::Unknown(block) if block.type_ == NTE_MOD_SCRIPT_BLOCK_TYPE => {
+                        if let Some(mut event) = decode_mod_script_block(block.value.as_ref()) {
+                            if event.mod_id == "enemy-telemetry"
+                                && matches!(
+                                    event.name.as_str(),
+                                    "enemy.identity" | "enemy.hit_target"
+                                )
+                                && let [_, config_hash, _] = event.values.as_slice()
+                            {
+                                event.enemy_identity = enemy_catalog.get(*config_hash).cloned();
+                            }
+                            sender
+                                .send(EngineEvent::ModScript(event))
                                 .map_err(|error| error.to_string())?;
                         }
                         continue;
@@ -4285,6 +4554,12 @@ struct ExportHit {
     #[serde(default)]
     target_name: Option<String>,
     #[serde(default)]
+    target_name_en: Option<String>,
+    #[serde(default)]
+    target_name_ja: Option<String>,
+    #[serde(default)]
+    target_monster_id: Option<String>,
+    #[serde(default)]
     target_context: Vec<String>,
     #[serde(default)]
     gameplay_effect_index: Option<u32>,
@@ -4408,6 +4683,9 @@ impl From<&Hit> for ExportHit {
             target_hp_percent: hit.target_hp_percent,
             target_id: hit.target_id.clone(),
             target_name: hit.target_name.clone(),
+            target_name_en: hit.target_name_en.clone(),
+            target_name_ja: hit.target_name_ja.clone(),
+            target_monster_id: hit.target_monster_id.clone(),
             target_context: hit.target_context.clone(),
             gameplay_effect_index: hit.gameplay_effect_index,
             gameplay_effect_name: hit.gameplay_effect_name.clone(),
@@ -4788,6 +5066,9 @@ fn export_hit_event(hit: ExportHit) -> EngineEvent {
         target_hp_percent: hit.target_hp_percent,
         target_id: hit.target_id,
         target_name: hit.target_name,
+        target_name_en: hit.target_name_en,
+        target_name_ja: hit.target_name_ja,
+        target_monster_id: hit.target_monster_id,
         target_context: hit.target_context,
         gameplay_effect_index: hit.gameplay_effect_index,
         gameplay_effect_name: hit.gameplay_effect_name,
@@ -4857,6 +5138,7 @@ fn parse_export_ids(value: &serde_json::Value) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crossbeam_channel::unbounded;
 
     use crate::engine::parser::{
@@ -4922,6 +5204,101 @@ mod tests {
         let mut invalid_flags = payload;
         invalid_flags[32..36].copy_from_slice(&2_u32.to_le_bytes());
         assert!(decode_combat_clock_block(&invalid_flags).is_none());
+    }
+
+    #[test]
+    fn mod_script_block_round_trips_bounded_event_data() {
+        let event = ModScriptEvent {
+            sequence: 17,
+            timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 42 * FILETIME_TICKS_PER_SECOND,
+            mod_id: "enemy-telemetry".to_owned(),
+            phase: ModScriptEventPhase::Postprocess,
+            name: "enemy.hit_target".to_owned(),
+            values: vec![0x1234, 0x4d88_7b49_05d5_dbaf, 80],
+            enemy_identity: None,
+        };
+        let payload =
+            encode_mod_script_block(&event).expect("bounded ModScript event should encode");
+
+        assert_eq!(decode_mod_script_block(&payload), Some(event));
+        assert!(decode_mod_script_block(&payload[..119]).is_none());
+
+        let mut invalid_phase = payload;
+        invalid_phase[24] = 3;
+        assert!(decode_mod_script_block(&invalid_phase).is_none());
+
+        let mut invalid_timestamp = payload;
+        invalid_timestamp[16..24].copy_from_slice(&(FILETIME_UNIX_EPOCH_100NS - 1).to_le_bytes());
+        assert!(decode_mod_script_block(&invalid_timestamp).is_none());
+
+        let mut invalid_padding = payload;
+        invalid_padding[119] = 1;
+        assert!(decode_mod_script_block(&invalid_padding).is_none());
+    }
+
+    #[test]
+    fn pcapng_import_restores_mod_script_enemy_identity() {
+        let path = std::env::temp_dir().join(format!(
+            "nte-mod-script-replay-{}-{}.pcapng",
+            std::process::id(),
+            Local::now()
+                .timestamp_nanos_opt()
+                .expect("current local time must fit in nanoseconds")
+        ));
+        let event = ModScriptEvent {
+            sequence: 23,
+            timestamp_100ns: FILETIME_UNIX_EPOCH_100NS + 84 * FILETIME_TICKS_PER_SECOND,
+            mod_id: "enemy-telemetry".to_owned(),
+            phase: ModScriptEventPhase::Postprocess,
+            name: "enemy.hit_target".to_owned(),
+            values: vec![0x5678, 0x4d88_7b49_05d5_dbaf, 0],
+            enemy_identity: None,
+        };
+        let payload = encode_mod_script_block(&event).expect("ModScript event should encode");
+        let file = File::create(&path).expect("pcapng fixture should be created");
+        let mut writer =
+            PcapNgWriter::new(BufWriter::new(file)).expect("pcapng writer should initialize");
+        writer
+            .write_pcapng_block(UnknownBlock::new(NTE_MOD_SCRIPT_BLOCK_TYPE, 0, &payload))
+            .expect("ModScript block should be written");
+        writer
+            .get_mut()
+            .flush()
+            .expect("pcapng fixture should flush");
+        drop(writer);
+
+        let (sender, receiver) = unbounded();
+        let handle = import_pcapng(
+            path.clone(),
+            CaptureResources {
+                characters: Arc::new(HashMap::new()),
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
+            None,
+            true,
+            true,
+            sender,
+            Arc::new(AtomicBool::new(false)),
+        );
+        handle.join().expect("pcapng import thread should finish");
+        std::fs::remove_file(path).expect("pcapng fixture should be removable");
+
+        let restored = receiver
+            .try_iter()
+            .find_map(|event| match event {
+                EngineEvent::ModScript(event) => Some(event),
+                _ => None,
+            })
+            .expect("pcapng import should restore the ModScript event");
+        assert_eq!(restored.sequence, 23);
+        assert_eq!(restored.name, "enemy.hit_target");
+        assert_eq!(
+            restored
+                .enemy_identity
+                .as_ref()
+                .map(|identity| identity.name_zh.as_str()),
+            Some("随心泥")
+        );
     }
 
     #[test]
@@ -5444,18 +5821,24 @@ mod tests {
         let mut state = InventoryConnectionState::default();
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch(1023, 0x09, 0xa1),
-                    inventory_bunch(1, 0x0c, 0xa3),
-                ])
+                .push_bunches(
+                    100,
+                    vec![
+                        inventory_bunch(1023, 0x09, 0xa1),
+                        inventory_bunch(1, 0x0c, 0xa3),
+                    ]
+                )
                 .is_empty()
         );
 
-        let completed = state.push_bunches(vec![
-            inventory_bunch(1023, 0x09, 0xb1),
-            inventory_bunch(0, 0x08, 0xb2),
-            inventory_bunch(1, 0x0c, 0xb3),
-        ]);
+        let completed = state.push_bunches(
+            200,
+            vec![
+                inventory_bunch(1023, 0x09, 0xb1),
+                inventory_bunch(0, 0x08, 0xb2),
+                inventory_bunch(1, 0x0c, 0xb3),
+            ],
+        );
 
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3]);
@@ -5467,25 +5850,34 @@ mod tests {
         let mut state = InventoryConnectionState::default();
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch(12, 0x08, 0xa3),
-                    inventory_bunch(13, 0x0c, 0xa4),
-                ])
+                .push_bunches(
+                    100,
+                    vec![
+                        inventory_bunch(12, 0x08, 0xa3),
+                        inventory_bunch(13, 0x0c, 0xa4),
+                    ]
+                )
                 .is_empty()
         );
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch(10, 0x09, 0xb1),
-                    inventory_bunch(11, 0x08, 0xb2),
-                ])
+                .push_bunches(
+                    200,
+                    vec![
+                        inventory_bunch(10, 0x09, 0xb1),
+                        inventory_bunch(11, 0x08, 0xb2),
+                    ]
+                )
                 .is_empty()
         );
 
-        let completed = state.push_bunches(vec![
-            inventory_bunch(12, 0x08, 0xb3),
-            inventory_bunch(13, 0x0c, 0xb4),
-        ]);
+        let completed = state.push_bunches(
+            201,
+            vec![
+                inventory_bunch(12, 0x08, 0xb3),
+                inventory_bunch(13, 0x0c, 0xb4),
+            ],
+        );
 
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].data, vec![0xb1, 0xb2, 0xb3, 0xb4]);
@@ -5493,24 +5885,130 @@ mod tests {
     }
 
     #[test]
+    fn inventory_reassembly_retries_after_a_fragment_is_retransmitted_in_a_newer_packet() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(100, vec![inventory_bunch(12, 0x0c, 0xa3)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(
+                    200,
+                    vec![
+                        inventory_bunch(10, 0x09, 0xa1),
+                        inventory_bunch(11, 0x08, 0xa2),
+                    ],
+                )
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(201, vec![inventory_bunch(12, 0x0c, 0xa3)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3]);
+        assert_eq!(completed[0].bit_len, 24);
+    }
+
+    #[test]
+    fn inventory_reassembly_keeps_logically_newer_fragments_that_arrive_before_their_start() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(1_867, vec![inventory_bunch(810, 0x08, 0xa2)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(1_868, vec![inventory_bunch(811, 0x08, 0xa3)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(1_866, vec![inventory_bunch(809, 0x09, 0xa1)])
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(1_869, vec![inventory_bunch(812, 0x0c, 0xa4)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
+        assert_eq!(completed[0].bit_len, 32);
+    }
+
+    #[test]
+    fn inventory_reassembly_accepts_transport_packet_id_wrap() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches((1 << 14) - 1, vec![inventory_bunch(100, 0x09, 0xa1)],)
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(0, vec![inventory_bunch(101, 0x0c, 0xa2)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2]);
+        assert_eq!(completed[0].bit_len, 16);
+    }
+
+    #[test]
+    fn inventory_reassembly_finishes_a_stream_before_the_next_start_in_the_same_packet() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(
+                    1_912,
+                    vec![
+                        inventory_bunch(821, 0x09, 0xa1),
+                        inventory_bunch(822, 0x08, 0xa2),
+                        inventory_bunch(823, 0x08, 0xa3),
+                    ],
+                )
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(
+            1_915,
+            vec![
+                inventory_bunch(824, 0x0c, 0xa4),
+                inventory_bunch(825, 0x09, 0xb1),
+            ],
+        );
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
+        assert_eq!(completed[0].bit_len, 32);
+        assert!(
+            state
+                .fragments
+                .contains_key(&(reliable_bunch_channel(7), 825))
+        );
+    }
+
+    #[test]
     fn inventory_reassembly_uses_channel_index_across_prefix_flag_changes() {
         let mut state = InventoryConnectionState::default();
         assert!(
             state
-                .push_bunches(vec![inventory_bunch_on(5146, 483, 0x09, 0xa1)])
+                .push_bunches(100, vec![inventory_bunch_on(5146, 483, 0x09, 0xa1)],)
                 .is_empty()
         );
         assert!(
             state
-                .push_bunches(vec![
-                    inventory_bunch_on(4122, 484, 0x08, 0xa2),
-                    inventory_bunch_on(4122, 485, 0x08, 0xa3),
-                    inventory_bunch_on(4122, 486, 0x08, 0xa4),
-                ])
+                .push_bunches(
+                    101,
+                    vec![
+                        inventory_bunch_on(4122, 484, 0x08, 0xa2),
+                        inventory_bunch_on(4122, 485, 0x08, 0xa3),
+                        inventory_bunch_on(4122, 486, 0x08, 0xa4),
+                    ],
+                )
                 .is_empty()
         );
 
-        let completed = state.push_bunches(vec![inventory_bunch_on(4122, 487, 0x0c, 0xa5)]);
+        let completed = state.push_bunches(102, vec![inventory_bunch_on(4122, 487, 0x0c, 0xa5)]);
 
         assert_eq!(state.known_channels, HashSet::from([26]));
         assert_eq!(completed.len(), 1);
@@ -6605,6 +7103,9 @@ mod tests {
                     "target_hp_percent":87.655,
                     "target_id":"TARGET",
                     "target_name":"Target Name",
+                    "target_name_en":"Target Name EN",
+                    "target_name_ja":"ターゲット名",
+                    "target_monster_id":"Boss_16",
                     "target_context":["context-a","context-b"],
                     "gameplay_effect_index":77,
                     "gameplay_effect_name":"GE_Test_Damage",
@@ -6648,6 +7149,9 @@ mod tests {
         assert_eq!(hit.target_hp_percent, 87.655);
         assert_eq!(hit.target_id.as_deref(), Some("TARGET"));
         assert_eq!(hit.target_name.as_deref(), Some("Target Name"));
+        assert_eq!(hit.target_name_en.as_deref(), Some("Target Name EN"));
+        assert_eq!(hit.target_name_ja.as_deref(), Some("ターゲット名"));
+        assert_eq!(hit.target_monster_id.as_deref(), Some("Boss_16"));
         assert_eq!(hit.target_context, ["context-a", "context-b"]);
         assert_eq!(hit.gameplay_effect_index, Some(77));
         assert_eq!(hit.gameplay_effect_name.as_deref(), Some("GE_Test_Damage"));
@@ -6895,7 +7399,7 @@ mod tests {
         nanally_pair_flower.bit_shift = 6;
         let nanally_pair_evidence = [(1051, 5, 157), (1051, 2, 368), (1010, 7, 640)];
 
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut nanally_pair_flower,
             &nanally_pair_evidence,
             &characters,
@@ -6911,7 +7415,7 @@ mod tests {
         kuhara_pair_flower.bit_shift = 5;
         let kuhara_pair_evidence = [(1051, 4, 148), (1051, 1, 359), (1055, 5, 529)];
 
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut kuhara_pair_flower,
             &kuhara_pair_evidence,
             &characters,
@@ -6925,7 +7429,7 @@ mod tests {
     }
 
     #[test]
-    fn creation_flower_requires_matching_record_owner_on_both_sides() {
+    fn damage_record_owner_requires_matching_anchors_and_outgoing_hit() {
         let characters = HashMap::from([
             (1010, character_with_attribute("娜娜莉", "灵")),
             (1051, character_with_attribute("「零」", "光")),
@@ -6940,11 +7444,11 @@ mod tests {
         flower.byte_offset = 253;
         flower.bit_shift = 6;
 
-        reattribute_creation_flower_from_damage_record(&mut flower, &[(1051, 5, 157)], &characters);
+        reattribute_hit_from_damage_record_owner(&mut flower, &[(1051, 5, 157)], &characters);
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
 
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut flower,
             &[(1051, 5, 157), (1055, 2, 368)],
             &characters,
@@ -6952,14 +7456,75 @@ mod tests {
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
 
+        flower.direction = HitDirection::Incoming;
         flower.attack_type = Some("Passive Damage".to_owned());
-        reattribute_creation_flower_from_damage_record(
+        reattribute_hit_from_damage_record_owner(
             &mut flower,
             &[(1051, 5, 157), (1051, 2, 368)],
             &characters,
         );
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
+    }
+
+    #[test]
+    fn damage_record_owner_separates_mixed_oneiroi_and_nanally_hits() {
+        let characters = HashMap::from([
+            (1010, character_with_attribute("娜娜莉", "灵")),
+            (1075, character_with_attribute("伊洛伊", "灵")),
+        ]);
+        let evidence = [
+            (1075, 4, 148),
+            (1075, 1, 359),
+            (1010, 6, 642),
+            (1010, 3, 853),
+        ];
+        let mut oneiroi = targetless_hit();
+        oneiroi.char_id = 1010;
+        oneiroi.char_name = "娜娜莉".to_owned();
+        oneiroi.char_source = HitCharacterSource::Session;
+        oneiroi.direction = HitDirection::Outgoing;
+        oneiroi.byte_offset = 244;
+        oneiroi.bit_shift = 5;
+        let mut nanally = targetless_hit();
+        nanally.char_id = 1010;
+        nanally.char_name = "娜娜莉".to_owned();
+        nanally.char_source = HitCharacterSource::Session;
+        nanally.direction = HitDirection::Outgoing;
+        nanally.byte_offset = 738;
+        nanally.bit_shift = 7;
+
+        reattribute_hit_from_damage_record_owner(&mut oneiroi, &evidence, &characters);
+        reattribute_hit_from_damage_record_owner(&mut nanally, &evidence, &characters);
+
+        assert_eq!(oneiroi.char_id, 1075);
+        assert_eq!(oneiroi.char_name, "伊洛伊");
+        assert_eq!(oneiroi.char_source, HitCharacterSource::Packet);
+        assert_eq!(nanally.char_id, 1010);
+        assert_eq!(nanally.char_name, "娜娜莉");
+        assert_eq!(nanally.char_source, HitCharacterSource::Packet);
+    }
+
+    #[test]
+    fn damage_record_owner_overrides_unrelated_same_shift_packet_id() {
+        let characters = HashMap::from([
+            (1055, character_with_attribute("九原", "灵")),
+            (1075, character_with_attribute("伊洛伊", "灵")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1075;
+        hit.char_name = "伊洛伊".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
+        hit.direction = HitDirection::Outgoing;
+        hit.byte_offset = 244;
+        hit.bit_shift = 5;
+        let evidence = [(1055, 4, 148), (1055, 1, 359), (1075, 5, 650)];
+
+        reattribute_hit_from_damage_record_owner(&mut hit, &evidence, &characters);
+
+        assert_eq!(hit.char_id, 1055);
+        assert_eq!(hit.char_name, "九原");
+        assert_eq!(hit.char_source, HitCharacterSource::Packet);
     }
 
     #[test]
@@ -7633,6 +8198,36 @@ mod tests {
     }
 
     #[test]
+    fn exact_gameplay_effect_owner_overrides_regular_packet_id() {
+        let characters = HashMap::from([
+            (1010, character_with_attribute("娜娜莉", "咒")),
+            (1051, character_with_attribute("零(女)", "光")),
+        ]);
+        let catalog = AbilityCatalog::from(HashMap::from([(
+            "GE_Player_Nanally_UltraSkill3_Damage".to_owned(),
+            GameplayEffectSkill {
+                damage_source_category: Some("Q".to_owned()),
+                ability_name: Some("GA_Nanally_UltraSkill".to_owned()),
+                attack_type: "Q技能".to_owned(),
+                damage_component: None,
+                owner_character_id: Some(1010),
+            },
+        )]));
+        let mut hit = targetless_hit();
+        hit.char_id = 1051;
+        hit.char_name = "零(女)".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
+        hit.direction = HitDirection::Outgoing;
+        hit.gameplay_effect_name = Some("GE_Player_Nanally_UltraSkill3_Damage".to_owned());
+
+        reattribute_hit_from_gameplay_effect_semantics(&mut hit, &catalog, &characters);
+
+        assert_eq!(hit.char_id, 1010);
+        assert_eq!(hit.char_name, "娜娜莉");
+        assert_eq!(hit.char_source, HitCharacterSource::GameplayEffect);
+    }
+
+    #[test]
     fn numeric_ability_owner_overrides_session_id() {
         let characters = HashMap::from([
             (1019, character_with_attribute("薄荷", "灵")),
@@ -8137,6 +8732,9 @@ mod tests {
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,
@@ -8611,6 +9209,93 @@ mod tests {
     }
 
     #[test]
+    fn boss_hp_sync_damage_does_not_guess_between_multiple_recent_hits() {
+        let mut decoder = PacketDecoder::default();
+        let characters = duplicate_test_characters();
+        let mut first = duplicate_test_hit(10.0, HitCharacterSource::Packet, "outgoing");
+        first.damage = 726.0;
+        first.target_hp_before = 7_060.0;
+        first.target_hp_after = 6_334.0;
+        first.gameplay_effect_index = Some(1_001);
+        let mut second = duplicate_test_hit(10.02, HitCharacterSource::Packet, "outgoing");
+        second.damage = 1_196.0;
+        second.target_hp_before = 6_334.0;
+        second.target_hp_after = 5_138.0;
+        second.gameplay_effect_index = Some(1_002);
+
+        let prepared =
+            decoder.prepare_hits_for_emission(vec![first, second], &[1051], false, &characters);
+        assert_eq!(prepared.emit.len(), 2);
+
+        assert!(
+            decoder
+                .infer_boss_hp_sync_damage(10.04, 0.0, &characters)
+                .is_none()
+        );
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE to a local large or concatenated pcapng path"]
+    fn stress_large_pcapng_import_with_bounded_event_lanes() {
+        let path =
+            PathBuf::from(std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set"));
+        let characters = Arc::new(
+            load_characters(Path::new(CHARACTER_DATA_PATH))
+                .expect("character resource table should load"),
+        );
+        let mut ability_catalog = AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))
+            .expect("skill table should load");
+        ability_catalog
+            .apply_semantics(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))
+            .expect("effect semantics should load");
+        let (reliable_sender, reliable_receiver) = bounded(16_384);
+        let (debug_sender, debug_receiver) = bounded(2_048);
+        let sink = EngineEventSink::split(reliable_sender, debug_sender);
+        let dropped_debug_probe = sink.clone();
+        let handle = import_pcapng(
+            path,
+            CaptureResources {
+                characters,
+                ability_catalog: Arc::new(ability_catalog),
+            },
+            None,
+            true,
+            false,
+            sink,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let mut semantic_events = 0;
+        let mut debug_packets = 0;
+        let mut capture_stopped = false;
+        let mut errors = Vec::new();
+        while !handle.is_finished() || !reliable_receiver.is_empty() || !debug_receiver.is_empty() {
+            while let Ok(event) = reliable_receiver.try_recv() {
+                semantic_events += 1;
+                match event {
+                    EngineEvent::CaptureStopped => capture_stopped = true,
+                    EngineEvent::Error(error) => errors.push(error),
+                    _ => {}
+                }
+            }
+            while debug_receiver.try_recv().is_ok() {
+                debug_packets += 1;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        handle.join().expect("pcapng import thread should finish");
+
+        assert!(capture_stopped);
+        assert!(errors.is_empty(), "{errors:#?}");
+        assert!(semantic_events > 1);
+        assert!(debug_packets > 0);
+        println!(
+            "large pcapng import completed: semantic_events={semantic_events}, debug_packets={debug_packets}, dropped_debug_packets={}",
+            dropped_debug_probe.take_dropped_debug_packets()
+        );
+    }
+
+    #[test]
     fn nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit() {
         let mut decoder = PacketDecoder::default();
         let characters = duplicate_test_characters();
@@ -8703,6 +9388,134 @@ mod tests {
             Some("GE_Test_Skill1_Damage")
         );
         assert_eq!(hit.damage_name, None);
+    }
+
+    #[test]
+    #[ignore = "set NTE_TEST_CAPTURE to a local pcapng path for target-instance diagnostics"]
+    fn diagnose_capture_enemy_instance_resolution() {
+        let path = std::env::var("NTE_TEST_CAPTURE").expect("NTE_TEST_CAPTURE must be set");
+        let characters = Arc::new(
+            load_characters(Path::new(CHARACTER_DATA_PATH))
+                .expect("character resource table should load"),
+        );
+        let (sender, receiver) = unbounded();
+        let sender = EngineEventSink::reliable(sender);
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = import_pcapng(
+            PathBuf::from(&path),
+            CaptureResources {
+                characters,
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
+            None,
+            true,
+            true,
+            sender,
+            stop,
+        );
+        handle.join().expect("pcapng import thread should finish");
+
+        let mut state = CombatState::default();
+        let mut identity_events = 0;
+        let mut hit_target_events = 0;
+        let mut enemy_events = Vec::new();
+        for event in receiver.try_iter() {
+            if let EngineEvent::ModScript(script) = &event
+                && script.mod_id == "enemy-telemetry"
+            {
+                enemy_events.push((
+                    filetime_100ns_to_unix_seconds(script.timestamp_100ns)
+                        .expect("enemy event timestamp should be valid"),
+                    script.name.clone(),
+                    script.values.clone(),
+                ));
+                match script.name.as_str() {
+                    "enemy.identity" => identity_events += 1,
+                    "enemy.hit_target" => hit_target_events += 1,
+                    _ => {}
+                }
+            }
+            crate::core::reducer::apply_engine_event(&mut state, event);
+        }
+
+        let outgoing = state
+            .hits
+            .iter()
+            .filter(|hit| hit.direction.is_outgoing())
+            .collect::<Vec<_>>();
+        let unidentified = outgoing
+            .iter()
+            .filter(|hit| hit.target_name.is_none())
+            .collect::<Vec<_>>();
+        println!(
+            "{}: {identity_events} identity events, {hit_target_events} hit-target events, {}/{} outgoing hits unidentified",
+            path,
+            unidentified.len(),
+            outgoing.len()
+        );
+        let identity_instances = enemy_events
+            .iter()
+            .filter(|(_, name, values)| name == "enemy.identity" && values.len() == 3)
+            .map(|(_, _, values)| values[0])
+            .collect::<HashSet<_>>();
+        let projected_instances = outgoing
+            .iter()
+            .flat_map(|hit| hit.target_context.iter())
+            .filter_map(|context| context.strip_prefix("enemy_target_instance="))
+            .collect::<HashSet<_>>();
+        let mut simultaneous = HashMap::<u64, Vec<&Hit>>::new();
+        for hit in &outgoing {
+            simultaneous
+                .entry(hit.timestamp.to_bits())
+                .or_default()
+                .push(hit);
+        }
+        let simultaneous_groups = simultaneous.values().filter(|hits| hits.len() > 1).count();
+        println!(
+            "  unique identity instances={} projected instances={} simultaneous hit groups={simultaneous_groups}",
+            identity_instances.len(),
+            projected_instances.len()
+        );
+        for hits in simultaneous.values().filter(|hits| hits.len() > 1).take(8) {
+            println!(
+                "  simultaneous t={:.6} hits={}",
+                hits[0].timestamp,
+                hits.len()
+            );
+            for hit in hits {
+                println!(
+                    "    char={} damage={:.1} hp={:.1}->{:.1} target={:?}",
+                    hit.char_name,
+                    hit.total_damage(),
+                    hit.target_hp_before,
+                    hit.target_hp_after,
+                    hit.target_context
+                        .iter()
+                        .find(|context| context.starts_with("enemy_target_instance="))
+                );
+            }
+        }
+        for hit in unidentified {
+            println!(
+                "t={:.3} char={} damage={:.1} max_hp={:.1}",
+                hit.timestamp,
+                hit.char_name,
+                hit.total_damage(),
+                hit.target_max_hp
+            );
+            let mut nearby = enemy_events.iter().collect::<Vec<_>>();
+            nearby.sort_by(|left, right| {
+                (left.0 - hit.timestamp)
+                    .abs()
+                    .total_cmp(&(right.0 - hit.timestamp).abs())
+            });
+            for (timestamp, name, values) in nearby.into_iter().take(6) {
+                println!(
+                    "  enemy_event delta={:+.6} t={timestamp:.6} name={name} values={values:?}",
+                    timestamp - hit.timestamp
+                );
+            }
+        }
     }
 
     #[test]

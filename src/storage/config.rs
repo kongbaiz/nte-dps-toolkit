@@ -738,6 +738,18 @@ pub struct UiConfig {
     #[serde(default)]
     pub auto_download_updates: bool,
     pub always_on_top: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_dps_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abyss_values_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_details_always_on_top: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_details_always_on_top: Option<bool>,
     /// Show notifications in the global "dynamic island" capsule floating
     /// above every window (its own overlay viewport). Off falls back to the
     /// legacy in-window corner toasts.
@@ -746,6 +758,8 @@ pub struct UiConfig {
     /// Horizontal offset of the island from the screen center, in logical points.
     #[serde(default)]
     pub island_offset_x: f32,
+    #[serde(default = "default_capture_filter")]
+    pub capture_filter: String,
     pub server_damage_calibration: bool,
     #[serde(default)]
     pub separate_reaction_damage: bool,
@@ -782,6 +796,23 @@ pub struct UiConfig {
     pub team_hit_detail_window_size: Option<[f32; 2]>,
     #[serde(default)]
     pub console_window_size: Option<[f32; 2]>,
+    /// Last normal outer position (logical points) for each native window. Negative coordinates
+    /// are valid for monitors placed left of or above the primary display.
+    #[serde(default)]
+    pub main_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub abyss_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub hit_detail_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub team_hit_detail_window_position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub console_window_position: Option<[f32; 2]>,
+    /// Last Tauri HUD outer position in physical virtual-desktop pixels.
+    /// Physical coordinates preserve negative secondary-monitor origins without
+    /// applying the startup monitor's DPI scale to another display.
+    #[serde(default)]
+    pub hud_window_position: Option<[i32; 2]>,
 }
 
 impl Default for UiConfig {
@@ -797,8 +828,15 @@ impl Default for UiConfig {
             auto_check_updates: true,
             auto_download_updates: false,
             always_on_top: true,
+            main_dps_always_on_top: None,
+            hud_always_on_top: None,
+            console_always_on_top: None,
+            abyss_values_always_on_top: None,
+            character_details_always_on_top: None,
+            team_details_always_on_top: None,
             island_notifications: true,
             island_offset_x: 0.0,
+            capture_filter: default_capture_filter(),
             server_damage_calibration: false,
             separate_reaction_damage: false,
             auto_round_after_idle: false,
@@ -818,12 +856,26 @@ impl Default for UiConfig {
             hit_detail_window_size: None,
             team_hit_detail_window_size: None,
             console_window_size: None,
+            main_window_position: None,
+            abyss_window_position: None,
+            hit_detail_window_position: None,
+            team_hit_detail_window_position: None,
+            console_window_position: None,
+            hud_window_position: None,
         }
     }
 }
 
 impl UiConfig {
     pub fn sanitized(mut self) -> Self {
+        self.main_dps_always_on_top =
+            Some(self.main_dps_always_on_top.unwrap_or(self.always_on_top));
+        self.hud_always_on_top = Some(self.hud_always_on_top.unwrap_or(self.always_on_top));
+        self.console_always_on_top = Some(self.console_always_on_top.unwrap_or(false));
+        self.abyss_values_always_on_top = Some(self.abyss_values_always_on_top.unwrap_or(false));
+        self.character_details_always_on_top =
+            Some(self.character_details_always_on_top.unwrap_or(false));
+        self.team_details_always_on_top = Some(self.team_details_always_on_top.unwrap_or(false));
         self.opacity = if self.opacity.is_finite() {
             self.opacity.clamp(0.35, 1.0)
         } else {
@@ -834,6 +886,7 @@ impl UiConfig {
         } else {
             0.0
         };
+        self.capture_filter = sanitize_capture_filter(&self.capture_filter);
         self.main_window_size = sanitize_window_size(self.main_window_size, MAIN_WINDOW_MIN_SIZE);
         self.abyss_window_size =
             sanitize_window_size(self.abyss_window_size, ABYSS_WINDOW_MIN_SIZE);
@@ -845,6 +898,12 @@ impl UiConfig {
         );
         self.console_window_size =
             sanitize_window_size(self.console_window_size, CONSOLE_WINDOW_MIN_SIZE);
+        self.main_window_position = sanitize_window_position(self.main_window_position);
+        self.abyss_window_position = sanitize_window_position(self.abyss_window_position);
+        self.hit_detail_window_position = sanitize_window_position(self.hit_detail_window_position);
+        self.team_hit_detail_window_position =
+            sanitize_window_position(self.team_hit_detail_window_position);
+        self.console_window_position = sanitize_window_position(self.console_window_position);
         self.timeline_bucket_seconds =
             sanitize_timeline_bucket_seconds(self.timeline_bucket_seconds);
         self.auto_round_idle_seconds = self
@@ -880,6 +939,24 @@ const fn default_auto_round_idle_seconds() -> u32 {
     AUTO_ROUND_IDLE_SECONDS_DEFAULT
 }
 
+fn default_capture_filter() -> String {
+    "udp".to_owned()
+}
+
+pub fn sanitize_capture_filter(filter: &str) -> String {
+    let filter = filter.trim();
+    if filter.is_empty()
+        || filter.len() > 512
+        || filter
+            .chars()
+            .any(|character| matches!(character, '\0' | '\r' | '\n'))
+    {
+        default_capture_filter()
+    } else {
+        filter.to_owned()
+    }
+}
+
 fn new_install_config() -> UiConfig {
     UiConfig {
         language: Language::system_default(),
@@ -908,6 +985,11 @@ fn sanitize_window_size(size: Option<[f32; 2]>, min: [f32; 2]) -> Option<[f32; 2
         width.clamp(min[0], WINDOW_SIZE_MAX),
         height.clamp(min[1], WINDOW_SIZE_MAX),
     ])
+}
+
+fn sanitize_window_position(position: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    let [x, y] = position?;
+    (x.is_finite() && y.is_finite()).then_some([x, y])
 }
 
 pub fn config_path() -> PathBuf {
@@ -1111,6 +1193,68 @@ mod tests {
     }
 
     #[test]
+    fn sanitizes_window_positions_without_discarding_secondary_monitor_coordinates() {
+        let config = UiConfig {
+            main_window_position: Some([-1920.0, 84.0]),
+            console_window_position: Some([f32::NAN, 120.0]),
+            hud_window_position: Some([-1920, 84]),
+            ..UiConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(config.main_window_position, Some([-1920.0, 84.0]));
+        assert_eq!(config.console_window_position, None);
+        assert_eq!(config.hud_window_position, Some([-1920, 84]));
+    }
+
+    #[test]
+    fn legacy_config_defaults_the_tauri_hud_position() {
+        let config: UiConfig = serde_json::from_str("{}").expect("legacy config");
+
+        assert_eq!(config.hud_window_position, None);
+    }
+
+    #[test]
+    fn legacy_always_on_top_migrates_without_coupling_desktop_windows() {
+        let disabled = serde_json::from_str::<UiConfig>(r#"{"always_on_top":false}"#)
+            .expect("legacy config")
+            .sanitized();
+        assert_eq!(disabled.main_dps_always_on_top, Some(false));
+        assert_eq!(disabled.hud_always_on_top, Some(false));
+        assert_eq!(disabled.console_always_on_top, Some(false));
+        assert_eq!(disabled.abyss_values_always_on_top, Some(false));
+
+        let independent = UiConfig {
+            always_on_top: false,
+            main_dps_always_on_top: Some(true),
+            hud_always_on_top: Some(false),
+            console_always_on_top: Some(true),
+            abyss_values_always_on_top: Some(false),
+            character_details_always_on_top: Some(true),
+            team_details_always_on_top: Some(false),
+            ..UiConfig::default()
+        }
+        .sanitized();
+        assert_eq!(independent.main_dps_always_on_top, Some(true));
+        assert_eq!(independent.hud_always_on_top, Some(false));
+        assert_eq!(independent.console_always_on_top, Some(true));
+        assert_eq!(independent.character_details_always_on_top, Some(true));
+        assert_eq!(independent.team_details_always_on_top, Some(false));
+    }
+
+    #[test]
+    fn tauri_hud_position_roundtrips_physical_secondary_monitor_coordinates() {
+        let config = UiConfig {
+            hud_window_position: Some([-1920, 84]),
+            ..UiConfig::default()
+        };
+        let json = serde_json::to_string(&config).expect("config should serialize");
+        let decoded: UiConfig = serde_json::from_str(&json).expect("config should deserialize");
+
+        assert_eq!(decoded.hud_window_position, Some([-1920, 84]));
+    }
+
+    #[test]
     fn sanitizes_invalid_timeline_bucket_seconds() {
         assert_eq!(
             UiConfig {
@@ -1303,6 +1447,7 @@ mod tests {
         assert!(!config.reduce_motion);
         assert!(config.auto_check_updates);
         assert!(!config.auto_download_updates);
+        assert_eq!(config.capture_filter, "udp");
         assert!(!config.separate_reaction_damage);
         assert!(!config.auto_round_after_idle);
         assert_eq!(
@@ -1337,6 +1482,22 @@ mod tests {
 
         assert_eq!(minimum.auto_round_idle_seconds, AUTO_ROUND_IDLE_SECONDS_MIN);
         assert_eq!(maximum.auto_round_idle_seconds, AUTO_ROUND_IDLE_SECONDS_MAX);
+    }
+
+    #[test]
+    fn capture_filter_is_backward_compatible_trimmed_and_bounded() {
+        let legacy: UiConfig = serde_json::from_str("{}").expect("legacy config");
+        assert_eq!(legacy.capture_filter, "udp");
+
+        let custom = UiConfig {
+            capture_filter: "  udp port 30196  ".to_owned(),
+            ..UiConfig::default()
+        }
+        .sanitized();
+        assert_eq!(custom.capture_filter, "udp port 30196");
+        assert_eq!(sanitize_capture_filter(""), "udp");
+        assert_eq!(sanitize_capture_filter("tcp\nport 80"), "udp");
+        assert_eq!(sanitize_capture_filter(&"x".repeat(513)), "udp");
     }
 
     #[test]

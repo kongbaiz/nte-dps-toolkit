@@ -12,8 +12,8 @@
   })();
 </script>
 <title>NTE DPS Toolkit — 异环 / Neverness to Everness 实时 DPS 伤害分析工具</title>
-<meta name="description" content="NTE DPS Toolkit 是基于 Rust + egui 的本机实时 DPS（每秒伤害）分析与战斗诊断工具，支持角色/技能伤害统计、深渊上下行线预测、抓包回放与 Debug 面板。开源、完全本机运行、不上传任何数据。Real-time DPS analyzer for Neverness to Everness (NTE), built with Rust, runs 100% locally.">
-<meta name="keywords" content="NTE DPS Toolkit, NTE DPS, 异环 DPS, Neverness to Everness DPS, DPS Analyzer, 伤害分析工具, 战斗诊断, 深渊预测, Npcap, egui, Rust, 封包解析">
+<meta name="description" content="NTE DPS Toolkit 是基于 Rust + Tauri + React 的本机实时 DPS（每秒伤害）分析与战斗诊断工具，支持角色/技能伤害统计、深渊上下行线预测、抓包回放与 Debug 面板。开源、完全本机运行、不上传任何数据。Real-time DPS analyzer for Neverness to Everness (NTE), built with Rust, Tauri, and React, runs 100% locally.">
+<meta name="keywords" content="NTE DPS Toolkit, NTE DPS, 异环 DPS, Neverness to Everness DPS, DPS Analyzer, 伤害分析工具, 战斗诊断, 深渊预测, Npcap, Tauri, React, Rust, 封包解析">
 <meta name="author" content="kongbaiz">
 <link rel="canonical" href="https://dps.o-na-ni.com/">
 
@@ -21,7 +21,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="NTE DPS Toolkit">
 <meta property="og:title" content="NTE DPS Toolkit — 异环实时 DPS 伤害分析工具">
-<meta property="og:description" content="基于 Rust + egui 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。开源、本机运行、不上传数据。">
+<meta property="og:description" content="基于 Rust + Tauri + React 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。开源、本机运行、不上传数据。">
 <meta property="og:image" content="https://dps.o-na-ni.com/assets/img/CN/main_menu_CN.png">
 <meta property="og:url" content="https://dps.o-na-ni.com/">
 <meta property="og:locale" content="zh_CN">
@@ -30,7 +30,7 @@
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="NTE DPS Toolkit — 异环实时 DPS 伤害分析工具">
-<meta name="twitter:description" content="基于 Rust + egui 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。">
+<meta name="twitter:description" content="基于 Rust + Tauri + React 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。">
 <meta name="twitter:image" content="https://dps.o-na-ni.com/assets/img/CN/main_menu_CN.png">
 
 <link rel="icon" type="image/png" href="assets/img/app-icon.png">
@@ -42,7 +42,7 @@
   "@type": "SoftwareApplication",
   "name": "NTE DPS Toolkit",
   "alternateName": "NTE DPS Tool",
-  "description": "本机运行的 NTE（异环 / Neverness to Everness）实时 DPS 伤害分析与战斗诊断工具，基于 Rust + egui，通过 Npcap 解析本机网络流量统计伤害、技能和深渊数据。",
+  "description": "本机运行的 NTE（异环 / Neverness to Everness）实时 DPS 伤害分析与战斗诊断工具，基于 Rust + Tauri + React，通过 Npcap 解析本机网络流量统计伤害、技能和深渊数据。",
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "Windows 10, Windows 11",
   "softwareVersion": "see GitHub Releases",
@@ -217,8 +217,8 @@
       <span class="lang-en">Real-time DPS Analysis &amp; Combat Diagnostics for NTE</span>
     </h1>
     <p class="tagline">
-      <span class="lang-zh">基于 Rust + egui，完全在你的电脑本机运行。通过 Npcap 解析本机网络流量，统计角色 / 技能伤害，预测深渊清线时间——不联网上传任何数据。</span>
-      <span class="lang-en">Built with Rust + egui, runs 100% on your own machine. Parses local network traffic via Npcap to track per-character / per-skill damage and predict Abyss clear times — no data is ever uploaded.</span>
+      <span class="lang-zh">基于 Rust + Tauri + React，完全在你的电脑本机运行。通过 Npcap 解析本机网络流量，统计角色 / 技能伤害，预测深渊清线时间——不联网上传任何数据。</span>
+      <span class="lang-en">Built with Rust + Tauri + React, runs 100% on your own machine. Parses local network traffic via Npcap to track per-character / per-skill damage and predict Abyss clear times — no data is ever uploaded.</span>
     </p>
 
     <div class="badges">

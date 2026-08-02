@@ -16,6 +16,8 @@ namespace nte::mods
 	{
 		constexpr uint32_t NATIVE_FUNCTION_FLAG = 0x400;
 		constexpr size_t PROCESS_EVENT_INDEX = 0x4C;
+		// UE5 UFunction stores ParmsSize before ReturnValueOffset at 0xB8.
+		constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB6;
 		constexpr uint64_t FUNCTION_CAST_FLAG = 0x0000000000080000;
 		constexpr uint8_t PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO = 2;
 		constexpr uint8_t PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT = 3;
@@ -354,6 +356,25 @@ namespace nte::mods
 				++expected;
 			}
 			return *expected == '\0' && index == decoded.length;
+		}
+
+		bool HashDecodedName(const DecodedUeName& decoded, uint64_t& hash)
+		{
+			if (decoded.first >= decoded.length)
+				return false;
+
+			hash = 0xcbf29ce484222325ull;
+			for (int32_t index = decoded.first; index < decoded.length; ++index)
+			{
+				wchar_t character = decoded.buffer[index];
+				if (character > 0x7f)
+					return false;
+				if (character >= L'A' && character <= L'Z')
+					character += L'a' - L'A';
+				hash ^= static_cast<uint8_t>(character);
+				hash *= 0x100000001b3ull;
+			}
+			return true;
 		}
 
 		bool NameEquals(const UeName& name, const char* expected)
@@ -932,6 +953,106 @@ namespace nte::mods
 		}
 		}
 		return false;
+	}
+
+	bool ReadNameHash(
+		const void* object,
+		uint64_t offset,
+		uint64_t& result)
+	{
+		result = 0;
+		UeName name{};
+		if (!memory::ReadValue(
+				object,
+				static_cast<size_t>(offset),
+				name) ||
+			name.comparison_index < 0)
+			return false;
+		DecodedUeName decoded{};
+		return DecodeName(name, decoded) &&
+			HashDecodedName(decoded, result);
+	}
+
+	bool FindReflectedFunction(
+		void* object,
+		const char* owner_class_name,
+		const char* function_name,
+		void*& result)
+	{
+		result = nullptr;
+		auto* ue_object = static_cast<UeObject*>(object);
+		if (!memory::IsReadableRange(ue_object, sizeof(UeObject)) ||
+			ue_object->object_class == nullptr ||
+			owner_class_name == nullptr ||
+			function_name == nullptr)
+			return false;
+		result = FindFunction(
+			ue_object->object_class,
+			owner_class_name,
+			function_name);
+		return result != nullptr;
+	}
+
+	bool ReflectedFunctionParamSize(
+		void* function,
+		uint16_t& size)
+	{
+		size = 0;
+		auto* ue_function = static_cast<UeFunction*>(function);
+		if (!memory::IsReadableRange(
+				ue_function,
+				FUNCTION_PARAM_SIZE_OFFSET + sizeof(uint16_t)))
+			return false;
+		uint64_t cast_flags = 0;
+		return memory::ReadValue(
+				ue_function->object_class,
+				offsetof(UeClass, cast_flags),
+				cast_flags) &&
+			(cast_flags & FUNCTION_CAST_FLAG) != 0 &&
+			memory::ReadValue(
+				ue_function,
+				FUNCTION_PARAM_SIZE_OFFSET,
+				size);
+	}
+
+	bool InvokeReflectedFunction(
+		void* object,
+		void* function,
+		void* params,
+		uint16_t params_size)
+	{
+		auto* ue_object = static_cast<UeObject*>(object);
+		auto* ue_function = static_cast<UeFunction*>(function);
+		if (!memory::IsReadableRange(ue_object, sizeof(UeObject)) ||
+			ue_object->object_class == nullptr ||
+			!memory::IsReadableRange(
+				ue_object->vtable,
+				(PROCESS_EVENT_INDEX + 1) * sizeof(void*)) ||
+			(params_size != 0 &&
+				!memory::IsReadableRange(params, params_size)))
+			return false;
+
+		uint16_t reflected_params_size = 0;
+		if (!ReflectedFunctionParamSize(
+				ue_function,
+				reflected_params_size) ||
+			reflected_params_size != params_size)
+			return false;
+
+		const auto process_event = reinterpret_cast<ProcessEvent>(
+			ue_object->vtable[PROCESS_EVENT_INDEX]);
+		if (!memory::IsExecutableAddress(
+			reinterpret_cast<const void*>(process_event)))
+			return false;
+
+		const uint32_t original_flags = ue_function->function_flags;
+		ue_function->function_flags |= NATIVE_FUNCTION_FLAG;
+		process_event(
+			ue_object,
+			ue_function,
+			params_size == 0 ? nullptr : params);
+		ue_function->function_flags = original_flags;
+		return true;
 	}
 
 	uint32_t CopyCombatClockTransitions(

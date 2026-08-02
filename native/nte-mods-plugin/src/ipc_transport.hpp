@@ -20,6 +20,7 @@ namespace nte::mods
 		SetItemLocked,
 		QueryCombatClockTransitions,
 		QueryModEvents,
+		QueryModLogs,
 	};
 
 	enum class IpcPumpResult : int32_t

@@ -1,19 +1,15 @@
-//! Windows / OS integration: game process and NIC detection, window rounding /
-//! transparency / topmost handling, the global passthrough hotkey and native
-//! file-drop bridging. `mods_plugin`, `network`, and `locale` are shared
-//! with the headless CLI build; the window/hotkey/drop bridges only exist for
-//! the GUI.
+//! Windows / OS integration shared by the Rust core and Tauri adapter.
 
-#[cfg(feature = "gui")]
-pub mod file_drop;
-#[cfg(feature = "gui")]
-pub mod hotkey;
+#[cfg(all(windows, feature = "desktop"))]
+pub mod file_dialog;
 pub mod locale;
 pub mod mods_plugin;
 pub mod network;
-#[cfg(feature = "gui")]
+#[cfg(windows)]
+pub mod passthrough_hotkey;
+#[cfg(feature = "desktop")]
 pub mod update_http;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 pub mod update_install;
-#[cfg(feature = "gui")]
-pub mod window_attributes;
+#[cfg(windows)]
+pub mod window_style;

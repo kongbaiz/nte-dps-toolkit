@@ -17,6 +17,9 @@ namespace nte::mods::runtime
 	constexpr uint32_t CAPABILITY_COMBAT_CLOCK = 1u << 5;
 	constexpr uint32_t CAPABILITY_LOG = 1u << 6;
 	constexpr uint32_t CAPABILITY_GAME_SESSION = 1u << 7;
+	constexpr uint32_t CAPABILITY_MEMORY_WRITE = 1u << 8;
+	constexpr uint32_t CAPABILITY_UNREAL_REFLECTION = 1u << 9;
+	constexpr uint32_t CAPABILITY_PROCESS_EVENT = 1u << 10;
 
 	enum class ReloadResult
 	{
@@ -34,5 +37,6 @@ namespace nte::mods::runtime
 		const NteModsIpcRequest& request,
 		NteModsIpcResponse& response);
 	uint32_t CopyModEvents(NteModEvent* output, uint32_t capacity);
+	uint32_t CopyModLogs(NteModLogEntry* output, uint32_t capacity);
 	void Reset();
 } // namespace nte::mods::runtime
