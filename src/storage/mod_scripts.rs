@@ -1,63 +1,43 @@
+#![cfg_attr(
+    feature = "desktop",
+    allow(
+        dead_code,
+        reason = "the desktop Mod Studio exposes a bounded subset of the shared script workspace helpers"
+    )
+)]
+
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
-use super::io_util::{atomic_write_file, atomic_write_text};
+use super::io_util::atomic_write_text;
 
 pub(crate) const MAX_MOD_SOURCE_BYTES: usize = 16 * 1024;
-const MAX_MOD_BLUEPRINT_BYTES: usize = 64 * 1024;
 const MAX_ENABLED_MODS: usize = 16;
 const MAX_MOD_INSTRUCTIONS: usize = 256;
 const MAX_MOD_VARIABLES: usize = 12;
 const MAX_MOD_STATES: usize = 16;
 const MAX_MOD_STRINGS: usize = 16;
 const MAX_MOD_ROUTES: usize = 16;
+const MAX_MOD_BINDINGS: usize = 16;
 const MAX_MOD_BLOCKS: usize = 8;
 const MAX_MOD_BRANCHES: usize = 8;
-const MAX_MOD_STRING_BYTES: usize = 31;
+const MAX_MOD_STRING_BYTES: usize = 96;
+const MAX_MOD_EVENT_NAME_BYTES: usize = 31;
 const MAX_MOD_VARIABLE_BYTES: usize = 32;
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
-const MOD_BLUEPRINT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ModScriptDocument {
     pub(crate) id: String,
     pub(crate) enabled: bool,
     pub(crate) source: String,
-    pub(crate) blueprint: ModScriptBlueprint,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ModScriptWorkspace {
     pub(crate) scripts: Vec<ModScriptDocument>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ModScriptBlueprint {
-    #[serde(default)]
-    pub(crate) nodes: Vec<ModScriptBlueprintNode>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ModScriptBlueprintNode {
-    pub(crate) signature: String,
-    pub(crate) position: [f32; 2],
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub(crate) description: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModScriptBlueprintFile {
-    version: u32,
-    #[serde(default)]
-    nodes: Vec<ModScriptBlueprintNode>,
 }
 
 pub(crate) fn mod_script_workspace_directory() -> PathBuf {
@@ -74,10 +54,6 @@ pub(crate) enum ModScriptError {
     SourceTooLarge,
     SourceContainsNul,
     SourceNotUtf8(String),
-    BlueprintTooLarge(String),
-    BlueprintNotUtf8(String),
-    InvalidBlueprint(String),
-    UnsupportedBlueprintVersion { id: String, version: u32 },
     MissingVersionHeader,
     MissingModDeclaration,
     MismatchedModDeclaration,
@@ -131,12 +107,10 @@ pub(crate) fn load_mod_script_workspace(
         }
         let source =
             String::from_utf8(bytes).map_err(|_| ModScriptError::SourceNotUtf8(id.clone()))?;
-        let blueprint = load_mod_script_blueprint(&mod_directory, &id)?;
         scripts.push(ModScriptDocument {
             enabled: enabled.contains(&id),
             id,
             source,
-            blueprint,
         });
     }
     scripts.sort_by(|left, right| left.id.cmp(&right.id));
@@ -147,94 +121,48 @@ pub(crate) fn save_mod_script(
     workspace_directory: &Path,
     id: &str,
     source: &str,
-    blueprint: &ModScriptBlueprint,
 ) -> Result<(), ModScriptError> {
     validate_mod_source(id, source)?;
-    let file = ModScriptBlueprintFile {
-        version: MOD_BLUEPRINT_VERSION,
-        nodes: blueprint.nodes.clone(),
-    };
-    let text = serde_json::to_string_pretty(&file)
-        .map_err(|_| ModScriptError::InvalidBlueprint(id.to_owned()))?;
-    if text.len() + 1 > MAX_MOD_BLUEPRINT_BYTES {
-        return Err(ModScriptError::BlueprintTooLarge(id.to_owned()));
-    }
     let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
     let source_path = mod_directory.join(format!("{id}.nte"));
-    let blueprint_path = mod_script_blueprint_path(&mod_directory, id);
-    let previous_blueprint =
-        read_optional_file(&blueprint_path).map_err(ModScriptError::FileSystem)?;
-    atomic_write_text(&blueprint_path, &format!("{text}\n")).map_err(ModScriptError::FileSystem)?;
-    if let Err(error) = atomic_write_text(&source_path, source) {
-        if let Err(rollback_error) = restore_file(&blueprint_path, previous_blueprint) {
-            return Err(ModScriptError::FileSystem(format!(
-                "{error}; failed to restore Blueprint metadata: {rollback_error}"
-            )));
+    atomic_write_text(&source_path, source).map_err(ModScriptError::FileSystem)
+}
+
+pub(crate) fn delete_mod_script(
+    workspace_directory: &Path,
+    id: &str,
+) -> Result<(), ModScriptError> {
+    validate_mod_id(id)?;
+    let source_path = workspace_directory
+        .join(MOD_DIRECTORY_NAME)
+        .join(format!("{id}.nte"));
+    if !source_path.is_file() {
+        return Err(ModScriptError::ModSourceMissing(id.to_owned()));
+    }
+
+    let mut enabled_mods = read_enabled_mods(workspace_directory)?;
+    let was_enabled = enabled_mods.remove(id);
+    if was_enabled {
+        write_enabled_mods(workspace_directory, &enabled_mods)?;
+    }
+    if let Err(error) = fs::remove_file(&source_path) {
+        if was_enabled {
+            enabled_mods.insert(id.to_owned());
+            if let Err(rollback_error) = write_enabled_mods(workspace_directory, &enabled_mods) {
+                let rollback_detail = match rollback_error {
+                    ModScriptError::FileSystem(detail) => detail,
+                    _ => "unexpected Mod storage error".to_owned(),
+                };
+                return Err(ModScriptError::FileSystem(format!(
+                    "failed to delete Mod source: {error}; enabled-set rollback also failed: {rollback_detail}"
+                )));
+            }
         }
-        return Err(ModScriptError::FileSystem(error));
+        return Err(ModScriptError::FileSystem(format!(
+            "failed to delete Mod source: {error}"
+        )));
     }
     Ok(())
-}
-
-fn read_optional_file(path: &Path) -> Result<Option<Vec<u8>>, String> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn restore_file(path: &Path, previous: Option<Vec<u8>>) -> Result<(), String> {
-    match previous {
-        Some(bytes) => atomic_write_file(path, |writer| {
-            writer.write_all(&bytes).map_err(|error| error.to_string())
-        }),
-        None => match fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.to_string()),
-        },
-    }
-}
-
-fn load_mod_script_blueprint(
-    mod_directory: &Path,
-    id: &str,
-) -> Result<ModScriptBlueprint, ModScriptError> {
-    let bytes = match fs::read(mod_script_blueprint_path(mod_directory, id)) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ModScriptBlueprint::default());
-        }
-        Err(error) => return Err(ModScriptError::FileSystem(error.to_string())),
-    };
-    if bytes.len() > MAX_MOD_BLUEPRINT_BYTES {
-        return Err(ModScriptError::BlueprintTooLarge(id.to_owned()));
-    }
-    let text =
-        std::str::from_utf8(&bytes).map_err(|_| ModScriptError::BlueprintNotUtf8(id.to_owned()))?;
-    let file = serde_json::from_str::<ModScriptBlueprintFile>(text)
-        .map_err(|_| ModScriptError::InvalidBlueprint(id.to_owned()))?;
-    if file.version != MOD_BLUEPRINT_VERSION {
-        return Err(ModScriptError::UnsupportedBlueprintVersion {
-            id: id.to_owned(),
-            version: file.version,
-        });
-    }
-    if file.nodes.iter().any(|node| {
-        node.signature.is_empty()
-            || node
-                .position
-                .iter()
-                .any(|coordinate| !coordinate.is_finite())
-    }) {
-        return Err(ModScriptError::InvalidBlueprint(id.to_owned()));
-    }
-    Ok(ModScriptBlueprint { nodes: file.nodes })
-}
-
-fn mod_script_blueprint_path(mod_directory: &Path, id: &str) -> PathBuf {
-    mod_directory.join(format!("{id}.blueprint.json"))
 }
 
 pub(crate) fn set_mod_enabled(
@@ -272,9 +200,57 @@ pub(crate) fn validate_mod_source(id: &str, source: &str) -> Result<(), ModScrip
     if source.contains('\0') {
         return Err(ModScriptError::SourceContainsNul);
     }
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    if source
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('#'))
+        .is_some_and(|line| line == "NTE_SCRIPT(5);")
+    {
+        let transpiled = transpile_cpp_mod_source(id, source)?;
+        return ModSourceValidator::new(&transpiled.source)
+            .validate(id)
+            .map_err(|failure| match failure {
+                ModSourceValidationFailure::InvalidLine(line) => ModScriptError::InvalidSourceLine(
+                    transpiled.line_map.get(line - 1).copied().unwrap_or(line),
+                ),
+                ModSourceValidationFailure::BudgetExceeded => ModScriptError::SourceBudgetExceeded,
+                ModSourceValidationFailure::CapabilityMismatch => {
+                    ModScriptError::CapabilityMismatch
+                }
+            });
+    }
+    validate_legacy_mod_source(id, source)
+}
+
+pub(crate) fn mod_source_bindings(id: &str, source: &str) -> Result<Vec<String>, ModScriptError> {
+    validate_mod_source(id, source)?;
+    let cpp = source
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with("//") && !line.starts_with('#'))
+        .is_some_and(|line| line == "NTE_SCRIPT(5);");
+    let mut bindings = Vec::new();
+    for raw in source.lines() {
+        let line = if cpp {
+            strip_cpp_line_comment(raw).trim()
+        } else {
+            raw.trim()
+        };
+        let binding = if cpp {
+            parse_cpp_macro_string(line, "NTE_BIND")
+        } else {
+            parse_call(line, "bind").and_then(parse_string_literal)
+        };
+        if let Some(binding) = binding {
+            bindings.push(binding.to_owned());
+        }
+    }
+    Ok(bindings)
+}
+
+fn validate_legacy_mod_source(id: &str, source: &str) -> Result<(), ModScriptError> {
     let mut lines = source
-        .strip_prefix('\u{feff}')
-        .unwrap_or(source)
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'));
@@ -305,14 +281,392 @@ pub(crate) fn validate_mod_source(id: &str, source: &str) -> Result<(), ModScrip
         })
 }
 
-const CAPABILITY_VIEWPORT_TICK: u8 = 1 << 0;
-const CAPABILITY_MEMORY_READ: u8 = 1 << 1;
-const CAPABILITY_IPC: u8 = 1 << 2;
-const CAPABILITY_SDK_READ: u8 = 1 << 3;
-const CAPABILITY_EQUIPMENT: u8 = 1 << 4;
-const CAPABILITY_COMBAT_CLOCK: u8 = 1 << 5;
-const CAPABILITY_LOG: u8 = 1 << 6;
-const CAPABILITY_GAME_SESSION: u8 = 1 << 7;
+struct CppTranspiledSource {
+    source: String,
+    line_map: Vec<usize>,
+}
+
+fn transpile_cpp_mod_source(
+    expected_id: &str,
+    source: &str,
+) -> Result<CppTranspiledSource, ModScriptError> {
+    let mut output = String::new();
+    let mut line_map = Vec::new();
+    let mut states = Vec::<String>::new();
+    let mut stage = 0u8;
+    let mut depth = 0usize;
+    let mut pending_block = false;
+    let mut handler_closed = false;
+
+    for (index, raw) in source.lines().enumerate() {
+        let line_number = index + 1;
+        let line = strip_cpp_line_comment(raw).trim();
+        if line.is_empty() || line.starts_with("#include ") {
+            continue;
+        }
+        if stage == 0 {
+            if line != "NTE_SCRIPT(5);" {
+                return Err(ModScriptError::MissingVersionHeader);
+            }
+            push_transpiled_line(&mut output, &mut line_map, "nte_mod(4)", line_number);
+            stage = 1;
+            continue;
+        }
+        if stage == 1 {
+            let Some(id) = parse_cpp_macro_string(line, "NTE_MOD") else {
+                return Err(ModScriptError::MissingModDeclaration);
+            };
+            if id != expected_id {
+                return Err(ModScriptError::MismatchedModDeclaration);
+            }
+            push_transpiled_line(
+                &mut output,
+                &mut line_map,
+                &format!("mod({id:?})"),
+                line_number,
+            );
+            stage = 2;
+            continue;
+        }
+        if stage == 2 {
+            if line == "void on_viewport_tick(const nte::viewport_tick_event& event)" {
+                push_transpiled_line(
+                    &mut output,
+                    &mut line_map,
+                    "def on_viewport_tick(event):",
+                    line_number,
+                );
+                stage = 3;
+                pending_block = true;
+                continue;
+            }
+            if let Some(capability) = parse_cpp_macro_string(line, "NTE_REQUIRES") {
+                push_transpiled_line(
+                    &mut output,
+                    &mut line_map,
+                    &format!("requires({capability:?})"),
+                    line_number,
+                );
+                continue;
+            }
+            if let Some(binding) = parse_cpp_macro_string(line, "NTE_BIND") {
+                push_transpiled_line(
+                    &mut output,
+                    &mut line_map,
+                    &format!("bind({binding:?})"),
+                    line_number,
+                );
+                continue;
+            }
+            if let Some(arguments) = parse_cpp_macro_arguments(line, "NTE_ROUTE_IPC") {
+                push_transpiled_line(
+                    &mut output,
+                    &mut line_map,
+                    &format!("route_ipc({arguments})"),
+                    line_number,
+                );
+                continue;
+            }
+            let Some(declaration) = line
+                .strip_suffix(';')
+                .and_then(strip_cpp_integer_declaration)
+            else {
+                return Err(ModScriptError::InvalidSourceLine(line_number));
+            };
+            let Some((name, value)) = parse_mod_assignment(declaration) else {
+                return Err(ModScriptError::InvalidSourceLine(line_number));
+            };
+            if !is_mod_variable_name(name)
+                || states.iter().any(|state| state == name)
+                || parse_cpp_integer(value).is_none()
+            {
+                return Err(ModScriptError::InvalidSourceLine(line_number));
+            }
+            states.push(name.to_owned());
+            push_transpiled_line(
+                &mut output,
+                &mut line_map,
+                &format!(
+                    "state.{name} = {}",
+                    normalize_cpp_expression(value, &states)
+                ),
+                line_number,
+            );
+            continue;
+        }
+
+        if pending_block {
+            if line != "{" {
+                return Err(ModScriptError::InvalidSourceLine(line_number));
+            }
+            depth += 1;
+            pending_block = false;
+            continue;
+        }
+        if line == "{" {
+            return Err(ModScriptError::InvalidSourceLine(line_number));
+        }
+        if line == "}" {
+            if depth == 0 {
+                return Err(ModScriptError::InvalidSourceLine(line_number));
+            }
+            depth -= 1;
+            if depth == 0 {
+                handler_closed = true;
+            }
+            continue;
+        }
+        if handler_closed || depth == 0 {
+            return Err(ModScriptError::InvalidSourceLine(line_number));
+        }
+
+        let indent = "    ".repeat(depth);
+        if let Some(condition) = parse_cpp_condition(line, "if") {
+            push_transpiled_line(
+                &mut output,
+                &mut line_map,
+                &format!(
+                    "{indent}if {}:",
+                    normalize_cpp_expression(condition, &states)
+                ),
+                line_number,
+            );
+            pending_block = true;
+            continue;
+        }
+        if let Some(condition) = parse_cpp_condition(line, "else if") {
+            push_transpiled_line(
+                &mut output,
+                &mut line_map,
+                &format!(
+                    "{indent}elif {}:",
+                    normalize_cpp_expression(condition, &states)
+                ),
+                line_number,
+            );
+            pending_block = true;
+            continue;
+        }
+        if line == "else" {
+            push_transpiled_line(
+                &mut output,
+                &mut line_map,
+                &format!("{indent}else:"),
+                line_number,
+            );
+            pending_block = true;
+            continue;
+        }
+        if let Some((variable, count)) = parse_cpp_for_range(line) {
+            push_transpiled_line(
+                &mut output,
+                &mut line_map,
+                &format!("{indent}for {variable} in range({count}):"),
+                line_number,
+            );
+            pending_block = true;
+            continue;
+        }
+
+        let Some(statement) = line.strip_suffix(';') else {
+            return Err(ModScriptError::InvalidSourceLine(line_number));
+        };
+        let statement = strip_cpp_local_declaration(statement).unwrap_or(statement);
+        push_transpiled_line(
+            &mut output,
+            &mut line_map,
+            &format!(
+                "{indent}{}",
+                normalize_cpp_expression(statement.trim(), &states)
+            ),
+            line_number,
+        );
+    }
+
+    if stage < 3 {
+        return Err(ModScriptError::MissingViewportTickHandler);
+    }
+    if pending_block || depth != 0 || !handler_closed {
+        return Err(ModScriptError::InvalidSourceLine(
+            source.lines().count().max(1),
+        ));
+    }
+    Ok(CppTranspiledSource {
+        source: output,
+        line_map,
+    })
+}
+
+fn push_transpiled_line(
+    output: &mut String,
+    line_map: &mut Vec<usize>,
+    line: &str,
+    source_line: usize,
+) {
+    output.push_str(line);
+    output.push('\n');
+    line_map.push(source_line);
+}
+
+fn strip_cpp_line_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_string = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            in_string = !in_string;
+        } else if !in_string && bytes[index..].starts_with(b"//") {
+            return &line[..index];
+        }
+        index += 1;
+    }
+    line
+}
+
+fn parse_cpp_macro_arguments<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    line.strip_suffix(';')
+        .and_then(|line| parse_call(line, name))
+}
+
+fn parse_cpp_macro_string<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    parse_cpp_macro_arguments(line, name).and_then(parse_string_literal)
+}
+
+fn strip_cpp_integer_declaration(line: &str) -> Option<&str> {
+    [
+        "std::uint64_t ",
+        "std::uintptr_t ",
+        "std::int64_t ",
+        "std::uint32_t ",
+        "std::int32_t ",
+        "bool ",
+    ]
+    .into_iter()
+    .find_map(|prefix| line.strip_prefix(prefix))
+}
+
+fn strip_cpp_local_declaration(line: &str) -> Option<&str> {
+    ["const auto ", "auto "]
+        .into_iter()
+        .find_map(|prefix| line.strip_prefix(prefix))
+        .or_else(|| strip_cpp_integer_declaration(line))
+}
+
+fn parse_cpp_integer(value: &str) -> Option<u64> {
+    parse_mod_integer(&normalize_cpp_expression(value, &[]))
+}
+
+fn parse_cpp_condition<'a>(line: &'a str, keyword: &str) -> Option<&'a str> {
+    line.strip_prefix(keyword)?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')
+        .map(str::trim)
+        .filter(|condition| !condition.is_empty())
+}
+
+fn parse_cpp_for_range(line: &str) -> Option<(&str, u8)> {
+    let header = line.strip_prefix("for (")?.strip_suffix(')')?;
+    let mut clauses = header.split(';').map(str::trim);
+    let declaration = strip_cpp_integer_declaration(clauses.next()?)?;
+    let (variable, initial) = parse_mod_assignment(declaration)?;
+    if initial != "0" {
+        return None;
+    }
+    let condition = clauses.next()?;
+    let (condition_variable, count) = condition.split_once('<')?;
+    if condition_variable.trim() != variable {
+        return None;
+    }
+    let count = parse_mod_integer(count.trim()).filter(|count| *count <= 64)? as u8;
+    let increment = clauses.next()?;
+    if clauses.next().is_some()
+        || !matches!(
+            increment,
+            value if value == format!("++{variable}") || value == format!("{variable}++")
+        )
+    {
+        return None;
+    }
+    Some((variable, count))
+}
+
+fn normalize_cpp_expression(expression: &str, states: &[String]) -> String {
+    let bytes = expression.as_bytes();
+    let mut output = String::with_capacity(expression.len());
+    let mut index = 0;
+    let mut in_string = false;
+    while index < bytes.len() {
+        if bytes[index] == b'"' {
+            in_string = !in_string;
+            output.push('"');
+            index += 1;
+            continue;
+        }
+        if !in_string && (bytes[index].is_ascii_alphabetic() || bytes[index] == b'_') {
+            let start = index;
+            index += 1;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric()
+                    || bytes[index] == b'_'
+                    || bytes[index..].starts_with(b"::"))
+            {
+                index += if bytes[index..].starts_with(b"::") {
+                    2
+                } else {
+                    1
+                };
+            }
+            let token = &expression[start..index];
+            let token = token.strip_prefix("nte::").unwrap_or(token);
+            if states.iter().any(|state| state == token) {
+                output.push_str("state.");
+                output.push_str(token);
+            } else {
+                output.push_str(match token {
+                    "nullptr" => "None",
+                    "true" => "True",
+                    "false" => "False",
+                    _ => token,
+                });
+                if token.contains("::") {
+                    let replacement = output.len() - token.len();
+                    output.replace_range(replacement.., &token.replace("::", "."));
+                }
+            }
+            continue;
+        }
+        if !in_string && bytes[index..].starts_with(b"&&") {
+            output.push_str(" and ");
+            index += 2;
+        } else if !in_string && bytes[index..].starts_with(b"||") {
+            output.push_str(" or ");
+            index += 2;
+        } else if !in_string
+            && bytes[index] == b'!'
+            && bytes.get(index + 1).is_none_or(|byte| *byte != b'=')
+        {
+            output.push_str("not ");
+            index += 1;
+        } else {
+            output.push(bytes[index] as char);
+            index += 1;
+        }
+    }
+    output
+}
+
+const CAPABILITY_VIEWPORT_TICK: u16 = 1 << 0;
+const CAPABILITY_MEMORY_READ: u16 = 1 << 1;
+const CAPABILITY_IPC: u16 = 1 << 2;
+const CAPABILITY_SDK_READ: u16 = 1 << 3;
+const CAPABILITY_EQUIPMENT: u16 = 1 << 4;
+const CAPABILITY_COMBAT_CLOCK: u16 = 1 << 5;
+const CAPABILITY_LOG: u16 = 1 << 6;
+const CAPABILITY_GAME_SESSION: u16 = 1 << 7;
+const CAPABILITY_MEMORY_WRITE: u16 = 1 << 8;
+const CAPABILITY_UNREAL_REFLECTION: u16 = 1 << 9;
+const CAPABILITY_PROCESS_EVENT: u16 = 1 << 10;
 
 #[derive(Clone, Copy)]
 struct ModSourceLine<'a> {
@@ -343,13 +697,14 @@ struct ModSourceBlock {
 
 struct ModSourceValidator<'a> {
     lines: Vec<ModSourceLine<'a>>,
-    capabilities: u8,
-    used_capabilities: u8,
+    capabilities: u16,
+    used_capabilities: u16,
     instruction_count: usize,
     states: Vec<&'a str>,
     variables: Vec<&'a str>,
     strings: Vec<&'a str>,
     routes: Vec<u16>,
+    bindings: Vec<&'a str>,
 }
 
 impl<'a> ModSourceValidator<'a> {
@@ -377,6 +732,7 @@ impl<'a> ModSourceValidator<'a> {
             variables: Vec::new(),
             strings: Vec::new(),
             routes: Vec::new(),
+            bindings: Vec::new(),
         }
     }
 
@@ -434,6 +790,21 @@ impl<'a> ModSourceValidator<'a> {
                 return Err(ModSourceValidationFailure::InvalidLine(line.number));
             }
             self.capabilities |= capability;
+            return Ok(());
+        }
+        if let Some(arguments) = parse_call(line.text, "bind") {
+            let Some(binding) =
+                parse_string_literal(arguments).filter(|value| is_mod_binding_id(value))
+            else {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            };
+            if self.bindings.len() == MAX_MOD_BINDINGS {
+                return Err(ModSourceValidationFailure::BudgetExceeded);
+            }
+            if self.bindings.contains(&binding) {
+                return Err(ModSourceValidationFailure::InvalidLine(line.number));
+            }
+            self.bindings.push(binding);
             return Ok(());
         }
         if let Some(arguments) = parse_call(line.text, "route_ipc") {
@@ -600,6 +971,71 @@ impl<'a> ModSourceValidator<'a> {
             self.assign_variable(target, line_number)?;
             return self.compile_expression(expression, line_number);
         }
+        for name in [
+            "memory.write_u8",
+            "memory.write_u16",
+            "memory.write_u32",
+            "memory.write_u64",
+            "memory.write_i32",
+            "memory.write_f32_milli",
+        ] {
+            if let Some(arguments) = parse_call(line, name) {
+                let arguments = split_mod_arguments(arguments, 4)
+                    .filter(|arguments| arguments.len() == 3)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                for argument in arguments {
+                    self.materialize_atom(argument, line_number)?;
+                }
+                self.used_capabilities |= CAPABILITY_MEMORY_WRITE;
+                return self.append_instructions(1);
+            }
+        }
+        if let Some(arguments) = parse_call(line, "unreal.params_clear") {
+            self.compile_single_argument_call(arguments, line_number)?;
+            self.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+            return Ok(());
+        }
+        for name in [
+            "unreal.params_write_u8",
+            "unreal.params_write_u16",
+            "unreal.params_write_u32",
+            "unreal.params_write_u64",
+            "unreal.params_write_i32",
+            "unreal.params_write_f32_milli",
+        ] {
+            if let Some(arguments) = parse_call(line, name) {
+                let arguments = split_mod_arguments(arguments, 3)
+                    .filter(|arguments| arguments.len() == 2)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                self.materialize_atom(arguments[0], line_number)?;
+                self.materialize_atom(arguments[1], line_number)?;
+                self.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+                return self.append_instructions(1);
+            }
+        }
+        for name in ["unreal.watch_array_u64", "unreal.watch_class_array_u64"] {
+            if let Some(arguments) = parse_call(line, name) {
+                let arguments = split_mod_arguments(arguments, 4)
+                    .filter(|arguments| arguments.len() == 4)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                for argument in arguments {
+                    self.materialize_atom(argument, line_number)?;
+                }
+                self.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+                return self.append_instructions(1);
+            }
+        }
+        for name in ["unreal.watch", "unreal.unwatch"] {
+            if let Some(arguments) = parse_call(line, name) {
+                let arguments = split_mod_arguments(arguments, 3)
+                    .filter(|arguments| arguments.len() == 2)
+                    .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+                self.materialize_atom(arguments[0], line_number)?;
+                self.materialize_atom(arguments[1], line_number)?;
+                self.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+                return self.append_instructions(1);
+            }
+        }
         if let Some(arguments) = parse_call(line, "equipment.prepare") {
             let arguments = split_mod_arguments(arguments, 4)
                 .filter(|arguments| arguments.len() == 1)
@@ -730,6 +1166,8 @@ impl<'a> ModSourceValidator<'a> {
             "memory.read_u32",
             "memory.read_u64",
             "memory.read_i32",
+            "memory.read_f32_milli",
+            "memory.read_fname_hash",
             "memory.tarray_first",
             "memory.tarray_count",
             "memory.is_readable",
@@ -742,6 +1180,88 @@ impl<'a> ModSourceValidator<'a> {
                 self.materialize_atom(arguments[1], line_number)?;
                 self.used_capabilities |= CAPABILITY_MEMORY_READ;
                 self.append_instructions(1)?;
+                return Ok(true);
+            }
+        }
+        if let Some(arguments) = parse_call(expression, "cache.get") {
+            self.compile_single_argument_call(arguments, line_number)?;
+            return Ok(true);
+        }
+        if let Some(arguments) = parse_call(expression, "cache.remember") {
+            let arguments = split_mod_arguments(arguments, 3)
+                .filter(|arguments| arguments.len() == 2)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.materialize_atom(arguments[0], line_number)?;
+            self.materialize_atom(arguments[1], line_number)?;
+            self.append_instructions(1)?;
+            return Ok(true);
+        }
+        if let Some(arguments) = parse_call(expression, "unreal.find_function") {
+            let arguments = split_mod_arguments(arguments, 4)
+                .filter(|arguments| arguments.len() == 3)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.materialize_atom(arguments[0], line_number)?;
+            let owner_name = parse_string_literal(arguments[1])
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            let function_name = parse_string_literal(arguments[2])
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.add_string(owner_name, line_number)?;
+            self.add_string(function_name, line_number)?;
+            self.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+            self.append_instructions(1)?;
+            return Ok(true);
+        }
+        for name in [
+            "unreal.params_read_u8",
+            "unreal.params_read_u16",
+            "unreal.params_read_u32",
+            "unreal.params_read_u64",
+            "unreal.params_read_i32",
+            "unreal.params_read_f32_milli",
+        ] {
+            if let Some(arguments) = parse_call(expression, name) {
+                self.compile_single_argument_call(arguments, line_number)?;
+                self.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+                return Ok(true);
+            }
+        }
+        if let Some(arguments) = parse_call(expression, "unreal.call") {
+            let arguments = split_mod_arguments(arguments, 3)
+                .filter(|arguments| arguments.len() == 2)
+                .ok_or(ModSourceValidationFailure::InvalidLine(line_number))?;
+            self.materialize_atom(arguments[0], line_number)?;
+            self.materialize_atom(arguments[1], line_number)?;
+            self.used_capabilities |= CAPABILITY_UNREAL_REFLECTION;
+            self.append_instructions(1)?;
+            return Ok(true);
+        }
+        for name in [
+            "event.next",
+            "event.object",
+            "event.function",
+            "event.params_size",
+            "event.captured_u64",
+        ] {
+            if let Some(arguments) = parse_call(expression, name) {
+                if !arguments.is_empty() {
+                    return Err(ModSourceValidationFailure::InvalidLine(line_number));
+                }
+                self.used_capabilities |= CAPABILITY_PROCESS_EVENT;
+                self.append_instructions(1)?;
+                return Ok(true);
+            }
+        }
+        for name in [
+            "event.read_u8",
+            "event.read_u16",
+            "event.read_u32",
+            "event.read_u64",
+            "event.read_i32",
+            "event.read_f32_milli",
+        ] {
+            if let Some(arguments) = parse_call(expression, name) {
+                self.compile_single_argument_call(arguments, line_number)?;
+                self.used_capabilities |= CAPABILITY_PROCESS_EVENT;
                 return Ok(true);
             }
         }
@@ -968,13 +1488,21 @@ fn is_mod_variable_name(name: &str) -> bool {
 
 fn is_mod_event_name(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= MAX_MOD_STRING_BYTES
+        && name.len() <= MAX_MOD_EVENT_NAME_BYTES
         && name.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
         })
 }
 
-fn mod_capability(name: &str) -> Option<u8> {
+pub(crate) fn is_mod_binding_id(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 31
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
+        })
+}
+
+fn mod_capability(name: &str) -> Option<u16> {
     Some(match name {
         "viewport.tick" => CAPABILITY_VIEWPORT_TICK,
         "memory.read" => CAPABILITY_MEMORY_READ,
@@ -984,11 +1512,14 @@ fn mod_capability(name: &str) -> Option<u8> {
         "combat-clock" => CAPABILITY_COMBAT_CLOCK,
         "log" => CAPABILITY_LOG,
         "game.session" => CAPABILITY_GAME_SESSION,
+        "memory.write" => CAPABILITY_MEMORY_WRITE,
+        "unreal.reflection" => CAPABILITY_UNREAL_REFLECTION,
+        "process.event" => CAPABILITY_PROCESS_EVENT,
         _ => return None,
     })
 }
 
-fn mod_ipc_service(name: &str) -> Option<(u16, u8)> {
+fn mod_ipc_service(name: &str) -> Option<(u16, u16)> {
     Some(match name {
         "equipment.equip_module" => (1, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
         "equipment.equip_core" => (2, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
@@ -1096,22 +1627,27 @@ fn parse_mod_for_range(line: &str) -> Option<(&str, u8)> {
 pub(crate) fn new_mod_script_template(id: &str) -> Result<String, ModScriptError> {
     validate_mod_id(id)?;
     Ok(format!(
-        "# Declare only the host capabilities this Mod actually uses.\n\
-         nte_mod(4)\n\
-         mod(\"{id}\")\n\
-         requires(\"viewport.tick\")\n\
-         requires(\"game.session\")\n\
-         requires(\"ipc\")\n\
-         route_ipc(12, \"ipc.query_mod_events\")\n\
-         state.last_character = 0\n\
+        "#include <nte/mod.hpp>\n\
          \n\
-         # This handler is the Mod's control flow and runs on the shared tick hook.\n\
-         def on_viewport_tick(event):\n\
-         \x20\x20\x20\x20character = game.player_character\n\
-         \x20\x20\x20\x20if character != state.last_character:\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20ipc.emit(\"pre.session.changed\", state.last_character, character)\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20state.last_character = character\n\
-         \x20\x20\x20\x20\x20\x20\x20\x20ipc.emit(\"post.session.changed\", character)\n"
+         NTE_SCRIPT(5);\n\
+         NTE_MOD(\"{id}\");\n\
+         NTE_REQUIRES(\"viewport.tick\");\n\
+         NTE_REQUIRES(\"game.session\");\n\
+         NTE_REQUIRES(\"ipc\");\n\
+         NTE_ROUTE_IPC(12, \"ipc.query_mod_events\");\n\
+         \n\
+         std::uint64_t last_character = 0;\n\
+         \n\
+         void on_viewport_tick(const nte::viewport_tick_event& event)\n\
+         {{\n\
+         \x20\x20\x20\x20const auto character = nte::game::player_character;\n\
+         \x20\x20\x20\x20if (character != last_character)\n\
+         \x20\x20\x20\x20{{\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20nte::ipc::emit(\"pre.session.changed\", last_character, character);\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20last_character = character;\n\
+         \x20\x20\x20\x20\x20\x20\x20\x20nte::ipc::emit(\"post.session.changed\", character);\n\
+         \x20\x20\x20\x20}}\n\
+         }}\n"
     ))
 }
 
@@ -1119,7 +1655,7 @@ pub(crate) fn validate_enabled_mod_set(source: &str) -> Result<(), ModScriptErro
     parse_enabled_mods(source).map(|_| ())
 }
 
-fn validate_mod_id(id: &str) -> Result<(), ModScriptError> {
+pub(crate) fn validate_mod_id(id: &str) -> Result<(), ModScriptError> {
     if id.is_empty()
         || id.len() > 31
         || id.bytes().any(|value| {
@@ -1205,20 +1741,13 @@ mod tests {
     fn workspace_round_trip_preserves_source_and_enabled_state() {
         let root = temp_workspace();
         let source = new_mod_script_template("telemetry").unwrap();
-        assert!(source.starts_with("# Declare only the host capabilities"));
-        assert!(source.contains("# This handler is the Mod's control flow"));
-        assert!(source.contains("game.player_character"));
-        assert!(source.contains("ipc.emit(\"pre.session.changed\""));
-        assert!(source.contains("ipc.emit(\"post.session.changed\""));
-        let blueprint = ModScriptBlueprint {
-            nodes: vec![ModScriptBlueprintNode {
-                signature: "0:character = game.player_character\n".to_owned(),
-                position: [184.5, 92.25],
-                description: "Read the active character.".to_owned(),
-            }],
-        };
+        assert!(source.starts_with("#include <nte/mod.hpp>"));
+        assert!(source.contains("NTE_SCRIPT(5);"));
+        assert!(source.contains("nte::game::player_character"));
+        assert!(source.contains("nte::ipc::emit(\"pre.session.changed\""));
+        assert!(source.contains("nte::ipc::emit(\"post.session.changed\""));
 
-        save_mod_script(&root, "telemetry", &source, &blueprint).unwrap();
+        save_mod_script(&root, "telemetry", &source).unwrap();
         set_mod_enabled(&root, "telemetry", true).unwrap();
         let workspace = load_mod_script_workspace(&root).unwrap();
 
@@ -1228,70 +1757,26 @@ mod tests {
                 id: "telemetry".to_owned(),
                 enabled: true,
                 source,
-                blueprint,
             }]
         );
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn workspace_loads_legacy_script_without_blueprint_metadata() {
+    fn deletion_disables_then_removes_the_mod_source() {
         let root = temp_workspace();
-        let source = new_mod_script_template("legacy").unwrap();
-        atomic_write_text(&root.join("nte-mods").join("legacy.nte"), &source).unwrap();
+        let source = new_mod_script_template("telemetry").unwrap();
+        save_mod_script(&root, "telemetry", &source).unwrap();
+        set_mod_enabled(&root, "telemetry", true).unwrap();
 
-        let workspace = load_mod_script_workspace(&root).unwrap();
+        delete_mod_script(&root, "telemetry").unwrap();
 
+        assert!(load_mod_script_workspace(&root).unwrap().scripts.is_empty());
         assert_eq!(
-            workspace.scripts[0].blueprint,
-            ModScriptBlueprint::default()
+            fs::read_to_string(root.join(MOD_SET_FILE_NAME)).unwrap(),
+            "nte_mod_set 1\n"
         );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn oversized_blueprint_is_rejected_before_source_is_written() {
-        let root = temp_workspace();
-        let source = new_mod_script_template("oversized").unwrap();
-        let blueprint = ModScriptBlueprint {
-            nodes: vec![ModScriptBlueprintNode {
-                signature: "0:value = 1\n".to_owned(),
-                position: [0.0, 0.0],
-                description: "x".repeat(MAX_MOD_BLUEPRINT_BYTES),
-            }],
-        };
-
-        assert_eq!(
-            save_mod_script(&root, "oversized", &source, &blueprint),
-            Err(ModScriptError::BlueprintTooLarge("oversized".to_owned()))
-        );
-        assert!(!root.join("nte-mods").join("oversized.nte").exists());
-    }
-
-    #[test]
-    fn source_write_failure_restores_previous_blueprint_metadata() {
-        let root = temp_workspace();
-        let mod_directory = root.join(MOD_DIRECTORY_NAME);
-        fs::create_dir_all(mod_directory.join("blocked.nte")).unwrap();
-        let blueprint_path = mod_script_blueprint_path(&mod_directory, "blocked");
-        atomic_write_text(&blueprint_path, "previous blueprint").unwrap();
-        let source = new_mod_script_template("blocked").unwrap();
-        let blueprint = ModScriptBlueprint {
-            nodes: vec![ModScriptBlueprintNode {
-                signature: "0:value = 1\n".to_owned(),
-                position: [10.0, 20.0],
-                description: String::new(),
-            }],
-        };
-
-        assert!(matches!(
-            save_mod_script(&root, "blocked", &source, &blueprint),
-            Err(ModScriptError::FileSystem(_))
-        ));
-        assert_eq!(
-            fs::read_to_string(blueprint_path).unwrap(),
-            "previous blueprint"
-        );
+        assert!(!root.join(MOD_DIRECTORY_NAME).join("telemetry.nte").exists());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1325,10 +1810,186 @@ mod tests {
                 "character-telemetry",
                 include_str!("../../plugins/examples/character-telemetry.nte"),
             ),
+            (
+                "reflection-events",
+                include_str!("../../plugins/examples/reflection-events.nte"),
+            ),
         ] {
             let crlf = source.replace("\r\n", "\n").replace('\n', "\r\n");
             validate_mod_source(id, &crlf).unwrap();
         }
+    }
+
+    #[test]
+    fn source_validation_accepts_cpp_namespaces_state_and_control_flow() {
+        validate_mod_source(
+            "telemetry",
+            concat!(
+                "#include <nte/mod.hpp>\n",
+                "\n",
+                "NTE_SCRIPT(5);\n",
+                "NTE_MOD(\"telemetry\");\n",
+                "NTE_REQUIRES(\"viewport.tick\");\n",
+                "NTE_REQUIRES(\"game.session\");\n",
+                "NTE_REQUIRES(\"ipc\");\n",
+                "std::uint64_t last_character = 0;\n",
+                "\n",
+                "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+                "{\n",
+                "    const auto character = nte::game::player_character;\n",
+                "    if (character != last_character)\n",
+                "    {\n",
+                "        nte::ipc::emit(\"post.character.changed\", character);\n",
+                "        last_character = character;\n",
+                "    }\n",
+                "}\n",
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn source_validation_reports_the_original_cpp_line() {
+        assert_eq!(
+            validate_mod_source(
+                "telemetry",
+                concat!(
+                    "#include <nte/mod.hpp>\n",
+                    "\n",
+                    "NTE_SCRIPT(5);\n",
+                    "NTE_MOD(\"telemetry\");\n",
+                    "NTE_REQUIRES(\"viewport.tick\");\n",
+                    "void on_viewport_tick(const nte::viewport_tick_event& event)\n",
+                    "{\n",
+                    "    const auto value = 1\n",
+                    "}\n",
+                ),
+            ),
+            Err(ModScriptError::InvalidSourceLine(8))
+        );
+    }
+
+    #[test]
+    fn source_validation_accepts_generic_typed_reads_and_cache() {
+        validate_mod_source(
+            "telemetry",
+            concat!(
+                "nte_mod(4)\n",
+                "mod(\"telemetry\")\n",
+                "requires(\"viewport.tick\")\n",
+                "requires(\"memory.read\")\n",
+                "def on_viewport_tick(event):\n",
+                "    base = 0x1000\n",
+                "    hp = memory.read_f32_milli(base, 0x20)\n",
+                "    name = memory.read_fname_hash(base, 0x40)\n",
+                "    cached = cache.remember(base, name)\n",
+                "    loaded = cache.get(base)\n",
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn source_validation_accepts_generic_unreal_runtime_capabilities() {
+        validate_mod_source(
+            "runtime-probe",
+            concat!(
+                "nte_mod(4)\n",
+                "mod(\"runtime-probe\")\n",
+                "requires(\"viewport.tick\")\n",
+                "requires(\"game.session\")\n",
+                "requires(\"memory.write\")\n",
+                "requires(\"unreal.reflection\")\n",
+                "requires(\"process.event\")\n",
+                "def on_viewport_tick(event):\n",
+                "    controller = game.player_controller\n",
+                "    function = unreal.find_function(controller, \"HTPlayerController\", \"ProbeState\")\n",
+                "    unreal.params_clear(16)\n",
+                "    unreal.params_write_u64(0, controller)\n",
+                "    called = unreal.call(controller, function)\n",
+                "    output = unreal.params_read_u32(8)\n",
+                "    unreal.watch(controller, function)\n",
+                "    unreal.watch_array_u64(controller, function, 0x160, 0x110)\n",
+                "    unreal.watch_class_array_u64(controller, function, 0x160, 0x110)\n",
+                "    memory.write_u8(controller, 0x20, output)\n",
+                "    ready = event.next()\n",
+                "    if ready:\n",
+                "        source = event.object()\n",
+                "        size = event.params_size()\n",
+                "        captured = event.captured_u64()\n",
+                "        value = event.read_u32(8)\n",
+                "        unreal.unwatch(controller, function)\n",
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn source_validation_requires_generic_runtime_capabilities() {
+        assert_eq!(
+            validate_mod_source(
+                "runtime-probe",
+                concat!(
+                    "nte_mod(4)\n",
+                    "mod(\"runtime-probe\")\n",
+                    "requires(\"viewport.tick\")\n",
+                    "def on_viewport_tick(event):\n",
+                    "    value = event.next()\n",
+                ),
+            ),
+            Err(ModScriptError::CapabilityMismatch)
+        );
+    }
+
+    #[test]
+    fn source_bindings_are_declared_by_the_mod_and_reject_duplicates() {
+        let source = new_mod_script_template("sample").unwrap().replace(
+            "NTE_MOD(\"sample\");",
+            "NTE_MOD(\"sample\");\nNTE_BIND(\"feature.sample\");",
+        );
+        assert_eq!(
+            mod_source_bindings("sample", &source).unwrap(),
+            vec!["feature.sample"]
+        );
+
+        let duplicate = source.replace(
+            "NTE_BIND(\"feature.sample\");",
+            "NTE_BIND(\"feature.sample\");\nNTE_BIND(\"feature.sample\");",
+        );
+        assert!(matches!(
+            mod_source_bindings("sample", &duplicate),
+            Err(ModScriptError::InvalidSourceLine(_))
+        ));
+    }
+
+    #[test]
+    fn source_validation_rejects_invalid_generic_cache_arguments() {
+        assert_eq!(
+            validate_mod_source(
+                "telemetry",
+                concat!(
+                    "nte_mod(4)\n",
+                    "mod(\"telemetry\")\n",
+                    "requires(\"viewport.tick\")\n",
+                    "def on_viewport_tick(event):\n",
+                    "    cached = cache.remember(1)\n",
+                ),
+            ),
+            Err(ModScriptError::InvalidSourceLine(5))
+        );
+        assert_eq!(
+            validate_mod_source(
+                "telemetry",
+                concat!(
+                    "nte_mod(4)\n",
+                    "mod(\"telemetry\")\n",
+                    "requires(\"viewport.tick\")\n",
+                    "def on_viewport_tick(event):\n",
+                    "    cached = cache.get(1, 2)\n",
+                ),
+            ),
+            Err(ModScriptError::InvalidSourceLine(5))
+        );
     }
 
     #[test]
@@ -1374,7 +2035,7 @@ mod tests {
         );
 
         assert_eq!(
-            save_mod_script(&root, "telemetry", source, &ModScriptBlueprint::default(),),
+            save_mod_script(&root, "telemetry", source),
             Err(ModScriptError::InvalidSourceLine(5))
         );
         assert!(!root.join(MOD_DIRECTORY_NAME).exists());

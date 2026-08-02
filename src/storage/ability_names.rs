@@ -127,18 +127,6 @@ pub fn resolve_ability_name(ability_name: &str) -> Option<String> {
         .cloned()
 }
 
-#[cfg(all(test, feature = "gui"))]
-pub(crate) fn set_for_test(
-    skills: HashMap<String, crate::engine::parser::GameplayEffectSkill>,
-    ability_tip_names: HashMap<String, String>,
-    semantic_names: HashMap<String, (String, bool)>,
-) {
-    let mut store = STORE.write().expect("ability name store lock poisoned");
-    store.catalog = Arc::new(AbilityCatalog::from(skills));
-    store.ability_tip_names = ability_tip_names;
-    store.semantic_names = semantic_names;
-}
-
 fn resolve_from_maps(
     catalog: &AbilityCatalog,
     ability_tip_names: &HashMap<String, String>,

@@ -6,6 +6,8 @@ on:
       - master
     paths:
       - "src/**"
+      - "src-tauri/**"
+      - "frontend/**"
       - "native/**"
       - "plugins/**"
       - "res/**"
@@ -16,7 +18,6 @@ on:
       - "README.md"
       - "README_EN.md"
       - "THIRD_PARTY_LICENSES.md"
-      - "licenses/**"
       - "scripts/**"
       - ".github/workflows/build.yml"
   pull_request:
@@ -24,6 +25,8 @@ on:
       - master
     paths:
       - "src/**"
+      - "src-tauri/**"
+      - "frontend/**"
       - "native/**"
       - "plugins/**"
       - "res/**"
@@ -34,7 +37,6 @@ on:
       - "README.md"
       - "README_EN.md"
       - "THIRD_PARTY_LICENSES.md"
-      - "licenses/**"
       - "scripts/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -65,6 +67,21 @@ jobs:
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
 
       - name: Validate official update channel
         if: github.event_name != 'pull_request'
@@ -141,38 +158,48 @@ jobs:
             "plugins/nte-mods/equipment.nte",
             "plugins/nte-mods/combat-clock.nte"
           )) {
-            if (-not (Get-Content -LiteralPath $program -Raw).StartsWith("nte_mod(4)")) {
-              throw "NTE Mods Plugin program is not Python-style DSL v4: $program"
+            $source = Get-Content -LiteralPath $program -Raw
+            if (-not $source.StartsWith("#include <nte/mod.hpp>") -or -not $source.Contains("NTE_SCRIPT(5);")) {
+              throw "NTE Mods Plugin program is not NTE C++ v5: $program"
             }
           }
 
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Check default GUI build
+      - name: Check shared desktop build
         run: cargo check
 
-      - name: Test default GUI build
+      - name: Test shared desktop build
         run: cargo test
 
-      - name: Check GUI and CLI targets
+      - name: Check Tauri and CLI targets
         shell: pwsh
         run: |
-          cargo check --bin nte-dps-tool --features gui
+          cargo fmt --check --manifest-path src-tauri/Cargo.toml
+          cargo check --manifest-path src-tauri/Cargo.toml
           cargo check --bin nte-core --no-default-features --features cli
 
-      - name: Lint GUI and CLI targets
+      - name: Lint desktop, Tauri, and CLI targets
         shell: pwsh
         run: |
-          cargo clippy --all-targets --features gui -- -D warnings
+          cargo clippy --all-targets --features desktop -- -D warnings
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
           cargo clippy --all-targets --no-default-features --features cli -- -D warnings
 
-      - name: Test GUI and CLI targets
+      - name: Test Tauri and CLI targets
         shell: pwsh
         run: |
-          cargo test --features gui
+          cargo test --manifest-path src-tauri/Cargo.toml
           cargo test --no-default-features --features cli
-          cargo test --features "gui external_resources"
+          cargo test --features external_resources
+
+      - name: Check frontend
+        shell: pwsh
+        run: |
+          pnpm --dir frontend lint
+          pnpm --dir frontend typecheck
+          pnpm --dir frontend test
 
       - name: Verify architecture policy
         shell: pwsh
@@ -181,10 +208,10 @@ jobs:
       - name: Build release variants
         shell: pwsh
         run: |
-          cargo build --release --bin nte-dps-tool --features gui
-          cargo build --release --bin nte-updater --features gui
+          pnpm --dir frontend tauri:build --no-bundle --ci
+          cargo build --release --bin nte-updater --features desktop
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
-          Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
+          Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-x64/
           Copy-Item plugins dist/nte-dps-tool-windows-x64/plugins -Recurse
 
@@ -195,9 +222,9 @@ jobs:
           Copy-Item docs/CLI_PROTOCOL_ZH.md dist/nte-core-windows-x64/
           Copy-Item docs/examples dist/nte-core-windows-x64/examples -Recurse
 
-          cargo build --release --bin nte-dps-tool --features "gui external_resources"
+          pnpm --dir frontend tauri:build --no-bundle --ci --features external_resources
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
-          Copy-Item target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
+          Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
           Copy-Item plugins dist/nte-dps-tool-windows-external-resources/plugins -Recurse
@@ -246,10 +273,10 @@ jobs:
             "nte-dps-tool-windows-x64" = @"
           # NTE DPS Tool - Windows x64
 
-          - Standard GUI release with F12, Packets, Resources, and Diagnostics available.
+          - Standard Tauri desktop release with F12, Packets, Resources, and Diagnostics available.
           - Runtime resources are embedded in the executable.
           - Includes nte-updater.exe for official-channel updates.
-          - The optional in-game mod loader uses plugins/dwmapi.dll plus bounded Python-style programs under plugins/nte-mods and is installed only after the timed risk confirmation.
+          - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
           - JSON resources are minified during embedding, and PNG resources may be embedded as smaller WebP bytes.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
@@ -257,17 +284,17 @@ jobs:
           # NTE Core - Windows x64
 
           - Local JSON-RPC 2.0 over NDJSON stdio sidecar for third-party integrations.
-          - Does not open a network port and does not include GUI images or GUI dependencies.
+          - Does not open a network port and does not include desktop UI images or windowing dependencies.
           - Read CLI_PROTOCOL.md or CLI_PROTOCOL_ZH.md before integrating.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
           "@
             "nte-dps-tool-windows-external-resources" = @"
           # NTE DPS Tool - Windows External Resources Variant
 
-          - Standard GUI release with F12 and all diagnostics available.
+          - Standard Tauri desktop release with F12 and all diagnostics available.
           - Runtime resources are not embedded in the executable.
           - Includes nte-updater.exe for official-channel updates.
-          - The optional in-game mod loader uses plugins/dwmapi.dll plus bounded Python-style programs under plugins/nte-mods and is installed only after the timed risk confirmation.
+          - The optional in-game mod loader uses plugins/dwmapi.dll plus restricted NTE C++ v5 Mods under plugins/nte-mods and is installed only after the timed risk confirmation.
           - Keep the bundled res directory beside nte-dps-tool.exe.
           - Use this build when minimizing executable size or updating resources without rebuilding the binary.
           - The executable is compressed with UPX -9 and integrity-tested before packaging.
@@ -276,7 +303,6 @@ jobs:
 
           foreach ($variant in $variantNotes.Keys) {
             Copy-Item THIRD_PARTY_LICENSES.md "dist/$variant/"
-            Copy-Item licenses "dist/$variant/licenses" -Recurse
             $variantNotes[$variant] | Set-Content -Encoding UTF8 "dist/$variant/BUILD_VARIANT.md"
             Compress-Archive -Path "dist/$variant/*" -DestinationPath "$variant.zip" -Force
           }
@@ -304,42 +330,26 @@ jobs:
           $shortSha = $env:GITHUB_SHA.Substring(0, 7)
           $crateVersion = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           $releaseTag = "v$crateVersion-build-$env:GITHUB_RUN_NUMBER-$shortSha"
+          $releaseNotesPath = "docs/releases/$crateVersion.md"
+          if (-not (Test-Path -LiteralPath $releaseNotesPath -PathType Leaf)) {
+            throw "Release notes are missing: $releaseNotesPath"
+          }
+          $releaseNotes = (Get-Content -LiteralPath $releaseNotesPath -Raw -Encoding UTF8).Trim()
+          if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
+            throw "Release notes are empty: $releaseNotesPath"
+          }
+          $notes = @(
+            $releaseNotes
+            ""
+            "---"
+            "Build: $env:GITHUB_SHA"
+          ) -join "`n"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag $releaseTag $env:GITHUB_SHA
           git push origin "refs/tags/$releaseTag"
 
-          # Accumulate every commit for the current crate version, including commits
-          # delivered by earlier pushes. A new version starts from the previous build tag.
-          $currentVersionPrefix = "v$crateVersion-build-"
-          $previousVersionTag = git tag --merged $env:GITHUB_SHA --sort=-creatordate |
-            Where-Object {
-              $_ -match '^(v.+-)?build-' -and -not $_.StartsWith($currentVersionPrefix)
-            } |
-            Select-Object -First 1
-
-          if ($previousVersionTag) {
-            $commitLines = @(git log --reverse --no-merges --pretty=format:"- %h %s" "$previousVersionTag..$env:GITHUB_SHA")
-          } else {
-            $commitLines = @()
-          }
-          if (-not $commitLines) {
-            $commitLines = @(git log --reverse --no-merges -n 20 --pretty=format:"- %h %s")
-          }
-
-          $notes = @(
-            "版本：v$crateVersion"
-            "自动构建：$env:GITHUB_SHA"
-            ""
-            "本次改动："
-            $commitLines
-            ""
-            "构建产物："
-            "- nte-dps-tool-windows-x64.zip：完整 GUI，资源内嵌，包含 plugins/dwmapi.dll、Python 风格受限 Mod 程序、F12 与诊断工具。"
-            "- nte-core-windows-x64.zip：本地 stdio Sidecar，供第三方本机工具集成。"
-            "- nte-dps-tool-windows-external-resources.zip：完整 GUI，资源外置，包含 plugins/dwmapi.dll 与 Python 风格受限 Mod 程序，需保持 res、plugins 目录与 exe 同级。"
-          ) -join "`n"
           gh release create $releaseTag `
             nte-dps-tool-windows-x64.zip `
             nte-core-windows-x64.zip `

@@ -330,6 +330,7 @@ impl Runtime {
             CaptureControllerOptions {
                 profile,
                 device,
+                filter: "udp".to_owned(),
                 include_incoming: params.include_incoming,
                 server_damage_calibration: params.server_damage_calibration,
                 raw_capture,
@@ -1513,6 +1514,9 @@ mod tests {
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,

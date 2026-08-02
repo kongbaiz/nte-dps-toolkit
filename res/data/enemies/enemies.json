@@ -1,0 +1,4995 @@
+{
+  "version": 1,
+  "hash": "fnv1a64_ascii_lower",
+  "sources": [
+    "Global/HT/Content/DataTable/Monster/DT_MonsterStaticData_*.json",
+    "Global/HT/Content/Localization/Game/{en,zh-CN,ja}/game.json",
+    "res/images/monsters/*.png"
+  ],
+  "enemies": [
+    {
+      "config_id": "Boss_016_BP",
+      "config_hash": "4d887b4905d5dbaf",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_016_BP_Abyss",
+      "config_hash": "735f1657fda4670c",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_016_BP_Child_q110150",
+      "config_hash": "74d2eb0421d600a2",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_016_BP_DiyBoss",
+      "config_hash": "004fad0f0dad161b",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_017_BP",
+      "config_hash": "252a8554510d02be",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "Boss_017_BP_Abyss",
+      "config_hash": "c9b043a4adfdd415",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "Boss_017_BP_BankBoss",
+      "config_hash": "43f996a3feb414c8",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "Boss_017_BP_MammonBoss",
+      "config_hash": "ca207b57ffb07bb7",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "Boss_017_BP_Vision",
+      "config_hash": "1d86f7078b0be877",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_05_BP",
+      "config_hash": "f86974c360c72645",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Abyss",
+      "config_hash": "e6cbb0c368c65b4a",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_q110131",
+      "config_hash": "153a5fec7d3f530c",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_review",
+      "config_hash": "3c4819a25c3b8266",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv1",
+      "config_hash": "2fbda9b454a6efaf",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv2",
+      "config_hash": "2fbdaab454a6f162",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv3",
+      "config_hash": "2fbdabb454a6f315",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv4",
+      "config_hash": "2fbda4b454a6e730",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv5",
+      "config_hash": "2fbda5b454a6e8e3",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv6",
+      "config_hash": "2fbda6b454a6ea96",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "boss_05_BP_Weekly_Lv7",
+      "config_hash": "2fbda7b454a6ec49",
+      "monster_id": "Boss_05",
+      "name_en": "Morphix",
+      "name_zh": "墨菲克斯",
+      "name_ja": "モルフィックス"
+    },
+    {
+      "config_id": "Boss_06_BP",
+      "config_hash": "cb2a82bcfe54b41a",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_BP_Abyss",
+      "config_hash": "afdcaa07058a5c79",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_BP_WorldFilm",
+      "config_hash": "59047ed3ebbed4e3",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_ChallengeLv1_BP",
+      "config_hash": "e7186215ef32a651",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_ChallengeLv2_BP",
+      "config_hash": "0f84500aa407af06",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_ChallengeLv3_BP",
+      "config_hash": "b98b260308fa1d57",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_ChallengeLv4_BP",
+      "config_hash": "169d543fa69d1adc",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_ChallengeLv5_BP",
+      "config_hash": "3fd56a345c1fcded",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_ChallengeLv6_BP",
+      "config_hash": "1522582dfbd6aaa2",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_Sagiri_BP_Challenge",
+      "config_hash": "dec4936e609763ce",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_06_Sagiri_BP_q110083",
+      "config_hash": "8b79cb0a5ce9c577",
+      "monster_id": "Boss_06",
+      "name_en": "Film - MANISH",
+      "name_zh": "胶卷-MANISH",
+      "name_ja": "フィルムMANISH"
+    },
+    {
+      "config_id": "Boss_07_BP",
+      "config_hash": "1f99b8b2ee8df2cb",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "Boss_07_BP_Abyss",
+      "config_hash": "f1b270943e2e03e0",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "Boss_07_BP_DiyBoss",
+      "config_hash": "967a47efcfa0d55f",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "Boss_07_BP_L110047",
+      "config_hash": "2fade0dd25ea9283",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "Boss_07_BP_WorldBoss",
+      "config_hash": "480f0bbff3e21699",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "boss_07_ChallengeLv1_BP",
+      "config_hash": "bd3ccca5ae06d9f2",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "boss_07_ChallengeLv2_BP",
+      "config_hash": "9090deb0f595047d",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "boss_07_ChallengeLv3_BP",
+      "config_hash": "92a688b61d5ce46c",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "boss_07_ChallengeLv4_BP",
+      "config_hash": "8a51da7bf3b93c67",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "boss_07_ChallengeLv5_BP",
+      "config_hash": "6119c4873e368956",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "boss_07_ChallengeLv6_BP",
+      "config_hash": "6247968c6538cc21",
+      "monster_id": "Boss_07",
+      "name_en": "Serenetti",
+      "name_zh": "塞润尼缇",
+      "name_ja": "セレニティ"
+    },
+    {
+      "config_id": "Boss_08_BP_Abyss",
+      "config_hash": "2a8d8d26b286926f",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_BP_DiyBoss",
+      "config_hash": "ccde4f1d749f5964",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_BP_q110733",
+      "config_hash": "5f8d3951b7edd951",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_BP_VisionBoss",
+      "config_hash": "5a1424340af8b920",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_BP_WorldBoss",
+      "config_hash": "709b30a27852c31a",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_ChallengeLv1_BP",
+      "config_hash": "4f0d07932631a5d7",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_ChallengeLv2_BP",
+      "config_hash": "7dd4edab3376b800",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_ChallengeLv3_BP",
+      "config_hash": "7c9a43a60c6a2ed1",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_ChallengeLv4_BP",
+      "config_hash": "aaa439be190e3322",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_ChallengeLv5_BP",
+      "config_hash": "54aaefb67e006b13",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "Boss_08_ChallengeLv6_BP",
+      "config_hash": "ac1f35cfc3d4a35c",
+      "monster_id": "Boss_08",
+      "name_en": "Swallowtail",
+      "name_zh": "斑蝶",
+      "name_ja": "斑蝶"
+    },
+    {
+      "config_id": "boss_09_BP_Abyss",
+      "config_hash": "ba93ca800eae7f9e",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_BP_VisionBoss",
+      "config_hash": "610ab72342307913",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_BP_WorldBoss",
+      "config_hash": "4d66ee419713bd47",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_ChallengeLv1_BP",
+      "config_hash": "65483d4e5f59b3b8",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_ChallengeLv2_BP",
+      "config_hash": "0dd3f73519857b6f",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_ChallengeLv3_BP",
+      "config_hash": "3894013b79d91b7e",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_ChallengeLv4_BP",
+      "config_hash": "6b71fb65341c3c45",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_ChallengeLv5_BP",
+      "config_hash": "c16b456ccf2a0454",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_09_ChallengeLv6_BP",
+      "config_hash": "92a23f54c1e308cb",
+      "monster_id": "Boss_09",
+      "name_en": "Black Tome",
+      "name_zh": "黑之书",
+      "name_ja": "魔の書"
+    },
+    {
+      "config_id": "boss_10_BP",
+      "config_hash": "813c14a2bca8195f",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_q110300",
+      "config_hash": "fe3aed814bce8f94",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv1",
+      "config_hash": "4855bd90cda86f29",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv2",
+      "config_hash": "4855ba90cda86a10",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv3",
+      "config_hash": "4855bb90cda86bc3",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv4",
+      "config_hash": "4855c090cda87442",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv5",
+      "config_hash": "4855c190cda875f5",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv6",
+      "config_hash": "4855be90cda870dc",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_BP_Weekly_Lv7",
+      "config_hash": "4855bf90cda8728f",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_partner_BP",
+      "config_hash": "1f7ccdb2ef0c68f0",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_10_partner_BP_q110389",
+      "config_hash": "3cd1a696880d078c",
+      "monster_id": "Boss_10",
+      "name_en": "The Never-ending Arachne",
+      "name_zh": "永不谢幕的阿拉克涅",
+      "name_ja": "踊りだせアラクネ"
+    },
+    {
+      "config_id": "boss_13_BP",
+      "config_hash": "83f2dab98e7cfc28",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_BP_DiyBoss",
+      "config_hash": "734149549bd0c42c",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_BP_Trial",
+      "config_hash": "6bb95d6f762f0ce3",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_BP_VisionBoss",
+      "config_hash": "a734762966802fd8",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_BP_WorldBoss",
+      "config_hash": "d21827d2e0edda02",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_ChallengeLv1_BP",
+      "config_hash": "fc3a163784532caf",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_ChallengeLv2_BP",
+      "config_hash": "57145c50cd0a8df8",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_ChallengeLv3_BP",
+      "config_hash": "29c7524a6a8bb5a9",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_ChallengeLv4_BP",
+      "config_hash": "2fff28613f5aa45a",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_ChallengeLv5_BP",
+      "config_hash": "2dea5e5c1794410b",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "boss_13_ChallengeLv6_BP",
+      "config_hash": "5cb2647424d98994",
+      "monster_id": "Boss_13",
+      "name_en": "Headless Rider",
+      "name_zh": "无首铁驭",
+      "name_ja": "デュラハン"
+    },
+    {
+      "config_id": "Boss_15_BP",
+      "config_hash": "b0c126cc7412c44a",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_BP_Abyss",
+      "config_hash": "112a8bcd63d0b1e9",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_BP_Vision",
+      "config_hash": "3256ca85f554e8fb",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_BP_WorldBoss",
+      "config_hash": "5a48e12c4a434884",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_ChallengeLv1_BP",
+      "config_hash": "7f8d40b74cba80c1",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_ChallengeLv2_BP",
+      "config_hash": "29a1eeafb1b8e876",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_ChallengeLv3_BP",
+      "config_hash": "52da04a4673b9b87",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_ChallengeLv4_BP",
+      "config_hash": "b35232e107c1c20c",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_ChallengeLv5_BP",
+      "config_hash": "5c8008d96bfc3f9d",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_15_ChallengeLv6_BP",
+      "config_hash": "85c4f6ce21893912",
+      "monster_id": "Boss_15",
+      "name_en": "Beat King",
+      "name_zh": "音霸魔王",
+      "name_ja": "音ゲー魔王"
+    },
+    {
+      "config_id": "Boss_16_summon_BP",
+      "config_hash": "ba7d50c2b8b7f4c7",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_16_summon_BP_Abyss",
+      "config_hash": "51cf195e4a6c1924",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_16_summon_small_BP",
+      "config_hash": "5abfae401dfc9cab",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "Boss_16_summon_small_BP_Abyss",
+      "config_hash": "83960f23dd5ff780",
+      "monster_id": "Boss_16",
+      "name_en": "Imaginadough",
+      "name_zh": "随心泥",
+      "name_ja": "イメージクレイ"
+    },
+    {
+      "config_id": "boss_17_ChallengeLv1_BP",
+      "config_hash": "9a1b766f3f74479b",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_17_ChallengeLv2_BP",
+      "config_hash": "f18ebc888546cce4",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_17_ChallengeLv3_BP",
+      "config_hash": "c7a7b28225ab1d95",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_17_ChallengeLv4_BP",
+      "config_hash": "93f0b8586ab00c0e",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_17_ChallengeLv5_BP",
+      "config_hash": "3df76e50cfa243ff",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_17_ChallengeLv6_BP",
+      "config_hash": "98d1b46a1859a548",
+      "monster_id": "Boss_17",
+      "name_en": "Mammon",
+      "name_zh": "玛门",
+      "name_ja": "マモン"
+    },
+    {
+      "config_id": "boss_18_BP_Abyss",
+      "config_hash": "e575b6ae739f0024",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_chase",
+      "config_hash": "f790ad6c322a1426",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_DiyBoss",
+      "config_hash": "e8afa0a7c8b6f793",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_stage1",
+      "config_hash": "4d9af5c5e0794ae5",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_stage1_L110116",
+      "config_hash": "df20faa6b2659db4",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_stage1_L110133",
+      "config_hash": "df19efa6b25f6c55",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_stage2",
+      "config_hash": "4d9af2c5e07945cc",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_18_BP_stage2_L110135",
+      "config_hash": "5dcccd05111ce05e",
+      "monster_id": "Boss_18",
+      "name_en": "Tomato Devil",
+      "name_zh": "番茄酱恶魔",
+      "name_ja": "トマトデビル"
+    },
+    {
+      "config_id": "boss_19_BP",
+      "config_hash": "241cce661efa68b6",
+      "monster_id": "boss_19",
+      "name_en": "Sea Prisoner",
+      "name_zh": "海囚",
+      "name_ja": "シープリズン"
+    },
+    {
+      "config_id": "boss_19_BP_Quest",
+      "config_hash": "09b45b173993c8db",
+      "monster_id": "boss_19",
+      "name_en": "Sea Prisoner",
+      "name_zh": "海囚",
+      "name_ja": "シープリズン"
+    },
+    {
+      "config_id": "boss_19_BP_WorldBoss",
+      "config_hash": "1dc78bb652462750",
+      "monster_id": "boss_19",
+      "name_en": "Sea Prisoner",
+      "name_zh": "海囚",
+      "name_ja": "シープリズン"
+    },
+    {
+      "config_id": "boss_26_BP_Abyss",
+      "config_hash": "b558fe1f4bc98e73",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_DiyBoss",
+      "config_hash": "7862cd249f0253b8",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_q110419",
+      "config_hash": "5c1f9c2064e68698",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_q110490",
+      "config_hash": "5c04a52064cfce2b",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv1",
+      "config_hash": "bc52148fbe9f792c",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv2",
+      "config_hash": "bc52178fbe9f7e45",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv3",
+      "config_hash": "bc52168fbe9f7c92",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv4",
+      "config_hash": "bc52118fbe9f7413",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv5",
+      "config_hash": "bc52108fbe9f7260",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv6",
+      "config_hash": "bc52138fbe9f7779",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_26_BP_Weekly_Lv7",
+      "config_hash": "bc52128fbe9f75c6",
+      "monster_id": "Boss_26",
+      "name_en": "Debt Collector",
+      "name_zh": "讨债人",
+      "name_ja": "取り立て屋"
+    },
+    {
+      "config_id": "boss_33_BP_Abyss",
+      "config_hash": "4a577bad36d5edc9",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_BP_VisionBoss",
+      "config_hash": "67168b492bb2012a",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_BP_WorldBoss",
+      "config_hash": "cf28115f8e6d6464",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv1_BP",
+      "config_hash": "07225743bd20d0a1",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv1_Summon",
+      "config_hash": "afa57036da8b01d4",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv2_BP",
+      "config_hash": "05f4853e961e8dd6",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv2_Summon",
+      "config_hash": "2cacf4d5d2d7bcf7",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv3_BP",
+      "config_hash": "2f2c9b334ba140e7",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv3_Summon",
+      "config_hash": "67134448ffbcc552",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv4_BP",
+      "config_hash": "3781496d7544e8ec",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv4_Summon",
+      "config_hash": "96e8ef7abf6388fd",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv5_BP",
+      "config_hash": "356b9f684d7d08fd",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv5_Summon",
+      "config_hash": "04c9aa15aa901478",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv6_BP",
+      "config_hash": "62178d5d05eede72",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_ChallengeLv6_Summon",
+      "config_hash": "82168b83dc04b78b",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "boss_33_Summon",
+      "config_hash": "4fcaa5793d5a0ae3",
+      "monster_id": "boss_33",
+      "name_en": "Nestbound Bird",
+      "name_zh": "囿巢鸟",
+      "name_ja": "巣囚鳥"
+    },
+    {
+      "config_id": "mon_011_BP",
+      "config_hash": "dc00439fce9dea2b",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_Abyss",
+      "config_hash": "5ee113a868bb3900",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_l110035_p11",
+      "config_hash": "8d9a000aec3df96b",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_L110035_p14",
+      "config_hash": "8d9a030aec3dfe84",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_L110035_p6",
+      "config_hash": "12b4fc2a65c4293d",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_L110038",
+      "config_hash": "235b77d0c5a897a5",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_q310038_c",
+      "config_hash": "b619f5e06f45daf6",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_q310038_d",
+      "config_hash": "b619f8e06f45e00f",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_World",
+      "config_hash": "3e6a8b3f8ec69e48",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_011_BP_World_02",
+      "config_hash": "8f437dce7275b5b7",
+      "monster_id": "mon_11",
+      "name_en": "Huggy Vines",
+      "name_zh": "抱抱藤",
+      "name_ja": "だっこツル"
+    },
+    {
+      "config_id": "mon_012_1_BP",
+      "config_hash": "90f273bfb22bdc2c",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_s110601",
+      "config_hash": "2a81fed879cc47f1",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_Vision",
+      "config_hash": "062425e0e7a24975",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_Area01_001",
+      "config_hash": "bdd572b1bd0e63ee",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_Area01_002",
+      "config_hash": "bdd571b1bd0e623b",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_Area02_001",
+      "config_hash": "9dd1b69a2b36f837",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_Area02_002",
+      "config_hash": "9dd1b79a2b36f9ea",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_Area02_003",
+      "config_hash": "9dd1b89a2b36fb9d",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_AreaSpecial_01",
+      "config_hash": "f911b6ddc9ab7f5e",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_1_BP_World_AreaSpecial_02",
+      "config_hash": "f911b5ddc9ab7dab",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_Abyss",
+      "config_hash": "4d9ea607ac9151d8",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_B110011",
+      "config_hash": "6f1e1387287bf77e",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_s110601",
+      "config_hash": "6be3c9773aeab17e",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_Vision",
+      "config_hash": "a1d7628e12cbab64",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_Area01_001",
+      "config_hash": "fd6c43a4d1b5ac93",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_Area01_002",
+      "config_hash": "fd6c44a4d1b5ae46",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_Area02_001",
+      "config_hash": "852e41d5014266ca",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_Area02_002",
+      "config_hash": "852e40d501426517",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_Area02_003",
+      "config_hash": "852e3fd501426364",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_AreaSpecial_01",
+      "config_hash": "7602eec81fe314b3",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_BP_World_AreaSpecial_02",
+      "config_hash": "7602efc81fe31666",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_ChallengeLv1_BP",
+      "config_hash": "32fc1d794112409a",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_Olny",
+      "config_hash": "b4c84ba9b795a9ef",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_012_2_perform_BP_L110248",
+      "config_hash": "72207a59ceac62ca",
+      "monster_id": "mon_12",
+      "name_en": "Bopp",
+      "name_zh": "波普",
+      "name_ja": "ポップ"
+    },
+    {
+      "config_id": "mon_015_BP",
+      "config_hash": "02747b7db241074f",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_015_BP_Abyss",
+      "config_hash": "308ba02eaf1c8bec",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_015_BP_Passive",
+      "config_hash": "07398b33d45dfc25",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_015_BP_PV",
+      "config_hash": "03b5169c360fb942",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_015_BP_s111800",
+      "config_hash": "be63f8429952f3f2",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_015_BP_World",
+      "config_hash": "1a5396c26eff71f4",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_015_BP_World_Perform",
+      "config_hash": "8ee30de1273029d6",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_016_BP",
+      "config_hash": "052a419484143718",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_Abyss",
+      "config_hash": "feb513a052462b67",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_AnomalyDoor",
+      "config_hash": "16b6aa8171ff328e",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_Bank",
+      "config_hash": "0b5dec1c38d1a737",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_Clone",
+      "config_hash": "e3072c07be5ef162",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_Hospital",
+      "config_hash": "b377c5e6978e0bb3",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_Hospital_Key",
+      "config_hash": "10c9cab3f60fade3",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_PV",
+      "config_hash": "4c6f8f5b45f463fb",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_q110020",
+      "config_hash": "aa116ae93d66a960",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_SeqTest",
+      "config_hash": "225684e0d57f2dd8",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_test",
+      "config_hash": "6b29f36fa84bdda5",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_Trial",
+      "config_hash": "68b87a19971cc0b3",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World",
+      "config_hash": "93fabdd11df8da73",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World_01",
+      "config_hash": "257e8a617bf017f7",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World_02",
+      "config_hash": "257e8b617bf019aa",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World_Interaction",
+      "config_hash": "7a56b68577a56984",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World_Interaction_red",
+      "config_hash": "908e031db132fba0",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World_Perform",
+      "config_hash": "e1762936f005a599",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_016_BP_World_W103305",
+      "config_hash": "a4c8bdfdcbd976c5",
+      "monster_id": "mon_16",
+      "name_en": "Haunted Vending Machine",
+      "name_zh": "贩售机附电灵",
+      "name_ja": "自販機の電気霊"
+    },
+    {
+      "config_id": "mon_019_BP_Abyss",
+      "config_hash": "29f85766f55add28",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_019_BP_Clone",
+      "config_hash": "004af5ed62d92a79",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_019_BP_PV",
+      "config_hash": "3afb61d9cf7d741e",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_019_BP_review",
+      "config_hash": "4db37473eca495b8",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_019_BP_World",
+      "config_hash": "3261db727d137a60",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_019_SadBear_BP_Vision",
+      "config_hash": "1c32b5327921f5c1",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_019_SadBear_BP_World",
+      "config_hash": "8d0cddf8f0cc337b",
+      "monster_id": "mon_19",
+      "name_en": "Saddy Teddy",
+      "name_zh": "伤心英熊",
+      "name_ja": "憂愁の英雄熊"
+    },
+    {
+      "config_id": "mon_01_BP",
+      "config_hash": "dcb32e778f569974",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Abyss",
+      "config_hash": "25e3fffd50ceabdb",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Clone_Exp",
+      "config_hash": "fa47771373c6fba2",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Clone_Gold",
+      "config_hash": "afb548fc6c054649",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Clone_WpExp",
+      "config_hash": "13bd8ca53ef1cfab",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Hockshop",
+      "config_hash": "b025ac6ed05a54ee",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Hospital",
+      "config_hash": "4b8b38b391f12f27",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Parry_PV1",
+      "config_hash": "49ec41f27cb6c153",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Parry_PV2",
+      "config_hash": "49ec42f27cb6c306",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Parryt_PV3",
+      "config_hash": "7f308cde48553f1b",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Parrytest",
+      "config_hash": "0884772246688071",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_PV",
+      "config_hash": "11f4b69d8d84a85f",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110013",
+      "config_hash": "efc98296deeb6ef2",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q1100132",
+      "config_hash": "5ed7a65cca0d3040",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110020",
+      "config_hash": "efbf8f96dee33084",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110022",
+      "config_hash": "efbf9196dee333ea",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110600_FW",
+      "config_hash": "2b1544c98e6e42be",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110600_Quest",
+      "config_hash": "1718b55c387f62a1",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110644",
+      "config_hash": "00325d96e7f4da74",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110674_02",
+      "config_hash": "bf754fb7f98de296",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110675",
+      "config_hash": "003c4e96e7fd157c",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110727",
+      "config_hash": "094ef996ed3e4ec0",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q110761",
+      "config_hash": "09418796ed3302ae",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_q310034",
+      "config_hash": "e9b66391e43f0eef",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_test",
+      "config_hash": "41f0d1e59516a509",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_Trial",
+      "config_hash": "e80ca7b107601857",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_BP_World",
+      "config_hash": "518e6aa24ea8cee7",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_blue_BP",
+      "config_hash": "ec3ffe28717ea40f",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_blue_BP_Abyss",
+      "config_hash": "4c53f8cae790a5ac",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_green_BP",
+      "config_hash": "9fa6d6f6427bc482",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_green_BP_Abyss",
+      "config_hash": "01c75eda35ebffc1",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_green_BP_Trial",
+      "config_hash": "241ff1905a715635",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_purple_BP",
+      "config_hash": "10550ba434ef24c1",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_purple_BP_Abyss",
+      "config_hash": "56dc1991b30745ce",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_red_BP",
+      "config_hash": "2534c90930455776",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_red_BP_Abyss",
+      "config_hash": "a6669a79e9b92b8d",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_white_BP",
+      "config_hash": "5cad816c415cf028",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_white_BP_Abyss",
+      "config_hash": "35c55543c6156df7",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_yellow_BP",
+      "config_hash": "7e6948488a9e543b",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_01_var_yellow_BP_Abyss",
+      "config_hash": "46d1d45e0513d010",
+      "monster_id": "mon_01",
+      "name_en": "Whisper Spawn",
+      "name_zh": "低语种",
+      "name_ja": "ウィスパー種"
+    },
+    {
+      "config_id": "mon_020_BP_Abyss",
+      "config_hash": "48b6387d55f6eb78",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_Bank_01_Treasure",
+      "config_hash": "bad7e6656f99bba0",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_Bank_02",
+      "config_hash": "3df68c0a0b17567d",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_Bank_03",
+      "config_hash": "3df68b0a0b1754ca",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_Dan_WWP002",
+      "config_hash": "d530a2e95e684378",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_q110600_FW",
+      "config_hash": "c2936584695c5107",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_World",
+      "config_hash": "de2eff90a1b18e50",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_World_02",
+      "config_hash": "77840679978b461f",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_World_ArmourBase",
+      "config_hash": "3ffdf37575cb9e4c",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_020_BP_World_ArmourBase_02",
+      "config_hash": "0325f289a589202b",
+      "monster_id": "mon_20",
+      "name_en": "Empty Shell",
+      "name_zh": "空铠甲",
+      "name_ja": "空骸甲"
+    },
+    {
+      "config_id": "mon_022_BP",
+      "config_hash": "b8ab73443456849d",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_Abyss",
+      "config_hash": "a511107fce490c42",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_BookShelf_Bank",
+      "config_hash": "51b703425bc62710",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_BookShelf_WJ1049",
+      "config_hash": "1dd286c5ce2ca7a9",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_Projector",
+      "config_hash": "9d78e6c0aa05792e",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110600_LHP",
+      "config_hash": "f17bc89bac62c0ea",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110600_Quest",
+      "config_hash": "3bcc7ce126068c14",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110628",
+      "config_hash": "5f52fe3abeabadeb",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110630",
+      "config_hash": "5f4f903abea8bd2a",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110637",
+      "config_hash": "5f4f8b3abea8b4ab",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110639",
+      "config_hash": "5f4f893abea8b145",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110647",
+      "config_hash": "5f597b3abeb0ee00",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_q110652",
+      "config_hash": "5f567e3abeaebd42",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_022_BP_World",
+      "config_hash": "59a02662f7551f6a",
+      "monster_id": "mon_22",
+      "name_en": "Spider Knowledge Collector",
+      "name_zh": "蜘识藏家",
+      "name_ja": "蜘識蔵家"
+    },
+    {
+      "config_id": "mon_023_BP",
+      "config_hash": "0f7d9d4bd01c070c",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_Abyss",
+      "config_hash": "194cce1609b85a13",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_Bank",
+      "config_hash": "8ecd18853f64be03",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_Museum_Lamp",
+      "config_hash": "3d33c90e27e06e44",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_Museum_Lamp_Wild",
+      "config_hash": "e87832fc96a09f39",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110600_LHP",
+      "config_hash": "6c4cdcc8a15aa617",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110600_Quest",
+      "config_hash": "552243b20344fab9",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110622",
+      "config_hash": "0044cf995a699e40",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110628",
+      "config_hash": "0044d9995a69af3e",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110630",
+      "config_hash": "004857995a6cbb2f",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110637",
+      "config_hash": "004854995a6cb616",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110639",
+      "config_hash": "00485e995a6cc714",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110647",
+      "config_hash": "0030d4995a58fdb5",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_q110652",
+      "config_hash": "0033d1995a5b2e73",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_Trial",
+      "config_hash": "5c8c43cd5a95f9df",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_Vision",
+      "config_hash": "c23ae20e1734c315",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_023_BP_World",
+      "config_hash": "2439af995287e7af",
+      "monster_id": "mon_23",
+      "name_en": "Eternal Lamp",
+      "name_zh": "长明灯",
+      "name_ja": "長明灯"
+    },
+    {
+      "config_id": "mon_025_BP_Abyss",
+      "config_hash": "ff31e34d0211d18d",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_Blue_World_Passive",
+      "config_hash": "04af86950ad01602",
+      "monster_id": "mon_25_blue",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_Green_World_Passive",
+      "config_hash": "6664ab8e1ab58e03",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_Red_World_Passive",
+      "config_hash": "9b4199eea7cfea13",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_Vision",
+      "config_hash": "c99a8e61f6611ccf",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_World",
+      "config_hash": "5f160c7fc860d1a1",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_World_Vision_02_1",
+      "config_hash": "802ebdfe549926b5",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_World_Vision_02_2",
+      "config_hash": "802ebafe5499219c",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_World_Vision_02_3",
+      "config_hash": "802ebbfe5499234f",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_World_W103308_01",
+      "config_hash": "1304c79c3f2465ce",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_BP_World_W103308_02",
+      "config_hash": "1304c69c3f24641b",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_1_BP",
+      "config_hash": "df22a1a2376ead70",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_1_BP_Abyss",
+      "config_hash": "f2eb8d2651a2c09f",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_1_BP_Vision",
+      "config_hash": "6f514f3b227817a1",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_1_BP_World",
+      "config_hash": "797907c30707addb",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_1_ChallengeLv1_BP",
+      "config_hash": "f6a232a729e46507",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_2_BP",
+      "config_hash": "85217b88ef6f7347",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_2_BP_Abyss",
+      "config_hash": "aaf405acfb9e43a4",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_2_BP_Vision",
+      "config_hash": "09bb6ce4d8e858b0",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_2_BP_World",
+      "config_hash": "5e63331e691bd65c",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_2_ChallengeLv1_BP",
+      "config_hash": "7df0c49467ebcbde",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_BP_WJ1017",
+      "config_hash": "8b5cb24cc3189831",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_025_double_ChallengeLv1_BP",
+      "config_hash": "416253e91fcd1d07",
+      "monster_id": "mon_25",
+      "name_en": "Skyfish Banner",
+      "name_zh": "洄天鱼幡",
+      "name_ja": "滝鯉"
+    },
+    {
+      "config_id": "mon_029_BP",
+      "config_hash": "6c5db17bea11ba0a",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_Abyss",
+      "config_hash": "2f5ec034b928f1a9",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_Bank",
+      "config_hash": "b580370daff5579d",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_Clone",
+      "config_hash": "1537f8005094c78c",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_Hide_World",
+      "config_hash": "213bbe21a90f9ca4",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_WA0059",
+      "config_hash": "cd87176d854998a1",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_World",
+      "config_hash": "da4c99e7f670982d",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_World_Interaction",
+      "config_hash": "23e6f6b8b14c8afe",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_029_BP_World_Perform",
+      "config_hash": "28e7506ef945c0c7",
+      "monster_id": "mon_29",
+      "name_en": "Haunted Record Player",
+      "name_zh": "唱片机附电灵",
+      "name_ja": "レコードの電気霊"
+    },
+    {
+      "config_id": "mon_02_blue_BP",
+      "config_hash": "93eaca2017f51998",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_blue_BP_Abyss",
+      "config_hash": "e5e31479e90799e7",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP",
+      "config_hash": "adeb285f821150eb",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Abyss",
+      "config_hash": "9d9e73de067a2ec0",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_AnomalyDoorMelee",
+      "config_hash": "19cc46049cb78baf",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_AnomalyDoorMelee_Drop",
+      "config_hash": "31bea51aaaba2bbd",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Clone_LvBrt01",
+      "config_hash": "c6f294691f5ce667",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Clone_LvBrt02",
+      "config_hash": "c6f295691f5ce81a",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Clone_LvBrt03",
+      "config_hash": "c6f296691f5ce9cd",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_CR_q100001",
+      "config_hash": "a61988c8285a38b7",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Hockshop",
+      "config_hash": "f15178a9105ef6a3",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Hospital",
+      "config_hash": "33dd75168f1d71fa",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_K110213",
+      "config_hash": "0dfed26db866555d",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_K110325",
+      "config_hash": "04e5136db31edb6f",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Melee_Clone_Exp",
+      "config_hash": "ee927f2197caeb1e",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Melee_Clone_Gold",
+      "config_hash": "74c3f502da8d6ba5",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_Melee_Clone_WpExp",
+      "config_hash": "9fbe876712f934af",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_PV",
+      "config_hash": "a250a7bbb184c9f6",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q1100132",
+      "config_hash": "6b7cf22fa9f1bd11",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110070",
+      "config_hash": "6f3ebb21a7984056",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110070_Drop",
+      "config_hash": "90655c38b21e34b2",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110125_5",
+      "config_hash": "df9a5dcc0dcdb623",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110126_1",
+      "config_hash": "ea4f16cc1472287e",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110126_3",
+      "config_hash": "ea4f14cc14722518",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110300",
+      "config_hash": "560acc21998a9ec8",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110600_FW",
+      "config_hash": "02bd854e00f09f7f",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110600_Quest",
+      "config_hash": "090fd9b140a89aa2",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110644",
+      "config_hash": "814c9f21b2071247",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110645",
+      "config_hash": "814c9e21b2071094",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110648",
+      "config_hash": "814c9321b206fde3",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110674_02",
+      "config_hash": "70fbfa5c33df144b",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110675",
+      "config_hash": "81428e21b1fea0df",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110679_01",
+      "config_hash": "a2a16f85ed18cdcf",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110727",
+      "config_hash": "784ae721acd4361f",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110729",
+      "config_hash": "784aed21acd44051",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110731",
+      "config_hash": "784e6921acd748dc",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_q110761",
+      "config_hash": "783d6d21acc8dc75",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_S110921",
+      "config_hash": "bd336bec9a5c5fa1",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_s110921_2",
+      "config_hash": "ac018c7d61e5b178",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_BP_World",
+      "config_hash": "808deb752f68bd08",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_Ghost_BP_Abyss",
+      "config_hash": "0540c74be27409b8",
+      "monster_id": "mon_02_Ghost_BP",
+      "name_en": "Bomb Spawn",
+      "name_zh": "轰洞种",
+      "name_ja": "爆発種"
+    },
+    {
+      "config_id": "mon_02_Ghost_BP_Vision_Projector",
+      "config_hash": "61890ff906fc28d7",
+      "monster_id": "mon_02_Ghost_BP",
+      "name_en": "Bomb Spawn",
+      "name_zh": "轰洞种",
+      "name_ja": "爆発種"
+    },
+    {
+      "config_id": "mon_02_Ghost_BP_World",
+      "config_hash": "f69186041071bd90",
+      "monster_id": "mon_02_Ghost_BP",
+      "name_en": "Bomb Spawn",
+      "name_zh": "轰洞种",
+      "name_ja": "爆発種"
+    },
+    {
+      "config_id": "mon_02_green_BP",
+      "config_hash": "69eba09658d9f777",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_green_BP_Abyss",
+      "config_hash": "d5f9fb0c3ebd5b54",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_green_BP_Clone",
+      "config_hash": "0f2619da1daa3a55",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_purple_BP",
+      "config_hash": "15e59ef31f59e0e6",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_purple_BP_Abyss",
+      "config_hash": "4633d5c32330a4fd",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_red_BP",
+      "config_hash": "19da05a4d9d3a5b7",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_red_BP_Abyss",
+      "config_hash": "bd04ffc98e414e94",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_white_BP",
+      "config_hash": "0225c30d30b8135d",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_white_BP_Abyss",
+      "config_hash": "e12b5f0f6926d702",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_yellow_BP",
+      "config_hash": "bf6dd228e1c249a4",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_02_yellow_BP_Abyss",
+      "config_hash": "2c47ed029823fb4b",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_030_BP",
+      "config_hash": "51b8393d92318fdc",
+      "monster_id": "mon_30",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Abyss",
+      "config_hash": "151e3d94d35c7ee3",
+      "monster_id": "mon_30",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Rain",
+      "config_hash": "5b9815df4b8214cf",
+      "monster_id": "mon_030_BP_Rain",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Rain_Abyss",
+      "config_hash": "849d9f2f54898d6c",
+      "monster_id": "mon_030_BP_Rain",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Rain_World",
+      "config_hash": "6e6595c3146c7374",
+      "monster_id": "mon_030_BP_Rain",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Snow",
+      "config_hash": "9e2121d928239dce",
+      "monster_id": "mon_030_BP_Snow",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Snow_Abyss",
+      "config_hash": "9a9c30d32306b3a5",
+      "monster_id": "mon_030_BP_Snow",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_Snow_World",
+      "config_hash": "6b4beb95c1d6b8c9",
+      "monster_id": "mon_030_BP_Snow",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_VisionRain",
+      "config_hash": "137b964de9422293",
+      "monster_id": "mon_030_BP_Rain",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_VisionSnow",
+      "config_hash": "51504a421903d672",
+      "monster_id": "mon_030_BP_Snow",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_World_01",
+      "config_hash": "1a9a5a0830106fd3",
+      "monster_id": "mon_30",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_030_BP_World_Interact",
+      "config_hash": "97a64cedde42e126",
+      "monster_id": "mon_30",
+      "name_en": "Rain-sweeping Maid",
+      "name_zh": "扫晴娘",
+      "name_ja": "ウェザーガール"
+    },
+    {
+      "config_id": "mon_037_BP",
+      "config_hash": "f4a60b00f48e9257",
+      "monster_id": "mon_37",
+      "name_en": "ReroRero Phone Booth",
+      "name_zh": "ReroRero电话亭",
+      "name_ja": "ReroRero電話ボックス"
+    },
+    {
+      "config_id": "mon_037_BP_Bank",
+      "config_hash": "96ac1c6efc1307a6",
+      "monster_id": "mon_37",
+      "name_en": "ReroRero Phone Booth",
+      "name_zh": "ReroRero电话亭",
+      "name_ja": "ReroRero電話ボックス"
+    },
+    {
+      "config_id": "mon_037_BP_World",
+      "config_hash": "f169b58b15b02b8c",
+      "monster_id": "mon_37",
+      "name_en": "ReroRero Phone Booth",
+      "name_zh": "ReroRero电话亭",
+      "name_ja": "ReroRero電話ボックス"
+    },
+    {
+      "config_id": "mon_037_BP_World_Perform",
+      "config_hash": "fba408322f40db5e",
+      "monster_id": "mon_37",
+      "name_en": "ReroRero Phone Booth",
+      "name_zh": "ReroRero电话亭",
+      "name_ja": "ReroRero電話ボックス"
+    },
+    {
+      "config_id": "mon_038_2_BP_World",
+      "config_hash": "91c9730a2a458e90",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_2_BP_World_CitryEvent_Passive_01",
+      "config_hash": "5d7981740dded67e",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_2_BP_World_CitryEvent_Passive_02",
+      "config_hash": "5d7980740dded4cb",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_2_BP_World_CityEvent_01",
+      "config_hash": "0dc832aa77d42db0",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_2_BP_World_CityEvent_02",
+      "config_hash": "0dc835aa77d432c9",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_2_BP_World_Passive",
+      "config_hash": "d61f0ef8b46434d6",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP",
+      "config_hash": "b379497f59d0dc14",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_Takeorder",
+      "config_hash": "13831cb2236bdb6a",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_WJ1048",
+      "config_hash": "cad3b2846bf1ba45",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World",
+      "config_hash": "ceed01af918309c7",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_CityEvent_01",
+      "config_hash": "64419a208ea65881",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_CityEvent_02",
+      "config_hash": "644197208ea65368",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_CityEvent_Passive_01",
+      "config_hash": "351277ece625556f",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_CityEvent_Passive_02",
+      "config_hash": "351278ece6255722",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_Passive",
+      "config_hash": "26a6c03ecf764c7d",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_Street",
+      "config_hash": "578399881eb21a37",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_038_BP_World_TrafficMonster",
+      "config_hash": "0fb32dfbe87f1d9d",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_03_1_BP_q110020",
+      "config_hash": "b723aaa59070b35e",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP",
+      "config_hash": "04bd72671dd709ba",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_Abyss",
+      "config_hash": "aaa7742fc489f7d9",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_Clone",
+      "config_hash": "7d70abfac0c34edc",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_DanRobber_WWP001",
+      "config_hash": "020ce61059010576",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_q110600_FW",
+      "config_hash": "677ba5bd43faa93c",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_q110600_Quest",
+      "config_hash": "e731fbc8e8182947",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_q110679_01",
+      "config_hash": "01328812a56ab20c",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_q110731",
+      "config_hash": "e69f996f10893359",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_Trial",
+      "config_hash": "a2362e78fb41243d",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_03_BP_World",
+      "config_hash": "98cf467c92441fbd",
+      "monster_id": "mon_03",
+      "name_en": "Rock Spawn",
+      "name_zh": "岩壳种",
+      "name_ja": "ロック種"
+    },
+    {
+      "config_id": "mon_04_attacktest",
+      "config_hash": "13dbe230d251bd9f",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP",
+      "config_hash": "ad2e1c4dd7ebee89",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_Abyss",
+      "config_hash": "b3fdc0d96513efd6",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_Clone_LvBrt01",
+      "config_hash": "eb607899c0b46da5",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_Clone_LvBrt02",
+      "config_hash": "eb607599c0b4688c",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_Clone_LvBrt03",
+      "config_hash": "eb607699c0b46a3f",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_CR_q100001",
+      "config_hash": "61e1832ac053fc31",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_Hospital",
+      "config_hash": "810a0b77d32261d8",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_parray",
+      "config_hash": "518f45ebb9264f9f",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_PV",
+      "config_hash": "e72965db2d3518e0",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110013",
+      "config_hash": "53e485564964772f",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110022",
+      "config_hash": "53e0fe5649615bf3",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110070",
+      "config_hash": "53eb9256496aabf4",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110070_down",
+      "config_hash": "82f3c8d0cdadff01",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q1100756",
+      "config_hash": "03eb7c9ec039a4b7",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110600_FW",
+      "config_hash": "9f4f75ae5fb45ae5",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110600_Quest",
+      "config_hash": "f2a64bea299b4260",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110644",
+      "config_hash": "883ffa5667283355",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110675",
+      "config_hash": "88437956672b40f9",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_q110729",
+      "config_hash": "7f30d05661ea0b1b",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_s110922",
+      "config_hash": "2a5f33f7d34959c6",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_s110922_2",
+      "config_hash": "e2c17d9d9463af8b",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_BP_World",
+      "config_hash": "2333d53548f3d07e",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_blue_BP",
+      "config_hash": "d54d9c2223612f44",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_blue_BP_Abyss",
+      "config_hash": "50bbf1703973fb2b",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_green_BP",
+      "config_hash": "d54f4d9937c910e3",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_green_BP_Abyss",
+      "config_hash": "307b15f68ce5c158",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_green_BP_Clone",
+      "config_hash": "6ef8f69598762f09",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_purple_BP",
+      "config_hash": "38f56a83e0202b42",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_purple_BP_Abyss",
+      "config_hash": "2c0fc326f9787381",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_red_BP",
+      "config_hash": "37dd89ddad6cb403",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_red_BP_Abyss",
+      "config_hash": "dd5b73af94858eb8",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_white_BP",
+      "config_hash": "14b1460125f16bb1",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_white_BP_Abyss",
+      "config_hash": "31926ba108c8787e",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_yellow_BP",
+      "config_hash": "290d67f78b185030",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_04_var_yellow_BP_Abyss",
+      "config_hash": "9ffdff9c4def245f",
+      "monster_id": "mon_04",
+      "name_en": "Lost Spawn",
+      "name_zh": "迷失种",
+      "name_ja": "ロスト種"
+    },
+    {
+      "config_id": "mon_051_BP_Abyss",
+      "config_hash": "62c1441dcddfd914",
+      "monster_id": "mon_51",
+      "name_en": "Teehee Bear",
+      "name_zh": "桀桀熊",
+      "name_ja": "ジャジャクマ"
+    },
+    {
+      "config_id": "mon_051_BP_q110500",
+      "config_hash": "931303d1edeaa846",
+      "monster_id": "mon_51",
+      "name_en": "Teehee Bear",
+      "name_zh": "桀桀熊",
+      "name_ja": "ジャジャクマ"
+    },
+    {
+      "config_id": "mon_051_ChallengeLv1_BP",
+      "config_hash": "8491e70a39ea1e4e",
+      "monster_id": "mon_51",
+      "name_en": "Teehee Bear",
+      "name_zh": "桀桀熊",
+      "name_ja": "ジャジャクマ"
+    },
+    {
+      "config_id": "mon_05_BP",
+      "config_hash": "83f62659226971d8",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Abyss",
+      "config_hash": "ab47d21f476a3a27",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Bank",
+      "config_hash": "eb4891c56755a1f7",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Clone_Exp",
+      "config_hash": "918b47e95606427e",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Clone_Gold",
+      "config_hash": "49b9c07004452485",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Clone_LvBrt01",
+      "config_hash": "bc6e3953f8870958",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Clone_LvBrt02",
+      "config_hash": "bc6e3c53f8870e71",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Clone_LvBrt03",
+      "config_hash": "bc6e3b53f8870cbe",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_Clone_WpExp",
+      "config_hash": "352051e4f628c60f",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_q110127_2",
+      "config_hash": "ccb51b4425cbb75b",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_World",
+      "config_hash": "37d384a645f65133",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_World_OnWall",
+      "config_hash": "634657af3981cb5d",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_World_OnWall_Bank",
+      "config_hash": "70980ae3012430b0",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_World_OnWall_Bank_Treasure",
+      "config_hash": "90ac385f6fc4097c",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_05_BP_WorldLane_01",
+      "config_hash": "59e24025cfeb99dd",
+      "monster_id": "mon_05",
+      "name_en": "Leech Spawn",
+      "name_zh": "凭依种",
+      "name_ja": "ポゼスト種"
+    },
+    {
+      "config_id": "mon_08_BP",
+      "config_hash": "510b342f681bd44d",
+      "monster_id": "mon_08",
+      "name_en": "Scarlet Phantom",
+      "name_zh": "瑰夜魅影",
+      "name_ja": "薔薇の夜の幻影"
+    },
+    {
+      "config_id": "mon_08_BP_Abyss",
+      "config_hash": "52ee1e5328166fb2",
+      "monster_id": "mon_08",
+      "name_en": "Scarlet Phantom",
+      "name_zh": "瑰夜魅影",
+      "name_ja": "薔薇の夜の幻影"
+    },
+    {
+      "config_id": "mon_13_1_BP_Vision",
+      "config_hash": "1df41edc16b2d3a2",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_BP_World",
+      "config_hash": "954d3297dd05d31e",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_BP_World_Interaction",
+      "config_hash": "21fca6188bccede9",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_BP_World_Perform",
+      "config_hash": "8483578a4cdda744",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_ChallengeLv1_BP",
+      "config_hash": "422c995251a0f880",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_summon_BP_Vision",
+      "config_hash": "99c7c4fda3675da4",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_summon_BP_World",
+      "config_hash": "e1e697bbfd9ce9f0",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_1_summon_ChallengeLv1_BP",
+      "config_hash": "052cf63b7e76d75a",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_2_BP_World",
+      "config_hash": "46cec4fdbb2d5359",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_2_BP_World_Interaction",
+      "config_hash": "eb593cf242035992",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_2_summon_BP_World",
+      "config_hash": "b43e7e23c6f25c95",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_BP_Show",
+      "config_hash": "8f0c465e61caf95f",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_BP_World",
+      "config_hash": "254145694739ff76",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_BP_World_Interaction",
+      "config_hash": "e395f0b9657c27e1",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_horizontal_BP_World",
+      "config_hash": "429fa50b5670b8f1",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_13_summon_BP_World",
+      "config_hash": "5d45847c0db92808",
+      "monster_id": "mon_13_2",
+      "name_en": "Cursed Blade",
+      "name_zh": "妖刀",
+      "name_ja": "妖刀"
+    },
+    {
+      "config_id": "mon_14_1_BP_q110022",
+      "config_hash": "3f1442e80ccab4a0",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_1_BP_Trial",
+      "config_hash": "0f3505c7c062c621",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP",
+      "config_hash": "fc50c1bd706aeb42",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_Abyss",
+      "config_hash": "9a3c3eb0aa9d3381",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_Clone",
+      "config_hash": "ffd155f32f6a04a4",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_Hospital_Key",
+      "config_hash": "6288ffc9c1913045",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_Perform",
+      "config_hash": "68e83108474ee910",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_q110022",
+      "config_hash": "f1463b3dade5ad34",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_q110648",
+      "config_hash": "23ffa33dca4631f6",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_World",
+      "config_hash": "91c788e7c46067f5",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_World_01",
+      "config_hash": "93911b4405d403a1",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_World_AnomalyDoor",
+      "config_hash": "0df009f4afc6ab23",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_14_BP_World_Interaction",
+      "config_hash": "9e8060da074d5626",
+      "monster_id": "mon_14",
+      "name_en": "Decomposer",
+      "name_zh": "分解者",
+      "name_ja": "デコンポーザー"
+    },
+    {
+      "config_id": "mon_15_BP_Vision_01",
+      "config_hash": "06d5dfaa93876486",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_15_BP_Vision_02",
+      "config_hash": "06d5deaa938762d3",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_15_BP_Vision_03",
+      "config_hash": "06d5ddaa93876120",
+      "monster_id": "mon_15",
+      "name_en": "Octowpus",
+      "name_zh": "拖车艄",
+      "name_ja": "トレーラー蛸"
+    },
+    {
+      "config_id": "mon_17_BP",
+      "config_hash": "2a69d3c3d397378d",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_Abyss",
+      "config_hash": "2fe0be1ae0546ef2",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_Bank",
+      "config_hash": "7b089d9b298d6420",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_Bank_Treasure",
+      "config_hash": "7ef5a78bd106038c",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_Hospital",
+      "config_hash": "b2748ccab83c28b4",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_q110600_LHP",
+      "config_hash": "0177d251f470089a",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_q110600_Quest",
+      "config_hash": "21744bc2491d9a24",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_S110300",
+      "config_hash": "499fa6a47c88f5d0",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_Show",
+      "config_hash": "cbba3e1deed6313b",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_Vision",
+      "config_hash": "ebd5abcbcef0674e",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_17_BP_World",
+      "config_hash": "1c6214edca7fecfa",
+      "monster_id": "mon_17",
+      "name_en": "Rainman",
+      "name_zh": "雨人",
+      "name_ja": "レインマン"
+    },
+    {
+      "config_id": "mon_18_2_BP",
+      "config_hash": "b9b3a79bc054cb25",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_BP_Abyss",
+      "config_hash": "3d95f3599b7955ea",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_BP_q310038_a",
+      "config_hash": "5e007bbebdcbd662",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_BP_S1105071",
+      "config_hash": "3ebe14282d3adcfe",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_BP_S1105071_2",
+      "config_hash": "ca6c690029523093",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_BP_World",
+      "config_hash": "113a98b49d08af62",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_summon_BP_World",
+      "config_hash": "dab5698632fe3d2c",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_2_summon_New_BP",
+      "config_hash": "7c14498af0598860",
+      "monster_id": "mon_18_2",
+      "name_en": "Gigafluff",
+      "name_zh": "「肉改」棉绒绒",
+      "name_ja": "筋強モフ"
+    },
+    {
+      "config_id": "mon_18_BP",
+      "config_hash": "81f909dd19821c5e",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_18_BP_Abyss",
+      "config_hash": "0792649944a1caf5",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_18_BP_S111300",
+      "config_hash": "c79ae583abc67252",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_18_BP_World",
+      "config_hash": "6b611e388f784979",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_18_BP_World_Passive",
+      "config_hash": "78ae8d2770768207",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_18_BP_World_Passive_New_Black",
+      "config_hash": "b87b7771c58e5472",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_18_BP_World_Passive_New_Green",
+      "config_hash": "29876d8ae405a09a",
+      "monster_id": "mon_18",
+      "name_en": "Fluffy",
+      "name_zh": "棉绒绒",
+      "name_ja": "モフモフ"
+    },
+    {
+      "config_id": "mon_21_BP",
+      "config_hash": "fc8cea0db7f359fe",
+      "monster_id": "mon_21",
+      "name_en": "Ora Puncher",
+      "name_zh": "欧拉拳套",
+      "name_ja": "オラオラグローブ"
+    },
+    {
+      "config_id": "mon_21_BP_Vision_Boxing",
+      "config_hash": "b16313afe95ae6cf",
+      "monster_id": "mon_21",
+      "name_en": "Ora Puncher",
+      "name_zh": "欧拉拳套",
+      "name_ja": "オラオラグローブ"
+    },
+    {
+      "config_id": "mon_21_BP_Vision_Boxing_BackStreet",
+      "config_hash": "659e03e807c5b44c",
+      "monster_id": "mon_21",
+      "name_en": "Ora Puncher",
+      "name_zh": "欧拉拳套",
+      "name_ja": "オラオラグローブ"
+    },
+    {
+      "config_id": "mon_21_BP_Vision_Boxing_Basketball",
+      "config_hash": "4121347ca193e85b",
+      "monster_id": "mon_21",
+      "name_en": "Ora Puncher",
+      "name_zh": "欧拉拳套",
+      "name_ja": "オラオラグローブ"
+    },
+    {
+      "config_id": "mon_21_BP_Vision_Boxing_Party",
+      "config_hash": "80bfd57483c60474",
+      "monster_id": "mon_21",
+      "name_en": "Ora Puncher",
+      "name_zh": "欧拉拳套",
+      "name_ja": "オラオラグローブ"
+    },
+    {
+      "config_id": "mon_21_BP_Vision_Boxing_Terrace",
+      "config_hash": "c9009f0be789d9a6",
+      "monster_id": "mon_21",
+      "name_en": "Ora Puncher",
+      "name_zh": "欧拉拳套",
+      "name_ja": "オラオラグローブ"
+    },
+    {
+      "config_id": "mon_24_BP",
+      "config_hash": "569b2826fffd474b",
+      "monster_id": "mon_24",
+      "name_en": "Ghostly Kite",
+      "name_zh": "诡面筝",
+      "name_ja": "妖面箏"
+    },
+    {
+      "config_id": "mon_24_BP_Abyss",
+      "config_hash": "156102f147d2d460",
+      "monster_id": "mon_24",
+      "name_en": "Ghostly Kite",
+      "name_zh": "诡面筝",
+      "name_ja": "妖面箏"
+    },
+    {
+      "config_id": "mon_24_BP_tree_Hang_NPC",
+      "config_hash": "a91222a8a0ded281",
+      "monster_id": "mon_24",
+      "name_en": "Ghostly Kite",
+      "name_zh": "诡面筝",
+      "name_ja": "妖面箏"
+    },
+    {
+      "config_id": "mon_24_BP_tree_world",
+      "config_hash": "a1e70740bc4ffd4f",
+      "monster_id": "mon_24",
+      "name_en": "Ghostly Kite",
+      "name_zh": "诡面筝",
+      "name_ja": "妖面箏"
+    },
+    {
+      "config_id": "mon_24_BP_World",
+      "config_hash": "f4ea7a886dde39a8",
+      "monster_id": "mon_24",
+      "name_en": "Ghostly Kite",
+      "name_zh": "诡面筝",
+      "name_ja": "妖面箏"
+    },
+    {
+      "config_id": "mon_24_BP_World_W103302",
+      "config_hash": "f88d0be28ff4ff97",
+      "monster_id": "mon_24",
+      "name_en": "Ghostly Kite",
+      "name_zh": "诡面筝",
+      "name_ja": "妖面箏"
+    },
+    {
+      "config_id": "mon_26_BP_Abyss",
+      "config_hash": "0a7a4320726b2bca",
+      "monster_id": "mon_26",
+      "name_en": "Paper Squadron",
+      "name_zh": "纸翼战队",
+      "name_ja": "紙ヒコーキ戦隊"
+    },
+    {
+      "config_id": "mon_26_BP_World",
+      "config_hash": "8b00e8805ede0c42",
+      "monster_id": "mon_26",
+      "name_en": "Paper Squadron",
+      "name_zh": "纸翼战队",
+      "name_ja": "紙ヒコーキ戦隊"
+    },
+    {
+      "config_id": "mon_26_BP_World_Perform",
+      "config_hash": "a0d1cedc1ab02a10",
+      "monster_id": "mon_26",
+      "name_en": "Paper Squadron",
+      "name_zh": "纸翼战队",
+      "name_ja": "紙ヒコーキ戦隊"
+    },
+    {
+      "config_id": "mon_27_BP",
+      "config_hash": "85642e3f0d4442d4",
+      "monster_id": "mon_27",
+      "name_en": "Noros",
+      "name_zh": "诺诺斯",
+      "name_ja": "ノノス"
+    },
+    {
+      "config_id": "mon_27_BP_Abyss",
+      "config_hash": "999d19674df8d77b",
+      "monster_id": "mon_27",
+      "name_en": "Noros",
+      "name_zh": "诺诺斯",
+      "name_ja": "ノノス"
+    },
+    {
+      "config_id": "mon_27_BP_Bank",
+      "config_hash": "09172f5a1269b78b",
+      "monster_id": "mon_27",
+      "name_en": "Noros",
+      "name_zh": "诺诺斯",
+      "name_ja": "ノノス"
+    },
+    {
+      "config_id": "mon_27_BP_L110035_p4",
+      "config_hash": "1585fa784b195a86",
+      "monster_id": "mon_27",
+      "name_en": "Noros",
+      "name_zh": "诺诺斯",
+      "name_ja": "ノノス"
+    },
+    {
+      "config_id": "mon_27_BP_World",
+      "config_hash": "1bcc840763d44f87",
+      "monster_id": "mon_27",
+      "name_en": "Noros",
+      "name_zh": "诺诺斯",
+      "name_ja": "ノノス"
+    },
+    {
+      "config_id": "mon_27_BP_World_Passive",
+      "config_hash": "cd4ac9dc56bcdd3d",
+      "monster_id": "mon_27",
+      "name_en": "Noros",
+      "name_zh": "诺诺斯",
+      "name_ja": "ノノス"
+    },
+    {
+      "config_id": "mon_2_BP",
+      "config_hash": "84c77258f04bb7cf",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_2_BP_q110011",
+      "config_hash": "1e1075511a6c73cf",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_2_BP_q1100132",
+      "config_hash": "8271c5cfe64e40e5",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_2_BP_q110020",
+      "config_hash": "1e1a86511a74e537",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_2_BP_q110022",
+      "config_hash": "1e1a88511a74e89d",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_2_BP_q110025",
+      "config_hash": "1e1a81511a74dcb8",
+      "monster_id": "mon_02",
+      "name_en": "Wind Spawn",
+      "name_zh": "风洞种",
+      "name_ja": "ウィンド種"
+    },
+    {
+      "config_id": "mon_33_BP",
+      "config_hash": "12368024354b7bff",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_33_BP_Abyss",
+      "config_hash": "17442c4167cd9b5c",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_33_BP_q110380",
+      "config_hash": "fe639851a6188a7c",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_33_BP_q110600_FW",
+      "config_hash": "53d81f613a7de663",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_33_BP_q110600_Quest",
+      "config_hash": "8831ff7fee413056",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_33_BP_World",
+      "config_hash": "1457ea36af409b44",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_33_BP_World_Perform",
+      "config_hash": "1c9655ca42455ea6",
+      "monster_id": "mon_33",
+      "name_en": "Dream Spawn",
+      "name_zh": "流梦种",
+      "name_ja": "夢の種"
+    },
+    {
+      "config_id": "mon_35_BP_Blue_Abyss",
+      "config_hash": "f663ccdb490957dd",
+      "monster_id": "mon_35",
+      "name_en": "Tin Soldier - Blue Rifle",
+      "name_zh": "罐头锡兵·蓝枪",
+      "name_ja": "缶詰兵士-青銃"
+    },
+    {
+      "config_id": "mon_35_BP_Blue_Clone",
+      "config_hash": "740facb5a4c36370",
+      "monster_id": "mon_35",
+      "name_en": "Tin Soldier - Blue Rifle",
+      "name_zh": "罐头锡兵·蓝枪",
+      "name_ja": "缶詰兵士-青銃"
+    },
+    {
+      "config_id": "mon_35_BP_Blue_review",
+      "config_hash": "a30358b5c033f263",
+      "monster_id": "mon_35",
+      "name_en": "Tin Soldier - Blue Rifle",
+      "name_zh": "罐头锡兵·蓝枪",
+      "name_ja": "缶詰兵士-青銃"
+    },
+    {
+      "config_id": "mon_35_BP_Blue_World",
+      "config_hash": "91a0f6fdd35c3211",
+      "monster_id": "mon_35",
+      "name_en": "Tin Soldier - Blue Rifle",
+      "name_zh": "罐头锡兵·蓝枪",
+      "name_ja": "缶詰兵士-青銃"
+    },
+    {
+      "config_id": "mon_35_BP_Red_Abyss",
+      "config_hash": "1817e3e781c9ba1a",
+      "monster_id": "mon_35_red",
+      "name_en": "Tin Soldier - Red Axe",
+      "name_zh": "罐头锡兵·红斧",
+      "name_ja": "缶詰兵士-赤斧"
+    },
+    {
+      "config_id": "mon_35_BP_Red_Clone",
+      "config_hash": "ade1f3e5d00a18db",
+      "monster_id": "mon_35_red",
+      "name_en": "Tin Soldier - Red Axe",
+      "name_zh": "罐头锡兵·红斧",
+      "name_ja": "缶詰兵士-赤斧"
+    },
+    {
+      "config_id": "mon_35_BP_Red_review",
+      "config_hash": "3357a75e049fa496",
+      "monster_id": "mon_35_red",
+      "name_en": "Tin Soldier - Red Axe",
+      "name_zh": "罐头锡兵·红斧",
+      "name_ja": "缶詰兵士-赤斧"
+    },
+    {
+      "config_id": "mon_35_BP_Red_Trial",
+      "config_hash": "067b2df2b386142a",
+      "monster_id": "mon_35_red",
+      "name_en": "Tin Soldier - Red Axe",
+      "name_zh": "罐头锡兵·红斧",
+      "name_ja": "缶詰兵士-赤斧"
+    },
+    {
+      "config_id": "mon_35_BP_Red_World",
+      "config_hash": "d0908a372f5b98b2",
+      "monster_id": "mon_35_red",
+      "name_en": "Tin Soldier - Red Axe",
+      "name_zh": "罐头锡兵·红斧",
+      "name_ja": "缶詰兵士-赤斧"
+    },
+    {
+      "config_id": "mon_38_2_BP_Abyss",
+      "config_hash": "1d15e17a46034444",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_2_BP_S111325_Elite",
+      "config_hash": "f93936921b2b585e",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_2_BP_WJ1048_01",
+      "config_hash": "568f0a5affb3a37a",
+      "monster_id": "mon_38_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_BP_Abyss",
+      "config_hash": "82e44ed511d03aff",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_BP_Normal_DLC_S111300",
+      "config_hash": "08e7cc57c4642aa4",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_BP_Normal_S111323_1L",
+      "config_hash": "4941324c99fb212b",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_BP_Normal_S1113244_3L",
+      "config_hash": "6f50d68652a4117e",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_BP_Normal_S111324_2L",
+      "config_hash": "3f2f72126edd718b",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_38_BP_Normal_S111325_Soldier",
+      "config_hash": "24af399ed0526356",
+      "monster_id": "mon_38",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_Abyss",
+      "config_hash": "169189c0410288c5",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_S1113244",
+      "config_hash": "ef56b71f8cf519f8",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_WJ1048",
+      "config_hash": "98799905de57af7f",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_World",
+      "config_hash": "e7424482dfd440e9",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_World_CityEvent_01",
+      "config_hash": "5f5902936f3d6f83",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_World_CityEvent_02",
+      "config_hash": "5f5903936f3d7136",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_World_CityEvent_Passive_01",
+      "config_hash": "be4a9055c4e30551",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_World_CityEvent_Passive_02",
+      "config_hash": "be4a8d55c4e30038",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_2_BP_World_Passive",
+      "config_hash": "1c0f94f76ff4f857",
+      "monster_id": "mon_39_2",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_Abyss",
+      "config_hash": "e78d6eef72cdf76e",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_Normal_Abyss",
+      "config_hash": "8d4646ad4f210496",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_Normal_DLC_S111300",
+      "config_hash": "3f4ce896decdef33",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_Normal_S111323_1L",
+      "config_hash": "1a5843683e3170c2",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_Normal_S1113244_3L",
+      "config_hash": "becd61a101dbdf09",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_Normal_S111324_2L",
+      "config_hash": "e8bd233e85009c32",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_WJ1048",
+      "config_hash": "484a207054af223a",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World",
+      "config_hash": "35c40e80c16ea446",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World_CityEvent_01",
+      "config_hash": "db502f2c9ba9911e",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World_CityEvent_02",
+      "config_hash": "db502e2c9ba98f6b",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World_CityEvent_Passive_01",
+      "config_hash": "e4ee5846da2dd844",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World_CityEvent_Passive_02",
+      "config_hash": "e4ee5b46da2ddd5d",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World_Passive",
+      "config_hash": "c62c384cbca44474",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_39_BP_World_Street",
+      "config_hash": "7af70f31f4cd4a3c",
+      "monster_id": "mon_39",
+      "name_en": "Garuda",
+      "name_zh": "迦楼罗",
+      "name_ja": "カルラ"
+    },
+    {
+      "config_id": "mon_41_BP",
+      "config_hash": "4c75e21a46c5adc8",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_41_BP_Abyss",
+      "config_hash": "51b03fd8c3d0e8d7",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_41_BP_q110600_FW",
+      "config_hash": "c48e7e672db8e992",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_41_BP_World",
+      "config_hash": "cd3428e150a8aa03",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_41_BP_World_Passive",
+      "config_hash": "d1834e8851db2251",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_41_Summon01_BP",
+      "config_hash": "dedc1ded36733f11",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_41_Summon02_BP",
+      "config_hash": "b4290be6d62a1bc6",
+      "monster_id": "mon_41",
+      "name_en": "Feather Puppet",
+      "name_zh": "羽偶",
+      "name_ja": "翼を持つ人形"
+    },
+    {
+      "config_id": "mon_48_BP",
+      "config_hash": "ea67a7cbfb623421",
+      "monster_id": "mon_48",
+      "name_en": "Cardboard Castle",
+      "name_zh": "瓦楞城堡",
+      "name_ja": "カードボードキャッスル"
+    },
+    {
+      "config_id": "mon_48_BP_World",
+      "config_hash": "4208195cea9210c6",
+      "monster_id": "mon_48",
+      "name_en": "Cardboard Castle",
+      "name_zh": "瓦楞城堡",
+      "name_ja": "カードボードキャッスル"
+    },
+    {
+      "config_id": "mon_48_BP_World_Vision",
+      "config_hash": "3f9bb5cd571e4c5f",
+      "monster_id": "mon_48",
+      "name_en": "Cardboard Castle",
+      "name_zh": "瓦楞城堡",
+      "name_ja": "カードボードキャッスル"
+    },
+    {
+      "config_id": "mon_48_ChallengeLv1_BP",
+      "config_hash": "61fe877dfab54c48",
+      "monster_id": "mon_48",
+      "name_en": "Cardboard Castle",
+      "name_zh": "瓦楞城堡",
+      "name_ja": "カードボードキャッスル"
+    },
+    {
+      "config_id": "mon_nanally_BP_Abyss",
+      "config_hash": "8067e08555e60873",
+      "monster_id": "mon_nanally",
+      "name_en": "Nanally",
+      "name_zh": "娜娜莉",
+      "name_ja": "ナナリ"
+    },
+    {
+      "config_id": "mon_nanally_BP_q110150",
+      "config_hash": "862181a8294e3424",
+      "monster_id": "mon_nanally",
+      "name_en": "Nanally",
+      "name_zh": "娜娜莉",
+      "name_ja": "ナナリ"
+    },
+    {
+      "config_id": "mon_nanally_BP_WJ1004",
+      "config_hash": "12530a4ead6f6aad",
+      "monster_id": "mon_nanally",
+      "name_en": "Nanally",
+      "name_zh": "娜娜莉",
+      "name_ja": "ナナリ"
+    }
+  ]
+}

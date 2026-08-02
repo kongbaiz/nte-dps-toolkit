@@ -1,17 +1,39 @@
-//! Non-UI core shared by the GUI and the CLI sidecar: the single
+//! Non-UI core shared by the Tauri desktop and the CLI sidecar: the single
 //! `EngineEvent` -> `CombatState` reducer and capture environment
-//! preparation/control. This layer must stay free of egui, i18n
+//! preparation/control. This layer must stay free of UI frameworks, i18n
 //! (`t()`/`tf()`), stdout and JSON-RPC concerns; frontends translate
 //! `CoreError` codes at their own display boundary.
 
 pub mod capture;
+pub mod character_data;
+pub mod combat_details;
+#[cfg(feature = "desktop")]
+pub mod diagnostics;
+pub mod empty_curtain;
+pub mod encrypted_ini;
+pub mod history;
+pub mod hud;
+pub mod live_capture;
+#[cfg(feature = "desktop")]
+pub mod mod_market;
+#[cfg(feature = "desktop")]
+pub mod mod_sdk;
+#[cfg(feature = "desktop")]
+pub mod mod_studio;
+pub mod packets;
 pub mod reducer;
+#[cfg(feature = "desktop")]
+pub mod resource_audit;
+pub mod skills;
 pub mod snapshot;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
+pub mod team_data;
+pub mod timeline;
+#[cfg(feature = "desktop")]
 pub mod update;
 
-/// Stable machine-readable error category shared by both frontends. The GUI
-/// picks user-facing wording per code at its display boundary; the CLI maps
+/// Stable machine-readable error category shared by both frontends. Tauri
+/// picks user-facing wording per code at its contract boundary; the CLI maps
 /// codes to JSON-RPC domain codes in later phases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CoreErrorCode {

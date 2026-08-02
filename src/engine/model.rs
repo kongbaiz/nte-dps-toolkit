@@ -133,6 +133,12 @@ pub struct Hit {
     #[serde(default)]
     pub target_name: Option<String>,
     #[serde(default)]
+    pub target_name_en: Option<String>,
+    #[serde(default)]
+    pub target_name_ja: Option<String>,
+    #[serde(default)]
+    pub target_monster_id: Option<String>,
+    #[serde(default)]
     pub target_context: Vec<String>,
     #[serde(default)]
     pub gameplay_effect_index: Option<u32>,
@@ -164,320 +170,6 @@ impl Hit {
     pub fn total_damage(&self) -> f64 {
         self.damage + self.follow_up_damage
     }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DamageScenarioKind {
-    #[default]
-    Regular,
-    Creation,
-    Burning,
-    DarkStar,
-}
-
-impl DamageScenarioKind {
-    const CREATION_BASE_DAMAGE: [f64; 16] = [
-        80.0, 120.0, 200.0, 300.0, 400.0, 600.0, 800.0, 1_000.0, 1_700.0, 2_200.0, 3_600.0,
-        5_000.0, 6_000.0, 7_000.0, 8_000.0, 9_000.0,
-    ];
-    const BURNING_BASE_DAMAGE: [f64; 16] = [
-        20.0, 35.0, 60.0, 90.0, 120.0, 180.0, 240.0, 300.0, 510.0, 660.0, 1_080.0, 1_500.0,
-        1_800.0, 2_100.0, 2_400.0, 2_700.0,
-    ];
-    const DARK_STAR_BASE_DAMAGE: [f64; 16] = [
-        400.0, 600.0, 1_000.0, 1_500.0, 2_000.0, 3_000.0, 4_000.0, 5_000.0, 8_500.0, 11_000.0,
-        18_000.0, 25_000.0, 30_000.0, 35_000.0, 40_000.0, 45_000.0,
-    ];
-
-    fn base_damage(self, fusion_level: u8) -> f64 {
-        let index = usize::from(fusion_level - 1);
-        match self {
-            Self::Regular => 1.0,
-            Self::Creation => Self::CREATION_BASE_DAMAGE[index],
-            Self::Burning => Self::BURNING_BASE_DAMAGE[index],
-            Self::DarkStar => Self::DARK_STAR_BASE_DAMAGE[index],
-        }
-    }
-
-    fn critical_multiplier(self, critical_rate: f64, critical_damage: f64) -> f64 {
-        match self {
-            Self::Regular => 1.0 + critical_rate * critical_damage,
-            Self::Burning => 1.0 + 0.5 * critical_damage,
-            Self::Creation | Self::DarkStar => 1.0,
-        }
-    }
-
-    fn ignores_defense(self) -> bool {
-        matches!(self, Self::DarkStar)
-    }
-
-    fn uses_fusion_strength(self) -> bool {
-        !matches!(self, Self::Regular)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DamageScenarioFormula {
-    pub base_damage_percent: f64,
-    pub damage_bonus_percent: f64,
-    pub critical_rate_percent: f64,
-    pub critical_damage_percent: f64,
-    pub attacker_level: u8,
-    pub enemy_level: u8,
-    pub defense_reduction_percent: f64,
-    pub defense_ignore_percent: f64,
-    pub resistance_percent: f64,
-    pub resistance_ignore_percent: f64,
-    pub resistance_reduction_percent: f64,
-    pub fusion_level: u8,
-    pub fusion_strength: f64,
-    pub vulnerability_percent: f64,
-    pub final_damage_percent: f64,
-    pub special_multiplier_percent: [f64; 3],
-}
-
-impl Default for DamageScenarioFormula {
-    fn default() -> Self {
-        Self {
-            base_damage_percent: 100.0,
-            damage_bonus_percent: 0.0,
-            critical_rate_percent: 0.0,
-            critical_damage_percent: 0.0,
-            attacker_level: 80,
-            enemy_level: 80,
-            defense_reduction_percent: 0.0,
-            defense_ignore_percent: 0.0,
-            resistance_percent: 0.0,
-            resistance_ignore_percent: 0.0,
-            resistance_reduction_percent: 0.0,
-            fusion_level: 1,
-            fusion_strength: 0.0,
-            vulnerability_percent: 0.0,
-            final_damage_percent: 0.0,
-            special_multiplier_percent: [0.0; 3],
-        }
-    }
-}
-
-impl DamageScenarioFormula {
-    pub fn multiplier(self, kind: DamageScenarioKind) -> f64 {
-        let percent = |value: f64| value / 100.0;
-        let base_damage = percent(self.base_damage_percent) * kind.base_damage(self.fusion_level);
-        let damage_bonus = 1.0 + percent(self.damage_bonus_percent);
-        let critical = kind.critical_multiplier(
-            percent(self.critical_rate_percent),
-            percent(self.critical_damage_percent),
-        );
-        let defense = if kind.ignores_defense() {
-            1.0
-        } else {
-            self.defense_multiplier()
-        };
-        let resistance = self.resistance_multiplier();
-        let fusion_strength = if kind.uses_fusion_strength() {
-            1.0 + self.fusion_strength / 600.0
-        } else {
-            1.0
-        };
-        let vulnerability = 1.0 + percent(self.vulnerability_percent);
-        let final_damage = 1.0 + percent(self.final_damage_percent);
-        let special = self
-            .special_multiplier_percent
-            .into_iter()
-            .map(|value| 1.0 + percent(value))
-            .product::<f64>();
-        base_damage
-            * damage_bonus
-            * critical
-            * defense
-            * resistance
-            * fusion_strength
-            * vulnerability
-            * final_damage
-            * special
-    }
-
-    pub fn defense_multiplier(self) -> f64 {
-        let attacker = 100.0 + f64::from(self.attacker_level);
-        let enemy = 100.0 + f64::from(self.enemy_level);
-        let defense_reduction = 1.0 - self.defense_reduction_percent / 100.0;
-        let defense_ignore = 1.0 - self.defense_ignore_percent / 100.0;
-        attacker / (enemy * defense_reduction * defense_ignore + attacker)
-    }
-
-    pub fn effective_resistance_percent(self) -> f64 {
-        self.resistance_percent - self.resistance_ignore_percent - self.resistance_reduction_percent
-    }
-
-    pub fn resistance_multiplier(self) -> f64 {
-        let resistance = self.effective_resistance_percent() / 100.0;
-        if resistance >= 0.0 {
-            1.0 - resistance
-        } else {
-            1.0 - resistance / (1.0 - resistance)
-        }
-    }
-
-    pub fn fusion_coefficient(self) -> f64 {
-        0.2 * self.fusion_strength / (self.fusion_strength + 180.0)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct DamageProjectionSummary {
-    pub raw_total_damage: f64,
-    pub projected_total_damage: f64,
-    pub affected_raw_damage: f64,
-    pub affected_projected_damage: f64,
-    pub affected_hits: usize,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct DamageTransformInput<'a> {
-    pub value: f64,
-    pub char_id: u32,
-    pub timestamp: f64,
-    pub damage_attribute: Option<&'a str>,
-    pub attack_type: Option<&'a str>,
-    pub skill_name: Option<&'a str>,
-    pub follow_up: bool,
-}
-
-pub fn summarize_damage_projection(
-    hits: &VecDeque<Hit>,
-    character_id: Option<u32>,
-    damage_attribute: Option<&str>,
-    attack_type: Option<&str>,
-    kind: DamageScenarioKind,
-    baseline: DamageScenarioFormula,
-    scenario: DamageScenarioFormula,
-) -> DamageProjectionSummary {
-    let ratio = scenario.multiplier(kind) / baseline.multiplier(kind);
-    let mut summary = DamageProjectionSummary::default();
-    for hit in hits.iter().filter(|hit| !hit.direction.is_incoming()) {
-        summary.raw_total_damage += hit.total_damage();
-        let primary_matches = damage_projection_component_matches(
-            hit,
-            hit.damage_attribute.as_deref(),
-            hit.attack_type.as_deref(),
-            character_id,
-            damage_attribute,
-            attack_type,
-        );
-        let follow_up_matches = damage_projection_component_matches(
-            hit,
-            hit.follow_up_damage_attribute.as_deref(),
-            hit.follow_up_attack_type.as_deref(),
-            character_id,
-            damage_attribute,
-            attack_type,
-        );
-
-        let mut affected = false;
-        if primary_matches {
-            let projected = hit.damage * ratio;
-            summary.affected_raw_damage += hit.damage;
-            summary.affected_projected_damage += projected;
-            summary.projected_total_damage += projected;
-            affected = true;
-        } else {
-            summary.projected_total_damage += hit.damage;
-        }
-        if follow_up_matches {
-            let projected = hit.follow_up_damage * ratio;
-            summary.affected_raw_damage += hit.follow_up_damage;
-            summary.affected_projected_damage += projected;
-            summary.projected_total_damage += projected;
-            affected |= hit.follow_up_damage != 0.0;
-        } else {
-            summary.projected_total_damage += hit.follow_up_damage;
-        }
-        summary.affected_hits += usize::from(affected);
-    }
-    summary
-}
-
-fn damage_projection_component_matches(
-    hit: &Hit,
-    component_attribute: Option<&str>,
-    component_attack_type: Option<&str>,
-    character_id: Option<u32>,
-    damage_attribute: Option<&str>,
-    attack_type: Option<&str>,
-) -> bool {
-    character_id.is_none_or(|char_id| hit.char_id == char_id)
-        && damage_attribute.is_none_or(|attribute| component_attribute == Some(attribute))
-        && attack_type.is_none_or(|source| component_attack_type == Some(source))
-}
-
-fn project_damage_in_hits(
-    hits: &mut VecDeque<Hit>,
-    character_id: Option<u32>,
-    damage_attribute: Option<&str>,
-    attack_type: Option<&str>,
-    ratio: f64,
-) {
-    for hit in hits.iter_mut().filter(|hit| !hit.direction.is_incoming()) {
-        if damage_projection_component_matches(
-            hit,
-            hit.damage_attribute.as_deref(),
-            hit.attack_type.as_deref(),
-            character_id,
-            damage_attribute,
-            attack_type,
-        ) {
-            hit.damage *= ratio;
-        }
-        if damage_projection_component_matches(
-            hit,
-            hit.follow_up_damage_attribute.as_deref(),
-            hit.follow_up_attack_type.as_deref(),
-            character_id,
-            damage_attribute,
-            attack_type,
-        ) {
-            hit.follow_up_damage *= ratio;
-        }
-    }
-}
-
-fn try_transform_damage_in_hits<E>(
-    hits: &mut VecDeque<Hit>,
-    transform: &mut impl FnMut(DamageTransformInput<'_>) -> Result<f64, E>,
-) -> Result<(), E> {
-    for hit in hits.iter_mut().filter(|hit| !hit.direction.is_incoming()) {
-        if hit.damage != 0.0 {
-            hit.damage = transform(DamageTransformInput {
-                value: hit.damage,
-                char_id: hit.char_id,
-                timestamp: hit.timestamp,
-                damage_attribute: hit.damage_attribute.as_deref(),
-                attack_type: hit.attack_type.as_deref(),
-                skill_name: hit
-                    .ability_name
-                    .as_deref()
-                    .or(hit.damage_name.as_deref())
-                    .or(hit.damage_component.as_deref()),
-                follow_up: false,
-            })?;
-        }
-        if hit.follow_up_damage != 0.0 {
-            hit.follow_up_damage = transform(DamageTransformInput {
-                value: hit.follow_up_damage,
-                char_id: hit.char_id,
-                timestamp: hit.timestamp,
-                damage_attribute: hit.follow_up_damage_attribute.as_deref(),
-                attack_type: hit.follow_up_attack_type.as_deref(),
-                skill_name: hit
-                    .follow_up_damage_name
-                    .as_deref()
-                    .or(hit.ability_name.as_deref())
-                    .or(hit.damage_component.as_deref()),
-                follow_up: true,
-            })?;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1368,6 +1060,21 @@ pub fn is_reaction_damage_type(attack_type: &str) -> bool {
     REACTION_DAMAGE_TYPES.contains(&attack_type)
 }
 
+pub fn is_qte_follow_up_damage_type(attack_type: &str) -> bool {
+    is_reaction_damage_type(attack_type)
+}
+
+pub fn is_qte_follow_up_damage_hit(hit: &Hit) -> bool {
+    hit.follow_up_attack_type
+        .as_deref()
+        .is_some_and(is_qte_follow_up_damage_type)
+        || (!hit.char_known
+            && hit
+                .attack_type
+                .as_deref()
+                .is_some_and(is_qte_follow_up_damage_type))
+}
+
 pub fn reaction_damage_for_hit(hit: &Hit) -> f64 {
     let primary = if hit
         .attack_type
@@ -1785,6 +1492,22 @@ impl PartyCombatState {
         updated
     }
 
+    fn apply_enemy_target_projection_result(&mut self, result: EnemyTargetProjectionResult) {
+        if result.changed {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+        }
+        if result.direction_changed {
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+    }
+
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
         match (self.started_at, self.ended_at) {
             (Some(start), Some(end)) => {
@@ -2115,11 +1838,237 @@ impl AbyssRunState {
     }
 }
 
+const ENEMY_TELEMETRY_MOD_ID: &str = "enemy-telemetry";
+const ENEMY_TELEMETRY_BACKFILL_HITS: usize = 32;
+const ENEMY_TELEMETRY_MAX_HIT_TARGETS: usize = 128;
+const ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS: f64 = 0.35;
+const ENEMY_TELEMETRY_INSTANCE: &str = "target_name_resolution=enemy_telemetry_instance";
+const ENEMY_TELEMETRY_HIT_INSTANCE: &str = "target_name_resolution=enemy_telemetry_hit_instance";
+const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+const FILETIME_TICKS_PER_SECOND: f64 = 10_000_000.0;
+
+#[derive(Clone, Default)]
+struct EnemyTelemetryTracker {
+    hit_targets: VecDeque<EnemyHitTargetObservation>,
+}
+
+#[derive(Clone)]
+struct EnemyHitTargetObservation {
+    sequence: u64,
+    target: u64,
+    config_hash: u64,
+    identity: Option<EnemyIdentity>,
+    level: u64,
+    observed_at: f64,
+}
+
+impl EnemyTelemetryTracker {
+    fn apply_event(&mut self, event: &ModScriptEvent) -> Option<EnemyHitTargetObservation> {
+        if event.mod_id != ENEMY_TELEMETRY_MOD_ID {
+            return None;
+        }
+        let timestamp = filetime_100ns_to_unix_seconds(event.timestamp_100ns)?;
+        match (event.phase, event.name.as_str(), event.values.as_slice()) {
+            (
+                ModScriptEventPhase::Postprocess,
+                "enemy.hit_target",
+                [target, config_hash, level],
+            ) if *target != 0 && *config_hash != 0 => {
+                if self.hit_targets.len() == ENEMY_TELEMETRY_MAX_HIT_TARGETS {
+                    self.hit_targets.pop_front();
+                }
+                let observation = EnemyHitTargetObservation {
+                    sequence: event.sequence,
+                    target: *target,
+                    config_hash: *config_hash,
+                    identity: event
+                        .enemy_identity
+                        .as_ref()
+                        .filter(|identity| identity.config_hash == *config_hash)
+                        .cloned(),
+                    level: *level,
+                    observed_at: timestamp,
+                };
+                self.hit_targets.push_back(observation.clone());
+                Some(observation)
+            }
+            _ => None,
+        }
+    }
+
+    fn take_hit_target_for_hit(&mut self, hit: &Hit) -> Option<EnemyHitTargetObservation> {
+        while self.hit_targets.front().is_some_and(|target| {
+            target.observed_at + ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS < hit.timestamp
+        }) {
+            self.hit_targets.pop_front();
+        }
+        let index = self.hit_targets.iter().position(|target| {
+            hit_accepts_enemy_hit_target(hit, target)
+                && (target.observed_at - hit.timestamp).abs()
+                    <= ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS
+        })?;
+        self.hit_targets.remove(index)
+    }
+
+    fn consume_hit_target(&mut self, sequence: u64) {
+        if let Some(index) = self
+            .hit_targets
+            .iter()
+            .position(|target| target.sequence == sequence)
+        {
+            self.hit_targets.remove(index);
+        }
+    }
+}
+
+fn filetime_100ns_to_unix_seconds(timestamp_100ns: u64) -> Option<f64> {
+    timestamp_100ns
+        .checked_sub(FILETIME_UNIX_EPOCH_100NS)
+        .map(|ticks| ticks as f64 / FILETIME_TICKS_PER_SECOND)
+}
+
+fn hit_accepts_enemy_telemetry(hit: &Hit) -> bool {
+    !hit.direction.is_incoming()
+}
+
+fn hit_has_exact_enemy_target(hit: &Hit) -> bool {
+    hit.target_context
+        .iter()
+        .any(|context| context == ENEMY_TELEMETRY_HIT_INSTANCE)
+}
+
+fn hit_accepts_enemy_hit_target(hit: &Hit, target: &EnemyHitTargetObservation) -> bool {
+    hit_accepts_enemy_telemetry(hit)
+        && !hit_has_exact_enemy_target(hit)
+        && hit.target_id.as_deref().is_none_or(|target_id| {
+            target_id == format!("enemy:{:016x}", target.config_hash)
+                || hit
+                    .target_context
+                    .iter()
+                    .any(|context| context == ENEMY_TELEMETRY_INSTANCE)
+        })
+}
+
+fn project_enemy_hit_target(
+    hit: &mut Hit,
+    target: &EnemyHitTargetObservation,
+) -> EnemyTargetProjectionResult {
+    let direction_changed = hit.direction.is_unknown();
+    let target_id = format!("enemy-instance:{:016x}", target.target);
+    let target_instance = format!("enemy_target_instance={:016x}", target.target);
+    let identity_changed = target.identity.as_ref().is_some_and(|identity| {
+        hit.target_name.as_deref() != Some(&identity.name_zh)
+            || hit.target_name_en.as_deref() != Some(&identity.name_en)
+            || hit.target_name_ja.as_deref() != Some(&identity.name_ja)
+            || hit.target_monster_id.as_deref() != Some(&identity.monster_id)
+    });
+    let changed = direction_changed
+        || hit.target_id.as_deref() != Some(&target_id)
+        || identity_changed
+        || !hit_has_exact_enemy_target(hit)
+        || !hit
+            .target_context
+            .iter()
+            .any(|context| context == &target_instance);
+
+    if direction_changed {
+        hit.direction = HitDirection::Outgoing;
+    }
+    hit.target_id = Some(target_id);
+    if let Some(identity) = &target.identity {
+        hit.target_name = Some(identity.name_zh.clone());
+        hit.target_name_en = Some(identity.name_en.clone());
+        hit.target_name_ja = Some(identity.name_ja.clone());
+        hit.target_monster_id = Some(identity.monster_id.clone());
+    }
+    hit.target_context.retain(|context| {
+        context != ENEMY_TELEMETRY_INSTANCE
+            && context != ENEMY_TELEMETRY_HIT_INSTANCE
+            && !context.starts_with("enemy_target_instance=")
+            && !context.starts_with("enemy_config_id=")
+            && !context.starts_with("enemy_level=")
+    });
+    hit.target_context
+        .push(ENEMY_TELEMETRY_HIT_INSTANCE.to_owned());
+    if let Some(identity) = &target.identity {
+        hit.target_context
+            .push(format!("enemy_config_id={}", identity.config_id));
+    }
+    if target.level > 0 {
+        hit.target_context
+            .push(format!("enemy_level={}", target.level));
+    }
+    hit.target_context.push(target_instance);
+
+    EnemyTargetProjectionResult {
+        changed,
+        direction_changed,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EnemyHitKey {
+    timestamp: u64,
+    char_id: u32,
+    byte_offset: usize,
+    bit_shift: u8,
+}
+
+impl EnemyHitKey {
+    fn from_hit(hit: &Hit) -> Self {
+        Self {
+            timestamp: hit.timestamp.to_bits(),
+            char_id: hit.char_id,
+            byte_offset: hit.byte_offset,
+            bit_shift: hit.bit_shift,
+        }
+    }
+
+    fn matches(self, hit: &Hit) -> bool {
+        hit.timestamp.to_bits() == self.timestamp
+            && hit.char_id == self.char_id
+            && hit.byte_offset == self.byte_offset
+            && hit.bit_shift == self.bit_shift
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct EnemyTargetProjectionResult {
+    changed: bool,
+    direction_changed: bool,
+}
+
+fn backfill_enemy_hit_target(
+    hits: &mut VecDeque<Hit>,
+    target: &EnemyHitTargetObservation,
+) -> Option<(EnemyHitKey, EnemyTargetProjectionResult)> {
+    let first = hits.len().saturating_sub(ENEMY_TELEMETRY_BACKFILL_HITS);
+    let hit = hits.iter_mut().skip(first).find(|hit| {
+        hit_accepts_enemy_hit_target(hit, target)
+            && (target.observed_at - hit.timestamp).abs()
+                <= ENEMY_TELEMETRY_HIT_TARGET_WINDOW_SECONDS
+    })?;
+    let key = EnemyHitKey::from_hit(hit);
+    Some((key, project_enemy_hit_target(hit, target)))
+}
+
+fn apply_enemy_hit_target_to_key(
+    hits: &mut VecDeque<Hit>,
+    key: EnemyHitKey,
+    target: &EnemyHitTargetObservation,
+) -> EnemyTargetProjectionResult {
+    match hits.iter_mut().find(|hit| key.matches(hit)) {
+        Some(hit) => project_enemy_hit_target(hit, target),
+        None => EnemyTargetProjectionResult::default(),
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct CombatState {
     pub hits: VecDeque<Hit>,
     pub hits_generation: u64,
     pub packets: VecDeque<PacketDebug>,
+    pub packets_generation: u64,
     pub packet_count: usize,
     pub packets_with_hits: usize,
     pub stats: HashMap<u32, CharacterStats>,
@@ -2132,96 +2081,17 @@ pub struct CombatState {
     pub empty_curtain: Vec<EmptyCurtainItem>,
     pub empty_curtain_characters: Vec<EmptyCurtainCharacter>,
     pub empty_curtain_generation: u64,
+    pub empty_curtain_characters_generation: u64,
     pub time_stop_events: Vec<TimeStopEvent>,
     time_stop: TimeStopTracker,
+    enemy_telemetry: EnemyTelemetryTracker,
 }
 
 impl CombatState {
-    pub fn try_transformed_damage_copy<E>(
-        &self,
-        mut transform: impl FnMut(DamageTransformInput<'_>) -> Result<f64, E>,
-    ) -> Result<Self, E> {
-        let mut transformed = self.clone();
-        try_transform_damage_in_hits(&mut transformed.hits, &mut transform)?;
-        rebuild_combat_totals(
-            &transformed.hits,
-            &mut transformed.stats,
-            &mut transformed.started_at,
-            &mut transformed.ended_at,
-            &mut transformed.total_damage,
-            &mut transformed.total_damage_taken,
-        );
-        transformed.sync_clock_with_time_stops();
-        for party in [
-            &mut transformed.abyss.first_half,
-            &mut transformed.abyss.second_half,
-        ] {
-            try_transform_damage_in_hits(&mut party.hits, &mut transform)?;
-            rebuild_combat_totals(
-                &party.hits,
-                &mut party.stats,
-                &mut party.started_at,
-                &mut party.ended_at,
-                &mut party.total_damage,
-                &mut party.total_damage_taken,
-            );
-            party.sync_clock_with_time_stops();
+    pub fn push_hit(&mut self, mut hit: Hit) {
+        if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
+            project_enemy_hit_target(&mut hit, &target);
         }
-        Ok(transformed)
-    }
-
-    pub fn projected_damage_copy(
-        &self,
-        character_id: Option<u32>,
-        damage_attribute: Option<&str>,
-        attack_type: Option<&str>,
-        kind: DamageScenarioKind,
-        baseline: DamageScenarioFormula,
-        scenario: DamageScenarioFormula,
-    ) -> Self {
-        let ratio = scenario.multiplier(kind) / baseline.multiplier(kind);
-        let mut projected = self.clone();
-        project_damage_in_hits(
-            &mut projected.hits,
-            character_id,
-            damage_attribute,
-            attack_type,
-            ratio,
-        );
-        rebuild_combat_totals(
-            &projected.hits,
-            &mut projected.stats,
-            &mut projected.started_at,
-            &mut projected.ended_at,
-            &mut projected.total_damage,
-            &mut projected.total_damage_taken,
-        );
-        projected.sync_clock_with_time_stops();
-        for party in [
-            &mut projected.abyss.first_half,
-            &mut projected.abyss.second_half,
-        ] {
-            project_damage_in_hits(
-                &mut party.hits,
-                character_id,
-                damage_attribute,
-                attack_type,
-                ratio,
-            );
-            rebuild_combat_totals(
-                &party.hits,
-                &mut party.stats,
-                &mut party.started_at,
-                &mut party.ended_at,
-                &mut party.total_damage,
-                &mut party.total_damage_taken,
-            );
-            party.sync_clock_with_time_stops();
-        }
-        projected
-    }
-
-    pub fn push_hit(&mut self, hit: Hit) {
         self.abyss.push_hit(hit.clone());
         update_combat_totals(
             &mut self.stats,
@@ -2288,6 +2158,7 @@ impl CombatState {
 
     pub fn push_packet(&mut self, packet: PacketDebug) {
         self.packets.push_back(packet);
+        self.packets_generation = self.packets_generation.wrapping_add(1);
         while self.packets.len() > 10_000 {
             self.packets.pop_front();
         }
@@ -2300,6 +2171,39 @@ impl CombatState {
 
     pub fn replace_empty_curtain_characters(&mut self, characters: Vec<EmptyCurtainCharacter>) {
         self.empty_curtain_characters = characters;
+        self.empty_curtain_characters_generation =
+            self.empty_curtain_characters_generation.wrapping_add(1);
+    }
+
+    fn apply_enemy_target_projection_result(&mut self, result: EnemyTargetProjectionResult) {
+        if result.changed {
+            self.hits_generation = self.hits_generation.wrapping_add(1);
+        }
+        if result.direction_changed {
+            rebuild_combat_totals(
+                &self.hits,
+                &mut self.stats,
+                &mut self.started_at,
+                &mut self.ended_at,
+                &mut self.total_damage,
+                &mut self.total_damage_taken,
+            );
+        }
+    }
+
+    pub fn apply_mod_script_event(&mut self, event: &ModScriptEvent) {
+        let Some(target) = self.enemy_telemetry.apply_event(event) else {
+            return;
+        };
+        let Some((key, result)) = backfill_enemy_hit_target(&mut self.hits, &target) else {
+            return;
+        };
+        self.enemy_telemetry.consume_hit_target(target.sequence);
+        self.apply_enemy_target_projection_result(result);
+        for party in [&mut self.abyss.first_half, &mut self.abyss.second_half] {
+            let result = apply_enemy_hit_target_to_key(&mut party.hits, key, &target);
+            party.apply_enemy_target_projection_result(result);
+        }
     }
 
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
@@ -2362,10 +2266,12 @@ impl CombatState {
         let empty_curtain = std::mem::take(&mut self.empty_curtain);
         let empty_curtain_characters = std::mem::take(&mut self.empty_curtain_characters);
         let empty_curtain_generation = self.empty_curtain_generation;
+        let empty_curtain_characters_generation = self.empty_curtain_characters_generation;
         *self = Self::default();
         self.empty_curtain = empty_curtain;
         self.empty_curtain_characters = empty_curtain_characters;
         self.empty_curtain_generation = empty_curtain_generation;
+        self.empty_curtain_characters_generation = empty_curtain_characters_generation;
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
@@ -2838,6 +2744,16 @@ pub enum ModScriptEventPhase {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnemyIdentity {
+    pub config_hash: u64,
+    pub config_id: String,
+    pub monster_id: String,
+    pub name_en: String,
+    pub name_zh: String,
+    pub name_ja: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModScriptEvent {
     pub sequence: u64,
     pub timestamp_100ns: u64,
@@ -2845,6 +2761,7 @@ pub struct ModScriptEvent {
     pub phase: ModScriptEventPhase,
     pub name: String,
     pub values: Vec<u64>,
+    pub enemy_identity: Option<EnemyIdentity>,
 }
 
 impl ModScriptEvent {
@@ -2869,6 +2786,7 @@ impl ModScriptEvent {
             phase,
             name,
             values,
+            enemy_identity: None,
         }
     }
 }
@@ -3195,6 +3113,9 @@ mod tests {
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,
@@ -3209,138 +3130,6 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
         }
-    }
-
-    #[test]
-    fn damage_scenario_uses_piecewise_resistance_formula() {
-        let positive = DamageScenarioFormula {
-            resistance_percent: 20.0,
-            ..Default::default()
-        };
-        assert!((positive.resistance_multiplier() - 0.8).abs() < 1e-9);
-
-        let negative = DamageScenarioFormula {
-            resistance_percent: 10.0,
-            resistance_reduction_percent: 30.0,
-            ..Default::default()
-        };
-        assert!((negative.effective_resistance_percent() + 20.0).abs() < 1e-9);
-        assert!((negative.resistance_multiplier() - (1.0 + 0.2 / 1.2)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn damage_scenario_uses_reaction_base_damage_and_critical_rules() {
-        let formula = DamageScenarioFormula {
-            fusion_level: 16,
-            fusion_strength: 600.0,
-            critical_rate_percent: 100.0,
-            critical_damage_percent: 100.0,
-            ..Default::default()
-        };
-        let common_without_defense =
-            formula.resistance_multiplier() * (1.0 + formula.fusion_strength / 600.0);
-        let creation = formula.multiplier(DamageScenarioKind::Creation);
-        let burning = formula.multiplier(DamageScenarioKind::Burning);
-        let dark_star = formula.multiplier(DamageScenarioKind::DarkStar);
-
-        assert!(
-            (creation - 9_000.0 * formula.defense_multiplier() * common_without_defense).abs()
-                < 1e-9
-        );
-        assert!(
-            (burning - 2_700.0 * 1.5 * formula.defense_multiplier() * common_without_defense).abs()
-                < 1e-9
-        );
-        assert!((dark_star - 45_000.0 * common_without_defense).abs() < 1e-9);
-    }
-
-    #[test]
-    fn damage_projection_can_target_primary_and_follow_up_damage_independently() {
-        let mut primary = test_hit(1.0, 7, "outgoing", 100.0);
-        primary.damage_attribute = Some("光".to_owned());
-        primary.attack_type = Some("普通攻击".to_owned());
-        primary.follow_up_damage = 50.0;
-        primary.follow_up_damage_attribute = Some("灵".to_owned());
-        primary.follow_up_attack_type = Some("覆纹".to_owned());
-        let unaffected = test_hit(2.0, 8, "outgoing", 200.0);
-        let incoming = test_hit(3.0, 7, "incoming", 500.0);
-        let hits = VecDeque::from([primary, unaffected, incoming]);
-        let baseline = DamageScenarioFormula::default();
-        let scenario = DamageScenarioFormula {
-            resistance_percent: 20.0,
-            ..Default::default()
-        };
-
-        let summary = summarize_damage_projection(
-            &hits,
-            Some(7),
-            Some("光"),
-            Some("普通攻击"),
-            DamageScenarioKind::Regular,
-            baseline,
-            scenario,
-        );
-
-        assert_eq!(summary.raw_total_damage, 350.0);
-        assert_eq!(summary.affected_raw_damage, 100.0);
-        assert_eq!(summary.affected_projected_damage, 80.0);
-        assert_eq!(summary.projected_total_damage, 330.0);
-        assert_eq!(summary.affected_hits, 1);
-    }
-
-    #[test]
-    fn projected_combat_state_changes_the_copy_and_preserves_the_source() {
-        let mut state = CombatState::default();
-        let mut hit = test_hit(1.0, 7, "outgoing", 100.0);
-        hit.damage_attribute = Some("光".to_owned());
-        state.push_hit(hit);
-        state.push_hit(test_hit(2.0, 8, "outgoing", 200.0));
-        let projected = state.projected_damage_copy(
-            Some(7),
-            Some("光"),
-            None,
-            DamageScenarioKind::Regular,
-            DamageScenarioFormula::default(),
-            DamageScenarioFormula {
-                resistance_percent: 20.0,
-                ..Default::default()
-            },
-        );
-
-        assert_eq!(state.total_damage, 300.0);
-        assert_eq!(state.hits[0].damage, 100.0);
-        assert_eq!(projected.total_damage, 280.0);
-        assert_eq!(projected.hits[0].damage, 80.0);
-        assert_eq!(projected.stats[&7].damage, 80.0);
-        assert_eq!(projected.stats[&8].damage, 200.0);
-    }
-
-    #[test]
-    fn low_code_transform_rebuilds_the_copy_and_preserves_the_source() {
-        let mut state = CombatState::default();
-        let mut skill_hit = test_hit(1.0, 7, "outgoing", 100.0);
-        skill_hit.ability_name = Some("技能甲".to_owned());
-        state.push_hit(skill_hit);
-        state.push_hit(test_hit(2.0, 8, "outgoing", 200.0));
-
-        let transformed = state
-            .try_transformed_damage_copy(|input| {
-                Ok::<_, ()>(if input.char_id == 7 {
-                    assert_eq!(input.skill_name, Some("技能甲"));
-                    input.value * 0.5
-                } else {
-                    assert_eq!(input.skill_name, None);
-                    input.value
-                })
-            })
-            .unwrap();
-
-        assert_eq!(state.total_damage, 300.0);
-        assert_eq!(state.hits[0].damage, 100.0);
-        assert_eq!(transformed.total_damage, 250.0);
-        assert_eq!(transformed.hits[0].damage, 50.0);
-        assert_eq!(transformed.stats[&7].damage, 50.0);
-        assert_eq!(transformed.stats[&8].damage, 200.0);
     }
 
     fn apply_test_pause(state: &mut CombatState, start: f64, end: f64) {
@@ -3997,6 +3786,7 @@ mod tests {
             character_id: 1020,
         }]);
         let inventory_generation = state.empty_curtain_generation;
+        let character_generation = state.empty_curtain_characters_generation;
 
         state.clear_battle_preserving_inventory();
 
@@ -4006,6 +3796,10 @@ mod tests {
         assert_eq!(state.empty_curtain.len(), 1);
         assert_eq!(state.empty_curtain_characters.len(), 1);
         assert_eq!(state.empty_curtain_generation, inventory_generation);
+        assert_eq!(
+            state.empty_curtain_characters_generation,
+            character_generation
+        );
     }
 
     #[test]

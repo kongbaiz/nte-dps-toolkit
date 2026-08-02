@@ -27,18 +27,18 @@ fn main() {
     let resource_dir = manifest_dir.join("res");
     let icon_path = manifest_dir.join("res/icons/app-icon.ico");
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let gui_enabled = env::var_os("CARGO_FEATURE_GUI").is_some();
+    let desktop_enabled = env::var_os("CARGO_FEATURE_DESKTOP").is_some();
     let cli_enabled = env::var_os("CARGO_FEATURE_CLI").is_some();
     let mode = if env::var_os("CARGO_FEATURE_EXTERNAL_RESOURCES").is_some() {
         ResourceMode::External
-    } else if cli_enabled && !gui_enabled {
+    } else if cli_enabled && !desktop_enabled {
         ResourceMode::Core
     } else {
         ResourceMode::Full
     };
 
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_EXTERNAL_RESOURCES");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_GUI");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_DESKTOP");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CLI");
     match mode {
         ResourceMode::Full => println!("cargo:rerun-if-changed={}", resource_dir.display()),
@@ -48,14 +48,14 @@ fn main() {
         ),
         ResourceMode::External => {}
     }
-    if gui_enabled {
+    if desktop_enabled {
         println!("cargo:rerun-if-changed={}", icon_path.display());
     }
 
     generate_embedded_resources(&manifest_dir, &resource_dir, &output_dir, mode);
 
     #[cfg(windows)]
-    if gui_enabled {
+    if desktop_enabled {
         winresource::WindowsResource::new()
             .set_icon(icon_path.to_str().expect("icon path must be valid UTF-8"))
             .compile()

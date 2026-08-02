@@ -120,6 +120,14 @@ pub struct InstalledComponentVersions {
     pub mods_plugin: Option<Version>,
 }
 
+pub fn installed_app_version(version: &str) -> Result<InstalledComponentVersions, UpdateError> {
+    let app = Version::parse(version).map_err(|_| UpdateError::InvalidVersion)?;
+    Ok(InstalledComponentVersions {
+        app,
+        mods_plugin: None,
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AvailableComponentUpdate {
     pub component: UpdateComponent,

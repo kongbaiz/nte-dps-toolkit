@@ -10,7 +10,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 
-pub(crate) fn atomic_write_text(path: &Path, text: &str) -> Result<(), String> {
+pub fn atomic_write_text(path: &Path, text: &str) -> Result<(), String> {
     atomic_write_file(path, |writer| {
         writer
             .write_all(text.as_bytes())

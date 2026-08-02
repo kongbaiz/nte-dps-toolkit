@@ -13,6 +13,11 @@ namespace nte::mods::memory
 		size_t offset,
 		void* destination,
 		size_t size);
+	bool WriteBytes(
+		void* base,
+		size_t offset,
+		const void* source,
+		size_t size);
 
 	template <typename T>
 	bool ReadValue(const void* base, size_t offset, T& value)
@@ -25,5 +30,11 @@ namespace nte::mods::memory
 	{
 		T* value = nullptr;
 		return ReadValue(base, offset, value) ? value : nullptr;
+	}
+
+	template <typename T>
+	bool WriteValue(void* base, size_t offset, const T& value)
+	{
+		return WriteBytes(base, offset, &value, sizeof(T));
 	}
 } // namespace nte::mods::memory

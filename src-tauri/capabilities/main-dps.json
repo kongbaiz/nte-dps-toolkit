@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-dps",
+  "description": "enables the main DPS window base permissions",
+  "windows": ["main-dps"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-set-background-color",
+    "core:webview:allow-set-webview-background-color"
+  ]
+}

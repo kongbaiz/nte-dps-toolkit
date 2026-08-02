@@ -8,35 +8,35 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::collections::BTreeMap;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::fmt;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::fs;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::io::Write;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::path::{Path, PathBuf};
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use std::ptr;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 use windows_sys::Win32::System::Pipes::CallNamedPipeW;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
     RegCloseKey, RegCreateKeyW, RegGetValueW, RegSetValueExW,
 };
 
 use crate::engine::model::HtItemNetId;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 use crate::storage::mod_scripts::{
     mod_script_workspace_directory, validate_enabled_mod_set, validate_mod_source,
 };
@@ -56,6 +56,8 @@ const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
+#[cfg(any(feature = "desktop", test))]
+const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
 const MAX_PLACEMENTS: usize = 64;
 const REQUEST_HEADER_SIZE: usize = 56;
@@ -69,6 +71,14 @@ const MOD_EVENT_HISTORY_SIZE: usize = 18;
 const MOD_EVENT_ID_SIZE: usize = 32;
 const MOD_EVENT_NAME_SIZE: usize = 32;
 const MOD_EVENT_VALUE_COUNT: usize = 3;
+#[cfg(any(feature = "desktop", test))]
+const MOD_LOG_SIZE: usize = 112;
+#[cfg(any(feature = "desktop", test))]
+const MOD_LOG_HISTORY_SIZE: usize = 18;
+#[cfg(any(feature = "desktop", test))]
+const MOD_LOG_ID_SIZE: usize = 32;
+#[cfg(any(feature = "desktop", test))]
+const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
 const COMBAT_CLOCK_PAUSE_VALID: u32 = 0x1;
@@ -77,10 +87,12 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
+static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+#[cfg(feature = "desktop")]
 static PLUGIN_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const GAME_INSTALL_REGISTRY_KEYS: [(ModsPluginGameRegion, &str); 2] = [
     (
         ModsPluginGameRegion::China,
@@ -91,59 +103,189 @@ const GAME_INSTALL_REGISTRY_KEYS: [(ModsPluginGameRegion, &str); 2] = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NTEGlobal",
     ),
 ];
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const GAME_BINARY_RELATIVE_PATH: &str = r"Client\WindowsNoEditor\HT\Binaries\Win64";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const GAME_EXECUTABLE_NAME: &str = "HTGame.exe";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const PLUGIN_FILE_NAME: &str = "dwmapi.dll";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_PLUGIN_MARKER_FILE_NAME: &str = ".nte-dps-tool-equipment-plugin";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_PLUGIN_MARKER_HEADER: &str = "NTE_DPS_TOOL_EQUIPMENT_PLUGIN_V1";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const PLUGIN_BINARY_SIGNATURE: &[u8] = b"NTE_DPS_TOOL_MODS_PLUGIN_V1";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_PLUGIN_BINARY_SIGNATURE: &[u8] = b"NTE_DPS_TOOL_MOD_LOADER_V1";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const MOD_WORKSPACE_REGISTRY_KEY: &str = r"Software\NTE DPS Tool\Mods Plugin";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const MOD_WORKSPACE_REGISTRY_VALUE: &str = "Workspace";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const MAX_LEGACY_MOD_FILE_BYTES: usize = 16 * 1024;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+state.last_target = 0
+state.last_config_id = 0
+state.last_level = 0
+state.last_hp = 0
+state.last_max_hp = 0
+state.last_flags = 0
+
+def on_viewport_tick(event):
+    character = game.player_character
+    target = None
+    if character != None:
+        target = sdk.attack_target(character)
+
+    if target == None:
+        if state.last_target != 0:
+            ipc.emit("post.enemy.cleared", state.last_target)
+        state.last_target = 0
+        state.last_config_id = 0
+        state.last_level = 0
+        state.last_hp = 0
+        state.last_max_hp = 0
+        state.last_flags = 0
+
+    if target != None:
+        config_id = sdk.character_config_id(target)
+        level = sdk.character_level(target)
+        hp = sdk.character_hp_milli(target)
+        max_hp = sdk.character_hp_max_milli(target, False)
+        alive = sdk.character_is_alive(target)
+        dead = sdk.character_is_dead(target)
+        dead_flag = dead << 1
+        state_flags = alive | dead_flag
+        if target != state.last_target:
+            ipc.emit("pre.enemy.identity", target, config_id, level)
+            ipc.emit("post.enemy.vitals", target, hp, max_hp)
+            ipc.emit("post.enemy.state", target, state_flags, level)
+        else:
+            if config_id != state.last_config_id:
+                ipc.emit("pre.enemy.identity", target, config_id, level)
+            if hp != state.last_hp:
+                ipc.emit("post.enemy.vitals", target, hp, max_hp)
+            elif max_hp != state.last_max_hp:
+                ipc.emit("post.enemy.vitals", target, hp, max_hp)
+            if level != state.last_level:
+                ipc.emit("post.enemy.state", target, state_flags, level)
+            elif state_flags != state.last_flags:
+                ipc.emit("post.enemy.state", target, state_flags, level)
+        state.last_target = target
+        state.last_config_id = config_id
+        state.last_level = level
+        state.last_hp = hp
+        state.last_max_hp = max_hp
+        state.last_flags = state_flags
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V2: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+state.next_sample_at = 0
+state.last_target = 0
+state.last_hp = 0
+state.last_max_hp = 0
+
+def on_viewport_tick(event):
+    now = time.now_ms()
+    sample_due = now >= state.next_sample_at
+
+    if sample_due == True:
+        # Target SDK calls execute at 10 Hz instead of on every rendered frame.
+        state.next_sample_at = now + 100
+        character = game.player_character
+        target = None
+        if character != None:
+            target = sdk.attack_target(character)
+
+    if sample_due == True:
+        if target == None:
+            if state.last_target != 0:
+                ipc.emit("post.enemy.cleared", state.last_target)
+            state.last_target = 0
+            state.last_hp = 0
+            state.last_max_hp = 0
+
+    if sample_due == True:
+        if target != None:
+            hp = sdk.character_hp_milli(target)
+            if target != state.last_target:
+                config_id = sdk.character_config_id(target)
+                level = sdk.character_level(target)
+                max_hp = sdk.character_hp_max_milli(target, False)
+                ipc.emit("pre.enemy.identity", target, config_id, level)
+                ipc.emit("post.enemy.vitals", target, hp, max_hp)
+                state.last_max_hp = max_hp
+            else:
+                if hp != state.last_hp:
+                    max_hp = sdk.character_hp_max_milli(target, False)
+                    ipc.emit("post.enemy.vitals", target, hp, max_hp)
+                    state.last_max_hp = max_hp
+            state.last_target = target
+            state.last_hp = hp
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V3: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("sdk.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+route_ipc(13, "enemy.query_identity")
+
+def on_viewport_tick(event):
+    # The desktop requests one identity snapshot after this capture's first hit.
+    # This handler only publishes the current controller as the IPC context.
+    player_controller = game.player_controller
+    if player_controller != None:
+        ipc.bind(None, player_controller)
+"#;
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V1: &[u8] =
     b"nte_mod 1\nmod equipment\non viewport_tick equipment.prepare\non viewport_tick ipc.pump\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V1: &[u8] =
     b"nte_mod 1\nmod combat-clock\non viewport_tick combat_clock.observe\non viewport_tick ipc.pump\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V2: &[u8] = b"nte_mod 2\nmod equipment\ncapability equipment\n\non viewport_tick\nload r0 event.viewport\nread_ptr r1 r0 0x80\nread_tarray_first r2 r1 0x38\nread_ptr r3 r2 0x30\nread_ptr r4 r3 0x2d0\nif equipment.cache_missing\ncall equipment.prepare r4\nend\ncall ipc.pump r4 null\nend\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V2: &[u8] = b"nte_mod 2\nmod combat-clock\ncapability combat-clock\n\non viewport_tick\nload r0 event.viewport\nread_ptr r1 r0 0x80\nread_tarray_first r2 r1 0x38\nread_ptr r3 r2 0x30\ncall combat_clock.observe r3\ncall ipc.pump null r3\nend\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V3: &[u8] = b"nte_mod(3)\nmod(\"equipment\")\ncapability(\"equipment\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = read_ptr(viewport, 0x80)\n    local_player = read_tarray_first(game_instance, 0x38)\n    player_controller = read_ptr(local_player, 0x30)\n    player_state = read_ptr(player_controller, 0x2d0)\n    if equipment.cache_missing():\n        equipment.prepare(player_state)\n    ipc.pump(player_state, None)\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V3: &[u8] = b"nte_mod(3)\nmod(\"combat-clock\")\ncapability(\"combat-clock\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = read_ptr(viewport, 0x80)\n    local_player = read_tarray_first(game_instance, 0x38)\n    player_controller = read_ptr(local_player, 0x30)\n    combat_clock.observe(player_controller)\n    ipc.pump(None, player_controller)\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4: &[u8] = b"nte_mod(4)\nmod(\"equipment\")\nrequires(\"viewport.tick\")\nrequires(\"memory.read\")\nrequires(\"sdk.read\")\nrequires(\"equipment\")\nrequires(\"ipc\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = memory.read_ptr(viewport, 0x80)\n    local_player = memory.tarray_first(game_instance, 0x38)\n    player_controller = memory.read_ptr(local_player, 0x30)\n    player_state = sdk.player_state(player_controller)\n    if equipment.cache_missing():\n        equipment.prepare(player_state)\n    ipc.bind(player_state, None)\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4: &[u8] = b"nte_mod(4)\nmod(\"combat-clock\")\nrequires(\"viewport.tick\")\nrequires(\"memory.read\")\nrequires(\"combat-clock\")\nrequires(\"ipc\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = memory.read_ptr(viewport, 0x80)\n    local_player = memory.tarray_first(game_instance, 0x38)\n    player_controller = memory.read_ptr(local_player, 0x30)\n    combat_clock.observe(player_controller)\n    ipc.bind(None, player_controller)\n";
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4_OFFSETS: &[u8] = br#"nte_mod(4)
 mod("equipment")
 requires("viewport.tick")
@@ -183,7 +325,7 @@ def on_viewport_tick(event):
         if cache_ready == True:
             ipc.bind(player_state, None)
 "#;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS: &[u8] = br#"nte_mod(4)
 mod("combat-clock")
 requires("viewport.tick")
@@ -228,7 +370,7 @@ def on_viewport_tick(event):
         state.last_pause_mask = pause_mask
         state.last_state_flags = state_flags
 "#;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
 mod("equipment")
 requires("viewport.tick")
@@ -263,7 +405,7 @@ def on_viewport_tick(event):
         if cache_ready == True:
             ipc.bind(player_state, None)
 "#;
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
 mod("combat-clock")
 requires("viewport.tick")
@@ -304,9 +446,821 @@ def on_viewport_tick(event):
         state.last_pause_mask = pause_mask
         state.last_state_flags = state_flags
 "#;
-#[cfg(feature = "gui")]
-const NO_LEGACY_MOD_PROGRAMS: &[&[u8]] = &[];
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
+const LEGACY_EQUIPMENT_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
+mod("equipment")
+requires("viewport.tick")
+requires("game.session")
+requires("equipment")
+requires("ipc")
+
+# External routing is the Mod's service table; the DLL only exposes validated kernel calls.
+route_ipc(1, "equipment.equip_module")
+route_ipc(2, "equipment.equip_core")
+route_ipc(3, "equipment.unequip_module")
+route_ipc(4, "equipment.unequip_core")
+route_ipc(5, "equipment.unequip_all")
+route_ipc(6, "equipment.equip_one_key")
+route_ipc(7, "equipment.move_module_to_character")
+route_ipc(8, "equipment.move_core_to_character")
+route_ipc(9, "equipment.set_item_discarded")
+route_ipc(10, "equipment.set_item_locked")
+route_ipc(12, "ipc.query_mod_events")
+
+# The script owns PlayerState lifecycle, cache retry, and IPC activation.
+# game.player_state is a stable built-in; client offsets stay in the host.
+state.last_player_state = 0
+state.next_prepare_at = 0
+
+def on_viewport_tick(event):
+    player_state = game.player_state
+    now = time.now_ms()
+    if player_state != None:
+        # A new PlayerState starts a fresh cache lifecycle.
+        if player_state != state.last_player_state:
+            state.last_player_state = player_state
+            state.next_prepare_at = 0
+
+        cache_ready = equipment.cache_ready(player_state)
+        if cache_ready == False:
+            # Retry at most once per second while UE functions are unavailable.
+            if now >= state.next_prepare_at:
+                equipment.prepare(player_state)
+                state.next_prepare_at = now + 1000
+                cache_ready = equipment.cache_ready(player_state)
+
+        # Equipment IPC becomes actionable only after this Mod prepared it.
+        if cache_ready == True:
+            ipc.bind(player_state, None)
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
+mod("combat-clock")
+requires("viewport.tick")
+requires("game.session")
+requires("combat-clock")
+requires("ipc")
+
+# External routing publishes the services owned by this Mod.
+route_ipc(11, "combat_clock.query_transitions")
+route_ipc(12, "ipc.query_mod_events")
+
+# The script owns sampling, transition detection, and forwarding.
+# Stable host properties hide the session offsets and packed sample format.
+state.initialized = 0
+state.last_controller = 0
+state.last_pause_mask = 0
+state.last_state_flags = 0
+
+def on_viewport_tick(event):
+    player_controller = game.player_controller
+    pause_mask = 0
+    state_flags = 0
+    if player_controller != None:
+        pause_mask = combat_clock.pause_mask(player_controller)
+        state_flags = combat_clock.state_flags(player_controller)
+        ipc.bind(None, player_controller)
+
+    # Forward only the first sample or a real state transition.
+    changed = state.initialized == False
+    if player_controller != state.last_controller:
+        changed = True
+    if pause_mask != state.last_pause_mask:
+        changed = True
+    if state_flags != state.last_state_flags:
+        changed = True
+
+    if changed == True:
+        combat_clock.forward(pause_mask, state_flags)
+        state.initialized = 1
+        state.last_controller = player_controller
+        state.last_pause_mask = pause_mask
+        state.last_state_flags = state_flags
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC: &[u8] = br#"nte_mod(4)
+mod("enemy-telemetry")
+requires("viewport.tick")
+requires("game.session")
+requires("memory.read")
+requires("ipc")
+route_ipc(12, "ipc.query_mod_events")
+state.next_sample_at = 0
+state.next_identity_at = 0
+state.last_target = 0
+state.last_hp = 0
+state.last_max_hp = 0
+
+def on_viewport_tick(event):
+    now = time.now_ms()
+    if now >= state.next_sample_at:
+        state.next_sample_at = now + 50
+        player_state = memory.read_ptr(game.player_controller, 0x2d0)
+        target = memory.read_ptr(player_state, 0x2880)
+        if target == None:
+            if state.last_target != 0:
+                ipc.emit("post.enemy.cleared", state.last_target)
+            state.last_target = 0
+            state.last_hp = 0
+            state.last_max_hp = 0
+        if target != None:
+            ability_system = memory.read_ptr(target, 0x8a0)
+            hp = memory.read_f32_milli(ability_system, 0x1a08)
+            max_hp = memory.read_f32_milli(ability_system, 0x1a0c)
+            if max_hp > 0:
+                if hp <= max_hp:
+                    object_index = memory.read_u32(target, 0x0c)
+                    target_key = target ^ object_index
+                    config_hash = cache.get(target_key)
+                    if config_hash == 0:
+                        config_hash = memory.read_fname_hash(target, 0x1d38)
+                        if config_hash != 0:
+                            config_hash = cache.remember(target_key, config_hash)
+                    target_changed = target_key != state.last_target
+                    if config_hash != 0:
+                        if target_changed == True:
+                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
+                        elif now >= state.next_identity_at:
+                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
+                    if target_changed == True:
+                        ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
+                    else:
+                        if hp != state.last_hp:
+                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
+                        elif max_hp != state.last_max_hp:
+                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
+                    if now >= state.next_identity_at:
+                        state.next_identity_at = now + 250
+                    state.last_target = target_key
+                    state.last_hp = hp
+                    state.last_max_hp = max_hp
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_sample_at = 0;
+std::uint64_t next_identity_at = 0;
+std::uint64_t last_target = 0;
+std::uint64_t last_hp = 0;
+std::uint64_t last_max_hp = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    if (now >= next_sample_at)
+    {
+        next_sample_at = now + 50;
+        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+        const auto target = nte::memory::read_ptr(player_state, 0x2880);
+        if (target == nullptr)
+        {
+            if (last_target != 0)
+            {
+                nte::ipc::emit("post.enemy.cleared", last_target);
+            }
+            last_target = 0;
+            last_hp = 0;
+            last_max_hp = 0;
+        }
+        if (target != nullptr)
+        {
+            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
+            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
+            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
+            if (max_hp > 0)
+            {
+                if (hp <= max_hp)
+                {
+                    const auto object_index = nte::memory::read_u32(target, 0x0c);
+                    const auto target_key = target ^ object_index;
+                    auto config_hash = nte::cache::get(target_key);
+                    if (config_hash == 0)
+                    {
+                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                        if (config_hash != 0)
+                        {
+                            config_hash = nte::cache::remember(target_key, config_hash);
+                        }
+                    }
+                    const auto target_changed = target_key != last_target;
+                    if (config_hash != 0)
+                    {
+                        if (target_changed == true)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                        else if (now >= next_identity_at)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                    }
+                    if (target_changed == true)
+                    {
+                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                    }
+                    else
+                    {
+                        if (hp != last_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                        else if (max_hp != last_max_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                    }
+                    if (now >= next_identity_at)
+                    {
+                        next_identity_at = now + 250;
+                    }
+                    last_target = target_key;
+                    last_hp = hp;
+                    last_max_hp = max_hp;
+                }
+            }
+        }
+    }
+}
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("ipc");
+NTE_REQUIRES("log");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_sample_at = 0;
+std::uint64_t next_identity_at = 0;
+std::uint64_t next_diagnostic_at = 0;
+std::uint64_t last_target = 0;
+std::uint64_t last_hp = 0;
+std::uint64_t last_max_hp = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    if (now >= next_sample_at)
+    {
+        next_sample_at = now + 50;
+        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+        const auto target = nte::memory::read_ptr(player_state, 0x2880);
+        if (target == nullptr)
+        {
+            if (last_target != 0)
+            {
+                nte::ipc::emit("post.enemy.cleared", last_target);
+                nte::log::info("enemy target cleared");
+            }
+            last_target = 0;
+            last_hp = 0;
+            last_max_hp = 0;
+        }
+        if (target != nullptr)
+        {
+            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
+            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
+            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
+            if (max_hp > 0)
+            {
+                if (hp <= max_hp)
+                {
+                    const auto object_index = nte::memory::read_u32(target, 0x0c);
+                    const auto target_key = target ^ object_index;
+                    auto config_hash = nte::cache::get(target_key);
+                    if (config_hash == 0)
+                    {
+                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                        if (config_hash != 0)
+                        {
+                            config_hash = nte::cache::remember(target_key, config_hash);
+                        }
+                    }
+                    if (config_hash == 0)
+                    {
+                        if (now >= next_diagnostic_at)
+                        {
+                            nte::log::info("enemy identity hash missing");
+                            next_diagnostic_at = now + 500;
+                        }
+                    }
+                    const auto target_changed = target_key != last_target;
+                    if (config_hash != 0)
+                    {
+                        if (target_changed == true)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                        else if (now >= next_identity_at)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                    }
+                    if (target_changed == true)
+                    {
+                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                    }
+                    else
+                    {
+                        if (hp != last_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                        else if (max_hp != last_max_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                    }
+                    if (now >= next_identity_at)
+                    {
+                        next_identity_at = now + 250;
+                    }
+                    last_target = target_key;
+                    last_hp = hp;
+                    last_max_hp = max_hp;
+                }
+                else if (now >= next_diagnostic_at)
+                {
+                    nte::log::info("enemy vitals invalid");
+                    next_diagnostic_at = now + 500;
+                }
+            }
+            else if (now >= next_diagnostic_at)
+            {
+                nte::log::info("enemy vitals invalid");
+                next_diagnostic_at = now + 500;
+            }
+        }
+    }
+}
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("unreal.reflection");
+NTE_REQUIRES("process.event");
+NTE_REQUIRES("ipc");
+NTE_REQUIRES("log");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_sample_at = 0;
+std::uint64_t next_identity_at = 0;
+std::uint64_t next_diagnostic_at = 0;
+std::uint64_t watched_character = 0;
+std::uint64_t watched_function = 0;
+std::uint64_t last_target = 0;
+std::uint64_t last_hp = 0;
+std::uint64_t last_max_hp = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    if (nte::game::player_character != watched_character)
+    {
+        if (watched_character != 0)
+        {
+            if (watched_function != 0)
+            {
+                nte::unreal::unwatch(watched_character, watched_function);
+            }
+        }
+        watched_character = nte::game::player_character;
+        watched_function = 0;
+    }
+    if (watched_character != 0)
+    {
+        if (watched_function == 0)
+        {
+            watched_function = nte::unreal::find_function(watched_character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
+            if (watched_function == 0)
+            {
+                if (now >= next_diagnostic_at)
+                {
+                    nte::log::info("enemy damage function missing");
+                    next_diagnostic_at = now + 500;
+                }
+            }
+        }
+        if (watched_function != 0)
+        {
+            nte::unreal::watch(watched_character, watched_function);
+        }
+    }
+    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
+    {
+        const auto event_ready = nte::event::next();
+        if (event_ready == true)
+        {
+            const auto damaged = nte::event::read_u64(0x110);
+            if (damaged != nullptr)
+            {
+                auto target_key = nte::memory::read_u32(damaged, 0x0c);
+                target_key = damaged ^ target_key;
+                const auto object_name_hash = nte::memory::read_fname_hash(damaged, 0x18);
+                target_key = target_key ^ object_name_hash;
+                auto config_hash = nte::cache::get(target_key);
+                if (config_hash == 0)
+                {
+                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
+                    if (config_hash != 0)
+                    {
+                        config_hash = nte::cache::remember(target_key, config_hash);
+                    }
+                }
+                if (config_hash != 0)
+                {
+                    nte::ipc::emit("post.enemy.hit_target", target_key, config_hash, 0);
+                }
+            }
+        }
+    }
+    if (now >= next_sample_at)
+    {
+        next_sample_at = now + 50;
+        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+        const auto target = nte::memory::read_ptr(player_state, 0x2880);
+        if (target == nullptr)
+        {
+            if (last_target != 0)
+            {
+                nte::ipc::emit("post.enemy.cleared", last_target);
+                nte::log::info("enemy target cleared");
+            }
+            last_target = 0;
+            last_hp = 0;
+            last_max_hp = 0;
+        }
+        if (target != nullptr)
+        {
+            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
+            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
+            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
+            if (max_hp > 0)
+            {
+                if (hp <= max_hp)
+                {
+                    auto target_key = nte::memory::read_u32(target, 0x0c);
+                    target_key = target ^ target_key;
+                    const auto object_name_hash = nte::memory::read_fname_hash(target, 0x18);
+                    target_key = target_key ^ object_name_hash;
+                    auto config_hash = nte::cache::get(target_key);
+                    if (config_hash == 0)
+                    {
+                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                        if (config_hash != 0)
+                        {
+                            config_hash = nte::cache::remember(target_key, config_hash);
+                        }
+                    }
+                    if (config_hash == 0)
+                    {
+                        if (now >= next_diagnostic_at)
+                        {
+                            nte::log::info("enemy identity hash missing");
+                            next_diagnostic_at = now + 500;
+                        }
+                    }
+                    if (config_hash != 0)
+                    {
+                        if (target_key != last_target)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                        else if (now >= next_identity_at)
+                        {
+                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
+                        }
+                    }
+                    if (target_key != last_target)
+                    {
+                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                    }
+                    else
+                    {
+                        if (hp != last_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                        else if (max_hp != last_max_hp)
+                        {
+                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
+                        }
+                    }
+                    if (now >= next_identity_at)
+                    {
+                        next_identity_at = now + 250;
+                    }
+                    last_target = target_key;
+                    last_hp = hp;
+                    last_max_hp = max_hp;
+                }
+                else if (now >= next_diagnostic_at)
+                {
+                    nte::log::info("enemy vitals invalid");
+                    next_diagnostic_at = now + 500;
+                }
+            }
+            else if (now >= next_diagnostic_at)
+            {
+                nte::log::info("enemy vitals invalid");
+                next_diagnostic_at = now + 500;
+            }
+        }
+    }
+}
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_identity_at = 0;
+std::uint64_t last_target = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+    const auto target = nte::memory::read_ptr(player_state, 0x2880);
+    if (target == nullptr)
+    {
+        if (last_target != 0)
+        {
+            nte::ipc::emit("post.enemy.cleared", last_target);
+        }
+        last_target = 0;
+    }
+    if (target != nullptr)
+    {
+        const auto object_index = nte::memory::read_u32(target, 0x0c);
+        const auto shifted_index = object_index << 32;
+        const auto target_instance = target ^ shifted_index;
+        if (target_instance != last_target)
+        {
+            next_identity_at = 0;
+        }
+        if (now >= next_identity_at)
+        {
+            auto config_hash = nte::cache::get(target_instance);
+            if (config_hash == 0)
+            {
+                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                if (config_hash != 0)
+                {
+                    config_hash = nte::cache::remember(target_instance, config_hash);
+                }
+            }
+            if (config_hash != 0)
+            {
+                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
+            }
+            next_identity_at = now + 50;
+        }
+        last_target = target_instance;
+    }
+}
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("unreal.reflection");
+NTE_REQUIRES("process.event");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_identity_at = 0;
+std::uint64_t watched_character = 0;
+std::uint64_t damage_function = 0;
+std::uint64_t last_target = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    const auto character = nte::game::player_character;
+    if (character != nullptr)
+    {
+        if (damage_function == 0)
+        {
+            damage_function = nte::unreal::find_function(character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
+        }
+        if (damage_function != 0)
+        {
+            if (character != watched_character)
+            {
+                nte::unreal::watch(character, damage_function);
+                watched_character = character;
+            }
+        }
+    }
+    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
+    {
+        const auto event_ready = nte::event::next();
+        if (event_ready == true)
+        {
+            const auto damaged = nte::event::read_u64(0x110);
+            if (damaged != nullptr)
+            {
+                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
+                const auto shifted_index = object_index << 32;
+                const auto target_instance = damaged ^ shifted_index;
+                auto config_hash = nte::cache::get(target_instance);
+                if (config_hash == 0)
+                {
+                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
+                    if (config_hash != 0)
+                    {
+                        config_hash = nte::cache::remember(target_instance, config_hash);
+                    }
+                }
+                if (config_hash != 0)
+                {
+                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
+                }
+            }
+        }
+    }
+    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+    const auto target = nte::memory::read_ptr(player_state, 0x2880);
+    if (target == nullptr)
+    {
+        if (last_target != 0)
+        {
+            nte::ipc::emit("post.enemy.cleared", last_target);
+        }
+        last_target = 0;
+    }
+    if (target != nullptr)
+    {
+        const auto object_index = nte::memory::read_u32(target, 0x0c);
+        const auto shifted_index = object_index << 32;
+        const auto target_instance = target ^ shifted_index;
+        if (target_instance != last_target)
+        {
+            next_identity_at = 0;
+        }
+        if (now >= next_identity_at)
+        {
+            auto config_hash = nte::cache::get(target_instance);
+            if (config_hash == 0)
+            {
+                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                if (config_hash != 0)
+                {
+                    config_hash = nte::cache::remember(target_instance, config_hash);
+                }
+            }
+            if (config_hash != 0)
+            {
+                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
+            }
+            next_identity_at = now + 50;
+        }
+        last_target = target_instance;
+    }
+}
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY: &[u8] = br#"#include <nte/mod.hpp>
+
+NTE_SCRIPT(5);
+NTE_MOD("enemy-telemetry");
+NTE_REQUIRES("viewport.tick");
+NTE_REQUIRES("game.session");
+NTE_REQUIRES("memory.read");
+NTE_REQUIRES("unreal.reflection");
+NTE_REQUIRES("process.event");
+NTE_REQUIRES("ipc");
+NTE_ROUTE_IPC(12, "ipc.query_mod_events");
+
+std::uint64_t next_identity_at = 0;
+std::uint64_t watched_ability_system = 0;
+std::uint64_t damage_function = 0;
+std::uint64_t last_target = 0;
+
+void on_viewport_tick(const nte::viewport_tick_event& event)
+{
+    const auto now = nte::time::now_ms();
+    const auto character = nte::game::player_character;
+    if (character != nullptr)
+    {
+        const auto ability_system = nte::memory::read_ptr(character, 0x8A0);
+        if (ability_system != nullptr)
+        {
+            if (damage_function == 0)
+            {
+                damage_function = nte::unreal::find_function(ability_system, "HTAbilitySystemComponent", "NetMulticast_OnSendHandleDamageInfos");
+            }
+            if (damage_function != 0)
+            {
+                if (ability_system != watched_ability_system)
+                {
+                    nte::unreal::watch_array_u64(ability_system, damage_function, 0x160, 0x110);
+                    watched_ability_system = ability_system;
+                }
+            }
+        }
+    }
+    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
+    {
+        const auto event_ready = nte::event::next();
+        if (event_ready == true)
+        {
+            const auto damaged = nte::event::captured_u64();
+            if (damaged != nullptr)
+            {
+                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
+                const auto shifted_index = object_index << 32;
+                const auto target_instance = damaged ^ shifted_index;
+                auto config_hash = nte::cache::get(target_instance);
+                if (config_hash == 0)
+                {
+                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
+                    if (config_hash != 0)
+                    {
+                        config_hash = nte::cache::remember(target_instance, config_hash);
+                    }
+                }
+                if (config_hash != 0)
+                {
+                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
+                }
+            }
+        }
+    }
+    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
+    const auto target = nte::memory::read_ptr(player_state, 0x2880);
+    if (target == nullptr)
+    {
+        if (last_target != 0)
+        {
+            nte::ipc::emit("post.enemy.cleared", last_target);
+        }
+        last_target = 0;
+    }
+    if (target != nullptr)
+    {
+        const auto object_index = nte::memory::read_u32(target, 0x0c);
+        const auto shifted_index = object_index << 32;
+        const auto target_instance = target ^ shifted_index;
+        if (target_instance != last_target)
+        {
+            next_identity_at = 0;
+        }
+        if (now >= next_identity_at)
+        {
+            auto config_hash = nte::cache::get(target_instance);
+            if (config_hash == 0)
+            {
+                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
+                if (config_hash != 0)
+                {
+                    config_hash = nte::cache::remember(target_instance, config_hash);
+                }
+            }
+            if (config_hash != 0)
+            {
+                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
+            }
+            next_identity_at = now + 50;
+        }
+        last_target = target_instance;
+    }
+}
+"#;
+#[cfg(feature = "desktop")]
+const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[
+    b"nte_mod_set 1\nload equipment\nload combat-clock\n",
+    b"nte_mod_set 1\nload combat-clock\nload enemy-telemetry\nload equipment\n",
+];
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V1,
     LEGACY_EQUIPMENT_MOD_V2,
@@ -314,8 +1268,9 @@ const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V4,
     LEGACY_EQUIPMENT_MOD_V4_OFFSETS,
     LEGACY_EQUIPMENT_MOD_V4_SESSION,
+    LEGACY_EQUIPMENT_MOD_V4_ROUTES,
 ];
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V1,
     LEGACY_COMBAT_CLOCK_MOD_V2,
@@ -323,6 +1278,21 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V4,
     LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS,
     LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
+    LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
+];
+#[cfg(feature = "desktop")]
+#[allow(dead_code)]
+const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
+    LEGACY_ENEMY_TELEMETRY_MOD_V1,
+    LEGACY_ENEMY_TELEMETRY_MOD_V2,
+    LEGACY_ENEMY_TELEMETRY_MOD_V3,
+    LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC,
+    LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP,
+    LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS,
+    LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT,
+    LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET,
+    LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT,
+    LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY,
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -402,19 +1372,37 @@ pub struct ModEventSnapshot {
     pub values: Vec<u64>,
 }
 
+#[cfg(any(feature = "desktop", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModLogLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+#[cfg(any(feature = "desktop", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ModLogSnapshot {
+    pub sequence: u64,
+    pub timestamp_100ns: u64,
+    pub mod_id: String,
+    pub level: ModLogLevel,
+    pub message: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModsPluginSubmitError {
     Busy,
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModsPluginGameRegion {
     China,
     Global,
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModsPluginGameStatus {
     pub region: ModsPluginGameRegion,
@@ -422,7 +1410,7 @@ pub struct ModsPluginGameStatus {
     pub current: bool,
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModsPluginDeploymentStatus {
     pub installations: usize,
@@ -432,12 +1420,13 @@ pub struct ModsPluginDeploymentStatus {
     pub games: Vec<ModsPluginGameStatus>,
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModsPluginDeploymentError {
     GameRunning,
     GameProcessProbe(String),
     GameInstallationNotFound,
+    InvalidGameDirectory,
     Registry(String),
     PluginSourceNotFound,
     ConflictingDwmapi,
@@ -445,7 +1434,7 @@ pub enum ModsPluginDeploymentError {
     FileSystem(String),
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 impl fmt::Display for ModsPluginDeploymentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -455,6 +1444,9 @@ impl fmt::Display for ModsPluginDeploymentError {
             }
             Self::GameInstallationNotFound => {
                 formatter.write_str("game installation was not found")
+            }
+            Self::InvalidGameDirectory => {
+                formatter.write_str("selected directory does not contain HTGame.exe")
             }
             Self::Registry(error) => write!(formatter, "game registry lookup failed: {error}"),
             Self::PluginSourceNotFound => formatter.write_str("Mod loader source was not found"),
@@ -624,6 +1616,20 @@ pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
     request[8..16].copy_from_slice(&request_id.to_le_bytes());
     let response = call_plugin_request(&request)?;
     decode_mod_events(&response, request_id)
+}
+
+#[cfg(feature = "desktop")]
+pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
+    let request_id = MOD_LOG_QUERY_SEQUENCE
+        .fetch_add(1, Ordering::Relaxed)
+        .max(1);
+    let mut request = [0_u8; REQUEST_SIZE];
+    request[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+    request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+    request[6..8].copy_from_slice(&IPC_QUERY_MOD_LOGS.to_le_bytes());
+    request[8..16].copy_from_slice(&request_id.to_le_bytes());
+    let response = call_plugin_request(&request)?;
+    decode_mod_logs(&response, request_id)
 }
 
 fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
@@ -971,12 +1977,96 @@ fn decode_mod_events(
     Ok(events)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(any(feature = "desktop", test))]
+fn decode_fixed_utf8(bytes: &[u8], field: &str) -> Result<String, String> {
+    let end = bytes
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(bytes.len());
+    if end == 0 || bytes[end..].iter().any(|value| *value != 0) {
+        return Err(format!("Mod loader returned an invalid Mod log {field}"));
+    }
+    let text = std::str::from_utf8(&bytes[..end])
+        .map_err(|_| format!("Mod loader returned an invalid Mod log {field}"))?;
+    if text
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\t'))
+    {
+        return Err(format!("Mod loader returned an invalid Mod log {field}"));
+    }
+    Ok(text.to_owned())
+}
+
+#[cfg(any(feature = "desktop", test))]
+fn decode_mod_logs(
+    bytes: &[u8; RESPONSE_SIZE],
+    request_id: u64,
+) -> Result<Vec<ModLogSnapshot>, String> {
+    let (status, log_count) = decode_response_header(bytes, request_id)?;
+    if status != PLUGIN_STATUS_DRY_RUN_OK || log_count as usize > MOD_LOG_HISTORY_SIZE {
+        return Err("Mod loader returned invalid Mod log history".to_owned());
+    }
+
+    let mut logs = Vec::with_capacity(log_count as usize);
+    for index in 0..log_count as usize {
+        let offset = RESPONSE_HEADER_SIZE + index * MOD_LOG_SIZE;
+        let level = match u32::from_le_bytes(
+            bytes[offset + 48..offset + 52]
+                .try_into()
+                .expect("fixed Mod log level"),
+        ) {
+            1 => ModLogLevel::Info,
+            2 => ModLogLevel::Warning,
+            3 => ModLogLevel::Error,
+            _ => return Err("Mod loader returned invalid Mod log history".to_owned()),
+        };
+        let reserved = u32::from_le_bytes(
+            bytes[offset + 52..offset + 56]
+                .try_into()
+                .expect("fixed Mod log reserved"),
+        );
+        if reserved != 0 {
+            return Err("Mod loader returned invalid Mod log history".to_owned());
+        }
+        logs.push(ModLogSnapshot {
+            sequence: u64::from_le_bytes(
+                bytes[offset..offset + 8]
+                    .try_into()
+                    .expect("fixed Mod log sequence"),
+            ),
+            timestamp_100ns: u64::from_le_bytes(
+                bytes[offset + 8..offset + 16]
+                    .try_into()
+                    .expect("fixed Mod log timestamp"),
+            ),
+            mod_id: decode_fixed_ascii(
+                &bytes[offset + 16..offset + 16 + MOD_LOG_ID_SIZE],
+                "log mod id",
+            )?,
+            level,
+            message: decode_fixed_utf8(
+                &bytes[offset + 56..offset + 56 + MOD_LOG_MESSAGE_SIZE],
+                "message",
+            )?,
+        });
+    }
+    Ok(logs)
+}
+
+#[cfg(feature = "desktop")]
 pub fn inspect_plugin_deployment(
     current_plugin: Option<&[u8]>,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
+    inspect_plugin_deployment_with_manual(current_plugin, None)
+}
+
+#[cfg(feature = "desktop")]
+pub fn inspect_plugin_deployment_with_manual(
+    current_plugin: Option<&[u8]>,
+    manual: Option<(ModsPluginGameRegion, &Path)>,
+) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     prepare_mod_workspace()?;
-    let installations = match game_installation_directories() {
+    let installations = match game_installation_directories_with_manual(manual) {
         Ok(installations) => installations,
         Err(ModsPluginDeploymentError::GameInstallationNotFound) => Vec::new(),
         Err(error) => return Err(error),
@@ -984,34 +2074,55 @@ pub fn inspect_plugin_deployment(
     inspect_game_installations(&installations, current_plugin)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 pub fn install_mods_plugin(
     region: ModsPluginGameRegion,
     plugin: &[u8],
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
+    install_mods_plugin_with_manual(region, plugin, None)
+}
+
+#[cfg(feature = "desktop")]
+pub fn install_mods_plugin_with_manual(
+    region: ModsPluginGameRegion,
+    plugin: &[u8],
+    manual_directory: Option<&Path>,
+) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     ensure_game_is_closed()?;
     let workspace = prepare_mod_workspace()?;
-    let installations = game_installation_directories()?;
+    let installations = game_installation_directories_with_manual(
+        manual_directory.map(|directory| (region, directory)),
+    )?;
     let directory = selected_game_directory(&installations, region)?;
     migrate_legacy_mod_workspace(std::slice::from_ref(directory), &workspace)?;
     install_plugin_to_directories(std::slice::from_ref(directory), plugin)?;
     inspect_game_installations(&installations, Some(plugin))
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 pub fn remove_mods_plugin(
     region: ModsPluginGameRegion,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
+    remove_mods_plugin_with_manual(region, None)
+}
+
+#[cfg(feature = "desktop")]
+pub fn remove_mods_plugin_with_manual(
+    region: ModsPluginGameRegion,
+    manual_directory: Option<&Path>,
+) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     ensure_game_is_closed()?;
     let workspace = prepare_mod_workspace()?;
-    let installations = game_installation_directories()?;
+    let installations = game_installation_directories_with_manual(
+        manual_directory.map(|directory| (region, directory)),
+    )?;
     let directory = selected_game_directory(&installations, region)?;
     migrate_legacy_mod_workspace(std::slice::from_ref(directory), &workspace)?;
     remove_plugin_from_directories(std::slice::from_ref(directory))?;
     inspect_game_installations(&installations, None)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 pub fn refresh_installed_mods_plugins(
     plugin: &[u8],
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
@@ -1041,7 +2152,7 @@ pub fn refresh_installed_mods_plugins(
     inspect_game_installations(&installations, Some(plugin))
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn ensure_game_is_closed() -> Result<(), ModsPluginDeploymentError> {
     match super::network::game_process_is_running() {
         Ok(false) => Ok(()),
@@ -1050,7 +2161,7 @@ fn ensure_game_is_closed() -> Result<(), ModsPluginDeploymentError> {
     }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 pub fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
     let workspace = mod_script_workspace_directory();
     install_default_mod_files(&workspace).map_err(file_system_error)?;
@@ -1059,7 +2170,7 @@ pub fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
     Ok(workspace)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentError> {
     let subkey = wide_null(MOD_WORKSPACE_REGISTRY_KEY);
     let value_name = wide_null(MOD_WORKSPACE_REGISTRY_VALUE);
@@ -1101,7 +2212,7 @@ fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentEr
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn game_installation_directories()
 -> Result<Vec<(ModsPluginGameRegion, PathBuf)>, ModsPluginDeploymentError> {
     let mut directories = Vec::new();
@@ -1129,7 +2240,44 @@ fn game_installation_directories()
     Ok(directories)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
+fn game_installation_directories_with_manual(
+    manual: Option<(ModsPluginGameRegion, &Path)>,
+) -> Result<Vec<(ModsPluginGameRegion, PathBuf)>, ModsPluginDeploymentError> {
+    let mut directories = match game_installation_directories() {
+        Ok(directories) => directories,
+        Err(ModsPluginDeploymentError::GameInstallationNotFound) => Vec::new(),
+        Err(_) if manual.is_some() => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    if let Some((region, selected)) = manual {
+        let directory = resolve_manual_game_directory(selected)?;
+        directories.retain(|(candidate, _)| *candidate != region);
+        directories.push((region, directory));
+    }
+    if directories.is_empty() {
+        return Err(ModsPluginDeploymentError::GameInstallationNotFound);
+    }
+    Ok(directories)
+}
+
+#[cfg(feature = "desktop")]
+fn resolve_manual_game_directory(selected: &Path) -> Result<PathBuf, ModsPluginDeploymentError> {
+    for directory in [
+        selected.to_path_buf(),
+        selected.join(GAME_BINARY_RELATIVE_PATH),
+        selected
+            .join("Neverness To Everness")
+            .join(GAME_BINARY_RELATIVE_PATH),
+    ] {
+        if directory.join(GAME_EXECUTABLE_NAME).is_file() {
+            return directory.canonicalize().map_err(file_system_error);
+        }
+    }
+    Err(ModsPluginDeploymentError::InvalidGameDirectory)
+}
+
+#[cfg(feature = "desktop")]
 fn selected_game_directory(
     installations: &[(ModsPluginGameRegion, PathBuf)],
     region: ModsPluginGameRegion,
@@ -1140,7 +2288,7 @@ fn selected_game_directory(
         .ok_or(ModsPluginDeploymentError::GameInstallationNotFound)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn read_registry_string(
     subkey: &str,
     value: &str,
@@ -1218,19 +2366,19 @@ fn read_registry_string(
     })
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PluginMarker {
     size: u64,
     fingerprint: u64,
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn plugin_marker(plugin: &[u8]) -> PluginMarker {
     PluginMarker {
         size: plugin.len() as u64,
@@ -1238,7 +2386,7 @@ fn plugin_marker(plugin: &[u8]) -> PluginMarker {
     }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in bytes {
@@ -1248,7 +2396,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-#[cfg(all(feature = "gui", test))]
+#[cfg(all(feature = "desktop", test))]
 fn encode_plugin_marker(plugin: &[u8]) -> String {
     let marker = plugin_marker(plugin);
     format!(
@@ -1257,7 +2405,7 @@ fn encode_plugin_marker(plugin: &[u8]) -> String {
     )
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn parse_plugin_marker(text: &str) -> Option<PluginMarker> {
     let mut lines = text.lines();
     if lines.next()? != LEGACY_PLUGIN_MARKER_HEADER {
@@ -1271,7 +2419,7 @@ fn parse_plugin_marker(text: &str) -> Option<PluginMarker> {
     Some(PluginMarker { size, fingerprint })
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn plugin_binary_is_managed(plugin: &[u8]) -> bool {
     [PLUGIN_BINARY_SIGNATURE, LEGACY_PLUGIN_BINARY_SIGNATURE]
         .iter()
@@ -1282,7 +2430,7 @@ fn plugin_binary_is_managed(plugin: &[u8]) -> bool {
         })
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn plugin_directory_is_managed(directory: &Path) -> Result<bool, ModsPluginDeploymentError> {
     let plugin_path = directory.join(PLUGIN_FILE_NAME);
     let marker_path = directory.join(LEGACY_PLUGIN_MARKER_FILE_NAME);
@@ -1304,7 +2452,7 @@ fn plugin_directory_is_managed(directory: &Path) -> Result<bool, ModsPluginDeplo
     Ok(plugin_binary_is_managed(&plugin))
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn inspect_game_installations(
     installations: &[(ModsPluginGameRegion, PathBuf)],
     current_plugin: Option<&[u8]>,
@@ -1328,7 +2476,7 @@ fn inspect_game_installations(
     Ok(status)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn inspect_plugin_directories(
     directories: &[PathBuf],
     current_plugin: Option<&[u8]>,
@@ -1350,7 +2498,7 @@ fn inspect_plugin_directories(
     Ok(status)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn install_plugin_to_directories(
     directories: &[PathBuf],
     plugin: &[u8],
@@ -1377,7 +2525,7 @@ fn install_plugin_to_directories(
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn replace_managed_plugin_directories(
     directories: &[PathBuf],
     plugin: &[u8],
@@ -1419,7 +2567,7 @@ fn replace_managed_plugin_directories(
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn restore_managed_plugin_backups(backups: &[(PathBuf, Vec<u8>)]) -> Vec<String> {
     let mut failures = Vec::new();
     for (plugin_path, plugin) in backups.iter().rev() {
@@ -1430,7 +2578,7 @@ fn restore_managed_plugin_backups(backups: &[(PathBuf, Vec<u8>)]) -> Vec<String>
     failures
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn atomic_replace_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
@@ -1483,7 +2631,7 @@ fn atomic_replace_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn remove_plugin_from_directories(
     directories: &[PathBuf],
 ) -> Result<(), ModsPluginDeploymentError> {
@@ -1498,7 +2646,7 @@ fn remove_plugin_from_directories(
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn migrate_legacy_mod_workspace(
     game_directories: &[PathBuf],
     workspace: &Path,
@@ -1614,7 +2762,7 @@ fn migrate_legacy_mod_workspace(
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn read_legacy_mod_file(path: &Path) -> Result<Vec<u8>, ModsPluginDeploymentError> {
     let bytes = fs::read(path).map_err(file_system_error)?;
     if bytes.len() > MAX_LEGACY_MOD_FILE_BYTES {
@@ -1626,7 +2774,7 @@ fn read_legacy_mod_file(path: &Path) -> Result<Vec<u8>, ModsPluginDeploymentErro
     Ok(bytes)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
     let mod_directory = directory.join(MOD_DIRECTORY_NAME);
     let mut mod_files = Vec::new();
@@ -1672,7 +2820,7 @@ fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn rollback_default_mod_files(created: &[PathBuf], migrated: &[(PathBuf, Vec<u8>)]) {
     for created_path in created.iter().rev() {
         let _ = fs::remove_file(created_path);
@@ -1682,17 +2830,18 @@ fn rollback_default_mod_files(created: &[PathBuf], migrated: &[(PathBuf, Vec<u8>
     }
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
     let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
     fs::create_dir_all(&mod_directory)?;
+    let workspace_initialized = workspace_directory.join(MOD_SET_FILE_NAME).is_file();
     let mut created = Vec::new();
     let mut migrated = Vec::new();
     for (path, bytes, legacy) in [
         (
             workspace_directory.join(MOD_SET_FILE_NAME),
             DEFAULT_MOD_SET,
-            NO_LEGACY_MOD_PROGRAMS,
+            LEGACY_DEFAULT_MOD_SETS,
         ),
         (
             mod_directory.join(EQUIPMENT_MOD_FILE_NAME),
@@ -1706,6 +2855,9 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
         ),
     ] {
         if !path.exists() {
+            if workspace_initialized {
+                continue;
+            }
             if let Err(error) = fs::write(&path, bytes) {
                 rollback_default_mod_files(&created, &migrated);
                 let _ = fs::remove_dir(&mod_directory);
@@ -1733,13 +2885,13 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn read_marker(path: &Path) -> Result<PluginMarker, ModsPluginDeploymentError> {
     let text = fs::read_to_string(path).map_err(file_system_error)?;
     parse_plugin_marker(&text).ok_or(ModsPluginDeploymentError::InstalledPluginChanged)
 }
 
-#[cfg(feature = "gui")]
+#[cfg(feature = "desktop")]
 fn file_system_error(error: io::Error) -> ModsPluginDeploymentError {
     ModsPluginDeploymentError::FileSystem(error.to_string())
 }
@@ -1752,7 +2904,25 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/include/nte_mods_ipc.h"
     ));
-
+    const NATIVE_HOST_API: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/host_api.cpp"
+    ));
+    #[cfg(feature = "desktop")]
+    const NATIVE_MOD_RUNTIME: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/mod_runtime.cpp"
+    ));
+    #[cfg(feature = "desktop")]
+    const NATIVE_PLUGIN_RUNTIME: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/plugin_runtime.cpp"
+    ));
+    #[cfg(feature = "desktop")]
+    const NATIVE_PLUGIN_RUNTIME_HEADER: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/plugin_runtime.hpp"
+    ));
     fn native_define(name: &str) -> u64 {
         let prefix = format!("#define {name} ");
         let value = NATIVE_IPC_HEADER
@@ -1781,7 +2951,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn bundled_mods_keep_distinct_control_flow_in_external_sources() {
         let equipment =
             std::str::from_utf8(EQUIPMENT_MOD).expect("bundled equipment Mod must be UTF-8");
@@ -1790,20 +2960,20 @@ mod tests {
 
         crate::storage::mod_scripts::validate_mod_source("equipment", equipment).unwrap();
         crate::storage::mod_scripts::validate_mod_source("combat-clock", combat_clock).unwrap();
-        assert!(equipment.contains("game.player_state"));
-        assert!(equipment.contains("state.next_prepare_at"));
-        assert!(equipment.contains("equipment.cache_ready(player_state)"));
-        assert!(equipment.contains("ipc.bind(player_state, None)"));
-        assert!(equipment.contains("route_ipc(1, \"equipment.equip_module\")"));
-        assert!(equipment.contains("route_ipc(10, \"equipment.set_item_locked\")"));
+        assert!(equipment.contains("nte::game::player_state"));
+        assert!(equipment.contains("std::uint64_t next_prepare_at"));
+        assert!(equipment.contains("nte::equipment::cache_ready(player_state)"));
+        assert!(equipment.contains("nte::ipc::bind(player_state, nullptr)"));
+        assert!(equipment.contains("NTE_ROUTE_IPC(1, \"equipment.equip_module\")"));
+        assert!(equipment.contains("NTE_ROUTE_IPC(10, \"equipment.set_item_locked\")"));
         assert!(!equipment.contains("0x"));
-        assert!(combat_clock.contains("game.player_controller"));
-        assert!(combat_clock.contains("state.last_pause_mask"));
-        assert!(combat_clock.contains("combat_clock.pause_mask(player_controller)"));
-        assert!(combat_clock.contains("combat_clock.state_flags(player_controller)"));
-        assert!(combat_clock.contains("combat_clock.forward(pause_mask, state_flags)"));
-        assert!(combat_clock.contains("route_ipc(11, \"combat_clock.query_transitions\")"));
-        assert!(!combat_clock.contains("combat_clock.observe("));
+        assert!(combat_clock.contains("nte::game::player_controller"));
+        assert!(combat_clock.contains("std::uint64_t last_pause_mask"));
+        assert!(combat_clock.contains("nte::combat_clock::pause_mask(player_controller)"));
+        assert!(combat_clock.contains("nte::combat_clock::state_flags(player_controller)"));
+        assert!(combat_clock.contains("nte::combat_clock::forward(pause_mask, state_flags)"));
+        assert!(combat_clock.contains("NTE_ROUTE_IPC(11, \"combat_clock.query_transitions\")"));
+        assert!(!combat_clock.contains("nte::combat_clock::observe("));
         assert!(!combat_clock.contains("0x"));
         assert_ne!(equipment, combat_clock);
     }
@@ -1843,6 +3013,15 @@ mod tests {
         assert_eq!(
             native_define("NTE_MOD_EVENT_VALUE_COUNT"),
             MOD_EVENT_VALUE_COUNT as u64
+        );
+        assert_eq!(
+            native_define("NTE_MOD_LOG_HISTORY_SIZE"),
+            MOD_LOG_HISTORY_SIZE as u64
+        );
+        assert_eq!(native_define("NTE_MOD_LOG_ID_SIZE"), MOD_LOG_ID_SIZE as u64);
+        assert_eq!(
+            native_define("NTE_MOD_LOG_MESSAGE_SIZE"),
+            MOD_LOG_MESSAGE_SIZE as u64
         );
         assert_eq!(
             native_enum("NTE_MODS_IPC_EQUIP_MODULE"),
@@ -1893,9 +3072,43 @@ mod tests {
             IPC_QUERY_MOD_EVENTS as u64
         );
         assert_eq!(
+            native_enum("NTE_MODS_IPC_QUERY_MOD_LOGS"),
+            IPC_QUERY_MOD_LOGS as u64
+        );
+        assert_eq!(
             native_enum("NTE_MODS_STATUS_MOD_DISABLED"),
             MAX_PLUGIN_STATUS as u64
         );
+    }
+
+    #[test]
+    fn native_host_exposes_generic_name_hash_reading_without_enemy_services() {
+        assert!(NATIVE_HOST_API.contains("bool ReadNameHash("));
+        assert!(!NATIVE_HOST_API.contains("ReadEnemyIdentitySnapshot"));
+        assert!(!NATIVE_IPC_HEADER.contains("NTE_MODS_IPC_QUERY_ENEMY_IDENTITY"));
+        assert!(!NATIVE_IPC_HEADER.contains("NteEnemyIdentitySnapshot"));
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn process_event_buffer_covers_the_damage_callback_payload() {
+        assert!(
+            NATIVE_PLUGIN_RUNTIME_HEADER
+                .contains("constexpr size_t PROCESS_EVENT_PARAM_CAPACITY = 512;")
+        );
+        assert!(NATIVE_HOST_API.contains("constexpr size_t FUNCTION_PARAM_SIZE_OFFSET = 0xB6;"));
+        assert!(
+            NATIVE_MOD_RUNTIME.contains("ParseCall(line, \"unreal.watch_array_u64\", arguments)")
+        );
+        assert!(NATIVE_MOD_RUNTIME.contains("\"unreal.watch_class_array_u64\""));
+        assert!(NATIVE_MOD_RUNTIME.contains("\"event.captured_u64\""));
+        assert!(
+            NATIVE_PLUGIN_RUNTIME
+                .contains("constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENTS = 32;")
+        );
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("event.captured_u64 = captured_u64;"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("process_event_class_hooks"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("ReplaceProcessEventVTableEntry"));
     }
 
     #[test]
@@ -2125,6 +3338,60 @@ mod tests {
     }
 
     #[test]
+    fn mod_log_response_decodes_runtime_output() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&29_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[24..32].copy_from_slice(&12_u64.to_le_bytes());
+        bytes[32..40].copy_from_slice(&133_000_000_000_000_000_u64.to_le_bytes());
+        bytes[40..49].copy_from_slice(b"telemetry");
+        bytes[72..76].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[80..95].copy_from_slice("热更新完成".as_bytes());
+
+        assert_eq!(
+            decode_mod_logs(&bytes, 29),
+            Ok(vec![ModLogSnapshot {
+                sequence: 12,
+                timestamp_100ns: 133_000_000_000_000_000,
+                mod_id: "telemetry".to_owned(),
+                level: ModLogLevel::Info,
+                message: "热更新完成".to_owned(),
+            }])
+        );
+    }
+
+    #[test]
+    fn mod_log_response_rejects_invalid_levels_and_trailing_bytes() {
+        let mut bytes = [0_u8; RESPONSE_SIZE];
+        bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
+        bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+        bytes[8..16].copy_from_slice(&29_u64.to_le_bytes());
+        bytes[16..20].copy_from_slice(&PLUGIN_STATUS_DRY_RUN_OK.to_le_bytes());
+        bytes[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        bytes[40..47].copy_from_slice(b"runtime");
+        bytes[72..76].copy_from_slice(&4_u32.to_le_bytes());
+        bytes[80..85].copy_from_slice(b"error");
+        assert!(decode_mod_logs(&bytes, 29).is_err());
+
+        bytes[72..76].copy_from_slice(&3_u32.to_le_bytes());
+        bytes[86] = 1;
+        assert!(decode_mod_logs(&bytes, 29).is_err());
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn native_hot_reload_keeps_the_last_working_program_and_quarantines_faults() {
+        assert!(NATIVE_MOD_RUNTIME.contains("candidate_enabled_mod_set"));
+        assert!(NATIVE_MOD_RUNTIME.contains("previous version kept."));
+        assert!(NATIVE_MOD_RUNTIME.contains("ExecuteProgramGuarded"));
+        assert!(NATIVE_MOD_RUNTIME.contains("quarantined_programs"));
+        assert!(NATIVE_MOD_RUNTIME.contains("CopyModLogs"));
+    }
+
+    #[test]
     fn combat_clock_response_rejects_legacy_timer_payloads() {
         let mut bytes = [0_u8; RESPONSE_SIZE];
         bytes[0..4].copy_from_slice(&IPC_MAGIC.to_le_bytes());
@@ -2206,7 +3473,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn deployment_test_directory(name: &str) -> PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2220,7 +3487,7 @@ mod tests {
         path
     }
 
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn managed_plugin(label: &str) -> Vec<u8> {
         format!(
             "{}:{label}",
@@ -2230,14 +3497,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn retired_loader_signature_remains_managed_for_upgrade() {
         let legacy = [LEGACY_PLUGIN_BINARY_SIGNATURE, b":legacy-runtime"].concat();
 
         assert!(plugin_binary_is_managed(&legacy));
     }
 
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn install_legacy_managed_plugin(directory: &Path, plugin: &[u8]) {
         fs::write(directory.join(PLUGIN_FILE_NAME), plugin).unwrap();
         fs::write(
@@ -2249,7 +3516,93 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
+    fn default_workspace_installs_only_stable_mods() {
+        let workspace = deployment_test_directory("stable-mod-defaults");
+
+        install_default_mod_files(&workspace).unwrap();
+
+        assert_eq!(
+            fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
+            DEFAULT_MOD_SET
+        );
+        let mut installed = fs::read_dir(workspace.join(MOD_DIRECTORY_NAME))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        installed.sort();
+        assert_eq!(installed, ["combat-clock.nte", "equipment.nte"]);
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn default_workspace_upgrades_the_previous_exact_enabled_set() {
+        let workspace = deployment_test_directory("stable-enabled-set-upgrade");
+        fs::write(
+            workspace.join(MOD_SET_FILE_NAME),
+            LEGACY_DEFAULT_MOD_SETS[1],
+        )
+        .unwrap();
+
+        install_default_mod_files(&workspace).unwrap();
+
+        assert_eq!(
+            fs::read(workspace.join(MOD_SET_FILE_NAME)).unwrap(),
+            DEFAULT_MOD_SET
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn initialized_workspace_does_not_restore_a_deleted_default_mod() {
+        let workspace = deployment_test_directory("deleted-default-mod");
+        install_default_mod_files(&workspace).unwrap();
+        crate::storage::mod_scripts::delete_mod_script(&workspace, "equipment").unwrap();
+
+        install_default_mod_files(&workspace).unwrap();
+
+        assert!(
+            !workspace
+                .join(MOD_DIRECTORY_NAME)
+                .join(EQUIPMENT_MOD_FILE_NAME)
+                .exists()
+        );
+        assert!(
+            !fs::read_to_string(workspace.join(MOD_SET_FILE_NAME))
+                .unwrap()
+                .lines()
+                .any(|line| line == "equipment")
+        );
+        fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn native_runtime_exposes_generic_mod_extension_abi() {
+        for api in [
+            "memory.write_u64",
+            "unreal.find_function",
+            "unreal.params_clear",
+            "unreal.params_write_u64",
+            "unreal.params_read_u64",
+            "unreal.call",
+            "unreal.watch",
+            "unreal.watch_class_array_u64",
+            "unreal.unwatch",
+            "event.next",
+            "event.read_u64",
+        ] {
+            assert!(NATIVE_MOD_RUNTIME.contains(api), "{api} is missing");
+        }
+        assert!(NATIVE_HOST_API.contains("InvokeReflectedFunction"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("HookedProcessEvent"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResetProcessEventWatches"));
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
     fn deployment_inspection_without_game_installations_keeps_source_available() {
         let plugin = managed_plugin("current");
 
@@ -2263,7 +3616,32 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
+    fn manual_game_directory_accepts_install_root_or_binary_directory() {
+        let root = deployment_test_directory("manual-game-directory");
+        let binary = root.join(GAME_BINARY_RELATIVE_PATH);
+        fs::create_dir_all(&binary).unwrap();
+        fs::write(binary.join(GAME_EXECUTABLE_NAME), b"fixture").unwrap();
+        let canonical_binary = binary.canonicalize().unwrap();
+
+        assert_eq!(
+            resolve_manual_game_directory(&root).unwrap(),
+            canonical_binary
+        );
+        assert_eq!(
+            resolve_manual_game_directory(&binary).unwrap(),
+            canonical_binary
+        );
+        assert_eq!(
+            resolve_manual_game_directory(&root.join("missing")),
+            Err(ModsPluginDeploymentError::InvalidGameDirectory)
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
     fn deployment_marks_installs_and_removes_only_the_managed_plugin() {
         let directory = deployment_test_directory("lifecycle");
         let directories = vec![directory.clone()];
@@ -2304,7 +3682,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn legacy_game_mods_migrate_to_the_software_workspace_before_removal() {
         let directory = deployment_test_directory("mod-migration");
         let workspace = deployment_test_directory("mod-workspace");
@@ -2355,7 +3733,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn deployment_preserves_an_unmanaged_dwmapi_proxy() {
         let directory = deployment_test_directory("conflict");
         fs::write(directory.join(PLUGIN_FILE_NAME), b"another mod").unwrap();
@@ -2374,7 +3752,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn selected_client_install_ignores_another_clients_unmanaged_proxy() {
         let china = deployment_test_directory("selected-china");
         let global = deployment_test_directory("selected-global");
@@ -2416,7 +3794,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn deployment_preserves_a_managed_plugin_replaced_outside_the_tool() {
         let directory = deployment_test_directory("changed");
         let directories = vec![directory.clone()];
@@ -2430,7 +3808,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn managed_plugin_refresh_migrates_legacy_mod_programs() {
         for (version, equipment, combat_clock) in [
             ("v1", LEGACY_EQUIPMENT_MOD_V1, LEGACY_COMBAT_CLOCK_MOD_V1),
@@ -2490,7 +3868,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn managed_plugin_refresh_preserves_custom_mod_programs() {
         let directory = deployment_test_directory("custom-program-refresh");
         let workspace = deployment_test_directory("custom-program-workspace");
@@ -2524,7 +3902,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "desktop")]
     fn managed_plugin_refresh_updates_only_enabled_directories() {
         let enabled = deployment_test_directory("refresh-enabled");
         let disabled = deployment_test_directory("refresh-disabled");

@@ -13,6 +13,33 @@ namespace nte::mods::memory
 			for (size_t index = 0; index < size; ++index)
 				output[index] = input[index];
 		}
+
+		bool IsWritableRange(void* address, size_t size)
+		{
+			if (address == nullptr || size == 0)
+				return false;
+
+			MEMORY_BASIC_INFORMATION memory{};
+			if (VirtualQuery(address, &memory, sizeof(memory)) != sizeof(memory) ||
+				memory.State != MEM_COMMIT ||
+				(memory.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+				return false;
+			const DWORD protection = memory.Protect & 0xFF;
+			if (protection != PAGE_READWRITE &&
+				protection != PAGE_WRITECOPY &&
+				protection != PAGE_EXECUTE_READWRITE &&
+				protection != PAGE_EXECUTE_WRITECOPY)
+				return false;
+
+			const uintptr_t start = reinterpret_cast<uintptr_t>(address);
+			const uintptr_t region_start =
+				reinterpret_cast<uintptr_t>(memory.BaseAddress);
+			if (memory.RegionSize > UINTPTR_MAX - region_start)
+				return false;
+			const uintptr_t region_end = region_start + memory.RegionSize;
+			return start >= region_start && start <= region_end &&
+				size <= region_end - start;
+		}
 	} // namespace
 
 	uintptr_t ImageBase()
@@ -72,6 +99,26 @@ namespace nte::mods::memory
 			return false;
 
 		CopyBytes(destination, address, size);
+		return true;
+	}
+
+	bool WriteBytes(
+		void* base,
+		size_t offset,
+		const void* source,
+		size_t size)
+	{
+		if (base == nullptr || source == nullptr)
+			return false;
+
+		const uintptr_t base_address = reinterpret_cast<uintptr_t>(base);
+		if (offset > UINTPTR_MAX - base_address)
+			return false;
+		auto* address = reinterpret_cast<void*>(base_address + offset);
+		if (!IsWritableRange(address, size))
+			return false;
+
+		CopyBytes(address, source, size);
 		return true;
 	}
 } // namespace nte::mods::memory

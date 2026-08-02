@@ -71,7 +71,10 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             state.replace_empty_curtain_characters(characters);
             CoreSignal::InventoryCharactersReplaced
         }
-        EngineEvent::ModScript(event) => CoreSignal::ModScript(event),
+        EngineEvent::ModScript(event) => {
+            state.apply_mod_script_event(&event);
+            CoreSignal::ModScript(event)
+        }
         EngineEvent::Status(status) => CoreSignal::Status(status),
         EngineEvent::Warning(warning) => CoreSignal::Warning(warning),
         EngineEvent::Error(error) => CoreSignal::Error(error),
@@ -83,10 +86,16 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
 mod tests {
     use super::*;
     use crate::engine::model::{
-        AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, Hit, HitCharacterSource,
-        HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId, PacketDebug,
-        PacketObservation, TimeStopEvent,
+        AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, EnemyIdentity, Hit,
+        HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp, HtItemNetId,
+        ModScriptEventPhase, PacketDebug, PacketObservation, TimeStopEvent,
     };
+
+    const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+
+    fn filetime(timestamp: f64) -> u64 {
+        FILETIME_UNIX_EPOCH_100NS + (timestamp * 10_000_000.0) as u64
+    }
 
     fn test_hit(timestamp: f64, char_id: u32, damage: f64) -> Hit {
         Hit {
@@ -105,6 +114,9 @@ mod tests {
             target_hp_percent: 0.0,
             target_id: None,
             target_name: None,
+            target_name_en: None,
+            target_name_ja: None,
+            target_monster_id: None,
             target_context: Vec::new(),
             gameplay_effect_index: None,
             gameplay_effect_name: None,
@@ -165,6 +177,365 @@ mod tests {
         assert_eq!(signal, CoreSignal::ModScript(event));
         assert!(state.hits.is_empty());
         assert_eq!(state.total_damage, 0.0);
+    }
+
+    fn enemy_identity_event(timestamp: f64) -> ModScriptEvent {
+        enemy_identity_event_for(
+            timestamp,
+            0x1234,
+            0x4d88_7b49_05d5_dbaf,
+            "Boss_016_BP",
+            "Boss_16",
+            "Imaginadough",
+            "随心泥",
+            "イメージクレイ",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enemy_identity_event_for(
+        timestamp: f64,
+        target: u64,
+        config_hash: u64,
+        config_id: &str,
+        monster_id: &str,
+        name_en: &str,
+        name_zh: &str,
+        name_ja: &str,
+    ) -> ModScriptEvent {
+        let mut event = ModScriptEvent::from_bridge(
+            1,
+            filetime(timestamp),
+            "enemy-telemetry".to_owned(),
+            "pre.enemy.identity".to_owned(),
+            vec![target, config_hash, 80],
+        );
+        event.enemy_identity = Some(EnemyIdentity {
+            config_hash,
+            config_id: config_id.to_owned(),
+            monster_id: monster_id.to_owned(),
+            name_en: name_en.to_owned(),
+            name_zh: name_zh.to_owned(),
+            name_ja: name_ja.to_owned(),
+        });
+        event
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enemy_hit_target_event_for(
+        sequence: u64,
+        timestamp: f64,
+        target: u64,
+        config_hash: u64,
+        config_id: &str,
+        monster_id: &str,
+        name_en: &str,
+        name_zh: &str,
+        name_ja: &str,
+    ) -> ModScriptEvent {
+        let mut event = enemy_identity_event_for(
+            timestamp,
+            target,
+            config_hash,
+            config_id,
+            monster_id,
+            name_en,
+            name_zh,
+            name_ja,
+        );
+        event.sequence = sequence;
+        event.phase = ModScriptEventPhase::Postprocess;
+        event.name = "enemy.hit_target".to_owned();
+        event
+    }
+
+    #[test]
+    fn current_target_samples_do_not_claim_damage_without_an_exact_instance() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(10.0)),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(10.02, 7, 100.0))),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(10.05)),
+        );
+
+        assert!(state.hits[0].target_name.is_none());
+        assert!(state.hits[0].target_id.is_none());
+    }
+
+    #[test]
+    fn exact_hit_targets_split_simultaneous_group_damage_by_instance() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 89.0,
+                cycle: Some(1),
+                floor: Some(11),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(90.0)),
+        );
+
+        let mut first = test_hit(90.02, 7, 100.0);
+        first.byte_offset = 10;
+        let mut second = test_hit(90.02, 7, 200.0);
+        second.byte_offset = 20;
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(first)));
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(second)));
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(90.05)),
+        );
+
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                10,
+                90.06,
+                0xaaaa,
+                0x4d88_7b49_05d5_dbaf,
+                "Boss_016_BP",
+                "Boss_16",
+                "Imaginadough",
+                "随心泥",
+                "イメージクレイ",
+            )),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                11,
+                90.06,
+                0xbbbb,
+                0x2222,
+                "Monster_002_BP",
+                "Monster_2",
+                "Second target",
+                "第二目标",
+                "第2ターゲット",
+            )),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(90.07)),
+        );
+
+        assert_eq!(state.hits[0].target_name.as_deref(), Some("随心泥"));
+        assert_eq!(state.hits[1].target_name.as_deref(), Some("第二目标"));
+        assert_eq!(
+            state.hits[0].target_id.as_deref(),
+            Some("enemy-instance:000000000000aaaa")
+        );
+        assert_eq!(
+            state.hits[1].target_id.as_deref(),
+            Some("enemy-instance:000000000000bbbb")
+        );
+        assert_ne!(state.hits[0].target_id, state.hits[1].target_id);
+        assert!(
+            state.hits[0]
+                .target_context
+                .iter()
+                .any(|context| context == "enemy_target_instance=000000000000aaaa")
+        );
+        assert!(
+            state.hits[1]
+                .target_context
+                .iter()
+                .any(|context| context == "enemy_target_instance=000000000000bbbb")
+        );
+        assert!(state.hits.iter().all(|hit| {
+            hit.target_context
+                .iter()
+                .any(|context| context == "target_name_resolution=enemy_telemetry_hit_instance")
+        }));
+        assert!(
+            state.abyss.first_half.hits[1]
+                .target_context
+                .iter()
+                .any(|context| context == "enemy_target_instance=000000000000bbbb")
+        );
+    }
+
+    #[test]
+    fn exact_hit_targets_queue_until_the_matching_hits_arrive() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                20,
+                100.0,
+                0xaaaa,
+                0x4d88_7b49_05d5_dbaf,
+                "Boss_016_BP",
+                "Boss_16",
+                "Imaginadough",
+                "随心泥",
+                "イメージクレイ",
+            )),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                21,
+                100.0,
+                0xbbbb,
+                0x2222,
+                "Monster_002_BP",
+                "Monster_2",
+                "Second target",
+                "第二目标",
+                "第2ターゲット",
+            )),
+        );
+
+        let mut first = test_hit(100.02, 7, 100.0);
+        first.byte_offset = 10;
+        first.target_max_hp = 0.0;
+        let mut second = test_hit(100.02, 7, 200.0);
+        second.byte_offset = 20;
+        second.target_max_hp = 0.0;
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(first)));
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(second)));
+
+        assert_eq!(state.hits[0].target_name.as_deref(), Some("随心泥"));
+        assert_eq!(state.hits[1].target_name.as_deref(), Some("第二目标"));
+        assert_eq!(
+            state.hits[0].target_id.as_deref(),
+            Some("enemy-instance:000000000000aaaa")
+        );
+        assert_eq!(
+            state.hits[1].target_id.as_deref(),
+            Some("enemy-instance:000000000000bbbb")
+        );
+    }
+
+    #[test]
+    fn exact_hit_target_does_not_claim_a_hit_outside_its_time_window() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(110.0, 7, 100.0))),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                30,
+                110.351,
+                0xaaaa,
+                0x4d88_7b49_05d5_dbaf,
+                "Boss_016_BP",
+                "Boss_16",
+                "Imaginadough",
+                "随心泥",
+                "イメージクレイ",
+            )),
+        );
+
+        assert!(state.hits[0].target_name.is_none());
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(110.4, 7, 200.0))),
+        );
+        assert_eq!(state.hits[1].target_name.as_deref(), Some("随心泥"));
+    }
+
+    #[test]
+    fn exact_hit_target_backfill_promotes_candidate_output_and_rebuilds_totals() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 59.0,
+                cycle: Some(1),
+                floor: Some(11),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        let mut candidate = test_hit(60.02, 7, 100.0);
+        candidate.direction = HitDirection::Unknown;
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(candidate)));
+        assert_eq!(
+            state
+                .stats
+                .get(&7)
+                .expect("candidate stats should exist")
+                .attributed_hits,
+            0
+        );
+        let generation = state.hits_generation;
+        let party_generation = state.abyss.first_half.hits_generation;
+
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                40,
+                60.05,
+                0x1234,
+                0x4d88_7b49_05d5_dbaf,
+                "Boss_016_BP",
+                "Boss_16",
+                "Imaginadough",
+                "随心泥",
+                "イメージクレイ",
+            )),
+        );
+
+        assert_eq!(state.hits[0].direction, HitDirection::Outgoing);
+        assert_eq!(state.hits[0].target_name.as_deref(), Some("随心泥"));
+        assert_eq!(state.hits_generation, generation.wrapping_add(1));
+        assert_eq!(
+            state
+                .stats
+                .get(&7)
+                .expect("backfilled stats should exist")
+                .attributed_hits,
+            1
+        );
+        assert_eq!(
+            state.abyss.first_half.hits[0].target_name.as_deref(),
+            Some("随心泥")
+        );
+        assert_eq!(
+            state.abyss.first_half.hits_generation,
+            party_generation.wrapping_add(1)
+        );
+    }
+
+    #[test]
+    fn exact_hit_targets_do_not_project_incoming_damage() {
+        let mut state = CombatState::default();
+        let mut incoming = test_hit(80.02, 7, 100.0);
+        incoming.direction = HitDirection::Incoming;
+        apply_engine_event(&mut state, EngineEvent::Hit(Box::new(incoming)));
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                50,
+                80.05,
+                0x1234,
+                0x4d88_7b49_05d5_dbaf,
+                "Boss_016_BP",
+                "Boss_16",
+                "Imaginadough",
+                "随心泥",
+                "イメージクレイ",
+            )),
+        );
+
+        assert!(state.hits[0].target_name.is_none());
+        assert_eq!(state.hits[0].direction, HitDirection::Incoming);
     }
 
     #[test]
