@@ -142,7 +142,7 @@ VM、共享 Hook、边界校验和 capability 白名单。
 - `nte-core-windows-x64.zip`：无 GUI 的本地 Sidecar，供第三方本机工具集成；
 - `nte-dps-tool-windows-external-resources.zip`：完整 Tauri 桌面程序，`res/` 资源外置，并包含 `plugins/dwmapi.dll` 与受限 Mod 脚本。
 
-`master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 Tauri／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.0`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的“本次改动”会按时间顺序累计当前版本相对上一个版本构建标签的全部非合并提交，而不是只显示最后一次 push。
+`master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 Tauri／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.7`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的更新内容读取 `docs/releases/<version>.md` 中维护的中、英、日三语说明，不再展示 Git commit 备注；缺少对应版本说明时发布任务会停止。
 
 `nte-core.exe` 使用 JSON-RPC 2.0 over NDJSON，通过 stdin 接收请求、stdout 返回响应和事件。它不监听或开放任何网络端口；stdout 仅用于协议，日志写入 stderr。CLI 包不包含桌面 UI 图片、字体、图标或窗口依赖。协议、生命周期和调用方式见[中文协议文档](docs/CLI_PROTOCOL_ZH.md)、[英文协议文档](docs/CLI_PROTOCOL.md)及[无第三方依赖的 Python 示例](docs/examples/nte_core_client.py)。CLI 与桌面程序的发行和再分发均遵守本仓库的 AGPL／商业双授权。
 
