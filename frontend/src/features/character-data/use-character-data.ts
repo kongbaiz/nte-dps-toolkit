@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { replaceCharacterAvatarCatalog } from "@/lib/character-avatar";
 import { characterDataClient } from "@/lib/tauri/character-data-client";
 import {
   characterDataError,
@@ -38,6 +39,7 @@ export function useCharacterData() {
     try {
       const next = await characterDataClient.getSnapshot();
       if (!mounted.current) return null;
+      replaceCharacterAvatarCatalog(next.records);
       setSnapshot(next);
       if (announce) {
         setNotice({
@@ -66,6 +68,7 @@ export function useCharacterData() {
     try {
       const next = await characterDataClient.saveRecord(input);
       if (!mounted.current) return null;
+      replaceCharacterAvatarCatalog(next.records);
       setSnapshot(next);
       setNotice({
         kind: "success",

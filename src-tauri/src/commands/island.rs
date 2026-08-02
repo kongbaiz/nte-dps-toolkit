@@ -22,10 +22,11 @@ pub(crate) fn dismiss_island_notice(
     window: WebviewWindow,
 ) -> Result<IslandSnapshot, CommandError> {
     island::validate_window(&window)?;
-    state.dismiss_island_notice(&notice_id);
-    window
-        .hide()
-        .map_err(|_| CommandError::window_operation_failed())?;
+    if state.dismiss_island_notice(&notice_id) {
+        window
+            .hide()
+            .map_err(|_| CommandError::window_operation_failed())?;
+    }
     Ok(IslandSnapshot::from_state(state.inner()))
 }
 
