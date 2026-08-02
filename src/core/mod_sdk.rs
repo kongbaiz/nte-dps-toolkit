@@ -1,7 +1,7 @@
 //! Stable, frontend-neutral schema for the NTE C++ Mod host API.
 //!
-//! Both the migration-period egui editor and the Tauri/React editor consume
-//! this schema so completion and signature metadata have one Rust fact source.
+//! The Tauri/React editor consumes this schema so completion and signature
+//! metadata have one Rust fact source.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModSdkSymbolKind {

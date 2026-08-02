@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_detail_assets_match_the_legacy_frontend_rules() {
+    fn shared_detail_assets_match_the_established_frontend_rules() {
         let characters = HashMap::from([(
             1,
             CharacterInfo {

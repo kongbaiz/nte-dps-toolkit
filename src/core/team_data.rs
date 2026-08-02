@@ -1,6 +1,6 @@
 //! Frontend-neutral import/export helpers for the compact team DPS exchange
 //! format. UI adapters own file pickers and download affordances; validation
-//! and projection stay here so egui and Tauri share one contract.
+//! and projection stay here so desktop and CLI boundaries share one contract.
 
 use crate::engine::model::{
     CharacterStats, CombatState, TEAM_DPS_EXPORT_VERSION, TEAM_DPS_MAX_MEMBERS, TeamDps,

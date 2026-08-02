@@ -8,35 +8,35 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::collections::BTreeMap;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::fmt;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::fs;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::io::Write;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::path::{Path, PathBuf};
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use std::ptr;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 use windows_sys::Win32::System::Pipes::CallNamedPipeW;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
     RegCloseKey, RegCreateKeyW, RegGetValueW, RegSetValueExW,
 };
 
 use crate::engine::model::HtItemNetId;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 use crate::storage::mod_scripts::{
     mod_script_workspace_directory, validate_enabled_mod_set, validate_mod_source,
 };
@@ -56,7 +56,7 @@ const IPC_SET_ITEM_DISCARDED: u16 = 9;
 const IPC_SET_ITEM_LOCKED: u16 = 10;
 const IPC_QUERY_COMBAT_CLOCK_TRANSITIONS: u16 = 11;
 const IPC_QUERY_MOD_EVENTS: u16 = 12;
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
 const MAX_PLACEMENTS: usize = 64;
@@ -71,13 +71,13 @@ const MOD_EVENT_HISTORY_SIZE: usize = 18;
 const MOD_EVENT_ID_SIZE: usize = 32;
 const MOD_EVENT_NAME_SIZE: usize = 32;
 const MOD_EVENT_VALUE_COUNT: usize = 3;
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 const MOD_LOG_SIZE: usize = 112;
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 const MOD_LOG_HISTORY_SIZE: usize = 18;
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 const MOD_LOG_ID_SIZE: usize = 32;
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 const MOD_LOG_MESSAGE_SIZE: usize = 56;
 const RESPONSE_SIZE: usize =
     RESPONSE_HEADER_SIZE + COMBAT_CLOCK_HISTORY_SIZE * COMBAT_CLOCK_TRANSITION_SIZE;
@@ -87,12 +87,12 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 static PLUGIN_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const GAME_INSTALL_REGISTRY_KEYS: [(ModsPluginGameRegion, &str); 2] = [
     (
         ModsPluginGameRegion::China,
@@ -103,45 +103,45 @@ const GAME_INSTALL_REGISTRY_KEYS: [(ModsPluginGameRegion, &str); 2] = [
         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NTEGlobal",
     ),
 ];
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const GAME_BINARY_RELATIVE_PATH: &str = r"Client\WindowsNoEditor\HT\Binaries\Win64";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const GAME_EXECUTABLE_NAME: &str = "HTGame.exe";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const PLUGIN_FILE_NAME: &str = "dwmapi.dll";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_PLUGIN_MARKER_FILE_NAME: &str = ".nte-dps-tool-equipment-plugin";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_PLUGIN_MARKER_HEADER: &str = "NTE_DPS_TOOL_EQUIPMENT_PLUGIN_V1";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const PLUGIN_BINARY_SIGNATURE: &[u8] = b"NTE_DPS_TOOL_MODS_PLUGIN_V1";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_PLUGIN_BINARY_SIGNATURE: &[u8] = b"NTE_DPS_TOOL_MOD_LOADER_V1";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MOD_WORKSPACE_REGISTRY_KEY: &str = r"Software\NTE DPS Tool\Mods Plugin";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MOD_WORKSPACE_REGISTRY_VALUE: &str = "Workspace";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MAX_LEGACY_MOD_FILE_BYTES: usize = 16 * 1024;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const MOD_DIRECTORY_NAME: &str = "nte-mods";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const EQUIPMENT_MOD_FILE_NAME: &str = "equipment.nte";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD_FILE_NAME: &str = "combat-clock.nte";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const ENEMY_TELEMETRY_MOD_FILE_NAME: &str = "enemy-telemetry.nte";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const ENEMY_TELEMETRY_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/enemy-telemetry.nte");
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
 requires("viewport.tick")
@@ -203,7 +203,7 @@ def on_viewport_tick(event):
         state.last_max_hp = max_hp
         state.last_flags = state_flags
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V2: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
 requires("viewport.tick")
@@ -254,7 +254,7 @@ def on_viewport_tick(event):
             state.last_target = target
             state.last_hp = hp
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V3: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
 requires("viewport.tick")
@@ -271,25 +271,25 @@ def on_viewport_tick(event):
     if player_controller != None:
         ipc.bind(None, player_controller)
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V1: &[u8] =
     b"nte_mod 1\nmod equipment\non viewport_tick equipment.prepare\non viewport_tick ipc.pump\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V1: &[u8] =
     b"nte_mod 1\nmod combat-clock\non viewport_tick combat_clock.observe\non viewport_tick ipc.pump\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V2: &[u8] = b"nte_mod 2\nmod equipment\ncapability equipment\n\non viewport_tick\nload r0 event.viewport\nread_ptr r1 r0 0x80\nread_tarray_first r2 r1 0x38\nread_ptr r3 r2 0x30\nread_ptr r4 r3 0x2d0\nif equipment.cache_missing\ncall equipment.prepare r4\nend\ncall ipc.pump r4 null\nend\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V2: &[u8] = b"nte_mod 2\nmod combat-clock\ncapability combat-clock\n\non viewport_tick\nload r0 event.viewport\nread_ptr r1 r0 0x80\nread_tarray_first r2 r1 0x38\nread_ptr r3 r2 0x30\ncall combat_clock.observe r3\ncall ipc.pump null r3\nend\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V3: &[u8] = b"nte_mod(3)\nmod(\"equipment\")\ncapability(\"equipment\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = read_ptr(viewport, 0x80)\n    local_player = read_tarray_first(game_instance, 0x38)\n    player_controller = read_ptr(local_player, 0x30)\n    player_state = read_ptr(player_controller, 0x2d0)\n    if equipment.cache_missing():\n        equipment.prepare(player_state)\n    ipc.pump(player_state, None)\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V3: &[u8] = b"nte_mod(3)\nmod(\"combat-clock\")\ncapability(\"combat-clock\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = read_ptr(viewport, 0x80)\n    local_player = read_tarray_first(game_instance, 0x38)\n    player_controller = read_ptr(local_player, 0x30)\n    combat_clock.observe(player_controller)\n    ipc.pump(None, player_controller)\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4: &[u8] = b"nte_mod(4)\nmod(\"equipment\")\nrequires(\"viewport.tick\")\nrequires(\"memory.read\")\nrequires(\"sdk.read\")\nrequires(\"equipment\")\nrequires(\"ipc\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = memory.read_ptr(viewport, 0x80)\n    local_player = memory.tarray_first(game_instance, 0x38)\n    player_controller = memory.read_ptr(local_player, 0x30)\n    player_state = sdk.player_state(player_controller)\n    if equipment.cache_missing():\n        equipment.prepare(player_state)\n    ipc.bind(player_state, None)\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4: &[u8] = b"nte_mod(4)\nmod(\"combat-clock\")\nrequires(\"viewport.tick\")\nrequires(\"memory.read\")\nrequires(\"combat-clock\")\nrequires(\"ipc\")\n\ndef on_viewport_tick(event):\n    viewport = event.viewport\n    game_instance = memory.read_ptr(viewport, 0x80)\n    local_player = memory.tarray_first(game_instance, 0x38)\n    player_controller = memory.read_ptr(local_player, 0x30)\n    combat_clock.observe(player_controller)\n    ipc.bind(None, player_controller)\n";
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4_OFFSETS: &[u8] = br#"nte_mod(4)
 mod("equipment")
 requires("viewport.tick")
@@ -329,7 +329,7 @@ def on_viewport_tick(event):
         if cache_ready == True:
             ipc.bind(player_state, None)
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4_OFFSETS: &[u8] = br#"nte_mod(4)
 mod("combat-clock")
 requires("viewport.tick")
@@ -374,7 +374,7 @@ def on_viewport_tick(event):
         state.last_pause_mask = pause_mask
         state.last_state_flags = state_flags
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
 mod("equipment")
 requires("viewport.tick")
@@ -409,7 +409,7 @@ def on_viewport_tick(event):
         if cache_ready == True:
             ipc.bind(player_state, None)
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4_SESSION: &[u8] = br#"nte_mod(4)
 mod("combat-clock")
 requires("viewport.tick")
@@ -450,7 +450,7 @@ def on_viewport_tick(event):
         state.last_pause_mask = pause_mask
         state.last_state_flags = state_flags
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
 mod("equipment")
 requires("viewport.tick")
@@ -497,7 +497,7 @@ def on_viewport_tick(event):
         if cache_ready == True:
             ipc.bind(player_state, None)
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES: &[u8] = br#"nte_mod(4)
 mod("combat-clock")
 requires("viewport.tick")
@@ -541,7 +541,7 @@ def on_viewport_tick(event):
         state.last_pause_mask = pause_mask
         state.last_state_flags = state_flags
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC: &[u8] = br#"nte_mod(4)
 mod("enemy-telemetry")
 requires("viewport.tick")
@@ -599,7 +599,7 @@ def on_viewport_tick(event):
                     state.last_hp = hp
                     state.last_max_hp = max_hp
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP: &[u8] = br#"#include <nte/mod.hpp>
 
 NTE_SCRIPT(5);
@@ -694,7 +694,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
     }
 }
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS: &[u8] = br#"#include <nte/mod.hpp>
 
 NTE_SCRIPT(5);
@@ -810,7 +810,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
     }
 }
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT: &[u8] = br#"#include <nte/mod.hpp>
 
 NTE_SCRIPT(5);
@@ -990,7 +990,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
     }
 }
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET: &[u8] = br#"#include <nte/mod.hpp>
 
 NTE_SCRIPT(5);
@@ -1047,7 +1047,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
     }
 }
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT: &[u8] = br#"#include <nte/mod.hpp>
 
 NTE_SCRIPT(5);
@@ -1151,7 +1151,7 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
     }
 }
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY: &[u8] = br#"#include <nte/mod.hpp>
 
 NTE_SCRIPT(5);
@@ -1259,9 +1259,9 @@ void on_viewport_tick(const nte::viewport_tick_event& event)
     }
 }
 "#;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[b"nte_mod_set 1\nload equipment\nload combat-clock\n"];
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V1,
     LEGACY_EQUIPMENT_MOD_V2,
@@ -1271,7 +1271,7 @@ const LEGACY_EQUIPMENT_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_EQUIPMENT_MOD_V4_SESSION,
     LEGACY_EQUIPMENT_MOD_V4_ROUTES,
 ];
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V1,
     LEGACY_COMBAT_CLOCK_MOD_V2,
@@ -1281,7 +1281,7 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
     LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
 ];
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_ENEMY_TELEMETRY_MOD_V1,
     LEGACY_ENEMY_TELEMETRY_MOD_V2,
@@ -1372,7 +1372,7 @@ pub struct ModEventSnapshot {
     pub values: Vec<u64>,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ModLogLevel {
     Info,
@@ -1380,7 +1380,7 @@ pub(crate) enum ModLogLevel {
     Error,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ModLogSnapshot {
     pub sequence: u64,
@@ -1395,14 +1395,14 @@ pub enum ModsPluginSubmitError {
     Busy,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModsPluginGameRegion {
     China,
     Global,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModsPluginGameStatus {
     pub region: ModsPluginGameRegion,
@@ -1410,7 +1410,7 @@ pub struct ModsPluginGameStatus {
     pub current: bool,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModsPluginDeploymentStatus {
     pub installations: usize,
@@ -1420,7 +1420,7 @@ pub struct ModsPluginDeploymentStatus {
     pub games: Vec<ModsPluginGameStatus>,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ModsPluginDeploymentError {
     GameRunning,
@@ -1434,7 +1434,7 @@ pub enum ModsPluginDeploymentError {
     FileSystem(String),
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 impl fmt::Display for ModsPluginDeploymentError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -1618,7 +1618,7 @@ pub fn query_mod_events() -> Result<Vec<ModEventSnapshot>, String> {
     decode_mod_events(&response, request_id)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
     let request_id = MOD_LOG_QUERY_SEQUENCE
         .fetch_add(1, Ordering::Relaxed)
@@ -1977,7 +1977,7 @@ fn decode_mod_events(
     Ok(events)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 fn decode_fixed_utf8(bytes: &[u8], field: &str) -> Result<String, String> {
     let end = bytes
         .iter()
@@ -1997,7 +1997,7 @@ fn decode_fixed_utf8(bytes: &[u8], field: &str) -> Result<String, String> {
     Ok(text.to_owned())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui", test))]
+#[cfg(any(feature = "desktop", test))]
 fn decode_mod_logs(
     bytes: &[u8; RESPONSE_SIZE],
     request_id: u64,
@@ -2053,14 +2053,14 @@ fn decode_mod_logs(
     Ok(logs)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn inspect_plugin_deployment(
     current_plugin: Option<&[u8]>,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     inspect_plugin_deployment_with_manual(current_plugin, None)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn inspect_plugin_deployment_with_manual(
     current_plugin: Option<&[u8]>,
     manual: Option<(ModsPluginGameRegion, &Path)>,
@@ -2074,7 +2074,7 @@ pub fn inspect_plugin_deployment_with_manual(
     inspect_game_installations(&installations, current_plugin)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn install_mods_plugin(
     region: ModsPluginGameRegion,
     plugin: &[u8],
@@ -2082,7 +2082,7 @@ pub fn install_mods_plugin(
     install_mods_plugin_with_manual(region, plugin, None)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn install_mods_plugin_with_manual(
     region: ModsPluginGameRegion,
     plugin: &[u8],
@@ -2099,14 +2099,14 @@ pub fn install_mods_plugin_with_manual(
     inspect_game_installations(&installations, Some(plugin))
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn remove_mods_plugin(
     region: ModsPluginGameRegion,
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
     remove_mods_plugin_with_manual(region, None)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn remove_mods_plugin_with_manual(
     region: ModsPluginGameRegion,
     manual_directory: Option<&Path>,
@@ -2122,7 +2122,7 @@ pub fn remove_mods_plugin_with_manual(
     inspect_game_installations(&installations, None)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn refresh_installed_mods_plugins(
     plugin: &[u8],
 ) -> Result<ModsPluginDeploymentStatus, ModsPluginDeploymentError> {
@@ -2152,7 +2152,7 @@ pub fn refresh_installed_mods_plugins(
     inspect_game_installations(&installations, Some(plugin))
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn ensure_game_is_closed() -> Result<(), ModsPluginDeploymentError> {
     match super::network::game_process_is_running() {
         Ok(false) => Ok(()),
@@ -2161,7 +2161,7 @@ fn ensure_game_is_closed() -> Result<(), ModsPluginDeploymentError> {
     }
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
     let workspace = mod_script_workspace_directory();
     install_default_mod_files(&workspace).map_err(file_system_error)?;
@@ -2170,7 +2170,7 @@ pub fn prepare_mod_workspace() -> Result<PathBuf, ModsPluginDeploymentError> {
     Ok(workspace)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentError> {
     let subkey = wide_null(MOD_WORKSPACE_REGISTRY_KEY);
     let value_name = wide_null(MOD_WORKSPACE_REGISTRY_VALUE);
@@ -2212,7 +2212,7 @@ fn register_mod_workspace(workspace: &Path) -> Result<(), ModsPluginDeploymentEr
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn game_installation_directories()
 -> Result<Vec<(ModsPluginGameRegion, PathBuf)>, ModsPluginDeploymentError> {
     let mut directories = Vec::new();
@@ -2240,7 +2240,7 @@ fn game_installation_directories()
     Ok(directories)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn game_installation_directories_with_manual(
     manual: Option<(ModsPluginGameRegion, &Path)>,
 ) -> Result<Vec<(ModsPluginGameRegion, PathBuf)>, ModsPluginDeploymentError> {
@@ -2261,7 +2261,7 @@ fn game_installation_directories_with_manual(
     Ok(directories)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn resolve_manual_game_directory(selected: &Path) -> Result<PathBuf, ModsPluginDeploymentError> {
     for directory in [
         selected.to_path_buf(),
@@ -2277,7 +2277,7 @@ fn resolve_manual_game_directory(selected: &Path) -> Result<PathBuf, ModsPluginD
     Err(ModsPluginDeploymentError::InvalidGameDirectory)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn selected_game_directory(
     installations: &[(ModsPluginGameRegion, PathBuf)],
     region: ModsPluginGameRegion,
@@ -2288,7 +2288,7 @@ fn selected_game_directory(
         .ok_or(ModsPluginDeploymentError::GameInstallationNotFound)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn read_registry_string(
     subkey: &str,
     value: &str,
@@ -2366,19 +2366,19 @@ fn read_registry_string(
     })
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain([0]).collect()
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PluginMarker {
     size: u64,
     fingerprint: u64,
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn plugin_marker(plugin: &[u8]) -> PluginMarker {
     PluginMarker {
         size: plugin.len() as u64,
@@ -2386,7 +2386,7 @@ fn plugin_marker(plugin: &[u8]) -> PluginMarker {
     }
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for byte in bytes {
@@ -2396,7 +2396,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
     hash
 }
 
-#[cfg(all(any(feature = "desktop", feature = "gui"), test))]
+#[cfg(all(feature = "desktop", test))]
 fn encode_plugin_marker(plugin: &[u8]) -> String {
     let marker = plugin_marker(plugin);
     format!(
@@ -2405,7 +2405,7 @@ fn encode_plugin_marker(plugin: &[u8]) -> String {
     )
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn parse_plugin_marker(text: &str) -> Option<PluginMarker> {
     let mut lines = text.lines();
     if lines.next()? != LEGACY_PLUGIN_MARKER_HEADER {
@@ -2419,7 +2419,7 @@ fn parse_plugin_marker(text: &str) -> Option<PluginMarker> {
     Some(PluginMarker { size, fingerprint })
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn plugin_binary_is_managed(plugin: &[u8]) -> bool {
     [PLUGIN_BINARY_SIGNATURE, LEGACY_PLUGIN_BINARY_SIGNATURE]
         .iter()
@@ -2430,7 +2430,7 @@ fn plugin_binary_is_managed(plugin: &[u8]) -> bool {
         })
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn plugin_directory_is_managed(directory: &Path) -> Result<bool, ModsPluginDeploymentError> {
     let plugin_path = directory.join(PLUGIN_FILE_NAME);
     let marker_path = directory.join(LEGACY_PLUGIN_MARKER_FILE_NAME);
@@ -2452,7 +2452,7 @@ fn plugin_directory_is_managed(directory: &Path) -> Result<bool, ModsPluginDeplo
     Ok(plugin_binary_is_managed(&plugin))
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn inspect_game_installations(
     installations: &[(ModsPluginGameRegion, PathBuf)],
     current_plugin: Option<&[u8]>,
@@ -2476,7 +2476,7 @@ fn inspect_game_installations(
     Ok(status)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn inspect_plugin_directories(
     directories: &[PathBuf],
     current_plugin: Option<&[u8]>,
@@ -2498,7 +2498,7 @@ fn inspect_plugin_directories(
     Ok(status)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn install_plugin_to_directories(
     directories: &[PathBuf],
     plugin: &[u8],
@@ -2525,7 +2525,7 @@ fn install_plugin_to_directories(
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn replace_managed_plugin_directories(
     directories: &[PathBuf],
     plugin: &[u8],
@@ -2567,7 +2567,7 @@ fn replace_managed_plugin_directories(
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn restore_managed_plugin_backups(backups: &[(PathBuf, Vec<u8>)]) -> Vec<String> {
     let mut failures = Vec::new();
     for (plugin_path, plugin) in backups.iter().rev() {
@@ -2578,7 +2578,7 @@ fn restore_managed_plugin_backups(backups: &[(PathBuf, Vec<u8>)]) -> Vec<String>
     failures
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn atomic_replace_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
@@ -2631,7 +2631,7 @@ fn atomic_replace_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn remove_plugin_from_directories(
     directories: &[PathBuf],
 ) -> Result<(), ModsPluginDeploymentError> {
@@ -2646,7 +2646,7 @@ fn remove_plugin_from_directories(
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn migrate_legacy_mod_workspace(
     game_directories: &[PathBuf],
     workspace: &Path,
@@ -2762,7 +2762,7 @@ fn migrate_legacy_mod_workspace(
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn read_legacy_mod_file(path: &Path) -> Result<Vec<u8>, ModsPluginDeploymentError> {
     let bytes = fs::read(path).map_err(file_system_error)?;
     if bytes.len() > MAX_LEGACY_MOD_FILE_BYTES {
@@ -2774,7 +2774,7 @@ fn read_legacy_mod_file(path: &Path) -> Result<Vec<u8>, ModsPluginDeploymentErro
     Ok(bytes)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
     let mod_directory = directory.join(MOD_DIRECTORY_NAME);
     let mut mod_files = Vec::new();
@@ -2820,7 +2820,7 @@ fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn rollback_default_mod_files(created: &[PathBuf], migrated: &[(PathBuf, Vec<u8>)]) {
     for created_path in created.iter().rev() {
         let _ = fs::remove_file(created_path);
@@ -2830,7 +2830,7 @@ fn rollback_default_mod_files(created: &[PathBuf], migrated: &[(PathBuf, Vec<u8>
     }
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
     let mod_directory = workspace_directory.join(MOD_DIRECTORY_NAME);
     fs::create_dir_all(&mod_directory)?;
@@ -2886,13 +2886,13 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn read_marker(path: &Path) -> Result<PluginMarker, ModsPluginDeploymentError> {
     let text = fs::read_to_string(path).map_err(file_system_error)?;
     parse_plugin_marker(&text).ok_or(ModsPluginDeploymentError::InstalledPluginChanged)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn file_system_error(error: io::Error) -> ModsPluginDeploymentError {
     ModsPluginDeploymentError::FileSystem(error.to_string())
 }
@@ -2909,17 +2909,17 @@ mod tests {
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/src/host_api.cpp"
     ));
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     const NATIVE_MOD_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/src/mod_runtime.cpp"
     ));
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     const NATIVE_PLUGIN_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/src/plugin_runtime.cpp"
     ));
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     const NATIVE_PLUGIN_RUNTIME_HEADER: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/src/plugin_runtime.hpp"
@@ -2952,7 +2952,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn bundled_mods_keep_distinct_control_flow_in_external_sources() {
         let equipment =
             std::str::from_utf8(EQUIPMENT_MOD).expect("bundled equipment Mod must be UTF-8");
@@ -3091,7 +3091,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn process_event_buffer_covers_the_damage_callback_payload() {
         assert!(
             NATIVE_PLUGIN_RUNTIME_HEADER
@@ -3382,7 +3382,7 @@ mod tests {
         assert!(decode_mod_logs(&bytes, 29).is_err());
     }
 
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     #[test]
     fn native_hot_reload_keeps_the_last_working_program_and_quarantines_faults() {
         assert!(NATIVE_MOD_RUNTIME.contains("candidate_enabled_mod_set"));
@@ -3474,7 +3474,7 @@ mod tests {
         );
     }
 
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn deployment_test_directory(name: &str) -> PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -3488,7 +3488,7 @@ mod tests {
         path
     }
 
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn managed_plugin(label: &str) -> Vec<u8> {
         format!(
             "{}:{label}",
@@ -3498,14 +3498,14 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn retired_loader_signature_remains_managed_for_upgrade() {
         let legacy = [LEGACY_PLUGIN_BINARY_SIGNATURE, b":legacy-runtime"].concat();
 
         assert!(plugin_binary_is_managed(&legacy));
     }
 
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn install_legacy_managed_plugin(directory: &Path, plugin: &[u8]) {
         fs::write(directory.join(PLUGIN_FILE_NAME), plugin).unwrap();
         fs::write(
@@ -3517,7 +3517,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn default_workspace_installs_and_enables_enemy_telemetry_mod() {
         let workspace = deployment_test_directory("enemy-telemetry-defaults");
 
@@ -3540,7 +3540,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn default_workspace_upgrades_the_previous_exact_enabled_set() {
         let workspace = deployment_test_directory("enemy-telemetry-enabled-set-upgrade");
         fs::write(
@@ -3559,7 +3559,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn default_workspace_upgrades_polling_enemy_telemetry() {
         for legacy in LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS {
             let workspace = deployment_test_directory("enemy-telemetry-sampling-upgrade");
@@ -3578,7 +3578,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn enemy_telemetry_uses_only_generic_script_primitives() {
         let source = std::str::from_utf8(ENEMY_TELEMETRY_MOD).unwrap();
         validate_mod_source("enemy-telemetry", source).unwrap();
@@ -3614,7 +3614,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn native_runtime_exposes_generic_mod_extension_abi() {
         for api in [
             "memory.write_u64",
@@ -3637,7 +3637,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn deployment_inspection_without_game_installations_keeps_source_available() {
         let plugin = managed_plugin("current");
 
@@ -3651,7 +3651,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn manual_game_directory_accepts_install_root_or_binary_directory() {
         let root = deployment_test_directory("manual-game-directory");
         let binary = root.join(GAME_BINARY_RELATIVE_PATH);
@@ -3676,7 +3676,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn deployment_marks_installs_and_removes_only_the_managed_plugin() {
         let directory = deployment_test_directory("lifecycle");
         let directories = vec![directory.clone()];
@@ -3717,7 +3717,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn legacy_game_mods_migrate_to_the_software_workspace_before_removal() {
         let directory = deployment_test_directory("mod-migration");
         let workspace = deployment_test_directory("mod-workspace");
@@ -3768,7 +3768,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn deployment_preserves_an_unmanaged_dwmapi_proxy() {
         let directory = deployment_test_directory("conflict");
         fs::write(directory.join(PLUGIN_FILE_NAME), b"another mod").unwrap();
@@ -3787,7 +3787,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn selected_client_install_ignores_another_clients_unmanaged_proxy() {
         let china = deployment_test_directory("selected-china");
         let global = deployment_test_directory("selected-global");
@@ -3829,7 +3829,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn deployment_preserves_a_managed_plugin_replaced_outside_the_tool() {
         let directory = deployment_test_directory("changed");
         let directories = vec![directory.clone()];
@@ -3843,7 +3843,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn managed_plugin_refresh_migrates_legacy_mod_programs() {
         for (version, equipment, combat_clock) in [
             ("v1", LEGACY_EQUIPMENT_MOD_V1, LEGACY_COMBAT_CLOCK_MOD_V1),
@@ -3903,7 +3903,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn managed_plugin_refresh_preserves_custom_mod_programs() {
         let directory = deployment_test_directory("custom-program-refresh");
         let workspace = deployment_test_directory("custom-program-workspace");
@@ -3937,7 +3937,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     fn managed_plugin_refresh_updates_only_enabled_directories() {
         let enabled = deployment_test_directory("refresh-enabled");
         let disabled = deployment_test_directory("refresh-disabled");

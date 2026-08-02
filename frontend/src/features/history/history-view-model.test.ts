@@ -33,7 +33,7 @@ describe("History view model", () => {
     expect(nextHistoryRecordIndex(3, 2, 1)).toBe(2);
   });
 
-  it("formats combat duration with the same minute boundary as egui", () => {
+  it("formats combat duration with the established minute boundary", () => {
     expect(historyDurationFormat(9.25)).toEqual({
       key: "{}s",
       arguments: ["9.3"],

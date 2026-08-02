@@ -1,8 +1,0 @@
-98cb0a16945ed3a9bb900222aa4c78d1b45fcd547c0dd42d335e1bf7034fa32a  frontend/src/components/nte/window-motion-boundary.tsx
-5a2b93d329890be59bb0556be3d9b62fc6af528c705d56dcb5082ed02f6e70e4  frontend/src/features/main-dps/main-dps-page.tsx
-e97a3519a898a08fd4348051b8a12bcee238f682f7a393d718957490f67b64c9  frontend/src/features/technical-hud/technical-hud-page.tsx
-2e554ce43e67aeea7aa4202f62a66fa01ad500a0c2b801f60426c6ce4bfde9e3  src-tauri/src/commands/main_dps.rs
-2b074a83775a5e110bd779d968e250a6313cc2e6b605361981550e8532e635c6  src-tauri/src/commands/technical.rs
-37cabb4a5a1a51e96e0da65c4df0e300faa4392e2615426f370c9c328d672ea5  src-tauri/src/windows/island.rs
-5bc429d63e3a842b16331b26649cbaad69f5f59f4d37018075a5af4a90fea341  frontend/src/components/nte/window-motion-boundary.test.ts
-3bcfbfd71e5314c7d2cbb2fbc454046bf4742914781f935ac43dea1dd6aac5a4  frontend/src/components/nte/window-motion-target.ts

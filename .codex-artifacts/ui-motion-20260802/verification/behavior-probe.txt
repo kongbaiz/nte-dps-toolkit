@@ -1,9 +1,0 @@
-COMMAND baseline_probe: inspect preserved baseline CSS/TSX
-OUTPUT baseline_motion_tokens=False
-OUTPUT baseline_page_stage=False
-EXIT_STATUS baseline_probe=0
-COMMAND modified_probe: inspect final CSS/TSX and built CSS
-OUTPUT modified_motion_tokens=True
-OUTPUT modified_page_stage=True
-OUTPUT modified_reduced_motion=True
-EXIT_STATUS modified_probe=0

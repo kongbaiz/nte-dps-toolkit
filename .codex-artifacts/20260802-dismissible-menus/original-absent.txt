@@ -1,2 +1,0 @@
-frontend/src/hooks/use-dismissible-layer.ts
-frontend/src/hooks/use-dismissible-layer.test.ts

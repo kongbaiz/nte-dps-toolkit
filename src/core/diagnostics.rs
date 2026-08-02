@@ -1,7 +1,7 @@
 //! Frontend-neutral capture diagnostics.
 //!
-//! Checks expose stable English message keys plus arguments. The egui and
-//! Tauri frontends translate those messages at their respective boundaries.
+//! Checks expose stable English message keys plus arguments. The Tauri
+//! frontend translates those messages at its contract boundary.
 
 use super::capture::{enumerate_devices, resolve_auto_device, resolve_manual_device};
 

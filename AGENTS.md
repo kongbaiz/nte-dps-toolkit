@@ -6,7 +6,7 @@
 
 1. **先确认影响层再动手**：修改前先判断工作属于 Rust 领域核心、Tauri 适配层、React 前端、Windows 平台层、Mod 系统、资源或文档，并遵守 §4 的边界。
 2. **Rust 核心保持唯一事实源**：抓包、协议解析、战斗归并、历史、资源、更新、Mod IPC 和系统集成继续由 Rust 实现；React 负责展示与交互。
-3. **Tauri/React 是唯一现行桌面 UI**：新功能、交互修复和视觉规范落在 Tauri/React；Rust 保持业务权威；legacy egui 只做阻断构建或关键回归修复。
+3. **Tauri/React 是唯一桌面 UI**：新功能、交互修复和视觉规范落在 Tauri/React；Rust 保持业务权威；不得恢复已移除的旧桌面 UI、`gui` Feature 或根 crate 桌面 Binary。
 4. **保持 CLI 纯净**：`nte-core` 的 CLI-only 依赖树不得出现 Tauri、WebView、React 构建、egui、eframe、wgpu 或窗口库。
 5. **跨边界只传稳定契约**：Rust 与 React、游戏 Mod 与桌面程序之间只传显式 DTO、事件、命令和错误码；禁止把内部领域类型、裸指针、窗口句柄或可变状态直接暴露给前端。
 6. **高频数据必须批量传输**：逐包、逐 hit、逐帧 IPC 属于禁止实现；使用有序 Channel、状态代次、增量批次、分页和节流。
@@ -59,10 +59,10 @@
 
 ## 1. 适用范围与优先级
 
-- 本文适用于整个 `NTE DPS TOOL` 仓库，包括 Rust 核心、Tauri 主程序、React 前端、legacy egui 兼容代码、原生 Mods Plugin、资源、构建、测试和文档。
+- 本文适用于整个 `NTE DPS TOOL` 仓库，包括 Rust 核心、Tauri 主程序、React 前端、原生 Mods Plugin、资源、构建、测试和文档。
 - 优先级：用户当次明确指令 > 更深层目录中的 `AGENTS.md` > 本文。
 - 本文中的“必须 / 禁止”是规范性要求；描述性架构与代码现状不一致时，以代码为准，并报告偏差。
-- Tauri/React 是产品 UI；legacy egui 不作为新功能入口、视觉基线或业务规则副本，其隔离与删除应作为独立清理任务处理。
+- Tauri/React 是产品唯一 UI；根 Rust crate 只提供共享领域能力、CLI 与 updater 所需能力，不拥有桌面 UI 入口。
 
 ## 2. 项目定位与产品架构
 
@@ -83,7 +83,7 @@ shadcn/ui
 - `nte-core`：无 GUI 的 stdio sidecar，Feature `cli`；
 - `nte-updater`：现有签名更新事务的独立执行程序；
 - `dwmapi.dll`：游戏侧 NTE Mods Plugin；
-- `gui` Feature 下的 egui 代码：冻结的兼容与后续清理对象，不承载新增产品功能。
+- `desktop` Feature：提供 Tauri 桌面适配所需的共享平台能力，不包含 UI 框架或桌面 Binary。
 
 业务规则不翻译到 TypeScript。Rust 核心保持唯一事实源，Tauri 只做命令、Channel、窗口和平台适配，React 负责产品展示与交互；新增桌面能力必须通过稳定契约跨越边界。
 
@@ -141,9 +141,7 @@ flowchart LR
 - `src/platform/`：Win32、网络、热键、Mod IPC；
 - `src/storage/`：配置、历史、资源、i18n、文件；
 - `src/api/`、`src/cli/`：`nte-core` 对外协议；
-- `src/app/`：冻结的 legacy egui 兼容 UI，只接受阻断构建、安全或关键回归修复。
-
-业务逻辑不得新增到 `src/app/`。可复用规则放入既有 `core`、`engine`、`storage` 或 `platform` 归属；`src-tauri` 只保留适配代码。
+可复用规则放入既有 `core`、`engine`、`storage` 或 `platform` 归属；`src-tauri` 只保留适配代码。不得在根 crate 新建平行桌面 UI 入口。
 
 ### 4.3 Tauri crate
 
@@ -267,7 +265,7 @@ frontend/
 - 内部不变量优先通过类型、穷举 `match` 和带原因的 `expect()` 表达。
 - 禁止用 `.ok()`、`unwrap_or_default()` 或空分支吞掉内部错误。
 - 所有 `unsafe` 最小化并附 `SAFETY:` 注释；FFI 资源使用 RAII。
-- 后台任务不得阻塞 Tauri 主线程、egui 帧或抓包线程。
+- 后台任务不得阻塞 Tauri 主线程、WebView 渲染或抓包线程。
 - 单一调用点不引入 trait；第三处重复出现前不急于抽象。
 - 新业务规则必须有同文件测试；解析规则覆盖正常、边界和误判规避。
 - 序列化字段改动保持旧配置、旧历史和旧导入文件兼容。
@@ -325,7 +323,7 @@ frontend/
 
 - 英文字符串是稳定 key。
 - 简体中文值继续维护在 `res/languages/zh-CN.json`。
-- React 使用统一的 `t()` 封装读取翻译资源；Rust command 和契约返回稳定 code/key。legacy egui 仅复用既有 `t()` / `tf()`，不新增平行翻译源。
+- React 使用统一的 `t()` 封装读取翻译资源；Rust command 和契约返回稳定 code/key，不新增平行翻译源。
 - 新增用户可见文案必须同时补中文值。
 - Rust `core`、`engine` 和契约层返回稳定 code/key，不调用 UI 翻译函数。
 - 动态参数使用命名或显式占位符，禁止字符串拼接改变语序。
@@ -383,11 +381,11 @@ Tauri HUD 涉及透明、穿透、置顶、拖拽、缩放或窗口状态改动�
 7. 抓包高负载时 HUD 更新平滑；
 8. 关闭、更新和崩溃恢复不遗留幽灵窗口。
 
-### 11.3 Legacy egui 边界
+### 11.3 单一桌面 UI 边界
 
-- `src/app/`、相关 `gui` Feature 和 `vendor/egui-winit` 在独立清理任务前保持可构建。
-- legacy egui 只处理阻断构建、安全或关键回归问题，不新增产品功能，也不追求与 Tauri/React 的双向视觉同步。
-- 清理必须先确认产品入口与发行构建不再依赖 legacy egui，再在单一范围内移除 Feature、依赖、入口和本地 fork。
+- 桌面产品入口、窗口生命周期与发行构建统一由 `src-tauri` 承载。
+- 根 crate 不提供桌面 Binary，不声明旧 `gui` Feature，也不直接依赖 UI 或窗口框架。
+- `scripts/verify_architecture.ps1` 必须阻止旧 UI 依赖、源码目录和本地 fork 回流。
 - Tauri/React 的现行行为、产品需求和用户验收截图是 UI 验收基线。
 
 ## 12. 抓包、解析与历史
@@ -411,7 +409,7 @@ Tauri HUD 涉及透明、穿透、置顶、拖拽、缩放或窗口状态改动�
 - 不为少量状态引入大型全局状态框架或异步运行时。
 - 保留 release profile 的小体积、LTO 和 `panic = "abort"` 意图。
 - WebView2/Tauri、React、Tailwind 和 shadcn 的大版本升级必须先检查 API、窗口行为、构建产物和兼容说明。
-- `vendor/egui-winit-0.34.3` 仅服务于 legacy 清理前的构建兼容；不以此为先例新增本地 fork。
+- 不为桌面 UI 依赖新增本地 fork；必须修补上游依赖时先说明版本、维护与回退策略并获得确认。
 
 ## 14. 项目变更与交付规范
 
@@ -433,7 +431,7 @@ Tauri HUD 涉及透明、穿透、置顶、拖拽、缩放或窗口状态改动�
 ### 14.3 完成标准
 
 - 用户要求的行为已实现，相关测试或探针覆盖正常、边界和回归场景。
-- 没有在 React、Tauri adapter 或 legacy egui 中复制 Rust 领域规则。
+- 没有在 React 或 Tauri adapter 中复制 Rust 领域规则。
 - 新增或变更的异步 UI 具备适用的 loading、empty、error 和 stale 状态。
 - UI 改动提供本次实际受影响的人工验收步骤；平台级改动覆盖 §11 专项。
 - 任务 diff 不包含无关清理、重构、依赖升级或生成产物。
@@ -455,11 +453,11 @@ cargo test
 涉及双 Binary、共享 core、资源或 Feature 时追加：
 
 ```powershell
-cargo check --bin nte-dps-tool --features gui
+cargo check --manifest-path src-tauri/Cargo.toml
 cargo check --bin nte-core --no-default-features --features cli
-cargo clippy --bin nte-dps-tool --features gui -- -D warnings
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 cargo clippy --bin nte-core --no-default-features --features cli -- -D warnings
-cargo test --features gui
+cargo test --manifest-path src-tauri/Cargo.toml
 cargo test --no-default-features --features cli
 cargo tree -e normal --no-default-features --features cli
 ```
@@ -539,8 +537,8 @@ MSBuild.exe .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Confi
 
 - `git commit`、`git push`、创建 PR；
 - 批量移动、拆分、合并或重命名 Rust 模块；
-- 在 legacy egui 中新增产品功能；
-- 为维持双 UI 一致而把 Tauri/React 行为复制回 egui；
+- 恢复已移除的旧桌面 UI、`gui` Feature 或根 crate 桌面 Binary；
+- 为维护双 UI 而复制 Tauri/React 行为或 Rust 领域规则；
 - 在 React 中复制 Rust 领域算法；
 - 在 `src-tauri` 中复制 reducer、历史或解析逻辑；
 - 每个 hit、包或动画帧执行一次 Tauri `invoke` / global event；

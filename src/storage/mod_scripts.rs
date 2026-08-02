@@ -1,8 +1,8 @@
 #![cfg_attr(
-    all(feature = "desktop", not(feature = "gui")),
+    feature = "desktop",
     allow(
         dead_code,
-        reason = "the desktop Mod Studio reuses selected workspace transactions while the remaining helpers stay available to the egui migration path"
+        reason = "the desktop Mod Studio exposes a bounded subset of the shared script workspace helpers"
     )
 )]
 

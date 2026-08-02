@@ -5,7 +5,7 @@
 
 # NTE DPS Toolkit
 
-**实时 DPS 伤害分析与战斗诊断工具** · 基于 Rust + egui，本机运行
+**实时 DPS 伤害分析与战斗诊断工具** · 基于 Rust + Tauri + React，本机运行
 
 **中文** | [English](README_EN.md)
 
@@ -16,19 +16,19 @@
 [![Commercial license available](https://img.shields.io/badge/commercial%20license-available-orange.svg)](LICENSING.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg?logo=windows)](#运行环境)
 [![Language](https://img.shields.io/badge/Rust-1.85%2B-000000.svg?logo=rust)](https://www.rust-lang.org/)
-[![UI](https://img.shields.io/badge/UI-egui%20%2F%20eframe-7B68EE.svg)](https://github.com/emilk/egui)
+[![UI](https://img.shields.io/badge/UI-Tauri%20%2B%20React-24C8DB.svg)](https://tauri.app/)
 [![Capture](https://img.shields.io/badge/capture-Npcap-success.svg)](https://npcap.com/)
 [![GitHub stars](https://img.shields.io/github/stars/kongbaiz/nte-dps-toolkit?style=social)](https://github.com/kongbaiz/nte-dps-toolkit)
 
 </div>
 
-> **关键词**：NTE DPS Toolkit · DPS Tool · DPS Analyzer · DPS 伤害统计 · 实时伤害分析 · 战斗诊断 · 封包解析 · Npcap · egui
+> **关键词**：NTE DPS Toolkit · DPS Tool · DPS Analyzer · DPS 伤害统计 · 实时伤害分析 · 战斗诊断 · 封包解析 · Npcap · Tauri · React
 
 ---
 
 ## 项目简介
 
-**NTE DPS Toolkit** 是一个使用 **Rust + egui** 实现的 NTE 本地 **DPS（每秒伤害）分析与诊断工具**。它完全在用户本机运行，通过 [Npcap](https://npcap.com/) 读取本机相关 UDP 流量，提取伤害、深渊事件和部分 GameplayEffect 统计，并在本地以图形界面展示总览、角色、技能、命中明细和深渊上下行线统计。仓库同时提供无 GUI 的 `nte-core.exe`，供第三方本机工具通过 stdio 集成同一套抓包和解析核心。
+**NTE DPS Toolkit** 是一个使用 **Rust + Tauri + React** 实现的 NTE 本地 **DPS（每秒伤害）分析与诊断工具**。它完全在用户本机运行，通过 [Npcap](https://npcap.com/) 读取本机相关 UDP 流量，提取伤害、深渊事件和部分 GameplayEffect 统计，并在 Tauri 桌面界面展示总览、角色、技能、命中明细和深渊上下行线统计。仓库同时提供无 GUI 的 `nte-core.exe`，供第三方本机工具通过 stdio 集成同一套抓包和解析核心。
 
 作为一款 **DPS Analyzer（伤害分析器）**，它面向希望复盘战斗数据、优化输出循环和分析配队表现的玩家与研究者，提供实时统计、历史对比和深渊预测等工作流。
 
@@ -74,10 +74,11 @@
 
 - **操作系统**：Windows 10 / 11
 - **Rust**：1.85 或更高版本
+- **Node.js / pnpm（源码构建）**：Node.js 24、pnpm 10
 - **抓包驱动**：[Npcap](https://npcap.com/)，建议启用 *WinPcap API-compatible Mode*
 - **权限**：实时抓包可能需要以管理员身份运行
 
-普通 GUI 使用只需要 Rust、Npcap 和仓库内的 `res` 资源。**不需要**客户端导出树、CUE4Parse、FModel、Python、Npcap SDK、资源导出 AES key 或 usmap。Console 的加密 INI 编辑器使用代码内置的稳定 INI 协议 key，不需要用户提供资源导出密钥。CLI 发行包只内嵌解析所需的核心 JSON，不包含 GUI 图片、字体或图标。
+运行已发布的桌面程序只需要 Npcap 和随发行包提供的资源；从源码构建还需要 Rust、Node.js 与 pnpm。**不需要**客户端导出树、CUE4Parse、FModel、Python、Npcap SDK、资源导出 AES key 或 usmap。Console 的加密 INI 编辑器使用代码内置的稳定 INI 协议 key，不需要用户提供资源导出密钥。CLI 发行包只内嵌解析所需的核心 JSON，不包含桌面 UI 图片、字体或图标。
 
 ---
 
@@ -86,8 +87,10 @@
 ```powershell
 git clone https://github.com/kongbaiz/nte-dps-toolkit.git
 cd nte-dps-toolkit
+corepack enable
+pnpm --dir frontend install --frozen-lockfile
 cargo test
-cargo run --release --bin nte-dps-tool --features gui
+pnpm --dir frontend tauri:dev
 ```
 
 ### 可选原生 NTE Mods Plugin
@@ -105,7 +108,7 @@ msbuild .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Configura
 同步到主程序统一读取的 `plugins/dwmapi.dll`。模块细节见
 [`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)。
 
-GUI 发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并加入压缩包，其中
+Tauri 桌面发布版会把 `plugins/` 目录放在 `nte-dps-tool.exe` 同级并一并加入压缩包，其中
 `dwmapi.dll` 是唯一的自定义 Windows 模块，`nte-mods/*.nte` 统一使用受限
 NTE C++ v5 源码，由 DLL 编译为定长 VM 程序。外部 Mod 使用标准 C++ 声明、花括号、
 分号、命名空间 API、持久全局状态、算术／位运算、`if/else if/else`、有界 `for`、
@@ -131,17 +134,17 @@ VM、共享 Hook、边界校验和 capability 白名单。
 
 ---
 
-## GUI 与本地 CLI Sidecar
+## Tauri 桌面程序与本地 CLI Sidecar
 
 正式 Windows 产物分为：
 
-- `nte-dps-tool-windows-x64.zip`：标准 GUI，资源内嵌，包含 `plugins/dwmapi.dll` 与受限 Mod 脚本，始终包含 F12 和完整诊断工具；
+- `nte-dps-tool-windows-x64.zip`：标准 Tauri 桌面程序，资源内嵌，包含 `plugins/dwmapi.dll` 与受限 Mod 脚本，始终包含 F12 和完整诊断工具；
 - `nte-core-windows-x64.zip`：无 GUI 的本地 Sidecar，供第三方本机工具集成；
-- `nte-dps-tool-windows-external-resources.zip`：完整 GUI，`res/` 资源外置，并包含 `plugins/dwmapi.dll` 与受限 Mod 脚本。
+- `nte-dps-tool-windows-external-resources.zip`：完整 Tauri 桌面程序，`res/` 资源外置，并包含 `plugins/dwmapi.dll` 与受限 Mod 脚本。
 
-`master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 GUI／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.0`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的“本次改动”会按时间顺序累计当前版本相对上一个版本构建标签的全部非合并提交，而不是只显示最后一次 push。
+`master` 分支的自动构建会依次执行格式检查、编译检查、测试、Clippy 和 Tauri／CLI 依赖边界检查。三个发行目录生成后，其中的所有 `.exe` 都会使用固定版本的 UPX 执行 `upx -9`，并在创建 ZIP 前通过 `upx -t` 完整性检测；下载的 UPX 官方压缩包也会先校验 SHA-256。GitHub Release 标题取自 `Cargo.toml` 的版本号（例如 `v0.3.0`），标签仍包含构建序号和短提交 SHA，以允许同一版本重复构建。Release 的“本次改动”会按时间顺序累计当前版本相对上一个版本构建标签的全部非合并提交，而不是只显示最后一次 push。
 
-`nte-core.exe` 使用 JSON-RPC 2.0 over NDJSON，通过 stdin 接收请求、stdout 返回响应和事件。它不监听或开放任何网络端口；stdout 仅用于协议，日志写入 stderr。CLI 包不包含 GUI 图片、字体、图标或 GUI 依赖。协议、生命周期和调用方式见[中文协议文档](docs/CLI_PROTOCOL_ZH.md)、[英文协议文档](docs/CLI_PROTOCOL.md)及[无第三方依赖的 Python 示例](docs/examples/nte_core_client.py)。CLI 与 GUI 发行和再分发均遵守本仓库的 AGPL／商业双授权。
+`nte-core.exe` 使用 JSON-RPC 2.0 over NDJSON，通过 stdin 接收请求、stdout 返回响应和事件。它不监听或开放任何网络端口；stdout 仅用于协议，日志写入 stderr。CLI 包不包含桌面 UI 图片、字体、图标或窗口依赖。协议、生命周期和调用方式见[中文协议文档](docs/CLI_PROTOCOL_ZH.md)、[英文协议文档](docs/CLI_PROTOCOL.md)及[无第三方依赖的 Python 示例](docs/examples/nte_core_client.py)。CLI 与桌面程序的发行和再分发均遵守本仓库的 AGPL／商业双授权。
 
 构建 CLI：
 
@@ -215,12 +218,18 @@ res/
 cargo fmt --check
 cargo check
 cargo test
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --bin nte-core --no-default-features --features cli
 cargo test --no-default-features --features cli
+pnpm --dir frontend lint
+pnpm --dir frontend typecheck
+pnpm --dir frontend test
 pwsh -NoProfile -File scripts/verify_architecture.ps1
 ```
 
-最后一条命令校验 GUI/CLI Feature、两个 Binary 的启用条件、GUI 可选依赖归属及 CLI 依赖树隔离。
+最后一条命令校验 Tauri 是唯一桌面 UI、根 crate 不再提供旧桌面 Binary，并保持 CLI 依赖树与所有桌面窗口依赖隔离。
 
 依赖真实抓包的诊断测试默认忽略。需要运行时设置 `NTE_TEST_CAPTURE=<pcapng-path>`，再执行：
 
@@ -233,7 +242,7 @@ cargo test -- --ignored
 ## 常见问题（FAQ）
 
 **Q：抓不到任何流量 / 没有数据？**
-A：确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行，并已启动 `HTGame.exe`。GUI 的 Diagnostics 页可运行自动诊断向导，逐项检查 Npcap 设备、活动连接、抓包状态、原始包写入和伤害解析状态。
+A：确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行，并已启动 `HTGame.exe`。Tauri 桌面程序的 Diagnostics 页可运行自动诊断向导，逐项检查 Npcap 设备、活动连接、抓包状态、原始包写入和伤害解析状态。
 
 **Q：需要游戏资源导出 key、usmap 或 Python 吗？**
 A：不需要。普通运行只依赖仓库内 `res/` 与代码内置的稳定协议 key。

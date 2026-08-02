@@ -8,9 +8,9 @@ pub mod config;
 pub mod history;
 pub mod i18n;
 pub mod io_util;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub mod mod_scripts;
 pub mod paths;
 pub mod resource;
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub mod update;

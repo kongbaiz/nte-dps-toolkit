@@ -1,4 +1,4 @@
-//! Frontend-neutral Console equipment helpers shared by egui and Tauri.
+//! Frontend-neutral Console equipment helpers used by the Tauri adapter.
 
 use std::collections::HashSet;
 

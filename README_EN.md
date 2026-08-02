@@ -5,7 +5,7 @@
 
 # NTE DPS Toolkit
 
-**Real-time DPS damage analysis & combat diagnostics** · Built with Rust + egui, runs locally
+**Real-time DPS damage analysis & combat diagnostics** · Built with Rust + Tauri + React, runs locally
 
 [中文](README.md) | **English**
 
@@ -16,19 +16,19 @@
 [![Commercial license available](https://img.shields.io/badge/commercial%20license-available-orange.svg)](LICENSING.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg?logo=windows)](#requirements)
 [![Language](https://img.shields.io/badge/Rust-1.85%2B-000000.svg?logo=rust)](https://www.rust-lang.org/)
-[![UI](https://img.shields.io/badge/UI-egui%20%2F%20eframe-7B68EE.svg)](https://github.com/emilk/egui)
+[![UI](https://img.shields.io/badge/UI-Tauri%20%2B%20React-24C8DB.svg)](https://tauri.app/)
 [![Capture](https://img.shields.io/badge/capture-Npcap-success.svg)](https://npcap.com/)
 [![GitHub stars](https://img.shields.io/github/stars/kongbaiz/nte-dps-toolkit?style=social)](https://github.com/kongbaiz/nte-dps-toolkit)
 
 </div>
 
-> **Keywords**: NTE DPS Toolkit · DPS Tool · DPS Analyzer · damage meter · real-time DPS analysis · combat diagnostics · packet capture · Npcap · egui
+> **Keywords**: NTE DPS Toolkit · DPS Tool · DPS Analyzer · damage meter · real-time DPS analysis · combat diagnostics · packet capture · Npcap · Tauri · React
 
 ---
 
 ## Introduction
 
-**NTE DPS Toolkit** is a local **DPS (damage-per-second) analysis and diagnostics tool** for NTE, built with **Rust + egui**. It runs entirely on the user's machine, reading relevant local UDP traffic via [Npcap](https://npcap.com/) to extract damage, abyss events, and selected GameplayEffect statistics, then displays an overview plus per-character, per-skill, hit-detail, and abyss up/down-line breakdowns in a local GUI. The repository also ships the GUI-free `nte-core.exe`, allowing third-party local tools to integrate the same capture and parsing core over stdio.
+**NTE DPS Toolkit** is a local **DPS (damage-per-second) analysis and diagnostics tool** for NTE, built with **Rust + Tauri + React**. It runs entirely on the user's machine, reading relevant local UDP traffic via [Npcap](https://npcap.com/) to extract damage, abyss events, and selected GameplayEffect statistics, then displays an overview plus per-character, per-skill, hit-detail, and abyss up/down-line breakdowns in the Tauri desktop app. The repository also ships the UI-free `nte-core.exe`, allowing third-party local tools to integrate the same capture and parsing core over stdio.
 
 As a **DPS Analyzer**, it targets players and researchers who want to review combat data, optimize rotations, and analyze team-composition performance — with real-time stats, historical comparison, and abyss prediction workflows.
 
@@ -76,10 +76,11 @@ As a **DPS Analyzer**, it targets players and researchers who want to review com
 
 - **OS**: Windows 10 / 11
 - **Rust**: 1.85 or newer
+- **Node.js / pnpm (source builds)**: Node.js 24 and pnpm 10
 - **Capture driver**: [Npcap](https://npcap.com/), preferably with *WinPcap API-compatible Mode* enabled
 - **Privileges**: live capture may require running as Administrator
 
-Normal GUI use only needs Rust, Npcap, and the in-repo `res` assets. It does **not** need a client export tree, CUE4Parse, FModel, Python, the Npcap SDK, asset-export AES keys, or usmap. The Console's encrypted-INI editor uses a stable INI-protocol key built into the code — no user-supplied export key required. The CLI release embeds only the core JSON required for parsing and contains no GUI images, fonts, or icons.
+Running a published desktop build only requires Npcap and the resources shipped with the archive; source builds also require Rust, Node.js, and pnpm. It does **not** need a client export tree, CUE4Parse, FModel, Python, the Npcap SDK, asset-export AES keys, or usmap. The Console's encrypted-INI editor uses a stable INI-protocol key built into the code — no user-supplied export key required. The CLI release embeds only the core JSON required for parsing and contains no desktop UI images, fonts, or icons.
 
 ---
 
@@ -88,8 +89,10 @@ Normal GUI use only needs Rust, Npcap, and the in-repo `res` assets. It does **n
 ```powershell
 git clone https://github.com/kongbaiz/nte-dps-toolkit.git
 cd nte-dps-toolkit
+corepack enable
+pnpm --dir frontend install --frozen-lockfile
 cargo test
-cargo run --release --bin nte-dps-tool --features gui
+pnpm --dir frontend tauri:dev
 ```
 
 ### Optional native NTE Mods Plugin
@@ -111,7 +114,7 @@ runtime location read by the app. See
 [`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)
 for module details.
 
-GUI release archives place `plugins/` beside `nte-dps-tool.exe`. `dwmapi.dll`
+Tauri desktop release archives place `plugins/` beside `nte-dps-tool.exe`. `dwmapi.dll`
 is the only custom Windows module; `nte-mods/*.nte` use restricted NTE C++ v5,
 compiled by that DLL to fixed-size VM programs. External Mods use regular C++
 declarations, braces, semicolons, namespace-qualified APIs, persistent global
@@ -147,17 +150,17 @@ of overwriting or deleting another mod.
 
 ---
 
-## GUI and local CLI sidecar
+## Tauri desktop app and local CLI sidecar
 
 Official Windows artifacts are:
 
-- `nte-dps-tool-windows-x64.zip`: standard GUI with embedded resources, `plugins/dwmapi.dll`, restricted mod scripts, and the full F12 diagnostics toolset;
+- `nte-dps-tool-windows-x64.zip`: standard Tauri desktop app with embedded resources, `plugins/dwmapi.dll`, restricted mod scripts, and the full F12 diagnostics toolset;
 - `nte-core-windows-x64.zip`: GUI-free local sidecar for third-party integrations;
-- `nte-dps-tool-windows-external-resources.zip`: full GUI with an external `res/` directory, `plugins/dwmapi.dll`, and restricted mod scripts.
+- `nte-dps-tool-windows-external-resources.zip`: full Tauri desktop app with an external `res/` directory, `plugins/dwmapi.dll`, and restricted mod scripts.
 
-The automated `master` build runs formatting, compilation, tests, Clippy, and the GUI/CLI dependency-boundary check. After all three distribution directories are built, every `.exe` is compressed with `upx -9` from a pinned UPX release and verified with `upx -t` before the ZIP archives are created; the downloaded official UPX archive is also checked against its SHA-256 digest. GitHub Release titles come from the `Cargo.toml` version (for example, `v0.3.0`), while tags retain the build number and short commit SHA so the same version can be rebuilt. The release changelog lists every non-merge commit for the current version since the previous version's build tag, in chronological order, instead of showing only the last push.
+The automated `master` build runs formatting, compilation, tests, Clippy, and the Tauri/CLI dependency-boundary check. After all three distribution directories are built, every `.exe` is compressed with `upx -9` from a pinned UPX release and verified with `upx -t` before the ZIP archives are created; the downloaded official UPX archive is also checked against its SHA-256 digest. GitHub Release titles come from the `Cargo.toml` version (for example, `v0.3.0`), while tags retain the build number and short commit SHA so the same version can be rebuilt. The release changelog lists every non-merge commit for the current version since the previous version's build tag, in chronological order, instead of showing only the last push.
 
-`nte-core.exe` uses JSON-RPC 2.0 over NDJSON, reading requests from stdin and writing responses and events to stdout. It never listens on or opens a network port; stdout is protocol-only and logs go to stderr. The CLI package contains no GUI images, fonts, icons, or GUI dependencies. See the [English protocol](docs/CLI_PROTOCOL.md), [Simplified Chinese protocol](docs/CLI_PROTOCOL_ZH.md), and [standard-library Python example](docs/examples/nte_core_client.py) for the lifecycle and calling contract. Both GUI and CLI distribution remain subject to this repository's AGPL/commercial dual-license terms.
+`nte-core.exe` uses JSON-RPC 2.0 over NDJSON, reading requests from stdin and writing responses and events to stdout. It never listens on or opens a network port; stdout is protocol-only and logs go to stderr. The CLI package contains no desktop UI images, fonts, icons, or windowing dependencies. See the [English protocol](docs/CLI_PROTOCOL.md), [Simplified Chinese protocol](docs/CLI_PROTOCOL_ZH.md), and [standard-library Python example](docs/examples/nte_core_client.py) for the lifecycle and calling contract. Both desktop and CLI distributions remain subject to this repository's AGPL/commercial dual-license terms.
 
 Build the CLI with:
 
@@ -231,12 +234,18 @@ The program looks for `res` in the current directory or the executable's parent 
 cargo fmt --check
 cargo check
 cargo test
+cargo fmt --check --manifest-path src-tauri/Cargo.toml
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
 cargo check --bin nte-core --no-default-features --features cli
 cargo test --no-default-features --features cli
+pnpm --dir frontend lint
+pnpm --dir frontend typecheck
+pnpm --dir frontend test
 pwsh -NoProfile -File scripts/verify_architecture.ps1
 ```
 
-The final command verifies the GUI/CLI features, binary feature gates, ownership of optional GUI dependencies, and CLI dependency isolation.
+The final command verifies that Tauri is the only desktop UI, the root crate no longer owns a desktop binary, and the CLI dependency graph stays isolated from every desktop windowing dependency.
 
 Diagnostics tests that depend on real captures are ignored by default. To run them, set `NTE_TEST_CAPTURE=<pcapng-path>` and run:
 
@@ -249,7 +258,7 @@ cargo test -- --ignored
 ## FAQ
 
 **Q: No traffic / no data is captured.**
-A: Make sure Npcap is installed with *WinPcap API-compatible Mode* enabled, run as Administrator, and have `HTGame.exe` running. The GUI Diagnostics page includes an auto-diagnostics wizard that checks the Npcap device, active connections, capture status, raw-packet writing, and damage-parse status step by step.
+A: Make sure Npcap is installed with *WinPcap API-compatible Mode* enabled, run as Administrator, and have `HTGame.exe` running. The Tauri desktop Diagnostics page includes an auto-diagnostics wizard that checks the Npcap device, active connections, capture status, raw-packet writing, and damage-parse status step by step.
 
 **Q: Do I need asset-export keys, usmap, or Python?**
 A: No. Normal use only depends on the in-repo `res/` and the stable protocol key built into the code.

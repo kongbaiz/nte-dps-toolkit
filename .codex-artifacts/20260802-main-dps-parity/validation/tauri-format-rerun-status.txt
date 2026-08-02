@@ -1,2 +1,0 @@
-tauri-cargo-fmt=0
-tauri-cargo-fmt-check-rerun=0

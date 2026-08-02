@@ -7,20 +7,9 @@ repository = "https://github.com/kongbaiz/nte-dps-toolkit"
 license = "AGPL-3.0-or-later"
 
 [features]
-default = ["gui"]
+default = ["desktop"]
 desktop = [
     "dep:ed25519-dalek",
-    "dep:semver",
-    "dep:sha2",
-    "dep:zip",
-]
-gui = [
-    "dep:ed25519-dalek",
-    "dep:eframe",
-    "dep:egui_material_icons",
-    "dep:image",
-    "dep:raw-window-handle",
-    "dep:rfd",
     "dep:semver",
     "dep:sha2",
     "dep:zip",
@@ -33,11 +22,6 @@ name = "nte_dps_tool"
 path = "src/lib.rs"
 
 [[bin]]
-name = "nte-dps-tool"
-path = "src/main.rs"
-required-features = ["gui"]
-
-[[bin]]
 name = "nte-core"
 path = "src/bin/nte-core.rs"
 required-features = ["cli"]
@@ -45,7 +29,7 @@ required-features = ["cli"]
 [[bin]]
 name = "nte-updater"
 path = "src/bin/nte-updater.rs"
-required-features = ["gui"]
+required-features = ["desktop"]
 
 [dependencies]
 anyhow = "1.0"
@@ -54,15 +38,9 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["clock", "serde"] }
 crossbeam-channel = "0.5"
 ed25519-dalek = { version = "3.0", default-features = false, features = ["fast"], optional = true }
-eframe = { version = "0.34.3", features = ["accesskit", "default_fonts", "wgpu"], default-features = false, optional = true }
-egui_material_icons = { version = "=0.6.0", default-features = false, features = ["compressed", "outline"], optional = true }
-env_logger = "0.11"
 hex = "0.4"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"], optional = true }
 libloading = "0.8"
 pcap-file = "2.0"
-raw-window-handle = { version = "0.6", optional = true }
-rfd = { version = "0.15", optional = true }
 semver = { version = "1.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -95,18 +73,6 @@ lto = true
 opt-level = "z"
 strip = true
 debug = false
-
-# Patched egui-winit 0.34.3: sets WS_EX_NOREDIRECTIONBITMAP on transparent
-# windows, paired with the app's `Dx12SwapchainKind::DxgiFromVisual` wgpu
-# option (see lib.rs). Without this, the window's default GDI redirection
-# surface still shows through/around the DirectComposition visual. Upstream
-# doesn't expose this Windows-only winit attribute through eframe/egui-winit's
-# public API (checked against egui's unreleased main branch too), so this is
-# vendored under vendor/egui-winit-0.34.3 with a small patch until upstream
-# adds a hook. Re-diff against a fresh egui-winit release before bumping the
-# eframe/egui-winit version pin.
-[patch.crates-io]
-egui-winit = { path = "vendor/egui-winit-0.34.3" }
 
 [build-dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "webp"] }

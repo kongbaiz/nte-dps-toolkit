@@ -4,7 +4,7 @@
 
 `nte-core` 是仅输出英文机器协议值的无界面本地 Sidecar。协议字段和值保持稳定；调用方必须根据 JSON-RPC 数字错误码和 `error.data.domain_code` 分支，不能依赖用于人工阅读的 `message` 或 `detail` 文案。
 
-正式发行包为 `nte-core-windows-x64.zip`，包含 `nte-core.exe`、`CLI_PROTOCOL.md`、`CLI_PROTOCOL_ZH.md`、`examples/`、`THIRD_PARTY_LICENSES.md` 与 `licenses/`。Sidecar 供同一台 Windows 计算机上的第三方工具调用，不监听或开放 TCP/HTTP 端口。CLI 只内嵌抓包解析所需的核心 JSON，不包含 GUI 图片、字体、应用图标或 GUI 依赖栈。发行和集成仍受仓库 AGPL／商业双授权约束。
+正式发行包为 `nte-core-windows-x64.zip`，包含 `nte-core.exe`、`CLI_PROTOCOL.md`、`CLI_PROTOCOL_ZH.md`、`examples/` 与 `THIRD_PARTY_LICENSES.md`。Sidecar 供同一台 Windows 计算机上的第三方工具调用，不监听或开放 TCP/HTTP 端口。CLI 只内嵌抓包解析所需的核心 JSON，不包含桌面 UI 图片、字体、应用图标或窗口依赖栈。发行和集成仍受仓库 AGPL／商业双授权约束。
 
 ## 命令行
 

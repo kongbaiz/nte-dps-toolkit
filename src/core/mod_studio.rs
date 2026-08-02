@@ -344,7 +344,7 @@ pub fn set_mod_studio_document_enabled(
     load_mod_studio_workspace(workspace_directory)
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioError> {
     use crate::platform::mods_plugin::{query_mod_events, query_mod_logs};
 
@@ -369,7 +369,7 @@ pub fn poll_mod_studio_runtime() -> Result<ModStudioRuntimeSnapshot, ModStudioEr
     Ok(ModStudioRuntimeSnapshot { logs, events })
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn project_runtime_log(entry: crate::platform::mods_plugin::ModLogSnapshot) -> ModStudioRuntimeLog {
     use crate::platform::mods_plugin::ModLogLevel;
 
@@ -390,7 +390,7 @@ fn project_runtime_log(entry: crate::platform::mods_plugin::ModLogSnapshot) -> M
     }
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn project_runtime_event(
     entry: crate::platform::mods_plugin::ModEventSnapshot,
 ) -> ModStudioRuntimeEvent {
@@ -528,7 +528,7 @@ fn map_enabled_set_error(error: ModScriptError) -> ModStudioError {
     }
 }
 
-#[cfg(any(feature = "desktop", feature = "gui"))]
+#[cfg(feature = "desktop")]
 fn runtime_message_key(message: &str) -> Option<&'static str> {
     match message {
         "Hot reload applied." => Some("Hot reload applied."),
@@ -796,7 +796,7 @@ mod tests {
         fs::remove_dir_all(root).expect("remove workspace");
     }
 
-    #[cfg(any(feature = "desktop", feature = "gui"))]
+    #[cfg(feature = "desktop")]
     #[test]
     fn runtime_status_projection_localizes_lifecycle_and_keeps_raw_script_logs() {
         use crate::platform::mods_plugin::{ModLogLevel, ModLogSnapshot};
