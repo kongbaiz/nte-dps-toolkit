@@ -139,8 +139,7 @@ jobs:
             "game.player_controller",
             "game.player_state",
             "combat_clock.pause_mask",
-            "combat_clock.state_flags",
-            "sdk.character_config_id"
+            "combat_clock.state_flags"
           )) {
             if (-not $pluginText.Contains($requiredApi)) {
               throw "NTE Mods Plugin is missing the bundled-script API: $requiredApi"

@@ -7,7 +7,7 @@ use crate::{
         character_data::{CharacterDataSnapshot, SaveCharacterDataRecordRequest},
     },
     state::AppState,
-    windows::console,
+    windows::{self, console},
 };
 
 #[tauri::command]
@@ -15,7 +15,7 @@ pub(crate) fn get_character_data_snapshot(
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<CharacterDataSnapshot, CommandError> {
-    console::validate_window(&window)?;
+    windows::validate_character_avatar_window(&window)?;
     let (projection, generation) = state
         .character_data_snapshot()
         .map_err(character_data_error)?;

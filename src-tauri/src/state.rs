@@ -3994,4 +3994,19 @@ mod tests {
         );
         assert!(state.take_deleted_history(&token).is_none());
     }
+
+    #[test]
+    fn stale_island_dismiss_keeps_the_newer_notice() {
+        let state = AppState::default();
+        let stale_id = state.publish_island_notice("info", "First notice", Vec::new(), None);
+        let current_id = state.publish_island_notice("success", "Second notice", Vec::new(), None);
+
+        assert!(!state.dismiss_island_notice(&stale_id));
+        assert_eq!(
+            state.island_notice().map(|notice| notice.id),
+            Some(current_id.clone())
+        );
+        assert!(state.dismiss_island_notice(&current_id));
+        assert!(state.island_notice().is_none());
+    }
 }
