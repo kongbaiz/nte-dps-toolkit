@@ -208,7 +208,7 @@ jobs:
       - name: Build release variants
         shell: pwsh
         run: |
-          pnpm --dir frontend tauri:build -- --no-bundle --ci
+          pnpm --dir frontend tauri:build --no-bundle --ci
           cargo build --release --bin nte-updater --features desktop
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
@@ -222,7 +222,7 @@ jobs:
           Copy-Item docs/CLI_PROTOCOL_ZH.md dist/nte-core-windows-x64/
           Copy-Item docs/examples dist/nte-core-windows-x64/examples -Recurse
 
-          pnpm --dir frontend tauri:build -- --no-bundle --ci --features external_resources
+          pnpm --dir frontend tauri:build --no-bundle --ci --features external_resources
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
