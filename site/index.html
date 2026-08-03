@@ -11,8 +11,8 @@
     document.documentElement.setAttribute('data-theme', theme);
   })();
 </script>
-<title>NTE DPS Toolkit — 异环 / Neverness to Everness 实时 DPS 伤害分析工具</title>
-<meta name="description" content="NTE DPS Toolkit 是基于 Rust + Tauri + React 的本机实时 DPS（每秒伤害）分析与战斗诊断工具，支持角色/技能伤害统计、深渊上下行线预测、抓包回放与 Debug 面板。开源、完全本机运行、不上传任何数据。Real-time DPS analyzer for Neverness to Everness (NTE), built with Rust, Tauri, and React, runs 100% locally.">
+<title>NTE DPS Toolkit — 异环轻量实时 DPS、战斗复盘与深渊规划工具</title>
+<meta name="description" content="NTE DPS Toolkit 是面向《异环》玩家的轻量本机 DPS 工具：实时统计伤害、复盘战斗、规划深渊。开发者测试环境下空闲内存约 50 MB；三步安装，默认纯抓包，不上传数据。">
 <meta name="keywords" content="NTE DPS Toolkit, NTE DPS, 异环 DPS, Neverness to Everness DPS, DPS Analyzer, 伤害分析工具, 战斗诊断, 深渊预测, Npcap, Tauri, React, Rust, 封包解析">
 <meta name="author" content="kongbaiz">
 <link rel="canonical" href="https://dps.o-na-ni.com/">
@@ -20,8 +20,8 @@
 <!-- Open Graph -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="NTE DPS Toolkit">
-<meta property="og:title" content="NTE DPS Toolkit — 异环实时 DPS 伤害分析工具">
-<meta property="og:description" content="基于 Rust + Tauri + React 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。开源、本机运行、不上传数据。">
+<meta property="og:title" content="NTE DPS Toolkit — 异环轻量实时 DPS、战斗复盘与深渊规划工具">
+<meta property="og:description" content="面向玩家的本机 DPS 工具：开发者测试环境下空闲内存约 50 MB，三步开始记录；默认纯抓包，本地保存数据。">
 <meta property="og:image" content="https://dps.o-na-ni.com/assets/img/CN/main_menu_CN.png">
 <meta property="og:url" content="https://dps.o-na-ni.com/">
 <meta property="og:locale" content="zh_CN">
@@ -29,8 +29,8 @@
 
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="NTE DPS Toolkit — 异环实时 DPS 伤害分析工具">
-<meta name="twitter:description" content="基于 Rust + Tauri + React 的本机实时 DPS 分析与战斗诊断工具，支持角色/技能统计、深渊预测、抓包回放。">
+<meta name="twitter:title" content="NTE DPS Toolkit — 异环轻量实时 DPS、战斗复盘与深渊规划工具">
+<meta name="twitter:description" content="开发者测试环境下空闲内存约 50 MB；三步开始记录。默认纯抓包，本地保存数据。">
 <meta name="twitter:image" content="https://dps.o-na-ni.com/assets/img/CN/main_menu_CN.png">
 
 <link rel="icon" type="image/png" href="assets/img/app-icon.png">
@@ -42,7 +42,7 @@
   "@type": "SoftwareApplication",
   "name": "NTE DPS Toolkit",
   "alternateName": "NTE DPS Tool",
-  "description": "本机运行的 NTE（异环 / Neverness to Everness）实时 DPS 伤害分析与战斗诊断工具，基于 Rust + Tauri + React，通过 Npcap 解析本机网络流量统计伤害、技能和深渊数据。",
+  "description": "面向 NTE（异环 / Neverness to Everness）玩家的轻量本机实时 DPS、战斗复盘与深渊规划工具。开发者测试环境下空闲内存约 50 MB；通过 Npcap 被动读取本机网络流量，默认不上传数据。",
   "applicationCategory": "UtilitiesApplication",
   "operatingSystem": "Windows 10, Windows 11",
   "softwareVersion": "see GitHub Releases",
@@ -124,6 +124,9 @@
   .hero{padding:64px 0 40px; text-align:center}
   .hero h1{font-size:34px; margin:0 0 12px; font-weight:800}
   .hero .tagline{color: var(--text-dim); font-size:17px; max-width:640px; margin:0 auto 28px}
+  .highlights{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin:0 auto 28px; max-width:820px}
+  .highlight{background:var(--card); border:1px solid var(--border); border-radius:999px; padding:7px 13px; font-size:13px; color:var(--text-dim)}
+  .highlight strong{color:var(--text); font-weight:700}
   .badges{display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:28px}
   .badges img{height:20px}
   .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-bottom:40px}
@@ -140,6 +143,7 @@
     box-shadow: 0 20px 60px var(--shadow);
     max-width: 720px; margin: 0 auto;
   }
+  .hero-note{font-size:12px; color:var(--text-dim); max-width:720px; margin:14px auto 0}
 
   section{padding:48px 0; border-top:1px solid var(--border)}
   h2{font-size:24px; margin:0 0 28px; text-align:center}
@@ -169,14 +173,24 @@
   .usecases h3{margin:0 0 6px; font-size:15px}
   .usecases p{margin:0; font-size:14px; color:var(--text-dim)}
 
-  .install{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px 24px}
-  .install ol{margin:0; padding-left:20px; font-size:14px; color:var(--text-dim)}
-  .install li{margin-bottom:8px}
-  .install code, pre code{
+  .steps{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px}
+  .step{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px}
+  .step-number{display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:50%; background:var(--accent); color:#04131d; font-weight:800; margin-bottom:10px}
+  .step h3{margin:0 0 8px; font-size:16px}
+  .step p{margin:0; font-size:14px; color:var(--text-dim)}
+  .package-note{margin-top:16px; background:var(--bg-soft); border:1px solid var(--border); border-radius:10px; padding:16px 18px; font-size:14px; color:var(--text-dim)}
+  .package-note p{margin:0}
+  .package-note p + p{margin-top:8px}
+  .package-note strong{color:var(--text)}
+  .mode-grid{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px}
+  .mode-card{background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px}
+  .mode-card h3{margin:0 0 8px; font-size:16px; color:var(--accent)}
+  .mode-card p{margin:0; font-size:14px; color:var(--text-dim)}
+  .mode-card ul{margin:12px 0 0; padding-left:20px; font-size:14px; color:var(--text-dim)}
+  .mode-card li + li{margin-top:6px}
+  .step code, .package-note code, .mode-card code{
     background:#0a0f15; color:#a8e6a3; padding:2px 6px; border-radius:4px; font-size:13px;
   }
-  pre{background:#0a0f15; border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow-x:auto}
-  pre code{background:none; padding:0}
 
   footer{padding:36px 0 48px; border-top:1px solid var(--border); text-align:center}
   .footer-links{display:flex; gap:18px; justify-content:center; flex-wrap:wrap; font-size:14px; margin-bottom:14px}
@@ -188,6 +202,7 @@
   @media (max-width:600px){
     .hero h1{font-size:26px}
     .nav-links span.nl-text{display:none}
+    .steps,.mode-grid{grid-template-columns:1fr}
   }
 </style>
 </head>
@@ -202,7 +217,7 @@
     <div class="nav-links">
       <a href="#features"><span class="lang-zh">功能</span><span class="lang-en">Features</span></a>
       <a href="#screenshots"><span class="lang-zh">截图</span><span class="lang-en">Screenshots</span></a>
-      <a href="#install"><span class="lang-zh">安装</span><span class="lang-en">Install</span></a>
+      <a href="#quickstart"><span class="lang-zh">三步开始</span><span class="lang-en">3 Steps</span></a>
       <a href="https://github.com/kongbaiz/nte-dps-toolkit" target="_blank" rel="noopener">GitHub</a>
       <button id="lang-toggle" type="button">English</button>
       <button id="theme-toggle" type="button" aria-label="Toggle light/dark theme">🌙</button>
@@ -213,13 +228,19 @@
 <main>
   <section class="hero wrap">
     <h1>
-      <span class="lang-zh">NTE 实时 DPS 伤害分析 &amp; 战斗诊断工具</span>
-      <span class="lang-en">Real-time DPS Analysis &amp; Combat Diagnostics for NTE</span>
+      <span class="lang-zh">NTE 实时 DPS、战斗复盘与深渊规划</span>
+      <span class="lang-en">Real-time DPS, Combat Review &amp; Abyss Planning for NTE</span>
     </h1>
     <p class="tagline">
-      <span class="lang-zh">基于 Rust + Tauri + React，完全在你的电脑本机运行。通过 Npcap 解析本机网络流量，统计角色 / 技能伤害，预测深渊清线时间——不联网上传任何数据。</span>
-      <span class="lang-en">Built with Rust + Tauri + React, runs 100% on your own machine. Parses local network traffic via Npcap to track per-character / per-skill damage and predict Abyss clear times — no data is ever uploaded.</span>
+      <span class="lang-zh">记录伤害从哪里来、输出循环损失在哪里，以及不同队伍为什么表现不同。基于 Rust + Tauri + React，所有解析和记录默认都在你的电脑上完成。</span>
+      <span class="lang-en">See where damage comes from, where a rotation loses time, and why teams perform differently. Built with Rust + Tauri + React; parsing and records stay on your own computer by default.</span>
     </p>
+
+    <div class="highlights">
+      <div class="highlight"><span class="lang-zh"><strong>约 50 MB</strong> 空闲内存<sup>1</sup></span><span class="lang-en"><strong>~50 MB</strong> idle RAM<sup>1</sup></span></div>
+      <div class="highlight"><span class="lang-zh"><strong>三步</strong>开始记录</span><span class="lang-en"><strong>3 steps</strong> to start recording</span></div>
+      <div class="highlight"><span class="lang-zh"><strong>默认纯抓包</strong>，不上传数据</span><span class="lang-en"><strong>Packet-only by default</strong>, no uploads</span></div>
+    </div>
 
     <div class="badges">
       <img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License AGPL v3">
@@ -231,15 +252,16 @@
 
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/kongbaiz/nte-dps-toolkit/releases/latest" target="_blank" rel="noopener">
-        <span class="lang-zh">下载最新版本</span><span class="lang-en">Download Latest Release</span>
+        <span class="lang-zh">下载玩家版</span><span class="lang-en">Download Player Build</span>
       </a>
-      <a class="btn btn-secondary" href="https://github.com/kongbaiz/nte-dps-toolkit" target="_blank" rel="noopener">
-        <span class="lang-zh">查看源代码</span><span class="lang-en">View Source on GitHub</span>
+      <a class="btn btn-secondary" href="#quickstart">
+        <span class="lang-zh">查看三步安装</span><span class="lang-en">See the 3-step setup</span>
       </a>
     </div>
 
     <img class="hero-shot lang-zh" src="assets/img/CN/main_menu_CN.png" alt="NTE DPS Toolkit 主界面总览截图">
     <img class="hero-shot lang-en" src="assets/img/EN/main_menu_EN.png" alt="NTE DPS Toolkit main overview screenshot">
+    <p class="hero-note"><span class="lang-zh"><sup>1</sup> 开发者测试环境下，当前桌面端空闲内存约为 50 MB，约为旧版的六分之一；实际占用会随系统、WebView 版本和启用功能变化。</span><span class="lang-en"><sup>1</sup> In the developer's test environment, the current desktop app idles at roughly 50 MB RAM, about one sixth of the previous version. Actual usage varies by system, WebView version, and enabled features.</span></p>
   </section>
 
   <section id="features" class="wrap">
@@ -254,12 +276,12 @@
         <p><span class="lang-zh">按角色展示伤害、占比、命中数、DPS、技能分类和可筛选命中明细。</span><span class="lang-en">Damage, share, hit count, DPS, skill categories, and filterable hit details per character.</span></p>
       </div>
       <div class="feature">
-        <h3><span class="lang-zh">技能与效果映射</span><span class="lang-en">Skill &amp; effect mapping</span></h3>
-        <p><span class="lang-zh">解析并展示 GameplayEffect 映射、技能分类、ability_name、damage_name、attack_type。</span><span class="lang-en">Parses GameplayEffect mappings, skill categories, ability_name, damage_name, attack_type.</span></p>
+        <h3><span class="lang-zh">技能、命中与时间轴</span><span class="lang-en">Skills, hits &amp; timeline</span></h3>
+        <p><span class="lang-zh">查看技能分类、命中明细和战斗时间轴，定位输出循环中的损失。</span><span class="lang-en">Inspect skill categories, hit details, and the combat timeline to locate losses in a rotation.</span></p>
       </div>
       <div class="feature">
-        <h3><span class="lang-zh">深渊上 / 下行线统计</span><span class="lang-en">Abyss up/down-line stats</span></h3>
-        <p><span class="lang-zh">独立统计上下行线，保留重开、进线、通关和离开事件状态。</span><span class="lang-en">Tracked independently, preserving restart, line-entry, clear, and exit events.</span></p>
+        <h3><span class="lang-zh">深渊上下行线</span><span class="lang-en">Abyss up/down lines</span></h3>
+        <p><span class="lang-zh">独立记录上下行线，比较队伍表现并追踪重开、进线和通关。</span><span class="lang-en">Record the two lines independently, compare teams, and track restarts, entries, and clears.</span></p>
       </div>
       <div class="feature">
         <h3><span class="lang-zh">深渊预测</span><span class="lang-en">Abyss prediction</span></h3>
@@ -270,8 +292,8 @@
         <p><span class="lang-zh">战斗时间轴、技能占比、解析质量与本地历史页，支持保存与对比脱敏战斗摘要。</span><span class="lang-en">Combat timeline, skill share, parse quality, and a local history page with save/compare.</span></p>
       </div>
       <div class="feature">
-        <h3><span class="lang-zh">抓包与回放</span><span class="lang-en">Capture &amp; replay</span></h3>
-        <p><span class="lang-zh">实时保存完整帧到 pcapng；支持导出 JSON、导入回放用于 Debug。</span><span class="lang-en">Saves full frames to pcapng live; export JSON, import for debug replay.</span></p>
+        <h3><span class="lang-zh">本地历史与回放</span><span class="lang-en">Local history &amp; replay</span></h3>
+        <p><span class="lang-zh">保存脱敏战斗摘要进行对比；需要排查时可导入或导出 JSON / PCAPNG 回放。</span><span class="lang-en">Save de-identified battle summaries for comparison; import or export JSON / PCAPNG replays when troubleshooting.</span></p>
       </div>
       <div class="feature">
         <h3><span class="lang-zh">本机运行，不上传数据</span><span class="lang-en">100% local, no uploads</span></h3>
@@ -333,20 +355,50 @@
     </div>
   </section>
 
-  <section id="install" class="wrap">
-    <h2><span class="lang-zh">安装方式</span><span class="lang-en">Installation</span></h2>
-    <div class="install">
-      <p class="lang-zh">普通使用只需要 Rust、Npcap 和仓库内的 <code>res</code> 资源：</p>
-      <p class="lang-en">For normal use, you only need Rust, Npcap, and the bundled <code>res</code> assets:</p>
-      <pre><code>git clone https://github.com/kongbaiz/nte-dps-toolkit.git
-cd nte-dps-toolkit
-cargo test
-cargo run --release</code></pre>
-      <ol>
-        <li><span class="lang-zh">安装 <a href="https://npcap.com/" target="_blank" rel="noopener">Npcap</a> 并启用 WinPcap API-compatible Mode。</span><span class="lang-en">Install <a href="https://npcap.com/" target="_blank" rel="noopener">Npcap</a> with WinPcap API-compatible Mode enabled.</span></li>
-        <li><span class="lang-zh">以管理员身份运行程序（实时抓包通常需要）。</span><span class="lang-en">Run as Administrator (usually required for live packet capture).</span></li>
-        <li><span class="lang-zh">启动 NTE 客户端，工具会自动选择网卡和本机 IP。</span><span class="lang-en">Launch the NTE client; the tool auto-selects the adapter and local IP.</span></li>
-      </ol>
+  <section id="quickstart" class="wrap">
+    <h2><span class="lang-zh">三步开始记录</span><span class="lang-en">Start recording in 3 steps</span></h2>
+    <div class="steps">
+      <article class="step">
+        <span class="step-number">1</span>
+        <h3><span class="lang-zh">安装 Npcap</span><span class="lang-en">Install Npcap</span></h3>
+        <p><span class="lang-zh">安装 <a href="https://npcap.com/" target="_blank" rel="noopener">Npcap</a>，建议在安装时勾选 <strong>WinPcap API-compatible Mode</strong>。</span><span class="lang-en">Install <a href="https://npcap.com/" target="_blank" rel="noopener">Npcap</a> and enable <strong>WinPcap API-compatible Mode</strong> during setup.</span></p>
+      </article>
+      <article class="step">
+        <span class="step-number">2</span>
+        <h3><span class="lang-zh">下载玩家版</span><span class="lang-en">Download the player build</span></h3>
+        <p><span class="lang-zh">在 <a href="https://github.com/kongbaiz/nte-dps-toolkit/releases/latest" target="_blank" rel="noopener">Releases</a> 下载 <code>nte-dps-tool-windows-x64.zip</code>，解压到可写目录并运行 <code>nte-dps-tool.exe</code>。</span><span class="lang-en">From <a href="https://github.com/kongbaiz/nte-dps-toolkit/releases/latest" target="_blank" rel="noopener">Releases</a>, download <code>nte-dps-tool-windows-x64.zip</code>, extract it to a writable folder, then run <code>nte-dps-tool.exe</code>.</span></p>
+      </article>
+      <article class="step">
+        <span class="step-number">3</span>
+        <h3><span class="lang-zh">开始捕获</span><span class="lang-en">Start capture</span></h3>
+        <p><span class="lang-zh">以管理员身份运行工具，启动 NTE 客户端后点击开始捕获。程序会自动尝试选择活动网卡和本机 IP。</span><span class="lang-en">Run the tool as Administrator, launch NTE, then click Start Capture. The app will try to select the active adapter and local IP automatically.</span></p>
+      </article>
+    </div>
+    <div class="package-note">
+      <p><span class="lang-zh"><strong>绝大多数玩家：</strong>只需下载 <code>nte-dps-tool-windows-x64.zip</code>。不要下载 <code>nte-core-windows-x64.zip</code>；其中的 <code>nte-core.exe</code> 没有图形界面，双击后退出属于预期行为。</span><span class="lang-en"><strong>Most players:</strong> download only <code>nte-dps-tool-windows-x64.zip</code>. Do not download <code>nte-core-windows-x64.zip</code>; its <code>nte-core.exe</code> has no graphical interface, so exiting after a double-click is expected.</span></p>
+      <p><span class="lang-zh"><code>nte-dps-tool-windows-external-resources.zip</code> 仅适合需要自行修改外置 <code>res/</code> 资源的高级用户。</span><span class="lang-en"><code>nte-dps-tool-windows-external-resources.zip</code> is only for advanced users who need to modify external <code>res/</code> assets.</span></p>
+    </div>
+  </section>
+
+  <section id="modes" class="wrap">
+    <h2><span class="lang-zh">默认纯抓包，插件按需开启</span><span class="lang-en">Packet-only by default, plugin only when needed</span></h2>
+    <div class="mode-grid">
+      <article class="mode-card">
+        <h3><span class="lang-zh">纯抓包模式</span><span class="lang-en">Packet-only mode</span></h3>
+        <p><span class="lang-zh">默认工作流通过 Npcap 被动读取本机相关 UDP 流量，覆盖实时 DPS、角色与技能统计、历史对比、深渊统计以及 JSON / PCAPNG 回放。</span><span class="lang-en">The default workflow uses Npcap to passively read relevant local UDP traffic. It covers live DPS, character and skill statistics, history comparisons, Abyss statistics, and JSON / PCAPNG replay.</span></p>
+        <ul>
+          <li><span class="lang-zh">不向游戏发送数据，不注入，也不修改游戏数据。</span><span class="lang-en">It does not send data to the game, inject, or modify game data.</span></li>
+          <li><span class="lang-zh">原始抓包、日志和历史记录保存在程序目录。</span><span class="lang-en">Raw captures, logs, and history stay in the app directory.</span></li>
+        </ul>
+      </article>
+      <article class="mode-card">
+        <h3><span class="lang-zh">可选原生插件模式</span><span class="lang-en">Optional native plugin mode</span></h3>
+        <p><span class="lang-zh">精确时停扣除等少数高级能力需要可选原生插件。它默认不启用，需在 <strong>Console → Mod 工坊</strong> 中明确确认后才会安装到所选客户端。</span><span class="lang-en">A small set of advanced capabilities, such as precise time-stop deduction, requires the optional native plugin. It is disabled by default and is installed to the selected client only after explicit confirmation in <strong>Console → Mod Workshop</strong>.</span></p>
+        <ul>
+          <li><span class="lang-zh">该模式使用受限脚本、只读内存读取、事件订阅和明确的 capability 白名单，具有不同于纯抓包模式的技术与风险边界。</span><span class="lang-en">This mode uses restricted scripts, read-only memory access, event subscriptions, and an explicit capability allowlist, so it has a different technical and risk boundary from packet-only capture.</span></li>
+          <li><span class="lang-zh">更改插件安装状态前请关闭游戏；若目标目录已有其他来源的 <code>dwmapi.dll</code>，工具会保留该文件并报告冲突。启用前请阅读 <a href="https://github.com/kongbaiz/nte-dps-toolkit/blob/master/native/nte-mods-plugin/README.md" target="_blank" rel="noopener">插件说明</a>。</span><span class="lang-en">Close the game before changing plugin installation state. If the target folder already has another <code>dwmapi.dll</code>, the tool preserves it and reports a conflict. Read the <a href="https://github.com/kongbaiz/nte-dps-toolkit/blob/master/native/nte-mods-plugin/README.md" target="_blank" rel="noopener">plugin documentation</a> before enabling it.</span></li>
+        </ul>
+      </article>
     </div>
   </section>
 
