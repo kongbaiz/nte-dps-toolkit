@@ -1,90 +1,223 @@
 <div align="center">
 
-<!-- LOGO / BANNER placeholder: replace with a project banner image -->
 <img src="res/icons/app-icon.png" alt="NTE DPS Toolkit" width="120" />
 
 # NTE DPS Toolkit
 
-**Real-time DPS damage analysis & combat diagnostics** · Built with Rust + Tauri + React, runs locally
+**Local real-time DPS and combat analysis for Neverness to Everness (NTE)**
 
 [中文](README.md) | **English**
 
-**[Official Site →](https://dps.o-na-ni.com/)**
-
-<!-- Shields badges -->
+[![Latest Release](https://img.shields.io/github/v/release/kongbaiz/nte-dps-toolkit?display_name=tag&sort=semver)](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6.svg?logo=windows)](#quick-start)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Commercial license available](https://img.shields.io/badge/commercial%20license-available-orange.svg)](LICENSING.md)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg?logo=windows)](#requirements)
-[![Language](https://img.shields.io/badge/Rust-1.85%2B-000000.svg?logo=rust)](https://www.rust-lang.org/)
-[![UI](https://img.shields.io/badge/UI-Tauri%20%2B%20React-24C8DB.svg)](https://tauri.app/)
-[![Capture](https://img.shields.io/badge/capture-Npcap-success.svg)](https://npcap.com/)
 [![GitHub stars](https://img.shields.io/github/stars/kongbaiz/nte-dps-toolkit?style=social)](https://github.com/kongbaiz/nte-dps-toolkit)
+
+[**Download for Windows**](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest) · [**Official site**](https://dps.o-na-ni.com/) · [**Video demo**](https://www.bilibili.com/video/BV1YRNP6SEG5/)
 
 </div>
 
-> **Keywords**: NTE DPS Toolkit · DPS Tool · DPS Analyzer · damage meter · real-time DPS analysis · combat diagnostics · packet capture · Npcap · Tauri · React
+<p align="center">
+  <img src="images/EN/main_menu_EN.png" alt="NTE DPS Toolkit main interface" width="900" />
+</p>
+
+NTE DPS Toolkit records and explains **where your damage came from, where a rotation lost output, and why two teams performed differently**. It provides live character and skill statistics, local combat history, run-to-run comparison, and Abyss clear-time planning.
+
+- **Local-first**: combat data stays on your computer by default. No account is required and nothing is uploaded automatically.
+- **Lightweight**: the current desktop app was rebuilt from egui to Tauri + React. In the developer's test environment it idles at roughly **50 MB RAM**, about one sixth of the previous version. Actual usage varies by system, WebView version, and enabled features.
+- **Built for real combat analysis**: total DPS is only the starting point; the app also provides character, skill, hit-detail, timeline, history, and Abyss workflows.
+- **Open and auditable**: capture, parsing, desktop UI, and the local Sidecar are available in this repository.
+
+> This is an independent community project. It is not affiliated with, authorized, endorsed by, or partnered with the NTE publisher, developer, platform, or any related rights holder.
 
 ---
 
-## Introduction
+## What it helps you answer
 
-**NTE DPS Toolkit** is a local **DPS (damage-per-second) analysis and diagnostics tool** for NTE, built with **Rust + Tauri + React**. It runs entirely on the user's machine, reading relevant local UDP traffic via [Npcap](https://npcap.com/) to extract damage, abyss events, and selected GameplayEffect statistics, then displays an overview plus per-character, per-skill, hit-detail, and abyss up/down-line breakdowns in the Tauri desktop app. The repository also ships the UI-free `nte-core.exe`, allowing third-party local tools to integrate the same capture and parsing core over stdio.
-
-As a **DPS Analyzer**, it targets players and researchers who want to review combat data, optimize rotations, and analyze team-composition performance — with real-time stats, historical comparison, and abyss prediction workflows.
-
-> This is an independent community tool. It is **not affiliated with, authorized, endorsed by, or partnered with** the NTE publisher, developer, platform, or any related rights holders.
-
----
-
-## Features
-
-- **Real-time DPS stats**: live total damage, DPS, hit count, taken-damage, and combat duration.
-- **Per-character analysis**: damage, share, hit count, DPS, taken-damage, skill categories, and filterable hit details per character.
-- **Two timing modes**: "time-stop deducted" and "real time" DPS bases; time-stop deduction uses only the game's authoritative pause state observed by the native plugin.
-- **Target HP fields preserved**: `target_hp_before`, `target_hp_after`, `target_max_hp`, `target_hp_percent`.
-- **Skill & effect mapping**: parses and shows GameplayEffect mappings, skill categories, `ability_name`, `damage_name`, `attack_type`.
-- **Abyss up/down-line stats**: tracked independently, preserving restart, line-entry, clear, and exit event states, with an abyss monster stat-table viewer.
-- **Abyss prediction**: estimate clear time per up/down line, back-solve the DPS needed for a target time, and show static HP share per wave.
-- **Console review panel**: combat timeline, skill share, parse quality, and a local history page; save de-identified combat summaries, view details, compare two records, and feed historical teams into abyss prediction.
-- **Field-buff classification**: classifies optional supply-station field buffs like `GA_CardTrigger_*` / `GE_AbyssCard_*_Damage` as `Abyss Field Buff`, keeping them out of character skills or creation-flower damage.
-- **Capture & replay**: saves full Ethernet frames live to `logs/nte_raw_*.pcapng`; export parsed JSON, save full PCAPNG, and import JSON / PCAPNG for debug replay.
-- **Debug tooling**: inspect packet endpoints, character declarations, parse results, and payload previews; edit character data `res/data/characters/characters.json`; open/search/edit and save NTE encrypted INI; resource-coverage checks, an auto-diagnostics wizard, an adapter list, a server-damage calibration toggle, and more.
-- **Customizable HUD**: choose display modules, max characters, and a mini DPS curve; defaults keep total DPS, time, total damage, and character ranking.
-- **Auto persistence**: opacity, light/dark theme, always-on-top, and server-damage calibration saved to `config.json` next to the executable; a legacy `%LOCALAPPDATA%\NTE DPS Tool\config.json` is migrated automatically on first launch.
-- **Hotkeys**: `Home` toggles click-through; `F12` toggles the Console with Packets, Resources, and Diagnostics.
-- **Auto adapter selection**: picks the network adapter and local IP from `HTGame.exe`'s active connections.
-
-> Precise enemy-target and scene identification are still under research.
-> The `plugins/nte-mods/enemy-telemetry.nte` research script uses only generic
-> read-only memory, FName hashing, first-write cache,
-> and Mod-event primitives to sample and cache multiple targets without an
-> enemy-specific DLL service. Localized names and portraits are projected
-> into battle details only when both the config catalog and captured HP continuity match.
+| Use case | Result |
+|---|---|
+| **Combat review** | Total damage, effective DPS, combat duration, DPS curve, and individual hit details |
+| **Character and skill analysis** | Character share, skill categories, GameplayEffect mappings, and filterable details |
+| **Rotation comparison** | Save two de-identified summaries and compare team, character, skill, and timing differences |
+| **Abyss planning** | Track upper/lower routes independently, estimate clear time, and back-solve required DPS |
+| **Diagnostics and research** | Import or export JSON / PCAPNG to reproduce parser issues and inspect data quality |
 
 ---
 
-## Use Cases
+## Quick start
 
-- **Combat review**: record a fight's total damage, DPS curve, and hit details to find rotation bottlenecks.
-- **Team evaluation**: compare per-character damage share and skill contribution to validate different compositions.
-- **Abyss planning**: estimate clear time from historical team DPS and static monster HP, or back-solve the DPS needed to hit a target time.
-- **Data research**: export JSON / PCAPNG for offline analysis, or import samples for reproducible parse replay and debugging.
+### 1. Install Npcap
+
+Install [Npcap](https://npcap.com/). Enabling **WinPcap API-compatible Mode** is recommended.
+
+### 2. Download the player build
+
+Open the [latest Release](https://github.com/kongbaiz/nte-dps-toolkit/releases/latest) and download:
+
+```text
+nte-dps-tool-windows-x64.zip
+```
+
+Extract it to a writable directory and run:
+
+```text
+nte-dps-tool.exe
+```
+
+> **Players should not download `nte-core-windows-x64.zip`.** `nte-core.exe` has no graphical interface. It is a stdio Sidecar for third-party integrations, so exiting immediately when double-clicked is expected.
+
+### 3. Start recording
+
+1. Run the tool as Administrator; live capture usually requires elevated permissions.
+2. Launch the NTE client (`HTGame.exe`).
+3. Click Start Capture. The app will try to select the active adapter and local IP automatically.
+4. Review live data and saved runs in Overview, Character, Abyss, and Console.
+
+When no data appears, open **F12 → Diagnostics** and run the automatic diagnostics wizard.
 
 ---
 
-## Requirements
+## Which download should I use?
 
-- **OS**: Windows 10 / 11
-- **Rust**: 1.85 or newer
-- **Node.js / pnpm (source builds)**: Node.js 24 and pnpm 10
-- **Capture driver**: [Npcap](https://npcap.com/), preferably with *WinPcap API-compatible Mode* enabled
-- **Privileges**: live capture may require running as Administrator
-
-Running a published desktop build only requires Npcap and the resources shipped with the archive; source builds also require Rust, Node.js, and pnpm. It does **not** need a client export tree, CUE4Parse, FModel, Python, the Npcap SDK, asset-export AES keys, or usmap. The Console's encrypted-INI editor uses a stable INI-protocol key built into the code — no user-supplied export key required. The CLI release embeds only the core JSON required for parsing and contains no desktop UI images, fonts, or icons.
+| File | Intended user | Contents |
+|---|---|---|
+| `nte-dps-tool-windows-x64.zip` | **Most players — recommended** | Standard Tauri desktop app, embedded resources, full diagnostics, and optional plugin files |
+| `nte-dps-tool-windows-external-resources.zip` | Advanced users who need editable resources | Full desktop app with an external `res/` directory |
+| `nte-core-windows-x64.zip` | Third-party tool developers | Headless JSON-RPC 2.0 / NDJSON Sidecar |
 
 ---
 
-## Installation
+## Operating modes and security boundaries
+
+### Packet-only mode
+
+The default workflow uses Npcap to **passively read relevant local UDP traffic**:
+
+- it does not send data to the game;
+- it does not modify game data;
+- it does not require asset-export keys, usmap, FModel, CUE4Parse, or Python;
+- captures, logs, and history remain in the application directory.
+
+Packet-only mode supports the main live DPS, character/skill, history, Abyss, and JSON/PCAPNG replay workflows.
+
+### Optional native plugin mode
+
+Some advanced features — including authoritative pause-state timing for precise time-stop deduction — require the optional native plugin. This mode:
+
+- is disabled by default and requires explicit confirmation in **Console → Mod Workshop**;
+- installs the provided `dwmapi.dll` beside `HTGame.exe` for the selected client;
+- uses restricted scripts, read-only memory access, event subscriptions, and an explicit capability allowlist;
+- has a different technical and risk boundary from packet-only capture. Read the in-app disclosure and [`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md) before enabling it.
+
+Close the game before changing plugin installation state. If another `dwmapi.dll` already exists in the target directory, the tool preserves it and reports a conflict instead of overwriting or deleting another mod.
+
+---
+
+## Core features
+
+### Live statistics and HUD
+
+- Total damage, DPS, hit count, damage taken, and combat duration;
+- character rankings, damage share, skill categories, and filterable hit details;
+- configurable HUD modules, opacity, theme, always-on-top, click-through, and mini DPS curve;
+- `Home` toggles click-through and `F12` opens or closes Console.
+
+### Timing and damage accounting
+
+- Real-time and time-stop-deducted DPS bases;
+- authoritative pause timing through the optional native plugin;
+- preserved `target_hp_before`, `target_hp_after`, `target_max_hp`, and `target_hp_percent` fields;
+- GameplayEffect, `ability_name`, `damage_name`, `attack_type`, and skill-category mappings;
+- separate classification for Abyss field buffs and other special damage sources.
+
+### History, replay, and diagnostics
+
+- Save de-identified combat summaries, inspect details, and compare two runs;
+- combat timeline, skill share, parser-quality information, and local history;
+- live Ethernet-frame capture to `logs/nte_raw_*.pcapng`;
+- parsed JSON export, full PCAPNG save, and reproducible JSON / PCAPNG replay;
+- automatic checks for adapters, Npcap, active connections, capture state, raw packet writing, and damage parsing.
+
+### Abyss analysis
+
+- Independent upper-route and lower-route tracking;
+- restart, route-entry, clear, and exit event states;
+- estimated clear time from historical team DPS;
+- required-DPS calculation for a target time and static HP share by wave.
+
+> Abyss estimates use static monster HP and historical DPS. They do not model invulnerability, phase transitions, movement, or mechanic downtime.
+
+---
+
+## Screenshots
+
+| Team hit details | Character hit details |
+|---|---|
+| <img src="images/EN/team_battle_detail_EN.png" alt="Team hit details" width="520"> | <img src="images/EN/character_battle_detail_EN.png" alt="Character hit details" width="520"> |
+
+| Combat timeline | Configurable HUD |
+|---|---|
+| <img src="images/EN/timeline_EN.png" alt="Combat timeline" width="520"> | <img src="images/EN/HUD_EN.png" alt="Configurable HUD" width="520"> |
+
+| Abyss analysis |
+|---|
+| <img src="images/EN/abyss_EN.png" alt="Abyss analysis" width="760"> |
+
+---
+
+## Data and configuration
+
+Configuration, logs, and history are stored beside the executable:
+
+```text
+<application directory>/
+├─ config.json        UI and runtime settings
+├─ history/           De-identified combat history
+└─ logs/              PCAPNG captures and runtime logs
+```
+
+The legacy `%LOCALAPPDATA%\NTE DPS Tool\config.json` is migrated on first launch; the original file is left untouched.
+
+“Save current summary” stores de-identified statistics only. It does not include raw packets, payloads, decoded text, IP addresses, ports, local paths, or asset-authorization information. Raw PCAPNG files are generated locally; review them before attaching them to a public Issue.
+
+---
+
+## Third-party integration: `nte-core.exe`
+
+`nte-core.exe` is a headless local Sidecar using **JSON-RPC 2.0 over NDJSON**:
+
+- requests arrive on stdin;
+- responses and events are written to stdout;
+- logs are written to stderr;
+- it does not listen on or open a network port;
+- the CLI package contains no desktop UI images, fonts, icons, or window dependencies.
+
+Documentation and examples:
+
+- [English protocol](docs/CLI_PROTOCOL.md)
+- [中文协议文档](docs/CLI_PROTOCOL_ZH.md)
+- [Python standard-library client](docs/examples/nte_core_client.py)
+
+Build the CLI:
+
+```powershell
+cargo build --release --bin nte-core --no-default-features --features cli
+```
+
+---
+
+## Build from source
+
+### Requirements
+
+- Windows 10 / 11
+- Rust 1.85+
+- Node.js 24
+- pnpm 10
+- Npcap
+
+### Run the desktop app
 
 ```powershell
 git clone https://github.com/kongbaiz/nte-dps-toolkit.git
@@ -95,140 +228,7 @@ cargo test
 pnpm --dir frontend tauri:dev
 ```
 
-### Optional native NTE Mods Plugin
-
-`native/nte-mods-plugin` is a standalone Windows x64 submodule in this
-repository. It contains a single-DLL restricted script loader, the stable IPC
-header, and the Visual Studio project, with no vcpkg or client SDK dependency. After installing
-the Visual Studio 2022 "Desktop development with C++" workload, run this from
-the repository root:
-
-```powershell
-# Run in "Developer PowerShell for VS 2022"
-msbuild .\native\nte-mods-plugin\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m
-```
-
-The original output is `native/nte-mods-plugin/x64/Release/dwmapi.dll`.
-After each build it is staged automatically as `plugins/dwmapi.dll`, the single
-runtime location read by the app. See
-[`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)
-for module details.
-
-Tauri desktop release archives place `plugins/` beside `nte-dps-tool.exe`. `dwmapi.dll`
-is the only custom Windows module; `nte-mods/*.nte` use restricted NTE C++ v5,
-compiled by that DLL to fixed-size VM programs. External Mods use regular C++
-declarations, braces, semicolons, namespace-qualified APIs, persistent global
-state, arithmetic and bit operations, `if/else if/else`, bounded `for`, typed
-memory reads and writes, generic UFunction calls and
-ProcessEvent subscriptions, character APIs shared by the inspected
-China/Global SDKs, stable `nte::game::*` session values that hide client offsets, and
-custom IPC events. A new Mod adds only its `.nte` and resources; it adds no
-feature-specific DLL service and requires no DLL
-rebuild. Live capture routes `pre.*`, `post.*`, and ordinary script
-events through the app's shared event pipeline. The DLL retains the compiler,
-VM, shared hook, boundary validation, and capability whitelist. Open
-**Console → Mod Workshop** and enable **Enable in-game Mod loader** to review the
-third-party-mod risks and loading mechanism. Enable stays locked for five
-seconds, while Cancel and `Esc` close the dialog immediately. After confirmation,
-the app installs only `dwmapi.dll` beside `HTGame.exe` in the selected client.
-The enabled set and scripts remain under `plugins/` beside the software. The
-DLL resolves that registered workspace and watches saved source and enable
-changes every 250 ms while the game is running. The minimizable runtime console
-at the bottom of Mod Workshop shows hot-update status, compile failures, and
-`nte::log::info("message")` output. An update compiles the complete candidate
-set before an atomic swap; invalid source keeps the last working version, while
-a runtime fault pauses only that Mod until the next successful hot update.
-Edit `nte-mods.enabled` to load only
-`equipment` or `combat-clock`. Leaving only `nte_mod_set 1` removes the
-Viewport hook and closes IPC.
-When both China and Global clients are installed, choose the client to manage
-first. Close the game before changing the DLL installation state; Mod scripts
-can be enabled or disabled at runtime. Turning it off removes the
-copy installed by this tool from the selected client. If another `dwmapi.dll`
-is already present there, the app preserves it and reports a conflict instead
-of overwriting or deleting another mod.
-
----
-
-## Tauri desktop app and local CLI sidecar
-
-Official Windows artifacts are:
-
-- `nte-dps-tool-windows-x64.zip`: standard Tauri desktop app with embedded resources, `plugins/dwmapi.dll`, restricted mod scripts, and the full F12 diagnostics toolset;
-- `nte-core-windows-x64.zip`: GUI-free local sidecar for third-party integrations;
-- `nte-dps-tool-windows-external-resources.zip`: full Tauri desktop app with an external `res/` directory, `plugins/dwmapi.dll`, and restricted mod scripts.
-
-The automated `master` build runs formatting, compilation, tests, Clippy, and the Tauri/CLI dependency-boundary check. After all three distribution directories are built, every `.exe` is compressed with `upx -9` from a pinned UPX release and verified with `upx -t` before the ZIP archives are created; the downloaded official UPX archive is also checked against its SHA-256 digest. GitHub Release titles come from the `Cargo.toml` version (for example, `v0.3.7`), while tags retain the build number and short commit SHA so the same version can be rebuilt. Release updates are read from the curated Chinese, English, and Japanese notes in `docs/releases/<version>.md`; Git commit messages are no longer shown, and publishing stops if the matching version notes are missing.
-
-`nte-core.exe` uses JSON-RPC 2.0 over NDJSON, reading requests from stdin and writing responses and events to stdout. It never listens on or opens a network port; stdout is protocol-only and logs go to stderr. The CLI package contains no desktop UI images, fonts, icons, or windowing dependencies. See the [English protocol](docs/CLI_PROTOCOL.md), [Simplified Chinese protocol](docs/CLI_PROTOCOL_ZH.md), and [standard-library Python example](docs/examples/nte_core_client.py) for the lifecycle and calling contract. Both desktop and CLI distributions remain subject to this repository's AGPL/commercial dual-license terms.
-
-Build the CLI with:
-
-```powershell
-cargo build --release --bin nte-core --no-default-features --features cli
-```
-
----
-
-## Usage
-
-1. Install [Npcap](https://npcap.com/) with *WinPcap API-compatible Mode* enabled.
-2. Run the program as Administrator (usually required for live capture).
-3. Launch the NTE client (`HTGame.exe`); the tool auto-selects the adapter and local IP from its active connections.
-4. Start live capture in the main window; frames passing the current BPF filter are written to `logs/nte_raw_*.pcapng`.
-5. View real-time stats in the Overview / Character / Abyss tabs; save or compare de-identified combat summaries in the Console history page.
-
-Once capturing, the Console can import a full PCAPNG or parsed JSON and run the same stable parse pipeline as live capture; after stopping, you can save the current full PCAPNG.
-
----
-
-## Configuration
-
-App settings are saved automatically next to the executable:
-
-```text
-<program directory>\config.json
-```
-
-This covers opacity, light/dark theme, always-on-top, server-damage calibration, and more — restored on next launch without manual editing. A config from older releases at `%LOCALAPPDATA%\NTE DPS Tool\config.json` is migrated automatically on first launch (the legacy file is left in place). Raw captures and panic logs go to `logs\` and combat history to `history\`, both under the program directory as well.
-
-Resource directory layout:
-
-```text
-res/
-  data/characters/   character configs
-  data/skills/       GameplayEffect, skill, damage-name, and category mappings
-  data/reactions/    reaction and reaction-image configs
-  data/abyss/        abyss monster static tables, stat tables, and field display names
-  images/characters/ character avatars
-  images/attributes/ attribute icons
-  images/font/        in-game damage-number font assets
-  images/monsters/    abyss monster avatars
-  images/reactions/   reaction text assets
-  icons/              app icons
-```
-
-The program looks for `res` in the current directory or the executable's parent directory. Character, attribute, damage-number, reaction-text, and abyss-monster images are embedded at compile time as a fallback when external images are missing.
-
----
-
-## Examples
-
-### Screenshots
-
-| Main window | Abyss stats |
-|---|---|
-| <img src="images/EN/main_menu_EN.png" alt="Main window" width="360"> | <img src="images/EN/abyss_EN.png" alt="Abyss stats" width="520"> |
-
-| Team hit details | Character hit details |
-|---|---|
-| <img src="images/EN/team_battle_detail_EN.png" alt="Team hit details" width="520"> | <img src="images/EN/character_battle_detail_EN.png" alt="Character hit details" width="520"> |
-
-| Combat timeline | Customizable HUD |
-|---|---|
-| <img src="images/EN/timeline_EN.png" alt="Combat timeline" width="520"> | <img src="images/EN/HUD_EN.png" alt="Customizable HUD" width="520"> |
-
-### Verifying a build
+### Verification
 
 ```powershell
 cargo fmt --check
@@ -245,9 +245,9 @@ pnpm --dir frontend test
 pwsh -NoProfile -File scripts/verify_architecture.ps1
 ```
 
-The final command verifies that Tauri is the only desktop UI, the root crate no longer owns a desktop binary, and the CLI dependency graph stays isolated from every desktop windowing dependency.
+The final command verifies that Tauri is the only desktop UI and keeps the CLI dependency tree isolated from desktop window dependencies.
 
-Diagnostics tests that depend on real captures are ignored by default. To run them, set `NTE_TEST_CAPTURE=<pcapng-path>` and run:
+Capture-dependent diagnostic tests are ignored by default. Set `NTE_TEST_CAPTURE=<pcapng-path>` and run:
 
 ```powershell
 cargo test -- --ignored
@@ -257,45 +257,56 @@ cargo test -- --ignored
 
 ## FAQ
 
-**Q: No traffic / no data is captured.**
-A: Make sure Npcap is installed with *WinPcap API-compatible Mode* enabled, run as Administrator, and have `HTGame.exe` running. The Tauri desktop Diagnostics page includes an auto-diagnostics wizard that checks the Npcap device, active connections, capture status, raw-packet writing, and damage-parse status step by step.
+### No traffic or damage data appears
 
-**Q: Do I need asset-export keys, usmap, or Python?**
-A: No. Normal use only depends on the in-repo `res/` and the stable protocol key built into the code.
+Confirm that Npcap is installed with *WinPcap API-compatible Mode*, run the tool as Administrator, and start `HTGame.exe`. Then run the wizard under **F12 → Diagnostics**.
 
-**Q: Do saved histories contain sensitive data?**
-A: No. The Console "save this summary" action only writes de-identified statistics (results, character/skill summaries, abyss up/down-line summaries, parse-quality summaries). It does **not** include raw packets, payloads, decoded text, IPs, ports, local paths, or asset-authorization info.
+### Why does `nte-core.exe` exit immediately?
 
-**Q: How accurate is abyss prediction?**
-A: It's based on static monster HP and the selected team's DPS, and does **not** account for invulnerability, phase transitions, movement, or mechanic time — treat it as a reference only.
+It is a command-line Sidecar for third-party software and has no standalone GUI. Players should run `nte-dps-tool.exe`.
 
-**Q: Is this a cheat/hack?**
-A: No. The tool only passively reads local network traffic for statistics. It does not inject, modify, or send anything to the game.
+### Is the native plugin required?
+
+No. Packet-only mode supports the main statistics, history, Abyss, and replay workflows. Precise pause-state timing and selected research features require the optional plugin.
+
+### Is this a cheat?
+
+Packet-only mode passively reads local network traffic and does not inject, modify, or send data to the game. The optional native plugin installs a DLL and uses restricted event and memory capabilities, so it has a separate technical and risk boundary. Using it is the user's decision.
+
+### Why does an Abyss estimate differ from the actual clear time?
+
+The estimate does not include invulnerability, phase transitions, movement, or mechanic downtime. It is intended for planning and comparison.
+
+---
+
+## Known boundaries
+
+Precise enemy-target and scene identification remain under research. `plugins/nte-mods/enemy-telemetry.nte` projects localized enemy names and portraits into combat details only when both the configuration catalog and captured HP continuity match. When no reliable match is available, rely on the raw statistics and parser-quality indicators.
 
 ---
 
 ## Contributing
 
-Issues and Pull Requests are welcome. Before submitting:
+Issues and pull requests are welcome. Before submitting:
 
-- Run `cargo fmt --check`, `cargo check`, and `cargo test` and make sure they pass.
-- **Do not commit sensitive data**: `logs/`, `target/`, `data/`, local captures, full payloads, authorized-asset paths, asset-export keys, usmap, or full unpacked data must not be committed to the repo, issues, PRs, or public reports.
-- Asset export, CUE4Parse probing, and `NTE_Assets` post-processing tooling live in a separate private repo, `kongbaiz/nte-resource-exporter`; when updating `res/`, sync only the necessary distributable asset files.
-- The top-level `NTE_封包解析算法.md` is a de-identified maintenance summary documenting only the public design boundaries of the parser; finer samples, signatures, offsets, function names, and capture correlations should not be published with the public repo.
+- run formatting, compilation, and test checks;
+- do not commit `logs/`, `target/`, `data/`, local captures, full payloads, authorized asset paths, export keys, usmap, or full unpacked data;
+- asset-export and post-processing toolchains are not published here; only necessary redistributable resources should be synchronized;
+- `NTE_封包解析算法.md` documents only the de-identified public design boundary.
 
 ---
 
 ## License
 
-This project is **dual-licensed** (see [LICENSING.md](LICENSING.md)):
+This project uses [dual licensing](LICENSING.md):
 
-- **Open source — [GNU AGPL v3.0](LICENSE)**: you are free to use, modify, and redistribute it, **including commercially**. But under the AGPL's **copyleft**: once you distribute the software, a modified version, **or let users interact with a modified version over a network (SaaS)**, you must release the **complete corresponding source code** under the AGPL. In short — you *can* use it commercially, but you *cannot* build a closed-source product or service on top of it.
-- **Commercial license**: to use it in ways the AGPL does not permit (e.g. inside a **closed-source** product, or a proprietary hosted service without source disclosure), obtain a separate commercial license from the copyright holder — open an issue with the `commercial-license` label; see [LICENSING.md](LICENSING.md) for contact details.
+- **Open-source license — [GNU AGPL v3.0](LICENSE)**: use, modification, redistribution, and commercial use are allowed; distributing a modified version or offering it over a network requires providing the complete corresponding source under the AGPL.
+- **Commercial license**: a separate commercial license is required for closed-source integration or other uses not permitted by the AGPL.
 
-Third-party libraries, runtime components, and asset files retain their own licenses and rights notices — see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [NOTICE.md](NOTICE.md).
+Third-party libraries, runtime components, and resources retain their own licenses and rights. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) and [NOTICE.md](NOTICE.md).
 
 ---
 
 <div align="center">
-<sub>NTE DPS Toolkit · DPS Analyzer & combat diagnostics · Community-maintained, not affiliated with NTE</sub>
+<sub>NTE DPS Toolkit · Local DPS analyzer and combat diagnostics · Community-maintained and unaffiliated with NTE</sub>
 </div>
