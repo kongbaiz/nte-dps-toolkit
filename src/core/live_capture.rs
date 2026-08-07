@@ -311,20 +311,6 @@ impl LiveCaptureService {
         }
     }
 
-    fn queue_current_abyss_archive(&self) {
-        let _gate = self
-            .0
-            .event_gate
-            .lock()
-            .expect("live capture event gate poisoned");
-        let state = self
-            .0
-            .state
-            .lock()
-            .expect("live capture state lock poisoned");
-        self.0.queue_abyss_archive_if_changed(&state);
-    }
-
     pub fn archive_and_reset<P, T, E>(
         &self,
         prepare: impl FnOnce(&CombatState) -> Option<P>,
@@ -708,8 +694,6 @@ impl LiveCaptureService {
         }
         drop(controller);
 
-        self.queue_current_abyss_archive();
-
         let mut status = self
             .0
             .status
@@ -754,38 +738,6 @@ impl LiveCaptureInner {
         self.packet_revision.fetch_add(1, Ordering::AcqRel);
     }
 
-    fn history_hits_generation(state: &CombatState) -> u64 {
-        state
-            .hits_generation
-            .wrapping_add(state.abyss.first_half.hits_generation)
-            .wrapping_add(state.abyss.second_half.hits_generation)
-    }
-
-    fn queue_abyss_archive_if_changed(&self, state: &CombatState) {
-        let has_abyss_hits =
-            !state.abyss.first_half.hits.is_empty() || !state.abyss.second_half.hits.is_empty();
-        if !has_abyss_hits {
-            return;
-        }
-        let history_hits_generation = Self::history_hits_generation(state);
-        if history_hits_generation
-            == self
-                .last_abyss_archive_hits_generation
-                .load(Ordering::Acquire)
-        {
-            return;
-        }
-        let Some(details) = HistoryCombatDetails::from_state(state) else {
-            return;
-        };
-        self.last_abyss_archive_hits_generation
-            .store(history_hits_generation, Ordering::Release);
-        self.pending_abyss_archives
-            .lock()
-            .expect("live capture Abyss archive lock poisoned")
-            .push_back(details);
-    }
-
     fn process_event(&self, event: EngineEvent) {
         let _gate = self
             .event_gate
@@ -793,13 +745,24 @@ impl LiveCaptureInner {
             .expect("live capture event gate poisoned");
         let signal = {
             let mut state = self.state.lock().expect("live capture state lock poisoned");
+            let history_hits_generation = state
+                .hits_generation
+                .wrapping_add(state.abyss.first_half.hits_generation)
+                .wrapping_add(state.abyss.second_half.hits_generation);
             if let EngineEvent::Abyss(abyss) = &event
                 && abyss_event_starts_new_round(state.abyss.floor, abyss)
+                && history_hits_generation
+                    != self
+                        .last_abyss_archive_hits_generation
+                        .load(Ordering::Acquire)
+                && let Some(details) = HistoryCombatDetails::from_state(&state)
             {
-                self.queue_abyss_archive_if_changed(&state);
-            }
-            if matches!(&event, EngineEvent::CaptureStopped) {
-                self.queue_abyss_archive_if_changed(&state);
+                self.last_abyss_archive_hits_generation
+                    .store(history_hits_generation, Ordering::Release);
+                self.pending_abyss_archives
+                    .lock()
+                    .expect("live capture Abyss archive lock poisoned")
+                    .push_back(details);
             }
             if let EngineEvent::Hit(hit) = &event {
                 if !hit.direction.is_incoming() {
@@ -1181,35 +1144,6 @@ mod tests {
         assert_eq!(archives.len(), 1);
         assert_eq!(archives[0].first_half_hits.len(), 1);
         assert_eq!(archives[0].first_half_hits[0].damage, 321.0);
-    }
-
-    #[test]
-    fn final_abyss_round_stays_pending_when_the_session_is_reset() {
-        let service = LiveCaptureService::new(LiveCaptureResources::default());
-        let EngineEvent::Hit(previous_hit) = hit(654.0) else {
-            unreachable!("test helper returns a hit")
-        };
-        {
-            let mut state = service.0.state.lock().expect("live capture state lock");
-            state.apply_abyss_event(AbyssEvent::Stage {
-                timestamp: 0.0,
-                cycle: None,
-                floor: Some(12),
-                half: crate::engine::model::AbyssHalf::Second,
-                allow_late_backfill: false,
-            });
-            state.push_hit(*previous_hit);
-        }
-
-        service.queue_current_abyss_archive();
-        service.queue_current_abyss_archive();
-        service.reset_session();
-
-        let archives = service.take_pending_abyss_archives();
-        assert_eq!(archives.len(), 1);
-        assert_eq!(archives[0].second_half_hits.len(), 1);
-        assert_eq!(archives[0].second_half_hits[0].damage, 654.0);
-        assert!(service.with_state(|state| state.hits.is_empty()));
     }
 
     #[test]

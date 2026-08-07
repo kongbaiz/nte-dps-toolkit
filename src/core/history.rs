@@ -10,14 +10,16 @@ use crate::{
 };
 
 pub fn abyss_event_starts_new_round(current_floor: Option<u32>, event: &AbyssEvent) -> bool {
-    matches!(event, AbyssEvent::RestartDetected { .. })
-        || matches!(
-            event,
-            AbyssEvent::Stage {
-                floor: Some(next_floor),
-                ..
-            } if current_floor.is_some_and(|floor| floor != *next_floor)
-        )
+    matches!(
+        event,
+        AbyssEvent::RestartDetected { .. } | AbyssEvent::Exit { .. }
+    ) || matches!(
+        event,
+        AbyssEvent::Stage {
+            floor: Some(next_floor),
+            ..
+        } if current_floor.is_some_and(|floor| floor != *next_floor)
+    )
 }
 
 pub fn auto_round_due(
@@ -61,6 +63,14 @@ pub fn prepare_history_archive(
 mod tests {
     use super::*;
     use crate::engine::model::{Hit, HitCharacterSource, HitDirection};
+
+    #[test]
+    fn abyss_exit_archives_the_current_round() {
+        assert!(abyss_event_starts_new_round(
+            Some(12),
+            &AbyssEvent::Exit { timestamp: 10.0 },
+        ));
+    }
 
     #[test]
     fn idle_round_requires_running_unpaused_non_abyss_combat() {
