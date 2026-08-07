@@ -3,7 +3,7 @@
 //! [`apply_engine_event`]; neither frontend may keep its own full match over
 //! `EngineEvent` domain-state updates.
 
-use crate::engine::model::{CombatState, EngineEvent, ModScriptEvent};
+use crate::engine::model::{AbyssEvent, CombatState, EngineEvent, ModScriptEvent};
 
 /// What the caller still has to do after the domain state was updated.
 /// Frontend-only side effects (toasts, cache invalidation, thread cleanup,
@@ -56,6 +56,12 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::PacketObserved
         }
         EngineEvent::Abyss(event) => {
+            if matches!(&event, AbyssEvent::RestartDetected { .. })
+                && state.abyss.active_half.is_none()
+                && state.abyss.exited_at.is_some()
+            {
+                state.abyss = Default::default();
+            }
             state.apply_abyss_event(event);
             CoreSignal::StateChanged
         }
@@ -637,6 +643,67 @@ mod tests {
             EngineEvent::Abyss(AbyssEvent::RestartDetected { timestamp: 1.0 }),
         );
         assert_eq!(signal, CoreSignal::StateChanged);
+    }
+
+    #[test]
+    fn abyss_restart_after_exit_resets_previous_party_ownership() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 1.0,
+                cycle: Some(1),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(2.0, 1, 100.0))),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 3.0,
+                cycle: Some(1),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::Second,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(4.0, 2, 200.0))),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Exit { timestamp: 5.0 }),
+        );
+
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::RestartDetected { timestamp: 6.0 }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 7.0,
+                cycle: Some(2),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(8.0, 2, 300.0))),
+        );
+
+        assert_eq!(state.abyss.first_half.hits.len(), 1);
+        assert_eq!(state.abyss.first_half.hits[0].char_id, 2);
+        assert_eq!(state.abyss.first_half.hits[0].damage, 300.0);
+        assert!(state.abyss.second_half.hits.is_empty());
     }
 
     #[test]

@@ -386,22 +386,25 @@ pub(crate) struct MainDpsResetResult {
 }
 
 fn round_snapshots(records: &[HistoryRecord]) -> Vec<MainDpsRoundSnapshot> {
-    std::iter::once(MainDpsRoundSnapshot {
-        id: None,
-        live: true,
-        display_time: None,
-        abyss_floor: None,
-    })
-    .chain(records.iter().filter_map(|record| {
-        record.details.as_ref()?;
-        Some(MainDpsRoundSnapshot {
-            id: Some(record.id.clone()),
-            live: false,
-            display_time: Some(record.display_time()),
-            abyss_floor: record.summary.abyss.floor,
+    records
+        .iter()
+        .rev()
+        .filter_map(|record| {
+            record.details.as_ref()?;
+            Some(MainDpsRoundSnapshot {
+                id: Some(record.id.clone()),
+                live: false,
+                display_time: Some(record.display_time()),
+                abyss_floor: record.summary.abyss.floor,
+            })
         })
-    }))
-    .collect()
+        .chain(std::iter::once(MainDpsRoundSnapshot {
+            id: None,
+            live: true,
+            display_time: None,
+            abyss_floor: None,
+        }))
+        .collect()
 }
 
 fn theme_preset_id(value: ThemePreset) -> &'static str {
@@ -447,6 +450,27 @@ mod tests {
             value["readout"]["characters"].as_array().map(Vec::len),
             Some(0)
         );
+    }
+
+    #[test]
+    fn round_snapshots_follow_previous_next_chronology() {
+        let newest = HistoryRecord {
+            id: "newest".to_owned(),
+            details: Some(Default::default()),
+            ..Default::default()
+        };
+        let older = HistoryRecord {
+            id: "older".to_owned(),
+            details: Some(Default::default()),
+            ..Default::default()
+        };
+
+        let rounds = round_snapshots(&[newest, older]);
+        assert_eq!(rounds.len(), 3);
+        assert_eq!(rounds[0].id.as_deref(), Some("older"));
+        assert_eq!(rounds[1].id.as_deref(), Some("newest"));
+        assert!(rounds[2].live);
+        assert!(rounds[2].id.is_none());
     }
 
     #[test]
