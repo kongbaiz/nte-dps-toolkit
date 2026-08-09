@@ -8,6 +8,7 @@ import {
   parseModStudioDeployment,
   parseModStudioDirectorySelection,
   parseModStudioDocument,
+  parseModStudioGameDirectory,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
   parseModStudioSubscriptionReceipt,
@@ -18,7 +19,7 @@ describe("Mod Studio contract", () => {
   it("parses a bounded workspace index without source bodies", () => {
     expect(
       parseModStudioWorkspace({
-        contractVersion: 9,
+        contractVersion: 10,
         generation: "7",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -31,7 +32,7 @@ describe("Mod Studio contract", () => {
         ],
       }),
     ).toEqual({
-      contractVersion: 9,
+      contractVersion: 10,
       generation: "7",
       workspaceLabel: "plugins/nte-mods",
       documents: [
@@ -56,7 +57,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 9,
+        contractVersion: 10,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -71,7 +72,7 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
     expect(() =>
       parseModStudioWorkspace({
-        contractVersion: 9,
+        contractVersion: 10,
         generation: "0",
         workspaceLabel: "plugins/nte-mods",
         documents: [
@@ -95,13 +96,13 @@ describe("Mod Studio contract", () => {
   it("parses a requested document body", () => {
     expect(
       parseModStudioDocument({
-        contractVersion: 9,
+        contractVersion: 10,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
       }),
     ).toEqual({
-      contractVersion: 9,
+      contractVersion: 10,
       id: "combat-clock",
       enabled: true,
       source: "NTE_SCRIPT(5);",
@@ -111,7 +112,7 @@ describe("Mod Studio contract", () => {
   it("parses privacy-bounded Mod Market catalog items", () => {
     expect(
       parseModMarketCatalog({
-        contractVersion: 9,
+        contractVersion: 10,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "anonymous-read-only",
         mods: [
@@ -167,7 +168,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModMarketCatalog({
-        contractVersion: 9,
+        contractVersion: 10,
         publishedAt: "2026-08-03T00:00:00Z",
         privacyMode: "tracks-device",
         mods: [],
@@ -177,7 +178,7 @@ describe("Mod Studio contract", () => {
 
   it("parses bounded deployment state and a validated manual path selection", () => {
     const deployment = {
-      contractVersion: 9,
+      contractVersion: 10,
       installations: 1,
       installed: 1,
       current: 1,
@@ -208,10 +209,38 @@ describe("Mod Studio contract", () => {
     ).toThrow(ModStudioContractError);
   });
 
+  it("parses a persisted per-region game directory preference", () => {
+    expect(
+      parseModStudioGameDirectory({
+        contractVersion: 1,
+        region: "china",
+        path: "D:\\CustomGame",
+      }),
+    ).toEqual({
+      contractVersion: 1,
+      region: "china",
+      path: "D:\\CustomGame",
+    });
+    expect(
+      parseModStudioGameDirectory({
+        contractVersion: 1,
+        region: "global",
+        path: null,
+      }).path,
+    ).toBeNull();
+    expect(() =>
+      parseModStudioGameDirectory({
+        contractVersion: 2,
+        region: "china",
+        path: null,
+      }),
+    ).toThrow(ModStudioContractError);
+  });
+
   it("parses the bounded versioned Mod SDK schema", () => {
     expect(
       parseModStudioSdkSchema({
-        contractVersion: 9,
+        contractVersion: 10,
         schemaVersion: 2,
         symbols: [
           {
@@ -229,7 +258,7 @@ describe("Mod Studio contract", () => {
     });
     expect(() =>
       parseModStudioSdkSchema({
-        contractVersion: 9,
+        contractVersion: 10,
         schemaVersion: 1,
         symbols: [],
       }),
@@ -273,7 +302,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 9,
+          contractVersion: 10,
           generation: "2",
           entries: [
             {
@@ -310,7 +339,7 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "batch",
         payload: {
-          contractVersion: 9,
+          contractVersion: 10,
           generation: "2",
           entries: [
             {
@@ -356,14 +385,24 @@ describe("Mod Studio contract", () => {
       parseModStudioRuntimeEvent({
         event: "connection",
         payload: {
-          contractVersion: 9,
+          contractVersion: 10,
           generation: "3",
-          connected: false,
+          status: "waiting",
         },
       }),
     ).toMatchObject({
       event: "connection",
-      payload: { generation: "3", connected: false },
+      payload: { generation: "3", status: "waiting" },
     });
+    expect(() =>
+      parseModStudioRuntimeEvent({
+        event: "connection",
+        payload: {
+          contractVersion: 10,
+          generation: "3",
+          status: "installed",
+        },
+      }),
+    ).toThrow(ModStudioContractError);
   });
 });

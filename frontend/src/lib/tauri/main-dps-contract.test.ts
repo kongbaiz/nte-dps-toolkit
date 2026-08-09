@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { parseMainDpsSnapshot } from "./main-dps-contract";
+import {
+  MAIN_DPS_MAX_HISTORY_RECORDS,
+  MAIN_DPS_MAX_ROUNDS,
+  parseMainDpsSnapshot,
+} from "./main-dps-contract";
 
 const sample = {
-  contractVersion: 3,
+  contractVersion: 4,
   generation: "7",
   captureGeneration: "3",
   presentationGeneration: "2",
@@ -66,12 +70,14 @@ const sample = {
     importReplayRequiresConfirmation: false,
   },
   gameDetected: false,
+  gameDetectionStatus: "notRunning",
   hasLiveSessionData: false,
   onboarding: {
     done: true,
     step: 0,
     captureDeviceCount: 1,
     gameDetected: false,
+    gameDetectionStatus: "notRunning",
     passthroughHotkeyLabel: "F12",
     passthroughHotkeyReady: true,
   },
@@ -80,6 +86,91 @@ const sample = {
 describe("main DPS contract", () => {
   it("parses the versioned empty projection", () => {
     expect(parseMainDpsSnapshot(sample).rounds[0]?.live).toBe(true);
+  });
+
+  it("preserves probe failure instead of treating it as a normal negative", () => {
+    const parsed = parseMainDpsSnapshot({
+      ...sample,
+      gameDetectionStatus: "probeFailed",
+      onboarding: {
+        ...sample.onboarding,
+        gameDetectionStatus: "probeFailed",
+      },
+    });
+
+    expect(parsed.gameDetected).toBe(false);
+    expect(parsed.gameDetectionStatus).toBe("probeFailed");
+    expect(parsed.onboarding.gameDetectionStatus).toBe("probeFailed");
+  });
+
+  it("accepts the Rust history limit plus exactly one live row", () => {
+    const history = Array.from(
+      { length: MAIN_DPS_MAX_HISTORY_RECORDS },
+      (_, index) => ({
+        id: `record-${index}`,
+        live: false,
+        displayTime: "00:00:00",
+        abyssFloor: null,
+      }),
+    );
+
+    const parsed = parseMainDpsSnapshot({
+      ...sample,
+      rounds: [
+        ...history,
+        { id: null, live: true, displayTime: null, abyssFloor: null },
+      ],
+    });
+
+    expect(parsed.rounds).toHaveLength(MAIN_DPS_MAX_ROUNDS);
+    expect(parsed.rounds.filter((round) => round.live)).toHaveLength(1);
+  });
+
+  it("rejects an over-limit history list instead of silently slicing it", () => {
+    const rounds: Array<{
+      id: string | null;
+      live: boolean;
+      displayTime: string | null;
+      abyssFloor: number | null;
+    }> = Array.from({ length: MAIN_DPS_MAX_ROUNDS + 1 }, (_, index) => ({
+      id: `record-${index}`,
+      live: false,
+      displayTime: "00:00:00",
+      abyssFloor: null,
+    }));
+    rounds.push({ id: null, live: true, displayTime: null, abyssFloor: null });
+
+    expect(() => parseMainDpsSnapshot({ ...sample, rounds })).toThrow(
+      "rounds exceeds the contract limit",
+    );
+  });
+
+  it("rejects snapshots without exactly one live row", () => {
+    expect(() => parseMainDpsSnapshot({ ...sample, rounds: [] })).toThrow(
+      "rounds must contain exactly one live row",
+    );
+    expect(() =>
+      parseMainDpsSnapshot({
+        ...sample,
+        rounds: [
+          { id: null, live: true, displayTime: null, abyssFloor: null },
+          { id: null, live: true, displayTime: null, abyssFloor: null },
+        ],
+      }),
+    ).toThrow("rounds must contain exactly one live row");
+    expect(() =>
+      parseMainDpsSnapshot({
+        ...sample,
+        rounds: [
+          {
+            id: "live-with-id",
+            live: true,
+            displayTime: null,
+            abyssFloor: null,
+          },
+        ],
+      }),
+    ).toThrow("live row must have a null id");
   });
 
   it("rejects unbounded numeric values at the bridge", () => {

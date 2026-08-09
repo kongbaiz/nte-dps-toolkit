@@ -142,7 +142,7 @@ fn load_map(language: Language) -> HashMap<String, String> {
 /// whenever the settings dropdown changes.
 pub fn set_language(language: Language) {
     let map = load_map(language);
-    let mut store = STORE.write().expect("i18n store lock poisoned");
+    let mut store = STORE.write().unwrap_or_else(|poison| poison.into_inner());
     store.language = language;
     store.map = map;
 }
@@ -150,13 +150,16 @@ pub fn set_language(language: Language) {
 /// The active UI language. Lets non-UI display helpers pick a localized field
 /// without threading the setting through every call.
 pub fn current_language() -> Language {
-    STORE.read().expect("i18n store lock poisoned").language
+    STORE
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .language
 }
 
 /// Translate an English key into the active language. Returns the key unchanged for
 /// English or when the locale map has no entry for it.
 pub fn t(key: &str) -> String {
-    let store = STORE.read().expect("i18n store lock poisoned");
+    let store = STORE.read().unwrap_or_else(|poison| poison.into_inner());
     if matches!(store.language, Language::English) {
         return key.to_owned();
     }

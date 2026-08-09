@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -32,18 +32,18 @@ use crate::engine::model::{
     ModScriptEventPhase, PacketDebug, PacketObservation, PartyCombatState, TimeStopEvent,
 };
 use crate::engine::parser::{
-    AbilityCatalog, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, EquipmentKind,
-    GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH, GameplayEffectSkill,
-    ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot, ParsedGameplayEffect,
-    SKILL_DAMAGE_DATA_PATH, classify_attack_type, declared_character_ids_from_evidence,
-    find_data_file, find_declared_character_evidence, find_final_tower_character_evidence,
-    load_enemy_catalog, load_equipment_catalog, load_gameplay_effect_mapping,
-    matches_shifted_bytes_at, normalize_damage_name, parse_boss_hp_updates,
-    parse_current_hp_updates, parse_damage_payload, parse_empty_curtain_character_owners,
-    parse_empty_curtain_compact_module_placements, parse_empty_curtain_equipment_snapshot,
-    parse_empty_curtain_item_additions, parse_empty_curtain_item_removals,
-    parse_empty_curtain_items, parse_equipment_slots, parse_gameplay_effects, qte_reaction_type,
-    valid_item_net_id, validate_empty_curtain_snapshot,
+    AbilityCatalog, DamageRecordEncoding, ENEMY_CATALOG_PATH, EQUIPMENT_CATALOG_PATH,
+    EquipmentCatalog, EquipmentKind, GAMEPLAY_EFFECT_MAPPING_PATH, GAMEPLAY_EFFECT_SEMANTICS_PATH,
+    GameplayEffectSkill, ParsedEmptyCurtainEquipmentSnapshot, ParsedEquipmentSlot,
+    ParsedGameplayEffect, SKILL_DAMAGE_DATA_PATH, classify_attack_type, damage_record_encoding_at,
+    declared_character_ids_from_evidence, find_data_file, find_declared_character_evidence,
+    find_final_tower_character_evidence, load_enemy_catalog, load_equipment_catalog,
+    load_gameplay_effect_mapping, matches_shifted_bytes_at, normalize_damage_name,
+    parse_boss_hp_updates, parse_current_hp_updates, parse_damage_payload,
+    parse_empty_curtain_character_owners, parse_empty_curtain_compact_module_placements,
+    parse_empty_curtain_equipment_snapshot, parse_empty_curtain_item_additions,
+    parse_empty_curtain_item_removals, parse_empty_curtain_items, parse_equipment_slots,
+    parse_gameplay_effects, qte_reaction_type, valid_item_net_id, validate_empty_curtain_snapshot,
 };
 use crate::platform::mods_plugin::{
     CombatClockTransitionSnapshot, query_combat_clock_transitions, query_mod_events,
@@ -74,9 +74,8 @@ const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 const FILETIME_TICKS_PER_SECOND: u64 = 10_000_000;
 const COMBAT_CLOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
-/// Bounded queue between the acquisition thread and the parser thread. Large enough that realistic
-/// game traffic does not fill it; if parsing falls behind, acquisition applies backpressure instead
-/// of silently diverging from the raw capture.
+const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
+const GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS: f64 = 0.5;
 const CAPTURE_FRAME_QUEUE_CAPACITY: usize = 16_384;
 
 struct CaptureFrame {
@@ -1585,15 +1584,18 @@ const UNTYPED_SHADOW_HIT_WINDOW_SECONDS: f64 = 0.05;
 const BOSS_HP_SYNC_WINDOW_SECONDS: f64 = 1.0;
 const SERVER_DAMAGE_CALIBRATION_WINDOW_SECONDS: f64 = 1.0;
 /// The serialized GameplayEffect unique index precedes the first field of its
-/// paired damage record by this fixed distance.
-const GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS: usize = 1330;
+/// paired legacy damage record by this SDK-specific fixed distance.
+const LEGACY_GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS: usize = 1330;
 /// Compact FHTClientActiveGE data in the client fight-data wrapper follows its
 /// paired damage record by this fixed distance.
 const DAMAGE_RECORD_TO_COMPACT_GAMEPLAY_EFFECT_BITS: usize = 1255;
+/// The bool/enum SDK moved the record-local damage GameplayEffect after the
+/// damage field. The alternate distance is used by periodic/reaction records.
+const BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS: [usize; 2] = [1508, 1524];
 /// The source character selected by reaction settlement brackets its damage
-/// record at these fixed offsets. Both copies must agree before attribution.
-const DAMAGE_RECORD_SOURCE_CHARACTER_BEFORE_BITS: usize = 769;
-const DAMAGE_RECORD_SOURCE_CHARACTER_AFTER_BITS: usize = 916;
+/// record at schema-specific offsets. Both copies must agree before attribution.
+const LEGACY_DAMAGE_RECORD_SOURCE_CHARACTER_BITS: (usize, usize) = (769, 916);
+const BOOL_ENUM_DAMAGE_RECORD_SOURCE_CHARACTER_BITS: (usize, usize) = (537, 1173);
 
 fn hit_can_trigger_fuwen_follow_up(hit: &Hit) -> bool {
     match hit.attack_type.as_deref() {
@@ -2096,11 +2098,27 @@ fn append_inventory_bits(
     source: &[u8],
     source_bit_len: usize,
 ) -> Option<()> {
+    append_bounded_bits(
+        destination,
+        destination_bit_len,
+        source,
+        source_bit_len,
+        MAX_INVENTORY_STREAM_BITS,
+    )
+}
+
+fn append_bounded_bits(
+    destination: &mut Vec<u8>,
+    destination_bit_len: &mut usize,
+    source: &[u8],
+    source_bit_len: usize,
+    max_bits: usize,
+) -> Option<()> {
     if source_bit_len > source.len().checked_mul(8)? {
         return None;
     }
     let new_bit_len = destination_bit_len.checked_add(source_bit_len)?;
-    if new_bit_len > MAX_INVENTORY_STREAM_BITS {
+    if new_bit_len > max_bits {
         return None;
     }
     destination.resize(new_bit_len.div_ceil(8), 0);
@@ -2216,11 +2234,9 @@ impl EmptyCurtainDecoder {
         }
         let mut changed = false;
         for item in self.items.values_mut() {
-            let definition = self
-                .catalog
-                .items
-                .get(&item.item_id)
-                .expect("parsed inventory items must have catalog definitions");
+            let Some(definition) = self.catalog.items.get(&item.item_id) else {
+                continue;
+            };
             if definition.kind != kind {
                 continue;
             }
@@ -2686,6 +2702,35 @@ struct PendingGameplayEffectFragment {
     effect: Option<ParsedGameplayEffect>,
 }
 
+struct PendingBoolEnumGameplayEffectFragment {
+    next_sequence: u16,
+    data: Vec<u8>,
+    bit_len: usize,
+    pending_hit: Option<Hit>,
+    updated_at: f64,
+}
+
+struct CompletedBoolEnumGameplayEffectFragment {
+    hit: Hit,
+    payload: Vec<u8>,
+}
+
+#[derive(Default)]
+struct BoolEnumGameplayEffectFragmentObservation {
+    completed: Option<CompletedBoolEnumGameplayEffectFragment>,
+    abandoned_hits: Vec<Hit>,
+}
+
+#[derive(Default)]
+struct BoolEnumGameplayEffectFragmentTracker {
+    // One producer/consumer runs inside PacketDecoder. Streams are ordered by
+    // reliable bunch sequence, capped at 64 entries and 256 KiB each. A gap,
+    // replacement, timeout, or capacity eviction releases the delayed hit
+    // without a guessed skill instead of dropping it or joining stale bytes.
+    pending: HashMap<GameplayEffectFragmentKey, PendingBoolEnumGameplayEffectFragment>,
+    order: VecDeque<GameplayEffectFragmentKey>,
+}
+
 #[derive(Default)]
 struct GameplayEffectFragmentTracker {
     pending: HashMap<GameplayEffectFragmentKey, PendingGameplayEffectFragment>,
@@ -2765,6 +2810,168 @@ impl GameplayEffectFragmentTracker {
     }
 }
 
+impl BoolEnumGameplayEffectFragmentTracker {
+    fn observe(
+        &mut self,
+        timestamp: f64,
+        source: (Ipv4Addr, u16),
+        destination: (Ipv4Addr, u16),
+        bunch: &SingleBunch,
+    ) -> BoolEnumGameplayEffectFragmentObservation {
+        let mut observation = BoolEnumGameplayEffectFragmentObservation {
+            abandoned_hits: self.take_expired(timestamp),
+            ..Default::default()
+        };
+        let key = GameplayEffectFragmentKey {
+            source,
+            destination,
+            channel: reliable_bunch_channel(bunch.prefix),
+        };
+        match bunch.partial_flags {
+            0x09 => {
+                if let Some(replaced) = self.remove(key)
+                    && let Some(hit) = replaced.pending_hit
+                {
+                    observation.abandoned_hits.push(hit);
+                }
+                let mut data = Vec::new();
+                let mut bit_len = 0;
+                if append_bounded_bits(
+                    &mut data,
+                    &mut bit_len,
+                    &bunch.data,
+                    bunch.data_bit_len,
+                    MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS,
+                )
+                .is_some()
+                {
+                    observation.abandoned_hits.extend(self.insert(
+                        key,
+                        PendingBoolEnumGameplayEffectFragment {
+                            next_sequence: (bunch.sequence + 1) & 0x03ff,
+                            data,
+                            bit_len,
+                            pending_hit: None,
+                            updated_at: timestamp,
+                        },
+                    ));
+                }
+            }
+            0x08 | 0x0c => {
+                let Some(mut pending) = self.remove(key) else {
+                    return observation;
+                };
+                if pending.next_sequence != bunch.sequence
+                    || append_bounded_bits(
+                        &mut pending.data,
+                        &mut pending.bit_len,
+                        &bunch.data,
+                        bunch.data_bit_len,
+                        MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS,
+                    )
+                    .is_none()
+                {
+                    observation
+                        .abandoned_hits
+                        .extend(pending.pending_hit.take());
+                    return observation;
+                }
+                pending.next_sequence = (bunch.sequence + 1) & 0x03ff;
+                pending.updated_at = timestamp;
+                if bunch.partial_flags == 0x08 {
+                    observation.abandoned_hits.extend(self.insert(key, pending));
+                } else if let Some(hit) = pending.pending_hit {
+                    observation.completed = Some(CompletedBoolEnumGameplayEffectFragment {
+                        hit,
+                        payload: pending.data,
+                    });
+                }
+            }
+            _ => {
+                if let Some(mut removed) = self.remove(key) {
+                    observation
+                        .abandoned_hits
+                        .extend(removed.pending_hit.take());
+                }
+            }
+        }
+        observation
+    }
+
+    fn attach_hit(
+        &mut self,
+        source: (Ipv4Addr, u16),
+        destination: (Ipv4Addr, u16),
+        bunch: &SingleBunch,
+        hit: Hit,
+    ) -> Option<Hit> {
+        let key = GameplayEffectFragmentKey {
+            source,
+            destination,
+            channel: reliable_bunch_channel(bunch.prefix),
+        };
+        let Some(pending) = self.pending.get_mut(&key) else {
+            return Some(hit);
+        };
+        if bunch.partial_flags != 0x09
+            || pending.next_sequence != (bunch.sequence + 1) & 0x03ff
+            || pending.pending_hit.is_some()
+        {
+            return Some(hit);
+        }
+        pending.pending_hit = Some(hit);
+        None
+    }
+
+    fn take_expired(&mut self, timestamp: f64) -> Vec<Hit> {
+        let expired = self
+            .order
+            .iter()
+            .copied()
+            .filter(|key| {
+                self.pending.get(key).is_some_and(|pending| {
+                    timestamp - pending.updated_at > GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS
+                })
+            })
+            .collect::<Vec<_>>();
+        expired
+            .into_iter()
+            .filter_map(|key| self.remove(key)?.pending_hit)
+            .collect()
+    }
+
+    fn insert(
+        &mut self,
+        key: GameplayEffectFragmentKey,
+        pending: PendingBoolEnumGameplayEffectFragment,
+    ) -> Vec<Hit> {
+        let mut abandoned_hits = Vec::new();
+        if let Some(mut replaced) = self.remove(key) {
+            abandoned_hits.extend(replaced.pending_hit.take());
+        }
+        while self.pending.len() >= MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(mut evicted) = self.pending.remove(&oldest) {
+                abandoned_hits.extend(evicted.pending_hit.take());
+            }
+        }
+        self.order.push_back(key);
+        self.pending.insert(key, pending);
+        abandoned_hits
+    }
+
+    fn remove(
+        &mut self,
+        key: GameplayEffectFragmentKey,
+    ) -> Option<PendingBoolEnumGameplayEffectFragment> {
+        let pending = self.pending.remove(&key)?;
+        self.order.retain(|stored| *stored != key);
+        Some(pending)
+    }
+}
+
 struct PacketDecoder {
     packet_emission: PacketEmissionMode,
     session_characters: HashMap<(Ipv4Addr, u16, Ipv4Addr, u16), u32>,
@@ -2780,6 +2987,7 @@ struct PacketDecoder {
     empty_curtain: EmptyCurtainDecoder,
     frame_dedup: FrameDedup,
     gameplay_effect_fragments: GameplayEffectFragmentTracker,
+    bool_enum_gameplay_effect_fragments: BoolEnumGameplayEffectFragmentTracker,
     resource_warnings: Vec<String>,
 }
 
@@ -2853,6 +3061,7 @@ impl PacketDecoder {
             empty_curtain: EmptyCurtainDecoder::new(equipment_catalog),
             frame_dedup: FrameDedup::default(),
             gameplay_effect_fragments: GameplayEffectFragmentTracker::default(),
+            bool_enum_gameplay_effect_fragments: BoolEnumGameplayEffectFragmentTracker::default(),
             resource_warnings,
         }
     }
@@ -3206,11 +3415,18 @@ fn character_id_at_evidence_location(
         .map(|(character_id, _, _)| *character_id)
 }
 
-fn damage_record_source_character(hit: &Hit, evidence: &[(u32, u8, usize)]) -> Option<u32> {
+fn damage_record_source_character(
+    hit: &Hit,
+    evidence: &[(u32, u8, usize)],
+    encoding: DamageRecordEncoding,
+) -> Option<u32> {
     let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
-    let before_bit_offset =
-        hit_bit_offset.checked_sub(DAMAGE_RECORD_SOURCE_CHARACTER_BEFORE_BITS)?;
-    let after_bit_offset = hit_bit_offset.checked_add(DAMAGE_RECORD_SOURCE_CHARACTER_AFTER_BITS)?;
+    let (before_distance, after_distance) = match encoding {
+        DamageRecordEncoding::LegacyInt32 => LEGACY_DAMAGE_RECORD_SOURCE_CHARACTER_BITS,
+        DamageRecordEncoding::BoolAndEnums => BOOL_ENUM_DAMAGE_RECORD_SOURCE_CHARACTER_BITS,
+    };
+    let before_bit_offset = hit_bit_offset.checked_sub(before_distance)?;
+    let after_bit_offset = hit_bit_offset.checked_add(after_distance)?;
     let character_at = |bit_offset: usize| {
         evidence
             .iter()
@@ -3228,12 +3444,13 @@ fn damage_record_source_character(hit: &Hit, evidence: &[(u32, u8, usize)]) -> O
 fn reattribute_hit_from_damage_record_owner(
     hit: &mut Hit,
     evidence: &[(u32, u8, usize)],
+    encoding: DamageRecordEncoding,
     characters: &HashMap<u32, CharacterInfo>,
 ) {
     if !hit.direction.is_outgoing() {
         return;
     }
-    let Some(character_id) = damage_record_source_character(hit, evidence) else {
+    let Some(character_id) = damage_record_source_character(hit, evidence, encoding) else {
         return;
     };
     if character_id != hit.char_id {
@@ -3285,7 +3502,7 @@ fn matching_gameplay_effect<'a>(
                 belongs_to_current_record(effect)
                     && effect.byte_offset * 8
                         + usize::from(effect.bit_shift)
-                        + GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS
+                        + LEGACY_GAMEPLAY_EFFECT_TO_DAMAGE_RECORD_BITS
                         == hit_bit_offset
             })
         })
@@ -3293,6 +3510,49 @@ fn matching_gameplay_effect<'a>(
             // A fragmented bunch can carry the GE in its head and the sole
             // damage record in its tail, so their packet-local offsets differ.
             (previous_hit_bit_offset.is_none() && effects.len() == 1).then(|| &effects[0])
+        })
+}
+
+fn read_u32_at_bit_offset(data: &[u8], bit_offset: usize) -> Option<u32> {
+    let byte_offset = bit_offset / 8;
+    let bit_shift = bit_offset % 8;
+    let mut decoded = [0_u8; 4];
+    for (index, byte) in decoded.iter_mut().enumerate() {
+        let source_offset = byte_offset.checked_add(index)?;
+        let current = *data.get(source_offset)?;
+        let mut value = u16::from(current) >> bit_shift;
+        if bit_shift != 0 {
+            value |= u16::from(*data.get(source_offset.checked_add(1)?)?) << (8 - bit_shift);
+        }
+        *byte = value as u8;
+    }
+    Some(u32::from_le_bytes(decoded))
+}
+
+fn matching_bool_enum_gameplay_effect(
+    payload: &[u8],
+    hit: &Hit,
+    encoding: DamageRecordEncoding,
+    names: &HashMap<u32, String>,
+    ability_catalog: &AbilityCatalog,
+) -> Option<ParsedGameplayEffect> {
+    if encoding != DamageRecordEncoding::BoolAndEnums {
+        return None;
+    }
+    let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
+    BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS
+        .into_iter()
+        .find_map(|distance| {
+            let effect_bit_offset = hit_bit_offset.checked_add(distance)?;
+            let unique_index = read_u32_at_bit_offset(payload, effect_bit_offset)?;
+            let effect_name = names.get(&unique_index)?;
+            is_damage_gameplay_effect(effect_name, ability_catalog.skill(effect_name)).then_some(
+                ParsedGameplayEffect {
+                    unique_index,
+                    byte_offset: effect_bit_offset / 8,
+                    bit_shift: (effect_bit_offset % 8) as u8,
+                },
+            )
         })
 }
 
@@ -3306,12 +3566,24 @@ fn enrich_hit_with_gameplay_effect(
     let Some(effect) = matching_gameplay_effect(hit, effects, previous_hit_bit_offset) else {
         return;
     };
-    hit.gameplay_effect_index = Some(effect.unique_index);
+    apply_gameplay_effect(hit, effect, names, ability_catalog);
+}
+
+fn apply_gameplay_effect(
+    hit: &mut Hit,
+    effect: &ParsedGameplayEffect,
+    names: &HashMap<u32, String>,
+    ability_catalog: &AbilityCatalog,
+) {
     let Some(effect_name) = names.get(&effect.unique_index) else {
         return;
     };
-    hit.gameplay_effect_name = Some(effect_name.clone());
     let skill = ability_catalog.skill(effect_name);
+    if !is_damage_gameplay_effect(effect_name, skill) {
+        return;
+    }
+    hit.gameplay_effect_index = Some(effect.unique_index);
+    hit.gameplay_effect_name = Some(effect_name.clone());
     if let Some(skill) = skill {
         hit.ability_name = skill.ability_name.clone();
         hit.attack_type = Some(skill.attack_type.clone());
@@ -3319,7 +3591,13 @@ fn enrich_hit_with_gameplay_effect(
     } else {
         hit.attack_type = Some(classify_attack_type(None, effect_name, None));
     }
-    if is_known_incoming_damage_effect(effect_name) {
+    // A GameplayEffect name is only a fallback direction signal. When the
+    // damage record already carries a target snapshot, its packet-local
+    // direction is stronger evidence: the latest capture contains monster
+    // `Hitout` effects on the boss HP stream, which must remain outgoing.
+    if is_known_incoming_damage_effect(effect_name)
+        && (hit.direction.is_unknown() || hit.target_max_hp <= 0.0)
+    {
         hit.direction = HitDirection::Incoming;
     }
     if is_known_outgoing_damage_effect(effect_name, skill) {
@@ -3330,6 +3608,13 @@ fn enrich_hit_with_gameplay_effect(
         hit.damage_attribute = Some("物理".to_owned());
         hit.attack_type = Some("载具伤害".to_owned());
     }
+}
+
+fn is_damage_gameplay_effect(effect_name: &str, skill: Option<&GameplayEffectSkill>) -> bool {
+    skill.is_some()
+        || is_known_incoming_damage_effect(effect_name)
+        || is_known_outgoing_damage_effect(effect_name, skill)
+        || is_vehicle_physical_damage_effect(effect_name)
 }
 
 fn reattribute_hit_from_gameplay_effect_semantics(
@@ -3440,7 +3725,9 @@ fn is_known_incoming_damage_effect(effect_name: &str) -> bool {
     let effect_name_lower = effect_name.to_ascii_lowercase();
     (effect_name_lower.starts_with("ge_mon_") || effect_name_lower.starts_with("ge_boss_"))
         && !effect_name_lower.contains("steal")
-        && (effect_name_lower.contains("damage") || effect_name_lower.contains("_dmg"))
+        && (effect_name_lower.contains("damage")
+            || effect_name_lower.contains("_dmg")
+            || effect_name_lower.contains("hitout"))
 }
 
 fn is_vehicle_physical_damage_effect(effect_name: &str) -> bool {
@@ -3528,6 +3815,43 @@ fn reattribute_orphan_reaction(
 }
 
 impl PacketDecoder {
+    fn finalize_contextual_hit_attribution(
+        &mut self,
+        hit: &mut Hit,
+        timestamp: f64,
+        characters: &HashMap<u32, CharacterInfo>,
+    ) {
+        if hit
+            .attack_type
+            .as_deref()
+            .is_some_and(|attack_type| attack_type.starts_with("环合"))
+        {
+            let previous_declared_character = self
+                .character_declarations
+                .iter()
+                .filter(|(character_id, declared_at)| {
+                    **character_id != hit.char_id && timestamp - **declared_at <= 3.0
+                })
+                .max_by(|left, right| left.1.total_cmp(right.1))
+                .map(|(character_id, _)| *character_id);
+            let previous_attribute = previous_declared_character
+                .and_then(|character_id| characters.get(&character_id))
+                .and_then(|character| character.attribute.as_deref());
+            let entering_attribute = characters
+                .get(&hit.char_id)
+                .and_then(|character| character.attribute.as_deref());
+            if let (Some(previous_attribute), Some(entering_attribute)) =
+                (previous_attribute, entering_attribute)
+                && let Some(reaction_type) =
+                    qte_reaction_type(previous_attribute, entering_attribute)
+            {
+                hit.attack_type = Some(format!("环合·{reaction_type}"));
+            }
+        }
+        reattribute_orphan_reaction(hit, &self.character_declarations, timestamp, characters);
+        self.follow_up_damage.observe_fuwen_trigger_hit(hit);
+    }
+
     fn process_ethernet_frame(
         &mut self,
         packet: &[u8],
@@ -3560,8 +3884,31 @@ impl PacketDecoder {
             PacketEmissionMode::SummaryOnly => decode_summary_payload_text(payload),
         };
         let decoded_text = decoded_payload.text;
-        let evidence = find_declared_character_evidence(payload);
-        let final_tower_evidence = find_final_tower_character_evidence(payload);
+        let transport_packet = parse_transport_packet(payload);
+        let single_bunch = match &transport_packet {
+            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
+            _ => None,
+        };
+        let mut bool_enum_fragment_observation = match single_bunch.as_ref() {
+            Some(bunch) => self.bool_enum_gameplay_effect_fragments.observe(
+                timestamp,
+                (src, src_port),
+                (dst, dst_port),
+                bunch,
+            ),
+            None => BoolEnumGameplayEffectFragmentObservation {
+                abandoned_hits: self
+                    .bool_enum_gameplay_effect_fragments
+                    .take_expired(timestamp),
+                ..Default::default()
+            },
+        };
+        let combat_payload = single_bunch
+            .as_ref()
+            .filter(|bunch| bunch.partial_flags == 0x09)
+            .map_or(payload, |bunch| bunch.data.as_slice());
+        let evidence = find_declared_character_evidence(combat_payload);
+        let final_tower_evidence = find_final_tower_character_evidence(combat_payload);
         let character_evidence = merged_character_evidence(&evidence, &final_tower_evidence);
         let ids = character_ids_from_evidence_sources(&evidence, &final_tower_evidence);
         self.follow_up_damage
@@ -3571,12 +3918,7 @@ impl PacketDecoder {
             self.client_endpoints.insert((src, src_port));
         }
         let direction = if outgoing { "C2S" } else { "S2C" };
-        let transport_packet = parse_transport_packet(payload);
-        let single_bunch = match &transport_packet {
-            Some(TransportPacket::Sequenced(packet)) => parse_single_bunch(packet),
-            _ => None,
-        };
-        let gameplay_effects = parse_gameplay_effects(payload);
+        let gameplay_effects = parse_gameplay_effects(combat_payload);
         let inherited_gameplay_effect = single_bunch.as_ref().and_then(|bunch| {
             self.gameplay_effect_fragments.observe(
                 (src, src_port),
@@ -3597,7 +3939,7 @@ impl PacketDecoder {
             }
             let fallback = self.session_characters.get(&session_key).copied();
             parse_damage_payload(
-                payload,
+                combat_payload,
                 timestamp,
                 packet_char_id,
                 fallback,
@@ -3613,46 +3955,101 @@ impl PacketDecoder {
         let mut previous_hit_bit_offset = None;
         for hit in &mut hits {
             let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
-            enrich_hit_with_gameplay_effect(
-                hit,
-                effective_gameplay_effects,
-                &self.gameplay_effect_names,
-                &self.ability_catalog,
-                previous_hit_bit_offset,
-            );
+            let record_encoding =
+                damage_record_encoding_at(combat_payload, hit.byte_offset, hit.bit_shift);
+            let bool_enum_effect = record_encoding.and_then(|encoding| {
+                matching_bool_enum_gameplay_effect(
+                    combat_payload,
+                    hit,
+                    encoding,
+                    &self.gameplay_effect_names,
+                    &self.ability_catalog,
+                )
+            });
+            if let Some(effect) = bool_enum_effect.as_ref() {
+                apply_gameplay_effect(
+                    hit,
+                    effect,
+                    &self.gameplay_effect_names,
+                    &self.ability_catalog,
+                );
+            } else {
+                enrich_hit_with_gameplay_effect(
+                    hit,
+                    effective_gameplay_effects,
+                    &self.gameplay_effect_names,
+                    &self.ability_catalog,
+                    previous_hit_bit_offset,
+                );
+            }
             previous_hit_bit_offset = Some(hit_bit_offset);
-            reattribute_hit_from_damage_record_owner(hit, &evidence, characters);
+            if let Some(encoding) = record_encoding {
+                reattribute_hit_from_damage_record_owner(hit, &evidence, encoding, characters);
+            }
             reattribute_hit_from_gameplay_effect_semantics(hit, &self.ability_catalog, characters);
             reattribute_hit_from_ability_name(hit, !final_tower_evidence.is_empty(), characters);
-            if hit
-                .attack_type
-                .as_deref()
-                .is_some_and(|attack_type| attack_type.starts_with("环合"))
-            {
-                let previous_declared_character = self
-                    .character_declarations
-                    .iter()
-                    .filter(|(character_id, declared_at)| {
-                        **character_id != hit.char_id && timestamp - **declared_at <= 3.0
-                    })
-                    .max_by(|left, right| left.1.total_cmp(right.1))
-                    .map(|(character_id, _)| *character_id);
-                let previous_attribute = previous_declared_character
-                    .and_then(|character_id| characters.get(&character_id))
-                    .and_then(|character| character.attribute.as_deref());
-                let entering_attribute = characters
-                    .get(&hit.char_id)
-                    .and_then(|character| character.attribute.as_deref());
-                if let (Some(previous_attribute), Some(entering_attribute)) =
-                    (previous_attribute, entering_attribute)
-                    && let Some(reaction_type) =
-                        qte_reaction_type(previous_attribute, entering_attribute)
-                {
-                    hit.attack_type = Some(format!("环合·{reaction_type}"));
-                }
+        }
+
+        if let Some(bunch) = single_bunch
+            .as_ref()
+            .filter(|bunch| bunch.partial_flags == 0x09)
+            && hits.last().is_some_and(|hit| {
+                hit.gameplay_effect_name.is_none()
+                    && damage_record_encoding_at(combat_payload, hit.byte_offset, hit.bit_shift)
+                        == Some(DamageRecordEncoding::BoolAndEnums)
+                    && hit.byte_offset * 8
+                        + usize::from(hit.bit_shift)
+                        + BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS[0]
+                        + 32
+                        > bunch.data_bit_len
+            })
+            && let Some(pending_hit) = hits.pop()
+        {
+            if let Some(hit) = self.bool_enum_gameplay_effect_fragments.attach_hit(
+                (src, src_port),
+                (dst, dst_port),
+                bunch,
+                pending_hit,
+            ) {
+                hits.push(hit);
             }
-            reattribute_orphan_reaction(hit, &self.character_declarations, timestamp, characters);
-            self.follow_up_damage.observe_fuwen_trigger_hit(hit);
+        }
+
+        if let Some(mut completed) = bool_enum_fragment_observation.completed.take() {
+            let encoding = damage_record_encoding_at(
+                &completed.payload,
+                completed.hit.byte_offset,
+                completed.hit.bit_shift,
+            );
+            let effect = encoding.and_then(|encoding| {
+                matching_bool_enum_gameplay_effect(
+                    &completed.payload,
+                    &completed.hit,
+                    encoding,
+                    &self.gameplay_effect_names,
+                    &self.ability_catalog,
+                )
+            });
+            if let Some(effect) = effect.as_ref() {
+                apply_gameplay_effect(
+                    &mut completed.hit,
+                    effect,
+                    &self.gameplay_effect_names,
+                    &self.ability_catalog,
+                );
+                reattribute_hit_from_gameplay_effect_semantics(
+                    &mut completed.hit,
+                    &self.ability_catalog,
+                    characters,
+                );
+                reattribute_hit_from_ability_name(&mut completed.hit, false, characters);
+            }
+            hits.push(completed.hit);
+        }
+        hits.append(&mut bool_enum_fragment_observation.abandoned_hits);
+        for hit in &mut hits {
+            let hit_timestamp = hit.timestamp;
+            self.finalize_contextual_hit_attribution(hit, hit_timestamp, characters);
         }
         let prepared_hits =
             self.prepare_hits_for_emission(hits, &ids, include_incoming, characters);
@@ -4793,6 +5190,276 @@ fn format_capture_time(timestamp: f64) -> String {
         .to_string()
 }
 
+/// Byte budget enforced before a capture JSON export is read into memory.
+/// The check runs on the shared Rust import boundary, never only in a Tauri
+/// command or frontend drag-drop handler.
+pub const MAX_CAPTURE_JSON_IMPORT_BYTES: u64 = 256 * 1024 * 1024;
+/// Structural budget for parsed hits. The live engine itself retains at most
+/// [`MAX_COMBAT_HITS`]; this allows legitimate full exports with headroom.
+pub const MAX_CAPTURE_JSON_IMPORT_HITS: usize = 500_000;
+/// Structural budget for parsed packet records in a capture export.
+pub const MAX_CAPTURE_JSON_IMPORT_PACKETS: usize = 500_000;
+/// Structural budgets for lower-volume capture metadata collections.
+pub const MAX_CAPTURE_JSON_IMPORT_PARTY_ROWS: usize = 64;
+pub const MAX_CAPTURE_JSON_IMPORT_EMPTY_CURTAIN_ITEMS: usize = 4_096;
+pub const MAX_CAPTURE_JSON_IMPORT_EMPTY_CURTAIN_CHARACTERS: usize = 64;
+pub const MAX_CAPTURE_JSON_IMPORT_TIME_STOP_EVENTS: usize = 500_000;
+pub const MAX_CAPTURE_JSON_IMPORT_ITEM_STATS: usize = 32;
+pub const MAX_CAPTURE_JSON_IMPORT_TARGET_CONTEXT: usize = 64;
+pub const MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS: usize = 64;
+
+#[derive(Clone, Copy)]
+struct CaptureImportStructureLimits {
+    hits: usize,
+    packets: usize,
+    party_rows: usize,
+    abyss_party_rows: usize,
+    empty_curtain_items: usize,
+    empty_curtain_characters: usize,
+    time_stop_events: usize,
+    item_stats: usize,
+    target_context: usize,
+    declared_ids: usize,
+}
+
+const CAPTURE_IMPORT_STRUCTURE_LIMITS: CaptureImportStructureLimits =
+    CaptureImportStructureLimits {
+        hits: MAX_CAPTURE_JSON_IMPORT_HITS,
+        packets: MAX_CAPTURE_JSON_IMPORT_PACKETS,
+        party_rows: MAX_CAPTURE_JSON_IMPORT_PARTY_ROWS,
+        abyss_party_rows: MAX_CAPTURE_JSON_IMPORT_PARTY_ROWS,
+        empty_curtain_items: MAX_CAPTURE_JSON_IMPORT_EMPTY_CURTAIN_ITEMS,
+        empty_curtain_characters: MAX_CAPTURE_JSON_IMPORT_EMPTY_CURTAIN_CHARACTERS,
+        time_stop_events: MAX_CAPTURE_JSON_IMPORT_TIME_STOP_EVENTS,
+        item_stats: MAX_CAPTURE_JSON_IMPORT_ITEM_STATS,
+        target_context: MAX_CAPTURE_JSON_IMPORT_TARGET_CONTEXT,
+        declared_ids: MAX_CAPTURE_JSON_IMPORT_DECLARED_IDS,
+    };
+
+/// Typed rejection reasons for capture JSON imports. Messages intentionally
+/// never embed the full local path of the rejected file.
+#[derive(Debug)]
+pub enum CaptureImportError {
+    NotAFile,
+    TooLarge {
+        size: u64,
+        limit: u64,
+    },
+    TooManyHits {
+        count: usize,
+        limit: usize,
+    },
+    TooManyPackets {
+        count: usize,
+        limit: usize,
+    },
+    TooManyRecords {
+        field: &'static str,
+        count: usize,
+        limit: usize,
+    },
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for CaptureImportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotAFile => write!(formatter, "import path is not a regular file"),
+            Self::TooLarge { size, limit } => write!(
+                formatter,
+                "import file is too large ({size} bytes; limit {limit} bytes)"
+            ),
+            Self::TooManyHits { count, limit } => write!(
+                formatter,
+                "capture export has too many hits ({count}; limit {limit})"
+            ),
+            Self::TooManyPackets { count, limit } => write!(
+                formatter,
+                "capture export has too many packets ({count}; limit {limit})"
+            ),
+            Self::TooManyRecords {
+                field,
+                count,
+                limit,
+            } => write!(
+                formatter,
+                "capture export field {field} has too many records ({count}; limit {limit})"
+            ),
+            Self::Io(error) => write!(formatter, "cannot read import file: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for CaptureImportError {}
+
+/// Checks a capture JSON import path before any bytes are read:
+/// - the path must be a regular file;
+/// - its metadata size must fit the import budget.
+///
+/// Every replay/import entry point must call this before `read_to_string`.
+pub fn validate_capture_json_import(path: &Path) -> Result<(), CaptureImportError> {
+    validate_capture_json_import_with_limit(path, MAX_CAPTURE_JSON_IMPORT_BYTES)
+}
+
+fn validate_capture_json_import_with_limit(
+    path: &Path,
+    limit: u64,
+) -> Result<(), CaptureImportError> {
+    let metadata = std::fs::metadata(path).map_err(CaptureImportError::Io)?;
+    if !metadata.is_file() {
+        return Err(CaptureImportError::NotAFile);
+    }
+    let size = metadata.len();
+    if size > limit {
+        return Err(CaptureImportError::TooLarge { size, limit });
+    }
+    Ok(())
+}
+
+fn read_bounded_utf8(
+    reader: impl Read,
+    checked_size: u64,
+    limit: u64,
+) -> Result<String, CaptureImportError> {
+    if checked_size > limit {
+        return Err(CaptureImportError::TooLarge {
+            size: checked_size,
+            limit,
+        });
+    }
+    let mut reader = reader.take(limit.saturating_add(1));
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(CaptureImportError::Io)?;
+    let actual_size = bytes.len() as u64;
+    if actual_size > limit {
+        return Err(CaptureImportError::TooLarge {
+            size: actual_size,
+            limit,
+        });
+    }
+    String::from_utf8(bytes).map_err(|error| {
+        CaptureImportError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })
+}
+
+fn read_capture_json_import_with_limit(
+    path: &Path,
+    limit: u64,
+) -> Result<String, CaptureImportError> {
+    let file = File::open(path).map_err(CaptureImportError::Io)?;
+    let metadata = file.metadata().map_err(CaptureImportError::Io)?;
+    if !metadata.is_file() {
+        return Err(CaptureImportError::NotAFile);
+    }
+    read_bounded_utf8(file, metadata.len(), limit)
+}
+
+/// Structural budgets applied after JSON parsing so a hostile or corrupted
+/// export cannot allocate unbounded hit/packet vectors.
+fn validate_capture_export_structure(
+    document: &CaptureExportDocument,
+) -> Result<(), CaptureImportError> {
+    validate_capture_export_structure_with_limits(document, CAPTURE_IMPORT_STRUCTURE_LIMITS)
+}
+
+fn validate_capture_export_structure_with_limits(
+    document: &CaptureExportDocument,
+    limits: CaptureImportStructureLimits,
+) -> Result<(), CaptureImportError> {
+    if document.hits.len() > limits.hits {
+        return Err(CaptureImportError::TooManyHits {
+            count: document.hits.len(),
+            limit: limits.hits,
+        });
+    }
+    if document.packets.len() > limits.packets {
+        return Err(CaptureImportError::TooManyPackets {
+            count: document.packets.len(),
+            limit: limits.packets,
+        });
+    }
+    validate_capture_collection("party", document.party.len(), limits.party_rows)?;
+    validate_capture_collection(
+        "abyss.first_half.party",
+        document.abyss.first_half.party.len(),
+        limits.abyss_party_rows,
+    )?;
+    validate_capture_collection(
+        "abyss.second_half.party",
+        document.abyss.second_half.party.len(),
+        limits.abyss_party_rows,
+    )?;
+    validate_capture_collection(
+        "empty_curtain",
+        document.empty_curtain.len(),
+        limits.empty_curtain_items,
+    )?;
+    validate_capture_collection(
+        "empty_curtain_characters",
+        document.empty_curtain_characters.len(),
+        limits.empty_curtain_characters,
+    )?;
+    validate_capture_collection(
+        "time_stop_events",
+        document.time_stop_events.len(),
+        limits.time_stop_events,
+    )?;
+    for item in &document.empty_curtain {
+        validate_capture_collection(
+            "empty_curtain[].main_stats",
+            item.main_stats.len(),
+            limits.item_stats,
+        )?;
+        validate_capture_collection(
+            "empty_curtain[].sub_stats",
+            item.sub_stats.len(),
+            limits.item_stats,
+        )?;
+    }
+    for hit in &document.hits {
+        validate_capture_collection(
+            "hits[].target_context",
+            hit.target_context.len(),
+            limits.target_context,
+        )?;
+    }
+    for packet in &document.packets {
+        let declared_id_count = match &packet.declared_ids {
+            serde_json::Value::Array(values) => values.len(),
+            serde_json::Value::String(value) => value
+                .trim_matches(['[', ']'])
+                .split(',')
+                .filter(|part| !part.trim().is_empty())
+                .take(limits.declared_ids.saturating_add(1))
+                .count(),
+            _ => 0,
+        };
+        validate_capture_collection(
+            "packets[].declared_ids",
+            declared_id_count,
+            limits.declared_ids,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_capture_collection(
+    field: &'static str,
+    count: usize,
+    limit: usize,
+) -> Result<(), CaptureImportError> {
+    if count > limit {
+        return Err(CaptureImportError::TooManyRecords {
+            field,
+            count,
+            limit,
+        });
+    }
+    Ok(())
+}
+
 pub fn import_capture_json(
     path: PathBuf,
     sender: impl Into<EngineEventSink>,
@@ -4801,9 +5468,11 @@ pub fn import_capture_json(
     let sender = sender.into();
     thread::spawn(move || {
         let result = (|| -> Result<(usize, usize), String> {
-            let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            let text = read_capture_json_import_with_limit(&path, MAX_CAPTURE_JSON_IMPORT_BYTES)
+                .map_err(|error| error.to_string())?;
             let mut document = parse_capture_export(&text)?;
             drop(text);
+            validate_capture_export_structure(&document).map_err(|error| error.to_string())?;
             let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
             let mut saved_time_stop_events = std::mem::take(&mut document.time_stop_events);
             let mut saved_empty_curtain_characters =
@@ -5144,6 +5813,189 @@ mod tests {
     use crate::engine::parser::{
         CHARACTER_DATA_PATH, ParsedEmptyCurtainModulePlacement, load_characters,
     };
+
+    #[test]
+    fn bounded_utf8_reader_rejects_growth_past_checked_size() {
+        let limit = 8_u64;
+        let reader = std::io::Cursor::new(b"123456789".to_vec());
+        assert!(matches!(
+            read_bounded_utf8(reader, limit, limit),
+            Err(CaptureImportError::TooLarge { size: 9, limit: 8 })
+        ));
+    }
+
+    #[test]
+    fn capture_json_import_validates_size_and_structure_before_use() {
+        let directory =
+            std::env::temp_dir().join(format!("nte-capture-import-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+
+        let within = directory.join("within.json");
+        std::fs::write(&within, b"{\"version\":1,\"hits\":[],\"packets\":[]}")
+            .expect("write small fixture");
+
+        assert!(matches!(
+            validate_capture_json_import_with_limit(&directory, 1 << 20),
+            Err(CaptureImportError::NotAFile)
+        ));
+        assert!(matches!(
+            validate_capture_json_import_with_limit(&directory.join("missing.json"), 1 << 20),
+            Err(CaptureImportError::Io(_))
+        ));
+
+        let size = std::fs::metadata(&within).expect("fixture metadata").len();
+        assert!(
+            validate_capture_json_import_with_limit(&within, size).is_ok(),
+            "a file exactly at the limit is accepted"
+        );
+        assert!(matches!(
+            validate_capture_json_import_with_limit(&within, size - 1),
+            Err(CaptureImportError::TooLarge { .. })
+        ));
+        assert!(
+            validate_capture_json_import(&within).is_ok(),
+            "production entry point accepts small fixtures"
+        );
+
+        let document: CaptureExportDocument = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "party": [{}],
+            "abyss": {
+                "first_half": { "party": [{}] },
+                "second_half": { "party": [{}] }
+            },
+            "empty_curtain": [{
+                "id": { "solt": 1, "serial": 2 },
+                "item_id": "item",
+                "level": 1,
+                "main_stats": [{ "property": "attack", "value": 1.0 }],
+                "sub_stats": [],
+                "locked": false
+            }],
+            "empty_curtain_characters": [{
+                "net_id": { "solt": 3, "serial": 4 },
+                "character_id": 1
+            }],
+            "hits": [{
+                "timestamp_unix": 1,
+                "char_id": 1,
+                "char_name": "a",
+                "damage": 1.0,
+                "target_context": ["boss"]
+            }],
+            "packets": [{
+                "timestamp_unix": 1,
+                "source": "a",
+                "destination": "b",
+                "declared_ids": [1]
+            }],
+            "time_stop_events": [{
+                "GamePauseStarted": { "timestamp": 1.0, "pause_type_mask": 4 }
+            }]
+        }))
+        .expect("bounded export parses");
+        let at_limit = CaptureImportStructureLimits {
+            hits: 1,
+            packets: 1,
+            party_rows: 1,
+            abyss_party_rows: 1,
+            empty_curtain_items: 1,
+            empty_curtain_characters: 1,
+            time_stop_events: 1,
+            item_stats: 1,
+            target_context: 1,
+            declared_ids: 1,
+        };
+        assert!(
+            validate_capture_export_structure_with_limits(&document, at_limit).is_ok(),
+            "structure at the limit is accepted"
+        );
+        let mut limits = at_limit;
+        limits.hits = 0;
+        assert!(matches!(
+            validate_capture_export_structure_with_limits(&document, limits),
+            Err(CaptureImportError::TooManyHits { .. })
+        ));
+        let mut limits = at_limit;
+        limits.packets = 0;
+        assert!(matches!(
+            validate_capture_export_structure_with_limits(&document, limits),
+            Err(CaptureImportError::TooManyPackets { .. })
+        ));
+        for (field, limits) in [
+            (
+                "party",
+                CaptureImportStructureLimits {
+                    party_rows: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "abyss.first_half.party",
+                CaptureImportStructureLimits {
+                    abyss_party_rows: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "empty_curtain",
+                CaptureImportStructureLimits {
+                    empty_curtain_items: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "empty_curtain_characters",
+                CaptureImportStructureLimits {
+                    empty_curtain_characters: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "time_stop_events",
+                CaptureImportStructureLimits {
+                    time_stop_events: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "empty_curtain[].main_stats",
+                CaptureImportStructureLimits {
+                    item_stats: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "hits[].target_context",
+                CaptureImportStructureLimits {
+                    target_context: 0,
+                    ..at_limit
+                },
+            ),
+            (
+                "packets[].declared_ids",
+                CaptureImportStructureLimits {
+                    declared_ids: 0,
+                    ..at_limit
+                },
+            ),
+        ] {
+            assert!(matches!(
+                validate_capture_export_structure_with_limits(&document, limits),
+                Err(CaptureImportError::TooManyRecords {
+                    field: rejected,
+                    ..
+                }) if rejected == field
+            ));
+        }
+    }
 
     #[test]
     fn capture_frame_queue_applies_backpressure_without_dropping_frames() {
@@ -6110,6 +6962,108 @@ mod tests {
             None
         );
         assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn bool_enum_gameplay_effect_fragment_reassembles_pending_hit() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let start = inventory_bunch_on(5146, 647, 0x09, 0xa1);
+        let tail = inventory_bunch_on(4122, 648, 0x0c, 0xa2);
+        let mut hit = targetless_hit();
+        hit.damage = 163_027.0;
+        let mut tracker = BoolEnumGameplayEffectFragmentTracker::default();
+
+        let start_observation = tracker.observe(10.0, source, destination, &start);
+        assert!(start_observation.completed.is_none());
+        assert!(start_observation.abandoned_hits.is_empty());
+        assert!(
+            tracker
+                .attach_hit(source, destination, &start, hit)
+                .is_none()
+        );
+
+        let completed = tracker.observe(10.01, source, destination, &tail);
+        let completed = completed
+            .completed
+            .expect("contiguous tail should complete");
+        assert_eq!(completed.hit.damage, 163_027.0);
+        assert_eq!(completed.payload, vec![0xa1, 0xa2]);
+        assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn bool_enum_gameplay_effect_fragment_gap_releases_pending_hit() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let start = inventory_bunch(647, 0x09, 0xa1);
+        let mut hit = targetless_hit();
+        hit.damage = 42.0;
+        let mut tracker = BoolEnumGameplayEffectFragmentTracker::default();
+        tracker.observe(10.0, source, destination, &start);
+        assert!(
+            tracker
+                .attach_hit(source, destination, &start, hit)
+                .is_none()
+        );
+
+        let observation = tracker.observe(
+            10.01,
+            source,
+            destination,
+            &inventory_bunch(649, 0x0c, 0xa2),
+        );
+
+        assert!(observation.completed.is_none());
+        assert_eq!(observation.abandoned_hits.len(), 1);
+        assert_eq!(observation.abandoned_hits[0].damage, 42.0);
+        assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn bool_enum_gameplay_effect_fragment_timeout_releases_pending_hit() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let start = inventory_bunch(647, 0x09, 0xa1);
+        let mut hit = targetless_hit();
+        hit.damage = 84.0;
+        let mut tracker = BoolEnumGameplayEffectFragmentTracker::default();
+        tracker.observe(10.0, source, destination, &start);
+        assert!(
+            tracker
+                .attach_hit(source, destination, &start, hit)
+                .is_none()
+        );
+
+        let expired = tracker.take_expired(10.0 + GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS + 0.01);
+
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].damage, 84.0);
+        assert!(tracker.pending.is_empty());
+    }
+
+    #[test]
+    fn bool_enum_gameplay_effect_fragment_replacement_releases_pending_hit() {
+        let source = (Ipv4Addr::new(10, 0, 0, 2), 50_000);
+        let destination = (Ipv4Addr::new(10, 0, 0, 3), 7_777);
+        let first = inventory_bunch(647, 0x09, 0xa1);
+        let replacement = inventory_bunch(700, 0x09, 0xb1);
+        let mut hit = targetless_hit();
+        hit.damage = 126.0;
+        let mut tracker = BoolEnumGameplayEffectFragmentTracker::default();
+        tracker.observe(10.0, source, destination, &first);
+        assert!(
+            tracker
+                .attach_hit(source, destination, &first, hit)
+                .is_none()
+        );
+
+        let observation = tracker.observe(10.01, source, destination, &replacement);
+
+        assert_eq!(observation.abandoned_hits.len(), 1);
+        assert_eq!(observation.abandoned_hits[0].damage, 126.0);
+        assert!(observation.completed.is_none());
+        assert_eq!(tracker.pending.len(), 1);
     }
 
     #[test]
@@ -7402,6 +8356,7 @@ mod tests {
         reattribute_hit_from_damage_record_owner(
             &mut nanally_pair_flower,
             &nanally_pair_evidence,
+            DamageRecordEncoding::LegacyInt32,
             &characters,
         );
 
@@ -7418,6 +8373,7 @@ mod tests {
         reattribute_hit_from_damage_record_owner(
             &mut kuhara_pair_flower,
             &kuhara_pair_evidence,
+            DamageRecordEncoding::LegacyInt32,
             &characters,
         );
 
@@ -7444,13 +8400,19 @@ mod tests {
         flower.byte_offset = 253;
         flower.bit_shift = 6;
 
-        reattribute_hit_from_damage_record_owner(&mut flower, &[(1051, 5, 157)], &characters);
+        reattribute_hit_from_damage_record_owner(
+            &mut flower,
+            &[(1051, 5, 157)],
+            DamageRecordEncoding::LegacyInt32,
+            &characters,
+        );
         assert_eq!(flower.char_id, 1010);
         assert_eq!(flower.char_source, HitCharacterSource::Session);
 
         reattribute_hit_from_damage_record_owner(
             &mut flower,
             &[(1051, 5, 157), (1055, 2, 368)],
+            DamageRecordEncoding::LegacyInt32,
             &characters,
         );
         assert_eq!(flower.char_id, 1010);
@@ -7461,6 +8423,7 @@ mod tests {
         reattribute_hit_from_damage_record_owner(
             &mut flower,
             &[(1051, 5, 157), (1051, 2, 368)],
+            DamageRecordEncoding::LegacyInt32,
             &characters,
         );
         assert_eq!(flower.char_id, 1010);
@@ -7494,8 +8457,18 @@ mod tests {
         nanally.byte_offset = 738;
         nanally.bit_shift = 7;
 
-        reattribute_hit_from_damage_record_owner(&mut oneiroi, &evidence, &characters);
-        reattribute_hit_from_damage_record_owner(&mut nanally, &evidence, &characters);
+        reattribute_hit_from_damage_record_owner(
+            &mut oneiroi,
+            &evidence,
+            DamageRecordEncoding::LegacyInt32,
+            &characters,
+        );
+        reattribute_hit_from_damage_record_owner(
+            &mut nanally,
+            &evidence,
+            DamageRecordEncoding::LegacyInt32,
+            &characters,
+        );
 
         assert_eq!(oneiroi.char_id, 1075);
         assert_eq!(oneiroi.char_name, "伊洛伊");
@@ -7520,10 +8493,42 @@ mod tests {
         hit.bit_shift = 5;
         let evidence = [(1055, 4, 148), (1055, 1, 359), (1075, 5, 650)];
 
-        reattribute_hit_from_damage_record_owner(&mut hit, &evidence, &characters);
+        reattribute_hit_from_damage_record_owner(
+            &mut hit,
+            &evidence,
+            DamageRecordEncoding::LegacyInt32,
+            &characters,
+        );
 
         assert_eq!(hit.char_id, 1055);
         assert_eq!(hit.char_name, "九原");
+        assert_eq!(hit.char_source, HitCharacterSource::Packet);
+    }
+
+    #[test]
+    fn bool_enum_damage_record_uses_updated_owner_anchors() {
+        let characters = HashMap::from([
+            (1004, character_with_attribute("安魂曲", "暗")),
+            (1036, character_with_attribute("残虹", "热")),
+        ]);
+        let mut hit = targetless_hit();
+        hit.char_id = 1036;
+        hit.char_name = "残虹".to_owned();
+        hit.char_source = HitCharacterSource::Packet;
+        hit.direction = HitDirection::Outgoing;
+        hit.byte_offset = 200;
+        hit.bit_shift = 5;
+        let evidence = [(1004, 4, 133), (1004, 2, 347)];
+
+        reattribute_hit_from_damage_record_owner(
+            &mut hit,
+            &evidence,
+            DamageRecordEncoding::BoolAndEnums,
+            &characters,
+        );
+
+        assert_eq!(hit.char_id, 1004);
+        assert_eq!(hit.char_name, "安魂曲");
         assert_eq!(hit.char_source, HitCharacterSource::Packet);
     }
 
@@ -8509,6 +9514,108 @@ mod tests {
     }
 
     #[test]
+    fn bool_enum_active_gameplay_effect_is_not_matched_as_damage_record_effect() {
+        let mut hit = targetless_hit();
+        hit.byte_offset = 245;
+        let effects = [ParsedGameplayEffect {
+            unique_index: 3983,
+            byte_offset: 92,
+            bit_shift: 4,
+        }];
+
+        assert_eq!(
+            matching_gameplay_effect(&hit, &effects, Some(100)).map(|effect| effect.unique_index),
+            None
+        );
+    }
+
+    #[test]
+    fn bool_enum_damage_record_reads_trailing_gameplay_effect_at_both_layouts() {
+        let names = HashMap::from([
+            (3983, "GE_Player_Shinku_Skill1_2_Damage".to_owned()),
+            (599, "GE_Player_Lacrimosa_Blood_Damage_LV6".to_owned()),
+        ]);
+        let catalog = AbilityCatalog::from(HashMap::from([
+            (
+                "GE_Player_Shinku_Skill1_2_Damage".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("E".to_owned()),
+                    ability_name: Some("GA_Shinku_Skill".to_owned()),
+                    attack_type: "E技能".to_owned(),
+                    damage_component: None,
+                    owner_character_id: None,
+                },
+            ),
+            (
+                "GE_Player_Lacrimosa_Blood_Damage_LV6".to_owned(),
+                GameplayEffectSkill {
+                    damage_source_category: Some("A".to_owned()),
+                    ability_name: Some("GA_Lacrimosa_Passive".to_owned()),
+                    attack_type: "被动伤害".to_owned(),
+                    damage_component: None,
+                    owner_character_id: Some(1004),
+                },
+            ),
+        ]));
+        let mut hit = targetless_hit();
+        hit.byte_offset = 100;
+        hit.bit_shift = 3;
+        let hit_bit_offset = hit.byte_offset * 8 + usize::from(hit.bit_shift);
+
+        let primary_bit_offset =
+            hit_bit_offset + BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS[0];
+        let mut primary_payload = vec![0; primary_bit_offset.div_ceil(8) + 5];
+        write_shifted_bytes(
+            &mut primary_payload,
+            (primary_bit_offset % 8) as u8,
+            primary_bit_offset / 8,
+            &3983_u32.to_le_bytes(),
+        );
+        assert_eq!(
+            matching_bool_enum_gameplay_effect(
+                &primary_payload,
+                &hit,
+                DamageRecordEncoding::BoolAndEnums,
+                &names,
+                &catalog,
+            )
+            .map(|effect| effect.unique_index),
+            Some(3983)
+        );
+
+        let alternate_bit_offset =
+            hit_bit_offset + BOOL_ENUM_DAMAGE_RECORD_TO_GAMEPLAY_EFFECT_BITS[1];
+        let mut alternate_payload = vec![0; alternate_bit_offset.div_ceil(8) + 5];
+        write_shifted_bytes(
+            &mut alternate_payload,
+            (alternate_bit_offset % 8) as u8,
+            alternate_bit_offset / 8,
+            &599_u32.to_le_bytes(),
+        );
+        assert_eq!(
+            matching_bool_enum_gameplay_effect(
+                &alternate_payload,
+                &hit,
+                DamageRecordEncoding::BoolAndEnums,
+                &names,
+                &catalog,
+            )
+            .map(|effect| effect.unique_index),
+            Some(599)
+        );
+        assert!(
+            matching_bool_enum_gameplay_effect(
+                &primary_payload,
+                &hit,
+                DamageRecordEncoding::LegacyInt32,
+                &names,
+                &catalog,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn damage_record_without_own_effect_does_not_reuse_previous_record_effect() {
         let effects = [ParsedGameplayEffect {
             unique_index: 3983,
@@ -8608,6 +9715,83 @@ mod tests {
 
         assert_eq!(hit.direction, HitDirection::Incoming);
         assert_eq!(hit.attack_type.as_deref(), Some("其他"));
+    }
+
+    #[test]
+    fn monster_hitout_effect_overrides_outgoing_direction_to_incoming() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 4724,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(4724, "GE_mon_63_Hitout_600cm".to_owned())]);
+        let mut hit = targetless_hit();
+        hit.direction = HitDirection::Outgoing;
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+
+        assert_eq!(hit.direction, HitDirection::Incoming);
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
+    }
+
+    #[test]
+    fn monster_hitout_effect_keeps_outgoing_direction_for_target_snapshot() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 4724,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(4724, "GE_mon_63_Hitout_600cm".to_owned())]);
+        let mut hit = targetless_hit();
+        hit.direction = HitDirection::Outgoing;
+        hit.target_hp_before = 3_268_491.0;
+        hit.target_hp_after = 3_265_602.0;
+        hit.target_max_hp = 3_514_714.0;
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+
+        assert_eq!(hit.direction, HitDirection::Outgoing);
+        assert_eq!(
+            hit.gameplay_effect_name.as_deref(),
+            Some("GE_mon_63_Hitout_600cm")
+        );
+        assert_eq!(hit.attack_type.as_deref(), Some("其他"));
+    }
+
+    #[test]
+    fn non_damage_buff_effect_does_not_become_hit_type() {
+        let effects = [ParsedGameplayEffect {
+            unique_index: 4832,
+            byte_offset: 0,
+            bit_shift: 0,
+        }];
+        let names = HashMap::from([(4832, "Buff_41_Remove".to_owned())]);
+        let mut hit = targetless_hit();
+
+        enrich_hit_with_gameplay_effect(
+            &mut hit,
+            &effects,
+            &names,
+            &AbilityCatalog::default(),
+            None,
+        );
+
+        assert_eq!(hit.direction, HitDirection::Outgoing);
+        assert_eq!(hit.gameplay_effect_index, None);
+        assert_eq!(hit.gameplay_effect_name, None);
+        assert_eq!(hit.attack_type, None);
     }
 
     #[test]
@@ -9602,6 +10786,11 @@ mod tests {
             load_characters(Path::new(CHARACTER_DATA_PATH))
                 .expect("character resource table should load"),
         );
+        let mut ability_catalog = AbilityCatalog::load(Path::new(SKILL_DAMAGE_DATA_PATH))
+            .expect("skill table should load");
+        ability_catalog
+            .apply_semantics(Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH))
+            .expect("effect semantics should load");
         let (sender, receiver) = unbounded();
         let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
@@ -9609,7 +10798,7 @@ mod tests {
             PathBuf::from(path),
             CaptureResources {
                 characters,
-                ability_catalog: Arc::new(AbilityCatalog::default()),
+                ability_catalog: Arc::new(ability_catalog),
             },
             None,
             true,
@@ -9620,6 +10809,7 @@ mod tests {
         handle.join().expect("pcapng import thread should finish");
 
         let mut shinku_hits = Vec::new();
+        let mut skill_audit_hits = Vec::new();
         let mut outgoing_hit_timestamps = Vec::new();
         let mut abyss_events = Vec::new();
         let mut time_stops = Vec::new();
@@ -9637,6 +10827,7 @@ mod tests {
                     if hit.char_id == 1076 {
                         shinku_hits.push((*hit).clone());
                     }
+                    skill_audit_hits.push((*hit).clone());
                     state.push_hit(*hit);
                 }
                 EngineEvent::Abyss(event) => {
@@ -9692,6 +10883,48 @@ mod tests {
                 hit.ability_name,
                 hit.gameplay_effect_name,
                 hit.attack_type
+            );
+        }
+        let unmapped = skill_audit_hits
+            .iter()
+            .filter(|hit| hit.gameplay_effect_name.is_none())
+            .collect::<Vec<_>>();
+        let non_outgoing = skill_audit_hits
+            .iter()
+            .filter(|hit| hit.direction != HitDirection::Outgoing)
+            .collect::<Vec<_>>();
+        println!(
+            "skill audit: total={}, mapped={}, unmapped={}, non_outgoing={}",
+            skill_audit_hits.len(),
+            skill_audit_hits.len() - unmapped.len(),
+            unmapped.len(),
+            non_outgoing.len()
+        );
+        if std::env::var_os("NTE_DIAG_SKILL_AUDIT_ROWS").is_some() {
+            for hit in &skill_audit_hits {
+                println!(
+                    "skill row t={:.6} damage={:.1} char={} source={:?} direction={:?} effect={:?} ability={:?} attack={:?}",
+                    hit.timestamp,
+                    hit.damage,
+                    hit.char_id,
+                    hit.char_source,
+                    hit.direction,
+                    hit.gameplay_effect_name,
+                    hit.ability_name,
+                    hit.attack_type,
+                );
+            }
+        }
+        for hit in unmapped {
+            println!(
+                "unmapped hit t={:.6} damage={:.1} char={} direction={:?}",
+                hit.timestamp, hit.damage, hit.char_id, hit.direction
+            );
+        }
+        for hit in non_outgoing {
+            println!(
+                "non-outgoing hit t={:.6} damage={:.1} char={} effect={:?} direction={:?}",
+                hit.timestamp, hit.damage, hit.char_id, hit.gameplay_effect_name, hit.direction
             );
         }
         let completed_time_stop_count = time_stops

@@ -2,8 +2,9 @@ use std::{sync::atomic::Ordering, thread, time::Duration};
 
 use nte_dps_tool::core::mod_studio::{
     ModStudioRuntimeEvent as CoreModStudioRuntimeEvent, ModStudioRuntimeLog,
-    ModStudioRuntimeSnapshot, poll_mod_studio_runtime,
+    ModStudioRuntimeSnapshot,
 };
+use nte_dps_tool::platform::mods_plugin::probe_runtime_presence;
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
@@ -11,8 +12,8 @@ use crate::{
         CommandError, SubscriptionReceipt,
         mod_studio::{
             MOD_STUDIO_CONTRACT_VERSION, ModStudioRuntimeBatchSnapshot,
-            ModStudioRuntimeConnectionSnapshot, ModStudioRuntimeEntrySnapshot,
-            ModStudioRuntimeEvent,
+            ModStudioRuntimeConnectionSnapshot, ModStudioRuntimeConnectionStatusSnapshot,
+            ModStudioRuntimeEntrySnapshot, ModStudioRuntimeEvent,
         },
     },
     state::AppState,
@@ -34,13 +35,17 @@ pub(crate) fn subscribe_mod_studio_runtime(
 
     let stream_key = stream_key(&subscription_id);
     let state = state.inner().clone();
-    let stop = state.begin_stream(stream_key.clone());
+    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
     thread::spawn(move || {
         let mut cursor = RuntimeStreamCursor::default();
         while !stop.load(Ordering::Acquire) {
-            let events = match poll_mod_studio_runtime() {
+            let events = match state.poll_mod_studio_runtime() {
                 Ok(snapshot) => cursor.ingest_connected(snapshot),
-                Err(_) => cursor.ingest_disconnected(),
+                Err(_) => match probe_runtime_presence() {
+                    Ok(true) => cursor.ingest_unavailable(RuntimeConnectionStatus::LoaderPresent),
+                    Ok(false) => cursor.ingest_unavailable(RuntimeConnectionStatus::Waiting),
+                    Err(_) => cursor.ingest_unavailable(RuntimeConnectionStatus::ProbeFailed),
+                },
             };
             for event in events {
                 if on_event.send(event).is_err() {
@@ -92,10 +97,18 @@ fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
 #[derive(Default)]
 struct RuntimeStreamCursor {
     generation: u64,
-    connected: Option<bool>,
+    status: Option<RuntimeConnectionStatus>,
     last_log_sequence: u64,
     last_event_sequence: u64,
     next_sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RuntimeConnectionStatus {
+    Connected,
+    LoaderPresent,
+    Waiting,
+    ProbeFailed,
 }
 
 impl RuntimeStreamCursor {
@@ -104,9 +117,9 @@ impl RuntimeStreamCursor {
         snapshot: ModStudioRuntimeSnapshot,
     ) -> Vec<ModStudioRuntimeEvent> {
         let mut events = Vec::new();
-        if self.connected != Some(true) {
+        if self.status != Some(RuntimeConnectionStatus::Connected) {
             self.start_generation();
-            events.push(self.connection_event(true));
+            events.push(self.connection_event(RuntimeConnectionStatus::Connected));
         }
 
         let newest_log_sequence = snapshot
@@ -127,7 +140,7 @@ impl RuntimeStreamCursor {
             newest_event_sequence != 0 && newest_event_sequence < self.last_event_sequence;
         if log_sequence_reset || event_sequence_reset {
             self.start_generation();
-            events.push(self.connection_event(true));
+            events.push(self.connection_event(RuntimeConnectionStatus::Connected));
         }
 
         let mut pending = snapshot
@@ -172,30 +185,46 @@ impl RuntimeStreamCursor {
         events
     }
 
-    fn ingest_disconnected(&mut self) -> Vec<ModStudioRuntimeEvent> {
-        if self.connected == Some(false) {
+    fn ingest_unavailable(
+        &mut self,
+        status: RuntimeConnectionStatus,
+    ) -> Vec<ModStudioRuntimeEvent> {
+        if self.status == Some(status) {
             return Vec::new();
         }
         if self.generation == 0 {
             self.generation = 1;
         }
-        self.connected = Some(false);
-        vec![self.connection_event(false)]
+        self.status = Some(status);
+        vec![self.connection_event(status)]
     }
 
     fn start_generation(&mut self) {
         self.generation = self.generation.saturating_add(1).max(1);
-        self.connected = Some(true);
+        self.status = Some(RuntimeConnectionStatus::Connected);
         self.last_log_sequence = 0;
         self.last_event_sequence = 0;
         self.next_sequence = 0;
     }
 
-    fn connection_event(&self, connected: bool) -> ModStudioRuntimeEvent {
+    fn connection_event(&self, status: RuntimeConnectionStatus) -> ModStudioRuntimeEvent {
         ModStudioRuntimeEvent::Connection(ModStudioRuntimeConnectionSnapshot {
             contract_version: MOD_STUDIO_CONTRACT_VERSION,
             generation: self.generation.to_string(),
-            connected,
+            status: match status {
+                RuntimeConnectionStatus::Connected => {
+                    ModStudioRuntimeConnectionStatusSnapshot::Connected
+                }
+                RuntimeConnectionStatus::LoaderPresent => {
+                    ModStudioRuntimeConnectionStatusSnapshot::LoaderPresent
+                }
+                RuntimeConnectionStatus::Waiting => {
+                    ModStudioRuntimeConnectionStatusSnapshot::Waiting
+                }
+                RuntimeConnectionStatus::ProbeFailed => {
+                    ModStudioRuntimeConnectionStatusSnapshot::ProbeFailed
+                }
+            },
         })
     }
 }
@@ -291,7 +320,7 @@ mod tests {
     fn reconnect_and_sequence_reset_start_new_generations() {
         let mut cursor = RuntimeStreamCursor::default();
         cursor.ingest_connected(snapshot(&[(8, 80)], &[(6, 60)]));
-        let disconnected = cursor.ingest_disconnected();
+        let disconnected = cursor.ingest_unavailable(RuntimeConnectionStatus::Waiting);
         let reconnected = cursor.ingest_connected(snapshot(&[(8, 80)], &[(6, 60)]));
         let reset = cursor.ingest_connected(snapshot(&[(1, 10)], &[(1, 11)]));
 
@@ -302,5 +331,30 @@ mod tests {
             panic!("sequence reset starts with a connection snapshot");
         };
         assert_eq!(connection.generation, "3");
+    }
+
+    #[test]
+    fn loaded_runtime_without_a_game_hook_is_distinct_from_waiting() {
+        let mut cursor = RuntimeStreamCursor::default();
+
+        let loaded = cursor.ingest_unavailable(RuntimeConnectionStatus::LoaderPresent);
+        let repeated = cursor.ingest_unavailable(RuntimeConnectionStatus::LoaderPresent);
+        let waiting = cursor.ingest_unavailable(RuntimeConnectionStatus::Waiting);
+
+        let ModStudioRuntimeEvent::Connection(loaded) = &loaded[0] else {
+            panic!("loader presence is emitted as a connection snapshot");
+        };
+        assert_eq!(
+            loaded.status,
+            ModStudioRuntimeConnectionStatusSnapshot::LoaderPresent
+        );
+        assert!(repeated.is_empty());
+        let ModStudioRuntimeEvent::Connection(waiting) = &waiting[0] else {
+            panic!("waiting is emitted as a connection snapshot");
+        };
+        assert_eq!(
+            waiting.status,
+            ModStudioRuntimeConnectionStatusSnapshot::Waiting
+        );
     }
 }

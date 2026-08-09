@@ -23,7 +23,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { t, tf } from "@/lib/i18n";
-import { characterAvatarUrl } from "@/lib/character-avatar";
+import { resolveCharacterAvatar } from "@/lib/character-avatar";
+import { useCharacterAvatarCatalog } from "@/hooks/use-character-avatar";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import {
   abyssValuesClient,
@@ -715,10 +716,11 @@ function AbyssLineSection({
 }
 
 function AbyssTeamAvatars({ team }: { team: AbyssTeam }) {
+  useCharacterAvatarCatalog();
   return (
     <span className="flex items-center gap-1" aria-label={t("Team")}>
       {teamHeaderMembers(team).map((member) => {
-        const avatar = characterAvatarUrl(member.id);
+        const avatar = resolveCharacterAvatar(member.id);
         const initial = (member.name || String(member.id)).slice(0, 1);
         return (
           <span

@@ -13,7 +13,7 @@ use nte_dps_tool::{
         install_mods_plugin_with_manual, remove_mods_plugin_with_manual,
     },
     platform::update_http,
-    storage::{i18n, resource::read_mods_plugin},
+    storage::{config::MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES, i18n, resource::read_mods_plugin},
 };
 use tauri::{State, WebviewWindow};
 
@@ -23,7 +23,7 @@ use crate::{
         mod_studio::{
             ModMarketCatalogSnapshot, ModStudioDeploymentSnapshot,
             ModStudioDirectorySelectionSnapshot, ModStudioDocumentSnapshot,
-            ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
+            ModStudioGameDirectorySnapshot, ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
         },
     },
     state::AppState,
@@ -211,10 +211,11 @@ pub(crate) async fn open_mod_studio_folder(
 pub(crate) async fn get_mod_studio_deployment(
     region: Option<String>,
     game_directory: Option<String>,
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioDeploymentSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let manual = parse_manual_game_directory(region, game_directory)?;
+    let manual = resolve_manual_game_directory(state.inner(), region, game_directory)?;
     tauri::async_runtime::spawn_blocking(move || inspect_deployment(manual.as_ref()))
         .await
         .map_err(|error| {
@@ -228,10 +229,12 @@ pub(crate) async fn get_mod_studio_deployment(
 #[tauri::command]
 pub(crate) async fn choose_mod_studio_game_directory(
     region: String,
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioDirectorySelectionSnapshot, CommandError> {
     console::validate_window(&window)?;
     let region = parse_region(&region)?;
+    let state = state.inner().clone();
     #[cfg(windows)]
     {
         use nte_dps_tool::platform::file_dialog::{FolderDialogOutcome, choose_folder};
@@ -245,9 +248,16 @@ pub(crate) async fn choose_mod_studio_game_directory(
             Ok(FolderDialogOutcome::Selected(path)) => {
                 let deployment =
                     inspect_deployment(Some(&(region, path.clone()))).map_err(deployment_error)?;
+                let path = path.to_string_lossy().into_owned();
+                state
+                    .set_mod_studio_game_directory(region, Some(path.clone()))
+                    .map_err(|error| {
+                        log::error!("save Mod Studio game directory preference failed: {error}");
+                        CommandError::settings_config_save_failed()
+                    })?;
                 Ok(ModStudioDirectorySelectionSnapshot {
                     selected: true,
-                    path: Some(path.to_string_lossy().into_owned()),
+                    path: Some(path),
                     deployment: deployment.into(),
                 })
             }
@@ -269,9 +279,60 @@ pub(crate) async fn choose_mod_studio_game_directory(
     }
     #[cfg(not(windows))]
     {
-        let _ = region;
+        let _ = (region, state);
         Err(CommandError::mod_studio_file_dialog_failed())
     }
+}
+
+#[tauri::command]
+pub(crate) fn get_mod_studio_game_directory(
+    region: String,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModStudioGameDirectorySnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let region = parse_region(&region)?;
+    Ok(ModStudioGameDirectorySnapshot {
+        contract_version: crate::contract::mod_studio::MOD_STUDIO_DIRECTORY_CONTRACT_VERSION,
+        region: region.into(),
+        path: state.mod_studio_game_directory(region),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_mod_studio_game_directory(
+    region: String,
+    game_directory: Option<String>,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModStudioGameDirectorySnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let region = parse_region(&region)?;
+    let directory = match game_directory {
+        Some(directory) => Some(
+            parse_manual_game_directory(Some(region_name(region).to_owned()), Some(directory))?
+                .ok_or_else(|| {
+                    CommandError::from_mod_studio_deployment(
+                        ModsPluginDeploymentError::InvalidGameDirectory,
+                    )
+                })?
+                .1
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        None => None,
+    };
+    state
+        .set_mod_studio_game_directory(region, directory.clone())
+        .map_err(|error| {
+            log::error!("save Mod Studio game directory preference failed: {error}");
+            CommandError::settings_config_save_failed()
+        })?;
+    Ok(ModStudioGameDirectorySnapshot {
+        contract_version: crate::contract::mod_studio::MOD_STUDIO_DIRECTORY_CONTRACT_VERSION,
+        region: region.into(),
+        path: directory,
+    })
 }
 
 #[tauri::command]
@@ -279,11 +340,17 @@ pub(crate) async fn set_mod_studio_loader_enabled(
     region: String,
     enabled: bool,
     game_directory: Option<String>,
+    state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<ModStudioDeploymentSnapshot, CommandError> {
     console::validate_window(&window)?;
     let region = parse_region(&region)?;
-    let directory = game_directory.map(PathBuf::from);
+    let directory = resolve_manual_game_directory(
+        state.inner(),
+        Some(region_name(region).to_owned()),
+        game_directory,
+    )?
+    .map(|(_, directory)| directory);
     tauri::async_runtime::spawn_blocking(move || {
         if enabled {
             let plugin =
@@ -325,13 +392,44 @@ fn parse_manual_game_directory(
 ) -> Result<Option<(ModsPluginGameRegion, PathBuf)>, CommandError> {
     match (region, game_directory) {
         (None, None) => Ok(None),
-        (Some(region), Some(directory)) if !directory.trim().is_empty() => Ok(Some((
-            parse_region(&region)?,
-            Path::new(&directory).to_path_buf(),
-        ))),
+        (Some(region), Some(directory))
+            if !directory.trim().is_empty()
+                && directory.len() <= MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES
+                && !directory
+                    .chars()
+                    .any(|character| matches!(character, '\0' | '\r' | '\n')) =>
+        {
+            Ok(Some((
+                parse_region(&region)?,
+                Path::new(directory.trim()).to_path_buf(),
+            )))
+        }
         _ => Err(CommandError::from_mod_studio_deployment(
             ModsPluginDeploymentError::InvalidGameDirectory,
         )),
+    }
+}
+
+fn resolve_manual_game_directory(
+    state: &AppState,
+    region: Option<String>,
+    game_directory: Option<String>,
+) -> Result<Option<(ModsPluginGameRegion, PathBuf)>, CommandError> {
+    match (region, game_directory) {
+        (Some(region), None) => {
+            let region = parse_region(&region)?;
+            Ok(state
+                .mod_studio_game_directory(region)
+                .map(|directory| (region, PathBuf::from(directory))))
+        }
+        (region, game_directory) => parse_manual_game_directory(region, game_directory),
+    }
+}
+
+fn region_name(region: ModsPluginGameRegion) -> &'static str {
+    match region {
+        ModsPluginGameRegion::China => "china",
+        ModsPluginGameRegion::Global => "global",
     }
 }
 
@@ -462,6 +560,13 @@ mod tests {
         assert!(parse_manual_game_directory(None, Some("x".to_owned())).is_err());
         assert!(
             parse_manual_game_directory(Some("china".to_owned()), Some("  ".to_owned())).is_err()
+        );
+        assert!(
+            parse_manual_game_directory(
+                Some("china".to_owned()),
+                Some("x".repeat(MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES + 1)),
+            )
+            .is_err()
         );
     }
 }

@@ -10,6 +10,11 @@ $forbiddenCliDependencyPattern =
     '(^|[\s│├└─])(?:tauri|wry|webview2-com|eframe|egui(?:-[A-Za-z0-9_-]+)?|wgpu(?:-[A-Za-z0-9_-]+)?|rfd|raw-window-handle) v'
 $forbiddenLegacyUiDependencyPattern =
     '(^|[\s│├└─])(?:eframe|egui(?:-[A-Za-z0-9_-]+)?|wgpu(?:-[A-Za-z0-9_-]+)?|rfd) v'
+$forbiddenCliRealNames = @(
+    "tauri", "wry", "webview2-com", "eframe", "egui", "wgpu", "rfd",
+    "raw-window-handle"
+)
+$forbiddenLegacyUiRealNames = @("eframe", "egui", "wgpu", "rfd")
 
 function Assert-Policy {
     param(
@@ -35,6 +40,45 @@ function Find-ForbiddenDependency {
     @($TreeLines | Select-String -Pattern $Pattern)
 }
 
+function Test-ForbiddenLockedName {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+        [Parameter(Mandatory)]
+        [string[]]$ForbiddenNames
+    )
+
+    foreach ($forbidden in $ForbiddenNames) {
+        if (
+            $Name -eq $forbidden -or
+            $Name.StartsWith("$forbidden-") -or
+            $Name.StartsWith("${forbidden}_")
+        ) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Find-ForbiddenLockedNames {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Lockfile,
+        [Parameter(Mandatory)]
+        [string[]]$ForbiddenNames
+    )
+
+    if (-not (Test-Path -LiteralPath $Lockfile)) {
+        return @()
+    }
+    return @(
+        Get-Content -LiteralPath $Lockfile |
+            Select-String -Pattern '^name = "(.+)"' |
+            ForEach-Object { $_.Matches[0].Groups[1].Value } |
+            Where-Object { Test-ForbiddenLockedName $_ $ForbiddenNames }
+    )
+}
+
 function Test-PolicyHelpers {
     $cleanTree = @(
         "nte-dps-tool v0.0.0",
@@ -52,6 +96,16 @@ function Test-PolicyHelpers {
     Assert-Policy `
         (@(Find-ForbiddenDependency $forbiddenTree $script:forbiddenCliDependencyPattern).Count -eq 2) `
         "Architecture policy self-test missed a forbidden dependency"
+
+    Assert-Policy `
+        (Test-ForbiddenLockedName "tauri-utils" $script:forbiddenCliRealNames) `
+        "Forbidden locked-name helper must match prefixed real names"
+    Assert-Policy `
+        (-not (Test-ForbiddenLockedName "serde" $script:forbiddenCliRealNames)) `
+        "Forbidden locked-name helper must reject unrelated names"
+    Assert-Policy `
+        (-not (Test-ForbiddenLockedName "egui2" $script:forbiddenCliRealNames)) `
+        "Forbidden locked-name helper must not match suffix-only names"
 }
 
 Test-PolicyHelpers
@@ -140,6 +194,20 @@ try {
     Assert-Policy `
         ($forbiddenTauri.Count -eq 0) `
         "Tauri dependency tree contains legacy UI crates:`n$($forbiddenTauri -join "`n")"
+
+    $forbiddenLockedCli = @(
+        Find-ForbiddenLockedNames (Join-Path $repositoryRoot "Cargo.lock") $forbiddenCliRealNames
+    )
+    Assert-Policy `
+        ($forbiddenLockedCli.Count -eq 0) `
+        "Root crate lockfile must not resolve desktop UI crates: $($forbiddenLockedCli -join ', ')"
+
+    $forbiddenLockedTauri = @(
+        Find-ForbiddenLockedNames (Join-Path $repositoryRoot "src-tauri\Cargo.lock") $forbiddenLegacyUiRealNames
+    )
+    Assert-Policy `
+        ($forbiddenLockedTauri.Count -eq 0) `
+        "Tauri lockfile must not resolve legacy UI crates: $($forbiddenLockedTauri -join ', ')"
 
     Assert-Policy (-not (Test-Path -LiteralPath "src/app")) "Legacy src/app directory must stay removed"
     Assert-Policy (-not (Test-Path -LiteralPath "vendor/egui-winit-0.34.3")) "Vendored egui-winit must stay removed"

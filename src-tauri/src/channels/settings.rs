@@ -23,7 +23,7 @@ pub(crate) fn subscribe_settings(
 
     let stream_key = stream_key(&subscription_id);
     let state = state.inner().clone();
-    let stop = state.begin_stream(stream_key.clone());
+    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
     thread::spawn(move || {
         let mut last_revision = None;
         let mut last_install_blocker = None;

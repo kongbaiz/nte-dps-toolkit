@@ -12,6 +12,18 @@ export default defineConfig({
       "@res": path.resolve(__dirname, "../res"),
     },
   },
+  build: {
+    rollupOptions: {
+      input: {
+        "main-dps": path.resolve(__dirname, "main-dps.html"),
+        console: path.resolve(__dirname, "console.html"),
+        hud: path.resolve(__dirname, "hud.html"),
+        notification: path.resolve(__dirname, "notification.html"),
+        "combat-details": path.resolve(__dirname, "combat-details.html"),
+        "abyss-values": path.resolve(__dirname, "abyss-values.html"),
+      },
+    },
+  },
   server: {
     fs: {
       allow: [

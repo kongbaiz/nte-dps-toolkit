@@ -35,20 +35,21 @@ namespace nte::mods
 
 		HANDLE ipc_pipe = INVALID_HANDLE_VALUE;
 		HANDLE ipc_event = nullptr;
+		HANDLE runtime_presence_event = nullptr;
 		OVERLAPPED ipc_overlapped{};
 		IpcTransportState ipc_transport_state = IpcTransportState::Closed;
 		ULONGLONG ipc_io_deadline = 0;
 		NteModsIpcRequest ipc_request{};
 		NteModsIpcResponse ipc_response{};
 
-		class PipeSecurityAttributes
+		class LocalIpcSecurityAttributes
 		{
 		public:
-			PipeSecurityAttributes() = default;
-			PipeSecurityAttributes(const PipeSecurityAttributes&) = delete;
-			PipeSecurityAttributes& operator=(const PipeSecurityAttributes&) = delete;
+			LocalIpcSecurityAttributes() = default;
+			LocalIpcSecurityAttributes(const LocalIpcSecurityAttributes&) = delete;
+			LocalIpcSecurityAttributes& operator=(const LocalIpcSecurityAttributes&) = delete;
 
-			~PipeSecurityAttributes()
+			~LocalIpcSecurityAttributes()
 			{
 				if (descriptor_ != nullptr)
 					LocalFree(descriptor_);
@@ -222,7 +223,7 @@ namespace nte::mods
 			if (ipc_pipe != INVALID_HANDLE_VALUE)
 				return true;
 
-			PipeSecurityAttributes security;
+			LocalIpcSecurityAttributes security;
 			if (!security.Initialize())
 				return false;
 
@@ -499,6 +500,31 @@ namespace nte::mods
 		}
 
 	} // namespace
+
+	bool OpenRuntimePresence()
+	{
+		if (runtime_presence_event != nullptr)
+			return true;
+
+		LocalIpcSecurityAttributes security;
+		if (!security.Initialize())
+			return false;
+
+		const auto event_name = NTE_OBFUSCATE_STRING(
+			NTE_MODS_RUNTIME_PRESENCE_NAME);
+		runtime_presence_event = CreateEventW(
+			security.Get(), TRUE, TRUE, event_name.c_str());
+		return runtime_presence_event != nullptr;
+	}
+
+	void CloseRuntimePresence()
+	{
+		if (runtime_presence_event == nullptr)
+			return;
+
+		CloseHandle(runtime_presence_event);
+		runtime_presence_event = nullptr;
+	}
 
 	NteModsStatus InvokeIpcKernelService(
 		IpcKernelService service,

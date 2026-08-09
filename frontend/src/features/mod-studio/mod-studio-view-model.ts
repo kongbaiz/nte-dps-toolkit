@@ -33,7 +33,8 @@ export interface ModStudioSourceBuffer {
 
 export interface ModStudioRuntimeState {
   generation: string | null;
-  connection: "connecting" | "connected" | "disconnected";
+  connection:
+    "connecting" | "connected" | "loaderPresent" | "waiting" | "probeFailed";
   entries: ModStudioRuntimeEntry[];
   error: ModStudioCommandError | null;
 }
@@ -223,7 +224,7 @@ export function acceptRuntimeEvent(
     const reset = state.generation !== event.payload.generation;
     return {
       generation: event.payload.generation,
-      connection: event.payload.connected ? "connected" : "disconnected",
+      connection: event.payload.status,
       entries: reset ? [] : state.entries,
       error: null,
     };

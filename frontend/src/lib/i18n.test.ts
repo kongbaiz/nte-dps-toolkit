@@ -10,6 +10,7 @@ const MIGRATION_PARITY_KEYS = [
   "DPS: {}",
   "Share: {}%",
   "Taken: {}",
+  "Follow-up",
 ] as const;
 
 afterEach(() => setFrontendLanguage("zh-CN"));

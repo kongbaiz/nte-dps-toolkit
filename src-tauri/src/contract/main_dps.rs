@@ -5,7 +5,7 @@ use nte_dps_tool::{
     engine::model::{CharacterInfo, DamageAttributionSummary},
     storage::{
         config::{AccentColor, ThemePreset, UiConfig, UiDensity},
-        history::HistoryRecord,
+        history::{HistoryRecord, MAX_HISTORY_RECORDS},
         i18n::Language,
     },
 };
@@ -15,7 +15,32 @@ use crate::{
     state::{AppState, MainDpsReadout},
 };
 
-pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 3;
+pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 4;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum GameDetectionStatus {
+    Running,
+    NotRunning,
+    ProbeFailed,
+}
+
+fn resolve_game_detection_status(
+    data_empty: bool,
+    probe: impl FnOnce() -> Result<bool, String>,
+) -> GameDetectionStatus {
+    if !data_empty {
+        return GameDetectionStatus::Running;
+    }
+    match probe() {
+        Ok(true) => GameDetectionStatus::Running,
+        Ok(false) => GameDetectionStatus::NotRunning,
+        Err(error) => {
+            log::warn!("game process detection failed while projecting Main DPS: {error}");
+            GameDetectionStatus::ProbeFailed
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +64,7 @@ pub(crate) struct MainDpsSnapshot {
     pub readout: MainDpsReadoutSnapshot,
     pub actions: MainDpsActionsSnapshot,
     pub game_detected: bool,
+    pub game_detection_status: GameDetectionStatus,
     pub has_live_session_data: bool,
     pub onboarding: MainDpsOnboardingSnapshot,
 }
@@ -55,6 +81,7 @@ impl MainDpsSnapshot {
         let always_on_top = state.window_always_on_top(crate::state::DesktopWindowKind::MainDps);
         let rounds = state.main_round_records();
         let selected_round_id = state.main_selected_round_id();
+        let round_snapshots = round_snapshots(&rounds, selected_round_id.as_deref());
         let MainDpsReadout {
             hud,
             has_hits,
@@ -75,11 +102,10 @@ impl MainDpsSnapshot {
         let live_round_selected = selected_round_id.is_none();
         let has_live_session_data = state.session_has_data();
         let can_import_replay = !capture_active && !replay_running;
-        let game_detected = if data_empty {
-            nte_dps_tool::platform::network::game_process_is_running().unwrap_or(false)
-        } else {
-            true
-        };
+        let game_detection_status = resolve_game_detection_status(data_empty, || {
+            nte_dps_tool::platform::network::game_process_is_running()
+        });
+        let game_detected = game_detection_status == GameDetectionStatus::Running;
 
         Self {
             contract_version: MAIN_DPS_CONTRACT_VERSION,
@@ -96,7 +122,7 @@ impl MainDpsSnapshot {
             always_on_top,
             passthrough: state.passthrough(),
             appearance: MainDpsAppearanceSnapshot::from(&config),
-            rounds: round_snapshots(&rounds),
+            rounds: round_snapshots,
             selected_round_id,
             readout: MainDpsReadoutSnapshot::from_hud(
                 hud,
@@ -133,12 +159,14 @@ impl MainDpsSnapshot {
                     || replay_running,
             },
             game_detected,
+            game_detection_status,
             has_live_session_data,
             onboarding: MainDpsOnboardingSnapshot {
                 done: config.onboarding_done,
                 step: state.onboarding_step(),
                 capture_device_count: state.capture_device_count(),
                 game_detected,
+                game_detection_status,
                 passthrough_hotkey_label: state.passthrough_hotkey().label(),
                 passthrough_hotkey_ready: state.passthrough_hotkey_ready(),
             },
@@ -361,6 +389,7 @@ pub(crate) struct MainDpsOnboardingSnapshot {
     pub step: usize,
     pub capture_device_count: usize,
     pub game_detected: bool,
+    pub game_detection_status: GameDetectionStatus,
     pub passthrough_hotkey_label: &'static str,
     pub passthrough_hotkey_ready: bool,
 }
@@ -385,23 +414,43 @@ pub(crate) struct MainDpsResetResult {
     pub undo_token: Option<String>,
 }
 
-fn round_snapshots(records: &[HistoryRecord]) -> Vec<MainDpsRoundSnapshot> {
-    std::iter::once(MainDpsRoundSnapshot {
-        id: None,
-        live: true,
-        display_time: None,
-        abyss_floor: None,
-    })
-    .chain(records.iter().filter_map(|record| {
-        record.details.as_ref()?;
-        Some(MainDpsRoundSnapshot {
+fn round_snapshots(
+    records: &[HistoryRecord],
+    selected_round_id: Option<&str>,
+) -> Vec<MainDpsRoundSnapshot> {
+    let mut visible = records
+        .iter()
+        .filter(|record| record.details.is_some())
+        .take(MAX_HISTORY_RECORDS)
+        .collect::<Vec<_>>();
+    if let Some(selected_round_id) = selected_round_id
+        && !visible.iter().any(|record| record.id == selected_round_id)
+        && let Some(selected) = records
+            .iter()
+            .find(|record| record.id == selected_round_id && record.details.is_some())
+    {
+        if visible.len() == MAX_HISTORY_RECORDS {
+            visible.pop();
+        }
+        visible.push(selected);
+    }
+
+    visible
+        .into_iter()
+        .rev()
+        .map(|record| MainDpsRoundSnapshot {
             id: Some(record.id.clone()),
             live: false,
             display_time: Some(record.display_time()),
             abyss_floor: record.summary.abyss.floor,
         })
-    }))
-    .collect()
+        .chain(std::iter::once(MainDpsRoundSnapshot {
+            id: None,
+            live: true,
+            display_time: None,
+            abyss_floor: None,
+        }))
+        .collect()
 }
 
 fn theme_preset_id(value: ThemePreset) -> &'static str {
@@ -435,6 +484,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn game_detection_distinguishes_normal_negative_from_probe_failure() {
+        assert_eq!(
+            resolve_game_detection_status(true, || Ok(true)),
+            GameDetectionStatus::Running
+        );
+        assert_eq!(
+            resolve_game_detection_status(true, || Ok(false)),
+            GameDetectionStatus::NotRunning
+        );
+        assert_eq!(
+            resolve_game_detection_status(true, || Err("access denied".to_owned())),
+            GameDetectionStatus::ProbeFailed
+        );
+        assert_eq!(
+            resolve_game_detection_status(false, || Err("must not be called".to_owned())),
+            GameDetectionStatus::Running
+        );
+    }
+
+    #[test]
     fn empty_snapshot_is_bounded_and_uses_string_generations() {
         let snapshot = MainDpsSnapshot::from_state(&AppState::default());
         let value = serde_json::to_value(snapshot).expect("snapshot serializes");
@@ -447,6 +516,104 @@ mod tests {
             value["readout"]["characters"].as_array().map(Vec::len),
             Some(0)
         );
+    }
+
+    #[test]
+    fn round_snapshots_follow_previous_next_chronology() {
+        let newest = HistoryRecord {
+            id: "newest".to_owned(),
+            details: Some(Default::default()),
+            ..Default::default()
+        };
+        let older = HistoryRecord {
+            id: "older".to_owned(),
+            details: Some(Default::default()),
+            ..Default::default()
+        };
+
+        let rounds = round_snapshots(&[newest, older], None);
+        assert_eq!(rounds.len(), 3);
+        assert_eq!(rounds[0].id.as_deref(), Some("older"));
+        assert_eq!(rounds[1].id.as_deref(), Some("newest"));
+        assert!(rounds[2].live);
+        assert!(rounds[2].id.is_none());
+    }
+
+    #[test]
+    fn round_snapshots_cap_history_and_always_append_one_live_row() {
+        let records = (0..=MAX_HISTORY_RECORDS)
+            .map(|index| HistoryRecord {
+                id: format!("record-{index}"),
+                details: Some(Default::default()),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        let rounds = round_snapshots(&records, None);
+
+        assert_eq!(rounds.len(), MAX_HISTORY_RECORDS + 1);
+        assert_eq!(rounds.iter().filter(|row| row.live).count(), 1);
+        assert!(
+            rounds
+                .last()
+                .is_some_and(|row| row.live && row.id.is_none())
+        );
+        let omitted_id = format!("record-{MAX_HISTORY_RECORDS}");
+        assert!(
+            !rounds
+                .iter()
+                .any(|row| row.id.as_deref() == Some(omitted_id.as_str()))
+        );
+    }
+
+    #[test]
+    fn round_snapshots_skip_history_without_details_before_reversing() {
+        let missing_details_id = format!("record-{}", MAX_HISTORY_RECORDS / 2);
+        let records = (0..=MAX_HISTORY_RECORDS)
+            .map(|index| HistoryRecord {
+                id: format!("record-{index}"),
+                details: if index == MAX_HISTORY_RECORDS / 2 {
+                    None
+                } else {
+                    Some(Default::default())
+                },
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+
+        let rounds = round_snapshots(&records, None);
+        let history_rows = rounds.iter().filter(|row| !row.live).collect::<Vec<_>>();
+
+        assert_eq!(history_rows.len(), MAX_HISTORY_RECORDS);
+        assert_eq!(rounds.iter().filter(|row| row.live).count(), 1);
+        assert!(rounds.last().is_some_and(|row| row.live));
+        assert!(
+            !history_rows
+                .iter()
+                .any(|row| row.id.as_deref() == Some(missing_details_id.as_str()))
+        );
+    }
+
+    #[test]
+    fn round_snapshots_keep_the_selected_overflow_record_visible() {
+        let records = (0..=MAX_HISTORY_RECORDS)
+            .map(|index| HistoryRecord {
+                id: format!("record-{index}"),
+                details: Some(Default::default()),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let selected_id = format!("record-{MAX_HISTORY_RECORDS}");
+
+        let rounds = round_snapshots(&records, Some(&selected_id));
+
+        assert_eq!(rounds.len(), MAX_HISTORY_RECORDS + 1);
+        assert!(
+            rounds
+                .iter()
+                .any(|row| row.id.as_deref() == Some(selected_id.as_str()))
+        );
+        assert!(rounds.last().is_some_and(|row| row.live));
     }
 
     #[test]

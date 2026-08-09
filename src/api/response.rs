@@ -24,7 +24,7 @@ pub struct HelloResult {
     pub core_version: &'static str,
     pub protocol_version: u32,
     pub data_version: &'static str,
-    pub capabilities: [&'static str; 4],
+    pub capabilities: [&'static str; 7],
     pub raw_capture_default: bool,
 }
 
@@ -34,7 +34,15 @@ impl Default for HelloResult {
             core_version: env!("CARGO_PKG_VERSION"),
             protocol_version: PROTOCOL_VERSION,
             data_version: DATA_VERSION,
-            capabilities: ["capture", "inventory", "battle_summary", "equipment"],
+            capabilities: [
+                "capture",
+                "inventory",
+                "battle_summary",
+                "equipment",
+                "battle_record_v1",
+                "battle_axis_v1",
+                "battle_timeline_v1",
+            ],
             raw_capture_default: true,
         }
     }
@@ -117,10 +125,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hello_preserves_existing_capability_order_and_appends_equipment() {
+    fn hello_preserves_existing_capability_order_and_appends_battle_reads() {
         assert_eq!(
             HelloResult::default().capabilities,
-            ["capture", "inventory", "battle_summary", "equipment"]
+            [
+                "capture",
+                "inventory",
+                "battle_summary",
+                "equipment",
+                "battle_record_v1",
+                "battle_axis_v1",
+                "battle_timeline_v1"
+            ]
         );
     }
 }

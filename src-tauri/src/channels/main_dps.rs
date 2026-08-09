@@ -25,10 +25,11 @@ pub(crate) fn subscribe_main_dps(
     main_dps::validate_window(&window)?;
     let stream_key = format!("{STREAM_KEY_PREFIX}{subscription_id}");
     let state = state.inner().clone();
-    let stop = state.begin_stream(stream_key.clone());
+    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
     thread::spawn(move || {
         let mut last_revision = None;
         let mut last_game_detected = None;
+        let mut last_game_detection_status = None;
         let mut last_empty = true;
         let mut empty_probe_ticks = 0_u8;
         let mut last_capture_lifecycle = None;
@@ -37,6 +38,7 @@ pub(crate) fn subscribe_main_dps(
             if last_revision != Some(revision) {
                 let next = snapshot(&state);
                 last_game_detected = Some(next.game_detected);
+                last_game_detection_status = Some(next.game_detection_status);
                 last_empty = next.readout.data_state == "empty";
                 empty_probe_ticks = 0;
                 let lifecycle = (state.capture_phase(), state.replay_running());
@@ -54,9 +56,11 @@ pub(crate) fn subscribe_main_dps(
                     empty_probe_ticks = 0;
                     let next = snapshot(&state);
                     if next.readout.data_state == "empty"
-                        && last_game_detected != Some(next.game_detected)
+                        && (last_game_detected != Some(next.game_detected)
+                            || last_game_detection_status != Some(next.game_detection_status))
                     {
                         last_game_detected = Some(next.game_detected);
+                        last_game_detection_status = Some(next.game_detection_status);
                         last_empty = true;
                         if on_event.send(MainDpsEvent::Snapshot(next)).is_err() {
                             break;

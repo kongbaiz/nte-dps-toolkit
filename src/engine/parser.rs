@@ -10,8 +10,15 @@ use crate::engine::model::{
 use crate::storage::i18n::Language;
 use crate::storage::resource::{read_resource_text, resource_exists, resource_file_path};
 
-const RECORD_FIELD_TYPES: [u8; 10] = [12, 12, 12, 13, 12, 12, 6, 6, 6, 12];
-const RECORD_FIELD_LENGTHS: [usize; 10] = [4, 4, 4, 8, 4, 4, 4, 4, 4, 4];
+const RECORD_FIELD_COUNT: usize = 10;
+const RECORD_PREFIX_FIELD_TYPES: [u8; 6] = [12, 12, 12, 13, 12, 12];
+const RECORD_PREFIX_FIELD_LENGTHS: [usize; 6] = [4, 4, 4, 8, 4, 4];
+const LEGACY_STATE_FIELD_TYPES: [u8; 3] = [6, 6, 6];
+const LEGACY_STATE_FIELD_LENGTHS: [usize; 3] = [4, 4, 4];
+const BOOL_ENUM_STATE_FIELD_TYPES: [u8; 3] = [8, 1, 1];
+const BOOL_ENUM_STATE_FIELD_LENGTHS: [usize; 3] = [1, 4, 4];
+const RECORD_TRAILING_FIELD_TYPE: u8 = 12;
+const RECORD_TRAILING_FIELD_LENGTH: usize = 4;
 const MAX_RECORD_FIELD_LENGTH: usize = 8;
 const MIN_DAMAGE: f32 = 2.0;
 // Damage and boss HP are serialized as f32. 999-night encounters can reach tens of
@@ -30,6 +37,8 @@ const COMPACT_GAMEPLAY_EFFECT_MARKER_WITH_FIELD: u8 = 12;
 const COMPACT_GAMEPLAY_EFFECT_MARKER: u8 = 4;
 const COMPACT_GAMEPLAY_EFFECT_FIELD: &[u8] = &[11, 0, 0, 0];
 const COMPACT_GAMEPLAY_EFFECT_TRAILER: &[u8] = &[59, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
+const BOOL_ENUM_COMPACT_GAMEPLAY_EFFECT_TRAILER: &[u8] =
+    &[0, 124, 16, 0, 0, 0, 0, 0, 0, 0, 28, 32, 0, 0, 0];
 const EQUIPMENT_SLOT_STATE_ANCHOR: &[u8] = b"\x06\0\0\0State\0";
 const EMPTY_CURTAIN_CORE_SLOT_ANCHOR: &[u8] = b"FEquipmentSlotInfo";
 const EMPTY_CURTAIN_GRID_SIDE: i32 = 7;
@@ -297,8 +306,15 @@ pub struct ParsedDamageRecord {
     pub repeated_damage: f32,
     pub state_flags: [i32; 3],
     pub trailing_value: f32,
+    pub encoding: DamageRecordEncoding,
     pub byte_offset: usize,
     pub bit_shift: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DamageRecordEncoding {
+    LegacyInt32,
+    BoolAndEnums,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2200,11 +2216,11 @@ fn parse_damage_record_at(
     byte_offset: usize,
     bit_shift: u8,
 ) -> Option<ParsedDamageRecord> {
-    let mut fields = [Field::default(); RECORD_FIELD_TYPES.len()];
+    let mut fields = [Field::default(); RECORD_FIELD_COUNT];
     let mut bit_cursor = 0;
-    for (index, (expected_type, expected_length)) in RECORD_FIELD_TYPES
+    for (index, (expected_type, expected_length)) in RECORD_PREFIX_FIELD_TYPES
         .into_iter()
-        .zip(RECORD_FIELD_LENGTHS)
+        .zip(RECORD_PREFIX_FIELD_LENGTHS)
         .enumerate()
     {
         let (field_type, field, consumed) = read_field(data, byte_offset, bit_shift, bit_cursor)?;
@@ -2215,17 +2231,61 @@ fn parse_damage_record_at(
         fields[index] = field;
     }
 
+    let (first_state_type, first_state, consumed) =
+        read_field(data, byte_offset, bit_shift, bit_cursor)?;
+    let state_encoding = match (first_state_type, first_state.len) {
+        (6, 4) => DamageRecordEncoding::LegacyInt32,
+        (8, 1) => DamageRecordEncoding::BoolAndEnums,
+        _ => return None,
+    };
+    bit_cursor += consumed;
+    fields[6] = first_state;
+
+    let (state_types, state_lengths) = match state_encoding {
+        DamageRecordEncoding::LegacyInt32 => (LEGACY_STATE_FIELD_TYPES, LEGACY_STATE_FIELD_LENGTHS),
+        DamageRecordEncoding::BoolAndEnums => {
+            (BOOL_ENUM_STATE_FIELD_TYPES, BOOL_ENUM_STATE_FIELD_LENGTHS)
+        }
+    };
+    for state_index in 1..state_types.len() {
+        let (field_type, field, consumed) = read_field(data, byte_offset, bit_shift, bit_cursor)?;
+        if field_type != state_types[state_index] || field.len != state_lengths[state_index] {
+            return None;
+        }
+        bit_cursor += consumed;
+        fields[6 + state_index] = field;
+    }
+
+    let (trailing_type, trailing_field, _) = read_field(data, byte_offset, bit_shift, bit_cursor)?;
+    if trailing_type != RECORD_TRAILING_FIELD_TYPE
+        || trailing_field.len != RECORD_TRAILING_FIELD_LENGTH
+    {
+        return None;
+    }
+    fields[9] = trailing_field;
+
     let damage = f32_field(&fields[0])?;
     let target_hp_before = f32_field(&fields[1])?;
     let target_max_hp = f32_field(&fields[2])?;
     let damage_time = f64_field(&fields[3])?;
     let world_time = f32_field(&fields[4])?;
     let repeated_damage = f32_field(&fields[5])?;
-    let state_flags = [
-        i32_field(&fields[6])?,
-        i32_field(&fields[7])?,
-        i32_field(&fields[8])?,
-    ];
+    let state_flags = match state_encoding {
+        DamageRecordEncoding::LegacyInt32 => [
+            i32_field(&fields[6])?,
+            i32_field(&fields[7])?,
+            i32_field(&fields[8])?,
+        ],
+        DamageRecordEncoding::BoolAndEnums => [
+            match fields[6].raw[0] {
+                0 => 0,
+                1 => 1,
+                _ => return None,
+            },
+            i32_field(&fields[7])?,
+            i32_field(&fields[8])?,
+        ],
+    };
     let trailing_value = f32_field(&fields[9])?;
 
     if !damage.is_finite()
@@ -2257,9 +2317,20 @@ fn parse_damage_record_at(
         repeated_damage,
         state_flags,
         trailing_value,
+        encoding: state_encoding,
         byte_offset: byte_offset + 5,
         bit_shift,
     })
+}
+
+pub fn damage_record_encoding_at(
+    data: &[u8],
+    damage_byte_offset: usize,
+    bit_shift: u8,
+) -> Option<DamageRecordEncoding> {
+    let record_start = damage_byte_offset.checked_sub(5)?;
+    let record = parse_damage_record_at(data, record_start, bit_shift)?;
+    (record.byte_offset == damage_byte_offset).then_some(record.encoding)
 }
 
 pub fn parse_damage_records(data: &[u8]) -> Vec<ParsedDamageRecord> {
@@ -2388,6 +2459,26 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
             });
         }
         for marker_offset in 0..shifted.len() {
+            if shifted
+                .get(
+                    marker_offset + 4
+                        ..marker_offset + 4 + BOOL_ENUM_COMPACT_GAMEPLAY_EFFECT_TRAILER.len(),
+                )
+                .is_some_and(|bytes| bytes == BOOL_ENUM_COMPACT_GAMEPLAY_EFFECT_TRAILER)
+                && let Some(index_bytes) = shifted.get(marker_offset..marker_offset + 4)
+                && let Ok(index_bytes) = <[u8; 4]>::try_from(index_bytes)
+            {
+                let unique_index = u32::from_le_bytes(index_bytes);
+                if !matches!(unique_index, 0 | u32::MAX)
+                    && seen.insert((unique_index, bit_shift, marker_offset))
+                {
+                    effects.push(ParsedGameplayEffect {
+                        unique_index,
+                        byte_offset: marker_offset,
+                        bit_shift,
+                    });
+                }
+            }
             let trailer_offset = match shifted[marker_offset] {
                 COMPACT_GAMEPLAY_EFFECT_MARKER_WITH_FIELD
                     if shifted
@@ -2718,6 +2809,33 @@ mod character_tests {
 
     fn encoded_damage_record(damage: f32, target_hp_before: f32, target_max_hp: f32) -> Vec<u8> {
         encoded_damage_record_with_flags(damage, target_hp_before, target_max_hp, [0, 0, 0])
+    }
+
+    fn encoded_bool_enum_damage_record_with_flags(
+        damage: f32,
+        target_hp_before: f32,
+        target_max_hp: f32,
+        state_flags: [i32; 3],
+    ) -> Vec<u8> {
+        let fields = [
+            (12, damage.to_le_bytes().to_vec()),
+            (12, target_hp_before.to_le_bytes().to_vec()),
+            (12, target_max_hp.to_le_bytes().to_vec()),
+            (13, 1.0_f64.to_le_bytes().to_vec()),
+            (12, 1.0_f32.to_le_bytes().to_vec()),
+            (12, damage.to_le_bytes().to_vec()),
+            (8, vec![state_flags[0] as u8]),
+            (1, state_flags[1].to_le_bytes().to_vec()),
+            (1, state_flags[2].to_le_bytes().to_vec()),
+            (12, 0.0_f32.to_le_bytes().to_vec()),
+        ];
+        let mut encoded = Vec::new();
+        for (field_type, value) in fields {
+            encoded.push(field_type);
+            encoded.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            encoded.extend_from_slice(&value);
+        }
+        encoded
     }
 
     fn write_shifted_bytes(payload: &mut [u8], bit_shift: u8, byte_offset: usize, bytes: &[u8]) {
@@ -3178,7 +3296,30 @@ mod character_tests {
         ))
         .expect("bundled characters should load");
 
-        assert!(!characters.is_empty());
+        let canhong = characters.get(&1036).expect("残虹 should be bundled");
+        assert_eq!(canhong.name_zh, "残虹");
+        assert_eq!(canhong.attribute.as_deref(), Some("咒"));
+        assert!(
+            canhong
+                .avatar
+                .as_deref()
+                .is_some_and(|path| !path.is_empty())
+        );
+
+        let lingke = characters.get(&1072).expect("灵可 should be bundled");
+        assert_eq!(lingke.name_zh, "灵可");
+        assert_eq!(lingke.attribute.as_deref(), Some("灵"));
+        assert!(
+            lingke
+                .avatar
+                .as_deref()
+                .is_some_and(|path| !path.is_empty())
+        );
+
+        assert!(
+            !characters.contains_key(&1091),
+            "non-canonical alias row must not become a third character"
+        );
     }
 
     #[test]
@@ -3218,6 +3359,23 @@ mod character_tests {
             vec![ParsedGameplayEffect {
                 unique_index: 4579,
                 byte_offset: 21,
+                bit_shift: 6,
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_bool_enum_sdk_compact_gameplay_effect_record() {
+        let mut record = 4737_u32.to_le_bytes().to_vec();
+        record.extend_from_slice(&[0, 124, 16, 0, 0, 0, 0, 0, 0, 0, 28, 32, 0, 0, 0]);
+        let mut payload = vec![0; 40];
+        write_shifted_bytes(&mut payload, 6, 12, &record);
+
+        assert_eq!(
+            parse_gameplay_effects(&payload),
+            vec![ParsedGameplayEffect {
+                unique_index: 4737,
+                byte_offset: 12,
                 bit_shift: 6,
             }]
         );
@@ -3309,6 +3467,25 @@ mod character_tests {
         assert_eq!(
             names.get("GA_Mint019_Melee").map(String::as_str),
             Some("满分收容术")
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "external_resources"))]
+    fn bundled_ability_tips_include_lingke_release_skills() {
+        let names = load_ability_tip_names(
+            Path::new("missing-root/res/data/skills/ability_tips.json"),
+            Language::SimplifiedChinese,
+        )
+        .expect("bundled ability tips should load");
+
+        assert_eq!(
+            names.get("GA_Radio072_Skill").map(String::as_str),
+            Some("变轨技能：瞬息全频振")
+        );
+        assert_eq!(
+            names.get("GA_Radio072_UltraSkill").map(String::as_str),
+            Some("超负荷共鸣")
         );
     }
 
@@ -3510,6 +3687,13 @@ mod character_tests {
             assert_eq!(nanally_ultimate.damage_component, None);
         }
 
+        let zankou_dot = catalog.skill("GE_Player_Zankou_DotDamage").unwrap();
+        assert_eq!(zankou_dot.owner_character_id, Some(1036));
+        assert_eq!(
+            zankou_dot.ability_name.as_deref(),
+            Some("GA_Zankou_Passive1")
+        );
+
         let names = load_gameplay_effect_semantic_names(
             Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH),
             Language::SimplifiedChinese,
@@ -3613,6 +3797,63 @@ mod character_tests {
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].damage, damage);
+    }
+
+    #[test]
+    fn parses_bool_enum_damage_state_encoding() {
+        let payload = encoded_bool_enum_damage_record_with_flags(
+            26_043.0,
+            1_224_273.0,
+            1_224_273.0,
+            [0, 1, 1],
+        );
+
+        let records = parse_damage_records(&payload);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].damage, 26_043.0);
+        assert_eq!(records[0].state_flags, [0, 1, 1]);
+        assert_eq!(records[0].encoding, DamageRecordEncoding::BoolAndEnums);
+        assert_eq!(
+            damage_record_encoding_at(&payload, records[0].byte_offset, records[0].bit_shift),
+            Some(DamageRecordEncoding::BoolAndEnums)
+        );
+    }
+
+    #[test]
+    fn rejects_bool_enum_damage_record_with_invalid_bool_state() {
+        let mut payload = encoded_bool_enum_damage_record_with_flags(
+            26_043.0,
+            1_224_273.0,
+            1_224_273.0,
+            [0, 1, 1],
+        );
+        let first_state_value_offset = (5 + 4) * 3 + (5 + 8) + (5 + 4) * 2 + 5;
+        payload[first_state_value_offset] = 2;
+
+        assert!(parse_damage_records(&payload).is_empty());
+    }
+
+    #[test]
+    fn parses_bool_enum_damage_state_encoding_at_every_bit_shift() {
+        let encoded = encoded_bool_enum_damage_record_with_flags(
+            26_043.0,
+            1_224_273.0,
+            1_224_273.0,
+            [0, 1, 1],
+        );
+
+        for bit_shift in 0..8 {
+            let mut payload = vec![0; encoded.len() + 1];
+            write_shifted_bytes(&mut payload, bit_shift, 0, &encoded);
+
+            let records = parse_damage_records(&payload);
+
+            assert_eq!(records.len(), 1, "bit shift {bit_shift}");
+            assert_eq!(records[0].bit_shift, bit_shift);
+            assert_eq!(records[0].state_flags, [0, 1, 1]);
+            assert_eq!(records[0].encoding, DamageRecordEncoding::BoolAndEnums);
+        }
     }
 
     #[test]

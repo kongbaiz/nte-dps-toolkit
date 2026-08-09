@@ -7,6 +7,7 @@ import {
   parseModStudioDeployment,
   parseModStudioDirectorySelection,
   parseModStudioDocument,
+  parseModStudioGameDirectory,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
   parseModStudioSubscriptionReceipt,
@@ -16,6 +17,7 @@ import {
   type ModStudioDocumentSnapshot,
   type ModStudioDeploymentSnapshot,
   type ModStudioDirectorySelectionSnapshot,
+  type ModStudioGameDirectorySnapshot,
   type ModStudioGameRegion,
   type ModStudioRuntimeEvent,
   type ModStudioSdkSchemaSnapshot,
@@ -29,12 +31,14 @@ const COMMANDS = {
   chooseGameDirectory: "choose_mod_studio_game_directory",
   createDocument: "create_mod_studio_document",
   getDeployment: "get_mod_studio_deployment",
+  getGameDirectory: "get_mod_studio_game_directory",
   getDocument: "get_mod_studio_document",
   getSdkSchema: "get_mod_studio_sdk_schema",
   getWorkspace: "get_mod_studio_workspace",
   openFolder: "open_mod_studio_folder",
   saveDocument: "save_mod_studio_document",
   setEnabled: "set_mod_studio_document_enabled",
+  setGameDirectory: "set_mod_studio_game_directory",
   setLoaderEnabled: "set_mod_studio_loader_enabled",
   subscribeRuntime: "subscribe_mod_studio_runtime",
   unsubscribeRuntime: "unsubscribe_mod_studio_runtime",
@@ -60,12 +64,19 @@ export interface ModStudioClient {
     region: ModStudioGameRegion | null,
     gameDirectory: string | null,
   ): Promise<ModStudioDeploymentSnapshot>;
+  getGameDirectory(
+    region: ModStudioGameRegion,
+  ): Promise<ModStudioGameDirectorySnapshot>;
   getDocument(id: string): Promise<ModStudioDocumentSnapshot>;
   getSdkSchema(): Promise<ModStudioSdkSchemaSnapshot>;
   getWorkspace(): Promise<ModStudioWorkspaceSnapshot>;
   openFolder(): Promise<true>;
   saveDocument(id: string, source: string): Promise<ModStudioDocumentSnapshot>;
   setEnabled(id: string, enabled: boolean): Promise<ModStudioWorkspaceSnapshot>;
+  setGameDirectory(
+    region: ModStudioGameRegion,
+    gameDirectory: string | null,
+  ): Promise<ModStudioGameDirectorySnapshot>;
   setLoaderEnabled(
     region: ModStudioGameRegion,
     enabled: boolean,
@@ -123,6 +134,10 @@ export function createModStudioClient(
         region,
         gameDirectory,
       }),
+    getGameDirectory: (region) =>
+      request(COMMANDS.getGameDirectory, parseModStudioGameDirectory, {
+        region,
+      }),
     getDocument: (id) =>
       request(COMMANDS.getDocument, parseModStudioDocument, { id }),
     getSdkSchema: () => request(COMMANDS.getSdkSchema, parseModStudioSdkSchema),
@@ -138,6 +153,11 @@ export function createModStudioClient(
       request(COMMANDS.saveDocument, parseModStudioDocument, { id, source }),
     setEnabled: (id, enabled) =>
       request(COMMANDS.setEnabled, parseModStudioWorkspace, { id, enabled }),
+    setGameDirectory: (region, gameDirectory) =>
+      request(COMMANDS.setGameDirectory, parseModStudioGameDirectory, {
+        region,
+        gameDirectory,
+      }),
     setLoaderEnabled: (region, enabled, gameDirectory) =>
       request(COMMANDS.setLoaderEnabled, parseModStudioDeployment, {
         region,

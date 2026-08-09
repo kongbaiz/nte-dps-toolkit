@@ -68,22 +68,22 @@
         {
           "gameplay_effect": "GE_ActorReaction_1_1019_Damage",
           "base_damage": [
-            160.0,
-            240.0,
-            400.0,
-            600.0,
-            800.0,
-            1200.0,
-            1600.0,
-            2000.0,
-            3400.0,
-            4400.0,
-            7200.0,
-            10000.0,
-            12000.0,
-            14000.0,
-            16000.0,
-            18000.0
+            30.0,
+            45.0,
+            75.0,
+            112.5,
+            150.0,
+            225.0,
+            300.0,
+            375.0,
+            637.5,
+            825.0,
+            1350.0,
+            1875.0,
+            2250.0,
+            2625.0,
+            3000.0,
+            3375.0
           ]
         },
         {
@@ -143,7 +143,12 @@
       ],
       "default_damage_effect": "None",
       "damage_effects": [],
-      "character_abilities": []
+      "character_abilities": [
+        {
+          "CharacterID": "1072",
+          "ReactionAbilityID": "GA_Radio072_Passive_1"
+        }
+      ]
     },
     "4": {
       "reaction_type": "REACTION_RESULT_TYPE_4",
@@ -228,7 +233,7 @@
           ]
         },
         {
-          "gameplay_effect": "Buff_Reaction_5_new_1003",
+          "gameplay_effect": "Buff_Reaction_5_new_1036",
           "base_damage": [
             20.0,
             35.0,
@@ -261,6 +266,10 @@
         {
           "CharacterID": "1033",
           "ReactionAbilityID": "GA_Adler_Passive_1"
+        },
+        {
+          "CharacterID": "1036",
+          "ReactionAbilityID": "GA_Zankou_Passive1"
         }
       ]
     },
@@ -945,7 +954,7 @@
       },
       "ReactionDataArray": [
         {
-          "RespawnCount": 1,
+          "AdditionalManagerCanExistNum": 3,
           "ReactionAbilityID": "GA_Oneiroi_Passive_1",
           "ConditionArray": [
             {
@@ -957,10 +966,54 @@
               ]
             }
           ]
+        },
+        {
+          "AdditionalManagerCanExistNum": 3,
+          "ReactionAbilityID": "GA_Oneiroi_Passive_1",
+          "ConditionArray": [
+            {
+              "GEConditionArray": [
+                {
+                  "ObjectName": "BlueprintGeneratedClass'Buff_Oneiroi075_Passive1_C'",
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_075_Oneiroi/PassiveEffect/Buff_Oneiroi075_Passive1.1"
+                },
+                {
+                  "ObjectName": "BlueprintGeneratedClass'Buff_Kuhara055_Passive1_C'",
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_055_Kuhara/PassiveEffect/Buff_Kuhara055_Passive1.0"
+                }
+              ]
+            }
+          ]
         }
       ],
       "Desc": {
         "CultureInvariantString": "创生株发射完小球消失后，再次生成一株复制体创生株（复制体消失不能再次复制）"
+      }
+    },
+    "1072": {
+      "Name": {
+        "CultureInvariantString": "灵可"
+      },
+      "ReactionDataArray": [
+        {
+          "ExtraDamageRatio": 0.13,
+          "SouceGEClass": null,
+          "ExtraFuWenDamageRatio": 0.0,
+          "ReactionAbilityID": "GA_Radio072_Passive_1",
+          "ConditionArray": [
+            {
+              "GEConditionArray": [
+                {
+                  "ObjectName": "BlueprintGeneratedClass'Buff_Radio072_Passive1_C'",
+                  "ObjectPath": "/Game/Blueprints/Abilities/Player/Ability_072_Radio/PassiveEffect/Buff_Radio072_Passive1.1"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "Desc": {
+        "CultureInvariantString": "覆纹额外追击伤害提升至30%，受覆纹状态影响的目标，所受追击伤害提高10%"
       }
     }
   }

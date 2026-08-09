@@ -2,7 +2,12 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::storage::config::{TIMELINE_BUCKET_SECONDS_MAX, TIMELINE_BUCKET_SECONDS_MIN};
+
 use super::jsonrpc::RpcError;
+
+pub const BATTLE_AXIS_PAGE_LIMIT_MAX: usize = 500;
+const BATTLE_RECORD_ID_MAX_BYTES: usize = 128;
 
 #[derive(Debug)]
 pub enum Request {
@@ -15,6 +20,9 @@ pub enum Request {
     InventoryGetLatest,
     Equipment(EquipmentOperationParam),
     BattleGetSummary(BattleSummaryParams),
+    BattleGetRecord(BattleRecordParams),
+    BattleGetAxis(BattleAxisParams),
+    BattleGetTimeline(BattleTimelineParams),
     BattleReset,
     Unknown,
 }
@@ -60,6 +68,49 @@ pub struct CaptureStartParams {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 pub struct BattleSummaryParams {
     pub subtract_time_stop: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BattleRecordParams {
+    #[serde(default)]
+    pub battle_record_id: Option<String>,
+    pub subtract_time_stop: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BattleAxisParams {
+    pub battle_record_id: Option<String>,
+    pub cursor: Option<u64>,
+    pub limit: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BattleTimelineScopeParam {
+    All,
+    Upper,
+    Lower,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BattleTimelineParams {
+    #[serde(default)]
+    pub battle_record_id: Option<String>,
+    pub scope: BattleTimelineScopeParam,
+    pub bucket_seconds: f32,
+    pub subtract_time_stop: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBattleAxisParams {
+    #[serde(default)]
+    battle_record_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
+    limit: usize,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -322,12 +373,79 @@ pub fn parse_request(method: &str, params: Value) -> Result<Request, RpcError> {
             })?;
             Ok(Request::BattleGetSummary(params))
         }
+        "battle.get_record" => {
+            let params: BattleRecordParams = parse_params(params, method)?;
+            validate_battle_record_id(params.battle_record_id.as_deref())?;
+            Ok(Request::BattleGetRecord(params))
+        }
+        "battle.get_axis" => {
+            let params: RawBattleAxisParams = parse_params(params, method)?;
+            validate_battle_record_id(params.battle_record_id.as_deref())?;
+            if !(1..=BATTLE_AXIS_PAGE_LIMIT_MAX).contains(&params.limit) {
+                return Err(RpcError::invalid_params(format!(
+                    "battle.get_axis limit must be between 1 and {BATTLE_AXIS_PAGE_LIMIT_MAX}"
+                )));
+            }
+            let cursor = params
+                .cursor
+                .as_deref()
+                .map(parse_battle_axis_cursor)
+                .transpose()?;
+            Ok(Request::BattleGetAxis(BattleAxisParams {
+                battle_record_id: params.battle_record_id,
+                cursor,
+                limit: params.limit,
+            }))
+        }
+        "battle.get_timeline" => {
+            let params: BattleTimelineParams = parse_params(params, method)?;
+            validate_battle_record_id(params.battle_record_id.as_deref())?;
+            if !params.bucket_seconds.is_finite()
+                || !(TIMELINE_BUCKET_SECONDS_MIN..=TIMELINE_BUCKET_SECONDS_MAX)
+                    .contains(&params.bucket_seconds)
+            {
+                return Err(RpcError::invalid_params(format!(
+                    "battle.get_timeline bucket_seconds must be between {TIMELINE_BUCKET_SECONDS_MIN} and {TIMELINE_BUCKET_SECONDS_MAX}"
+                )));
+            }
+            Ok(Request::BattleGetTimeline(params))
+        }
         "battle.reset" => {
             validate_empty_params(&params)?;
             Ok(Request::BattleReset)
         }
         _ => Ok(Request::Unknown),
     }
+}
+
+fn validate_battle_record_id(value: Option<&str>) -> Result<(), RpcError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty()
+        || value.len() > BATTLE_RECORD_ID_MAX_BYTES
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(RpcError::invalid_params("battle_record_id is invalid"));
+    }
+    Ok(())
+}
+
+fn parse_battle_axis_cursor(value: &str) -> Result<u64, RpcError> {
+    if value.is_empty() || value.len() > 20 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(RpcError::invalid_params(
+            "battle.get_axis cursor must be a positive decimal string",
+        ));
+    }
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|cursor| *cursor > 0)
+        .ok_or_else(|| {
+            RpcError::invalid_params("battle.get_axis cursor must be a positive decimal string")
+        })
 }
 
 fn parse_params<T: DeserializeOwned>(params: Value, method: &str) -> Result<T, RpcError> {
@@ -449,6 +567,88 @@ mod tests {
             parse_request(
                 "battle.get_summary",
                 serde_json::json!({"subtract_time_stop": "yes"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn battle_read_methods_use_typed_bounded_parameters() {
+        for (method, params) in [
+            (
+                "battle.get_record",
+                serde_json::json!({"subtract_time_stop": true}),
+            ),
+            (
+                "battle.get_axis",
+                serde_json::json!({"cursor": null, "limit": 250}),
+            ),
+            (
+                "battle.get_timeline",
+                serde_json::json!({
+                    "scope": "all",
+                    "bucket_seconds": 1.0,
+                    "subtract_time_stop": true
+                }),
+            ),
+        ] {
+            let request = parse_request(method, params).expect("valid battle read request");
+            assert!(
+                !matches!(request, Request::Unknown),
+                "{method} must have a typed request variant"
+            );
+        }
+
+        assert!(
+            parse_request(
+                "battle.get_axis",
+                serde_json::json!({"cursor": null, "limit": 0})
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "battle.get_axis",
+                serde_json::json!({"cursor": "not-a-number", "limit": 250})
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "battle.get_axis",
+                serde_json::json!({"cursor": "1", "limit": BATTLE_AXIS_PAGE_LIMIT_MAX + 1})
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "battle.get_record",
+                serde_json::json!({
+                    "battle_record_id": "contains spaces",
+                    "subtract_time_stop": true
+                })
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "battle.get_timeline",
+                serde_json::json!({
+                    "scope": "all",
+                    "bucket_seconds": 0.1,
+                    "subtract_time_stop": true
+                })
+            )
+            .is_err()
+        );
+        assert!(
+            parse_request(
+                "battle.get_timeline",
+                serde_json::json!({
+                    "scope": "all",
+                    "bucket_seconds": TIMELINE_BUCKET_SECONDS_MAX + 0.1,
+                    "subtract_time_stop": true
+                })
             )
             .is_err()
         );

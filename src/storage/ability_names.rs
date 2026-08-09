@@ -72,7 +72,7 @@ pub fn init(language: Language) -> (Arc<AbilityCatalog>, Option<String>) {
             HashMap::new()
         }
     };
-    let mut store = STORE.write().expect("ability name store lock poisoned");
+    let mut store = STORE.write().unwrap_or_else(|poison| poison.into_inner());
     store.catalog = Arc::clone(&catalog);
     store.ability_tip_names = ability_tip_names;
     store.semantic_names = semantic_names;
@@ -102,14 +102,14 @@ pub fn reload(language: Language) -> Option<String> {
             HashMap::new()
         }
     };
-    let mut store = STORE.write().expect("ability name store lock poisoned");
+    let mut store = STORE.write().unwrap_or_else(|poison| poison.into_inner());
     store.ability_tip_names = ability_tip_names;
     store.semantic_names = semantic_names;
     (!warnings.is_empty()).then(|| warnings.join("; "))
 }
 
 pub fn resolve_damage_name(effect_name: &str) -> Option<String> {
-    let store = STORE.read().expect("ability name store lock poisoned");
+    let store = STORE.read().unwrap_or_else(|poison| poison.into_inner());
     resolve_from_maps(
         &store.catalog,
         &store.ability_tip_names,
@@ -121,7 +121,7 @@ pub fn resolve_damage_name(effect_name: &str) -> Option<String> {
 pub fn resolve_ability_name(ability_name: &str) -> Option<String> {
     STORE
         .read()
-        .expect("ability name store lock poisoned")
+        .unwrap_or_else(|poison| poison.into_inner())
         .ability_tip_names
         .get(ability_name)
         .cloned()

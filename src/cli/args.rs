@@ -33,7 +33,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
 fn parse_serve(args: &[OsString]) -> Result<Command, String> {
     let mut stdio = false;
     let mut data_dir = None;
-    let mut log_level = false;
+    let mut legacy_log_level = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].to_str() {
@@ -48,7 +48,8 @@ fn parse_serve(args: &[OsString]) -> Result<Command, String> {
                 }
                 data_dir = Some(PathBuf::from(value));
             }
-            Some("--log-level") if !log_level => {
+            // Backward compatibility for launchers that still pass the retired no-op option.
+            Some("--log-level") if !legacy_log_level => {
                 index += 1;
                 let value = args
                     .get(index)
@@ -57,7 +58,7 @@ fn parse_serve(args: &[OsString]) -> Result<Command, String> {
                 if value.is_empty() || value.starts_with("--") {
                     return Err("error: --log-level requires a non-empty value".to_owned());
                 }
-                log_level = true;
+                legacy_log_level = true;
             }
             _ => return Err(usage()),
         }
@@ -72,7 +73,7 @@ fn parse_serve(args: &[OsString]) -> Result<Command, String> {
 }
 
 fn usage() -> String {
-    "error: unsupported arguments; usage: nte-core serve --stdio [--data-dir <path>] [--log-level <level>] | version --json | devices --json".to_owned()
+    "error: unsupported arguments; usage: nte-core serve --stdio [--data-dir <path>] | version --json | devices --json".to_owned()
 }
 
 #[cfg(test)]
@@ -93,8 +94,6 @@ mod tests {
                 "--data-dir",
                 "capture-data",
                 "--stdio",
-                "--log-level",
-                "info",
             ])),
             Ok(Command::Serve(ServeOptions {
                 data_dir: PathBuf::from("capture-data")
@@ -102,6 +101,16 @@ mod tests {
         );
         assert_eq!(
             parse(args(&["serve", "--stdio"])),
+            Ok(Command::Serve(ServeOptions {
+                data_dir: PathBuf::from("logs")
+            }))
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_log_level_for_backward_compatibility() {
+        assert_eq!(
+            parse(args(&["serve", "--stdio", "--log-level", "info"])),
             Ok(Command::Serve(ServeOptions {
                 data_dir: PathBuf::from("logs")
             }))
@@ -118,11 +127,26 @@ mod tests {
             parse(args(&["serve", "--stdio", "--data-dir"])).unwrap_err(),
             "error: --data-dir requires a value"
         );
+        assert_eq!(
+            parse(args(&["serve", "--stdio", "--log-level"])).unwrap_err(),
+            "error: --log-level requires a UTF-8 value"
+        );
     }
 
     #[test]
     fn rejects_unknown_and_duplicate_options() {
         assert!(parse(args(&["unknown"])).is_err());
         assert!(parse(args(&["serve", "--stdio", "--stdio"])).is_err());
+        assert!(
+            parse(args(&[
+                "serve",
+                "--stdio",
+                "--log-level",
+                "info",
+                "--log-level",
+                "debug",
+            ]))
+            .is_err()
+        );
     }
 }

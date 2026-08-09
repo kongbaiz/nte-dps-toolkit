@@ -371,7 +371,7 @@ mod tests {
                 attribute: "咒".to_owned(),
                 verified: true,
                 color: "#123ABC".to_owned(),
-                avatar: "res/images/characters/player_020_256.png".to_owned(),
+                avatar: "res/images/characters/player_020.png".to_owned(),
             },
         )
         .expect("save character data");

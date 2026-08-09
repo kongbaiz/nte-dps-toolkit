@@ -74,7 +74,7 @@ nte-dps-tool.exe
 3. Click Start Capture. The app will try to select the active adapter and local IP automatically.
 4. Review live data and saved runs in Overview, Character, Abyss, and Console.
 
-When no data appears, open **F12 → Diagnostics** and run the automatic diagnostics wizard.
+When no data appears, press `F12` to open Console and run the **Diagnostics** wizard.
 
 ---
 
@@ -121,7 +121,7 @@ Close the game before changing plugin installation state. If another `dwmapi.dll
 - Total damage, DPS, hit count, damage taken, and combat duration;
 - character rankings, damage share, skill categories, and filterable hit details;
 - configurable HUD modules, opacity, theme, always-on-top, click-through, and mini DPS curve;
-- `Home` toggles click-through and `F12` opens or closes Console.
+- `Home` toggles click-through and `F12` opens Console and jumps to the Packets page.
 
 ### Timing and damage accounting
 
@@ -259,7 +259,7 @@ cargo test -- --ignored
 
 ### No traffic or damage data appears
 
-Confirm that Npcap is installed with *WinPcap API-compatible Mode*, run the tool as Administrator, and start `HTGame.exe`. Then run the wizard under **F12 → Diagnostics**.
+Confirm that Npcap is installed with *WinPcap API-compatible Mode*, run the tool as Administrator, and start `HTGame.exe`. Then press `F12` to open Console and run the **Diagnostics** wizard.
 
 ### Why does `nte-core.exe` exit immediately?
 

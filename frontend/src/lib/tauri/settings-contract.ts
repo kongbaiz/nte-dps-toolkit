@@ -360,7 +360,9 @@ export function parseTeamDataImportFileResult(
   };
 }
 
-function parseUpdateSettings(updates: Record<string, unknown>): UpdateSettings {
+export function parseUpdateSettings(
+  updates: Record<string, unknown>,
+): UpdateSettings {
   const available = array(updates.available, "settings.updates.available").map(
     (value, index) => {
       const update = record(value, `settings.updates.available[${index}]`);

@@ -15,6 +15,7 @@
 #define NTE_MOD_LOG_MESSAGE_SIZE 56u
 #define NTE_MODS_IPC_VERSION 7u
 #define NTE_MODS_PIPE_NAME L"\\\\.\\pipe\\nte-mods-plugin-v7"
+#define NTE_MODS_RUNTIME_PRESENCE_NAME L"Local\\nte-mods-plugin-v1-present"
 #define NTE_MODS_IPC_MAGIC 0x5145544Eu
 #define NTE_MODS_IPC_REQUEST_SIZE 1080u
 #define NTE_MODS_IPC_RESPONSE_SIZE 2072u

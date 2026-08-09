@@ -6,6 +6,7 @@
 #include "obfuscated_string.hpp"
 #include "offset_resolver.hpp"
 #include "shadow_vtable_hook.hpp"
+#include "signature_policy.hpp"
 #include "viewport_hook_policy.hpp"
 
 #include <Windows.h>
@@ -23,8 +24,8 @@ namespace nte::mods
 		constexpr size_t LOCAL_PLAYER_VIEWPORT_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_WORLD_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
-		constexpr size_t VIEWPORT_TICK_INDEX = 100;
-		constexpr size_t PROCESS_EVENT_INDEX = 0x4C;
+		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 4;
+		constexpr size_t VIEWPORT_TICK_CODE_WINDOW = 0x90;
 		constexpr size_t MAX_PROCESS_EVENT_HOOKS = 16;
 		constexpr size_t MAX_PROCESS_EVENT_CLASS_HOOKS = 4;
 		constexpr size_t MAX_PROCESS_EVENT_SUBSCRIPTIONS = 32;
@@ -39,12 +40,38 @@ namespace nte::mods
 			L"Software\\NTE DPS Tool\\Mod Loader";
 		constexpr wchar_t MOD_WORKSPACE_REGISTRY_VALUE[] = L"Workspace";
 
-		constexpr std::array<uint8_t, 22> VIEWPORT_TICK_PREFIX{
-			0x4C, 0x89, 0x74, 0x24, 0x20, 0x55, 0x48, 0x8D, 0x6C, 0x24, 0xD0,
-			0x48, 0x81, 0xEC, 0x30, 0x01, 0x00, 0x00, 0x4C, 0x8B, 0xF1, 0xE8,
+		constexpr uint8_t STACK_ALLOC_LARGE_BYTES[]{
+			0x48, 0x81, 0xEC, 0x00, 0x00, 0x00, 0x00,
 		};
-		constexpr std::array<uint8_t, 12> VIEWPORT_TICK_SUFFIX{
-			0x49, 0x8B, 0x06, 0x49, 0x8B, 0xCE, 0xFF, 0x90, 0x80, 0x01, 0x00, 0x00,
+		constexpr uint8_t STACK_ALLOC_LARGE_MASK[]{
+			0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00,
+		};
+		constexpr signature::BytePattern STACK_ALLOC_LARGE{
+			STACK_ALLOC_LARGE_BYTES,
+			STACK_ALLOC_LARGE_MASK,
+			sizeof(STACK_ALLOC_LARGE_BYTES),
+		};
+		constexpr uint8_t STACK_ALLOC_SMALL_BYTES[]{
+			0x48, 0x83, 0xEC, 0x00,
+		};
+		constexpr uint8_t STACK_ALLOC_SMALL_MASK[]{
+			0xFF, 0xFF, 0xFF, 0x00,
+		};
+		constexpr signature::BytePattern STACK_ALLOC_SMALL{
+			STACK_ALLOC_SMALL_BYTES,
+			STACK_ALLOC_SMALL_MASK,
+			sizeof(STACK_ALLOC_SMALL_BYTES),
+		};
+		constexpr uint8_t VIEWPORT_TICK_VCALL_BYTES[]{
+			0xFF, 0x90, 0x80, 0x01, 0x00, 0x00,
+		};
+		constexpr uint8_t VIEWPORT_TICK_VCALL_MASK[]{
+			0xFF, 0xF8, 0xFF, 0xFF, 0xFF, 0xFF,
+		};
+		constexpr signature::BytePattern VIEWPORT_TICK_VCALL{
+			VIEWPORT_TICK_VCALL_BYTES,
+			VIEWPORT_TICK_VCALL_MASK,
+			sizeof(VIEWPORT_TICK_VCALL_BYTES),
 		};
 
 		struct LocalPlayerArray
@@ -130,8 +157,14 @@ namespace nte::mods
 			void* expected,
 			void* replacement)
 		{
+			const auto* resolved = offsets::Get();
+			if (resolved == nullptr || resolved->process_event_index >= 4096 ||
+				!memory::IsReadableRange(
+					vtable,
+					(resolved->process_event_index + 1) * sizeof(void*)))
+				return false;
 			auto* slot = reinterpret_cast<PVOID volatile*>(
-				vtable + PROCESS_EVENT_INDEX);
+				vtable + resolved->process_event_index);
 			DWORD old_protection = 0;
 			if (!VirtualProtect(
 					const_cast<PVOID*>(slot),
@@ -176,18 +209,6 @@ namespace nte::mods
 			return reinterpret_cast<ViewportTick>(
 				InterlockedCompareExchangePointer(
 					&original_viewport_tick, nullptr, nullptr));
-		}
-
-		bool BytesEqual(const void* left, const void* right, size_t size)
-		{
-			const auto* left_bytes = static_cast<const uint8_t*>(left);
-			const auto* right_bytes = static_cast<const uint8_t*>(right);
-			for (size_t index = 0; index < size; ++index)
-			{
-				if (left_bytes[index] != right_bytes[index])
-					return false;
-			}
-			return true;
 		}
 
 		bool EqualsAsciiCaseInsensitive(const wchar_t* left, const wchar_t* right)
@@ -260,25 +281,83 @@ namespace nte::mods
 
 		bool IsExpectedViewportTick(const void* address)
 		{
-			constexpr size_t CALL_DISPLACEMENT_SIZE = 4;
-			constexpr size_t suffix_offset =
-				VIEWPORT_TICK_PREFIX.size() + CALL_DISPLACEMENT_SIZE;
-			constexpr size_t signature_size =
-				suffix_offset + VIEWPORT_TICK_SUFFIX.size();
-
 			if (!memory::IsExecutableAddress(address) ||
-				!memory::IsReadableRange(address, signature_size))
+				!memory::IsReadableRange(address, VIEWPORT_TICK_CODE_WINDOW))
 				return false;
 
 			const auto* code = static_cast<const uint8_t*>(address);
-			return BytesEqual(
-				code,
-				VIEWPORT_TICK_PREFIX.data(),
-				VIEWPORT_TICK_PREFIX.size()) &&
-				BytesEqual(
-					code + suffix_offset,
-					VIEWPORT_TICK_SUFFIX.data(),
-					VIEWPORT_TICK_SUFFIX.size());
+			const bool has_stack_frame =
+				signature::Find(
+					code,
+					VIEWPORT_TICK_CODE_WINDOW,
+					0,
+					32,
+					STACK_ALLOC_LARGE) != VIEWPORT_TICK_CODE_WINDOW ||
+				signature::Find(
+					code,
+					VIEWPORT_TICK_CODE_WINDOW,
+					0,
+					32,
+					STACK_ALLOC_SMALL) != VIEWPORT_TICK_CODE_WINDOW;
+			return has_stack_frame &&
+				signature::Find(
+					code,
+					VIEWPORT_TICK_CODE_WINDOW,
+					0,
+					VIEWPORT_TICK_CODE_WINDOW,
+					VIEWPORT_TICK_VCALL) != VIEWPORT_TICK_CODE_WINDOW;
+		}
+
+		bool ResolveViewportTickIndex(
+			void** vtable,
+			size_t preferred_index,
+			size_t& result)
+		{
+			const size_t begin = preferred_index > VIEWPORT_TICK_SCAN_RADIUS
+				? preferred_index - VIEWPORT_TICK_SCAN_RADIUS
+				: 0;
+			if (preferred_index > SIZE_MAX - VIEWPORT_TICK_SCAN_RADIUS)
+				return false;
+			const size_t end = preferred_index + VIEWPORT_TICK_SCAN_RADIUS;
+			if (!memory::IsReadableRange(vtable, (end + 1) * sizeof(void*)))
+				return false;
+
+			const auto* resolved = offsets::Get();
+			if (resolved == nullptr)
+				return false;
+			const bool known_image_profile =
+				offsets::IsKnownImageProfile(
+					resolved->image_size,
+					resolved->image_checksum);
+			const bool preferred_index_is_valid =
+				memory::IsExecutableAddress(vtable[preferred_index]) &&
+				memory::IsReadableRange(vtable[preferred_index], 16);
+			if (nte::hook::ShouldPreferKnownViewportTick(
+					known_image_profile,
+					preferred_index_is_valid))
+			{
+				// The current live build has two semantically similar entries in
+				// the bounded scan window. The verified image profile is the
+				// authoritative tie-breaker for its SDK vtable index.
+				result = preferred_index;
+				return true;
+			}
+
+			const signature::SelectionResult selection =
+				signature::SelectUniqueIndex(
+					begin,
+					end,
+					[&](size_t index)
+					{
+						return IsExpectedViewportTick(vtable[index]);
+					},
+					result);
+			if (selection == signature::SelectionResult::Unique)
+				return true;
+			if (selection == signature::SelectionResult::Ambiguous)
+				return false;
+
+			return false;
 		}
 
 		void __fastcall HookedViewportTick(
@@ -423,9 +502,13 @@ namespace nte::mods
 				return false;
 
 			auto** vtable = *reinterpret_cast<void***>(viewport);
-			if (!memory::IsReadableRange(
-				vtable, (VIEWPORT_TICK_INDEX + 1) * sizeof(void*)) ||
-				!IsExpectedViewportTick(vtable[VIEWPORT_TICK_INDEX]))
+			const auto* resolved = offsets::Get();
+			size_t viewport_tick_index = 0;
+			if (resolved == nullptr ||
+				!ResolveViewportTickIndex(
+					vtable,
+					resolved->viewport_tick_index,
+					viewport_tick_index))
 			{
 				DebugLog(NTE_OBFUSCATE_STRING(
 					L"NTE Mods plugin: unsupported viewport Tick vtable.\n")
@@ -434,7 +517,7 @@ namespace nte::mods
 			}
 
 			const auto candidate_tick = reinterpret_cast<ViewportTick>(
-				vtable[VIEWPORT_TICK_INDEX]);
+				vtable[viewport_tick_index]);
 			const bool had_active_hook =
 				viewport_hooks[active_viewport_hook_index].IsInstalled();
 			const size_t target_hook_index = had_active_hook
@@ -448,7 +531,7 @@ namespace nte::mods
 				reinterpret_cast<void*>(candidate_tick));
 			if (!viewport_hooks[target_hook_index].Install(
 				viewport,
-				VIEWPORT_TICK_INDEX,
+				viewport_tick_index,
 				reinterpret_cast<void*>(&HookedViewportTick)) ||
 				viewport_hooks[target_hook_index].OriginalFunction() !=
 				reinterpret_cast<void*>(candidate_tick))
@@ -623,6 +706,10 @@ namespace nte::mods
 			!memory::IsReadableRange(object, sizeof(void*)) ||
 			!memory::IsReadableRange(function, 0xBA))
 			return false;
+		const auto* resolved = offsets::Get();
+		if (resolved == nullptr || resolved->process_event_index >= 4096)
+			return false;
+		const size_t process_event_index = resolved->process_event_index;
 		if ((array_element_size == 0 && array_value_offset != 0) ||
 			array_element_size > MAX_PROCESS_EVENT_ARRAY_ELEMENT_SIZE ||
 			(array_element_size != 0 &&
@@ -634,8 +721,8 @@ namespace nte::mods
 		auto** vtable = *reinterpret_cast<void***>(object);
 		if (!memory::IsReadableRange(
 				vtable,
-				(PROCESS_EVENT_INDEX + 1) * sizeof(void*)) ||
-			!memory::IsExecutableAddress(vtable[PROCESS_EVENT_INDEX]))
+				(process_event_index + 1) * sizeof(void*)) ||
+			!memory::IsExecutableAddress(vtable[process_event_index]))
 			return false;
 		uint16_t params_size = 0;
 		if (!ReflectedFunctionParamSize(function, params_size) ||
@@ -702,7 +789,7 @@ namespace nte::mods
 					}
 				}
 				const auto original = reinterpret_cast<ProcessEvent>(
-					vtable[PROCESS_EVENT_INDEX]);
+					vtable[process_event_index]);
 				if (target_hook == nullptr ||
 					!ReplaceProcessEventVTableEntry(
 						vtable,
@@ -752,10 +839,10 @@ namespace nte::mods
 				target_hook->hook.Remove();
 				target_hook->object = object;
 				target_hook->original =
-					reinterpret_cast<ProcessEvent>(vtable[PROCESS_EVENT_INDEX]);
+					reinterpret_cast<ProcessEvent>(vtable[process_event_index]);
 				if (!target_hook->hook.Install(
 						object,
-						PROCESS_EVENT_INDEX,
+						process_event_index,
 						reinterpret_cast<void*>(&HookedProcessEvent)) ||
 					target_hook->hook.OriginalFunction() !=
 						reinterpret_cast<void*>(target_hook->original))
@@ -987,6 +1074,12 @@ namespace nte::mods
 					L"NTE Mods plugin: failed to start runtime watcher.\n")
 					.c_str());
 			}
+			else if (!OpenRuntimePresence())
+			{
+				DebugLog(NTE_OBFUSCATE_STRING(
+					L"NTE Mods plugin: failed to publish runtime presence.\n")
+					.c_str());
+			}
 		}
 	}
 
@@ -1008,5 +1101,6 @@ namespace nte::mods
 		runtime::Reset();
 		RestoreViewportHook();
 		CloseIpc();
+		CloseRuntimePresence();
 	}
 } // namespace nte::mods

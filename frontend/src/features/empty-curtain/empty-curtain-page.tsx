@@ -31,7 +31,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { characterAvatarUrl } from "@/lib/character-avatar";
+import { resolveCharacterAvatar } from "@/lib/character-avatar";
+import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
 import type { ManageItemInput } from "@/lib/tauri/empty-curtain-client";
 import {
@@ -242,7 +243,7 @@ export function EmptyCurtainPage() {
                 <EquipmentCanvasGrid
                   items={visibleItems}
                   imageUrl={equipmentImageUrl}
-                  characterAvatarUrl={characterAvatarUrl}
+                  characterAvatarUrl={resolveCharacterAvatar}
                   onOpenItem={(item) =>
                     setSelectedItemKey(itemUidKey(item.uid))
                   }
@@ -1152,7 +1153,7 @@ function CharacterAvatar({
   characterId: number;
   small?: boolean;
 }) {
-  const avatarUrl = characterAvatarUrl(characterId);
+  const avatarUrl = useCharacterAvatar(characterId);
   const className = small ? "size-5" : "size-9";
   return avatarUrl ? (
     <img

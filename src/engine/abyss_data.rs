@@ -17,7 +17,7 @@ const LEGACY_ABYSS_MONSTER_STATIC_PATH: &str =
 const LEGACY_MONSTER_PACK_DATA_PATH: &str = "NTE_Assets/DataTable/PackData/DT_MonsterPackData.json";
 const LEGACY_ABYSS_LOCALIZATION_PATH: &str = "NTE_Assets/Localization/zh-CN/game.json";
 type AbyssPackIdParts = (u32, u32, Option<u32>, Option<u32>, String);
-const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=7;
+const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=10;
 
 #[derive(Clone, Debug, Default)]
 pub struct AbyssMonsterDataset {
@@ -873,12 +873,18 @@ fn number(row: &Value, key: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_dataset_from_summary, build_static_index, lookup_static_monster,
-        parse_abyss_attribute_monster_id, parse_abyss_group, parse_abyss_pack_id,
-        parse_abyss_route_half, parse_abyss_season_names,
+        build_dataset_from_summary, build_static_index, is_supported_abyss_season,
+        lookup_static_monster, parse_abyss_attribute_monster_id, parse_abyss_group,
+        parse_abyss_pack_id, parse_abyss_route_half, parse_abyss_season_names,
     };
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn supports_released_abyss_season_ten_only() {
+        assert!(is_supported_abyss_season(10));
+        assert!(!is_supported_abyss_season(11));
+    }
 
     #[test]
     fn parses_simple_abyss_pack_id() {
@@ -1018,7 +1024,7 @@ mod tests {
             .iter()
             .map(|season| season.season)
             .collect::<Vec<_>>();
-        assert_eq!(seasons, [1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(seasons, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
         let floor = dataset
             .floor(4, 1)
@@ -1033,14 +1039,18 @@ mod tests {
         );
 
         let latest_floor = dataset
-            .floor(7, 1)
+            .floor(10, 1)
             .expect("latest abyss floor should exist");
         assert_eq!(latest_floor.wave_count(), 2);
         assert_eq!(latest_floor.monster_count(), 16);
-        // Season 7's real name ("月恒环线") comes from AbyssCloneSeasonDataTable,
-        // not the localization-file/quest-name scan alone — that scan lagged
-        // behind for this season and left it falling back to "第 7 期".
-        assert_eq!(latest_floor.season_name.as_deref(), Some("月恒环线"));
+        assert_eq!(latest_floor.season_name.as_deref(), Some("星流环线"));
+        assert!(
+            latest_floor
+                .monsters
+                .iter()
+                .all(|monster| monster.stats.hp_max_base > 0.0),
+            "season 10 summary rows must resolve stats from the refreshed pack table"
+        );
 
         // These come from the authoritative AbyssCloneLevelDataTable summary
         // (not the pack_id-guessing fallback), so every supported floor

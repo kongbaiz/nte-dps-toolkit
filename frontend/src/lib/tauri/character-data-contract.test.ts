@@ -13,7 +13,7 @@ const RECORD = {
   attribute: "咒",
   verified: true,
   color: "#123ABC",
-  avatar: "res/images/characters/player_003_256.png",
+  avatar: "res/images/characters/player_003.png",
 };
 
 describe("Character data contract", () => {

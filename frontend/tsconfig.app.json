@@ -5,6 +5,7 @@
     "lib": ["ES2023", "DOM"],
     "module": "esnext",
     "types": ["vite/client"],
+    "strict": true,
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
     "paths": {

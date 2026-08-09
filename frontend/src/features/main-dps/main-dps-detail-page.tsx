@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Button } from "@/components/ui/button";
-import { characterAvatarUrl } from "@/lib/character-avatar";
+import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import {
@@ -34,6 +34,7 @@ import {
   detailColumnWidth,
   detailVisibleRowRange,
   mergeLiveDetailSnapshot,
+  mergePagedDetailSnapshot,
   resetDetailColumnWidths,
   setDetailColumnVisible,
   setDetailColumnWidth,
@@ -82,13 +83,7 @@ export function MainDpsDetailPage() {
     setError(null);
     try {
       const next = await mainDpsDetailClient.getSnapshot(snapshot.rows.length);
-      setSnapshot((current) => {
-        const merged =
-          current !== null && sameView(current, next)
-            ? { ...next, offset: 0, rows: [...current.rows, ...next.rows] }
-            : next;
-        return merged;
-      });
+      setSnapshot((current) => mergePagedDetailSnapshot(current, next));
     } catch (loadError) {
       setError(errorText(loadError));
     } finally {
@@ -376,10 +371,7 @@ export function MainDpsDetailPage() {
 }
 
 function DetailSummary({ snapshot }: { snapshot: MainDpsDetailSnapshot }) {
-  const avatar =
-    snapshot.characterId === null
-      ? null
-      : characterAvatarUrl(snapshot.characterId);
+  const avatar = useCharacterAvatar(snapshot.characterId);
   const metrics = [
     ["Total Output", formatMainMetric(snapshot.metrics.totalOutput), false],
     ["DPS", formatMainMetric(snapshot.metrics.dps), false],
@@ -665,8 +657,8 @@ function HitTable({
       }}
     >
       <table
-        className="table-fixed text-sm"
-        style={{ width: `${Math.max(totalWidth, 768)}px` }}
+        className="table-fixed w-full text-sm"
+        style={{ minWidth: `${totalWidth}px` }}
       >
         <colgroup>
           {visibleColumns.map((column) => (
@@ -790,7 +782,7 @@ function HitRow({
   columns: MainDpsDetailColumns;
   maxDamage: number;
 }) {
-  const avatar = characterAvatarUrl(row.characterId);
+  const avatar = useCharacterAvatar(row.characterId);
   const targetPortrait = row.targetMonsterId
     ? monsterImageUrl(row.targetMonsterId)
     : null;
@@ -1112,19 +1104,6 @@ function formatHitTime(timestamp: number): string {
       second: "2-digit",
     });
   return `${timestamp.toFixed(1)}s`;
-}
-
-function sameView(
-  current: MainDpsDetailSnapshot,
-  next: MainDpsDetailSnapshot,
-): boolean {
-  return (
-    current.kind === next.kind &&
-    current.characterId === next.characterId &&
-    current.filter === next.filter &&
-    current.qteType === next.qteType &&
-    current.skillFilter === next.skillFilter
-  );
 }
 
 function errorText(error: unknown): string {

@@ -8,6 +8,7 @@ import {
 import { Check, Info, TriangleAlert, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import { t, tf, useTranslationRevision } from "@/lib/i18n";
 import { MOTION_DURATION, waitForMotion } from "@/lib/motion";
 import { islandClient, type IslandSnapshot } from "@/lib/tauri/island-client";
@@ -33,11 +34,13 @@ export function IslandPage() {
         });
     };
     refresh();
-    let unlisten: (() => void) | undefined;
-    void islandClient.subscribe(refresh).then((next) => {
-      unlisten = next;
-    });
-    return () => unlisten?.();
+    return cleanupAsyncRegistration(
+      islandClient.subscribe(refresh),
+      (value) => {
+        const error = parseIslandCommandError(value);
+        setError(tf(error.messageKey, error.messageArguments));
+      },
+    );
   }, []);
 
   const dismissWithMotion = useCallback(async (noticeId: string) => {

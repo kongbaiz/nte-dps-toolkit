@@ -35,7 +35,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { characterAvatarUrl } from "@/lib/character-avatar";
+import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
 import type {
   SkillsCharacter,
@@ -438,7 +438,7 @@ function CharacterButton({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const avatar = characterAvatarUrl(character.id);
+  const avatar = useCharacterAvatar(character.id);
   return (
     <button
       type="button"
@@ -524,7 +524,7 @@ function SkillRow({
             <p className="truncate text-sm font-medium">{row.name}</p>
             <p className="truncate text-xs text-muted-foreground">
               {character.name} · {row.category}
-              {row.followUp ? ` · ${t("follow-up")}` : ""}
+              {row.followUp ? ` · ${t("Follow-up")}` : ""}
             </p>
           </div>
           <div className="font-mono text-sm font-semibold min-[680px]:text-right">

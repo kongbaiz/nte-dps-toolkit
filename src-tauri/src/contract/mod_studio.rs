@@ -18,7 +18,8 @@ use nte_dps_tool::platform::mods_plugin::{
 
 use super::CommandError;
 
-pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 9;
+pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 10;
+pub(crate) const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,7 +71,16 @@ pub(crate) struct ModStudioSdkSymbolSnapshot {
 pub(crate) struct ModStudioRuntimeConnectionSnapshot {
     pub contract_version: u32,
     pub generation: String,
-    pub connected: bool,
+    pub status: ModStudioRuntimeConnectionStatusSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ModStudioRuntimeConnectionStatusSnapshot {
+    Connected,
+    LoaderPresent,
+    Waiting,
+    ProbeFailed,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,6 +173,14 @@ pub(crate) struct ModStudioDirectorySelectionSnapshot {
     pub selected: bool,
     pub path: Option<String>,
     pub deployment: ModStudioDeploymentSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModStudioGameDirectorySnapshot {
+    pub contract_version: u32,
+    pub region: ModStudioGameRegionSnapshot,
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -640,6 +658,36 @@ mod tests {
         assert_eq!(value["contractVersion"], MOD_STUDIO_CONTRACT_VERSION);
         assert_eq!(value["games"][0]["region"], "global");
         assert!(value.get("path").is_none());
+    }
+
+    #[test]
+    fn game_directory_snapshot_uses_a_separate_bounded_contract() {
+        let snapshot = ModStudioGameDirectorySnapshot {
+            contract_version: MOD_STUDIO_DIRECTORY_CONTRACT_VERSION,
+            region: ModsPluginGameRegion::China.into(),
+            path: Some("D:\\CustomGame".to_owned()),
+        };
+        let value = serde_json::to_value(snapshot).expect("serialize game directory");
+
+        assert_eq!(
+            value["contractVersion"],
+            MOD_STUDIO_DIRECTORY_CONTRACT_VERSION
+        );
+        assert_eq!(value["region"], "china");
+        assert_eq!(value["path"], "D:\\CustomGame");
+    }
+
+    #[test]
+    fn runtime_connection_distinguishes_loader_presence_from_hook_connectivity() {
+        let snapshot = ModStudioRuntimeConnectionSnapshot {
+            contract_version: MOD_STUDIO_CONTRACT_VERSION,
+            generation: "4".to_owned(),
+            status: ModStudioRuntimeConnectionStatusSnapshot::LoaderPresent,
+        };
+        let value = serde_json::to_value(snapshot).expect("serialize runtime connection");
+
+        assert_eq!(value["status"], "loaderPresent");
+        assert!(value.get("connected").is_none());
     }
 
     #[test]

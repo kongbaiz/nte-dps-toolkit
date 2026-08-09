@@ -124,6 +124,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
     status: "idle",
   });
   const initialRegionResolved = useRef(false);
+  const deploymentRequest = useRef(0);
   const selectedId = useRef<string | null>(null);
   const currentSelectedId = selectedIdOf(state);
   if (currentSelectedId !== null) {
@@ -150,13 +151,26 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
   }, [client]);
 
   const refreshDeployment = useCallback(async () => {
+    const request = ++deploymentRequest.current;
     setDeploymentState({ status: "loading" });
     try {
-      const directory = manualDirectories[selectedRegion] ?? null;
+      const preference = await client.getGameDirectory(selectedRegion);
+      if (request !== deploymentRequest.current) return;
+      const directory = preference.path;
+      setManualDirectories((current) => {
+        const next = { ...current };
+        if (directory === null) {
+          delete next[selectedRegion];
+        } else {
+          next[selectedRegion] = directory;
+        }
+        return next;
+      });
       const snapshot = await client.getDeployment(
         directory === null ? null : selectedRegion,
         directory,
       );
+      if (request !== deploymentRequest.current) return;
       if (!initialRegionResolved.current) {
         initialRegionResolved.current = true;
         const detected =
@@ -167,12 +181,13 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
       }
       setDeploymentState({ status: "ready", snapshot, operation: "idle" });
     } catch (error) {
+      if (request !== deploymentRequest.current) return;
       setDeploymentState({
         status: "error",
         error: parseModStudioCommandError(error),
       });
     }
-  }, [client, manualDirectories, selectedRegion]);
+  }, [client, selectedRegion]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([refresh(), refreshDeployment()]);
@@ -223,7 +238,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
       (error) => {
         setRuntimeState((current) => ({
           ...current,
-          connection: "disconnected",
+          connection: "probeFailed",
           error,
         }));
       },
@@ -486,6 +501,8 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
   }, [client]);
 
   const chooseGameDirectory = useCallback(async () => {
+    deploymentRequest.current += 1;
+    initialRegionResolved.current = true;
     setDeploymentState((current) =>
       current.status === "ready"
         ? { ...current, operation: "choosing" }
@@ -518,13 +535,23 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
     }
   }, [client, selectedRegion]);
 
-  const useAutomaticGameDirectory = useCallback(() => {
-    setManualDirectories((current) => {
-      const next = { ...current };
-      delete next[selectedRegion];
-      return next;
-    });
-  }, [selectedRegion]);
+  const useAutomaticGameDirectory = useCallback(async () => {
+    deploymentRequest.current += 1;
+    setDeploymentState((current) =>
+      current.status === "ready"
+        ? { ...current, operation: "updating" }
+        : current,
+    );
+    try {
+      await client.setGameDirectory(selectedRegion, null);
+      await refreshDeployment();
+    } catch (error) {
+      setDeploymentState({
+        status: "error",
+        error: parseModStudioCommandError(error),
+      });
+    }
+  }, [client, refreshDeployment, selectedRegion]);
 
   const setLoaderEnabled = useCallback(
     async (enabled: boolean) => {
