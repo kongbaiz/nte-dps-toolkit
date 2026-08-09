@@ -3,14 +3,16 @@ use std::{sync::atomic::Ordering, thread, time::Duration};
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
-    contract::{CommandError, SubscriptionReceipt, main_dps_detail::MainDpsDetailSnapshot},
+    contract::{
+        CommandError, SubscriptionReceipt,
+        main_dps_detail::{MAIN_DPS_DETAIL_PAGE_LIMIT, MainDpsDetailSnapshot},
+    },
     state::AppState,
     windows::combat_details,
 };
 
 pub(crate) const MAIN_DPS_DETAIL_STREAM_INTERVAL_MS: u32 = 250;
 const STREAM_KEY_PREFIX: &str = "main-dps-detail:";
-const STREAM_PAGE_LIMIT: usize = 250;
 
 #[tauri::command]
 pub(crate) fn subscribe_main_dps_detail(
@@ -24,14 +26,18 @@ pub(crate) fn subscribe_main_dps_detail(
     let kind = combat_details::window_kind(&window)?;
     let stream_key = format!("{STREAM_KEY_PREFIX}{subscription_id}");
     let state = state.inner().clone();
-    let stop = state.begin_stream(stream_key.clone());
+    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
     thread::spawn(move || {
         let mut last_revision = None;
         while !stop.load(Ordering::Acquire) {
             let revision = state.main_dps_stream_revision();
-            let visible = window.is_visible().unwrap_or(false);
+            let visible = match window.is_visible() {
+                Ok(visible) => visible,
+                Err(_) => break,
+            };
             if visible && last_revision != Some(revision) {
-                let next = MainDpsDetailSnapshot::from_state(&state, kind, 0, STREAM_PAGE_LIMIT);
+                let next =
+                    MainDpsDetailSnapshot::from_state(&state, kind, 0, MAIN_DPS_DETAIL_PAGE_LIMIT);
                 if on_event.send(next).is_err() {
                     break;
                 }

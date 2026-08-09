@@ -6,11 +6,11 @@ script templates from this directory:
 ```text
 plugins/
   dwmapi.dll
+  mods-plugin.version
   nte-mods.enabled
   nte-mods/
     equipment.nte
     combat-clock.nte
-    enemy-telemetry.nte
   examples/
     character-telemetry.nte
     reflection-events.nte

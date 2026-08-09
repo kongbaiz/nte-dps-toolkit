@@ -154,7 +154,7 @@ mod tests {
             direction: "outgoing".to_owned(),
             payload_len: index,
             declared_ids: vec![index as u32],
-            parsed_hits: usize::from(index.is_multiple_of(2)),
+            parsed_hits: usize::from(index % 2 == 0),
             note: format!("note-{index}"),
             payload_preview: "private-preview".to_owned(),
             payload_hex: "deadbeef".to_owned(),

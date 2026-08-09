@@ -19,7 +19,7 @@ pub(crate) fn subscribe_technical_state(
     hud::validate_window(&window)?;
 
     let state = state.inner().clone();
-    let stop = state.begin_stream(subscription_id.clone());
+    let stop = state.begin_stream(window.label().to_owned(), subscription_id.clone());
     let stream_subscription_id = subscription_id.clone();
     thread::spawn(move || {
         let mut last_revision = None;

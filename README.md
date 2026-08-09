@@ -74,7 +74,7 @@ nte-dps-tool.exe
 3. 在主界面点击开始捕获；程序会自动尝试选择活动网卡和本机 IP。
 4. 在总览、角色、深渊和 Console 页面查看实时数据与历史记录。
 
-抓不到数据时，打开 **F12 → Diagnostics**，运行自动诊断向导。
+抓不到数据时，按 `F12` 打开 Console 并运行 **Diagnostics** 自动诊断向导。
 
 ---
 
@@ -121,7 +121,7 @@ nte-dps-tool.exe
 - 总伤害、DPS、命中数、受击统计和战斗时长；
 - 角色排行、伤害占比、技能分类和可筛选命中明细；
 - 可定制 HUD、透明度、主题、置顶、鼠标穿透和小型 DPS 曲线；
-- `Home` 切换鼠标穿透，`F12` 打开或关闭 Console。
+- `Home` 切换鼠标穿透，`F12` 打开 Console 并跳到 Packets 页面。
 
 ### 时间与伤害口径
 
@@ -259,7 +259,7 @@ cargo test -- --ignored
 
 ### 抓不到任何流量或没有伤害数据
 
-确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行工具，并已启动 `HTGame.exe`。随后在 **F12 → Diagnostics** 中运行自动诊断向导。
+确认已安装 Npcap 并启用 *WinPcap API-compatible Mode*，以管理员身份运行工具，并已启动 `HTGame.exe`。随后按 `F12` 打开 Console，运行 **Diagnostics** 自动诊断向导。
 
 ### 为什么 `nte-core.exe` 双击后立即退出
 

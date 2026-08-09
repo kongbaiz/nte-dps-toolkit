@@ -3,13 +3,39 @@ import { describe, expect, it, vi } from "vitest";
 import { createModStudioClient } from "./mod-studio-client";
 
 const workspace = {
-  contractVersion: 9,
+  contractVersion: 10,
   generation: "0",
   workspaceLabel: "plugins/nte-mods",
   documents: [],
 };
 
 describe("Mod Studio client", () => {
+  it("loads and clears the persisted game directory preference", async () => {
+    const preference = {
+      contractVersion: 1,
+      region: "china" as const,
+      path: "D:\\CustomGame",
+    };
+    const cleared = { ...preference, path: null };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce(preference)
+      .mockResolvedValueOnce(cleared);
+    const client = createModStudioClient({ invoke, createChannel: vi.fn() });
+
+    await expect(client.getGameDirectory("china")).resolves.toEqual(preference);
+    await expect(client.setGameDirectory("china", null)).resolves.toEqual(
+      cleared,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_mod_studio_game_directory", {
+      region: "china",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "set_mod_studio_game_directory", {
+      region: "china",
+      gameDirectory: null,
+    });
+  });
+
   it("deletes a workspace Mod through the typed Rust command", async () => {
     const deletedWorkspace = { ...workspace, generation: "4" };
     const invoke = vi.fn().mockResolvedValueOnce(deletedWorkspace);
@@ -25,7 +51,7 @@ describe("Mod Studio client", () => {
 
   it("loads and installs market items through Rust-owned commands", async () => {
     const catalog = {
-      contractVersion: 9,
+      contractVersion: 10,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [
@@ -67,7 +93,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(catalog)
       .mockResolvedValueOnce({
-        contractVersion: 9,
+        contractVersion: 10,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
@@ -90,7 +116,7 @@ describe("Mod Studio client", () => {
 
   it("routes creation, folders, manual game selection, and loader deployment through typed commands", async () => {
     const deployment = {
-      contractVersion: 9,
+      contractVersion: 10,
       installations: 1,
       installed: 0,
       current: 0,
@@ -100,7 +126,7 @@ describe("Mod Studio client", () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce({
-        contractVersion: 9,
+        contractVersion: 10,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
@@ -155,7 +181,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(workspace)
       .mockResolvedValueOnce({
-        contractVersion: 9,
+        contractVersion: 10,
         schemaVersion: 2,
         symbols: [
           {
@@ -168,13 +194,13 @@ describe("Mod Studio client", () => {
         ],
       })
       .mockResolvedValueOnce({
-        contractVersion: 9,
+        contractVersion: 10,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
       })
       .mockResolvedValueOnce({
-        contractVersion: 9,
+        contractVersion: 10,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);\n// saved",
@@ -256,9 +282,9 @@ describe("Mod Studio client", () => {
     deliver?.({
       event: "connection",
       payload: {
-        contractVersion: 9,
+        contractVersion: 10,
         generation: "1",
-        connected: true,
+        status: "connected",
       },
     });
     await unsubscribe();
@@ -266,9 +292,9 @@ describe("Mod Studio client", () => {
     expect(onEvent).toHaveBeenCalledWith({
       event: "connection",
       payload: {
-        contractVersion: 9,
+        contractVersion: 10,
         generation: "1",
-        connected: true,
+        status: "connected",
       },
     });
     expect(onError).not.toHaveBeenCalled();

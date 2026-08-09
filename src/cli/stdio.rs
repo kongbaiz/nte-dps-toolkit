@@ -9,6 +9,10 @@ use crossbeam_channel::{Receiver, Sender, bounded, select, tick, unbounded};
 use serde_json::Value;
 
 use crate::api::PROTOCOL_VERSION;
+use crate::api::battle::{
+    BattleAxisDto, BattleReadError, BattleRecordContext, BattleRecordDto, BattleTimelineDto,
+    battle_axis, battle_record, battle_timeline,
+};
 use crate::api::dto::{
     BattleSummaryDto, BattleSummaryEvent, CaptureDetectResult, InventorySnapshotDto,
     InventorySnapshotEvent,
@@ -17,7 +21,8 @@ use crate::api::jsonrpc::{
     RpcError, ValidatedRequest, failure, failure_without_id, notification, parse_line, success,
 };
 use crate::api::request::{
-    BattleSummaryParams, CaptureDeviceParam, CaptureProfileParam, CaptureStartParams,
+    BattleAxisParams, BattleRecordParams, BattleSummaryParams, BattleTimelineParams,
+    BattleTimelineScopeParam, CaptureDeviceParam, CaptureProfileParam, CaptureStartParams,
     EquipmentOperationParam, ItemUidParam, RawCaptureParam, Request,
 };
 use crate::api::response::{
@@ -31,10 +36,12 @@ use crate::core::capture::{
 };
 use crate::core::reducer::{CoreSignal, apply_engine_event};
 use crate::core::snapshot::{InventorySnapshot, inventory_snapshot};
+use crate::core::timeline::TimelineScope;
 use crate::core::{CoreError, CoreErrorCode};
 use crate::engine::capture::PacketEmissionMode;
 use crate::engine::model::{
     CaptureQualitySource, CharacterInfo, CombatState, DpsTimeBasis, EngineEvent, HtItemNetId,
+    TimeStopEvent,
 };
 use crate::engine::parser::{
     AbilityCatalog, CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog,
@@ -101,12 +108,18 @@ fn latest_message_channel() -> (LatestMessageSender, LatestMessageReceiver) {
 
 impl LatestMessageSender {
     fn publish(&self, message: Value) {
-        *self.slot.lock().expect("latest message slot lock poisoned") = Some(message);
+        *self
+            .slot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(message);
         let _ = self.wake.try_send(());
     }
 
     fn clear(&self) {
-        *self.slot.lock().expect("latest message slot lock poisoned") = None;
+        *self
+            .slot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
     }
 }
 
@@ -114,7 +127,7 @@ impl LatestMessageReceiver {
     fn take(&self) -> Option<Value> {
         self.slot
             .lock()
-            .expect("latest message slot lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .take()
     }
 }
@@ -148,15 +161,43 @@ struct Runtime {
     sequence: u64,
     inventory_generation: u64,
     operation_sequence: u64,
+    battle_record_sequence: u64,
+    battle_record: Option<BattleRecordRuntime>,
     equipment_request_sequence: u64,
     mods_plugin: ModsPluginClient,
     pending_equipment_requests: HashMap<u64, Value>,
     active_operation_id: Option<String>,
+    latest_operation_id: Option<String>,
     running_notified: bool,
     battle_summary_dirty: bool,
     latest_battle_summary: LatestMessageSender,
     engine_sender: Sender<EngineEvent>,
     data_dir: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct BattleRecordRuntime {
+    id: String,
+    capture_operation_id: Option<String>,
+    generation: u64,
+    finalized: bool,
+    finalized_at_unix_ms: Option<u64>,
+    axis_base_sequence: u64,
+    source: CaptureQualitySource,
+}
+
+impl BattleRecordRuntime {
+    fn context(&self) -> BattleRecordContext<'_> {
+        BattleRecordContext {
+            id: &self.id,
+            capture_operation_id: self.capture_operation_id.as_deref(),
+            generation: self.generation,
+            finalized: self.finalized,
+            finalized_at_unix_ms: self.finalized_at_unix_ms,
+            axis_base_sequence: self.axis_base_sequence,
+            source: self.source,
+        }
+    }
 }
 
 impl Runtime {
@@ -177,10 +218,13 @@ impl Runtime {
             sequence: 0,
             inventory_generation: 0,
             operation_sequence: 0,
+            battle_record_sequence: 0,
+            battle_record: None,
             equipment_request_sequence: 0,
             mods_plugin: ModsPluginClient::new(),
             pending_equipment_requests: HashMap::new(),
             active_operation_id: None,
+            latest_operation_id: None,
             running_notified: false,
             battle_summary_dirty: false,
             latest_battle_summary,
@@ -280,10 +324,13 @@ impl Runtime {
         response: ModsPluginResponse,
         outbound: &Sender<Value>,
     ) -> bool {
-        let id = self
-            .pending_equipment_requests
-            .remove(&response.request_id)
-            .expect("Mod loader responses must match a submitted CLI request");
+        let Some(id) = self.pending_equipment_requests.remove(&response.request_id) else {
+            eprintln!(
+                "warning: ignoring Mod loader response for unknown or stale request_id {}",
+                response.request_id
+            );
+            return false;
+        };
         let message = match response.status {
             Ok(0) => success(
                 id,
@@ -344,6 +391,7 @@ impl Runtime {
         )?;
         let operation_id = self.next_operation_id();
         self.active_operation_id = Some(operation_id.clone());
+        self.latest_operation_id = Some(operation_id.clone());
         self.running_notified = false;
         Ok(operation_id)
     }
@@ -369,9 +417,46 @@ impl Runtime {
     }
 
     fn process_engine_event(&mut self, event: EngineEvent, outbound: &Sender<Value>) {
-        match apply_engine_event(&mut self.state, event) {
-            CoreSignal::StateChanged => self.battle_summary_dirty = true,
-            CoreSignal::DebugPacket | CoreSignal::PacketObserved | CoreSignal::ModScript(_) => {}
+        let appended_hit = matches!(&event, EngineEvent::Hit(_));
+        let previous_hit_count = self.state.hits.len();
+        let previous_hits_generation = self.state.hits_generation;
+        let previous_abyss_event_count = self.state.abyss.event_count;
+        let time_stop_state_may_change = match &event {
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseStarted { timestamp, .. }) => {
+                timestamp.is_finite()
+            }
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseEnded { .. }) => {
+                self.state.is_game_paused()
+            }
+            _ => false,
+        };
+        let signal = apply_engine_event(&mut self.state, event);
+        let dropped_hits = if appended_hit {
+            previous_hit_count
+                .saturating_add(1)
+                .saturating_sub(self.state.hits.len()) as u64
+        } else {
+            0
+        };
+        match signal {
+            CoreSignal::StateChanged => {
+                let battle_projection_changed = self.state.hits_generation
+                    != previous_hits_generation
+                    || self.state.abyss.event_count != previous_abyss_event_count
+                    || time_stop_state_may_change;
+                if battle_projection_changed {
+                    self.mark_battle_changed(dropped_hits);
+                    self.battle_summary_dirty = true;
+                }
+            }
+            CoreSignal::DebugPacket => {}
+            CoreSignal::PacketObserved => self.mark_battle_changed(0),
+            CoreSignal::ModScript { state_changed, .. } => {
+                if state_changed {
+                    self.mark_battle_changed(0);
+                    self.battle_summary_dirty = true;
+                }
+            }
             CoreSignal::InventoryCharactersReplaced => {}
             CoreSignal::InventoryReplaced => self.publish_inventory_snapshot(outbound),
             CoreSignal::Status(_) => {
@@ -412,6 +497,7 @@ impl Runtime {
                         .expect("running capture must have an operation id");
                     self.capture.capture_stopped();
                     self.running_notified = false;
+                    self.finalize_current_battle_record(Some(&operation_id));
                     self.send_final_battle_summary(outbound);
                     self.send_capture_status_for(outbound, operation_id, profile, "stopped");
                 }
@@ -428,6 +514,122 @@ impl Runtime {
             )
             .as_ref()
             .map(BattleSummaryDto::from)
+    }
+
+    fn mark_battle_changed(&mut self, dropped_hits: u64) {
+        if self.state.hits.is_empty()
+            && self.state.stats.is_empty()
+            && !self.state.abyss.is_active()
+        {
+            return;
+        }
+        let operation_id = self
+            .active_operation_id
+            .as_ref()
+            .or(self.latest_operation_id.as_ref())
+            .cloned();
+        if self.battle_record.is_none() {
+            self.battle_record_sequence = self.battle_record_sequence.saturating_add(1);
+            self.battle_record = Some(BattleRecordRuntime {
+                id: format!("battle-{}", self.battle_record_sequence),
+                capture_operation_id: operation_id.clone(),
+                generation: 0,
+                finalized: false,
+                finalized_at_unix_ms: None,
+                axis_base_sequence: 0,
+                source: CaptureQualitySource::Live,
+            });
+        }
+        if let Some(record) = self.battle_record.as_mut() {
+            if record.capture_operation_id.is_none() || record.finalized {
+                record.capture_operation_id.clone_from(&operation_id);
+            }
+            record.axis_base_sequence = record.axis_base_sequence.saturating_add(dropped_hits);
+            record.generation = record.generation.saturating_add(1);
+            record.finalized = false;
+            record.finalized_at_unix_ms = None;
+        }
+    }
+
+    fn finalize_current_battle_record(&mut self, operation_id: Option<&str>) {
+        let Some(record) = self.battle_record.as_mut() else {
+            return;
+        };
+        if operation_id.is_some()
+            && record.capture_operation_id.is_some()
+            && operation_id != record.capture_operation_id.as_deref()
+        {
+            return;
+        }
+        if !record.finalized {
+            record.finalized = true;
+            record.finalized_at_unix_ms = Some(unix_time_ms());
+            record.generation = record.generation.saturating_add(1);
+        }
+    }
+
+    fn battle_record_context(
+        &self,
+        requested_id: Option<&str>,
+    ) -> Result<Option<BattleRecordContext<'_>>, BattleReadError> {
+        let Some(record) = self.battle_record.as_ref() else {
+            return if requested_id.is_some() {
+                Err(BattleReadError::RecordNotFound)
+            } else {
+                Ok(None)
+            };
+        };
+        if requested_id.is_some_and(|requested_id| requested_id != record.id) {
+            return Err(BattleReadError::RecordNotFound);
+        }
+        Ok(Some(record.context()))
+    }
+
+    fn battle_record(
+        &self,
+        params: BattleRecordParams,
+    ) -> Result<Option<BattleRecordDto>, BattleReadError> {
+        let Some(context) = self.battle_record_context(params.battle_record_id.as_deref())? else {
+            return Ok(None);
+        };
+        Ok(Some(battle_record(
+            &self.state,
+            context,
+            params.subtract_time_stop,
+        )))
+    }
+
+    fn battle_axis(
+        &self,
+        params: BattleAxisParams,
+    ) -> Result<Option<BattleAxisDto>, BattleReadError> {
+        let Some(context) = self.battle_record_context(params.battle_record_id.as_deref())? else {
+            return Ok(None);
+        };
+        battle_axis(&self.state, context, params.cursor, params.limit).map(Some)
+    }
+
+    fn battle_timeline(
+        &self,
+        params: BattleTimelineParams,
+    ) -> Result<Option<BattleTimelineDto>, BattleReadError> {
+        let Some(context) = self.battle_record_context(params.battle_record_id.as_deref())? else {
+            return Ok(None);
+        };
+        let scope = match params.scope {
+            BattleTimelineScopeParam::All => TimelineScope::Whole,
+            BattleTimelineScopeParam::Upper => TimelineScope::First,
+            BattleTimelineScopeParam::Lower => TimelineScope::Second,
+        };
+        battle_timeline(
+            &self.state,
+            &self.characters,
+            context,
+            scope,
+            params.bucket_seconds,
+            params.subtract_time_stop,
+        )
+        .map(Some)
     }
 
     fn flush_battle_summary(&mut self) {
@@ -460,6 +662,7 @@ impl Runtime {
 
     fn reset_battle(&mut self) {
         self.state.clear_battle_preserving_inventory();
+        self.battle_record = None;
         self.battle_summary_dirty = false;
         self.latest_battle_summary.clear();
     }
@@ -800,6 +1003,7 @@ fn handle_request(
             drain_engine_events(runtime, engine_receiver, outbound);
             match result {
                 Ok((operation_id, profile)) => {
+                    runtime.finalize_current_battle_record(Some(&operation_id));
                     runtime.send_final_battle_summary(outbound);
                     let response = success(
                         id,
@@ -852,6 +1056,30 @@ fn handle_request(
                 outbound,
                 success(id, runtime.battle_summary(subtract_time_stop)),
             )
+        }
+        Request::BattleGetRecord(params) => {
+            drain_engine_events(runtime, engine_receiver, outbound);
+            let message = match runtime.battle_record(params) {
+                Ok(record) => success(id, record),
+                Err(error) => failure(id, battle_read_error(error)),
+            };
+            send(outbound, message)
+        }
+        Request::BattleGetAxis(params) => {
+            drain_engine_events(runtime, engine_receiver, outbound);
+            let message = match runtime.battle_axis(params) {
+                Ok(axis) => success(id, axis),
+                Err(error) => failure(id, battle_read_error(error)),
+            };
+            send(outbound, message)
+        }
+        Request::BattleGetTimeline(params) => {
+            drain_engine_events(runtime, engine_receiver, outbound);
+            let message = match runtime.battle_timeline(params) {
+                Ok(timeline) => success(id, timeline),
+                Err(error) => failure(id, battle_read_error(error)),
+            };
+            send(outbound, message)
         }
         Request::BattleReset => {
             drain_engine_events(runtime, engine_receiver, outbound);
@@ -989,6 +1217,7 @@ fn stop_for_exit(
             .stop_capture()
             .expect("capture checked as running must stop");
         drain_engine_events(runtime, engine_receiver, outbound);
+        runtime.finalize_current_battle_record(Some(&operation_id));
         runtime.send_final_battle_summary(outbound);
         runtime.send_capture_status_for(outbound, operation_id, profile, "stopped");
     }
@@ -1034,6 +1263,29 @@ fn core_error(code: CoreErrorCode) -> RpcError {
     }
 }
 
+fn battle_read_error(error: BattleReadError) -> RpcError {
+    match error {
+        BattleReadError::RecordNotFound => RpcError::domain(
+            "BATTLE_RECORD_NOT_FOUND",
+            "The requested battle record is not available in this Core process",
+        ),
+        BattleReadError::AxisCursorExpired { first_available } => RpcError::domain(
+            "BATTLE_AXIS_CURSOR_EXPIRED",
+            format!(
+                "The requested cursor was trimmed; first available cursor is {first_available}"
+            ),
+        ),
+        BattleReadError::AxisCursorInvalid { last_available } => RpcError::domain(
+            "BATTLE_AXIS_CURSOR_INVALID",
+            format!("The requested cursor exceeds the last available hit {last_available}"),
+        ),
+        BattleReadError::TimelineTooLarge => RpcError::domain(
+            "BATTLE_TIMELINE_TOO_LARGE",
+            "The requested timeline exceeds the bounded response budget; increase bucket_seconds",
+        ),
+    }
+}
+
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1047,7 +1299,7 @@ mod tests {
 
     use crate::engine::model::{
         EmptyCurtainCharacter, EmptyCurtainItem, EmptyCurtainPlacement, Hit, HitCharacterSource,
-        HitDirection, HtItemNetId, PacketDebug, TimeStopEvent,
+        HitDirection, HitFollowUp, HtItemNetId, PacketDebug, TimeStopEvent,
     };
 
     #[test]
@@ -1381,6 +1633,218 @@ mod tests {
                 locked: true,
             }
         ));
+    }
+
+    #[test]
+    fn battle_read_methods_are_registered_before_data_exists() {
+        let input = br#"{"jsonrpc":"2.0","id":"hello","method":"core.hello","params":{"client_name":"test","client_version":"1","protocol_min":1,"protocol_max":1}}
+{"jsonrpc":"2.0","id":"record","method":"battle.get_record","params":{"subtract_time_stop":true}}
+{"jsonrpc":"2.0","id":"axis","method":"battle.get_axis","params":{"cursor":null,"limit":250}}
+{"jsonrpc":"2.0","id":"timeline","method":"battle.get_timeline","params":{"scope":"all","bucket_seconds":1.0,"subtract_time_stop":true}}
+{"jsonrpc":"2.0","id":"shutdown","method":"core.shutdown","params":{}}
+"#;
+        let output = SharedWriter::default();
+        let captured = output.clone();
+
+        assert_eq!(run(Cursor::new(input), output, PathBuf::from("logs")), 0);
+
+        let lines = String::from_utf8(captured.bytes())
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        for id in ["record", "axis", "timeline"] {
+            let response = lines
+                .iter()
+                .find(|line| line["id"] == id)
+                .expect("battle read response");
+            assert_eq!(response["result"], Value::Null);
+            assert!(response.get("error").is_none());
+        }
+    }
+
+    #[test]
+    fn battle_read_models_share_a_stable_record_lifecycle_and_revision() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        let (outbound, _) = bounded(8);
+        runtime.active_operation_id = Some("capture-9".to_owned());
+
+        runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(1.0, 100.0))), &outbound);
+        runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(2.0, 200.0))), &outbound);
+
+        let record = runtime
+            .battle_record(BattleRecordParams {
+                battle_record_id: None,
+                subtract_time_stop: true,
+            })
+            .expect("record query")
+            .expect("record exists");
+        assert_eq!(record.battle_record_id, "battle-1");
+        assert_eq!(record.capture_operation_id.as_deref(), Some("capture-9"));
+        assert_eq!(record.state, "live");
+        let live_generation = record.generation.parse::<u64>().expect("generation");
+
+        let axis = runtime
+            .battle_axis(BattleAxisParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                cursor: None,
+                limit: 1,
+            })
+            .expect("axis query")
+            .expect("axis exists");
+        assert_eq!(axis.generation, record.generation);
+        assert_eq!(axis.rows.len(), 1);
+        assert_eq!(axis.next_cursor.as_deref(), Some("2"));
+
+        let timeline = runtime
+            .battle_timeline(BattleTimelineParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                scope: BattleTimelineScopeParam::All,
+                bucket_seconds: 1.0,
+                subtract_time_stop: true,
+            })
+            .expect("timeline query")
+            .expect("timeline exists");
+        assert_eq!(timeline.generation, record.generation);
+        assert_eq!(timeline.total_damage, 300.0);
+        assert!(!timeline.buckets.is_empty());
+
+        runtime.process_engine_event(EngineEvent::EmptyCurtainCharacters(Vec::new()), &outbound);
+        assert_eq!(
+            runtime.battle_record.as_ref().expect("record").generation,
+            live_generation,
+            "inventory-only changes must not advance the battle read generation"
+        );
+        runtime.process_engine_event(
+            EngineEvent::HitFollowUp(HitFollowUp {
+                source_timestamp: 99.0,
+                source_char_id: 999,
+                source_damage: 1.0,
+                source_target_hp_before: 0.0,
+                source_target_hp_after: 0.0,
+                source_target_max_hp: 0.0,
+                source_gameplay_effect_index: None,
+                timestamp: 100.0,
+                damage: 1.0,
+                target_hp_after: 0.0,
+                target_hp_percent: 0.0,
+                damage_name: None,
+                attack_type: None,
+                damage_attribute: None,
+            }),
+            &outbound,
+        );
+        assert_eq!(
+            runtime.battle_record.as_ref().expect("record").generation,
+            live_generation,
+            "a no-op follow-up must not advance the battle read generation"
+        );
+        runtime.process_engine_event(
+            EngineEvent::TimeStop(TimeStopEvent::GamePauseEnded {
+                timestamp: 101.0,
+                pause_type_mask: 1,
+            }),
+            &outbound,
+        );
+        assert_eq!(
+            runtime.battle_record.as_ref().expect("record").generation,
+            live_generation,
+            "an unmatched pause end must not advance the battle read generation"
+        );
+
+        runtime.finalize_current_battle_record(Some("capture-9"));
+        let finalized = runtime
+            .battle_record(BattleRecordParams {
+                battle_record_id: Some(record.battle_record_id.clone()),
+                subtract_time_stop: true,
+            })
+            .expect("final record query")
+            .expect("record exists");
+        assert_eq!(finalized.state, "finalized");
+        assert_eq!(
+            finalized.generation.parse::<u64>().expect("generation"),
+            live_generation + 1
+        );
+        assert!(finalized.finalized_at_unix_ms.is_some());
+
+        runtime.reset_battle();
+        assert!(
+            runtime
+                .battle_record(BattleRecordParams {
+                    battle_record_id: None,
+                    subtract_time_stop: true,
+                })
+                .expect("empty record query")
+                .is_none()
+        );
+        assert!(matches!(
+            runtime.battle_record(BattleRecordParams {
+                battle_record_id: Some(record.battle_record_id),
+                subtract_time_stop: true,
+            }),
+            Err(BattleReadError::RecordNotFound)
+        ));
+
+        runtime.process_engine_event(EngineEvent::Hit(Box::new(test_hit(3.0, 50.0))), &outbound);
+        assert_eq!(
+            runtime.battle_record.as_ref().expect("new record").id,
+            "battle-2"
+        );
+    }
+
+    #[test]
+    fn unknown_and_duplicate_mod_responses_do_not_consume_pending_requests_or_stop_runtime() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime
+            .pending_equipment_requests
+            .insert(1, serde_json::json!("rpc-1"));
+        let (outbound, receiver) = unbounded();
+
+        assert!(!runtime.process_equipment_response(
+            ModsPluginResponse {
+                request_id: 99,
+                status: Ok(0),
+            },
+            &outbound,
+        ));
+        assert_eq!(
+            runtime.pending_equipment_requests.get(&1),
+            Some(&serde_json::json!("rpc-1"))
+        );
+        assert!(receiver.try_recv().is_err());
+
+        assert!(!runtime.process_equipment_response(
+            ModsPluginResponse {
+                request_id: 1,
+                status: Ok(0),
+            },
+            &outbound,
+        ));
+        assert_eq!(receiver.recv().expect("normal response")["id"], "rpc-1");
+        assert!(!runtime.process_equipment_response(
+            ModsPluginResponse {
+                request_id: 1,
+                status: Ok(0),
+            },
+            &outbound,
+        ));
+        assert!(receiver.try_recv().is_err());
     }
 
     #[test]

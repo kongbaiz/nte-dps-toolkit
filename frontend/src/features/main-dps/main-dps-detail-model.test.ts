@@ -6,6 +6,7 @@ import {
   DEFAULT_DETAIL_COLUMNS,
   detailVisibleRowRange,
   mergeLiveDetailSnapshot,
+  mergePagedDetailSnapshot,
   resetDetailColumnWidths,
   setDetailColumnVisible,
   setDetailColumnWidth,
@@ -51,6 +52,22 @@ describe("main DPS detail model", () => {
     expect(
       mergeLiveDetailSnapshot(current, next).rows.map((row) => row.id),
     ).toEqual(["a2", "b2"]);
+  });
+
+  it("deduplicates rows when a live stream advances before loadMore resolves", () => {
+    const current = fakeSnapshot(["a", "b", "c", "d"], 6);
+    const next = fakeSnapshot(["c", "d", "e"], 6);
+    expect(
+      mergePagedDetailSnapshot(current, next).rows.map((row) => row.id),
+    ).toEqual(["a", "b", "c", "d", "e"]);
+  });
+
+  it("replaces the view when loadMore resolves into a different detail view", () => {
+    const current = fakeSnapshot(["a", "b"], 2);
+    const next = { ...fakeSnapshot(["x"], 1), kind: "character" as const };
+    expect(
+      mergePagedDetailSnapshot(current, next).rows.map((row) => row.id),
+    ).toEqual(["x"]);
   });
 });
 

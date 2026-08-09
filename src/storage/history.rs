@@ -134,9 +134,8 @@ impl HistoryCombatDetails {
         } else {
             (state.started_at, state.ended_at)
         };
-        let round_started_at =
-            round_started_at.expect("a combat round with hits has a start timestamp");
-        let round_ended_at = round_ended_at.expect("a combat round with hits has an end timestamp");
+        let round_started_at = round_started_at?;
+        let round_ended_at = round_ended_at?;
         Some(Self {
             floor: if has_abyss_hits { abyss.floor } else { None },
             active_half: if has_abyss_hits {
@@ -769,9 +768,7 @@ fn skill_comparison_key(
         }
         None => format!(
             "effect:{}",
-            row.gameplay_effect_name
-                .as_deref()
-                .expect("skill comparison row has a stable effect identity")
+            row.gameplay_effect_name.as_deref().unwrap_or("unknown")
         ),
     };
     (format!("stable:{identity}"), row.category.clone())

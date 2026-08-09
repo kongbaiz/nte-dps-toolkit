@@ -172,7 +172,7 @@
       "damage_name_ja": "影獣牙突（1スタック）"
     },
     "GE_Player_Zankou_DotDamage": {
-      "owner_character_id": 1070,
+      "owner_character_id": 1036,
       "ability": "GA_Zankou_Passive1",
       "attack_type": "Passive Damage",
       "damage_name_en": "Harmonics: Nova End Damage",

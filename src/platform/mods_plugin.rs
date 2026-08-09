@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "desktop")]
 use std::ptr;
 #[cfg(feature = "desktop")]
-use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::Storage::FileSystem::{
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
@@ -34,6 +34,8 @@ use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
     RegCloseKey, RegCreateKeyW, RegGetValueW, RegSetValueExW,
 };
+#[cfg(feature = "desktop")]
+use windows_sys::Win32::System::Threading::{OpenEventW, SYNCHRONIZATION_SYNCHRONIZE};
 
 use crate::engine::model::HtItemNetId;
 #[cfg(feature = "desktop")]
@@ -42,6 +44,8 @@ use crate::storage::mod_scripts::{
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\nte-mods-plugin-v7";
+#[cfg(feature = "desktop")]
+const RUNTIME_PRESENCE_NAME: &str = r"Local\nte-mods-plugin-v1-present";
 const IPC_MAGIC: u32 = 0x5145_544e;
 const IPC_VERSION: u16 = 7;
 const IPC_EQUIP_MODULE: u16 = 1;
@@ -1632,6 +1636,28 @@ pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
     decode_mod_logs(&response, request_id)
 }
 
+#[cfg(feature = "desktop")]
+pub fn probe_runtime_presence() -> Result<bool, String> {
+    let mut event_name = RUNTIME_PRESENCE_NAME.encode_utf16().collect::<Vec<_>>();
+    event_name.push(0);
+
+    // SAFETY: event_name is NUL-terminated and remains alive for the call.
+    let handle = unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, 0, event_name.as_ptr()) };
+    if handle.is_null() {
+        let error = io::Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(code) if code as u32 == ERROR_FILE_NOT_FOUND => Ok(false),
+            _ => Err(error.to_string()),
+        };
+    }
+
+    // SAFETY: OpenEventW returned an owned, valid event handle.
+    if unsafe { CloseHandle(handle) } == 0 {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    Ok(true)
+}
+
 fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
     let mut response = [0_u8; RESPONSE_SIZE];
     let mut bytes_read = 0;
@@ -2909,6 +2935,21 @@ mod tests {
         "/native/nte-mods-plugin/src/host_api.cpp"
     ));
     #[cfg(feature = "desktop")]
+    const NATIVE_IPC_TRANSPORT: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/ipc_transport.cpp"
+    ));
+    #[cfg(feature = "desktop")]
+    const NATIVE_OFFSET_RESOLVER: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/offset_resolver.cpp"
+    ));
+    #[cfg(feature = "desktop")]
+    const NATIVE_SIGNATURE_POLICY: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/native/nte-mods-plugin/src/signature_policy.hpp"
+    ));
+    #[cfg(feature = "desktop")]
     const NATIVE_MOD_RUNTIME: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/src/mod_runtime.cpp"
@@ -2982,6 +3023,9 @@ mod tests {
     fn rust_wire_constants_match_the_native_ipc_header() {
         assert_eq!(native_define("NTE_MODS_IPC_MAGIC"), IPC_MAGIC as u64);
         assert_eq!(native_define("NTE_MODS_IPC_VERSION"), IPC_VERSION as u64);
+        assert!(NATIVE_IPC_HEADER.contains(
+            "#define NTE_MODS_RUNTIME_PRESENCE_NAME L\"Local\\\\nte-mods-plugin-v1-present\""
+        ));
         assert_eq!(
             native_define("NTE_EQUIPMENT_MAX_PLACEMENTS"),
             MAX_PLACEMENTS as u64
@@ -3079,6 +3123,26 @@ mod tests {
             native_enum("NTE_MODS_STATUS_MOD_DISABLED"),
             MAX_PLUGIN_STATUS as u64
         );
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn native_runtime_presence_and_test_server_offset_profile_are_bounded() {
+        assert!(NATIVE_IPC_TRANSPORT.contains("bool OpenRuntimePresence()"));
+        assert!(NATIVE_IPC_TRANSPORT.contains("LocalIpcSecurityAttributes security;"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("OpenRuntimePresence()"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("CloseRuntimePresence()"));
+        assert!(
+            NATIVE_OFFSET_RESOLVER
+                .contains("{ 0x1064D000, 0x0FDACCFD, 0x0164A940, 0x0F071DB0, 100, 0x4C }")
+        );
+        assert!(NATIVE_OFFSET_RESOLVER.contains("IsExecutableCodeAddress"));
+        assert!(NATIVE_OFFSET_RESOLVER.contains("IsWritableDataAddress"));
+        assert!(NATIVE_OFFSET_RESOLVER.contains("APPEND_NAME_PROLOGUE_MASK"));
+        assert!(NATIVE_OFFSET_RESOLVER.contains("GWORLD_SEQUENCE_MASK"));
+        assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("ResolveViewportTickIndex"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 4"));
     }
 
     #[test]

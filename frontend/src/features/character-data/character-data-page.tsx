@@ -494,7 +494,7 @@ function CharacterEditor({
           <input
             className={INPUT_CLASS}
             maxLength={512}
-            placeholder="res/images/characters/player_000_256.png"
+            placeholder="res/images/characters/player_000.png"
             value={draft.avatar}
             onChange={(event) => update("avatar", event.target.value)}
           />

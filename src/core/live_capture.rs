@@ -24,7 +24,7 @@ use crossbeam_channel::{Receiver, RecvError, TryRecvError, bounded, select_biase
 use super::{
     CoreError, CoreErrorCode,
     capture::{CaptureController, CaptureControllerOptions},
-    history::abyss_event_starts_new_round,
+    history::{PendingHistoryArchive, abyss_event_starts_new_round},
     reducer::{CoreSignal, apply_engine_event},
 };
 use crate::{
@@ -34,7 +34,8 @@ use crate::{
             import_pcapng,
         },
         model::{
-            CaptureQualitySource, CaptureQualitySummary, CharacterInfo, CombatState, EngineEvent,
+            AbyssEvent, CaptureQualitySource, CaptureQualitySummary, CharacterInfo, CombatState,
+            EngineEvent,
         },
         parser::{AbilityCatalog, CHARACTER_DATA_PATH, load_characters},
     },
@@ -43,6 +44,7 @@ use crate::{
 
 const RELIABLE_ENGINE_EVENT_CAPACITY: usize = 16_384;
 const DEBUG_ENGINE_EVENT_CAPACITY: usize = 2_048;
+const MAX_PENDING_ABYSS_ARCHIVES: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LiveCapturePhase {
@@ -121,6 +123,14 @@ pub enum CaptureReplayKind {
     Json,
 }
 
+/// An authoritative round detached from live capture under `event_gate`.
+/// Callers may prepare and persist it after the gate is released; new engine
+/// events are already routed into the replacement state.
+pub struct CutRound {
+    pub state: CombatState,
+    pub source: CaptureQualitySource,
+}
+
 struct ReplayTask {
     stop: Arc<AtomicBool>,
     thread: thread::JoinHandle<()>,
@@ -141,7 +151,7 @@ struct LiveCaptureInner {
     receiver: Mutex<Option<(Receiver<EngineEvent>, Receiver<EngineEvent>)>>,
     resources: LiveCaptureResources,
     last_outgoing_hit_at: Mutex<Option<Instant>>,
-    pending_abyss_archives: Mutex<VecDeque<HistoryCombatDetails>>,
+    pending_abyss_archives: Mutex<VecDeque<PendingHistoryArchive>>,
     last_abyss_archive_hits_generation: AtomicU64,
 }
 
@@ -174,14 +184,14 @@ impl LiveCaptureService {
             .0
             .status
             .lock()
-            .expect("live capture status lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     pub fn replay_running(&self) -> bool {
         self.0
             .replay
             .lock()
-            .expect("capture replay lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .is_some()
     }
 
@@ -189,7 +199,7 @@ impl LiveCaptureService {
         self.0
             .controller
             .lock()
-            .expect("live capture controller lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .active_filter()
     }
 
@@ -197,7 +207,7 @@ impl LiveCaptureService {
         self.0
             .controller
             .lock()
-            .expect("live capture controller lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .raw_capture_snapshot()
     }
 
@@ -205,7 +215,7 @@ impl LiveCaptureService {
         self.0
             .controller
             .lock()
-            .expect("live capture controller lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .save_last_raw_capture(path)
     }
 
@@ -214,12 +224,11 @@ impl LiveCaptureService {
             .0
             .quality_source
             .lock()
-            .expect("capture quality source lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     pub fn quality_summary(&self) -> CaptureQualitySummary {
-        let source = self.quality_source();
-        self.with_state(|state| state.capture_quality_summary(source))
+        self.with_state_and_source(|state, source| state.capture_quality_summary(source))
     }
 
     /// Returns a cheap monotonic marker for capture state that can affect
@@ -252,8 +261,38 @@ impl LiveCaptureService {
             .0
             .state
             .lock()
-            .expect("live capture state lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         read(&state)
+    }
+
+    /// Reads the authoritative state and its provenance from the same capture
+    /// session. Lock order is `event_gate -> state -> quality_source`.
+    fn with_state_and_source<T>(
+        &self,
+        read: impl FnOnce(&CombatState, CaptureQualitySource) -> T,
+    ) -> T {
+        let _gate = self
+            .0
+            .event_gate
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let source = *self
+            .0
+            .quality_source
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        read(&state, source)
+    }
+
+    /// Clones one low-frequency, provenance-frozen capture snapshot for work
+    /// that must continue after the capture locks are released.
+    pub fn state_and_source_snapshot(&self) -> (CombatState, CaptureQualitySource) {
+        self.with_state_and_source(|state, source| (state.clone(), source))
     }
 
     pub fn with_packet_state<T>(
@@ -264,12 +303,12 @@ impl LiveCaptureService {
             .0
             .event_gate
             .lock()
-            .expect("live capture event gate poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let state = self
             .0
             .state
             .lock()
-            .expect("live capture state lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let revision = super::packets::PacketStreamRevision {
             generation: self.0.packet_revision.load(Ordering::Acquire),
             session_generation: self.0.packet_session_generation.load(Ordering::Acquire),
@@ -287,68 +326,78 @@ impl LiveCaptureService {
         self.0
             .last_outgoing_hit_at
             .lock()
-            .expect("live capture activity lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .map(|last| last.elapsed())
     }
 
-    pub fn take_pending_abyss_archives(&self) -> Vec<HistoryCombatDetails> {
+    pub fn take_pending_abyss_archives(&self) -> Vec<PendingHistoryArchive> {
         self.0
             .pending_abyss_archives
             .lock()
-            .expect("live capture Abyss archive lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .drain(..)
             .collect()
     }
 
-    pub fn restore_pending_abyss_archives(&self, archives: Vec<HistoryCombatDetails>) {
+    pub fn restore_pending_abyss_archives(&self, archives: Vec<PendingHistoryArchive>) {
         let mut pending = self
             .0
             .pending_abyss_archives
             .lock()
-            .expect("live capture Abyss archive lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
+        let mut dropped = 0_usize;
         for archive in archives.into_iter().rev() {
+            if pending.len() >= MAX_PENDING_ABYSS_ARCHIVES {
+                pending.pop_back();
+                dropped += 1;
+            }
             pending.push_front(archive);
+        }
+        if dropped > 0 {
+            eprintln!(
+                "automatic Abyss History retry queue exceeded {MAX_PENDING_ABYSS_ARCHIVES} entries; discarded {dropped} newest archive(s) while restoring older failed retries"
+            );
         }
     }
 
-    pub fn archive_and_reset<P, T, E>(
-        &self,
-        prepare: impl FnOnce(&CombatState) -> Option<P>,
-        persist: impl FnOnce(P) -> Result<T, E>,
-    ) -> Result<Option<T>, E> {
+    /// Atomically installs a fresh combat state and returns the detached round.
+    ///
+    /// Lock order is `event_gate -> state -> quality_source -> round runtime`.
+    /// No serialization or persistence is allowed in this critical section.
+    pub fn cut_round(&self) -> Option<CutRound> {
         let _gate = self
             .0
             .event_gate
             .lock()
-            .expect("live capture event gate poisoned");
-        let prepared = {
-            let state = self
-                .0
-                .state
-                .lock()
-                .expect("live capture state lock poisoned");
-            prepare(&state)
-        };
-        let Some(prepared) = prepared else {
-            return Ok(None);
-        };
-        let result = persist(prepared)?;
-        *self
+            .unwrap_or_else(|poison| poison.into_inner());
+        let mut state = self
             .0
             .state
             .lock()
-            .expect("live capture state lock poisoned") = CombatState::default();
+            .unwrap_or_else(|poison| poison.into_inner());
+        if state.hits.is_empty() && state.stats.is_empty() && !state.abyss.is_active() {
+            return None;
+        }
+        let detached = std::mem::take(&mut *state);
+        let source = *self
+            .0
+            .quality_source
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         *self
             .0
             .last_outgoing_hit_at
             .lock()
-            .expect("live capture activity lock poisoned") = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
         self.0
             .last_abyss_archive_hits_generation
             .store(u64::MAX, Ordering::Release);
         self.0.bump_packet_session();
         self.0.bump_revision();
-        Ok(Some(result))
+        Some(CutRound {
+            state: detached,
+            source,
+        })
     }
 
     /// Clears the current combat projection while keeping capture resources and
@@ -358,17 +407,17 @@ impl LiveCaptureService {
             .0
             .event_gate
             .lock()
-            .expect("live capture event gate poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         *self
             .0
             .state
             .lock()
-            .expect("live capture state lock poisoned") = CombatState::default();
+            .unwrap_or_else(|poison| poison.into_inner()) = CombatState::default();
         *self
             .0
             .last_outgoing_hit_at
             .lock()
-            .expect("live capture activity lock poisoned") = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
         self.0
             .last_abyss_archive_hits_generation
             .store(u64::MAX, Ordering::Release);
@@ -383,23 +432,23 @@ impl LiveCaptureService {
             .0
             .event_gate
             .lock()
-            .expect("live capture event gate poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let has_outgoing = state.hits.iter().any(|hit| hit.direction.is_outgoing());
         *self
             .0
             .state
             .lock()
-            .expect("live capture state lock poisoned") = state;
+            .unwrap_or_else(|poison| poison.into_inner()) = state;
         *self
             .0
             .quality_source
             .lock()
-            .expect("capture quality source lock poisoned") = quality_source;
+            .unwrap_or_else(|poison| poison.into_inner()) = quality_source;
         *self
             .0
             .last_outgoing_hit_at
             .lock()
-            .expect("live capture activity lock poisoned") = has_outgoing.then_some(Instant::now());
+            .unwrap_or_else(|poison| poison.into_inner()) = has_outgoing.then_some(Instant::now());
         self.0
             .last_abyss_archive_hits_generation
             .store(u64::MAX, Ordering::Release);
@@ -414,7 +463,7 @@ impl LiveCaptureService {
                 .0
                 .status
                 .lock()
-                .expect("live capture status lock poisoned");
+                .unwrap_or_else(|poison| poison.into_inner());
             match status.phase {
                 LiveCapturePhase::Idle | LiveCapturePhase::Stopped | LiveCapturePhase::Failed => {
                     *status = LiveCaptureStatus {
@@ -458,13 +507,13 @@ impl LiveCaptureService {
             .0
             .event_gate
             .lock()
-            .expect("live capture event gate poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         {
             let status = self
                 .0
                 .status
                 .lock()
-                .expect("live capture status lock poisoned");
+                .unwrap_or_else(|poison| poison.into_inner());
             if matches!(
                 status.phase,
                 LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
@@ -472,7 +521,7 @@ impl LiveCaptureService {
                 .0
                 .replay
                 .lock()
-                .expect("capture replay lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .is_some()
             {
                 return Err(CoreError::new(
@@ -486,12 +535,12 @@ impl LiveCaptureService {
             .0
             .state
             .lock()
-            .expect("live capture state lock poisoned") = CombatState::default();
+            .unwrap_or_else(|poison| poison.into_inner()) = CombatState::default();
         *self
             .0
             .last_outgoing_hit_at
             .lock()
-            .expect("live capture activity lock poisoned") = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
         self.0.bump_packet_session();
         let stop = Arc::new(AtomicBool::new(false));
         let thread = match kind {
@@ -511,13 +560,16 @@ impl LiveCaptureService {
                 import_capture_json(path, self.0.sender.clone(), Arc::clone(&stop))
             }
         };
-        *self.0.replay.lock().expect("capture replay lock poisoned") =
-            Some(ReplayTask { stop, thread });
+        *self
+            .0
+            .replay
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(ReplayTask { stop, thread });
         *self
             .0
             .quality_source
             .lock()
-            .expect("capture quality source lock poisoned") = match kind {
+            .unwrap_or_else(|poison| poison.into_inner()) = match kind {
             CaptureReplayKind::Pcapng => CaptureQualitySource::PcapngReplay,
             CaptureReplayKind::Json => CaptureQualitySource::JsonReplay,
         };
@@ -525,7 +577,7 @@ impl LiveCaptureService {
             .0
             .status
             .lock()
-            .expect("live capture status lock poisoned") = LiveCaptureStatus {
+            .unwrap_or_else(|poison| poison.into_inner()) = LiveCaptureStatus {
             phase: LiveCapturePhase::Running,
             issue: None,
         };
@@ -538,7 +590,7 @@ impl LiveCaptureService {
             .0
             .replay
             .lock()
-            .expect("capture replay lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .as_ref()
             .map(|replay| Arc::clone(&replay.stop));
         let should_spawn = {
@@ -546,7 +598,7 @@ impl LiveCaptureService {
                 .0
                 .status
                 .lock()
-                .expect("live capture status lock poisoned");
+                .unwrap_or_else(|poison| poison.into_inner());
             match status.phase {
                 LiveCapturePhase::Starting => {
                     status.phase = LiveCapturePhase::Stopping;
@@ -581,7 +633,7 @@ impl LiveCaptureService {
             .0
             .receiver
             .lock()
-            .expect("live capture receiver lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .take()
         else {
             return Ok(());
@@ -599,7 +651,7 @@ impl LiveCaptureService {
                     .0
                     .receiver
                     .lock()
-                    .expect("live capture receiver lock poisoned") =
+                    .unwrap_or_else(|poison| poison.into_inner()) =
                     Some((reliable_receiver, debug_receiver));
                 Err(CoreError::new(
                     CoreErrorCode::SystemProbeFailed,
@@ -618,12 +670,12 @@ impl LiveCaptureService {
                 .0
                 .state
                 .lock()
-                .expect("live capture state lock poisoned");
+                .unwrap_or_else(|poison| poison.into_inner());
             let result = self
                 .0
                 .controller
                 .lock()
-                .expect("live capture controller lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .start(
                     options,
                     Arc::clone(&self.0.resources.characters),
@@ -632,6 +684,11 @@ impl LiveCaptureService {
                 );
             if result.is_ok() {
                 *state = CombatState::default();
+                *self
+                    .0
+                    .quality_source
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()) = CaptureQualitySource::Live;
                 self.0.bump_packet_session();
             }
             result
@@ -639,17 +696,12 @@ impl LiveCaptureService {
 
         match result {
             Ok(()) => {
-                *self
-                    .0
-                    .quality_source
-                    .lock()
-                    .expect("capture quality source lock poisoned") = CaptureQualitySource::Live;
                 let should_stop = {
                     let mut status = self
                         .0
                         .status
                         .lock()
-                        .expect("live capture status lock poisoned");
+                        .unwrap_or_else(|poison| poison.into_inner());
                     if status.phase == LiveCapturePhase::Stopping {
                         true
                     } else {
@@ -686,27 +738,38 @@ impl LiveCaptureService {
             .0
             .controller
             .lock()
-            .expect("live capture controller lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
+
         if controller.is_running() {
             controller
                 .stop()
                 .expect("running live capture controller must stop");
+            return;
         }
+
         drop(controller);
 
-        let mut status = self
-            .0
-            .status
-            .lock()
-            .expect("live capture status lock poisoned");
-        if status.phase != LiveCapturePhase::Failed {
-            *status = LiveCaptureStatus {
-                phase: LiveCapturePhase::Stopped,
-                issue: None,
-            };
+        let changed = {
+            let mut status = self
+                .0
+                .status
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+
+            if status.phase == LiveCapturePhase::Stopping {
+                *status = LiveCaptureStatus {
+                    phase: LiveCapturePhase::Stopped,
+                    issue: None,
+                };
+                true
+            } else {
+                false
+            }
+        };
+
+        if changed {
+            self.0.bump_capture_status_revision();
         }
-        drop(status);
-        self.0.bump_capture_status_revision();
     }
 
     fn record_start_failure(&self, code: CoreErrorCode) {
@@ -714,7 +777,7 @@ impl LiveCaptureService {
             .0
             .status
             .lock()
-            .expect("live capture status lock poisoned") = LiveCaptureStatus {
+            .unwrap_or_else(|poison| poison.into_inner()) = LiveCaptureStatus {
             phase: LiveCapturePhase::Failed,
             issue: Some(LiveCaptureIssue::Start(code)),
         };
@@ -738,44 +801,81 @@ impl LiveCaptureInner {
         self.packet_revision.fetch_add(1, Ordering::AcqRel);
     }
 
+    /// Queues the current Abyss round only when its hit content changed since
+    /// the last archive. Dedupe uses the monotonic `state.hits_generation`
+    /// because the Abyss reducer can reset the party generations while the
+    /// global generation keeps advancing; summing both can collide across two
+    /// rounds and suppress a later archive.
+    fn queue_abyss_archive_if_changed(&self, state: &CombatState) {
+        let has_abyss_hits =
+            !state.abyss.first_half.hits.is_empty() || !state.abyss.second_half.hits.is_empty();
+        if !has_abyss_hits {
+            return;
+        }
+        let hits_generation = state.hits_generation;
+        if hits_generation
+            == self
+                .last_abyss_archive_hits_generation
+                .load(Ordering::Acquire)
+        {
+            return;
+        }
+        let Some(details) = HistoryCombatDetails::from_state(state) else {
+            return;
+        };
+        let source = *self
+            .quality_source
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let mut pending = self
+            .pending_abyss_archives
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if pending.len() >= MAX_PENDING_ABYSS_ARCHIVES {
+            eprintln!(
+                "automatic Abyss History retry queue is full at {MAX_PENDING_ABYSS_ARCHIVES} entries; newest round was not queued"
+            );
+            return;
+        }
+        self.last_abyss_archive_hits_generation
+            .store(hits_generation, Ordering::Release);
+        pending.push_back(PendingHistoryArchive { details, source });
+    }
+
     fn process_event(&self, event: EngineEvent) {
         let _gate = self
             .event_gate
             .lock()
-            .expect("live capture event gate poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let signal = {
-            let mut state = self.state.lock().expect("live capture state lock poisoned");
-            let history_hits_generation = state
-                .hits_generation
-                .wrapping_add(state.abyss.first_half.hits_generation)
-                .wrapping_add(state.abyss.second_half.hits_generation);
-            if let EngineEvent::Abyss(abyss) = &event
-                && abyss_event_starts_new_round(state.abyss.floor, abyss)
-                && history_hits_generation
-                    != self
-                        .last_abyss_archive_hits_generation
-                        .load(Ordering::Acquire)
-                && let Some(details) = HistoryCombatDetails::from_state(&state)
-            {
-                self.last_abyss_archive_hits_generation
-                    .store(history_hits_generation, Ordering::Release);
-                self.pending_abyss_archives
-                    .lock()
-                    .expect("live capture Abyss archive lock poisoned")
-                    .push_back(details);
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let pre_event_abyss_boundary = matches!(
+                &event,
+                EngineEvent::Abyss(abyss)
+                    if abyss_event_starts_new_round(state.abyss.floor, abyss)
+            );
+            let post_event_abyss_archive = matches!(&event, EngineEvent::CaptureStopped)
+                || matches!(&event, EngineEvent::Abyss(AbyssEvent::Exit { .. }));
+            if pre_event_abyss_boundary {
+                self.queue_abyss_archive_if_changed(&state);
             }
             if let EngineEvent::Hit(hit) = &event {
-                if !hit.direction.is_incoming() {
+                if hit.direction.is_outgoing() {
                     *self
                         .last_outgoing_hit_at
                         .lock()
-                        .expect("live capture activity lock poisoned") = Some(Instant::now());
-                }
-                if hit.direction.is_outgoing() {
+                        .unwrap_or_else(|poison| poison.into_inner()) = Some(Instant::now());
                     self.outgoing_hit_revision.fetch_add(1, Ordering::AcqRel);
                 }
             }
-            apply_engine_event(&mut state, event)
+            let signal = apply_engine_event(&mut state, event);
+            if post_event_abyss_archive {
+                self.queue_abyss_archive_if_changed(&state);
+            }
+            signal
         };
 
         let affects_packet_projection = matches!(
@@ -791,13 +891,13 @@ impl LiveCaptureInner {
             CoreSignal::InventoryReplaced
             | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
-            | CoreSignal::PacketObserved
-            | CoreSignal::ModScript(_) => false,
+            | CoreSignal::PacketObserved => false,
+            CoreSignal::ModScript { state_changed, .. } => state_changed,
             CoreSignal::Status(_) => {
                 let mut status = self
                     .status
                     .lock()
-                    .expect("live capture status lock poisoned");
+                    .unwrap_or_else(|poison| poison.into_inner());
                 if status.phase == LiveCapturePhase::Starting {
                     status.phase = LiveCapturePhase::Running;
                 }
@@ -806,7 +906,7 @@ impl LiveCaptureInner {
             CoreSignal::Warning(_) => {
                 self.status
                     .lock()
-                    .expect("live capture status lock poisoned")
+                    .unwrap_or_else(|poison| poison.into_inner())
                     .issue = Some(LiveCaptureIssue::RuntimeWarning);
                 true
             }
@@ -814,7 +914,7 @@ impl LiveCaptureInner {
                 *self
                     .status
                     .lock()
-                    .expect("live capture status lock poisoned") = LiveCaptureStatus {
+                    .unwrap_or_else(|poison| poison.into_inner()) = LiveCaptureStatus {
                     phase: LiveCapturePhase::Failed,
                     issue: Some(LiveCaptureIssue::RuntimeError),
                 };
@@ -823,12 +923,12 @@ impl LiveCaptureInner {
             CoreSignal::CaptureStopped => {
                 self.controller
                     .lock()
-                    .expect("live capture controller lock poisoned")
+                    .unwrap_or_else(|poison| poison.into_inner())
                     .capture_stopped();
                 if let Some(replay) = self
                     .replay
                     .lock()
-                    .expect("capture replay lock poisoned")
+                    .unwrap_or_else(|poison| poison.into_inner())
                     .take()
                 {
                     let _ = replay.thread.join();
@@ -836,7 +936,7 @@ impl LiveCaptureInner {
                 let mut status = self
                     .status
                     .lock()
-                    .expect("live capture status lock poisoned");
+                    .unwrap_or_else(|poison| poison.into_inner());
                 if status.phase != LiveCapturePhase::Failed {
                     *status = LiveCaptureStatus {
                         phase: LiveCapturePhase::Stopped,
@@ -861,7 +961,7 @@ impl Drop for LiveCaptureInner {
         if let Some(replay) = self
             .replay
             .get_mut()
-            .expect("capture replay lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .take()
         {
             replay.stop.store(true, Ordering::Release);
@@ -869,7 +969,7 @@ impl Drop for LiveCaptureInner {
         }
         self.controller
             .get_mut()
-            .expect("live capture controller lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .stop_if_running();
     }
 }
@@ -884,7 +984,7 @@ fn engine_event_loop(
             Some(inner) => inner
                 .replay
                 .lock()
-                .expect("capture replay lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .is_some(),
             None => break,
         };
@@ -1070,6 +1170,110 @@ mod tests {
     }
 
     #[test]
+    fn mod_script_backfill_advances_only_when_projection_changes() {
+        use crate::engine::model::ModScriptEvent;
+
+        fn identity_event(timestamp: f64) -> ModScriptEvent {
+            let mut event = ModScriptEvent::from_bridge(
+                1,
+                filetime(timestamp),
+                "enemy-telemetry".to_owned(),
+                "pre.enemy.identity".to_owned(),
+                vec![0x1234, 0x4d88_7b49_05d5_dbaf, 80],
+            );
+            event.enemy_identity = Some(crate::engine::model::EnemyIdentity {
+                config_hash: 0x4d88_7b49_05d5_dbaf,
+                config_id: "Boss_016_BP".to_owned(),
+                monster_id: "Boss_16".to_owned(),
+                name_en: "Imaginadough".to_owned(),
+                name_zh: "随心泥".to_owned(),
+                name_ja: "イメージクレイ".to_owned(),
+            });
+            event
+        }
+
+        fn hit_target_event(sequence: u64, timestamp: f64) -> ModScriptEvent {
+            let mut event = identity_event(timestamp);
+            event.sequence = sequence;
+            event.phase = crate::engine::model::ModScriptEventPhase::Postprocess;
+            event.name = "enemy.hit_target".to_owned();
+            event
+        }
+
+        const FILETIME_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+        fn filetime(timestamp: f64) -> u64 {
+            FILETIME_UNIX_EPOCH_100NS + (timestamp * 10_000_000.0) as u64
+        }
+
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        service
+            .0
+            .process_event(EngineEvent::ModScript(identity_event(1.0)));
+        service.0.process_event(hit(100.0));
+
+        let before_target = service.revision();
+        service
+            .0
+            .process_event(EngineEvent::ModScript(hit_target_event(2, 1.05)));
+        assert!(
+            service.revision() > before_target,
+            "target backfill must advance the frontend revision"
+        );
+        assert_eq!(
+            service.with_state(|state| state.hits[0].target_name.clone()),
+            Some("随心泥".to_owned())
+        );
+
+        let before_duplicate = service.revision();
+        service
+            .0
+            .process_event(EngineEvent::ModScript(hit_target_event(3, 1.05)));
+        assert_eq!(
+            service.revision(),
+            before_duplicate,
+            "idempotent ModScript backfill must not bump the revision"
+        );
+    }
+
+    #[test]
+    fn idle_policy_tracks_only_confirmed_outgoing_hits() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        assert!(service.idle_elapsed().is_none());
+
+        service.0.process_event(EngineEvent::Hit({
+            let mut incoming = match hit(1.0) {
+                EngineEvent::Hit(hit) => hit,
+                _ => unreachable!("test helper returns a hit"),
+            };
+            incoming.direction = HitDirection::Incoming;
+            incoming
+        }));
+        assert!(
+            service.idle_elapsed().is_none(),
+            "incoming hits must not reset the auto-round idle timer"
+        );
+
+        service.0.process_event(EngineEvent::Hit({
+            let mut unknown = match hit(2.0) {
+                EngineEvent::Hit(hit) => hit,
+                _ => unreachable!("test helper returns a hit"),
+            };
+            unknown.direction = HitDirection::Unknown;
+            unknown
+        }));
+        assert!(
+            service.idle_elapsed().is_none(),
+            "unknown-direction hits must not reset the auto-round idle timer"
+        );
+
+        service.0.process_event(hit(3.0));
+        assert!(
+            service.idle_elapsed().is_some(),
+            "confirmed outgoing hits must reset the auto-round idle timer"
+        );
+    }
+
+    #[test]
     fn inventory_events_advance_only_the_inventory_projection() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         let initial_revision = service.revision();
@@ -1090,36 +1294,44 @@ mod tests {
     }
 
     #[test]
-    fn archive_reset_keeps_the_round_when_persistence_fails() {
+    fn cut_round_installs_replacement_before_persistence_work() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
         service.0.process_event(hit(321.0));
 
-        let result: Result<Option<()>, &str> = service.archive_and_reset(
-            |state| (!state.hits.is_empty()).then_some(state.total_damage),
-            |_| Err("disk full"),
-        );
+        let cut = service.cut_round().expect("archivable round");
+        service.0.process_event(hit(99.0));
 
-        assert_eq!(result, Err("disk full"));
-        assert_eq!(service.with_state(|state| state.total_damage), 321.0);
+        assert_eq!(cut.state.total_damage, 321.0);
+        assert_eq!(cut.source, CaptureQualitySource::Unknown);
+        assert_eq!(service.with_state(|state| state.total_damage), 99.0);
     }
 
     #[test]
-    fn archive_reset_clears_the_round_only_after_persistence_succeeds() {
+    fn cut_round_freezes_replay_source_and_empty_round_is_a_no_op() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
+        assert!(service.cut_round().is_none());
+        *service
+            .0
+            .quality_source
+            .lock()
+            .expect("quality source lock") = CaptureQualitySource::JsonReplay;
         service.0.process_event(hit(321.0));
 
-        let result: Result<Option<f64>, &str> = service.archive_and_reset(
-            |state| (!state.hits.is_empty()).then_some(state.total_damage),
-            Ok,
-        );
+        let cut = service.cut_round().expect("archivable replay round");
 
-        assert_eq!(result, Ok(Some(321.0)));
+        assert_eq!(cut.source, CaptureQualitySource::JsonReplay);
+        assert_eq!(cut.state.total_damage, 321.0);
         assert!(service.with_state(|state| state.hits.is_empty()));
     }
 
     #[test]
     fn abyss_restart_queues_the_previous_round_before_reducer_changes_state() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
+        *service
+            .0
+            .quality_source
+            .lock()
+            .expect("quality source lock") = CaptureQualitySource::PcapngReplay;
         let EngineEvent::Hit(previous_hit) = hit(321.0) else {
             unreachable!("test helper returns a hit")
         };
@@ -1142,8 +1354,222 @@ mod tests {
 
         let archives = service.take_pending_abyss_archives();
         assert_eq!(archives.len(), 1);
-        assert_eq!(archives[0].first_half_hits.len(), 1);
-        assert_eq!(archives[0].first_half_hits[0].damage, 321.0);
+        assert_eq!(archives[0].details.first_half_hits.len(), 1);
+        assert_eq!(archives[0].details.first_half_hits[0].damage, 321.0);
+        assert_eq!(archives[0].source, CaptureQualitySource::PcapngReplay);
+    }
+
+    #[test]
+    fn abyss_exit_archive_contains_the_real_exit_timestamp() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+        service.0.process_event(hit(321.0));
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Exit { timestamp: 10.0 }));
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].details.first_half_hits.len(), 1);
+        assert_eq!(archives[0].details.first_half_hits[0].damage, 321.0);
+        assert_eq!(archives[0].details.exited_at, Some(10.0));
+    }
+
+    #[test]
+    fn final_abyss_round_stays_pending_when_the_session_is_reset() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let EngineEvent::Hit(previous_hit) = hit(654.0) else {
+            unreachable!("test helper returns a hit")
+        };
+        {
+            let mut state = service.0.state.lock().expect("live capture state lock");
+            state.apply_abyss_event(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::Second,
+                allow_late_backfill: false,
+            });
+            state.push_hit(*previous_hit);
+        }
+
+        service.0.process_event(EngineEvent::CaptureStopped);
+        service.reset_session();
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].details.second_half_hits.len(), 1);
+        assert_eq!(archives[0].details.second_half_hits[0].damage, 654.0);
+        assert!(service.with_state(|state| state.hits.is_empty()));
+    }
+
+    #[test]
+    fn capture_stopped_archives_after_prior_semantic_events() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+        service.0.process_event(hit(100.0));
+        service.0.process_event(hit(200.0));
+
+        service.0.process_event(EngineEvent::CaptureStopped);
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].details.first_half_hits.len(), 2);
+        assert_eq!(
+            service.status().phase,
+            LiveCapturePhase::Stopped,
+            "CaptureStopped is the single final archive and Stopped barrier"
+        );
+    }
+
+    #[test]
+    fn pending_abyss_archive_queue_is_bounded() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+
+        for round in 0..(MAX_PENDING_ABYSS_ARCHIVES + 4) {
+            service.0.process_event(hit((round + 1) as f64));
+            service
+                .0
+                .process_event(EngineEvent::Abyss(AbyssEvent::RestartDetected {
+                    timestamp: (round + 1) as f64,
+                }));
+            service
+                .0
+                .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                    timestamp: (round + 1) as f64 + 0.5,
+                    cycle: None,
+                    floor: Some(12),
+                    half: crate::engine::model::AbyssHalf::First,
+                    allow_late_backfill: false,
+                }));
+        }
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(archives.len(), MAX_PENDING_ABYSS_ARCHIVES);
+        assert_eq!(archives[0].details.first_half_hits[0].damage, 1.0);
+        assert_eq!(
+            archives[MAX_PENDING_ABYSS_ARCHIVES - 1]
+                .details
+                .first_half_hits[0]
+                .damage,
+            MAX_PENDING_ABYSS_ARCHIVES as f64
+        );
+    }
+
+    #[test]
+    fn restoring_abyss_archive_retries_keeps_queue_bounded() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+        service.0.process_event(hit(321.0));
+        service.0.process_event(EngineEvent::CaptureStopped);
+        let template = service
+            .take_pending_abyss_archives()
+            .into_iter()
+            .next()
+            .expect("template archive");
+
+        service.restore_pending_abyss_archives(vec![template; MAX_PENDING_ABYSS_ARCHIVES + 5]);
+
+        assert_eq!(
+            service.take_pending_abyss_archives().len(),
+            MAX_PENDING_ABYSS_ARCHIVES
+        );
+    }
+
+    #[test]
+    fn abyss_restart_dedupe_does_not_collide_across_rounds() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+
+        // First round: four hits on the first half, then archive it through
+        // the same final-archive path used when capture stops.
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+        for _ in 0..4 {
+            service.0.process_event(hit(100.0));
+        }
+        service.0.process_event(EngineEvent::CaptureStopped);
+
+        // Exit then restart resets the Abyss party generations while the
+        // global hits generation keeps advancing.
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Exit { timestamp: 10.0 }));
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::RestartDetected {
+                timestamp: 11.0,
+            }));
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 12.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+
+        // Second round with fewer hits. Its summed generation (6 + 2) equals
+        // the first round's summed generation (4 + 4), so a sum-based dedupe
+        // would suppress this round; the monotonic global marker does not.
+        for _ in 0..2 {
+            service.0.process_event(hit(200.0));
+        }
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 20.0,
+                cycle: None,
+                floor: Some(13),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(archives.len(), 2);
+        assert_eq!(archives[0].details.first_half_hits.len(), 4);
+        assert_eq!(archives[1].details.first_half_hits.len(), 2);
     }
 
     #[test]
@@ -1176,6 +1602,51 @@ mod tests {
         assert!(
             service.with_packet_state(|revision, _, _| revision.generation)
                 > initial_packet_revision.generation
+        );
+    }
+
+    #[test]
+    fn stopping_after_completed_runtime_failure_does_not_stick() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+
+        // A running-then-failed lifecycle: an Abyss round with hits, the final
+        // CaptureStopped drain barrier, then the runtime Error.
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+        service.0.process_event(hit(100.0));
+        service.0.process_event(hit(200.0));
+        service.0.process_event(EngineEvent::CaptureStopped);
+        service
+            .0
+            .process_event(EngineEvent::Error("capture failed".to_owned()));
+
+        assert_eq!(service.status().phase, LiveCapturePhase::Failed);
+
+        // The controller no longer owns a running capture, so Stop must
+        // recover locally instead of waiting for a CaptureStopped that will
+        // never arrive.
+        service
+            .request_stop()
+            .expect("a failed capture must accept stop");
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while service.status().phase != LiveCapturePhase::Stopped {
+            assert!(Instant::now() < deadline, "stop recovery timed out");
+            thread::yield_now();
+        }
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(
+            archives.len(),
+            1,
+            "recovery stop must not create a duplicate Abyss archive"
         );
     }
 
@@ -1227,6 +1698,22 @@ mod tests {
         service.restore_session(previous, CaptureQualitySource::PcapngReplay);
         assert_eq!(service.with_state(|state| state.total_damage), 321.0);
         assert_eq!(service.quality_source(), CaptureQualitySource::PcapngReplay);
+    }
+
+    #[test]
+    fn state_and_source_snapshot_uses_one_session_gate() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut state = CombatState::default();
+        let EngineEvent::Hit(hit) = hit(456.0) else {
+            unreachable!("test helper returns a hit")
+        };
+        state.push_hit(*hit);
+        service.restore_session(state, CaptureQualitySource::JsonReplay);
+
+        let (snapshot, source) = service.state_and_source_snapshot();
+
+        assert_eq!(snapshot.total_damage, 456.0);
+        assert_eq!(source, CaptureQualitySource::JsonReplay);
     }
 
     #[test]

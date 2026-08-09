@@ -1,6 +1,8 @@
 #include "offset_resolver.hpp"
 
 #include "memory_access.hpp"
+#include "offset_signatures.hpp"
+#include "signature_policy.hpp"
 
 #include <Windows.h>
 
@@ -13,9 +15,42 @@ namespace nte::mods::offsets
 	{
 		constexpr size_t MAX_IMAGE_SECTIONS = 96;
 		constexpr size_t MAX_APPEND_NAME_WINDOW = 0x140;
-		constexpr size_t GWORLD_SEQUENCE_SIZE = 35;
 		constexpr size_t NOT_FOUND = static_cast<size_t>(-1);
 		constexpr size_t MAX_IMAGE_SIZE = 0x40000000;
+		constexpr size_t DEFAULT_VIEWPORT_TICK_INDEX = 100;
+		constexpr size_t DEFAULT_PROCESS_EVENT_INDEX = 0x4C;
+
+		struct KnownOffsetProfile
+		{
+			size_t image_size;
+			size_t append_name_offset;
+			size_t gworld_offset;
+			size_t viewport_tick_index;
+			size_t process_event_index;
+		};
+
+		// SDK snapshots for the currently supported CN, CN test, and Global builds.
+		// Image size is the stable fallback key; PE checksum is retained only in the
+		// resolved diagnostics and never blocks signature/profile location.
+		constexpr KnownOffsetProfile KNOWN_OFFSET_PROFILES[]{
+			{ 0x1000C000, 0x0161C020, 0x0EAAADB0, 100, 0x4C },
+			{ 0x1064D000, 0x0164A940, 0x0F071DB0, 100, 0x4C },
+			{ 0x1000E000, 0x0161BAE0, 0x0EAAADB0, 100, 0x4C },
+		};
+
+		constexpr uint8_t APPEND_NAME_PROLOGUE_BYTES[]{
+			0x48, 0x89, 0x5C, 0x24, 0x00, 0x48, 0x89, 0x74,
+			0x24, 0x00, 0x57, 0x48, 0x83, 0xEC, 0x00,
+		};
+		constexpr uint8_t APPEND_NAME_PROLOGUE_MASK[]{
+			0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0xFF, 0xFF, 0xFF,
+			0xFF, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+		};
+		constexpr signature::BytePattern APPEND_NAME_PROLOGUE{
+			APPEND_NAME_PROLOGUE_BYTES,
+			APPEND_NAME_PROLOGUE_MASK,
+			sizeof(APPEND_NAME_PROLOGUE_BYTES),
+		};
 
 		ResolvedOffsets resolved_offsets{};
 		bool resolution_attempted = false;
@@ -102,16 +137,17 @@ namespace nte::mods::offsets
 
 		bool IsAppendNamePrologue(const uint8_t* code, size_t size)
 		{
-			return size >= 15 &&
-				code[0] == 0x48 && code[1] == 0x89 && code[2] == 0x5C &&
-				code[3] == 0x24 && code[4] == 0x10 && code[5] == 0x48 &&
-				code[6] == 0x89 && code[7] == 0x74 && code[8] == 0x24 &&
-				code[9] == 0x18 && code[10] == 0x57 && code[11] == 0x48 &&
-				code[12] == 0x83 && code[13] == 0xEC && code[14] == 0x20;
+			return signature::Matches(code, size, APPEND_NAME_PROLOGUE);
 		}
 
 		bool IsAppendNameFunction(const uint8_t* code, size_t size)
 		{
+			// Prefer the current live signature; retain the structural matcher below
+			// for supported builds whose relocations or prologue layout differ.
+			if (signature::Matches(
+				code, size, detail::APPEND_NAME_LIVE_SIGNATURE))
+				return true;
+
 			if (!IsAppendNamePrologue(code, size))
 				return false;
 
@@ -210,14 +246,8 @@ namespace nte::mods::offsets
 
 		bool IsGWorldSequence(const uint8_t* code, size_t size)
 		{
-			return size >= GWORLD_SEQUENCE_SIZE &&
-				code[0] == 0x48 && code[1] == 0x8B && code[2] == 0x04 &&
-				code[3] == 0xD0 && code[4] == 0x8B && code[5] == 0x04 &&
-				code[6] == 0x01 && code[7] == 0x39 && code[8] == 0x05 &&
-				code[13] == 0x7F && code[15] == 0x48 && code[16] == 0x89 &&
-				code[17] == 0x1D && code[22] == 0x48 && code[23] == 0x8D &&
-				code[24] == 0x05 && code[29] == 0x48 && code[30] == 0x83 &&
-				code[31] == 0xC4 && code[33] == 0x5B && code[34] == 0xC3;
+			return size >= detail::GWORLD_SEQUENCE_SIZE &&
+				signature::Matches(code, size, detail::GWORLD_SEQUENCE);
 		}
 
 		int64_t ReadSignedDisplacement(const uint8_t* bytes)
@@ -272,6 +302,59 @@ namespace nte::mods::offsets
 				if (address >= section.virtual_address &&
 					address <= end - sizeof(void*))
 					return true;
+			}
+			return false;
+		}
+
+		bool IsExecutableCodeAddress(
+			uintptr_t address,
+			const detail::SectionView* sections,
+			size_t section_count)
+		{
+			for (size_t index = 0; index < section_count; ++index)
+			{
+				const detail::SectionView& section = sections[index];
+				if (!section.executable || section.bytes == nullptr || section.size == 0 ||
+					section.virtual_address > UINTPTR_MAX - section.size)
+					continue;
+				const uintptr_t end = section.virtual_address + section.size;
+				if (address >= section.virtual_address && address < end)
+					return IsReadableRange(reinterpret_cast<const void*>(address), 1);
+			}
+			return false;
+		}
+
+		bool ResolveKnownProfile(
+			const detail::SectionView* sections,
+			size_t section_count,
+			uintptr_t image_base,
+			size_t image_size,
+			uint32_t image_checksum,
+			ResolvedOffsets& result)
+		{
+			for (const KnownOffsetProfile& profile : KNOWN_OFFSET_PROFILES)
+			{
+				if (profile.image_size != image_size ||
+					profile.append_name_offset >= image_size ||
+					profile.gworld_offset >= image_size)
+					continue;
+
+				const uintptr_t append_name = image_base + profile.append_name_offset;
+				const uintptr_t gworld = image_base + profile.gworld_offset;
+				if (!IsExecutableCodeAddress(append_name, sections, section_count) ||
+					!IsWritableDataAddress(gworld, sections, section_count))
+					return false;
+
+				result = {
+					append_name,
+					gworld,
+					image_size,
+					image_checksum,
+					profile.viewport_tick_index,
+					profile.process_event_index,
+					ResolutionSource::KnownProfile,
+				};
+				return true;
 			}
 			return false;
 		}
@@ -352,8 +435,15 @@ namespace nte::mods::offsets
 			if (append_name_count != 1 || gworld_count != 1)
 				return false;
 
-			result.append_name_address = append_name;
-			result.gworld_address = gworld;
+			result = {
+				append_name,
+				gworld,
+				image_size,
+				0,
+				DEFAULT_VIEWPORT_TICK_INDEX,
+				DEFAULT_PROCESS_EVENT_INDEX,
+				ResolutionSource::Signature,
+			};
 			return true;
 		}
 	} // namespace detail
@@ -442,12 +532,23 @@ namespace nte::mods::offsets
 		}
 
 		ResolvedOffsets candidate{};
-		if (!detail::ResolveInSections(
+		const bool resolved_by_signature = detail::ResolveInSections(
 			sections,
 			section_count,
 			image_base,
 			image_size,
-			candidate))
+			candidate);
+		if (resolved_by_signature)
+		{
+			candidate.image_checksum = nt_headers.OptionalHeader.CheckSum;
+		}
+		else if (!ResolveKnownProfile(
+				sections,
+				section_count,
+				image_base,
+				image_size,
+				nt_headers.OptionalHeader.CheckSum,
+				candidate))
 			return false;
 
 		resolved_offsets = candidate;
@@ -458,5 +559,15 @@ namespace nte::mods::offsets
 	const ResolvedOffsets* Get()
 	{
 		return resolution_succeeded ? &resolved_offsets : nullptr;
+	}
+
+	bool IsKnownImageProfile(size_t image_size, uint32_t)
+	{
+		for (const KnownOffsetProfile& profile : KNOWN_OFFSET_PROFILES)
+		{
+			if (profile.image_size == image_size)
+				return true;
+		}
+		return false;
 	}
 } // namespace nte::mods::offsets

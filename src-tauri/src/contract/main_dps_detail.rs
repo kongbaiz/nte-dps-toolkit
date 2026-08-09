@@ -25,6 +25,7 @@ use nte_dps_tool::{
 use crate::state::{AppState, MainDpsDetailKind, MainDpsDetailRequest};
 
 pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 3;
+pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 
 #[derive(Clone, Debug, Serialize)]
@@ -67,105 +68,108 @@ impl MainDpsDetailSnapshot {
         let config = state.ui_config_snapshot();
         let language = config.language;
         let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
-        let (combat, selected_half) = state.main_dps_detail_state();
-        let source = selected_half
-            .map(|half| DetailSource::Party(combat.abyss.half(half)))
-            .unwrap_or(DetailSource::Combat(&combat));
-        let base_hits = source
-            .hits()
-            .iter()
-            .filter(|hit| request.character_id.is_none_or(|id| hit.char_id == id))
-            .collect::<Vec<_>>();
-        let matching = base_hits
-            .iter()
-            .copied()
-            .filter(|hit| request.matches(hit))
-            .collect::<Vec<_>>();
-        let total_hits = matching.len();
-        let total_damage = matching.iter().map(|hit| hit.total_damage()).sum();
-        let max_row_damage = matching
-            .iter()
-            .map(|hit| hit.total_damage())
-            .fold(1.0_f64, f64::max);
-        let rows = matching
-            .into_iter()
-            .skip(offset)
-            .take(limit.clamp(1, MAIN_DPS_DETAIL_PAGE_LIMIT))
-            .enumerate()
-            .map(|(index, hit)| {
-                MainDpsHitSnapshot::from_hit(hit, offset + index, &resources.characters, language)
-            })
-            .collect();
-        let character = request
-            .character_id
-            .and_then(|character_id| resources.characters.get(&character_id));
-        let character_name = request.character_id.map(|character_id| {
-            localized_character_name(
-                character,
-                language,
-                source
-                    .stats()
-                    .get(&character_id)
-                    .map(|row| row.name.as_str())
-                    .unwrap_or_else(|| "-"),
-            )
-        });
-        let metrics = detail_metrics(
-            source,
-            request.character_id,
-            config.separate_reaction_damage,
-            subtract_time_stop,
-        );
-        let mut direction: MainDpsDirectionSummary =
-            summarize_hit_directions(base_hits.iter().copied()).into();
-        direction.confirmed_hits = metrics.output_count;
-        let hit_types = hit_type_summaries(&metrics);
-        let attribution = MainDpsAttributionSummary::new(
-            source.damage_attribution_summary(),
-            config.separate_reaction_damage,
-        );
-        let skills = request
-            .character_id
-            .map(|_| skill_summaries(&base_hits, metrics.total_output, language))
-            .unwrap_or_default();
-        let qte_summaries = qte_summaries(&base_hits, metrics.total_output);
-        let qte_type = match &request.filter {
-            CombatDetailFilter::QteType(value) => Some(value.clone()),
-            _ => None,
-        };
+        let generation = state.next_sequence().to_string();
+        let actions = MainDpsDetailActions::from_state(state);
+        state.with_main_dps_detail_state(|combat, selected_half| {
+            let source = selected_half
+                .map(|half| DetailSource::Party(combat.abyss.half(half)))
+                .unwrap_or(DetailSource::Combat(combat));
+            let base_hits = source
+                .hits()
+                .iter()
+                .filter(|hit| request.character_id.is_none_or(|id| hit.char_id == id))
+                .collect::<Vec<_>>();
+            let page_limit = limit.clamp(1, MAIN_DPS_DETAIL_PAGE_LIMIT);
+            let mut total_hits = 0_usize;
+            let mut total_damage = 0.0_f64;
+            let mut max_row_damage = 1.0_f64;
+            let mut rows = Vec::with_capacity(page_limit);
+            for hit in base_hits.iter().copied().filter(|hit| request.matches(hit)) {
+                let row_index = total_hits;
+                total_hits += 1;
+                let damage = hit.total_damage();
+                total_damage += damage;
+                max_row_damage = max_row_damage.max(damage);
+                if row_index >= offset && rows.len() < page_limit {
+                    rows.push(MainDpsHitSnapshot::from_hit(
+                        hit,
+                        row_index,
+                        &resources.characters,
+                        language,
+                    ));
+                }
+            }
+            let character = request
+                .character_id
+                .and_then(|character_id| resources.characters.get(&character_id));
+            let character_name = request.character_id.map(|character_id| {
+                localized_character_name(
+                    character,
+                    language,
+                    source
+                        .stats()
+                        .get(&character_id)
+                        .map(|row| row.name.as_str())
+                        .unwrap_or_else(|| "-"),
+                )
+            });
+            let metrics = detail_metrics(
+                source,
+                request.character_id,
+                config.separate_reaction_damage,
+                subtract_time_stop,
+            );
+            let mut direction: MainDpsDirectionSummary =
+                summarize_hit_directions(base_hits.iter().copied()).into();
+            direction.confirmed_hits = metrics.output_count;
+            let hit_types = hit_type_summaries(&metrics);
+            let attribution = MainDpsAttributionSummary::new(
+                source.damage_attribution_summary(),
+                config.separate_reaction_damage,
+            );
+            let skills = request
+                .character_id
+                .map(|_| skill_summaries(&base_hits, metrics.total_output, language))
+                .unwrap_or_default();
+            let qte_summaries = qte_summaries(&base_hits, metrics.total_output);
+            let qte_type = match &request.filter {
+                CombatDetailFilter::QteType(value) => Some(value.clone()),
+                _ => None,
+            };
 
-        Self {
-            contract_version: MAIN_DPS_DETAIL_CONTRACT_VERSION,
-            generation: state.next_sequence().to_string(),
-            kind: if request.character_id.is_some() {
-                "character"
-            } else {
-                "team"
-            },
-            abyss_half: selected_half.map(|half| match half {
-                nte_dps_tool::engine::model::AbyssHalf::First => "first",
-                nte_dps_tool::engine::model::AbyssHalf::Second => "second",
-            }),
-            character_id: request.character_id,
-            character_name,
-            character_color: character.and_then(|value| value.color.clone()),
-            filter: filter_id(&request.filter),
-            qte_type,
-            skill_filter: request.skill_filter,
-            columns: config.hit_detail_columns.into(),
-            actions: MainDpsDetailActions::from_state(state),
-            metrics,
-            direction,
-            hit_types,
-            attribution,
-            qte_summaries,
-            skills,
-            total_hits,
-            total_damage,
-            max_row_damage,
-            offset,
-            rows,
-        }
+            Self {
+                contract_version: MAIN_DPS_DETAIL_CONTRACT_VERSION,
+                generation,
+                kind: if request.character_id.is_some() {
+                    "character"
+                } else {
+                    "team"
+                },
+                abyss_half: selected_half.map(|half| match half {
+                    nte_dps_tool::engine::model::AbyssHalf::First => "first",
+                    nte_dps_tool::engine::model::AbyssHalf::Second => "second",
+                }),
+                character_id: request.character_id,
+                character_name,
+                character_color: character.and_then(|value| value.color.clone()),
+                filter: filter_id(&request.filter),
+                qte_type,
+                skill_filter: request.skill_filter,
+                columns: config.hit_detail_columns.into(),
+                actions,
+                metrics,
+                direction,
+                hit_types,
+                attribution,
+                qte_summaries,
+                skills,
+                total_hits,
+                total_damage,
+                max_row_damage,
+                offset,
+                rows,
+            }
+        })
     }
 }
 
@@ -873,6 +877,33 @@ mod tests {
         assert_eq!(value["actions"]["canStartCapture"], true);
         assert_eq!(value["maxRowDamage"], 1.0);
         assert_eq!(value["rows"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[test]
+    fn fifty_thousand_hits_keep_totals_correct_and_return_only_the_requested_page() {
+        let mut combat = CombatState::default();
+        for index in 0..50_000 {
+            let mut hit = skill_hit(1.0, Some("GA_Fixture"), Some("Fixture"), "Skill");
+            hit.timestamp = index as f64;
+            combat.push_hit(hit);
+        }
+        let state = AppState::default();
+        state.restore_live_state_for_test(
+            combat,
+            nte_dps_tool::engine::model::CaptureQualitySource::Live,
+        );
+
+        let snapshot = MainDpsDetailSnapshot::from_state(
+            &state,
+            MainDpsDetailKind::Team,
+            49_990,
+            MAIN_DPS_DETAIL_PAGE_LIMIT,
+        );
+
+        assert_eq!(snapshot.total_hits, 50_000);
+        assert_eq!(snapshot.total_damage, 50_000.0);
+        assert_eq!(snapshot.rows.len(), 10);
+        assert_eq!(snapshot.rows[0].timestamp, 49_990.0);
     }
 
     #[test]

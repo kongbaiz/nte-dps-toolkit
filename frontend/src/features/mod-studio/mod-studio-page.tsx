@@ -218,7 +218,7 @@ function ModStudioHeader({
   manualGameDirectory: string | null;
   deploymentState: ModStudioDeploymentState;
   onChooseGameDirectory: () => void | Promise<void>;
-  onUseAutomaticGameDirectory: () => void;
+  onUseAutomaticGameDirectory: () => void | Promise<void>;
   onSetLoaderEnabled: (enabled: boolean) => void | Promise<void>;
   dirty: boolean;
 }) {
@@ -356,7 +356,7 @@ function ModStudioHeader({
               size="sm"
               className="h-8"
               disabled={dirty || deploymentBusy}
-              onClick={onUseAutomaticGameDirectory}
+              onClick={() => void onUseAutomaticGameDirectory()}
             >
               {t("Use automatic detection")}
             </Button>
@@ -391,11 +391,7 @@ function ModStudioHeader({
         </span>
         <span className="text-muted-foreground">·</span>
         <span className="text-muted-foreground">
-          {t(
-            runtimeConnected
-              ? "Hot reload connected"
-              : "Waiting for the game Mod loader",
-          )}
+          {t(runtimeConnectionMessage(runtimeState.connection))}
         </span>
       </div>
       {actionError !== null ? (
@@ -454,6 +450,22 @@ function deploymentStatusKey(
   return "Mod loader is installed for the selected game client";
 }
 
+function runtimeConnectionMessage(
+  connection: ModStudioRuntimeState["connection"],
+): string {
+  switch (connection) {
+    case "connected":
+      return "Hot reload connected";
+    case "loaderPresent":
+      return "Mod loader is loaded; waiting for the game hook";
+    case "probeFailed":
+      return "Unable to check the game Mod loader state";
+    case "connecting":
+    case "waiting":
+      return "Waiting for the game Mod loader";
+  }
+}
+
 function ModLoaderRiskDialog({
   onCancel,
   onConfirm,
@@ -504,7 +516,7 @@ function ModLoaderRiskDialog({
           </p>
           <p>
             {t(
-              "It installs only dwmapi.dll beside HTGame.exe. The DLL reads restricted Python-style .nte programs from the software plugins directory and watches saved enable or source changes at runtime. With no enabled Mod, it removes its hook and closes IPC.",
+              "It installs only dwmapi.dll beside HTGame.exe. The DLL reads restricted NTE C++ v5 .nte programs from the software plugins directory and watches saved enable or source changes at runtime. With no enabled Mod, it removes its hook and closes IPC.",
             )}
           </p>
           <p>
@@ -1120,11 +1132,7 @@ function RuntimeConsole({
   const connectionText =
     runtimeState.error !== null
       ? tf(runtimeState.error.messageKey, runtimeState.error.messageArguments)
-      : t(
-          connected
-            ? "Hot reload connected"
-            : "Waiting for the game Mod loader",
-        );
+      : t(runtimeConnectionMessage(runtimeState.connection));
   const entries = useMemo(
     () =>
       visibleRuntimeEntries(

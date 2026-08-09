@@ -2256,6 +2256,156 @@
         "Desc": {
           "CultureInvariantString": "小吱QTE"
         }
+      },
+      "GE_Player_Oneiroi_Melee1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊普攻1"
+        }
+      },
+      "GE_Player_Oneiroi_Melee2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊普攻2"
+        }
+      },
+      "GE_Player_Oneiroi_Melee3_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊普攻3"
+        }
+      },
+      "GE_Player_Oneiroi_Melee4_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊普攻4"
+        }
+      },
+      "GE_Player_Oneiroi_Melee5_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊普攻5"
+        }
+      },
+      "GE_Player_Oneiroi_Branch1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊分支1"
+        }
+      },
+      "GE_Player_Oneiroi_Branch2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊分支2"
+        }
+      },
+      "GE_Player_Oneiroi_Branch3_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊分支3"
+        }
+      },
+      "GE_Player_Oneiroi_Branch5_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊分支5"
+        }
+      },
+      "GE_Player_Oneiroi_AirAttack_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊下落攻击"
+        }
+      },
+      "GE_Player_Oneiroi_PerfectEvadeAttack_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊极限闪反"
+        }
+      },
+      "GE_Player_Oneiroi_Skill_Gun_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊技能枪小羊"
+        }
+      },
+      "GE_Player_Oneiroi_Skill_Syringe_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊技能针筒小羊"
+        }
+      },
+      "GE_Player_Oneiroi_Skill_Trumpet_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊技能喇叭小羊"
+        }
+      },
+      "GE_Player_Oneiroi_QTE_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_UltraSkill_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊大招释放"
+        }
+      },
+      "GE_Player_Oneiroi_UltraSkill1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊大招持续"
+        }
+      },
+      "GE_Player_Oneiroi_GunAI_Skill1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI枪小羊普攻"
+        }
+      },
+      "GE_Player_Oneiroi_GunAI_Skill2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI枪小羊技能"
+        }
+      },
+      "GE_Player_Oneiroi_GunAI_QTE_Guang_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI枪小羊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_GunAI_QTE_Zhou_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI枪小羊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_SyringeAI_Skill1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI针筒小羊普攻"
+        }
+      },
+      "GE_Player_Oneiroi_SyringeAI_Skill2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI针筒小羊技能"
+        }
+      },
+      "GE_Player_Oneiroi_SyringeAI_QTE_Guang_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI针筒小羊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_SyringeAI_QTE_Zhou_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI针筒小羊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_TrumpetAI_Skill1_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI喇叭小羊普攻"
+        }
+      },
+      "GE_Player_Oneiroi_TrumpetAI_Skill2_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI喇叭小羊技能"
+        }
+      },
+      "GE_Player_Oneiroi_TrumpetAI_QTE_Guang_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI喇叭小羊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_TrumpetAI_QTE_Zhou_Damage": {
+        "Desc": {
+          "CultureInvariantString": "ylyAI喇叭小羊QTE"
+        }
+      },
+      "GE_Player_Oneiroi_Skill_Damage": {
+        "Desc": {
+          "CultureInvariantString": "伊洛伊极小必要伤害"
+        }
       }
     }
   }

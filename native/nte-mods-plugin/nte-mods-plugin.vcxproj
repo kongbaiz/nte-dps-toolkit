@@ -77,8 +77,10 @@
     <ClInclude Include="src\mod_runtime.hpp" />
     <ClInclude Include="src\obfuscated_string.hpp" />
     <ClInclude Include="src\offset_resolver.hpp" />
+    <ClInclude Include="src\offset_signatures.hpp" />
     <ClInclude Include="src\plugin_runtime.hpp" />
     <ClInclude Include="src\shadow_vtable_hook.hpp" />
+    <ClInclude Include="src\signature_policy.hpp" />
     <ClInclude Include="src\viewport_hook_policy.hpp" />
   </ItemGroup>
   <ItemGroup>

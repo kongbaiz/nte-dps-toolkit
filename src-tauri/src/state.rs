@@ -1,6 +1,5 @@
 use std::{
-    collections::HashMap,
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc, Mutex, MutexGuard,
@@ -26,13 +25,18 @@ use nte_dps_tool::{
             EncryptedIniDocument, EncryptedIniError, EncryptedIniKey, EncryptedIniSaveOutcome,
             load_encrypted_ini_document, save_encrypted_ini_document,
         },
-        history::{PreparedHistoryArchive, auto_round_due, prepare_history_archive},
+        history::{
+            PendingHistoryArchive, PreparedHistoryArchive, auto_round_due, prepare_history_archive,
+        },
         hud::{HudProjectionOptions, HudSnapshot, project_hud},
         live_capture::{
             CaptureReplayKind, LiveCapturePhase, LiveCaptureResources, LiveCaptureService,
             LiveCaptureStatus,
         },
-        mod_studio::ModStudioWorkspaceService,
+        mod_studio::{
+            ModStudioError, ModStudioRuntimeSnapshot, ModStudioWorkspaceService,
+            poll_mod_studio_runtime,
+        },
         packets::{
             PacketStreamRevision, PacketsProjection, project_packets_since, project_recent_packets,
         },
@@ -55,7 +59,9 @@ use nte_dps_tool::{
             CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_equipment_catalog,
         },
     },
-    platform::mods_plugin::{ModsPluginClient, ModsPluginOperation, ModsPluginSubmitError},
+    platform::mods_plugin::{
+        ModsPluginClient, ModsPluginGameRegion, ModsPluginOperation, ModsPluginSubmitError,
+    },
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
@@ -109,6 +115,11 @@ pub(crate) struct StreamRevision {
     presentation: u64,
 }
 
+struct StreamEntry {
+    owner_window: String,
+    stop: Arc<AtomicBool>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MainDpsStreamRevision {
     pub(crate) capture: u64,
@@ -140,8 +151,14 @@ pub(crate) struct IslandNoticeState {
 
 #[derive(Clone)]
 struct PausedPresentation {
-    state: CombatState,
+    state: Arc<CombatState>,
     packet_revision: PacketStreamRevision,
+}
+
+#[derive(Clone)]
+struct SelectedRoundPresentation {
+    record_id: String,
+    state: Arc<CombatState>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -171,6 +188,36 @@ pub(crate) enum DesktopWindowKind {
 struct MainRoundCache {
     revision: Option<u64>,
     records: Vec<HistoryRecord>,
+}
+
+/// Owns UI-only presentation state and its revision protocol. Rust combat
+/// state remains authoritative in `LiveCaptureService`; this service stores
+/// only frozen/selected projections and interaction requests.
+#[derive(Default)]
+struct PresentationState {
+    revision: AtomicU64,
+    main_revision: AtomicU64,
+    processing_paused: AtomicBool,
+    selected_abyss_half: Mutex<Option<AbyssHalf>>,
+    observed_abyss_half: Mutex<Option<AbyssHalf>>,
+    selected_round: Mutex<Option<SelectedRoundPresentation>>,
+    selected_outgoing_revision: AtomicU64,
+    character_detail_request: Mutex<MainDpsDetailRequest>,
+    team_detail_request: Mutex<MainDpsDetailRequest>,
+    paused: Mutex<Option<PausedPresentation>>,
+}
+
+/// Serializes history persistence and owns revision/cache/retry/undo state.
+/// Capture only cuts rounds; disk I/O and retry lifecycle stay here.
+#[derive(Default)]
+struct HistoryService {
+    revision: AtomicU64,
+    undo_sequence: AtomicU64,
+    round_cache: Mutex<MainRoundCache>,
+    transaction: Mutex<()>,
+    archive_transaction: Mutex<()>,
+    pending_archives: Mutex<VecDeque<PreparedHistoryArchive>>,
+    undo: Mutex<Option<HistoryUndoEntry>>,
 }
 
 fn next_live_abyss_selection(
@@ -223,20 +270,15 @@ struct AppStateInner {
     passthrough: AtomicBool,
     passthrough_hotkey_ready: AtomicBool,
     always_on_top: AtomicBool,
-    presentation_revision: AtomicU64,
     settings_revision: AtomicU64,
-    history_revision: AtomicU64,
-    main_dps_revision: AtomicU64,
     onboarding_step: AtomicU64,
     island_notice_revision: AtomicU64,
-    main_processing_paused: AtomicBool,
     replay_import_reserved: Mutex<bool>,
     diagnostics_revision: AtomicU64,
-    history_undo_sequence: AtomicU64,
     session_undo_sequence: AtomicU64,
     character_data_revision: AtomicU64,
     empty_curtain_operation_revision: AtomicU64,
-    streams: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    streams: Mutex<HashMap<String, StreamEntry>>,
     live_capture: LiveCaptureService,
     mod_studio: ModStudioWorkspaceService,
     equipment_catalog: Arc<EquipmentCatalog>,
@@ -245,21 +287,13 @@ struct AppStateInner {
     capture_devices: Mutex<Vec<CaptureDeviceSnapshot>>,
     imported_teams: Mutex<(Option<TeamDps>, Option<TeamDps>)>,
     update_runtime: Mutex<UpdateRuntimeState>,
-    selected_abyss_half: Mutex<Option<AbyssHalf>>,
-    main_observed_abyss_half: Mutex<Option<AbyssHalf>>,
-    main_selected_round_id: Mutex<Option<String>>,
-    main_selected_outgoing_revision: AtomicU64,
-    main_character_detail_request: Mutex<MainDpsDetailRequest>,
-    main_team_detail_request: Mutex<MainDpsDetailRequest>,
-    main_paused_presentation: Mutex<Option<PausedPresentation>>,
-    main_round_cache: Mutex<MainRoundCache>,
+    presentation: PresentationState,
+    history: HistoryService,
     passthrough_transaction: Mutex<()>,
     config_transaction: Mutex<()>,
-    history_transaction: Mutex<()>,
     character_data_transaction: Mutex<()>,
     encrypted_ini: Mutex<EncryptedIniRuntimeState>,
     diagnostics_report: Mutex<Option<DiagnosticRun>>,
-    history_undo: Mutex<Option<HistoryUndoEntry>>,
     session_undo: Mutex<Option<SessionUndoEntry>>,
     island_notice: Mutex<Option<IslandNoticeState>>,
     ui_config: Mutex<UiConfig>,
@@ -332,6 +366,9 @@ struct SessionUndoEntry {
 pub(crate) const HISTORY_UNDO_WINDOW: Duration = Duration::from_secs(5);
 pub(crate) const SESSION_UNDO_WINDOW: Duration = Duration::from_secs(5);
 pub(crate) const ISLAND_NOTICE_WINDOW: Duration = Duration::from_secs(5);
+/// FIFO retry queue for already-cut rounds. A full queue rejects the next
+/// round boundary before capture state is detached, preserving live data.
+const MAX_PENDING_HISTORY_ARCHIVES: usize = 64;
 
 #[derive(Clone, Debug)]
 struct UpdateRuntimeState {
@@ -403,7 +440,7 @@ impl ReplayImportReservation {
             .0
             .replay_import_reserved
             .lock()
-            .expect("replay import reservation lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let result = if replace_current {
             self.state
                 .stop_active_capture_and_wait(Duration::from_secs(5))
@@ -426,7 +463,7 @@ impl Drop for ReplayImportReservation {
                 .0
                 .replay_import_reserved
                 .lock()
-                .expect("replay import reservation lock poisoned") = false;
+                .unwrap_or_else(|poison| poison.into_inner()) = false;
         }
     }
 }
@@ -464,16 +501,11 @@ impl AppState {
                     .hud_always_on_top
                     .expect("sanitized HUD always-on-top state"),
             ),
-            presentation_revision: AtomicU64::new(0),
             settings_revision: AtomicU64::new(0),
-            history_revision: AtomicU64::new(0),
-            main_dps_revision: AtomicU64::new(0),
             onboarding_step: AtomicU64::new(0),
             island_notice_revision: AtomicU64::new(0),
-            main_processing_paused: AtomicBool::new(false),
             replay_import_reserved: Mutex::new(false),
             diagnostics_revision: AtomicU64::new(0),
-            history_undo_sequence: AtomicU64::new(0),
             session_undo_sequence: AtomicU64::new(0),
             character_data_revision: AtomicU64::new(0),
             empty_curtain_operation_revision: AtomicU64::new(0),
@@ -486,21 +518,13 @@ impl AppState {
             capture_devices: Mutex::new(capture_devices),
             imported_teams: Mutex::new((None, None)),
             update_runtime: Mutex::new(UpdateRuntimeState::default()),
-            selected_abyss_half: Mutex::new(None),
-            main_observed_abyss_half: Mutex::new(None),
-            main_selected_round_id: Mutex::new(None),
-            main_selected_outgoing_revision: AtomicU64::new(0),
-            main_character_detail_request: Mutex::new(MainDpsDetailRequest::default()),
-            main_team_detail_request: Mutex::new(MainDpsDetailRequest::default()),
-            main_paused_presentation: Mutex::new(None),
-            main_round_cache: Mutex::new(MainRoundCache::default()),
+            presentation: PresentationState::default(),
+            history: HistoryService::default(),
             passthrough_transaction: Mutex::new(()),
             config_transaction: Mutex::new(()),
-            history_transaction: Mutex::new(()),
             character_data_transaction: Mutex::new(()),
             encrypted_ini: Mutex::new(EncryptedIniRuntimeState::default()),
             diagnostics_report: Mutex::new(None),
-            history_undo: Mutex::new(None),
             session_undo: Mutex::new(None),
             island_notice: Mutex::new(None),
             ui_config: Mutex::new(config),
@@ -532,15 +556,15 @@ impl AppState {
                 always_on_top: self.always_on_top(),
             },
             capture: self.0.live_capture.status().into(),
-            hud: {
-                let state = self.main_presented_combat_state();
+            hud: self.with_main_presented_state(|state| {
                 let selected_abyss_half = *self
                     .0
+                    .presentation
                     .selected_abyss_half
                     .lock()
-                    .expect("HUD abyss selection lock poisoned");
+                    .unwrap_or_else(|poison| poison.into_inner());
                 let mut hud = project_hud(
-                    &state,
+                    state,
                     &hud_config,
                     &HashSet::new(),
                     HudProjectionOptions {
@@ -564,7 +588,7 @@ impl AppState {
                         .and_then(|character| character.color.clone());
                 }
                 hud
-            },
+            }),
         }
     }
 
@@ -585,7 +609,7 @@ impl AppState {
             .0
             .island_notice
             .lock()
-            .expect("island notice lock poisoned") = Some(IslandNoticeState {
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(IslandNoticeState {
             id: id.clone(),
             tone,
             message_key,
@@ -601,7 +625,7 @@ impl AppState {
             .0
             .island_notice
             .lock()
-            .expect("island notice lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if notice
             .as_ref()
             .is_some_and(|notice| Instant::now() > notice.expires_at)
@@ -616,7 +640,7 @@ impl AppState {
             .0
             .island_notice
             .lock()
-            .expect("island notice lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if notice.as_ref().is_some_and(|notice| notice.id == id) {
             notice.take();
             return true;
@@ -632,7 +656,7 @@ impl AppState {
         self.0
             .capture_devices
             .lock()
-            .expect("capture device list lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .len()
     }
 
@@ -697,7 +721,7 @@ impl AppState {
             .0
             .config_transaction
             .lock()
-            .expect("UI config transaction lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let previous = self.ui_config();
         let mut candidate = previous.clone();
         candidate.console_window_size = Some(size);
@@ -707,7 +731,11 @@ impl AppState {
             return Ok(false);
         }
         config::save(&self.0.config_path, &candidate)?;
-        *self.0.ui_config.lock().expect("UI config lock poisoned") = candidate;
+        *self
+            .0
+            .ui_config
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = candidate;
         Ok(true)
     }
 
@@ -762,15 +790,19 @@ impl AppState {
     }
 
     pub(crate) fn main_processing_paused(&self) -> bool {
-        self.0.main_processing_paused.load(Ordering::Acquire)
+        self.0
+            .presentation
+            .processing_paused
+            .load(Ordering::Acquire)
     }
 
     pub(crate) fn main_paused_event_counts(&self) -> (u64, u64) {
         let paused = self
             .0
-            .main_paused_presentation
+            .presentation
+            .paused
             .lock()
-            .expect("main DPS paused presentation lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone();
         let Some(paused) = paused else {
             return (0, 0);
@@ -803,72 +835,88 @@ impl AppState {
                 .0
                 .live_capture
                 .with_packet_state(|packet_revision, _, state| PausedPresentation {
-                    state: state.clone(),
+                    state: Arc::new(state.clone()),
                     packet_revision,
                 });
             *self
                 .0
-                .main_paused_presentation
+                .presentation
+                .paused
                 .lock()
-                .expect("main DPS paused presentation lock poisoned") = Some(frozen);
+                .unwrap_or_else(|poison| poison.into_inner()) = Some(frozen);
         } else {
             self.0
-                .main_paused_presentation
+                .presentation
+                .paused
                 .lock()
-                .expect("main DPS paused presentation lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .take();
         }
         self.0
-            .main_processing_paused
+            .presentation
+            .processing_paused
             .store(paused, Ordering::Release);
-        self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+        self.0.presentation.revision.fetch_add(1, Ordering::AcqRel);
         self.bump_main_dps_revision();
     }
 
     pub(crate) fn main_selected_round_id(&self) -> Option<String> {
         let mut selected = self
             .0
-            .main_selected_round_id
+            .presentation
+            .selected_round
             .lock()
-            .expect("main DPS selected round lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if selected.is_some()
             && !self.main_processing_paused()
             && self.0.live_capture.outgoing_hit_revision()
                 != self
                     .0
-                    .main_selected_outgoing_revision
+                    .presentation
+                    .selected_outgoing_revision
                     .load(Ordering::Acquire)
         {
-            *selected = None;
+            selected.take();
             drop(selected);
             self.bump_main_dps_revision();
             return None;
         }
-        selected.clone()
+        selected
+            .as_ref()
+            .map(|selection| selection.record_id.clone())
     }
 
     pub(crate) fn set_main_selected_round_id(&self, record_id: Option<String>) -> Result<(), ()> {
-        if let Some(id) = record_id.as_deref()
-            && !self
-                .main_round_records()
-                .iter()
-                .any(|record| record.id == id && record.details.is_some())
-        {
-            return Err(());
-        }
+        let selection = match record_id {
+            Some(record_id) => {
+                let state = selected_round_combat_state(
+                    &self.main_round_records(),
+                    Some(record_id.as_str()),
+                )
+                .ok_or(())?;
+                Some(SelectedRoundPresentation {
+                    record_id,
+                    state: Arc::new(state),
+                })
+            }
+            None => None,
+        };
         let mut selected = self
             .0
-            .main_selected_round_id
+            .presentation
+            .selected_round
             .lock()
-            .expect("main DPS selected round lock poisoned");
-        if *selected == record_id {
+            .unwrap_or_else(|poison| poison.into_inner());
+        if selected.as_ref().map(|value| value.record_id.as_str())
+            == selection.as_ref().map(|value| value.record_id.as_str())
+        {
             return Ok(());
         }
-        self.0.main_selected_outgoing_revision.store(
+        self.0.presentation.selected_outgoing_revision.store(
             self.0.live_capture.outgoing_hit_revision(),
             Ordering::Release,
         );
-        *selected = record_id;
+        *selected = selection;
         drop(selected);
         self.bump_main_dps_revision();
         Ok(())
@@ -878,9 +926,10 @@ impl AppState {
         let revision = self.history_revision();
         let mut cache = self
             .0
-            .main_round_cache
+            .history
+            .round_cache
             .lock()
-            .expect("main DPS round cache lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if cache.revision != Some(revision) {
             cache.records = load_history().records;
             cache.revision = Some(revision);
@@ -891,11 +940,12 @@ impl AppState {
             .main_selected_round_id()
             .is_some_and(|id| !records.iter().any(|record| record.id == id));
         if stale_selection {
-            *self
-                .0
-                .main_selected_round_id
+            self.0
+                .presentation
+                .selected_round
                 .lock()
-                .expect("main DPS selected round lock poisoned") = None;
+                .unwrap_or_else(|poison| poison.into_inner())
+                .take();
             self.bump_main_dps_revision();
         }
         records
@@ -903,29 +953,28 @@ impl AppState {
 
     pub(crate) fn main_dps_readout(
         &self,
-        rounds: &[HistoryRecord],
+        _rounds: &[HistoryRecord],
         selected_round_id: Option<&str>,
     ) -> MainDpsReadout {
-        if let Some(state) = selected_round_combat_state(rounds, selected_round_id) {
-            return self.project_main_readout(&state, false);
-        }
-        let state = self.main_presented_combat_state();
-        self.project_main_readout(&state, !self.main_processing_paused())
+        let follow_live_half = selected_round_id.is_none() && !self.main_processing_paused();
+        self.with_main_presented_state(|state| self.project_main_readout(state, follow_live_half))
     }
 
     pub(crate) fn main_dps_detail_request(&self, kind: MainDpsDetailKind) -> MainDpsDetailRequest {
         match kind {
             MainDpsDetailKind::Character => self
                 .0
-                .main_character_detail_request
+                .presentation
+                .character_detail_request
                 .lock()
-                .expect("main DPS character detail request lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .clone(),
             MainDpsDetailKind::Team => self
                 .0
-                .main_team_detail_request
+                .presentation
+                .team_detail_request
                 .lock()
-                .expect("main DPS team detail request lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .clone(),
         }
     }
@@ -939,40 +988,48 @@ impl AppState {
             MainDpsDetailKind::Character => {
                 *self
                     .0
-                    .main_character_detail_request
+                    .presentation
+                    .character_detail_request
                     .lock()
-                    .expect("main DPS character detail request lock poisoned") = request;
+                    .unwrap_or_else(|poison| poison.into_inner()) = request;
             }
             MainDpsDetailKind::Team => {
                 *self
                     .0
-                    .main_team_detail_request
+                    .presentation
+                    .team_detail_request
                     .lock()
-                    .expect("main DPS team detail request lock poisoned") = request;
+                    .unwrap_or_else(|poison| poison.into_inner()) = request;
             }
         }
     }
 
-    pub(crate) fn main_dps_detail_state(&self) -> (CombatState, Option<AbyssHalf>) {
-        let state = self.main_presented_combat_state();
-        let selected_half = state.abyss.is_active().then(|| {
-            (*self
-                .0
-                .selected_abyss_half
-                .lock()
-                .expect("main DPS abyss selection lock poisoned"))
-            .or(state.abyss.active_half)
-            .unwrap_or(AbyssHalf::First)
-        });
-        (state, selected_half)
+    pub(crate) fn with_main_dps_detail_state<T>(
+        &self,
+        project: impl FnOnce(&CombatState, Option<AbyssHalf>) -> T,
+    ) -> T {
+        self.with_main_presented_state(|state| {
+            let selected_half = state.abyss.is_active().then(|| {
+                (*self
+                    .0
+                    .presentation
+                    .selected_abyss_half
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner()))
+                .or(state.abyss.active_half)
+                .unwrap_or(AbyssHalf::First)
+            });
+            project(state, selected_half)
+        })
     }
 
     pub(crate) fn set_main_selected_abyss_half(&self, half: Option<AbyssHalf>) {
         let mut selected = self
             .0
+            .presentation
             .selected_abyss_half
             .lock()
-            .expect("main DPS abyss selection lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if *selected == half {
             return;
         }
@@ -1024,9 +1081,9 @@ impl AppState {
             } else {
                 0
             },
-            presentation: self.0.presentation_revision.load(Ordering::Acquire),
+            presentation: self.0.presentation.revision.load(Ordering::Acquire),
             history: self.history_revision(),
-            main: self.0.main_dps_revision.load(Ordering::Acquire),
+            main: self.0.presentation.main_revision.load(Ordering::Acquire),
         }
     }
 
@@ -1037,9 +1094,10 @@ impl AppState {
         } else {
             *self
                 .0
+                .presentation
                 .selected_abyss_half
                 .lock()
-                .expect("main DPS abyss selection lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
         };
         let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
         let projection_half = state.abyss.is_active().then(|| {
@@ -1107,14 +1165,16 @@ impl AppState {
     fn follow_live_abyss_half(&self, active_half: Option<AbyssHalf>) -> Option<AbyssHalf> {
         let mut selected = self
             .0
+            .presentation
             .selected_abyss_half
             .lock()
-            .expect("main DPS abyss selection lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let mut observed = self
             .0
-            .main_observed_abyss_half
+            .presentation
+            .observed_abyss_half
             .lock()
-            .expect("main DPS observed abyss half lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let (next_selected, next_observed) =
             next_live_abyss_selection(*selected, *observed, active_half);
         *selected = next_selected;
@@ -1123,7 +1183,11 @@ impl AppState {
     }
 
     fn bump_main_dps_revision(&self) -> u64 {
-        self.0.main_dps_revision.fetch_add(1, Ordering::AcqRel) + 1
+        self.0
+            .presentation
+            .main_revision
+            .fetch_add(1, Ordering::AcqRel)
+            + 1
     }
 
     pub(crate) fn settings_snapshot(&self) -> SettingsSnapshot {
@@ -1133,35 +1197,17 @@ impl AppState {
             .0
             .capture_devices
             .lock()
-            .expect("capture device cache lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone();
         let (upper_imported, lower_imported) = {
             let imported = self
                 .0
                 .imported_teams
                 .lock()
-                .expect("imported team lock poisoned");
+                .unwrap_or_else(|poison| poison.into_inner());
             (imported.0.is_some(), imported.1.is_some())
         };
-        let update = self
-            .0
-            .update_runtime
-            .lock()
-            .expect("update runtime lock poisoned")
-            .clone();
-        let install_blocked_message_key = self.install_blocked_message_key_for(&update);
-        let updates = UpdateSettingsSnapshot::from_runtime(
-            &config,
-            update.status,
-            update.message_key,
-            update.message_arguments,
-            &update.available,
-            update.active_component,
-            update.downloaded_bytes,
-            update.total_bytes,
-            update.prepared.as_ref(),
-            install_blocked_message_key,
-        );
+        let updates = self.update_settings_snapshot();
         SettingsSnapshot::from_config(
             &config,
             generation,
@@ -1174,12 +1220,35 @@ impl AppState {
         )
     }
 
+    pub(crate) fn update_settings_snapshot(&self) -> UpdateSettingsSnapshot {
+        let config = self.ui_config();
+        let update = self
+            .0
+            .update_runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone();
+        let install_blocked_message_key = self.install_blocked_message_key_for(&update);
+        UpdateSettingsSnapshot::from_runtime(
+            &config,
+            update.status,
+            update.message_key,
+            update.message_arguments,
+            &update.available,
+            update.active_component,
+            update.downloaded_bytes,
+            update.total_bytes,
+            update.prepared.as_ref(),
+            install_blocked_message_key,
+        )
+    }
+
     pub(crate) fn request_capture_start(&self, replace_current: bool) -> Result<(), CoreError> {
         let replay_import_reserved = self
             .0
             .replay_import_reserved
             .lock()
-            .expect("replay import reservation lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if *replay_import_reserved {
             return Err(CoreError::new(
                 CoreErrorCode::CaptureAlreadyRunning,
@@ -1254,7 +1323,7 @@ impl AppState {
 
     pub(crate) fn set_passthrough(&self, enabled: bool) {
         if self.0.passthrough.swap(enabled, Ordering::AcqRel) != enabled {
-            self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+            self.0.presentation.revision.fetch_add(1, Ordering::AcqRel);
         }
     }
 
@@ -1262,7 +1331,7 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .passthrough_hotkey
     }
 
@@ -1270,7 +1339,7 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .global_hotkeys
     }
 
@@ -1288,7 +1357,7 @@ impl AppState {
         self.0
             .passthrough_transaction
             .lock()
-            .expect("passthrough transaction lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     pub(crate) fn always_on_top(&self) -> bool {
@@ -1316,7 +1385,7 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .hud_window_position
     }
 
@@ -1421,7 +1490,7 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .auto_check_updates
     }
 
@@ -1429,7 +1498,7 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .auto_download_updates
     }
 
@@ -1438,7 +1507,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if update_is_busy(update.status) || update.prepared.is_some() {
             return Err(UpdateActionError::Busy);
         }
@@ -1458,7 +1527,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         update.prepared = None;
         update.active_component = None;
         update.downloaded_bytes = 0;
@@ -1490,7 +1559,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         update.status =
             if message_key == "The official update channel is not configured in this build" {
                 "not-configured"
@@ -1516,7 +1585,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if update_is_busy(update.status) || update.prepared.is_some() {
             return Err(UpdateActionError::Busy);
         }
@@ -1550,7 +1619,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if update.status != "downloading" || update.active_component != Some(component) {
             return;
         }
@@ -1567,7 +1636,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         update.status = "ready";
         update.message_key = match component {
             UpdateComponent::App => "Version {} is ready to install",
@@ -1590,7 +1659,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if update_is_busy(update.status) {
             return Err(UpdateActionError::Busy);
         }
@@ -1619,7 +1688,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         update
             .available
             .retain(|item| item.component != UpdateComponent::ModsPlugin);
@@ -1647,7 +1716,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone();
         self.install_blocked_message_key_for(&update)
     }
@@ -1685,7 +1754,7 @@ impl AppState {
             .0
             .update_runtime
             .lock()
-            .expect("update runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         update.status = "error";
         update.message_key = message_key;
         update.message_arguments.clear();
@@ -1744,7 +1813,7 @@ impl AppState {
             .0
             .capture_devices
             .lock()
-            .expect("capture device cache lock poisoned") = devices;
+            .unwrap_or_else(|poison| poison.into_inner()) = devices;
         self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
@@ -1785,7 +1854,7 @@ impl AppState {
             .0
             .session_undo
             .lock()
-            .expect("session undo lock poisoned") = Some(SessionUndoEntry {
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(SessionUndoEntry {
             token: token.clone(),
             state: previous,
             quality_source: self.0.live_capture.quality_source(),
@@ -1800,7 +1869,7 @@ impl AppState {
         self.0
             .session_undo
             .lock()
-            .expect("session undo lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .take();
         self.0.live_capture.reset_session();
         self.return_main_presentation_to_live();
@@ -1821,7 +1890,7 @@ impl AppState {
             .0
             .session_undo
             .lock()
-            .expect("session undo lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if undo.as_ref().is_none_or(|entry| entry.token != token) {
             return Err(SessionUndoError::Missing);
         }
@@ -1841,7 +1910,7 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let fallback = export.single;
         imported.0 = export.upper.or_else(|| fallback.clone());
         imported.1 = export.lower.or(fallback);
@@ -1852,7 +1921,7 @@ impl AppState {
         self.0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 
@@ -1865,7 +1934,7 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if upper {
             imported.0 = Some(team);
         } else {
@@ -1883,7 +1952,7 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if upper {
             imported.0 = Some(team);
         } else {
@@ -1902,19 +1971,20 @@ impl AppState {
 
     fn current_abyss_team(&self, upper: bool) -> Option<TeamDps> {
         let config = self.ui_config();
-        let state = self.main_presented_combat_state();
-        let export = nte_dps_tool::core::team_data::export_team_data(
-            &state,
-            matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
-            config.separate_reaction_damage,
-            None,
-            None,
-        )?;
-        if state.abyss.is_active() {
-            if upper { export.upper } else { export.lower }
-        } else {
-            export.single
-        }
+        self.with_main_presented_state(|state| {
+            let export = nte_dps_tool::core::team_data::export_team_data(
+                state,
+                matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+                config.separate_reaction_damage,
+                None,
+                None,
+            )?;
+            if state.abyss.is_active() {
+                if upper { export.upper } else { export.lower }
+            } else {
+                export.single
+            }
+        })
     }
 
     pub(crate) fn clear_abyss_team(&self, upper: bool) {
@@ -1922,7 +1992,7 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if upper {
             imported.0 = None;
         } else {
@@ -1936,7 +2006,7 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let (upper, lower) = &mut *imported;
         std::mem::swap(upper, lower);
         self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
@@ -1948,15 +2018,23 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
-        let state = self.main_presented_combat_state();
-        nte_dps_tool::core::team_data::export_team_data(
-            &state,
-            matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
-            config.separate_reaction_damage,
-            imported.0.clone(),
-            imported.1.clone(),
-        )
+            .unwrap_or_else(|poison| poison.into_inner());
+        let imported = imported.clone();
+        self.with_main_presented_state(|state| {
+            nte_dps_tool::core::team_data::export_team_data(
+                state,
+                matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+                config.separate_reaction_damage,
+                imported.0,
+                imported.1,
+            )
+        })
+    }
+
+    pub(crate) fn poll_mod_studio_runtime(
+        &self,
+    ) -> Result<ModStudioRuntimeSnapshot, ModStudioError> {
+        poll_mod_studio_runtime()
     }
 
     pub(crate) fn set_hud_option(
@@ -1997,14 +2075,18 @@ impl AppState {
             .0
             .config_transaction
             .lock()
-            .expect("UI config transaction lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let mut candidate = self.ui_config();
         if candidate.hud_window_position == Some(position) {
             return Ok(false);
         }
         candidate.hud_window_position = Some(position);
         config::save(&self.0.config_path, &candidate)?;
-        *self.0.ui_config.lock().expect("UI config lock poisoned") = candidate;
+        *self
+            .0
+            .ui_config
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = candidate;
         Ok(true)
     }
 
@@ -2042,28 +2124,27 @@ impl AppState {
 
     pub(crate) fn prepare_current_history_archive(&self) -> Option<PreparedHistoryArchive> {
         let config = self.ui_config();
-        self.0.live_capture.with_state(|state| {
-            prepare_history_archive(
-                state,
-                CaptureQualitySource::Live,
-                DpsTimeBasis::from_subtract_time_stop(matches!(
-                    config.dps_time_mode,
-                    DpsTimeMode::TimeStopAdjusted
-                )),
-                config.separate_reaction_damage,
-            )
-        })
+        let (state, source) = self.0.live_capture.state_and_source_snapshot();
+        prepare_history_archive(
+            &state,
+            source,
+            DpsTimeBasis::from_subtract_time_stop(matches!(
+                config.dps_time_mode,
+                DpsTimeMode::TimeStopAdjusted
+            )),
+            config.separate_reaction_damage,
+        )
     }
 
     fn prepare_history_details(
         &self,
-        details: HistoryCombatDetails,
+        pending: PendingHistoryArchive,
     ) -> Option<PreparedHistoryArchive> {
         let config = self.ui_config();
-        let state = details.to_combat_state();
+        let state = pending.details.to_combat_state();
         state
             .session_summary(
-                CaptureQualitySource::Live,
+                pending.source,
                 DpsTimeBasis::from_subtract_time_stop(matches!(
                     config.dps_time_mode,
                     DpsTimeMode::TimeStopAdjusted
@@ -2072,7 +2153,7 @@ impl AppState {
             )
             .map(|summary| PreparedHistoryArchive {
                 summary,
-                details: Some(details),
+                details: Some(pending.details),
             })
     }
 
@@ -2089,34 +2170,71 @@ impl AppState {
     }
 
     pub(crate) fn archive_current_history_round(&self) -> Result<bool, String> {
+        self.archive_current_history_round_with(|state, archive| {
+            state.persist_history_archive(archive)
+        })
+    }
+
+    fn archive_current_history_round_with(
+        &self,
+        persist: impl FnOnce(&Self, PreparedHistoryArchive) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let _archive_transaction = self
+            .0
+            .history
+            .archive_transaction
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self
+            .0
+            .history
+            .pending_archives
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .len()
+            >= MAX_PENDING_HISTORY_ARCHIVES
+        {
+            return Err("History retry queue is full; the current round was kept live".to_owned());
+        }
         let config = self.ui_config();
-        let result = self.0.live_capture.archive_and_reset(
-            |state| {
-                prepare_history_archive(
-                    state,
-                    CaptureQualitySource::Live,
-                    DpsTimeBasis::from_subtract_time_stop(matches!(
-                        config.dps_time_mode,
-                        DpsTimeMode::TimeStopAdjusted
-                    )),
-                    config.separate_reaction_damage,
-                )
-            },
-            |archive| self.persist_history_archive(archive),
-        )?;
-        Ok(result.is_some())
+        let Some(cut) = self.0.live_capture.cut_round() else {
+            return Ok(false);
+        };
+        let Some(archive) = prepare_history_archive(
+            &cut.state,
+            cut.source,
+            DpsTimeBasis::from_subtract_time_stop(matches!(
+                config.dps_time_mode,
+                DpsTimeMode::TimeStopAdjusted
+            )),
+            config.separate_reaction_damage,
+        ) else {
+            log::warn!("cut History round had no archivable summary");
+            return Ok(true);
+        };
+        if let Err(error) = persist(self, archive.clone()) {
+            log::warn!("History persistence failed after the live round was cut: {error}");
+            self.0
+                .history
+                .pending_archives
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push_back(archive);
+        }
+        Ok(true)
     }
 
     pub(crate) fn maintain_history_rounds(&self) {
+        self.retry_pending_history_archives();
         let pending = self.0.live_capture.take_pending_abyss_archives();
         let mut retry = Vec::new();
-        for details in pending {
-            let Some(archive) = self.prepare_history_details(details.clone()) else {
+        for pending in pending {
+            let Some(archive) = self.prepare_history_details(pending.clone()) else {
                 continue;
             };
             if let Err(error) = self.persist_history_archive(archive) {
                 log::warn!("automatic Abyss History archive failed: {error}");
-                retry.push(details);
+                retry.push(pending);
             }
         }
         if !retry.is_empty() {
@@ -2145,21 +2263,71 @@ impl AppState {
         }
     }
 
+    fn retry_pending_history_archives(&self) {
+        let _archive_transaction = self
+            .0
+            .history
+            .archive_transaction
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let pending = {
+            let mut pending = self
+                .0
+                .history
+                .pending_archives
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            std::mem::take(&mut *pending)
+        };
+        if pending.is_empty() {
+            return;
+        }
+
+        let mut retry = VecDeque::new();
+        for archive in pending {
+            if let Err(error) = self.persist_history_archive(archive.clone()) {
+                log::warn!("retrying a pending History archive failed: {error}");
+                retry.push_back(archive);
+            }
+        }
+        if retry.is_empty() {
+            return;
+        }
+        let mut pending = self
+            .0
+            .history
+            .pending_archives
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        retry.append(&mut *pending);
+        *pending = retry;
+    }
+
     pub(crate) fn with_history_transaction<T>(&self, action: impl FnOnce() -> T) -> T {
         let _guard = self
             .0
-            .history_transaction
+            .history
+            .transaction
             .lock()
-            .expect("history transaction lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         action()
     }
 
     pub(crate) fn history_revision(&self) -> u64 {
-        self.0.history_revision.load(Ordering::Acquire)
+        self.0.history.revision.load(Ordering::Acquire)
     }
 
     pub(crate) fn live_capture_resources(&self) -> LiveCaptureResources {
         self.0.live_capture.resources()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn restore_live_state_for_test(
+        &self,
+        state: CombatState,
+        source: CaptureQualitySource,
+    ) {
+        self.0.live_capture.restore_session(state, source);
     }
 
     pub(crate) fn character_data_snapshot(
@@ -2169,7 +2337,7 @@ impl AppState {
             .0
             .character_data_transaction
             .lock()
-            .expect("character data transaction lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let projection = load_character_data(&self.0.character_data_path)?;
         let revision = self.0.character_data_revision.load(Ordering::Acquire);
         Ok((projection, revision))
@@ -2183,7 +2351,7 @@ impl AppState {
             .0
             .character_data_transaction
             .lock()
-            .expect("character data transaction lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let projection = save_character_data_record(&self.0.character_data_path, input)?;
         let revision = self
             .0
@@ -2198,7 +2366,7 @@ impl AppState {
             .0
             .encrypted_ini
             .lock()
-            .expect("encrypted INI runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         encrypted_ini_projection(&runtime)
     }
 
@@ -2210,7 +2378,7 @@ impl AppState {
             .0
             .encrypted_ini
             .lock()
-            .expect("encrypted INI runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let document = load_encrypted_ini_document(&path)?;
         runtime.generation = runtime.generation.wrapping_add(1);
         runtime.path = Some(path);
@@ -2225,7 +2393,7 @@ impl AppState {
             .0
             .encrypted_ini
             .lock()
-            .expect("encrypted INI runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let path = runtime
             .path
             .clone()
@@ -2246,7 +2414,7 @@ impl AppState {
             .0
             .encrypted_ini
             .lock()
-            .expect("encrypted INI runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if runtime.generation != expected_generation {
             return Err(EncryptedIniRuntimeError::StaleGeneration);
         }
@@ -2268,7 +2436,7 @@ impl AppState {
             .0
             .encrypted_ini
             .lock()
-            .expect("encrypted INI runtime lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         runtime.generation = runtime.generation.wrapping_add(1);
         runtime.path = None;
         runtime.document = None;
@@ -2276,38 +2444,38 @@ impl AppState {
     }
 
     pub(crate) fn empty_curtain_snapshot(&self) -> InventorySnapshot {
-        self.refresh_empty_curtain_operation();
         let resources = self.0.live_capture.resources();
         let observed_at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis()
             .min(u128::from(u64::MAX)) as u64;
-        let state = self.main_presented_combat_state();
-        inventory_snapshot(
-            &state.empty_curtain,
-            &state.empty_curtain_characters,
-            &self.0.equipment_catalog,
-            &resources.characters,
-            state.empty_curtain_generation,
-            observed_at_unix_ms,
-        )
+        self.with_main_presented_state(|state| {
+            inventory_snapshot(
+                &state.empty_curtain,
+                &state.empty_curtain_characters,
+                &self.0.equipment_catalog,
+                &resources.characters,
+                state.empty_curtain_generation,
+                observed_at_unix_ms,
+            )
+        })
     }
 
-    pub(crate) fn with_empty_curtain<T>(
+    pub(crate) fn empty_curtain_data_snapshot(
         &self,
-        action: impl FnOnce(
-            &[nte_dps_tool::engine::model::EmptyCurtainItem],
-            &[nte_dps_tool::engine::model::EmptyCurtainCharacter],
-            &EquipmentCatalog,
-        ) -> T,
-    ) -> T {
-        let state = self.main_presented_combat_state();
-        action(
-            &state.empty_curtain,
-            &state.empty_curtain_characters,
-            &self.0.equipment_catalog,
-        )
+    ) -> (
+        Vec<nte_dps_tool::engine::model::EmptyCurtainItem>,
+        Vec<nte_dps_tool::engine::model::EmptyCurtainCharacter>,
+        Arc<EquipmentCatalog>,
+    ) {
+        let (items, characters) = self.with_main_presented_state(|state| {
+            (
+                state.empty_curtain.clone(),
+                state.empty_curtain_characters.clone(),
+            )
+        });
+        (items, characters, Arc::clone(&self.0.equipment_catalog))
     }
 
     pub(crate) fn equipment_catalog(&self) -> Arc<EquipmentCatalog> {
@@ -2319,18 +2487,19 @@ impl AppState {
         self.0
             .empty_curtain_operation
             .lock()
-            .expect("Console equipment operation lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 
     pub(crate) fn empty_curtain_revision(&self) -> (u64, u64, u64) {
         self.refresh_empty_curtain_operation();
         let (inventory, characters) = if self.main_processing_paused() {
-            let state = self.main_presented_combat_state();
-            (
-                state.empty_curtain_generation,
-                state.empty_curtain_characters_generation,
-            )
+            self.with_main_presented_state(|state| {
+                (
+                    state.empty_curtain_generation,
+                    state.empty_curtain_characters_generation,
+                )
+            })
         } else {
             self.0.live_capture.inventory_revision()
         };
@@ -2389,7 +2558,7 @@ impl AppState {
         self.0
             .diagnostics_report
             .lock()
-            .expect("diagnostics report lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 
@@ -2398,7 +2567,7 @@ impl AppState {
             .0
             .diagnostics_report
             .lock()
-            .expect("diagnostics report lock poisoned") = Some(report);
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(report);
         self.0.diagnostics_revision.fetch_add(1, Ordering::AcqRel);
     }
 
@@ -2427,7 +2596,7 @@ impl AppState {
             .0
             .replay_import_reserved
             .lock()
-            .expect("replay import reservation lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let active = matches!(
             self.capture_phase(),
             LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
@@ -2518,7 +2687,7 @@ impl AppState {
             .0
             .empty_curtain_operation
             .lock()
-            .expect("Console equipment operation lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .request_id
             .is_some()
         {
@@ -2528,13 +2697,13 @@ impl AppState {
             .0
             .mods_plugin
             .lock()
-            .expect("Mod loader client lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .submit(character, operation)?;
         *self
             .0
             .empty_curtain_operation
             .lock()
-            .expect("Console equipment operation lock poisoned") = EmptyCurtainOperationState {
+            .unwrap_or_else(|poison| poison.into_inner()) = EmptyCurtainOperationState {
             status: "pending",
             message_key: "Sending equipment request...",
             message_arguments: Vec::new(),
@@ -2546,12 +2715,12 @@ impl AppState {
         Ok(request_id)
     }
 
-    fn refresh_empty_curtain_operation(&self) {
+    pub(crate) fn refresh_empty_curtain_operation(&self) {
         let response = self
             .0
             .mods_plugin
             .lock()
-            .expect("Mod loader client lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .try_recv();
         let Some(response) = response else {
             return;
@@ -2560,7 +2729,7 @@ impl AppState {
             .0
             .empty_curtain_operation
             .lock()
-            .expect("Console equipment operation lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if operation.request_id != Some(response.request_id) {
             return;
         }
@@ -2598,26 +2767,31 @@ impl AppState {
     pub(crate) fn timeline_projection(&self, scope: TimelineScope) -> TimelineProjection {
         let config = self.ui_config();
         let resources = self.0.live_capture.resources();
-        let state = self.main_presented_combat_state();
-        project_timeline(
-            &state,
-            &resources.characters,
-            TimelineProjectionOptions {
-                scope,
-                bucket_seconds: config.timeline_bucket_seconds,
-                subtract_time_stop: matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
-                language: config.language,
-            },
-        )
+        self.with_main_presented_state(|state| {
+            project_timeline(
+                state,
+                &resources.characters,
+                TimelineProjectionOptions {
+                    scope,
+                    bucket_seconds: config.timeline_bucket_seconds,
+                    subtract_time_stop: matches!(
+                        config.dps_time_mode,
+                        DpsTimeMode::TimeStopAdjusted
+                    ),
+                    language: config.language,
+                },
+            )
+        })
     }
 
     pub(crate) fn packet_stream_revision(&self) -> PacketStreamRevision {
         if self.main_processing_paused()
             && let Some(paused) = self
                 .0
-                .main_paused_presentation
+                .presentation
+                .paused
                 .lock()
-                .expect("main DPS paused presentation lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .as_ref()
         {
             return paused.packet_revision;
@@ -2634,9 +2808,10 @@ impl AppState {
         if self.main_processing_paused()
             && let Some(paused) = self
                 .0
-                .main_paused_presentation
+                .presentation
+                .paused
                 .lock()
-                .expect("main DPS paused presentation lock poisoned")
+                .unwrap_or_else(|poison| poison.into_inner())
                 .as_ref()
         {
             let revision = paused.packet_revision;
@@ -2681,15 +2856,16 @@ impl AppState {
     pub(crate) fn skills_projection(&self, scope: SkillsScope) -> SkillsProjection {
         let config = self.ui_config();
         let resources = self.0.live_capture.resources();
-        let state = self.main_presented_combat_state();
-        project_skills(
-            &state,
-            &resources.characters,
-            SkillsProjectionOptions {
-                scope,
-                language: config.language,
-            },
-        )
+        self.with_main_presented_state(|state| {
+            project_skills(
+                state,
+                &resources.characters,
+                SkillsProjectionOptions {
+                    scope,
+                    language: config.language,
+                },
+            )
+        })
     }
 
     pub(crate) fn timeline_preferences(&self) -> (f32, TimelineDpsViewMode) {
@@ -2712,17 +2888,18 @@ impl AppState {
     }
 
     pub(crate) fn bump_history_revision(&self) -> u64 {
-        self.0.history_revision.fetch_add(1, Ordering::AcqRel) + 1
+        self.0.history.revision.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     pub(crate) fn remember_deleted_history(&self, record: HistoryRecord) -> String {
-        let sequence = self.0.history_undo_sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        let sequence = self.0.history.undo_sequence.fetch_add(1, Ordering::AcqRel) + 1;
         let token = format!("history-undo-{sequence}");
         *self
             .0
-            .history_undo
+            .history
+            .undo
             .lock()
-            .expect("history undo lock poisoned") = Some(HistoryUndoEntry {
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(HistoryUndoEntry {
             token: token.clone(),
             record,
             expires_at: Instant::now() + HISTORY_UNDO_WINDOW,
@@ -2733,9 +2910,10 @@ impl AppState {
     pub(crate) fn take_deleted_history(&self, token: &str) -> Option<HistoryRecord> {
         let mut undo = self
             .0
-            .history_undo
+            .history
+            .undo
             .lock()
-            .expect("history undo lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let matches = undo
             .as_ref()
             .is_some_and(|entry| entry.token == token && Instant::now() <= entry.expires_at);
@@ -2747,7 +2925,7 @@ impl AppState {
             .0
             .imported_teams
             .lock()
-            .expect("imported team lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         if upper {
             imported.0 = Some(team);
         } else {
@@ -2761,7 +2939,7 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
 
@@ -2770,7 +2948,7 @@ impl AppState {
             .0
             .config_transaction
             .lock()
-            .expect("UI config transaction lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let previous = self.ui_config();
         let mut candidate = previous.clone();
         update(&mut candidate);
@@ -2779,8 +2957,12 @@ impl AppState {
             return Ok(false);
         }
         config::save(&self.0.config_path, &candidate)?;
-        *self.0.ui_config.lock().expect("UI config lock poisoned") = candidate;
-        self.0.presentation_revision.fetch_add(1, Ordering::AcqRel);
+        *self
+            .0
+            .ui_config
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = candidate;
+        self.0.presentation.revision.fetch_add(1, Ordering::AcqRel);
         self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
         Ok(true)
     }
@@ -2792,7 +2974,7 @@ impl AppState {
             } else {
                 self.0.live_capture.revision()
             },
-            presentation: self.0.presentation_revision.load(Ordering::Acquire),
+            presentation: self.0.presentation.revision.load(Ordering::Acquire),
         }
     }
 
@@ -2800,61 +2982,89 @@ impl AppState {
         self.0.settings_revision.load(Ordering::Acquire)
     }
 
-    fn main_presented_combat_state(&self) -> CombatState {
-        let selected_round_id = self.main_selected_round_id();
-        selected_round_id
-            .as_deref()
-            .and_then(|record_id| {
-                selected_round_combat_state(&self.main_round_records(), Some(record_id))
-            })
-            .unwrap_or_else(|| {
-                if self.main_processing_paused()
-                    && let Some(paused) = self
-                        .0
-                        .main_paused_presentation
-                        .lock()
-                        .expect("main DPS paused presentation lock poisoned")
-                        .as_ref()
-                {
-                    return paused.state.clone();
-                }
-                self.0.live_capture.with_state(Clone::clone)
-            })
+    fn with_main_presented_state<T>(&self, project: impl FnOnce(&CombatState) -> T) -> T {
+        if self.main_selected_round_id().is_some() {
+            let selected = self
+                .0
+                .presentation
+                .selected_round
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some(selected) = selected.as_ref() {
+                return project(selected.state.as_ref());
+            }
+        }
+        if self.main_processing_paused() {
+            let paused = self
+                .0
+                .presentation
+                .paused
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some(paused) = paused.as_ref() {
+                return project(paused.state.as_ref());
+            }
+        }
+        self.0.live_capture.with_state(project)
     }
 
     fn return_main_presentation_to_live(&self) {
-        *self
-            .0
-            .main_selected_round_id
+        self.0
+            .presentation
+            .selected_round
             .lock()
-            .expect("main DPS selected round lock poisoned") = None;
-        self.0.main_selected_outgoing_revision.store(
+            .unwrap_or_else(|poison| poison.into_inner())
+            .take();
+        self.0.presentation.selected_outgoing_revision.store(
             self.0.live_capture.outgoing_hit_revision(),
             Ordering::Release,
         );
         self.0
-            .main_paused_presentation
+            .presentation
+            .paused
             .lock()
-            .expect("main DPS paused presentation lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .take();
         self.0
-            .main_processing_paused
+            .presentation
+            .processing_paused
             .store(false, Ordering::Release);
         *self
             .0
+            .presentation
             .selected_abyss_half
             .lock()
-            .expect("selected abyss half lock poisoned") = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
         *self
             .0
-            .main_observed_abyss_half
+            .presentation
+            .observed_abyss_half
             .lock()
-            .expect("main DPS observed abyss half lock poisoned") = None;
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
         self.bump_main_dps_revision();
     }
 
     pub(crate) fn mod_studio(&self) -> ModStudioWorkspaceService {
         self.0.mod_studio.clone()
+    }
+
+    pub(crate) fn mod_studio_game_directory(&self, region: ModsPluginGameRegion) -> Option<String> {
+        let config = self.ui_config();
+        match region {
+            ModsPluginGameRegion::China => config.mod_studio_china_game_directory,
+            ModsPluginGameRegion::Global => config.mod_studio_global_game_directory,
+        }
+    }
+
+    pub(crate) fn set_mod_studio_game_directory(
+        &self,
+        region: ModsPluginGameRegion,
+        directory: Option<String>,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| match region {
+            ModsPluginGameRegion::China => config.mod_studio_china_game_directory = directory,
+            ModsPluginGameRegion::Global => config.mod_studio_global_game_directory = directory,
+        })
     }
 
     pub(crate) fn uptime_ms(&self) -> u128 {
@@ -2865,37 +3075,66 @@ impl AppState {
         self.0
             .ui_config
             .lock()
-            .expect("UI config lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .hud
             .clone()
     }
 
-    pub(crate) fn begin_stream(&self, subscription_id: String) -> Arc<AtomicBool> {
+    pub(crate) fn begin_stream(
+        &self,
+        owner_window: String,
+        subscription_id: String,
+    ) -> Arc<AtomicBool> {
         let stop = Arc::new(AtomicBool::new(false));
         let replaced = self
             .0
             .streams
             .lock()
-            .expect("technical stream registry lock poisoned")
-            .insert(subscription_id, Arc::clone(&stop));
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(
+                subscription_id,
+                StreamEntry {
+                    owner_window,
+                    stop: Arc::clone(&stop),
+                },
+            );
 
         if let Some(replaced) = replaced {
-            replaced.store(true, Ordering::Release);
+            replaced.stop.store(true, Ordering::Release);
         }
 
         stop
     }
 
     pub(crate) fn stop_stream(&self, subscription_id: &str) {
-        if let Some(stop) = self
+        if let Some(entry) = self
             .0
             .streams
             .lock()
-            .expect("technical stream registry lock poisoned")
+            .unwrap_or_else(|poison| poison.into_inner())
             .remove(subscription_id)
         {
-            stop.store(true, Ordering::Release);
+            entry.stop.store(true, Ordering::Release);
         }
+    }
+
+    pub(crate) fn stop_streams_for_window(&self, owner_window: &str) -> usize {
+        let mut streams = self
+            .0
+            .streams
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let owned = streams
+            .iter()
+            .filter(|(_, entry)| entry.owner_window == owner_window)
+            .map(|(subscription_id, _)| subscription_id.clone())
+            .collect::<Vec<_>>();
+        for subscription_id in &owned {
+            if let Some(entry) = streams.remove(subscription_id) {
+                entry.stop.store(true, Ordering::Release);
+            }
+        }
+        owned.len()
     }
 
     pub(crate) fn finish_stream(&self, subscription_id: &str, stop: &Arc<AtomicBool>) {
@@ -2903,10 +3142,10 @@ impl AppState {
             .0
             .streams
             .lock()
-            .expect("technical stream registry lock poisoned");
+            .unwrap_or_else(|poison| poison.into_inner());
         let is_current = streams
             .get(subscription_id)
-            .is_some_and(|current| Arc::ptr_eq(current, stop));
+            .is_some_and(|current| Arc::ptr_eq(&current.stop, stop));
 
         if is_current {
             streams.remove(subscription_id);
@@ -2994,8 +3233,8 @@ mod tests {
     #[test]
     fn replacing_subscription_stops_previous_stream() {
         let state = AppState::default();
-        let previous = state.begin_stream("technical".to_owned());
-        let current = state.begin_stream("technical".to_owned());
+        let previous = state.begin_stream("hud".to_owned(), "technical".to_owned());
+        let current = state.begin_stream("hud".to_owned(), "technical".to_owned());
 
         assert!(previous.load(Ordering::Acquire));
         assert!(!current.load(Ordering::Acquire));
@@ -3038,6 +3277,34 @@ mod tests {
     }
 
     #[test]
+    fn empty_curtain_data_snapshot_is_detached_from_live_state() {
+        use nte_dps_tool::engine::model::{EmptyCurtainItem, HtItemNetId};
+
+        let state = AppState::default();
+        let mut combat = CombatState::default();
+        combat.empty_curtain.push(EmptyCurtainItem {
+            id: HtItemNetId { solt: 1, serial: 2 },
+            item_id: "fixture-item".to_owned(),
+            level: 1,
+            main_stats: Vec::new(),
+            sub_stats: Vec::new(),
+            locked: false,
+            discarded: false,
+            character_net_id: None,
+            equipped_character_id: None,
+            equipped_placement: None,
+        });
+        state.restore_live_state_for_test(combat, CaptureQualitySource::Live);
+
+        let (items, characters, _) = state.empty_curtain_data_snapshot();
+        state.restore_live_state_for_test(CombatState::default(), CaptureQualitySource::Live);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].item_id, "fixture-item");
+        assert!(characters.is_empty());
+    }
+
+    #[test]
     fn pause_freezes_the_presented_state_until_resume() {
         let config_path = temporary_config_path("pause_freezes_projection");
         let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
@@ -3057,12 +3324,96 @@ mod tests {
         second.push_hit(test_hit(25.0));
         live_capture.restore_session(second, CaptureQualitySource::Live);
 
-        assert_eq!(state.main_presented_combat_state().total_damage, 125.0);
+        assert_eq!(
+            state.with_main_presented_state(|presented| presented.total_damage),
+            125.0
+        );
         assert!(state.main_paused_event_counts().0 > 0);
         assert_ne!(state.main_dps_stream_revision(), paused_revision);
 
         state.set_main_processing_paused(false);
-        assert_eq!(state.main_presented_combat_state().total_damage, 325.0);
+        assert_eq!(
+            state.with_main_presented_state(|presented| presented.total_damage),
+            325.0
+        );
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn cut_round_freezes_replay_source_and_queues_failed_persistence() {
+        let config_path = temporary_config_path("cut_round_source_retry");
+        let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut replay = CombatState::default();
+        replay.push_hit(test_hit(444.0));
+        live_capture.restore_session(replay, CaptureQualitySource::JsonReplay);
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            live_capture.clone(),
+            config_path.clone(),
+        );
+
+        let prepared = state
+            .prepare_current_history_archive()
+            .expect("current replay archive");
+        assert_eq!(
+            prepared.summary.quality.source,
+            CaptureQualitySource::JsonReplay
+        );
+        assert_eq!(
+            state.archive_current_history_round_with(|_, _| Err("disk full".to_owned())),
+            Ok(true)
+        );
+        assert!(live_capture.with_state(|current| current.hits.is_empty()));
+
+        let pending = state
+            .0
+            .history
+            .pending_archives
+            .lock()
+            .expect("pending History archives lock");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending[0].summary.quality.source,
+            CaptureQualitySource::JsonReplay,
+            "retry must retain source captured at the round boundary"
+        );
+        drop(pending);
+
+        let mut next = CombatState::default();
+        next.push_hit(test_hit(99.0));
+        live_capture.restore_session(next, CaptureQualitySource::Live);
+        assert_eq!(
+            live_capture.with_state(|current| current.total_damage),
+            99.0
+        );
+        let retry_template = state
+            .prepare_current_history_archive()
+            .expect("retry queue template");
+        {
+            let mut pending = state
+                .0
+                .history
+                .pending_archives
+                .lock()
+                .expect("pending History archives lock");
+            while pending.len() < MAX_PENDING_HISTORY_ARCHIVES {
+                pending.push_back(retry_template.clone());
+            }
+        }
+        assert!(
+            state
+                .archive_current_history_round_with(|_, _| {
+                    panic!("a full retry queue must reject before persistence")
+                })
+                .is_err()
+        );
+        assert_eq!(
+            live_capture.with_state(|current| current.total_damage),
+            99.0,
+            "full retry queue must preserve the current live round"
+        );
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");
@@ -3089,7 +3440,10 @@ mod tests {
         state
             .undo_session_reset(&token)
             .expect("restore reset session");
-        assert_eq!(state.main_presented_combat_state().total_damage, 222.0);
+        assert_eq!(
+            state.with_main_presented_state(|presented| presented.total_damage),
+            222.0
+        );
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");
@@ -3227,13 +3581,30 @@ mod tests {
     #[test]
     fn finishing_replaced_stream_keeps_current_registration() {
         let state = AppState::default();
-        let previous = state.begin_stream("technical".to_owned());
-        let current = state.begin_stream("technical".to_owned());
+        let previous = state.begin_stream("hud".to_owned(), "technical".to_owned());
+        let current = state.begin_stream("hud".to_owned(), "technical".to_owned());
 
         state.finish_stream("technical", &previous);
         state.stop_stream("technical");
 
         assert!(current.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn destroying_owner_window_stops_only_its_streams_and_clears_registry_entries() {
+        let state = AppState::default();
+        let hud_first = state.begin_stream("hud".to_owned(), "hud:first".to_owned());
+        let hud_second = state.begin_stream("hud".to_owned(), "hud:second".to_owned());
+        let console = state.begin_stream("console".to_owned(), "console:first".to_owned());
+
+        assert_eq!(state.stop_streams_for_window("hud"), 2);
+        assert!(hud_first.load(Ordering::Acquire));
+        assert!(hud_second.load(Ordering::Acquire));
+        assert!(!console.load(Ordering::Acquire));
+        assert_eq!(state.stop_streams_for_window("hud"), 0);
+
+        state.stop_stream("console:first");
+        assert!(console.load(Ordering::Acquire));
     }
 
     #[test]
@@ -3626,6 +3997,53 @@ mod tests {
         assert_eq!(
             restored.settings_snapshot().capture.bpf_filter,
             "udp port 30196"
+        );
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn mod_studio_game_directory_survives_state_reload() {
+        let config_path = temporary_config_path("mod_studio_game_directory");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+
+        assert!(
+            state
+                .set_mod_studio_game_directory(
+                    ModsPluginGameRegion::China,
+                    Some("D:\\CustomGame".to_owned()),
+                )
+                .expect("save Mod Studio game directory")
+        );
+        assert_eq!(
+            state.mod_studio_game_directory(ModsPluginGameRegion::China),
+            Some("D:\\CustomGame".to_owned())
+        );
+
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
+                .expect("valid saved UI config");
+        let restored = AppState::new_with_config_path(
+            saved,
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        assert_eq!(
+            restored.mod_studio_game_directory(ModsPluginGameRegion::China),
+            Some("D:\\CustomGame".to_owned())
+        );
+
+        restored
+            .set_mod_studio_game_directory(ModsPluginGameRegion::China, None)
+            .expect("clear Mod Studio game directory");
+        assert_eq!(
+            restored.mod_studio_game_directory(ModsPluginGameRegion::China),
+            None
         );
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))

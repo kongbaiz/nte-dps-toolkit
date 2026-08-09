@@ -31,6 +31,8 @@ namespace nte::mods
 	};
 
 	IpcPumpResult PumpLiveIpc(const PluginContext* context);
+	bool OpenRuntimePresence();
+	void CloseRuntimePresence();
 	NteModsStatus InvokeIpcKernelService(
 		IpcKernelService service,
 		const PluginContext* context,

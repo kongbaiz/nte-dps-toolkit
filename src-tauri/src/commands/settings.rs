@@ -139,17 +139,25 @@ pub(crate) async fn install_settings_update(
     if let Some(message_key) = state.update_install_blocked_message_key() {
         return Err(CommandError::update_install_blocked(message_key));
     }
-    let prepared = state.begin_update_install().map_err(update_action_error)?;
+    install_update(app, state.clone())
+        .await
+        .map_err(update_action_error)?;
+    Ok(state.settings_snapshot())
+}
+
+pub(crate) async fn install_update(
+    app: AppHandle,
+    state: AppState,
+) -> Result<(), UpdateActionError> {
+    let prepared = state.begin_update_install()?;
     let version = prepared.version().to_string();
     match prepared.component() {
         UpdateComponent::App => match update_storage::launch_prepared_app_update(&prepared) {
             Ok(_) => {
-                let snapshot = state.settings_snapshot();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(200));
                     app.exit(0);
                 });
-                return Ok(snapshot);
             }
             Err(error) => {
                 log::error!("launch prepared application update failed: {error}");
@@ -174,16 +182,26 @@ pub(crate) async fn install_settings_update(
             }
         }
     }
-    Ok(state.settings_snapshot())
+    Ok(())
 }
 
-pub(crate) fn schedule_automatic_update_check(state: AppState) {
+pub(crate) fn schedule_automatic_update_check(app: AppHandle, state: AppState) {
     if !state.auto_check_updates() {
         return;
     }
     tauri::async_runtime::spawn(async move {
-        if let Err(error) = run_update_check(state).await {
+        if let Err(error) = run_update_check(state.clone()).await {
             log::debug!("automatic update check skipped: {error:?}");
+            return;
+        }
+        if !state.update_settings_snapshot().available.is_empty()
+            && let Err(error) = app.emit_to(
+                crate::windows::main_dps::MAIN_DPS_WINDOW_LABEL,
+                crate::windows::main_dps::UPDATE_AVAILABLE_EVENT,
+                (),
+            )
+        {
+            log::debug!("notify main DPS about an available update failed: {error}");
         }
     });
 }
@@ -228,7 +246,7 @@ async fn run_update_check(state: AppState) -> Result<(), UpdateActionError> {
     Ok(())
 }
 
-async fn run_update_download(
+pub(crate) async fn run_update_download(
     state: AppState,
     component: UpdateComponent,
 ) -> Result<(), UpdateActionError> {
@@ -819,7 +837,7 @@ fn check_for_updates()
         .map_err(|error| CheckSettingsUpdateError::Failed(error.to_string()))
 }
 
-fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> {
+pub(crate) fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> {
     match value {
         "app" => Ok(UpdateComponent::App),
         "mods-plugin" => Ok(UpdateComponent::ModsPlugin),
@@ -827,7 +845,7 @@ fn parse_update_component(value: &str) -> Result<UpdateComponent, CommandError> 
     }
 }
 
-fn update_action_error(error: UpdateActionError) -> CommandError {
+pub(crate) fn update_action_error(error: UpdateActionError) -> CommandError {
     match error {
         UpdateActionError::Busy => CommandError::update_operation_busy(),
         UpdateActionError::Unavailable => CommandError::update_component_unavailable(),

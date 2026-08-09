@@ -100,23 +100,36 @@ export const mainDpsClient = {
   subscribe(
     onSnapshot: (value: MainDpsSnapshot) => void,
     onError: (error: MainDpsCommandError) => void,
-  ) {
+  ): () => void {
     const subscriptionId = crypto.randomUUID();
+    let closed = false;
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => {
+      if (closed) return;
       try {
         onSnapshot(parseMainDpsEvent(message));
       } catch (error) {
         onError(parseMainDpsCommandError(error));
       }
     };
-    void command("subscribe_main_dps", {
+    const receipt = command("subscribe_main_dps", {
       subscriptionId,
       onEvent: channel,
-    }).catch((error) => onError(parseMainDpsCommandError(error)));
-    return () =>
-      command("unsubscribe_main_dps", { subscriptionId })
-        .then(() => undefined)
-        .catch(() => undefined);
+    })
+      .then(() => subscriptionId)
+      .catch((error: unknown) => {
+        if (!closed) onError(parseMainDpsCommandError(error));
+        return undefined;
+      });
+    return () => {
+      if (closed) return;
+      closed = true;
+      void receipt.then((activeId) => {
+        if (activeId === undefined) return;
+        void command("unsubscribe_main_dps", {
+          subscriptionId: activeId,
+        }).catch((error: unknown) => onError(parseMainDpsCommandError(error)));
+      });
+    };
   },
 };

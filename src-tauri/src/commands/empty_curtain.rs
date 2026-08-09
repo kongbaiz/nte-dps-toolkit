@@ -64,32 +64,31 @@ pub(crate) fn get_empty_curtain_positions(
     console::validate_window(&window)?;
     let item_id = HtItemNetId::from(item);
     let character_id = HtItemNetId::from(character);
-    state.with_empty_curtain(|items, characters, catalog| {
-        let item = items
-            .iter()
-            .find(|item| item.id == item_id)
-            .ok_or_else(item_unavailable)?;
-        let character = characters
-            .iter()
-            .find(|character| character.net_id == character_id)
-            .ok_or_else(character_unavailable)?;
-        let positions = catalog
-            .valid_module_positions(character.character_id, &item.item_id)
-            .ok_or_else(|| {
-                CommandError::empty_curtain(
-                    "empty_curtain_position_unavailable",
-                    "No compatible position is available for this drive module",
-                    Vec::new(),
-                )
-            })?;
-        Ok(positions
-            .iter()
-            .map(|position| EmptyCurtainPositionSnapshot {
-                row: position.row,
-                column: position.column,
-            })
-            .collect())
-    })
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let item = items
+        .iter()
+        .find(|item| item.id == item_id)
+        .ok_or_else(item_unavailable)?;
+    let character = characters
+        .iter()
+        .find(|character| character.net_id == character_id)
+        .ok_or_else(character_unavailable)?;
+    let positions = catalog
+        .valid_module_positions(character.character_id, &item.item_id)
+        .ok_or_else(|| {
+            CommandError::empty_curtain(
+                "empty_curtain_position_unavailable",
+                "No compatible position is available for this drive module",
+                Vec::new(),
+            )
+        })?;
+    Ok(positions
+        .iter()
+        .map(|position| EmptyCurtainPositionSnapshot {
+            row: position.row,
+            column: position.column,
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -104,7 +103,8 @@ pub(crate) fn manage_empty_curtain_item(
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
     let item_id = HtItemNetId::from(item);
-    let operation = state.with_empty_curtain(|items, characters, catalog| {
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let operation = {
         let item = items
             .iter()
             .find(|item| item.id == item_id)
@@ -205,7 +205,7 @@ pub(crate) fn manage_empty_curtain_item(
                 Vec::new(),
             )),
         }
-    })?;
+    }?;
     submit(state.inner(), operation.0, operation.1)?;
     Ok(snapshot(state.inner()))
 }
@@ -219,7 +219,8 @@ pub(crate) fn apply_empty_curtain_character_action(
 ) -> Result<EmptyCurtainSnapshot, CommandError> {
     console::validate_window(&window)?;
     let character_uid = HtItemNetId::from(character);
-    let operation = state.with_empty_curtain(|items, characters, catalog| {
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let operation = {
         let character = characters
             .iter()
             .copied()
@@ -227,7 +228,7 @@ pub(crate) fn apply_empty_curtain_character_action(
             .ok_or_else(character_unavailable)?;
         match action.as_str() {
             "unequip-all" => Ok(ModsPluginOperation::UnequipAll),
-            "one-click" => recommended_loadout(character, items, catalog)
+            "one-click" => recommended_loadout(character, &items, &catalog)
                 .map(|loadout| ModsPluginOperation::EquipOneKey {
                     placements: loadout
                         .placements
@@ -247,7 +248,7 @@ pub(crate) fn apply_empty_curtain_character_action(
                 Vec::new(),
             )),
         }
-    })?;
+    }?;
     submit(state.inner(), character_uid, operation)?;
     Ok(snapshot(state.inner()))
 }
@@ -258,25 +259,23 @@ pub(crate) async fn export_empty_curtain_inventory(
     window: WebviewWindow,
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
-    let json = state.with_empty_curtain(|items, _, catalog| {
-        if items.is_empty() {
-            return Err(CommandError::empty_curtain(
-                "empty_curtain_inventory_empty",
-                "No Console equipment to export",
+    let (items, _, catalog) = state.empty_curtain_data_snapshot();
+    if items.is_empty() {
+        return Err(CommandError::empty_curtain(
+            "empty_curtain_inventory_empty",
+            "No Console equipment to export",
+            Vec::new(),
+        ));
+    }
+    let json = serde_json::to_string_pretty(&build_drive_calculator_inventory(&items, &catalog))
+        .map_err(|error| {
+            log::error!("serialize Drive Calculator inventory failed: {error}");
+            CommandError::empty_curtain(
+                "empty_curtain_export_serialize_failed",
+                "Failed to serialize Console equipment",
                 Vec::new(),
-            ));
-        }
-        serde_json::to_string_pretty(&build_drive_calculator_inventory(items, catalog)).map_err(
-            |error| {
-                log::error!("serialize Drive Calculator inventory failed: {error}");
-                CommandError::empty_curtain(
-                    "empty_curtain_export_serialize_failed",
-                    "Failed to serialize Console equipment",
-                    Vec::new(),
-                )
-            },
-        )
-    })?;
+            )
+        })?;
     let completed = save_json(
         &window,
         i18n::t("Drive Calculator inventory"),
@@ -298,16 +297,15 @@ pub(crate) async fn export_empty_curtain_loadout(
 ) -> Result<EmptyCurtainFileResult, CommandError> {
     console::validate_window(&window)?;
     let character_uid = HtItemNetId::from(character);
-    let (json, character_id) = state.with_empty_curtain(|items, characters, catalog| {
-        let character = characters
-            .iter()
-            .copied()
-            .find(|candidate| candidate.net_id == character_uid)
-            .ok_or_else(character_unavailable)?;
-        export_character_loadout_json(character, items, catalog)
-            .map(|json| (json, character.character_id))
-            .map_err(character_loadout_error)
-    })?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let character = characters
+        .iter()
+        .copied()
+        .find(|candidate| candidate.net_id == character_uid)
+        .ok_or_else(character_unavailable)?;
+    let (json, character_id) = export_character_loadout_json(character, &items, &catalog)
+        .map(|json| (json, character.character_id))
+        .map_err(character_loadout_error)?;
     let completed = save_json(
         &window,
         i18n::t("Console character loadout"),
@@ -333,26 +331,25 @@ pub(crate) async fn import_empty_curtain_loadout(
             snapshot: snapshot(state.inner()),
         });
     };
-    let operation = state.with_empty_curtain(|items, characters, catalog| {
-        let file = parse_character_loadout_json(&json).map_err(character_loadout_error)?;
-        let loadout = validate_character_loadout(&file, characters, items, catalog)
-            .map_err(character_loadout_error)?;
-        Ok((
-            loadout.character.net_id,
-            ModsPluginOperation::EquipOneKey {
-                placements: loadout
-                    .placements
-                    .into_iter()
-                    .map(|placement| ModsPluginPlacement {
-                        equipment: placement.equipment,
-                        row: placement.row,
-                        column: placement.column,
-                    })
-                    .collect(),
-                core: loadout.core,
-            },
-        ))
-    })?;
+    let (items, characters, catalog) = state.empty_curtain_data_snapshot();
+    let file = parse_character_loadout_json(&json).map_err(character_loadout_error)?;
+    let loadout = validate_character_loadout(&file, &characters, &items, &catalog)
+        .map_err(character_loadout_error)?;
+    let operation = (
+        loadout.character.net_id,
+        ModsPluginOperation::EquipOneKey {
+            placements: loadout
+                .placements
+                .into_iter()
+                .map(|placement| ModsPluginPlacement {
+                    equipment: placement.equipment,
+                    row: placement.row,
+                    column: placement.column,
+                })
+                .collect(),
+            core: loadout.core,
+        },
+    );
     submit(state.inner(), operation.0, operation.1)?;
     Ok(EmptyCurtainFileResult {
         completed: true,
@@ -361,6 +358,7 @@ pub(crate) async fn import_empty_curtain_loadout(
 }
 
 pub(crate) fn snapshot(state: &AppState) -> EmptyCurtainSnapshot {
+    state.refresh_empty_curtain_operation();
     let inventory = state.empty_curtain_snapshot();
     let catalog = state.equipment_catalog();
     let resources = state.live_capture_resources();

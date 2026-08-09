@@ -17,6 +17,7 @@ use crate::{
 
 pub(crate) const MAIN_DPS_WINDOW_LABEL: &str = "main-dps";
 pub(crate) const MAIN_DPS_CONFIRMATION_EVENT: &str = "main-dps-confirmation-requested";
+pub(crate) const UPDATE_AVAILABLE_EVENT: &str = "update-available";
 const LEGACY_TAURI_MAIN_DPS_DEFAULT_SIZE: [f32; 2] = [670.0, 692.0];
 const COMPACT_TAURI_MAIN_DPS_DEFAULT_SIZE: [f32; 2] = [670.0, 560.0];
 // Windows moves minimized top-level windows to a large negative sentinel position.

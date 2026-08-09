@@ -33,6 +33,13 @@ pub fn run() {
                 }
             }
         })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                window
+                    .state::<AppState>()
+                    .stop_streams_for_window(window.label());
+            }
+        })
         .setup(|app| {
             let state = app.state::<AppState>();
             let main_dps_window = app
@@ -121,7 +128,10 @@ pub fn run() {
                 }
             }
             commands::settings::schedule_completed_update_cleanup();
-            commands::settings::schedule_automatic_update_check(state.inner().clone());
+            commands::settings::schedule_automatic_update_check(
+                app.handle().clone(),
+                state.inner().clone(),
+            );
             match history_runtime::HistoryRuntime::start(state.inner().clone()) {
                 Ok(runtime) => {
                     let managed = app.manage(runtime);
@@ -182,12 +192,15 @@ pub fn run() {
             commands::island::undo_island_notice,
             commands::main_dps::close_main_dps_window,
             commands::main_dps::get_main_dps_snapshot,
+            commands::main_dps::get_main_dps_update_prompt,
             commands::main_dps::get_main_dps_detail_snapshot,
+            commands::main_dps::download_main_dps_update,
             commands::main_dps::finish_main_dps_onboarding,
             commands::main_dps::set_main_dps_detail_view,
             commands::main_dps::set_main_dps_detail_columns,
             commands::main_dps::import_main_dps_replay,
             commands::main_dps::import_main_dps_replay_path,
+            commands::main_dps::install_main_dps_update,
             commands::main_dps::minimize_main_dps_window,
             commands::main_dps::open_main_dps_console,
             commands::main_dps::open_main_dps_character_details,
@@ -217,7 +230,9 @@ pub fn run() {
             commands::mod_studio::delete_mod_studio_document,
             commands::mod_studio::open_mod_studio_folder,
             commands::mod_studio::get_mod_studio_deployment,
+            commands::mod_studio::get_mod_studio_game_directory,
             commands::mod_studio::choose_mod_studio_game_directory,
+            commands::mod_studio::set_mod_studio_game_directory,
             commands::mod_studio::set_mod_studio_loader_enabled,
             commands::mod_studio::save_mod_studio_document,
             commands::mod_studio::set_mod_studio_document_enabled,
