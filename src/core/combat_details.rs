@@ -37,9 +37,9 @@ impl CombatDetailFilter {
             }
             Self::SharedMechanics => !hit.direction.is_incoming() && is_unbalance_damage_hit(hit),
             Self::Unattributed => {
-                !hit.direction.is_incoming()
-                    && !is_unbalance_damage_hit(hit)
-                    && !(hit.direction.is_outgoing() && hit.char_known)
+                !(hit.direction.is_incoming()
+                    || is_unbalance_damage_hit(hit)
+                    || (hit.direction.is_outgoing() && hit.char_known))
             }
             Self::QteType(attack_type) => {
                 !hit.direction.is_incoming()

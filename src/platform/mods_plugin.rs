@@ -3135,13 +3135,12 @@ mod tests {
         assert!(NATIVE_PLUGIN_RUNTIME.contains("OpenRuntimePresence()"));
         assert!(NATIVE_PLUGIN_RUNTIME.contains("CloseRuntimePresence()"));
         assert!(
-            NATIVE_OFFSET_RESOLVER
-                .contains("{ 0x1064D000, 0x0FDACCFD, 0x0164A940, 0x0F071DB0, 100, 0x4C }")
+            NATIVE_OFFSET_RESOLVER.contains("{ 0x1064D000, 0x0164A940, 0x0F071DB0, 100, 0x4C }")
         );
         assert!(NATIVE_OFFSET_RESOLVER.contains("IsExecutableCodeAddress"));
         assert!(NATIVE_OFFSET_RESOLVER.contains("IsWritableDataAddress"));
         assert!(NATIVE_OFFSET_RESOLVER.contains("APPEND_NAME_PROLOGUE_MASK"));
-        assert!(NATIVE_OFFSET_RESOLVER.contains("GWORLD_SEQUENCE_MASK"));
+        assert!(NATIVE_OFFSET_RESOLVER.contains("IsGWorldSequence"));
         assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
         assert!(NATIVE_PLUGIN_RUNTIME.contains("ResolveViewportTickIndex"));
         assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 4"));

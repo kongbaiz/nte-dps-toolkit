@@ -2490,9 +2490,9 @@ pub fn parse_gameplay_effects(data: &[u8]) -> Vec<ParsedGameplayEffect> {
                 COMPACT_GAMEPLAY_EFFECT_MARKER => marker_offset + 9,
                 _ => continue,
             };
-            if !shifted
+            if shifted
                 .get(trailer_offset..trailer_offset + COMPACT_GAMEPLAY_EFFECT_TRAILER.len())
-                .is_some_and(|bytes| bytes == COMPACT_GAMEPLAY_EFFECT_TRAILER)
+                .is_none_or(|bytes| bytes != COMPACT_GAMEPLAY_EFFECT_TRAILER)
             {
                 continue;
             }

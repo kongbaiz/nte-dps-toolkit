@@ -89,12 +89,7 @@ mod tests {
         assert_eq!(parse(args(&["version", "--json"])), Ok(Command::Version));
         assert_eq!(parse(args(&["devices", "--json"])), Ok(Command::Devices));
         assert_eq!(
-            parse(args(&[
-                "serve",
-                "--data-dir",
-                "capture-data",
-                "--stdio",
-            ])),
+            parse(args(&["serve", "--data-dir", "capture-data", "--stdio",])),
             Ok(Command::Serve(ServeOptions {
                 data_dir: PathBuf::from("capture-data")
             }))

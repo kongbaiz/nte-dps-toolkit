@@ -1,0 +1,14 @@
+warning: in the working copy of '.codex/verification/hardening-20260812/.baseline-source.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.codex/verification/hardening-20260812/MODIFIED_FILE', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.codex/verification/hardening-20260812/.baseline-source.txt b/.codex/verification/hardening-20260812/MODIFIED_FILE
+index f1ef190..1ba09ec 100644
+--- a/.codex/verification/hardening-20260812/.baseline-source.txt
++++ b/.codex/verification/hardening-20260812/MODIFIED_FILE
+@@ -1,4 +1,5 @@
+ branch=fix/a-group-hardening
+ field=version_sync_0_3_8
+-state=BASELINE
+-value=desktop-version-0.3.7
++state=MODIFIED
++value=desktop-version-0.3.8
++
