@@ -13,7 +13,7 @@ use nte_dps_tool::{
     engine::model::{
         CharacterInfo, CharacterStats, CombatState, DamageAttributionSummary, Hit, HitDirection,
         HitDirectionSummary, PartyCombatState, is_qte_follow_up_damage_type,
-        is_unbalance_damage_hit, summarize_hit_directions,
+        is_unbalance_damage_hit,
     },
     storage::{
         ability_names,
@@ -24,9 +24,11 @@ use nte_dps_tool::{
 
 use crate::state::{AppState, MainDpsDetailKind, MainDpsDetailRequest};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 3;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 4;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
+pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
+pub(crate) const MAIN_DPS_DETAIL_SKILL_LIMIT: usize = 250;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,7 +50,11 @@ pub(crate) struct MainDpsDetailSnapshot {
     pub hit_types: Vec<MainDpsFilterSummary>,
     pub attribution: MainDpsAttributionSummary,
     pub qte_summaries: Vec<MainDpsQteSummary>,
+    pub qte_summary_total_count: usize,
+    pub qte_summaries_truncated: bool,
     pub skills: Vec<MainDpsSkillSummary>,
+    pub skill_total_count: usize,
+    pub skills_truncated: bool,
     pub total_hits: usize,
     pub total_damage: f64,
     pub max_row_damage: f64,
@@ -64,39 +70,58 @@ impl MainDpsDetailSnapshot {
         limit: usize,
     ) -> Self {
         let request = state.main_dps_detail_request(kind);
+        let cache_revision = state.main_dps_stream_revision();
+        if let Some(snapshot) =
+            state.main_dps_detail_cache_get(cache_revision, kind, &request, offset, limit)
+        {
+            return (*snapshot).clone();
+        }
         let resources = state.live_capture_resources();
         let config = state.ui_config_snapshot();
         let language = config.language;
         let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
         let generation = state.next_sequence().to_string();
         let actions = MainDpsDetailActions::from_state(state);
-        state.with_main_dps_detail_state(|combat, selected_half| {
+        let snapshot = state.with_main_dps_detail_state(|combat, selected_half| {
             let source = selected_half
                 .map(|half| DetailSource::Party(combat.abyss.half(half)))
                 .unwrap_or(DetailSource::Combat(combat));
-            let base_hits = source
-                .hits()
-                .iter()
-                .filter(|hit| request.character_id.is_none_or(|id| hit.char_id == id))
-                .collect::<Vec<_>>();
             let page_limit = limit.clamp(1, MAIN_DPS_DETAIL_PAGE_LIMIT);
             let mut total_hits = 0_usize;
             let mut total_damage = 0.0_f64;
             let mut max_row_damage = 1.0_f64;
             let mut rows = Vec::with_capacity(page_limit);
-            for hit in base_hits.iter().copied().filter(|hit| request.matches(hit)) {
-                let row_index = total_hits;
-                total_hits += 1;
-                let damage = hit.total_damage();
-                total_damage += damage;
-                max_row_damage = max_row_damage.max(damage);
-                if row_index >= offset && rows.len() < page_limit {
-                    rows.push(MainDpsHitSnapshot::from_hit(
-                        hit,
-                        row_index,
-                        &resources.characters,
-                        language,
-                    ));
+            let mut direction_summary = HitDirectionSummary::default();
+            let mut qte_accumulators = HashMap::<&str, (u64, f64)>::new();
+            let mut skill_accumulators = HashMap::<&str, SkillSummaryAccumulator<'_>>::new();
+
+            // Keep this as the only hit walk in the detail projection. The
+            // filter-independent summaries use the same character-scoped
+            // stream as the rows, while only the final page materializes DTO
+            // strings.
+            for hit in source.hits() {
+                if !request.character_matches(hit) {
+                    continue;
+                }
+                accumulate_hit_direction(&mut direction_summary, hit);
+                accumulate_qte_summary(&mut qte_accumulators, hit);
+                if request.character_id.is_some() && !hit.direction.is_incoming() {
+                    accumulate_skill_summary(&mut skill_accumulators, hit);
+                }
+                if request.matches_filters(hit) {
+                    let row_index = total_hits;
+                    total_hits += 1;
+                    let damage = hit.total_damage();
+                    total_damage += damage;
+                    max_row_damage = max_row_damage.max(damage);
+                    if row_index >= offset && rows.len() < page_limit {
+                        rows.push(MainDpsHitSnapshot::from_hit(
+                            hit,
+                            row_index,
+                            &resources.characters,
+                            language,
+                        ));
+                    }
                 }
             }
             let character = request
@@ -119,19 +144,30 @@ impl MainDpsDetailSnapshot {
                 config.separate_reaction_damage,
                 subtract_time_stop,
             );
-            let mut direction: MainDpsDirectionSummary =
-                summarize_hit_directions(base_hits.iter().copied()).into();
+            let mut direction: MainDpsDirectionSummary = direction_summary.into();
             direction.confirmed_hits = metrics.output_count;
             let hit_types = hit_type_summaries(&metrics);
             let attribution = MainDpsAttributionSummary::new(
                 source.damage_attribution_summary(),
                 config.separate_reaction_damage,
             );
-            let skills = request
-                .character_id
-                .map(|_| skill_summaries(&base_hits, metrics.total_output, language))
-                .unwrap_or_default();
-            let qte_summaries = qte_summaries(&base_hits, metrics.total_output);
+            let mut qte_summaries =
+                qte_summaries_from_accumulators(qte_accumulators, metrics.total_output);
+            let qte_summary_total_count = qte_summaries.len();
+            let qte_summaries_truncated = qte_summary_total_count > MAIN_DPS_DETAIL_QTE_LIMIT;
+            qte_summaries.truncate(MAIN_DPS_DETAIL_QTE_LIMIT);
+            let mut skills = if request.character_id.is_some() {
+                skill_summaries_from_accumulators(
+                    skill_accumulators,
+                    metrics.total_output,
+                    language,
+                )
+            } else {
+                Vec::new()
+            };
+            let skill_total_count = skills.len();
+            let skills_truncated = skill_total_count > MAIN_DPS_DETAIL_SKILL_LIMIT;
+            skills.truncate(MAIN_DPS_DETAIL_SKILL_LIMIT);
             let qte_type = match &request.filter {
                 CombatDetailFilter::QteType(value) => Some(value.clone()),
                 _ => None,
@@ -154,7 +190,7 @@ impl MainDpsDetailSnapshot {
                 character_color: character.and_then(|value| value.color.clone()),
                 filter: filter_id(&request.filter),
                 qte_type,
-                skill_filter: request.skill_filter,
+                skill_filter: request.skill_filter.clone(),
                 columns: config.hit_detail_columns.into(),
                 actions,
                 metrics,
@@ -162,14 +198,27 @@ impl MainDpsDetailSnapshot {
                 hit_types,
                 attribution,
                 qte_summaries,
+                qte_summary_total_count,
+                qte_summaries_truncated,
                 skills,
+                skill_total_count,
+                skills_truncated,
                 total_hits,
                 total_damage,
                 max_row_damage,
                 offset,
                 rows,
             }
-        })
+        });
+        state.main_dps_detail_cache_store(
+            cache_revision,
+            kind,
+            &request,
+            offset,
+            limit,
+            std::sync::Arc::new(snapshot.clone()),
+        );
+        snapshot
     }
 }
 
@@ -245,14 +294,17 @@ impl MainDpsDetailActions {
 }
 
 impl MainDpsDetailRequest {
-    fn matches(&self, hit: &Hit) -> bool {
+    fn character_matches(&self, hit: &Hit) -> bool {
         self.character_id
             .is_none_or(|character_id| hit.char_id == character_id)
-            && self.filter.matches(hit)
+    }
+
+    fn matches_filters(&self, hit: &Hit) -> bool {
+        self.filter.matches(hit)
             && self
                 .skill_filter
-                .as_ref()
-                .is_none_or(|filter| hit_skill_name(hit) == *filter)
+                .as_deref()
+                .is_none_or(|filter| hit_skill_name_ref(hit) == filter)
     }
 }
 
@@ -454,33 +506,53 @@ pub(crate) struct MainDpsQteSummary {
     pub share_percent: f64,
 }
 
-fn qte_summaries(hits: &[&Hit], total_damage: f64) -> Vec<MainDpsQteSummary> {
-    let mut summaries = HashMap::<String, (u64, f64)>::new();
-    for hit in hits
-        .iter()
-        .copied()
-        .filter(|hit| !hit.direction.is_incoming())
-    {
-        if let Some(attack_type) = hit.attack_type.as_deref()
-            && (is_qte_follow_up_damage_type(attack_type) || is_unbalance_damage_hit(hit))
-        {
-            let row = summaries.entry(attack_type.to_owned()).or_default();
-            row.0 += 1;
-            row.1 += hit.damage;
+fn accumulate_hit_direction(summary: &mut HitDirectionSummary, hit: &Hit) {
+    let damage = hit.total_damage();
+    match hit.direction {
+        HitDirection::Incoming => {
+            summary.incoming_damage += damage;
+            summary.incoming_hits += 1;
         }
-        if hit.follow_up_damage > 0.0
-            && let Some(attack_type) = hit.follow_up_attack_type.as_deref()
-            && is_qte_follow_up_damage_type(attack_type)
-        {
-            let row = summaries.entry(attack_type.to_owned()).or_default();
-            row.0 += 1;
-            row.1 += hit.follow_up_damage;
+        HitDirection::Outgoing => {
+            summary.outgoing_damage += damage;
+            summary.outgoing_hits += 1;
+        }
+        HitDirection::Unknown => {
+            summary.unknown_damage += damage;
+            summary.unknown_hits += 1;
         }
     }
+}
+
+fn accumulate_qte_summary<'a>(summaries: &mut HashMap<&'a str, (u64, f64)>, hit: &'a Hit) {
+    if hit.direction.is_incoming() {
+        return;
+    }
+    if let Some(attack_type) = hit.attack_type.as_deref()
+        && (is_qte_follow_up_damage_type(attack_type) || is_unbalance_damage_hit(hit))
+    {
+        let row = summaries.entry(attack_type).or_default();
+        row.0 += 1;
+        row.1 += hit.damage;
+    }
+    if hit.follow_up_damage > 0.0
+        && let Some(attack_type) = hit.follow_up_attack_type.as_deref()
+        && is_qte_follow_up_damage_type(attack_type)
+    {
+        let row = summaries.entry(attack_type).or_default();
+        row.0 += 1;
+        row.1 += hit.follow_up_damage;
+    }
+}
+
+fn qte_summaries_from_accumulators(
+    summaries: HashMap<&str, (u64, f64)>,
+    total_damage: f64,
+) -> Vec<MainDpsQteSummary> {
     let mut rows = summaries
         .into_iter()
         .map(|(attack_type, (hits, damage))| MainDpsQteSummary {
-            attack_type,
+            attack_type: attack_type.to_owned(),
             hits,
             damage,
             share_percent: percent(damage, total_damage),
@@ -501,47 +573,43 @@ pub(crate) struct MainDpsSkillSummary {
     pub share_percent: f64,
 }
 
-#[derive(Clone, Debug)]
-struct SkillSummaryAccumulator {
-    name: String,
-    category: String,
+#[derive(Clone, Copy, Debug)]
+struct SkillSummaryAccumulator<'a> {
+    representative: &'a Hit,
     hits: u64,
     damage: f64,
 }
 
-fn skill_summaries(
-    hits: &[&Hit],
+fn accumulate_skill_summary<'a>(
+    summaries: &mut HashMap<&'a str, SkillSummaryAccumulator<'a>>,
+    hit: &'a Hit,
+) {
+    let id = hit_skill_name_ref(hit);
+    let row = summaries.entry(id).or_insert(SkillSummaryAccumulator {
+        representative: hit,
+        hits: 0,
+        damage: 0.0,
+    });
+    row.hits += 1;
+    row.damage += hit.total_damage();
+}
+
+fn skill_summaries_from_accumulators(
+    summaries: HashMap<&str, SkillSummaryAccumulator<'_>>,
     total_damage: f64,
     language: Language,
 ) -> Vec<MainDpsSkillSummary> {
-    let mut summaries = HashMap::<String, SkillSummaryAccumulator>::new();
-    for hit in hits
-        .iter()
-        .copied()
-        .filter(|hit| !hit.direction.is_incoming())
-    {
-        let id = hit_skill_name(hit);
-        let row = summaries
-            .entry(id)
-            .or_insert_with(|| SkillSummaryAccumulator {
-                name: skill_summary_display_name(hit, language),
-                category: hit
-                    .attack_type
-                    .as_deref()
-                    .map(|value| translate_attack_type(value, language))
-                    .unwrap_or_else(|| i18n::t_for(language, "Uncategorized")),
-                hits: 0,
-                damage: 0.0,
-            });
-        row.hits += 1;
-        row.damage += hit.total_damage();
-    }
     let mut rows = summaries
         .into_iter()
         .map(|(id, summary)| MainDpsSkillSummary {
-            id,
-            name: summary.name,
-            category: summary.category,
+            id: id.to_owned(),
+            name: skill_summary_display_name(summary.representative, language),
+            category: summary
+                .representative
+                .attack_type
+                .as_deref()
+                .map(|value| translate_attack_type(value, language))
+                .unwrap_or_else(|| i18n::t_for(language, "Uncategorized")),
             hits: summary.hits,
             damage: summary.damage,
             share_percent: percent(summary.damage, total_damage),
@@ -549,6 +617,21 @@ fn skill_summaries(
         .collect::<Vec<_>>();
     rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
     rows
+}
+
+#[cfg(test)]
+fn skill_summaries<'a>(
+    hits: impl IntoIterator<Item = &'a Hit>,
+    total_damage: f64,
+    language: Language,
+) -> Vec<MainDpsSkillSummary> {
+    let mut summaries = HashMap::<&'a str, SkillSummaryAccumulator<'a>>::new();
+    for hit in hits {
+        if !hit.direction.is_incoming() {
+            accumulate_skill_summary(&mut summaries, hit);
+        }
+    }
+    skill_summaries_from_accumulators(summaries, total_damage, language)
 }
 
 fn skill_summary_display_name(hit: &Hit, language: Language) -> String {
@@ -730,6 +813,10 @@ fn translate_attack_type(value: &str, language: Language) -> String {
 }
 
 fn hit_skill_name(hit: &Hit) -> String {
+    hit_skill_name_ref(hit).to_owned()
+}
+
+fn hit_skill_name_ref(hit: &Hit) -> &str {
     hit.damage_component
         .as_deref()
         .or(hit.ability_name.as_deref())
@@ -737,7 +824,6 @@ fn hit_skill_name(hit: &Hit) -> String {
         .or(hit.damage_name.as_deref())
         .or(hit.attack_type.as_deref())
         .unwrap_or("Unmapped Skill")
-        .to_owned()
 }
 
 fn localized_character_name(
@@ -907,6 +993,40 @@ mod tests {
     }
 
     #[test]
+    fn skill_summary_output_is_server_bounded_with_explicit_truncation() {
+        let mut combat = CombatState::default();
+        for index in 0..=MAIN_DPS_DETAIL_SKILL_LIMIT {
+            let mut hit = skill_hit(1.0, Some("GA_Fixture"), Some("Fixture"), "Skill");
+            hit.ability_name = Some(format!("GA_Fixture_{index}"));
+            hit.timestamp = index as f64;
+            combat.push_hit(hit);
+        }
+        let state = AppState::default();
+        state.set_main_dps_detail_request(
+            MainDpsDetailKind::Character,
+            MainDpsDetailRequest {
+                character_id: Some(1010),
+                ..Default::default()
+            },
+        );
+        state.restore_live_state_for_test(
+            combat,
+            nte_dps_tool::engine::model::CaptureQualitySource::Live,
+        );
+
+        let snapshot = MainDpsDetailSnapshot::from_state(
+            &state,
+            MainDpsDetailKind::Character,
+            0,
+            MAIN_DPS_DETAIL_DEFAULT_LIMIT,
+        );
+
+        assert_eq!(snapshot.skill_total_count, MAIN_DPS_DETAIL_SKILL_LIMIT + 1);
+        assert_eq!(snapshot.skills.len(), MAIN_DPS_DETAIL_SKILL_LIMIT);
+        assert!(snapshot.skills_truncated);
+    }
+
+    #[test]
     fn filter_counts_use_the_authoritative_metric_counts() {
         let metrics = MainDpsDetailMetrics {
             total_output: 2_300_409.0,
@@ -938,7 +1058,7 @@ mod tests {
         let break_damage = skill_hit(10.0, None, Some("Buff_Tenacity_damage"), "倾陷伤害");
         let hits = [&ultimate, &awakening, &break_damage];
 
-        let summaries = skill_summaries(&hits, 130.0, Language::SimplifiedChinese);
+        let summaries = skill_summaries(hits.iter().copied(), 130.0, Language::SimplifiedChinese);
         let ultimate = summaries
             .iter()
             .find(|summary| summary.id == "GA_Nanally_UltraSkill")

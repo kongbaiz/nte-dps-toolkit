@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createDiagnosticsClient } from "@/lib/tauri/diagnostics-client";
 
 const SNAPSHOT = {
-  contractVersion: 1,
+  contractVersion: 2,
   captureGeneration: "4",
   qualityGeneration: "5",
   reportGeneration: "2",
@@ -12,6 +12,7 @@ const SNAPSHOT = {
     phase: "idle",
     replayRunning: false,
     activeFilter: null,
+    droppedHistoryArchives: "0",
     rawCapture: null,
   },
   environment: null,

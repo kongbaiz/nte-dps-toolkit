@@ -1397,6 +1397,12 @@ pub(crate) struct ModLogSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModsPluginSubmitError {
     Busy,
+    Disconnected,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModsPluginReceiveError {
+    Disconnected,
 }
 
 #[cfg(feature = "desktop")]
@@ -1550,9 +1556,7 @@ impl ModsPluginClient {
         match self.sender.try_send(WorkerCommand::Request(request)) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err(ModsPluginSubmitError::Busy),
-            Err(TrySendError::Disconnected(_)) => {
-                panic!("Mod loader worker must remain alive while its client exists")
-            }
+            Err(TrySendError::Disconnected(_)) => Err(ModsPluginSubmitError::Disconnected),
         }
     }
 
@@ -1560,13 +1564,11 @@ impl ModsPluginClient {
         self.receiver.clone()
     }
 
-    pub fn try_recv(&self) -> Option<ModsPluginResponse> {
+    pub fn try_recv(&self) -> Result<Option<ModsPluginResponse>, ModsPluginReceiveError> {
         match self.receiver.try_recv() {
-            Ok(response) => Some(response),
-            Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
-                panic!("Mod loader worker disconnected before its client was dropped")
-            }
+            Ok(response) => Ok(Some(response)),
+            Err(TryRecvError::Empty) => Ok(None),
+            Err(TryRecvError::Disconnected) => Err(ModsPluginReceiveError::Disconnected),
         }
     }
 
@@ -3534,6 +3536,40 @@ mod tests {
                 .unwrap()
                 .request_id,
             1
+        );
+    }
+
+    #[test]
+    fn disconnected_worker_is_reported_without_panicking() {
+        let client = ModsPluginClient::with_call_for_test(|_| Ok(0));
+        client.stop.store(true, Ordering::Release);
+        let submission = client.submit_request(ModsPluginRequest {
+            request_id: 1,
+            character: HtItemNetId { solt: 1, serial: 2 },
+            operation: ModsPluginOperation::UnequipAll,
+        });
+        assert!(matches!(
+            submission,
+            Ok(()) | Err(ModsPluginSubmitError::Disconnected)
+        ));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match client.try_recv() {
+                Err(ModsPluginReceiveError::Disconnected) => break,
+                Ok(None) if std::time::Instant::now() < deadline => std::thread::yield_now(),
+                Ok(Some(_)) => panic!("stopped Mod loader worker returned a response"),
+                Ok(None) => panic!("stopped Mod loader worker did not disconnect"),
+            }
+        }
+
+        assert_eq!(
+            client.submit_request(ModsPluginRequest {
+                request_id: 2,
+                character: HtItemNetId { solt: 3, serial: 4 },
+                operation: ModsPluginOperation::UnequipAll,
+            }),
+            Err(ModsPluginSubmitError::Disconnected)
         );
     }
 

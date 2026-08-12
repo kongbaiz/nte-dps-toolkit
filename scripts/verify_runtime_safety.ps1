@@ -7,11 +7,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# This policy is intentionally source based.  It is a review aid, not a proof
-# that a lock is held for the right amount of time.  The default mode allows
-# the small amount of debt that existed when the policy was introduced and
-# blocks new occurrences.  -Strict turns the baseline diagnostics into
-# blocking diagnostics while a debt-removal PR is being prepared.
+# This policy is intentionally source based. It is a review aid, not a proof
+# that a lock is held for the right amount of time. The default mode blocks
+# unbounded contract repair and channel workers without an owner/cancellation
+# proof. -Strict additionally turns all review warnings into errors.
 $script:RuleIds = @{
     CloneProjection = "RUNTIME-HOT-CLONE"
     ChannelWorker   = "RUNTIME-CHANNEL-THREAD"
@@ -30,23 +29,8 @@ $script:Baseline = @{
         # The original main presentation clone was removed in the current
         # working tree; keep this empty so a regression is a new violation.
     }
-    ChannelWorker = @{
-        "src-tauri/src/channels/diagnostics.rs"      = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/empty_curtain.rs"    = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/history.rs"          = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/main_dps.rs"         = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/main_dps_detail.rs" = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/mod_studio.rs"       = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/packets.rs"          = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/settings.rs"         = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/skills.rs"           = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/technical.rs"        = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-        "src-tauri/src/channels/timeline.rs"         = [pscustomobject]@{ Spawn = 1; Sleep = 1 }
-    }
-    ContractSlice = @{
-        "frontend/src/lib/tauri/main-dps-contract.ts"        = 1
-        "frontend/src/lib/tauri/main-dps-detail-contract.ts" = 3
-    }
+    ChannelWorker = @{}
+    ContractSlice = @{}
 }
 
 function Assert-Policy {
@@ -187,13 +171,36 @@ function Test-HotProjectionContext {
         [Parameter(Mandatory)]
         [string]$RelativePath,
         [Parameter(Mandatory)]
+        [AllowEmptyString()]
         [string]$FunctionName
     )
 
     if ($RelativePath -match "^src-tauri/src/(channels|contract|commands)/") {
         return $true
     }
+    if ($RelativePath -eq "src/core/live_capture.rs" -and $FunctionName -match "(?i)(process_event|queue_abyss_archive)") {
+        return $true
+    }
     return $FunctionName -match "(?i)(presented|projection|snapshot|stream|detail|main_dps)"
+}
+
+function Test-HotCloneFingerprint {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Window,
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$FunctionName
+    )
+
+    if ($Window -match "with_state\s*\(\s*Clone\s*::\s*clone\s*\)") {
+        return $true
+    }
+    if ($FunctionName -match "(?i)main_round" -and $Window -match "\brecords\.clone\s*\(\)") {
+        return $true
+    }
+    return $FunctionName -match "(?i)(process_event|queue_abyss_archive)" -and
+        $Window -match "HistoryCombatDetails::from_state\s*\("
 }
 
 function Find-HotCloneOccurrences {
@@ -206,25 +213,25 @@ function Find-HotCloneOccurrences {
     $seen = @{}
     foreach ($file in $Files) {
         $relative = ConvertTo-RelativePath $file.FullName
-        if ($relative -notmatch "^src-tauri/src/.*\.rs$") {
+        if ($relative -notmatch "^(src-tauri/src/.*\.rs|src/core/live_capture\.rs)$") {
             continue
         }
         $lines = @(Get-Content -LiteralPath $file.FullName)
         for ($index = 0; $index -lt $lines.Count; $index++) {
             $windowEnd = [Math]::Min($lines.Count - 1, $index + 2)
             $window = ($lines[$index..$windowEnd] -join " ")
-            if ($window -notmatch "with_state\s*\(\s*Clone\s*::\s*clone\s*\)") {
-                continue
-            }
             $tokenLine = $index
             for ($candidate = $index; $candidate -le $windowEnd; $candidate++) {
-                if ($lines[$candidate] -match "with_state") {
+                if ($lines[$candidate] -match "with_state|records\.clone|HistoryCombatDetails::from_state") {
                     $tokenLine = $candidate
                     break
                 }
             }
             $function = Get-NearestRustFunction -Lines $lines -Index $index
             if (-not (Test-HotProjectionContext $relative $function.Name)) {
+                continue
+            }
+            if (-not (Test-HotCloneFingerprint $window $function.Name)) {
                 continue
             }
             $key = "$relative|$($tokenLine + 1)|$($function.Name)"
@@ -267,6 +274,7 @@ function Find-ChannelThreadSleepOccurrences {
             }
         )
         if ($spawn.Count -gt 0 -and $sleep.Count -gt 0) {
+            $source = $lines -join "`n"
             $occurrences += [pscustomobject]@{
                 Path        = $relative
                 SpawnCount  = $spawn.Count
@@ -275,6 +283,9 @@ function Find-ChannelThreadSleepOccurrences {
                 FirstSleep  = $sleep[0]
                 SpawnLines  = @($spawn)
                 SleepLines  = @($sleep)
+                OwnerCancellation = $source -match "begin_stream" -and
+                    $source -match "finish_stream" -and
+                    $source -match "while\s*(?:!stop\.load|\(\s*!stop\.load)"
             }
         }
     }
@@ -563,6 +574,12 @@ function Test-PolicyHelpers {
         "Hot projection helper must classify the main presented state"
     Assert-Policy (-not (Test-HotProjectionContext "src-tauri/src/state.rs" "reset_session_with_undo")) `
         "Hot projection helper must not classify undo snapshots"
+    Assert-Policy (Test-HotCloneFingerprint "let records = cache.records.clone();" "main_round_records") `
+        "Hot clone helper must detect deep history-record cache clones"
+    Assert-Policy (Test-HotCloneFingerprint "HistoryCombatDetails::from_state(&state)" "process_event") `
+        "Hot clone helper must detect archive conversion inside event processing"
+    Assert-Policy (-not (Test-HotCloneFingerprint "HistoryCombatDetails::from_state(&state)" "queue_detached_abyss_round")) `
+        "Hot clone helper must allow detached archive conversion outside process_event"
 
     $replayLines = @(
         "fn import_capture_json(path: &Path) {",
@@ -630,24 +647,9 @@ try {
         -Description "High-frequency projection contains with_state(Clone::clone)"
 
     $channelOccurrences = @(Find-ChannelThreadSleepOccurrences $rustFiles)
-    $seenChannels = @{}
-    $channelBaseline = [hashtable]$script:Baseline['ChannelWorker']
     foreach ($occurrence in $channelOccurrences) {
-        $seenChannels[$occurrence.Path] = $true
-        if (-not $channelBaseline.ContainsKey($occurrence.Path)) {
-            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line $occurrence.FirstSpawn -Message "Channel worker uses thread::spawn + thread::sleep without an allowlist entry."))
-            continue
-        }
-        $entryBaseline = $channelBaseline[$occurrence.Path]
-        if ($occurrence.SpawnCount -gt $entryBaseline.Spawn -or $occurrence.SleepCount -gt $entryBaseline.Sleep) {
-            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line $occurrence.FirstSpawn -Message "Channel worker added thread::spawn + thread::sleep; update the allowlist only with owner/cancellation review."))
-        } elseif ($occurrence.SpawnCount -eq $entryBaseline.Spawn -and $occurrence.SleepCount -eq $entryBaseline.Sleep) {
-            $diagnostics.Add((New-Diagnostic -Severity Warning -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line $occurrence.FirstSpawn -Message "Existing channel thread::spawn + thread::sleep is allowlisted; prefer owner-bound cancellation." -Baseline $true))
-        }
-    }
-    foreach ($path in $channelBaseline.Keys) {
-        if (-not $seenChannels.ContainsKey($path)) {
-            $diagnostics.Add((New-Diagnostic -Severity Info -Rule $script:RuleIds['ChannelWorker'] -Path $path -Message "Channel worker baseline entry is stale: no thread::spawn + thread::sleep remains. Remove it after review." -Baseline $true))
+        if (-not $occurrence.OwnerCancellation) {
+            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line $occurrence.FirstSpawn -Message "Channel worker uses thread::spawn + thread::sleep without an owner-bound stop token and cleanup path."))
         }
     }
 
@@ -684,23 +686,6 @@ try {
         }
     }
 
-    foreach ($occurrence in $channelOccurrences) {
-        if (-not $channelBaseline.ContainsKey($occurrence.Path)) {
-            continue
-        }
-        $entryBaseline = $channelBaseline[$occurrence.Path]
-        if ($occurrence.SpawnCount -gt $entryBaseline.Spawn -or
-            $occurrence.SleepCount -gt $entryBaseline.Sleep) {
-            continue
-        }
-        $addedWorkerLine = @($occurrence.SpawnLines + $occurrence.SleepLines | Where-Object {
-                Test-AddedOccurrence -Path $occurrence.Path -Line $_ -AddedLines $addedLines
-            } | Select-Object -First 1)
-        if ($addedWorkerLine.Count -gt 0) {
-            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line ([int]$addedWorkerLine[0]) -Message "This diff adds thread::spawn/thread::sleep while the total stays within the count baseline; owner/cancellation review requires a new fingerprint."))
-        }
-    }
-
     foreach ($occurrence in $sliceOccurrences) {
         $current = if ($sliceCounts.ContainsKey($occurrence.Path)) { [int]$sliceCounts[$occurrence.Path] } else { 0 }
         $baseline = if ($contractBaseline.ContainsKey($occurrence.Path)) { [int]$contractBaseline[$occurrence.Path] } else { 0 }
@@ -734,12 +719,12 @@ try {
             })
     }
     if ($errors.Count -gt 0) {
-        $modeHint = if ($Strict) { "allowlisted debt is blocking in -Strict mode" } else { "new findings are not allowlisted" }
+        $modeHint = if ($Strict) { "review warnings are blocking in -Strict mode" } else { "unreviewed findings are blocking" }
         Write-Error ("Runtime safety policy failed with {0} blocking diagnostic(s): {1}." -f $errors.Count, $modeHint)
         exit 1
     }
 
-    $mode = if ($Strict) { "strict" } else { "baseline-aware" }
+    $mode = if ($Strict) { "strict" } else { "standard" }
     Write-Output ("Runtime safety policy passed ({0} mode): {1} warning(s), {2} informational diagnostic(s)." -f $mode, $warnings.Count, @($ordered | Where-Object { $_.Severity -eq "Info" }).Count)
 }
 finally {

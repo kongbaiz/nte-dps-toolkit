@@ -386,12 +386,17 @@ fn submit(
     state
         .submit_empty_curtain_operation(character, operation)
         .map(|_| ())
-        .map_err(|ModsPluginSubmitError::Busy| {
-            CommandError::empty_curtain(
+        .map_err(|error| match error {
+            ModsPluginSubmitError::Busy => CommandError::empty_curtain(
                 "empty_curtain_operation_busy",
                 "Mod loader is busy; try again shortly",
                 Vec::new(),
-            )
+            ),
+            ModsPluginSubmitError::Disconnected => CommandError::empty_curtain(
+                "empty_curtain_operation_unavailable",
+                "Mod loader is unavailable; restart the Mod loader and try again",
+                Vec::new(),
+            ),
         })
 }
 

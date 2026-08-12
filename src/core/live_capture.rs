@@ -131,6 +131,11 @@ pub struct CutRound {
     pub source: CaptureQualitySource,
 }
 
+struct DetachedAbyssRound {
+    state: CombatState,
+    source: CaptureQualitySource,
+}
+
 struct ReplayTask {
     stop: Arc<AtomicBool>,
     thread: thread::JoinHandle<()>,
@@ -152,7 +157,7 @@ struct LiveCaptureInner {
     resources: LiveCaptureResources,
     last_outgoing_hit_at: Mutex<Option<Instant>>,
     pending_abyss_archives: Mutex<VecDeque<PendingHistoryArchive>>,
-    last_abyss_archive_hits_generation: AtomicU64,
+    dropped_history_archives: AtomicU64,
 }
 
 impl LiveCaptureService {
@@ -175,7 +180,7 @@ impl LiveCaptureService {
             resources,
             last_outgoing_hit_at: Mutex::new(None),
             pending_abyss_archives: Mutex::new(VecDeque::new()),
-            last_abyss_archive_hits_generation: AtomicU64::new(u64::MAX),
+            dropped_history_archives: AtomicU64::new(0),
         }))
     }
 
@@ -354,10 +359,15 @@ impl LiveCaptureService {
             pending.push_front(archive);
         }
         if dropped > 0 {
+            self.0.note_dropped_history_archives(dropped as u64);
             eprintln!(
                 "automatic Abyss History retry queue exceeded {MAX_PENDING_ABYSS_ARCHIVES} entries; discarded {dropped} newest archive(s) while restoring older failed retries"
             );
         }
+    }
+
+    pub fn dropped_history_archives(&self) -> u64 {
+        self.0.dropped_history_archives.load(Ordering::Acquire)
     }
 
     /// Atomically installs a fresh combat state and returns the detached round.
@@ -389,9 +399,6 @@ impl LiveCaptureService {
             .last_outgoing_hit_at
             .lock()
             .unwrap_or_else(|poison| poison.into_inner()) = None;
-        self.0
-            .last_abyss_archive_hits_generation
-            .store(u64::MAX, Ordering::Release);
         self.0.bump_packet_session();
         self.0.bump_revision();
         Some(CutRound {
@@ -418,9 +425,6 @@ impl LiveCaptureService {
             .last_outgoing_hit_at
             .lock()
             .unwrap_or_else(|poison| poison.into_inner()) = None;
-        self.0
-            .last_abyss_archive_hits_generation
-            .store(u64::MAX, Ordering::Release);
         self.0.bump_packet_session();
         self.0.bump_revision();
     }
@@ -449,9 +453,6 @@ impl LiveCaptureService {
             .last_outgoing_hit_at
             .lock()
             .unwrap_or_else(|poison| poison.into_inner()) = has_outgoing.then_some(Instant::now());
-        self.0
-            .last_abyss_archive_hits_generation
-            .store(u64::MAX, Ordering::Release);
         self.0.bump_packet_session();
         self.0.bump_revision();
     }
@@ -801,53 +802,72 @@ impl LiveCaptureInner {
         self.packet_revision.fetch_add(1, Ordering::AcqRel);
     }
 
-    /// Queues the current Abyss round only when its hit content changed since
-    /// the last archive. Dedupe uses the monotonic `state.hits_generation`
-    /// because the Abyss reducer can reset the party generations while the
-    /// global generation keeps advancing; summing both can collide across two
-    /// rounds and suppress a later archive.
-    fn queue_abyss_archive_if_changed(&self, state: &CombatState) {
+    fn note_dropped_history_archives(&self, count: u64) {
+        self.dropped_history_archives
+            .fetch_add(count, Ordering::AcqRel);
+        self.status
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .issue = Some(LiveCaptureIssue::RuntimeWarning);
+        self.bump_revision();
+    }
+
+    /// Detaches the current Abyss round only when its hit content changed since
+    /// the last archive. The expensive HistoryCombatDetails conversion happens
+    /// after the event gate and state lock are released.
+    ///
+    /// Taking the state makes the boundary itself the dedupe barrier: after a
+    /// round is detached, the replacement state contains no old Abyss hits.
+    fn detach_abyss_round_if_changed(&self, state: &mut CombatState) -> Option<DetachedAbyssRound> {
         let has_abyss_hits =
             !state.abyss.first_half.hits.is_empty() || !state.abyss.second_half.hits.is_empty();
         if !has_abyss_hits {
-            return;
+            return None;
         }
-        let hits_generation = state.hits_generation;
-        if hits_generation
-            == self
-                .last_abyss_archive_hits_generation
-                .load(Ordering::Acquire)
-        {
-            return;
-        }
-        let Some(details) = HistoryCombatDetails::from_state(state) else {
-            return;
-        };
         let source = *self
             .quality_source
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
+        let detached = std::mem::take(state);
+        *self
+            .last_outgoing_hit_at
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = None;
+        self.bump_packet_session();
+        Some(DetachedAbyssRound {
+            state: detached,
+            source,
+        })
+    }
+
+    fn queue_detached_abyss_round(&self, detached: DetachedAbyssRound) {
+        let Some(details) = HistoryCombatDetails::from_state(&detached.state) else {
+            return;
+        };
         let mut pending = self
             .pending_abyss_archives
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         if pending.len() >= MAX_PENDING_ABYSS_ARCHIVES {
+            drop(pending);
+            self.note_dropped_history_archives(1);
             eprintln!(
                 "automatic Abyss History retry queue is full at {MAX_PENDING_ABYSS_ARCHIVES} entries; newest round was not queued"
             );
             return;
         }
-        self.last_abyss_archive_hits_generation
-            .store(hits_generation, Ordering::Release);
-        pending.push_back(PendingHistoryArchive { details, source });
+        pending.push_back(PendingHistoryArchive {
+            details,
+            source: detached.source,
+        });
     }
 
     fn process_event(&self, event: EngineEvent) {
-        let _gate = self
-            .event_gate
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        let signal = {
+        let (signal, detached_abyss_round) = {
+            let _gate = self
+                .event_gate
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let mut state = self
                 .state
                 .lock()
@@ -859,9 +879,9 @@ impl LiveCaptureInner {
             );
             let post_event_abyss_archive = matches!(&event, EngineEvent::CaptureStopped)
                 || matches!(&event, EngineEvent::Abyss(AbyssEvent::Exit { .. }));
-            if pre_event_abyss_boundary {
-                self.queue_abyss_archive_if_changed(&state);
-            }
+            let mut detached_abyss_round = pre_event_abyss_boundary
+                .then(|| self.detach_abyss_round_if_changed(&mut state))
+                .flatten();
             if let EngineEvent::Hit(hit) = &event {
                 if hit.direction.is_outgoing() {
                     *self
@@ -872,11 +892,14 @@ impl LiveCaptureInner {
                 }
             }
             let signal = apply_engine_event(&mut state, event);
-            if post_event_abyss_archive {
-                self.queue_abyss_archive_if_changed(&state);
+            if post_event_abyss_archive && detached_abyss_round.is_none() {
+                detached_abyss_round = self.detach_abyss_round_if_changed(&mut state);
             }
-            signal
+            (signal, detached_abyss_round)
         };
+        if let Some(detached_abyss_round) = detached_abyss_round {
+            self.queue_detached_abyss_round(detached_abyss_round);
+        }
 
         let affects_packet_projection = matches!(
             &signal,
@@ -1480,6 +1503,7 @@ mod tests {
                 .damage,
             MAX_PENDING_ABYSS_ARCHIVES as f64
         );
+        assert_eq!(service.dropped_history_archives(), 4);
     }
 
     #[test]
@@ -1508,6 +1532,7 @@ mod tests {
             service.take_pending_abyss_archives().len(),
             MAX_PENDING_ABYSS_ARCHIVES
         );
+        assert_eq!(service.dropped_history_archives(), 5);
     }
 
     #[test]
