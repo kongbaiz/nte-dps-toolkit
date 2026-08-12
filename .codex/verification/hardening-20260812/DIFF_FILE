@@ -1,14 +1,82 @@
-warning: in the working copy of '.codex/verification/hardening-20260812/.baseline-source.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.codex/verification/hardening-20260812/.baseline-source.md', LF will be replaced by CRLF the next time Git touches it
 warning: in the working copy of '.codex/verification/hardening-20260812/MODIFIED_FILE', LF will be replaced by CRLF the next time Git touches it
-diff --git a/.codex/verification/hardening-20260812/.baseline-source.txt b/.codex/verification/hardening-20260812/MODIFIED_FILE
-index f1ef190..1ba09ec 100644
---- a/.codex/verification/hardening-20260812/.baseline-source.txt
+diff --git a/.codex/verification/hardening-20260812/.baseline-source.md b/.codex/verification/hardening-20260812/MODIFIED_FILE
+index 70786ed..fd0780b 100644
+--- a/.codex/verification/hardening-20260812/.baseline-source.md
 +++ b/.codex/verification/hardening-20260812/MODIFIED_FILE
-@@ -1,4 +1,5 @@
- branch=fix/a-group-hardening
- field=version_sync_0_3_8
--state=BASELINE
--value=desktop-version-0.3.7
-+state=MODIFIED
-+value=desktop-version-0.3.8
-+
+@@ -1,52 +1,46 @@
+-# NTE DPS TOOL v0.3.7
++# NTE DPS TOOL v0.3.8
+
+ ## 简体中文
+
+ ### 主要更新
+
+-- 使用 React 替换 egui 作为桌面 UI，大幅降低运行时内存占用。
+-- 新增 Mod 市场，可从市场下载 Mod，为软件扩展更多功能。
++- 新增新版本角色的解析。
++- 更新新版本深渊数据，包括楼层、怪物和相关展示内容。
+
+-### Issue 修复
++### 问题修复
+
+-- [#30](https://github.com/kongbaiz/nte-dps-toolkit/issues/30)：查看历史记录时，新的伤害会自动返回实时数据；同类深渊记录切换时会保留当前上／下半层选择。
+-- [#31](https://github.com/kongbaiz/nte-dps-toolkit/issues/31)：移除大型 PCAPNG 回放可能触发异常的 egui/wgpu 渲染路径，并对回放事件流进行有界处理。
+-- [#32](https://github.com/kongbaiz/nte-dps-toolkit/issues/32)：历史记录显示、排序和文件名改用首条伤害或受击记录的时间，不再使用导入或保存时间。
+-- [#34](https://github.com/kongbaiz/nte-dps-toolkit/issues/34)：保存并恢复各窗口的位置，包含副显示器坐标。
+-- [#36](https://github.com/kongbaiz/nte-dps-toolkit/issues/36)：使用伤害记录附近的角色证据修正多角色数据中的伤害归属。
+-- [#37](https://github.com/kongbaiz/nte-dps-toolkit/issues/37)：修正服务端 HP 同步值被误计为额外伤害的问题，仅在匹配唯一明确时合并或校准伤害。
+-- [#38](https://github.com/kongbaiz/nte-dps-toolkit/issues/38)：Mod 工坊支持手动选择游戏安装目录，可用于台服等非标准安装位置。
++- 优化 Main DPS、历史记录和详情投影，减少高频路径中的完整状态／历史深拷贝与重复扫描。
++- 修复手动切分战斗、深渊重启／层间切换／退出及抓包停止归档后，Empty Curtain 装备、角色快照和 generation 丢失的问题。
++- 修复 Replay 播放期间误创建新 Round，以及 Mod loader worker 断开时 CLI 进程 panic 的问题。
++- 修复部分战斗归因过滤和 Gameplay Effect 解析兼容性问题。
++- 同步桌面端、Tauri 和前端版本号至 0.3.8，避免更新检查重复提示。
+
+ ## English
+
+ ### Highlights
+
+-- Replaced egui with React for the desktop UI, significantly reducing runtime memory usage.
+-- Added the Mod Market, where Mods can be downloaded to extend the application with more features.
++- Added parsing support for characters introduced in the latest game version.
++- Updated the latest Abyss floor, monster, and related display data.
+
+ ### Issue fixes
+
+-- [#30](https://github.com/kongbaiz/nte-dps-toolkit/issues/30): New damage now returns the view from history to live data, while switching between comparable Abyss records preserves the selected half.
+-- [#31](https://github.com/kongbaiz/nte-dps-toolkit/issues/31): Removed the egui/wgpu rendering path that could fail during large PCAPNG replays and bounded the replay event pipeline.
+-- [#32](https://github.com/kongbaiz/nte-dps-toolkit/issues/32): History display, sorting, and file names now use the earliest damage or incoming-hit timestamp instead of the import or save time.
+-- [#34](https://github.com/kongbaiz/nte-dps-toolkit/issues/34): Window positions are now saved and restored, including coordinates on secondary monitors.
+-- [#36](https://github.com/kongbaiz/nte-dps-toolkit/issues/36): Damage ownership in mixed-character data is corrected using character evidence adjacent to each damage record.
+-- [#37](https://github.com/kongbaiz/nte-dps-toolkit/issues/37): Fixed server HP synchronization values being counted as extra damage; merging or calibration now occurs only for a single unambiguous match.
+-- [#38](https://github.com/kongbaiz/nte-dps-toolkit/issues/38): Mod Studio now supports manually selecting the game installation directory for Taiwan and other non-standard installations.
++- Reduced full-state/history copies and repeated scans in high-frequency Main DPS, history, and detail projections.
++- Preserved Empty Curtain equipment, character snapshots, and generations across manual round cuts, Abyss restarts/transitions/exits, and capture-stop archives.
++- Prevented new rounds during Replay playback and avoided CLI panics when the Mod loader worker disconnects.
++- Fixed compatibility issues in combat attribution filters and Gameplay Effect parsing.
++- Synchronized the desktop, Tauri, and frontend versions to 0.3.8 to prevent repeated update prompts.
+
+ ## 日本語
+
+ ### 主な更新
+
+-- デスクトップ UI を egui から React に置き換え、実行時のメモリ使用量を大幅に削減しました。
+-- Mod マーケットを追加し、Mod をダウンロードしてアプリの機能を拡張できるようになりました。
++- 最新バージョンで追加されたキャラクターの解析に対応しました。
++- 最新の深淵の階層、モンスター、および関連表示データを更新しました。
+
+ ### Issue の修正
+
+-- [#30](https://github.com/kongbaiz/nte-dps-toolkit/issues/30)：履歴表示中に新しいダメージを検出するとリアルタイム表示へ戻り、同種の深淵履歴を切り替えても選択中の前半／後半を維持するようにしました。
+-- [#31](https://github.com/kongbaiz/nte-dps-toolkit/issues/31)：大容量 PCAPNG の再生時に異常を起こす可能性があった egui/wgpu の描画経路を削除し、再生イベント処理を上限付きにしました。
+-- [#32](https://github.com/kongbaiz/nte-dps-toolkit/issues/32)：履歴の表示、並び順、ファイル名に、インポート時刻や保存時刻ではなく最初の与ダメージまたは被ダメージ時刻を使用するようにしました。
+-- [#34](https://github.com/kongbaiz/nte-dps-toolkit/issues/34)：各ウィンドウの位置を保存・復元し、サブモニター上の座標にも対応しました。
+-- [#36](https://github.com/kongbaiz/nte-dps-toolkit/issues/36)：各ダメージレコード周辺のキャラクター情報を使用し、複数キャラクターが混在するデータでのダメージ帰属を修正しました。
+-- [#37](https://github.com/kongbaiz/nte-dps-toolkit/issues/37)：サーバー HP の同期値が追加ダメージとして誤集計される問題を修正し、一意に対応付けられる場合のみダメージを統合または補正するようにしました。
+-- [#38](https://github.com/kongbaiz/nte-dps-toolkit/issues/38)：Mod 工房でゲームのインストール先を手動選択できるようにし、台湾版などの標準外の配置に対応しました。
++- Main DPS、履歴、詳細表示の高頻度投影で、CombatState／履歴全体のコピーと重複スキャンを削減しました。
++- 手動ラウンド分割、深淵の再開／階層切り替え／退出、キャプチャ停止時のアーカイブ後も、Empty Curtain の装備・キャラクタースナップショット・generation を保持するようにしました。
++- Replay 再生中の誤った新規ラウンド作成を防ぎ、Mod loader worker の切断時に CLI が panic しないようにしました。
++- 戦闘帰属フィルターと Gameplay Effect 解析の互換性問題を修正しました。
++- デスクトップ、Tauri、フロントエンドのバージョンを 0.3.8 に統一し、更新通知が繰り返し表示される問題を修正しました。
