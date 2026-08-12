@@ -73,7 +73,7 @@ describe("main DPS detail model", () => {
 
 function fakeSnapshot(ids: string[], totalHits: number): MainDpsDetailSnapshot {
   return {
-    contractVersion: 3,
+    contractVersion: 4,
     generation: "1",
     kind: "team",
     abyssHalf: null,
@@ -113,7 +113,11 @@ function fakeSnapshot(ids: string[], totalHits: number): MainDpsDetailSnapshot {
       separateReactionDamage: false,
     },
     qteSummaries: [],
+    qteSummaryTotalCount: 0,
+    qteSummariesTruncated: false,
     skills: [],
+    skillTotalCount: 0,
+    skillsTruncated: false,
     totalHits,
     totalDamage: 0,
     maxRowDamage: 1,

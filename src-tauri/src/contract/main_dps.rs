@@ -5,14 +5,14 @@ use nte_dps_tool::{
     engine::model::{CharacterInfo, DamageAttributionSummary},
     storage::{
         config::{AccentColor, ThemePreset, UiConfig, UiDensity},
-        history::{HistoryRecord, MAX_HISTORY_RECORDS},
+        history::MAX_HISTORY_RECORDS,
         i18n::Language,
     },
 };
 
 use crate::{
     contract::CaptureSnapshot,
-    state::{AppState, MainDpsReadout},
+    state::{AppState, HistoryRoundIndex, MainDpsReadout},
 };
 
 pub(crate) const MAIN_DPS_CONTRACT_VERSION: u32 = 4;
@@ -79,9 +79,9 @@ impl MainDpsSnapshot {
         let processing_paused = state.main_processing_paused();
         let (paused_pending_events, paused_debug_packets) = state.main_paused_event_counts();
         let always_on_top = state.window_always_on_top(crate::state::DesktopWindowKind::MainDps);
-        let rounds = state.main_round_records();
+        let rounds = state.main_round_index();
         let selected_round_id = state.main_selected_round_id();
-        let round_snapshots = round_snapshots(&rounds, selected_round_id.as_deref());
+        let round_snapshots = round_snapshots(rounds.as_ref(), selected_round_id.as_deref());
         let MainDpsReadout {
             hud,
             has_hits,
@@ -89,7 +89,7 @@ impl MainDpsSnapshot {
             damage_attribution,
             separate_reaction_damage,
             character_durations,
-        } = state.main_dps_readout(&rounds, selected_round_id.as_deref());
+        } = state.main_dps_readout(selected_round_id.as_deref());
         let resources = state.live_capture_resources();
         let data_empty = matches!(hud.data_state, HudDataState::Empty);
         let abyss_detected = hud.status.abyss_detected;
@@ -136,15 +136,15 @@ impl MainDpsSnapshot {
                 can_start_capture: !capture_active && !replay_running,
                 can_stop_capture: capture_active || replay_running,
                 can_reset: live_round_selected && has_hits,
-                can_start_new_round: live_round_selected
-                    && matches!(
-                        capture_status.phase,
-                        nte_dps_tool::core::live_capture::LiveCapturePhase::Running
-                    )
-                    && !processing_paused
-                    && !game_paused
-                    && !abyss_detected
-                    && has_hits,
+                can_start_new_round: can_start_new_round(
+                    capture_status.phase,
+                    replay_running,
+                    live_round_selected,
+                    processing_paused,
+                    game_paused,
+                    abyss_detected,
+                    has_hits,
+                ),
                 can_pause: live_round_selected
                     && (capture_active || replay_running)
                     && !processing_paused,
@@ -415,19 +415,19 @@ pub(crate) struct MainDpsResetResult {
 }
 
 fn round_snapshots(
-    records: &[HistoryRecord],
+    records: &[HistoryRoundIndex],
     selected_round_id: Option<&str>,
 ) -> Vec<MainDpsRoundSnapshot> {
     let mut visible = records
         .iter()
-        .filter(|record| record.details.is_some())
+        .filter(|record| record.has_details)
         .take(MAX_HISTORY_RECORDS)
         .collect::<Vec<_>>();
     if let Some(selected_round_id) = selected_round_id
         && !visible.iter().any(|record| record.id == selected_round_id)
         && let Some(selected) = records
             .iter()
-            .find(|record| record.id == selected_round_id && record.details.is_some())
+            .find(|record| record.id == selected_round_id && record.has_details)
     {
         if visible.len() == MAX_HISTORY_RECORDS {
             visible.pop();
@@ -441,8 +441,8 @@ fn round_snapshots(
         .map(|record| MainDpsRoundSnapshot {
             id: Some(record.id.clone()),
             live: false,
-            display_time: Some(record.display_time()),
-            abyss_floor: record.summary.abyss.floor,
+            display_time: Some(record.display_time.clone()),
+            abyss_floor: record.abyss_floor,
         })
         .chain(std::iter::once(MainDpsRoundSnapshot {
             id: None,
@@ -451,6 +451,27 @@ fn round_snapshots(
             abyss_floor: None,
         }))
         .collect()
+}
+
+fn can_start_new_round(
+    capture_phase: nte_dps_tool::core::live_capture::LiveCapturePhase,
+    replay_running: bool,
+    live_round_selected: bool,
+    processing_paused: bool,
+    game_paused: bool,
+    abyss_detected: bool,
+    has_hits: bool,
+) -> bool {
+    live_round_selected
+        && matches!(
+            capture_phase,
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Running
+        )
+        && !replay_running
+        && !processing_paused
+        && !game_paused
+        && !abyss_detected
+        && has_hits
 }
 
 fn theme_preset_id(value: ThemePreset) -> &'static str {
@@ -520,16 +541,8 @@ mod tests {
 
     #[test]
     fn round_snapshots_follow_previous_next_chronology() {
-        let newest = HistoryRecord {
-            id: "newest".to_owned(),
-            details: Some(Default::default()),
-            ..Default::default()
-        };
-        let older = HistoryRecord {
-            id: "older".to_owned(),
-            details: Some(Default::default()),
-            ..Default::default()
-        };
+        let newest = test_round("newest", true);
+        let older = test_round("older", true);
 
         let rounds = round_snapshots(&[newest, older], None);
         assert_eq!(rounds.len(), 3);
@@ -542,11 +555,7 @@ mod tests {
     #[test]
     fn round_snapshots_cap_history_and_always_append_one_live_row() {
         let records = (0..=MAX_HISTORY_RECORDS)
-            .map(|index| HistoryRecord {
-                id: format!("record-{index}"),
-                details: Some(Default::default()),
-                ..Default::default()
-            })
+            .map(|index| test_round(&format!("record-{index}"), true))
             .collect::<Vec<_>>();
 
         let rounds = round_snapshots(&records, None);
@@ -570,15 +579,7 @@ mod tests {
     fn round_snapshots_skip_history_without_details_before_reversing() {
         let missing_details_id = format!("record-{}", MAX_HISTORY_RECORDS / 2);
         let records = (0..=MAX_HISTORY_RECORDS)
-            .map(|index| HistoryRecord {
-                id: format!("record-{index}"),
-                details: if index == MAX_HISTORY_RECORDS / 2 {
-                    None
-                } else {
-                    Some(Default::default())
-                },
-                ..Default::default()
-            })
+            .map(|index| test_round(&format!("record-{index}"), index != MAX_HISTORY_RECORDS / 2))
             .collect::<Vec<_>>();
 
         let rounds = round_snapshots(&records, None);
@@ -597,11 +598,7 @@ mod tests {
     #[test]
     fn round_snapshots_keep_the_selected_overflow_record_visible() {
         let records = (0..=MAX_HISTORY_RECORDS)
-            .map(|index| HistoryRecord {
-                id: format!("record-{index}"),
-                details: Some(Default::default()),
-                ..Default::default()
-            })
+            .map(|index| test_round(&format!("record-{index}"), true))
             .collect::<Vec<_>>();
         let selected_id = format!("record-{MAX_HISTORY_RECORDS}");
 
@@ -614,6 +611,32 @@ mod tests {
                 .any(|row| row.id.as_deref() == Some(selected_id.as_str()))
         );
         assert!(rounds.last().is_some_and(|row| row.live));
+    }
+
+    #[test]
+    fn replay_is_read_only_for_manual_new_round_actions() {
+        assert!(!can_start_new_round(
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Running,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+        ));
+        assert!(can_start_new_round(
+            nte_dps_tool::core::live_capture::LiveCapturePhase::Running,
+            false,
+            true,
+            false,
+            false,
+            false,
+            true,
+        ));
+    }
+
+    fn test_round(id: &str, has_details: bool) -> HistoryRoundIndex {
+        HistoryRoundIndex::for_test(id, has_details)
     }
 
     #[test]

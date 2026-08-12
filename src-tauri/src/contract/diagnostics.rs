@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::state::AppState;
 
-pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 1;
+pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -36,6 +36,7 @@ pub(crate) struct DiagnosticsCaptureSnapshot {
     pub phase: &'static str,
     pub replay_running: bool,
     pub active_filter: Option<String>,
+    pub dropped_history_archives: String,
     pub raw_capture: Option<DiagnosticsRawCaptureSnapshot>,
 }
 
@@ -161,6 +162,7 @@ impl DiagnosticsSnapshot {
                 phase: capture_phase_code(phase),
                 replay_running: capture_input.replay_running,
                 active_filter: capture_input.active_capture_filter,
+                dropped_history_archives: capture_input.dropped_history_archives.to_string(),
                 raw_capture: raw_capture.map(DiagnosticsRawCaptureSnapshot::from),
             },
             environment: state
@@ -334,7 +336,10 @@ mod tests {
         let value = serde_json::to_value(result).expect("action result serializes");
 
         assert_eq!(value["performed"], false);
-        assert_eq!(value["snapshot"]["contractVersion"], 1);
+        assert_eq!(
+            value["snapshot"]["contractVersion"],
+            DIAGNOSTICS_CONTRACT_VERSION
+        );
         assert!(value["snapshot"]["qualityGeneration"].is_string());
     }
 }

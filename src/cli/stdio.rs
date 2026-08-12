@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crossbeam_channel::{Receiver, Sender, bounded, select, tick, unbounded};
+use crossbeam_channel::{Receiver, Sender, bounded, never, select, tick, unbounded};
 use serde_json::Value;
 
 use crate::api::PROTOCOL_VERSION;
@@ -357,6 +357,32 @@ impl Runtime {
             ),
         };
         send(outbound, message)
+    }
+
+    fn fail_pending_equipment_requests(&mut self, outbound: &Sender<Value>) -> bool {
+        let pending = std::mem::take(&mut self.pending_equipment_requests);
+        if pending.is_empty() {
+            eprintln!(
+                "warning: Mod loader worker disconnected; no equipment requests were pending"
+            );
+            return false;
+        }
+        eprintln!(
+            "warning: Mod loader worker disconnected; failing {} pending equipment request(s)",
+            pending.len()
+        );
+        for (_, id) in pending {
+            if outbound
+                .send(failure(
+                    id,
+                    RpcError::domain("MODS_PLUGIN_UNAVAILABLE", "Mod loader is unavailable"),
+                ))
+                .is_err()
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn start_capture(&mut self, params: CaptureStartParams) -> Result<String, CoreError> {
@@ -873,7 +899,7 @@ fn core_loop(
     mut runtime: Runtime,
 ) {
     let battle_summary_tick = tick(BATTLE_SUMMARY_INTERVAL);
-    let equipment_response_rx = runtime.mods_plugin.response_receiver();
+    let mut equipment_response_rx = runtime.mods_plugin.response_receiver();
     loop {
         select! {
             recv(writer_event_rx) -> _ => {
@@ -886,10 +912,18 @@ fn core_loop(
                 }
             },
             recv(equipment_response_rx) -> response => {
-                let response = response
-                    .expect("Mod loader worker must remain alive while Core is running");
-                if runtime.process_equipment_response(response, outbound_tx) {
-                    return;
+                match response {
+                    Ok(response) => {
+                        if runtime.process_equipment_response(response, outbound_tx) {
+                            return;
+                        }
+                    }
+                    Err(_) => {
+                        if runtime.fail_pending_equipment_requests(outbound_tx) {
+                            return;
+                        }
+                        equipment_response_rx = never();
+                    }
                 }
             },
             recv(battle_summary_tick) -> _ => runtime.flush_battle_summary(),
@@ -1046,6 +1080,13 @@ fn handle_request(
                             "MODS_PLUGIN_BUSY",
                             "Mod loader already has the maximum number of pending requests",
                         ),
+                    ),
+                ),
+                Err(ModsPluginSubmitError::Disconnected) => send(
+                    outbound,
+                    failure(
+                        id,
+                        RpcError::domain("MODS_PLUGIN_UNAVAILABLE", "Mod loader is unavailable"),
                     ),
                 ),
             }
@@ -1845,6 +1886,48 @@ mod tests {
             &outbound,
         ));
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn disconnected_mod_loader_fails_pending_equipment_requests() {
+        let resources = RuntimeResources::load().expect("runtime resources");
+        let (engine_sender, _) = unbounded();
+        let (latest_battle, _) = latest_message_channel();
+        let mut runtime = Runtime::new(
+            resources,
+            engine_sender,
+            latest_battle,
+            PathBuf::from("logs"),
+        );
+        runtime
+            .pending_equipment_requests
+            .insert(1, serde_json::json!("rpc-1"));
+        runtime
+            .pending_equipment_requests
+            .insert(2, serde_json::json!("rpc-2"));
+        let (outbound, receiver) = unbounded();
+
+        assert!(!runtime.fail_pending_equipment_requests(&outbound));
+        assert!(runtime.pending_equipment_requests.is_empty());
+        let messages = [
+            receiver.recv().expect("first unavailable response"),
+            receiver.recv().expect("second unavailable response"),
+        ];
+        assert!(messages.iter().all(|message| {
+            message["error"]["data"]["domain_code"] == "MODS_PLUGIN_UNAVAILABLE"
+        }));
+        let mut ids = [
+            messages[0]["id"]
+                .as_str()
+                .expect("first response ID")
+                .to_owned(),
+            messages[1]["id"]
+                .as_str()
+                .expect("second response ID")
+                .to_owned(),
+        ];
+        ids.sort();
+        assert_eq!(ids, ["rpc-1", "rpc-2"]);
     }
 
     #[test]

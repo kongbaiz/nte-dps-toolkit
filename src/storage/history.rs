@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Local, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 
 use crate::engine::model::{
     AbyssHalf, CombatSessionCharacterSummary, CombatSessionSkillSummary, CombatSessionSummary,
@@ -345,6 +345,58 @@ pub struct HistoryLoadResult {
     pub skipped_files: usize,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct HistoryIndexRecord {
+    pub path: PathBuf,
+    pub id: String,
+    pub display_time: String,
+    pub abyss_floor: Option<u32>,
+    pub has_details: bool,
+    effective_timestamp: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct HistoryIndexLoadResult {
+    pub records: Vec<HistoryIndexRecord>,
+    pub skipped_files: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(default)]
+struct HistoryIndexEnvelope {
+    version: u32,
+    id: String,
+    saved_at: DateTime<Utc>,
+    recorded_at: Option<DateTime<Utc>>,
+    summary: HistoryIndexSummary,
+    details: Option<IgnoredAny>,
+}
+
+impl Default for HistoryIndexEnvelope {
+    fn default() -> Self {
+        Self {
+            version: HISTORY_RECORD_VERSION,
+            id: String::new(),
+            saved_at: DateTime::<Utc>::UNIX_EPOCH,
+            recorded_at: None,
+            summary: HistoryIndexSummary::default(),
+            details: None,
+        }
+    }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct HistoryIndexSummary {
+    abyss: HistoryIndexAbyssSummary,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct HistoryIndexAbyssSummary {
+    floor: Option<u32>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HistoryComparison {
     pub left_id: String,
@@ -387,6 +439,61 @@ pub fn load_history() -> HistoryLoadResult {
     load_history_from_dir(&history_dir())
 }
 
+pub fn load_history_record_from_path(path: &Path) -> Result<HistoryRecord, String> {
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("History record path is not a file".to_owned());
+    }
+    if metadata.len() > MAX_HISTORY_IMPORT_BYTES {
+        return Err("History record exceeds the supported file size".to_owned());
+    }
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    parse_history_record(&text, path)
+}
+
+pub fn load_history_index() -> HistoryIndexLoadResult {
+    load_history_index_from_dir(&history_dir())
+}
+
+pub fn load_history_index_from_dir(directory: &Path) -> HistoryIndexLoadResult {
+    let mut result = HistoryIndexLoadResult::default();
+    let Ok(entries) = fs::read_dir(directory) else {
+        return result;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let parsed = fs::metadata(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|metadata| {
+                if !metadata.is_file() {
+                    return Err("History record path is not a file".to_owned());
+                }
+                if metadata.len() > MAX_HISTORY_IMPORT_BYTES {
+                    return Err("History record exceeds the supported file size".to_owned());
+                }
+                fs::read_to_string(&path).map_err(|error| error.to_string())
+            })
+            .and_then(|text| parse_history_index(&text, &path));
+        match parsed {
+            Ok(mut record) => {
+                record.path = path;
+                result.records.push(record);
+            }
+            Err(_) => result.skipped_files += 1,
+        }
+    }
+    result.records.sort_by(|left, right| {
+        right
+            .effective_timestamp
+            .cmp(&left.effective_timestamp)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    result
+}
+
 pub fn load_history_from_dir(directory: &Path) -> HistoryLoadResult {
     let mut result = HistoryLoadResult::default();
     let Ok(entries) = fs::read_dir(directory) else {
@@ -397,10 +504,7 @@ pub fn load_history_from_dir(directory: &Path) -> HistoryLoadResult {
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        match fs::read_to_string(&path)
-            .map_err(|error| error.to_string())
-            .and_then(|text| parse_history_record(&text, &path))
-        {
+        match load_history_record_from_path(&path) {
             Ok(record) => result.records.push(record),
             Err(_) => result.skipped_files += 1,
         }
@@ -597,6 +701,37 @@ fn parse_history_record(text: &str, path: &Path) -> Result<HistoryRecord, String
         details.validate()?;
     }
     Ok(record)
+}
+
+fn parse_history_index(text: &str, path: &Path) -> Result<HistoryIndexRecord, String> {
+    let record: HistoryIndexEnvelope =
+        serde_json::from_str(text).map_err(|error| error.to_string())?;
+    if record.version > HISTORY_RECORD_VERSION {
+        return Err(format!("Unsupported history version {}", record.version));
+    }
+    let id = if record.id.trim().is_empty() {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("legacy")
+            .to_owned()
+    } else {
+        record.id
+    };
+    if !valid_record_id(&id) {
+        return Err("Invalid history record ID".to_owned());
+    }
+    let effective_timestamp = record.recorded_at.unwrap_or(record.saved_at);
+    Ok(HistoryIndexRecord {
+        path: path.to_owned(),
+        id,
+        display_time: effective_timestamp
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        abyss_floor: record.summary.abyss.floor,
+        has_details: record.details.is_some(),
+        effective_timestamp,
+    })
 }
 
 fn valid_record_id(record_id: &str) -> bool {
@@ -813,6 +948,26 @@ mod tests {
             result.records[0].effective_timestamp(),
             &result.records[0].saved_at
         );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn history_index_reads_round_metadata_without_materializing_details() {
+        let directory = temp_history_dir("index_only");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("indexed.json"),
+            r#"{"version":1,"id":"indexed","saved_at":"2026-01-01T00:00:00Z","summary":{"abyss":{"floor":12}},"details":{"global_hits":[{"not":"decoded by the index"}]}}"#,
+        )
+        .unwrap();
+
+        let result = load_history_index_from_dir(&directory);
+
+        assert_eq!(result.skipped_files, 0);
+        assert_eq!(result.records.len(), 1);
+        assert_eq!(result.records[0].id, "indexed");
+        assert_eq!(result.records[0].abyss_floor, Some(12));
+        assert!(result.records[0].has_details);
         let _ = fs::remove_dir_all(directory);
     }
 

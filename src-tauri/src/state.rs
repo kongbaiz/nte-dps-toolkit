@@ -60,7 +60,8 @@ use nte_dps_tool::{
         },
     },
     platform::mods_plugin::{
-        ModsPluginClient, ModsPluginGameRegion, ModsPluginOperation, ModsPluginSubmitError,
+        ModsPluginClient, ModsPluginGameRegion, ModsPluginOperation, ModsPluginReceiveError,
+        ModsPluginSubmitError,
     },
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
@@ -70,8 +71,8 @@ use nte_dps_tool::{
             sanitize_timeline_bucket_seconds,
         },
         history::{
-            HistoryCombatDetails, HistoryRecord, load_history, save_summary,
-            save_summary_with_details,
+            HistoryCombatDetails, HistoryIndexRecord, HistoryRecord, load_history_index,
+            load_history_record_from_path, save_summary, save_summary_with_details,
         },
         i18n::Language,
         paths::{capture_log_dir, software_dir},
@@ -82,6 +83,7 @@ use nte_dps_tool::{
 use crate::{
     contract::{
         HudWindowSnapshot, TECHNICAL_CONTRACT_VERSION, TechnicalSnapshot,
+        main_dps_detail::MainDpsDetailSnapshot,
         settings::{CaptureDeviceSnapshot, SettingsSnapshot, UpdateSettingsSnapshot},
     },
     windows::hud::HUD_WINDOW_LABEL,
@@ -100,6 +102,7 @@ const HUD_CHARACTERS_HEIGHT: u16 = 116;
 const HUD_OPTIONAL_TITLE_HEIGHT: u16 = 22;
 const HUD_OPTIONAL_STATUS_HEIGHT: u16 = 22;
 const HUD_MINI_TIMELINE_HEIGHT: u16 = 42;
+const MAIN_DPS_DETAIL_CACHE_CAPACITY: usize = 4;
 
 #[derive(Clone)]
 pub(crate) struct AppState(Arc<AppStateInner>);
@@ -184,10 +187,64 @@ pub(crate) enum DesktopWindowKind {
     TeamDetails,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug)]
+pub(crate) struct HistoryRoundIndex {
+    path: PathBuf,
+    pub(crate) id: String,
+    pub(crate) display_time: String,
+    pub(crate) abyss_floor: Option<u32>,
+    pub(crate) has_details: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MainDpsDetailCacheKey {
+    revision: MainDpsStreamRevision,
+    kind: MainDpsDetailKind,
+    request: MainDpsDetailRequest,
+    offset: usize,
+    limit: usize,
+}
+
+struct MainDpsDetailCache {
+    key: MainDpsDetailCacheKey,
+    snapshot: Arc<MainDpsDetailSnapshot>,
+}
+
+impl HistoryRoundIndex {
+    fn from_storage(record: &HistoryIndexRecord) -> Self {
+        Self {
+            path: record.path.clone(),
+            id: record.id.clone(),
+            display_time: record.display_time.clone(),
+            abyss_floor: record.abyss_floor,
+            has_details: record.has_details,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(id: &str, has_details: bool) -> Self {
+        Self {
+            path: PathBuf::new(),
+            id: id.to_owned(),
+            display_time: id.to_owned(),
+            abyss_floor: None,
+            has_details,
+        }
+    }
+}
+
 struct MainRoundCache {
     revision: Option<u64>,
-    records: Vec<HistoryRecord>,
+    index: Arc<Vec<HistoryRoundIndex>>,
+}
+
+impl Default for MainRoundCache {
+    fn default() -> Self {
+        Self {
+            revision: None,
+            index: Arc::new(Vec::new()),
+        }
+    }
 }
 
 /// Owns UI-only presentation state and its revision protocol. Rust combat
@@ -204,6 +261,7 @@ struct PresentationState {
     selected_outgoing_revision: AtomicU64,
     character_detail_request: Mutex<MainDpsDetailRequest>,
     team_detail_request: Mutex<MainDpsDetailRequest>,
+    detail_cache: Mutex<Vec<MainDpsDetailCache>>,
     paused: Mutex<Option<PausedPresentation>>,
 }
 
@@ -232,6 +290,7 @@ fn next_live_abyss_selection(
     }
 }
 
+#[cfg(test)]
 fn selected_round_combat_state(
     rounds: &[HistoryRecord],
     selected_round_id: Option<&str>,
@@ -889,11 +948,17 @@ impl AppState {
     pub(crate) fn set_main_selected_round_id(&self, record_id: Option<String>) -> Result<(), ()> {
         let selection = match record_id {
             Some(record_id) => {
-                let state = selected_round_combat_state(
-                    &self.main_round_records(),
-                    Some(record_id.as_str()),
-                )
-                .ok_or(())?;
+                let index = self.main_round_index();
+                let record = index
+                    .iter()
+                    .find(|record| record.id == record_id && record.has_details)
+                    .and_then(|record| load_history_record_from_path(&record.path).ok())
+                    .ok_or(())?;
+                let state = record
+                    .details
+                    .as_ref()
+                    .map(HistoryCombatDetails::to_combat_state)
+                    .ok_or(())?;
                 Some(SelectedRoundPresentation {
                     record_id,
                     state: Arc::new(state),
@@ -922,7 +987,7 @@ impl AppState {
         Ok(())
     }
 
-    pub(crate) fn main_round_records(&self) -> Vec<HistoryRecord> {
+    pub(crate) fn main_round_index(&self) -> Arc<Vec<HistoryRoundIndex>> {
         let revision = self.history_revision();
         let mut cache = self
             .0
@@ -931,14 +996,20 @@ impl AppState {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         if cache.revision != Some(revision) {
-            cache.records = load_history().records;
+            let records = load_history_index().records;
+            cache.index = Arc::new(
+                records
+                    .iter()
+                    .map(HistoryRoundIndex::from_storage)
+                    .collect(),
+            );
             cache.revision = Some(revision);
         }
-        let records = cache.records.clone();
+        let index = Arc::clone(&cache.index);
         drop(cache);
         let stale_selection = self
             .main_selected_round_id()
-            .is_some_and(|id| !records.iter().any(|record| record.id == id));
+            .is_some_and(|id| !index.iter().any(|record| record.id == id));
         if stale_selection {
             self.0
                 .presentation
@@ -948,14 +1019,10 @@ impl AppState {
                 .take();
             self.bump_main_dps_revision();
         }
-        records
+        index
     }
 
-    pub(crate) fn main_dps_readout(
-        &self,
-        _rounds: &[HistoryRecord],
-        selected_round_id: Option<&str>,
-    ) -> MainDpsReadout {
+    pub(crate) fn main_dps_readout(&self, selected_round_id: Option<&str>) -> MainDpsReadout {
         let follow_live_half = selected_round_id.is_none() && !self.main_processing_paused();
         self.with_main_presented_state(|state| self.project_main_readout(state, follow_live_half))
     }
@@ -976,6 +1043,63 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner())
                 .clone(),
+        }
+    }
+
+    pub(crate) fn main_dps_detail_cache_get(
+        &self,
+        revision: MainDpsStreamRevision,
+        kind: MainDpsDetailKind,
+        request: &MainDpsDetailRequest,
+        offset: usize,
+        limit: usize,
+    ) -> Option<Arc<MainDpsDetailSnapshot>> {
+        let key = MainDpsDetailCacheKey {
+            revision,
+            kind,
+            request: request.clone(),
+            offset,
+            limit,
+        };
+        let cache = self
+            .0
+            .presentation
+            .detail_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        cache
+            .iter()
+            .find(|cache| cache.key == key)
+            .map(|cache| Arc::clone(&cache.snapshot))
+    }
+
+    pub(crate) fn main_dps_detail_cache_store(
+        &self,
+        revision: MainDpsStreamRevision,
+        kind: MainDpsDetailKind,
+        request: &MainDpsDetailRequest,
+        offset: usize,
+        limit: usize,
+        snapshot: Arc<MainDpsDetailSnapshot>,
+    ) {
+        let key = MainDpsDetailCacheKey {
+            revision,
+            kind,
+            request: request.clone(),
+            offset,
+            limit,
+        };
+        let mut cache = self
+            .0
+            .presentation
+            .detail_cache
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        cache.retain(|entry| entry.key != key);
+        cache.push(MainDpsDetailCache { key, snapshot });
+        if cache.len() > MAIN_DPS_DETAIL_CACHE_CAPACITY {
+            let remove_count = cache.len() - MAIN_DPS_DETAIL_CACHE_CAPACITY;
+            cache.drain(..remove_count);
         }
     }
 
@@ -2170,6 +2294,9 @@ impl AppState {
     }
 
     pub(crate) fn archive_current_history_round(&self) -> Result<bool, String> {
+        if self.replay_running() {
+            return Err("History round cuts are unavailable during replay".to_owned());
+        }
         self.archive_current_history_round_with(|state, archive| {
             state.persist_history_archive(archive)
         })
@@ -2247,9 +2374,10 @@ impl AppState {
             return;
         }
         let status = self.0.live_capture.status();
+        let replay_running = self.replay_running();
         let due = self.0.live_capture.with_state(|state| {
             auto_round_due(
-                status.phase == LiveCapturePhase::Running,
+                status.phase == LiveCapturePhase::Running && !replay_running,
                 false,
                 state.abyss.is_active(),
                 state.is_game_paused(),
@@ -2547,6 +2675,7 @@ impl AppState {
             raw_packet_count,
             parsed_packet_count,
             hit_count,
+            dropped_history_archives: self.0.live_capture.dropped_history_archives(),
             include_incoming: true,
             server_damage_calibration: config.server_damage_calibration,
             last_diagnostic: status.issue.map(|issue| format!("{issue:?}")),
@@ -2716,12 +2845,34 @@ impl AppState {
     }
 
     pub(crate) fn refresh_empty_curtain_operation(&self) {
-        let response = self
+        let response = match self
             .0
             .mods_plugin
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .try_recv();
+            .try_recv()
+        {
+            Ok(response) => response,
+            Err(ModsPluginReceiveError::Disconnected) => {
+                let mut operation = self
+                    .0
+                    .empty_curtain_operation
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if operation.request_id.is_some() {
+                    *operation = EmptyCurtainOperationState {
+                        status: "error",
+                        message_key: "Mod loader worker disconnected",
+                        message_arguments: Vec::new(),
+                        request_id: None,
+                    };
+                    self.0
+                        .empty_curtain_operation_revision
+                        .fetch_add(1, Ordering::AcqRel);
+                }
+                return;
+            }
+        };
         let Some(response) = response else {
             return;
         };

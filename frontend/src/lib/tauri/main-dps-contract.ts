@@ -9,6 +9,7 @@ import {
 export const MAIN_DPS_CONTRACT_VERSION = 4;
 export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
 export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
+export const MAIN_DPS_MAX_CHARACTERS = 4;
 
 export interface MainDpsSnapshot {
   contractVersion: number;
@@ -217,9 +218,11 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
           "summary.totalDamageTaken",
         ),
       },
-      characters: list(readout.characters, "readout.characters")
-        .slice(0, 64)
-        .map(parseCharacter),
+      characters: boundedList(
+        readout.characters,
+        "readout.characters",
+        MAIN_DPS_MAX_CHARACTERS,
+      ).map(parseCharacter),
       damageAttribution: {
         totalDamage: finite(
           damageAttribution.totalDamage,
@@ -410,6 +413,12 @@ function list(value: unknown, field: string): unknown[] {
   if (!Array.isArray(value))
     throw new TechnicalContractError(`${field} must be an array`);
   return value;
+}
+function boundedList(value: unknown, field: string, limit: number): unknown[] {
+  const rows = list(value, field);
+  if (rows.length > limit)
+    throw new TechnicalContractError(`${field} exceeds the contract limit`);
+  return rows;
 }
 function text(value: unknown, field: string): string {
   if (typeof value !== "string")
