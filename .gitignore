@@ -3,8 +3,11 @@
 /data/
 /NTE_Assets/
 /res/data/direct_export_report.json
+/nte-debug-tool/
 /nte-resource-exporter/
 /SDK/
+/Dumper-7/
+/tools/
 __pycache__/
 *.py[cod]
 .ruff_cache/
@@ -16,6 +19,11 @@ __pycache__/
 /plugins/*.dll
 /plugins/mods-plugin.state.json
 /plugins/equipment-plugin.state.json
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
 
 # C# / MSBuild build artifacts (contain local user paths)
 **/bin/

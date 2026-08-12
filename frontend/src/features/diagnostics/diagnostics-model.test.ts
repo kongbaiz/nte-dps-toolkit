@@ -11,7 +11,7 @@ import {
 } from "./diagnostics-model";
 
 const SNAPSHOT = {
-  capture: { phase: "idle" },
+  capture: { phase: "idle", droppedHistoryArchives: "0" },
   quality: { source: "unknown", packetCount: 3, hitCount: 2 },
   report: {
     failedCount: 1,

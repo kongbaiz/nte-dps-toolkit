@@ -10,19 +10,20 @@ use nte_dps_tool::{
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use crate::{
-    commands::desktop_window,
+    commands::{desktop_window, settings},
     contract::{
         CommandError,
         main_dps::{MainDpsActionResult, MainDpsResetResult, MainDpsSnapshot},
-        main_dps_detail::{MainDpsDetailColumns, MainDpsDetailSnapshot},
+        main_dps_detail::{
+            MAIN_DPS_DETAIL_DEFAULT_LIMIT, MainDpsDetailColumns, MainDpsDetailSnapshot,
+        },
+        update::UpdatePromptSnapshot,
     },
     state::{
         AppState, DesktopWindowKind, MainDpsDetailKind, MainDpsDetailRequest, SessionUndoError,
     },
     windows::{combat_details, console, hud, island, main_dps},
 };
-
-const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 
 #[tauri::command]
 pub(crate) fn get_main_dps_snapshot(
@@ -31,6 +32,53 @@ pub(crate) fn get_main_dps_snapshot(
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
     Ok(snapshot(state.inner()))
+}
+
+#[tauri::command]
+pub(crate) fn get_main_dps_update_prompt(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<UpdatePromptSnapshot, CommandError> {
+    main_dps::validate_window(&window)?;
+    Ok(UpdatePromptSnapshot::from_updates(
+        state.update_settings_snapshot(),
+    ))
+}
+
+#[tauri::command]
+pub(crate) async fn download_main_dps_update(
+    component: String,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<UpdatePromptSnapshot, CommandError> {
+    main_dps::validate_window(&window)?;
+    let component = settings::parse_update_component(&component)?;
+    let state = state.inner().clone();
+    settings::run_update_download(state.clone(), component)
+        .await
+        .map_err(settings::update_action_error)?;
+    Ok(UpdatePromptSnapshot::from_updates(
+        state.update_settings_snapshot(),
+    ))
+}
+
+#[tauri::command]
+pub(crate) async fn install_main_dps_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<UpdatePromptSnapshot, CommandError> {
+    main_dps::validate_window(&window)?;
+    let state = state.inner().clone();
+    if let Some(message_key) = state.update_install_blocked_message_key() {
+        return Err(CommandError::update_install_blocked(message_key));
+    }
+    settings::install_update(app, state.clone())
+        .await
+        .map_err(settings::update_action_error)?;
+    Ok(UpdatePromptSnapshot::from_updates(
+        state.update_settings_snapshot(),
+    ))
 }
 
 #[tauri::command]

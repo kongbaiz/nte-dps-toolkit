@@ -20,4 +20,11 @@ constexpr bool ShouldRebindViewport(
     return resolved_viewport != nullptr && hooked_viewport != nullptr &&
            resolved_viewport != hooked_viewport;
 }
+
+constexpr bool ShouldPreferKnownViewportTick(
+    bool known_image_profile,
+    bool preferred_index_is_valid) noexcept
+{
+    return known_image_profile && preferred_index_is_valid;
+}
 } // namespace nte::hook

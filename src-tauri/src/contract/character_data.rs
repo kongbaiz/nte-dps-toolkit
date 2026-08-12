@@ -100,7 +100,7 @@ mod tests {
                     attribute: "灵".to_owned(),
                     verified: true,
                     color: "#123ABC".to_owned(),
-                    avatar: "res/images/characters/player_001_256.png".to_owned(),
+                    avatar: "res/images/characters/player_001.png".to_owned(),
                 }],
             },
             9_007_199_254_740_992,

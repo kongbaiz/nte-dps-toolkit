@@ -34,7 +34,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { t, tf } from "@/lib/i18n";
-import { characterAvatarUrl } from "@/lib/character-avatar";
+import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { characterAccent } from "@/lib/character-color";
 import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
 import { useHudModulePointerReorder } from "@/hooks/use-hud-module-pointer-reorder";
@@ -1178,10 +1178,8 @@ function HudCharacterRow({
     character.previewLabelSuffix === null
       ? projectedName || t("Character")
       : `${t("Character")} ${projectedName}`;
-  const avatar =
-    character.previewLabelSuffix === null
-      ? characterAvatarUrl(character.characterId)
-      : null;
+  const catalogAvatar = useCharacterAvatar(character.characterId);
+  const avatar = character.previewLabelSuffix === null ? catalogAvatar : null;
 
   return (
     <div

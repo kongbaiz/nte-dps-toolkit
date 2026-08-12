@@ -75,7 +75,7 @@ const DENSITY_OPTIONS = [
 ] as const;
 const DPS_TIME_OPTIONS = [
   { value: "time-stop-adjusted", labelKey: "Exclude Time Stop" },
-  { value: "real-time", labelKey: "Real Time" },
+  { value: "real-time", labelKey: "Real Time (incl. time stop)" },
 ] as const;
 const PASSTHROUGH_HOTKEY_OPTIONS = [
   { value: "home", label: "Home" },

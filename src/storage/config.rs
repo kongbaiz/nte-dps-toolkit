@@ -33,6 +33,7 @@ pub const HUD_WIDTH_MIN: u16 = 280;
 pub const HUD_WIDTH_MAX: u16 = 3840;
 const HIT_DETAIL_COLUMN_WIDTH_MIN: u16 = 64;
 const HIT_DETAIL_COLUMN_WIDTH_MAX: u16 = 600;
+pub const MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES: usize = 32_768;
 
 const PASSTHROUGH_HOTKEYS: [PassthroughHotkey; 4] = [
     PassthroughHotkey::Home,
@@ -737,6 +738,12 @@ pub struct UiConfig {
     pub auto_check_updates: bool,
     #[serde(default)]
     pub auto_download_updates: bool,
+    /// Per-region manual game directories selected in Mod Studio. `None` keeps
+    /// automatic installation detection for that region.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mod_studio_china_game_directory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mod_studio_global_game_directory: Option<String>,
     pub always_on_top: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main_dps_always_on_top: Option<bool>,
@@ -781,8 +788,6 @@ pub struct UiConfig {
     pub global_hotkeys: GlobalHotkeys,
     #[serde(default = "default_onboarding_done")]
     pub onboarding_done: bool,
-    #[serde(default)]
-    pub console_sidebar_migration_seen: bool,
     /// Last inner size (logical points) each window was dragged to, restored on the next launch.
     /// Absent (older configs, or the retired `*_window_scale` keys) → the window opens at its base
     /// size. Replaces the removed fixed-ratio `−／＋` scale.
@@ -827,6 +832,8 @@ impl Default for UiConfig {
             reduce_motion: false,
             auto_check_updates: true,
             auto_download_updates: false,
+            mod_studio_china_game_directory: None,
+            mod_studio_global_game_directory: None,
             always_on_top: true,
             main_dps_always_on_top: None,
             hud_always_on_top: None,
@@ -850,7 +857,6 @@ impl Default for UiConfig {
             passthrough_hotkey: PassthroughHotkey::default(),
             global_hotkeys: GlobalHotkeys::default(),
             onboarding_done: true,
-            console_sidebar_migration_seen: false,
             main_window_size: None,
             abyss_window_size: None,
             hit_detail_window_size: None,
@@ -913,6 +919,10 @@ impl UiConfig {
             .manual_capture_device
             .take()
             .filter(|name| !name.trim().is_empty());
+        self.mod_studio_china_game_directory =
+            sanitize_mod_studio_game_directory(self.mod_studio_china_game_directory.take());
+        self.mod_studio_global_game_directory =
+            sanitize_mod_studio_game_directory(self.mod_studio_global_game_directory.take());
         self.hud = self.hud.sanitized();
         self.hit_detail_columns = self.hit_detail_columns.sanitized();
         self.global_hotkeys = self.global_hotkeys.sanitized();
@@ -921,6 +931,22 @@ impl UiConfig {
         }
         self
     }
+}
+
+fn sanitize_mod_studio_game_directory(directory: Option<String>) -> Option<String> {
+    directory.and_then(|directory| {
+        let trimmed = directory.trim();
+        if trimmed.is_empty()
+            || trimmed.len() > MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES
+            || trimmed
+                .chars()
+                .any(|character| matches!(character, '\0' | '\r' | '\n'))
+        {
+            None
+        } else {
+            Some(trimmed.to_owned())
+        }
+    })
 }
 
 const fn default_onboarding_done() -> bool {
@@ -961,7 +987,6 @@ fn new_install_config() -> UiConfig {
     UiConfig {
         language: Language::system_default(),
         onboarding_done: false,
-        console_sidebar_migration_seen: true,
         ..UiConfig::default()
     }
 }
@@ -1308,6 +1333,33 @@ mod tests {
     }
 
     #[test]
+    fn sanitizes_mod_studio_game_directories() {
+        let config = UiConfig {
+            mod_studio_china_game_directory: Some("  D:\\Game  ".to_owned()),
+            mod_studio_global_game_directory: Some("\0invalid".to_owned()),
+            ..UiConfig::default()
+        }
+        .sanitized();
+
+        assert_eq!(
+            config.mod_studio_china_game_directory,
+            Some("D:\\Game".to_owned())
+        );
+        assert_eq!(config.mod_studio_global_game_directory, None);
+        assert_eq!(
+            UiConfig {
+                mod_studio_china_game_directory: Some(
+                    "x".repeat(MOD_STUDIO_GAME_DIRECTORY_MAX_BYTES + 1),
+                ),
+                ..UiConfig::default()
+            }
+            .sanitized()
+            .mod_studio_china_game_directory,
+            None
+        );
+    }
+
+    #[test]
     fn hud_presets_are_distinct() {
         assert_ne!(HudConfig::minimal(), HudConfig::default());
         assert_ne!(HudConfig::detailed(), HudConfig::default());
@@ -1456,7 +1508,6 @@ mod tests {
         );
         assert_eq!(config.global_hotkeys, GlobalHotkeys::default());
         assert!(config.onboarding_done);
-        assert!(!config.console_sidebar_migration_seen);
 
         let f9_config: UiConfig = serde_json::from_str(r#"{"passthrough_hotkey":"f9"}"#)
             .expect("legacy F9 config should deserialize");
@@ -1576,6 +1627,5 @@ mod tests {
     fn onboarding_only_opens_for_a_new_install() {
         assert!(UiConfig::default().onboarding_done);
         assert!(!new_install_config().onboarding_done);
-        assert!(new_install_config().console_sidebar_migration_seen);
     }
 }

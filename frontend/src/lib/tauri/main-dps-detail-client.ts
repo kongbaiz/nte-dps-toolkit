@@ -49,23 +49,36 @@ export const mainDpsDetailClient = {
   subscribe(
     onSnapshot: (snapshot: MainDpsDetailSnapshot) => void,
     onError: (error: unknown) => void,
-  ): () => Promise<void> {
+  ): () => void {
     const subscriptionId = crypto.randomUUID();
+    let closed = false;
     const channel = new Channel<unknown>();
     channel.onmessage = (message) => {
+      if (closed) return;
       try {
         onSnapshot(parseMainDpsDetailSnapshot(message));
       } catch (error) {
         onError(error);
       }
     };
-    void invoke("subscribe_main_dps_detail", {
+    const receipt = invoke("subscribe_main_dps_detail", {
       subscriptionId,
       onEvent: channel,
-    }).catch(onError);
-    return () =>
-      invoke("unsubscribe_main_dps_detail", { subscriptionId })
-        .then(() => undefined)
-        .catch(() => undefined);
+    })
+      .then(() => subscriptionId)
+      .catch((error: unknown) => {
+        if (!closed) onError(error);
+        return undefined;
+      });
+    return () => {
+      if (closed) return;
+      closed = true;
+      void receipt.then((activeId) => {
+        if (activeId === undefined) return;
+        void invoke("unsubscribe_main_dps_detail", {
+          subscriptionId: activeId,
+        }).catch((error: unknown) => onError(error));
+      });
+    };
   },
 };

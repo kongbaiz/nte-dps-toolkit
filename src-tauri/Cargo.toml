@@ -1,10 +1,10 @@
 [package]
 name = "nte-dps-tool-tauri"
-version = "0.3.7"
+version = "0.3.8"
 description = "Tauri desktop shell for NTE DPS TOOL"
 authors = ["NTE DPS TOOL contributors"]
-license = "AGPL-3.0-only"
-repository = "https://github.com/kongbaiz/nte-dps-tool"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/kongbaiz/nte-dps-toolkit"
 edition = "2024"
 rust-version = "1.85"
 autobins = false

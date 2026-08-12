@@ -6,7 +6,10 @@ import {
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_CONTRACT_VERSION = 3;
+export const MAIN_DPS_CONTRACT_VERSION = 4;
+export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
+export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
+export const MAIN_DPS_MAX_CHARACTERS = 4;
 
 export interface MainDpsSnapshot {
   contractVersion: number;
@@ -28,9 +31,12 @@ export interface MainDpsSnapshot {
   readout: MainDpsReadout;
   actions: MainDpsActions;
   gameDetected: boolean;
+  gameDetectionStatus: GameDetectionStatus;
   hasLiveSessionData: boolean;
   onboarding: MainDpsOnboarding;
 }
+
+export type GameDetectionStatus = "running" | "notRunning" | "probeFailed";
 
 export interface MainDpsAppearance {
   language: "en" | "ja" | "zh-CN";
@@ -47,6 +53,7 @@ export interface MainDpsOnboarding {
   step: number;
   captureDeviceCount: number;
   gameDetected: boolean;
+  gameDetectionStatus: GameDetectionStatus;
   passthroughHotkeyLabel: string;
   passthroughHotkeyReady: boolean;
 }
@@ -145,6 +152,7 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
     ["empty", "preview", "live"],
     "readout.dataState",
   );
+  const rounds = parseRounds(source.rounds);
 
   return {
     contractVersion: version,
@@ -194,7 +202,7 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
       reduceMotion: boolean(appearance.reduceMotion, "appearance.reduceMotion"),
       opacity: finite(appearance.opacity, "appearance.opacity"),
     },
-    rounds: list(source.rounds, "rounds").slice(0, 201).map(parseRound),
+    rounds,
     selectedRoundId: nullableText(source.selectedRoundId, "selectedRoundId"),
     readout: {
       dataState,
@@ -210,9 +218,11 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
           "summary.totalDamageTaken",
         ),
       },
-      characters: list(readout.characters, "readout.characters")
-        .slice(0, 64)
-        .map(parseCharacter),
+      characters: boundedList(
+        readout.characters,
+        "readout.characters",
+        MAIN_DPS_MAX_CHARACTERS,
+      ).map(parseCharacter),
       damageAttribution: {
         totalDamage: finite(
           damageAttribution.totalDamage,
@@ -288,6 +298,11 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
       ),
     },
     gameDetected: boolean(source.gameDetected, "gameDetected"),
+    gameDetectionStatus: oneOf(
+      source.gameDetectionStatus,
+      ["running", "notRunning", "probeFailed"] as const,
+      "gameDetectionStatus",
+    ),
     hasLiveSessionData: boolean(
       source.hasLiveSessionData,
       "hasLiveSessionData",
@@ -300,6 +315,11 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
         "onboarding.captureDeviceCount",
       ),
       gameDetected: boolean(onboarding.gameDetected, "onboarding.gameDetected"),
+      gameDetectionStatus: oneOf(
+        onboarding.gameDetectionStatus,
+        ["running", "notRunning", "probeFailed"] as const,
+        "onboarding.gameDetectionStatus",
+      ),
       passthroughHotkeyLabel: text(
         onboarding.passthroughHotkeyLabel,
         "onboarding.passthroughHotkeyLabel",
@@ -341,6 +361,33 @@ function parseRound(value: unknown, index: number): MainDpsRound {
   };
 }
 
+function parseRounds(value: unknown): MainDpsRound[] {
+  const rows = list(value, "rounds");
+  if (rows.length > MAIN_DPS_MAX_ROUNDS) {
+    throw new TechnicalContractError("rounds exceeds the contract limit");
+  }
+  const rounds = rows.map(parseRound);
+  const liveRows = rounds.filter((round) => round.live);
+  if (liveRows.length !== 1) {
+    throw new TechnicalContractError(
+      "rounds must contain exactly one live row",
+    );
+  }
+  for (const [index, round] of rounds.entries()) {
+    if (round.live && round.id !== null) {
+      throw new TechnicalContractError(
+        `rounds[${index}] live row must have a null id`,
+      );
+    }
+    if (!round.live && round.id === null) {
+      throw new TechnicalContractError(
+        `rounds[${index}] history row must have an id`,
+      );
+    }
+  }
+  return rounds;
+}
+
 function parseCharacter(value: unknown, index: number): MainDpsCharacter {
   const row = object(value, `characters[${index}]`);
   return {
@@ -366,6 +413,12 @@ function list(value: unknown, field: string): unknown[] {
   if (!Array.isArray(value))
     throw new TechnicalContractError(`${field} must be an array`);
   return value;
+}
+function boundedList(value: unknown, field: string, limit: number): unknown[] {
+  const rows = list(value, field);
+  if (rows.length > limit)
+    throw new TechnicalContractError(`${field} exceeds the contract limit`);
+  return rows;
 }
 function text(value: unknown, field: string): string {
   if (typeof value !== "string")

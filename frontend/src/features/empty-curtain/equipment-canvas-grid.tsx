@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { t, tf } from "@/lib/i18n";
+import { subscribeCharacterAvatarCatalog } from "@/lib/character-avatar";
 import {
   type EmptyCurtainItem,
   type EquipmentQuality,
@@ -193,6 +194,8 @@ export function EquipmentCanvasGrid({
       }
     };
     drawRef.current = scheduleDraw;
+    const unsubscribeAvatarCatalog =
+      subscribeCharacterAvatarCatalog(scheduleDraw);
     const resizeObserver = new ResizeObserver(scheduleResize);
     resizeObserver.observe(scroller);
     const themeObserver = new MutationObserver(() => {
@@ -208,6 +211,7 @@ export function EquipmentCanvasGrid({
     scheduleDraw();
 
     return () => {
+      unsubscribeAvatarCatalog();
       resizeObserver.disconnect();
       themeObserver.disconnect();
       scroller.removeEventListener("scroll", scheduleScroll);
@@ -224,7 +228,7 @@ export function EquipmentCanvasGrid({
       hoverOverlayRef.current.style.visibility = "hidden";
     }
     drawRef.current();
-  }, [characterAvatarUrl, imageUrl, items]);
+  }, [imageUrl, items]);
 
   const indexFromPointer = (
     target: EventTarget | null,

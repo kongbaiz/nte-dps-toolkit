@@ -8,7 +8,7 @@ import {
 } from "@/lib/tauri/diagnostics-contract";
 
 const SNAPSHOT = {
-  contractVersion: 1,
+  contractVersion: 2,
   captureGeneration: "9007199254740993",
   qualityGeneration: "9007199254740994",
   reportGeneration: "2",
@@ -17,6 +17,7 @@ const SNAPSHOT = {
     phase: "stopped",
     replayRunning: false,
     activeFilter: "udp",
+    droppedHistoryArchives: "0",
     rawCapture: {
       fileName: "nte_raw.pcapng",
       packetCount: "9007199254740994",

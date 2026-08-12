@@ -1,6 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
-import { listen } from "@tauri-apps/api/event";
 import {
   Check,
   ChevronLeft,
@@ -16,7 +22,7 @@ import { AnimatedNumber } from "@/components/nte/animated-number";
 import { useWindowMotion } from "@/components/nte/window-motion-context";
 import { Button } from "@/components/ui/button";
 import { characterAttributeUrl } from "@/lib/character-attribute";
-import { characterAvatarUrl } from "@/lib/character-avatar";
+import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import { t, tf, useTranslationRevision } from "@/lib/i18n";
@@ -26,10 +32,14 @@ import {
 } from "@/lib/settings-presentation";
 import { mainDpsClient } from "@/lib/tauri/main-dps-client";
 import type { MainDpsDetailFilter } from "@/lib/tauri/main-dps-detail-contract";
-import type {
-  MainDpsCharacter,
-  MainDpsSnapshot,
+import {
+  parseMainDpsCommandError,
+  type MainDpsCharacter,
+  type MainDpsSnapshot,
 } from "@/lib/tauri/main-dps-contract";
+import { updatePromptClient } from "@/lib/tauri/update-prompt-client";
+import type { UpdatePromptSnapshot } from "@/lib/tauri/update-prompt-contract";
+import { subscribeMainDpsConfirmationRequested } from "@/lib/tauri/window-events";
 import { cn } from "@/lib/utils";
 
 import {
@@ -43,6 +53,7 @@ import {
   mainDpsContentState,
   roundLabel,
 } from "./main-dps-model";
+import { UpdatePromptDialog } from "./update-prompt-dialog";
 import { useMainDps } from "./use-main-dps";
 
 type MainDpsOpenDetailFilter = Exclude<MainDpsDetailFilter, "qteType">;
@@ -79,6 +90,16 @@ export function MainDpsPage() {
     null,
   );
   const [resetUndoToken, setResetUndoToken] = useState<string | null>(null);
+  const [updatePrompt, setUpdatePrompt] = useState<UpdatePromptSnapshot | null>(
+    null,
+  );
+  const [updatePromptOpen, setUpdatePromptOpen] = useState(false);
+  const [updatePromptPending, setUpdatePromptPending] = useState(false);
+  const [updatePromptError, setUpdatePromptError] = useState<string | null>(
+    null,
+  );
+  const dismissedUpdateKey = useRef<string | null>(null);
+  const updatePromptRequest = useRef(0);
   const [onboardingHudPreset, setOnboardingHudPreset] = useState<
     "minimal" | "standard" | "detailed"
   >("standard");
@@ -107,6 +128,79 @@ export function MainDpsPage() {
         characters.length,
       )
     : "combat-empty";
+
+  const refreshUpdatePrompt = useCallback(
+    async (openWhenAvailable: boolean) => {
+      const request = ++updatePromptRequest.current;
+      try {
+        const next = await updatePromptClient.get();
+        if (request !== updatePromptRequest.current) return;
+        setUpdatePrompt(next);
+        if (next.updates.available.length === 0) {
+          setUpdatePromptOpen(false);
+          return;
+        }
+        const key = updatePromptKey(next);
+        if (openWhenAvailable && dismissedUpdateKey.current !== key) {
+          setUpdatePromptOpen(true);
+        }
+      } catch (value) {
+        if (openWhenAvailable) {
+          const commandError = parseMainDpsCommandError(value);
+          setUpdatePromptError(
+            tf(commandError.messageKey, commandError.messageArguments),
+          );
+        }
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    void refreshUpdatePrompt(true);
+    return cleanupAsyncRegistration(
+      updatePromptClient.subscribeAvailable(() => {
+        void refreshUpdatePrompt(true);
+      }),
+    );
+  }, [refreshUpdatePrompt]);
+
+  useEffect(() => {
+    void refreshUpdatePrompt(false);
+  }, [presentation.language, refreshUpdatePrompt]);
+
+  const updateNow = async () => {
+    if (updatePrompt === null || updatePromptPending) return;
+    ++updatePromptRequest.current;
+    const component =
+      updatePrompt.updates.prepared?.component ??
+      preferredUpdateComponent(updatePrompt);
+    if (component === null) return;
+    setUpdatePromptPending(true);
+    setUpdatePromptError(null);
+    try {
+      let next = updatePrompt;
+      if (next.updates.prepared === null) {
+        next = await updatePromptClient.download(component);
+        setUpdatePrompt(next);
+      }
+      if (next.updates.prepared !== null && next.updates.installEnabled) {
+        next = await updatePromptClient.install();
+        setUpdatePrompt(next);
+        if (next.updates.status === "up-to-date") {
+          setUpdatePromptOpen(false);
+        }
+      }
+    } catch (value) {
+      const commandError = parseMainDpsCommandError(value);
+      setUpdatePromptError(
+        tf(commandError.messageKey, commandError.messageArguments),
+      );
+    } finally {
+      setUpdatePromptPending(false);
+      void refreshUpdatePrompt(false);
+    }
+  };
 
   useDismissibleLayer({
     open: appearanceOpen,
@@ -173,9 +267,9 @@ export function MainDpsPage() {
 
   useEffect(() => {
     return cleanupAsyncRegistration(
-      listen<string>("main-dps-confirmation-requested", (event) => {
-        if (event.payload === "start") setConfirmation({ kind: "start" });
-        else if (event.payload === "reset") setConfirmation({ kind: "reset" });
+      subscribeMainDpsConfirmationRequested((payload) => {
+        if (payload === "start") setConfirmation({ kind: "start" });
+        else setConfirmation({ kind: "reset" });
       }),
     );
   }, []);
@@ -390,6 +484,19 @@ export function MainDpsPage() {
           </section>
         </div>
       )}
+      {updatePromptOpen && updatePrompt !== null ? (
+        <UpdatePromptDialog
+          error={updatePromptError}
+          onLater={() => {
+            dismissedUpdateKey.current = updatePromptKey(updatePrompt);
+            setUpdatePromptOpen(false);
+            setUpdatePromptError(null);
+          }}
+          onUpdate={() => void updateNow()}
+          pending={updatePromptPending}
+          updates={updatePrompt.updates}
+        />
+      ) : null}
       {!snapshot.onboarding.done && (
         <OnboardingOverlay
           onboarding={snapshot.onboarding}
@@ -815,6 +922,7 @@ export function MainDpsPage() {
               {characterListState === "combat-empty" ? (
                 <EmptyCombat
                   gameDetected={snapshot.gameDetected}
+                  gameDetectionStatus={snapshot.gameDetectionStatus}
                   captureRunning={captureRunning}
                   importReplay={importReplay}
                   replayOpen={replayOpen}
@@ -1024,7 +1132,7 @@ function CharacterRow({
   onClick(): void;
   onContext(event: React.MouseEvent): void;
 }) {
-  const avatar = characterAvatarUrl(row.characterId);
+  const avatar = useCharacterAvatar(row.characterId);
   const attribute = characterAttributeUrl(row.attribute);
   const accent = characterAccent(row.characterId, row.color);
   return (
@@ -1165,6 +1273,7 @@ function DamageAttributionStrip({
 }
 function EmptyCombat({
   gameDetected,
+  gameDetectionStatus,
   captureRunning,
   importReplay,
   replayOpen,
@@ -1174,6 +1283,7 @@ function EmptyCombat({
   redetect,
 }: {
   gameDetected: boolean;
+  gameDetectionStatus: "running" | "notRunning" | "probeFailed";
   captureRunning: boolean;
   importReplay(kind: "json" | "pcapng"): Promise<void>;
   replayOpen: boolean;
@@ -1204,7 +1314,11 @@ function EmptyCombat({
           >
             {gameDetected ? <Check className="size-5" /> : "1"}
           </span>
-          {t("Start HTGame.exe")}
+          {t(
+            gameDetectionStatus === "probeFailed"
+              ? "Game process detection failed."
+              : "Start HTGame.exe",
+          )}
         </li>
         <li className="flex items-center gap-3">
           <span
@@ -1285,6 +1399,25 @@ function EmptyCombat({
   );
 }
 
+function updatePromptKey(prompt: UpdatePromptSnapshot): string {
+  return prompt.updates.available
+    .map(
+      (update) => `${update.component}:${update.version}:${update.publishedAt}`,
+    )
+    .join("|");
+}
+
+function preferredUpdateComponent(
+  prompt: UpdatePromptSnapshot,
+): "app" | "mods-plugin" | null {
+  return (
+    prompt.updates.available.find((update) => update.component === "app")
+      ?.component ??
+    prompt.updates.available[0]?.component ??
+    null
+  );
+}
+
 function OnboardingOverlay({
   onboarding,
   hudPreset,
@@ -1339,9 +1472,11 @@ function OnboardingOverlay({
               </p>
               <p>
                 {t(
-                  onboarding.gameDetected
-                    ? "The game process is detected."
-                    : "Start the game before beginning live capture.",
+                  onboarding.gameDetectionStatus === "probeFailed"
+                    ? "Game process detection failed."
+                    : onboarding.gameDetected
+                      ? "The game process is detected."
+                      : "Start the game before beginning live capture.",
                 )}
               </p>
             </div>

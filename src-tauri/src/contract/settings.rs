@@ -12,6 +12,7 @@ use nte_dps_tool::{
             AccentColor, DpsTimeMode, GlobalHotkeyAction, GlobalHotkeys, HUD_WIDTH_MAX,
             HUD_WIDTH_MIN, HotkeyBinding, PassthroughHotkey, ThemePreset, UiConfig, UiDensity,
         },
+        i18n::Language,
         update::PreparedUpdate,
     },
 };
@@ -303,7 +304,7 @@ impl UpdateSettingsSnapshot {
             message_arguments,
             available: available
                 .iter()
-                .map(AvailableUpdateSnapshot::from)
+                .map(|update| AvailableUpdateSnapshot::from_update(update, config.language))
                 .collect(),
             active_component: active_component.map(update_component_id),
             downloaded_bytes: downloaded_bytes.to_string(),
@@ -315,15 +316,75 @@ impl UpdateSettingsSnapshot {
     }
 }
 
-impl From<&AvailableComponentUpdate> for AvailableUpdateSnapshot {
-    fn from(update: &AvailableComponentUpdate) -> Self {
+impl AvailableUpdateSnapshot {
+    fn from_update(update: &AvailableComponentUpdate, language: Language) -> Self {
         Self {
             component: update_component_id(update.component),
             version: update.version.to_string(),
             published_at: update.published_at.clone(),
-            notes: update.notes.clone(),
+            notes: localized_update_notes(&update.notes, language),
             artifact_size: update.artifact_size.to_string(),
         }
+    }
+}
+
+fn localized_update_notes(notes: &str, language: Language) -> String {
+    let sections = release_note_sections(notes);
+    if sections.is_empty() {
+        return notes.to_owned();
+    }
+
+    sections
+        .iter()
+        .find(|(section_language, _)| *section_language == language)
+        .or_else(|| {
+            sections
+                .iter()
+                .find(|(section_language, _)| *section_language == Language::English)
+        })
+        .or_else(|| sections.first())
+        .map(|(_, content)| content.clone())
+        .unwrap_or_default()
+}
+
+fn release_note_sections(notes: &str) -> Vec<(Language, String)> {
+    let mut sections = Vec::new();
+    let mut current_language = None;
+    let mut current_lines = Vec::new();
+
+    let finish_section = |sections: &mut Vec<(Language, String)>,
+                          current_language: &mut Option<Language>,
+                          current_lines: &mut Vec<&str>| {
+        let Some(language) = current_language.take() else {
+            current_lines.clear();
+            return;
+        };
+        let content = current_lines.join("\n").trim().to_owned();
+        current_lines.clear();
+        if !content.is_empty() {
+            sections.push((language, content));
+        }
+    };
+
+    for line in notes.lines() {
+        let heading = line.trim();
+        if let Some(label) = heading.strip_prefix("## ") {
+            finish_section(&mut sections, &mut current_language, &mut current_lines);
+            current_language = update_note_language(label.trim());
+        } else if current_language.is_some() {
+            current_lines.push(line);
+        }
+    }
+    finish_section(&mut sections, &mut current_language, &mut current_lines);
+    sections
+}
+
+fn update_note_language(label: &str) -> Option<Language> {
+    match label {
+        "English" | "en" => Some(Language::English),
+        "日本語" | "ja" => Some(Language::Japanese),
+        "简体中文" | "zh" | "zh-CN" => Some(Language::SimplifiedChinese),
+        _ => None,
     }
 }
 
@@ -513,5 +574,37 @@ mod tests {
         assert_eq!(value["performed"], true);
         assert_eq!(value["settings"]["generation"], "8");
         assert!(value.get("path").is_none());
+    }
+
+    #[test]
+    fn update_notes_select_only_the_active_language_section() {
+        let notes = "# Release\n\n## 简体中文\n\n中文更新\n\n## English\n\nEnglish update\n\n## 日本語\n\n日本語の更新";
+
+        assert_eq!(
+            localized_update_notes(notes, Language::SimplifiedChinese),
+            "中文更新"
+        );
+        assert_eq!(
+            localized_update_notes(notes, Language::English),
+            "English update"
+        );
+        assert_eq!(
+            localized_update_notes(notes, Language::Japanese),
+            "日本語の更新"
+        );
+    }
+
+    #[test]
+    fn update_notes_keep_legacy_unsectioned_text_and_use_english_fallback() {
+        assert_eq!(
+            localized_update_notes("Updater client", Language::Japanese),
+            "Updater client"
+        );
+
+        let notes = "## English\n\nEnglish update\n\n## 简体中文\n\n中文更新";
+        assert_eq!(
+            localized_update_notes(notes, Language::Japanese),
+            "English update"
+        );
     }
 }

@@ -12219,11 +12219,11 @@
       "monster_pool_id": "Abyss_7_11_0_1",
       "monsters": [
         {
-          "attribute_id": "Abyss_7_11_0_1_Boss_08_BP",
-          "class": "/Game/Blueprints/Character/Monster/boss_08/Abyss/Boss_08_BP_Abyss.Boss_08_BP_Abyss_C",
+          "attribute_id": "Abyss_7_11_0_1_Boss_07_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_07/Abyss/Boss_07_BP_Abyss.Boss_07_BP_Abyss_C",
           "count": 1,
           "level": 85,
-          "name": "斑蝶",
+          "name": "塞润尼缇",
           "is_boss": true
         }
       ],
@@ -12335,7 +12335,7 @@
         ],
         "second_half": [
           "灵",
-          "相"
+          "咒"
         ]
       }
     },
@@ -12378,7 +12378,5245 @@
         ],
         "second_half": [
           "灵",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_1_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_1_0_1_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_1_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_1_0_2_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_1_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_1_1_1_mon_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_05/Abyss/mon_05_BP_Abyss.mon_05_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "凭依种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_1_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_1_1_2_mon_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_05/Abyss/mon_05_BP_Abyss.mon_05_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "凭依种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_2_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_2_0_1_mon_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_33/Abyss/mon_33_BP_Abyss.mon_33_BP_Abyss_C",
+          "count": 4,
+          "level": 67,
+          "name": "流梦种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_2_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_2_0_2_mon_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_33/Abyss/mon_33_BP_Abyss.mon_33_BP_Abyss_C",
+          "count": 4,
+          "level": 67,
+          "name": "流梦种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_2_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_2_1_1_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_2_1_1_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_2_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_2_1_2_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_2_1_2_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_3_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_3_0_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 3,
+          "level": 69,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
           "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_3_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_3_0_2_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 3,
+          "level": 69,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_3_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_3_1_1_mon_41_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_41/Abyss/mon_41_BP_Abyss.mon_41_BP_Abyss_C",
+          "count": 4,
+          "level": 69,
+          "name": "羽偶",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_3_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_3_1_2_mon_41_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_41/Abyss/mon_41_BP_Abyss.mon_41_BP_Abyss_C",
+          "count": 4,
+          "level": 69,
+          "name": "羽偶",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_4_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_4_0_1_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_4_0_1_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "咒",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_4_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_4_0_2_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_4_0_2_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "咒",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_4_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_4_1_1_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_4_1_1_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "咒",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_4_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_4_1_2_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_4_1_2_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "咒",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_5_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_5_0_1_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "暗",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_5_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_5_0_2_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "暗",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_5_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_5_1_1_mon_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_08/Abyss/mon_08_BP_Abyss.mon_08_BP_Abyss_C",
+          "count": 2,
+          "level": 73,
+          "name": "瑰夜魅影",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "暗",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_5_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_5_1_2_mon_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_08/Abyss/mon_08_BP_Abyss.mon_08_BP_Abyss_C",
+          "count": 2,
+          "level": 73,
+          "name": "瑰夜魅影",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "暗",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_6_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_6_0_1_mon_17_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_17/Abyss/mon_17_BP_Abyss.mon_17_BP_Abyss_C",
+          "count": 4,
+          "level": 75,
+          "name": "雨人",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_6_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_6_0_2_mon_17_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_17/Abyss/mon_17_BP_Abyss.mon_17_BP_Abyss_C",
+          "count": 4,
+          "level": 75,
+          "name": "雨人",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_6_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_6_1_1_mon_020_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_20/Abyss/mon_020_BP_Abyss.mon_020_BP_Abyss_C",
+          "count": 2,
+          "level": 75,
+          "name": "空铠甲",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_6_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_6_1_2_mon_020_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_20/Abyss/mon_020_BP_Abyss.mon_020_BP_Abyss_C",
+          "count": 2,
+          "level": 75,
+          "name": "空铠甲",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_7_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_7_0_1_mon_025_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_25/Abyss/mon_025_BP_Abyss.mon_025_BP_Abyss_C",
+          "count": 1,
+          "level": 77,
+          "name": "洄天鱼幡",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_7_0_1_mon_025_double_1_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_25/Abyss/mon_025_double_1_BP_Abyss.mon_025_double_1_BP_Abyss_C",
+          "count": 1,
+          "level": 77,
+          "name": "洄天鱼幡",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_7_0_1_mon_025_double_2_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_25/Abyss/mon_025_double_2_BP_Abyss.mon_025_double_2_BP_Abyss_C",
+          "count": 1,
+          "level": 77,
+          "name": "洄天鱼幡",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_7_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_7_1_1_mon_27_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_27/Abyss/mon_27_BP_Abyss.mon_27_BP_Abyss_C",
+          "count": 4,
+          "level": 77,
+          "name": "诺诺斯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_8_7_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_7_1_2_mon_27_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_27/Abyss/mon_27_BP_Abyss.mon_27_BP_Abyss_C",
+          "count": 4,
+          "level": 77,
+          "name": "诺诺斯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 8,
+      "level_name": "第八站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_8_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_8_0_1_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_8_0_1_mon_029_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_29/Abyss/mon_029_BP_Abyss.mon_029_BP_Abyss_C",
+          "count": 2,
+          "level": 79,
+          "name": "唱片附电灵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "咒",
+          "魂"
+        ],
+        "second_half": [
+          "灵",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 8,
+      "level_name": "第八站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_8_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_8_1_1_mon_39_2_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_39_2/Abyss/mon_39_2_BP_Abyss.mon_39_2_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "迦楼罗",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_8_1_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 2,
+          "level": 79,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "咒",
+          "魂"
+        ],
+        "second_half": [
+          "灵",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_9_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_9_0_1_mon_022_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_22/Abyss/mon_022_BP_Abyss.mon_022_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "蜘识藏家",
+          "is_boss": true
+        },
+        {
+          "attribute_id": "Abyss_8_9_0_1_mon_24_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_24/Abyss/mon_24_BP_Abyss.mon_24_BP_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "诡面筝",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_9_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_9_1_1_mon_019_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_19/Abyss/mon_019_BP_Abyss.mon_019_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "伤心英熊",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_9_1_1_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_9_1_1_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_10_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_10_0_1_mon_015_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_15/Abyss/mon_015_BP_Abyss.mon_015_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "拖车艄",
+          "is_boss": true
+        },
+        {
+          "attribute_id": "Abyss_8_10_0_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 2,
+          "level": 82,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_10_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_10_1_1_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "扫晴娘",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_10_1_1_mon_030_BP_Snow",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Snow_Abyss.mon_030_BP_Snow_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "扫晴娘",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_8_10_1_1_mon_030_BP_Rain",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Rain_Abyss.mon_030_BP_Rain_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 11,
+      "level_name": "第十一站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_11_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_11_0_1_Boss_017_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_17/Abyss/Boss_017_BP_Abyss.Boss_017_BP_Abyss_C",
+          "count": 1,
+          "level": 85,
+          "name": "玛门",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 11,
+      "level_name": "第十一站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_11_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_11_1_1_boss_09_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_09/Abyss/boss_09_BP_Abyss.boss_09_BP_Abyss_C",
+          "count": 1,
+          "level": 85,
+          "name": "黑之书",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 12,
+      "level_name": "终点站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_12_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_12_0_1_Boss_06_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_06/Abyss/Boss_06_BP_Abyss.Boss_06_BP_Abyss_C",
+          "count": 1,
+          "level": 90,
+          "name": "胶卷-MANISH",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "相"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_8",
+      "level_id": 12,
+      "level_name": "终点站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_8_12_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_8_12_1_1_boss_26_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_26/Abyss/boss_26_BP_Abyss.boss_26_BP_Abyss_C",
+          "count": 1,
+          "level": 90,
+          "name": "讨债人",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "相"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_1_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_1_0_1_mon_01_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_01/Abyss/mon_01_BP_Abyss.mon_01_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "低语种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_1_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_1_0_2_mon_01_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_01/Abyss/mon_01_BP_Abyss.mon_01_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "低语种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_1_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_1_1_1_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_1_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_1_1_2_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_2_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_2_0_1_mon_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_33/Abyss/mon_33_BP_Abyss.mon_33_BP_Abyss_C",
+          "count": 4,
+          "level": 67,
+          "name": "流梦种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_2_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_2_0_2_mon_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_33/Abyss/mon_33_BP_Abyss.mon_33_BP_Abyss_C",
+          "count": 4,
+          "level": 67,
+          "name": "流梦种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_2_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_2_1_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 3,
+          "level": 67,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_2_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_2_1_2_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 3,
+          "level": 67,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_3_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_3_0_1_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 69,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_3_0_1_mon_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_05/Abyss/mon_05_BP_Abyss.mon_05_BP_Abyss_C",
+          "count": 1,
+          "level": 69,
+          "name": "凭依种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_3_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_3_0_2_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 69,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_3_0_2_mon_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_05/Abyss/mon_05_BP_Abyss.mon_05_BP_Abyss_C",
+          "count": 1,
+          "level": 69,
+          "name": "凭依种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_3_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_3_1_1_mon_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_05/Abyss/mon_05_BP_Abyss.mon_05_BP_Abyss_C",
+          "count": 4,
+          "level": 69,
+          "name": "凭依种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_3_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_3_1_2_mon_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_05/Abyss/mon_05_BP_Abyss.mon_05_BP_Abyss_C",
+          "count": 4,
+          "level": 69,
+          "name": "凭依种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_4_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_4_0_1_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_4_0_1_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "咒",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_4_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_4_0_2_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_4_0_2_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "咒",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_4_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_4_1_1_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_4_1_1_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "咒",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_4_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_4_1_2_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 71,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "咒",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_5_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_5_0_1_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_5_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_5_0_2_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_5_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_5_1_1_mon_41_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_41/Abyss/mon_41_BP_Abyss.mon_41_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "羽偶",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_5_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_5_1_2_mon_023_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_23/Abyss/mon_023_BP_Abyss.mon_023_BP_Abyss_C",
+          "count": 2,
+          "level": 73,
+          "name": "长明灯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_6_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_6_0_1_mon_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_08/Abyss/mon_08_BP_Abyss.mon_08_BP_Abyss_C",
+          "count": 2,
+          "level": 75,
+          "name": "瑰夜魅影",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_6_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_6_0_2_mon_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_08/Abyss/mon_08_BP_Abyss.mon_08_BP_Abyss_C",
+          "count": 2,
+          "level": 75,
+          "name": "瑰夜魅影",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_6_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_6_1_1_mon_27_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_27/Abyss/mon_27_BP_Abyss.mon_27_BP_Abyss_C",
+          "count": 4,
+          "level": 75,
+          "name": "诺诺斯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_6_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_6_1_2_mon_27_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_27/Abyss/mon_27_BP_Abyss.mon_27_BP_Abyss_C",
+          "count": 4,
+          "level": 75,
+          "name": "诺诺斯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_7_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_7_0_1_mon_020_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_20/Abyss/mon_020_BP_Abyss.mon_020_BP_Abyss_C",
+          "count": 2,
+          "level": 77,
+          "name": "空铠甲",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_7_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_7_0_2_mon_020_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_20/Abyss/mon_020_BP_Abyss.mon_020_BP_Abyss_C",
+          "count": 2,
+          "level": 77,
+          "name": "空铠甲",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_7_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_7_1_1_mon_17_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_17/Abyss/mon_17_BP_Abyss.mon_17_BP_Abyss_C",
+          "count": 4,
+          "level": 77,
+          "name": "雨人",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_7_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_7_1_2_mon_17_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_17/Abyss/mon_17_BP_Abyss.mon_17_BP_Abyss_C",
+          "count": 4,
+          "level": 77,
+          "name": "雨人",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "灵",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 8,
+      "level_name": "第八站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_8_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_8_0_1_mon_022_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_22/Abyss/mon_022_BP_Abyss.mon_022_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "蜘识藏家",
+          "is_boss": true
+        },
+        {
+          "attribute_id": "Abyss_9_8_0_1_mon_24_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_24/Abyss/mon_24_BP_Abyss.mon_24_BP_Abyss_C",
+          "count": 2,
+          "level": 79,
+          "name": "诡面筝",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "相"
+        ],
+        "second_half": [
+          "光",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 8,
+      "level_name": "第八站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_8_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_8_1_1_mon_025_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_25/Abyss/mon_025_BP_Abyss.mon_025_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "洄天鱼幡",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_8_1_1_mon_025_double_1_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_25/Abyss/mon_025_double_1_BP_Abyss.mon_025_double_1_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "洄天鱼幡",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_8_1_1_mon_025_double_2_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_25/Abyss/mon_025_double_2_BP_Abyss.mon_025_double_2_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "洄天鱼幡",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "相"
+        ],
+        "second_half": [
+          "光",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_9_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_9_0_1_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_9_0_1_mon_029_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_29/Abyss/mon_029_BP_Abyss.mon_029_BP_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "唱片附电灵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_9_9_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_9_0_2_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_9_0_2_mon_029_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_29/Abyss/mon_029_BP_Abyss.mon_029_BP_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "唱片附电灵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_9_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_9_1_1_Boss_06_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_06/Abyss/Boss_06_BP_Abyss.Boss_06_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "胶卷-MANISH",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "灵"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_10_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_10_0_1_mon_015_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_15/Abyss/mon_015_BP_Abyss.mon_015_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "拖车艄",
+          "is_boss": true
+        },
+        {
+          "attribute_id": "Abyss_9_10_0_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 2,
+          "level": 82,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "咒",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_10_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_10_1_1_mon_019_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_19/Abyss/mon_019_BP_Abyss.mon_019_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "伤心英熊",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_10_1_1_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 82,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_9_10_1_1_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 82,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "咒",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 11,
+      "level_name": "第十一站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_11_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_11_0_1_Boss_07_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_07/Abyss/Boss_07_BP_Abyss.Boss_07_BP_Abyss_C",
+          "count": 1,
+          "level": 85,
+          "name": "塞润尼缇",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 11,
+      "level_name": "第十一站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_11_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_11_1_1_Boss_017_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_17/Abyss/Boss_017_BP_Abyss.Boss_017_BP_Abyss_C",
+          "count": 1,
+          "level": 85,
+          "name": "玛门",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 12,
+      "level_name": "终点站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_12_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_12_0_1_mon_051_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_51/Abyss/mon_051_BP_Abyss.mon_051_BP_Abyss_C",
+          "count": 1,
+          "level": 90,
+          "name": "桀桀熊",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_9",
+      "level_id": 12,
+      "level_name": "终点站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_9_12_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_9_12_1_1_boss_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_33/Abyss/boss_33_BP_Abyss.boss_33_BP_Abyss_C",
+          "count": 1,
+          "level": 90,
+          "name": "囿巢鸟",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_1_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_1_0_1_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_1_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_1_0_2_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_1_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_1_1_1_mon_24_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_24/Abyss/mon_24_BP_Abyss.mon_24_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "诡面筝",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 1,
+      "level_name": "始发站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_1_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_1_1_2_mon_24_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_24/Abyss/mon_24_BP_Abyss.mon_24_BP_Abyss_C",
+          "count": 4,
+          "level": 65,
+          "name": "诡面筝",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_2_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_2_0_1_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_2_0_1_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_2_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_2_0_2_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_2_0_2_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 67,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_2_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_2_1_1_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 67,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 2,
+      "level_name": "第二站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_2_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_2_1_2_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 4,
+          "level": 67,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "暗"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_3_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_3_0_1_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 69,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_3_0_1_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 2,
+          "level": 69,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "魂",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_3_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_3_0_2_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 69,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_3_0_2_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 2,
+          "level": 69,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "魂",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_3_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_3_1_1_mon_41_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_41/Abyss/mon_41_BP_Abyss.mon_41_BP_Abyss_C",
+          "count": 4,
+          "level": 69,
+          "name": "羽偶",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "魂",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 3,
+      "level_name": "第三站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_3_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_3_1_2_mon_41_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_41/Abyss/mon_41_BP_Abyss.mon_41_BP_Abyss_C",
+          "count": 4,
+          "level": 69,
+          "name": "羽偶",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "暗"
+        ],
+        "second_half": [
+          "魂",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_4_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_4_0_1_mon_01_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_01/Abyss/mon_01_BP_Abyss.mon_01_BP_Abyss_C",
+          "count": 4,
+          "level": 71,
+          "name": "低语种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_4_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_4_0_2_mon_01_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_01/Abyss/mon_01_BP_Abyss.mon_01_BP_Abyss_C",
+          "count": 4,
+          "level": 71,
+          "name": "低语种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_4_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_4_1_1_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_4_1_1_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 4,
+      "level_name": "第四站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_4_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_4_1_2_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 71,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_4_1_2_mon_14_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_14/Abyss/mon_14_BP_Abyss.mon_14_BP_Abyss_C",
+          "count": 2,
+          "level": 71,
+          "name": "分解者",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_5_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_5_0_1_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_5_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_5_0_2_mon_030_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_30/Abyss/mon_030_BP_Abyss.mon_030_BP_Abyss_C",
+          "count": 4,
+          "level": 73,
+          "name": "扫晴娘",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_5_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_5_1_1_mon_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_08/Abyss/mon_08_BP_Abyss.mon_08_BP_Abyss_C",
+          "count": 2,
+          "level": 73,
+          "name": "瑰夜魅影",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 5,
+      "level_name": "第五站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_5_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_5_1_2_mon_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_08/Abyss/mon_08_BP_Abyss.mon_08_BP_Abyss_C",
+          "count": 2,
+          "level": 73,
+          "name": "瑰夜魅影",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "光",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_6_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_6_0_1_mon_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_33/Abyss/mon_33_BP_Abyss.mon_33_BP_Abyss_C",
+          "count": 4,
+          "level": 75,
+          "name": "流梦种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_6_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_6_0_2_mon_33_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_33/Abyss/mon_33_BP_Abyss.mon_33_BP_Abyss_C",
+          "count": 4,
+          "level": 75,
+          "name": "流梦种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_6_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_6_1_1_mon_020_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_20/Abyss/mon_020_BP_Abyss.mon_020_BP_Abyss_C",
+          "count": 2,
+          "level": 75,
+          "name": "空铠甲",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 6,
+      "level_name": "第六站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_6_1_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_6_1_2_mon_020_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_20/Abyss/mon_020_BP_Abyss.mon_020_BP_Abyss_C",
+          "count": 2,
+          "level": 75,
+          "name": "空铠甲",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_7_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_7_0_1_mon_27_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_27/Abyss/mon_27_BP_Abyss.mon_27_BP_Abyss_C",
+          "count": 4,
+          "level": 77,
+          "name": "诺诺斯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "魂"
+        ],
+        "second_half": [
+          "灵",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_7_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_7_0_2_mon_27_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_27/Abyss/mon_27_BP_Abyss.mon_27_BP_Abyss_C",
+          "count": 4,
+          "level": 77,
+          "name": "诺诺斯",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "魂"
+        ],
+        "second_half": [
+          "灵",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 7,
+      "level_name": "第七站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_7_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_7_1_1_mon_019_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_19/Abyss/mon_019_BP_Abyss.mon_019_BP_Abyss_C",
+          "count": 1,
+          "level": 77,
+          "name": "伤心英熊",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_7_1_1_mon_35_Red_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Red_Abyss.mon_35_BP_Red_Abyss_C",
+          "count": 2,
+          "level": 77,
+          "name": "罐头锡兵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_7_1_1_mon_35_Blue_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_35/Abyss/mon_35_BP_Blue_Abyss.mon_35_BP_Blue_Abyss_C",
+          "count": 2,
+          "level": 77,
+          "name": "罐头锡兵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "魂"
+        ],
+        "second_half": [
+          "灵",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 8,
+      "level_name": "第八站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_8_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_8_0_1_mon_022_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_22/Abyss/mon_022_BP_Abyss.mon_022_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "蜘识藏家",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 8,
+      "level_name": "第八站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_8_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_8_1_1_mon_015_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_15/Abyss/mon_015_BP_Abyss.mon_015_BP_Abyss_C",
+          "count": 1,
+          "level": 79,
+          "name": "拖车艄",
+          "is_boss": true
+        },
+        {
+          "attribute_id": "Abyss_10_8_1_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 2,
+          "level": 79,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "光",
+          "灵"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_9_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_9_0_1_mon_39_2_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_39_2/Abyss/mon_39_2_BP_Abyss.mon_39_2_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "迦楼罗",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_9_0_1_mon_38_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_38/Abyss/mon_38_BP_Abyss.mon_38_BP_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "迦楼罗",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "魂",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 9,
+      "level_name": "第九站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_9_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_9_1_1_mon_16_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_16/Abyss/mon_016_BP_Abyss.mon_016_BP_Abyss_C",
+          "count": 1,
+          "level": 80,
+          "name": "售货附电灵",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_9_1_1_mon_029_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_29/Abyss/mon_029_BP_Abyss.mon_029_BP_Abyss_C",
+          "count": 2,
+          "level": 80,
+          "name": "唱片附电灵",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "魂",
+          "相"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_10_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_10_0_1_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_10_0_1_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 2,
+          "level": 82,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 2,
+      "monster_pool_id": "Abyss_10_10_0_2",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_10_0_2_mon_03_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_03/Abyss/mon_03_BP_Abyss.mon_03_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "岩壳种",
+          "is_boss": false
+        },
+        {
+          "attribute_id": "Abyss_10_10_0_2_mon_04_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_04/Abyss/mon_04_BP_Abyss.mon_04_BP_Abyss_C",
+          "count": 2,
+          "level": 82,
+          "name": "迷失种",
+          "is_boss": false
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 10,
+      "level_name": "第十站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_10_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_10_1_1_Boss_15_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_15/Abyss/Boss_15_BP_Abyss.Boss_15_BP_Abyss_C",
+          "count": 1,
+          "level": 82,
+          "name": "音霸魔王",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "咒"
+        ],
+        "second_half": [
+          "暗",
+          "魂"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 11,
+      "level_name": "第十一站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_11_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_11_0_1_Boss_08_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_08/Abyss/Boss_08_BP_Abyss.Boss_08_BP_Abyss_C",
+          "count": 1,
+          "level": 85,
+          "name": "斑蝶",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "魂",
+          "相"
+        ],
+        "second_half": [
+          "灵",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 11,
+      "level_name": "第十一站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_11_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_11_1_1_boss_26_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_26/Abyss/boss_26_BP_Abyss.boss_26_BP_Abyss_C",
+          "count": 1,
+          "level": 85,
+          "name": "讨债人",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "魂",
+          "相"
+        ],
+        "second_half": [
+          "灵",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 12,
+      "level_name": "终点站",
+      "route": "EAbyssFightStage::FirstHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_12_0_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_12_0_1_mon_051_BP",
+          "class": "/Game/Blueprints/Character/Monster/mon_51/Abyss/mon_051_BP_Abyss.mon_051_BP_Abyss_C",
+          "count": 1,
+          "level": 90,
+          "name": "桀桀熊",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
+        ]
+      }
+    },
+    {
+      "abyss": "Abyss_10",
+      "level_id": 12,
+      "level_name": "终点站",
+      "route": "EAbyssFightStage::SecondHalf",
+      "wave": 1,
+      "monster_pool_id": "Abyss_10_12_1_1",
+      "monsters": [
+        {
+          "attribute_id": "Abyss_10_12_1_1_boss_05_BP",
+          "class": "/Game/Blueprints/Character/Monster/boss_05/Abyss/boss_05_BP_Abyss.boss_05_BP_Abyss_C",
+          "count": 1,
+          "level": 90,
+          "name": "墨菲克斯",
+          "is_boss": true
+        }
+      ],
+      "max_seconds": 600.0,
+      "star_thresholds": [
+        {
+          "stars": 1,
+          "seconds": 600.0
+        },
+        {
+          "stars": 2,
+          "seconds": 420.0
+        },
+        {
+          "stars": 3,
+          "seconds": 300.0
+        }
+      ],
+      "recommended_elements": {
+        "first_half": [
+          "灵",
+          "魂"
+        ],
+        "second_half": [
+          "暗",
+          "咒"
         ]
       }
     }

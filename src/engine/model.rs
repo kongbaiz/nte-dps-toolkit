@@ -2038,6 +2038,24 @@ struct EnemyTargetProjectionResult {
     direction_changed: bool,
 }
 
+/// Declares whether an applied [`ModScriptEvent`] mutated any user-visible
+/// combat projection. Reducers must key frontend revision bumps off this
+/// outcome instead of guessing from the event kind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModScriptApplyOutcome {
+    #[default]
+    Unchanged,
+    ProjectionChanged,
+}
+
+fn outcome_of_projection(result: EnemyTargetProjectionResult) -> ModScriptApplyOutcome {
+    if result.changed || result.direction_changed {
+        ModScriptApplyOutcome::ProjectionChanged
+    } else {
+        ModScriptApplyOutcome::Unchanged
+    }
+}
+
 fn backfill_enemy_hit_target(
     hits: &mut VecDeque<Hit>,
     target: &EnemyHitTargetObservation,
@@ -2191,19 +2209,24 @@ impl CombatState {
         }
     }
 
-    pub fn apply_mod_script_event(&mut self, event: &ModScriptEvent) {
+    pub fn apply_mod_script_event(&mut self, event: &ModScriptEvent) -> ModScriptApplyOutcome {
         let Some(target) = self.enemy_telemetry.apply_event(event) else {
-            return;
+            return ModScriptApplyOutcome::Unchanged;
         };
         let Some((key, result)) = backfill_enemy_hit_target(&mut self.hits, &target) else {
-            return;
+            return ModScriptApplyOutcome::Unchanged;
         };
         self.enemy_telemetry.consume_hit_target(target.sequence);
+        let mut outcome = outcome_of_projection(result);
         self.apply_enemy_target_projection_result(result);
         for party in [&mut self.abyss.first_half, &mut self.abyss.second_half] {
             let result = apply_enemy_hit_target_to_key(&mut party.hits, key, &target);
             party.apply_enemy_target_projection_result(result);
+            if outcome_of_projection(result) == ModScriptApplyOutcome::ProjectionChanged {
+                outcome = ModScriptApplyOutcome::ProjectionChanged;
+            }
         }
+        outcome
     }
 
     pub fn duration_with_time_stop(&self, subtract_time_stop: bool) -> f64 {
@@ -2262,16 +2285,17 @@ impl CombatState {
         }
     }
 
+    pub fn take_battle_preserving_inventory(&mut self) -> CombatState {
+        let mut detached = std::mem::take(self);
+        self.empty_curtain = std::mem::take(&mut detached.empty_curtain);
+        self.empty_curtain_characters = std::mem::take(&mut detached.empty_curtain_characters);
+        self.empty_curtain_generation = detached.empty_curtain_generation;
+        self.empty_curtain_characters_generation = detached.empty_curtain_characters_generation;
+        detached
+    }
+
     pub fn clear_battle_preserving_inventory(&mut self) {
-        let empty_curtain = std::mem::take(&mut self.empty_curtain);
-        let empty_curtain_characters = std::mem::take(&mut self.empty_curtain_characters);
-        let empty_curtain_generation = self.empty_curtain_generation;
-        let empty_curtain_characters_generation = self.empty_curtain_characters_generation;
-        *self = Self::default();
-        self.empty_curtain = empty_curtain;
-        self.empty_curtain_characters = empty_curtain_characters;
-        self.empty_curtain_generation = empty_curtain_generation;
-        self.empty_curtain_characters_generation = empty_curtain_characters_generation;
+        let _ = self.take_battle_preserving_inventory();
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {

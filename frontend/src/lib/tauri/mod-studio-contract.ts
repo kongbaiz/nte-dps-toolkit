@@ -1,5 +1,6 @@
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const MOD_STUDIO_CONTRACT_VERSION = 9;
+export const MOD_STUDIO_CONTRACT_VERSION = 10;
+export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_SDK_SCHEMA_VERSION = 2;
 export const MOD_STUDIO_MAX_DOCUMENTS = 256;
 export const MOD_STUDIO_MAX_SOURCE_BYTES = 16_384;
@@ -51,6 +52,12 @@ export interface ModStudioDirectorySelectionSnapshot {
   selected: boolean;
   path: string | null;
   deployment: ModStudioDeploymentSnapshot;
+}
+
+export interface ModStudioGameDirectorySnapshot {
+  contractVersion: number;
+  region: ModStudioGameRegion;
+  path: string | null;
 }
 
 export interface ModMarketItem {
@@ -137,9 +144,12 @@ export interface ModStudioRuntimeConnectionEvent {
   payload: {
     contractVersion: number;
     generation: string;
-    connected: boolean;
+    status: ModStudioRuntimeConnectionStatus;
   };
 }
+
+export type ModStudioRuntimeConnectionStatus =
+  "connected" | "loaderPresent" | "waiting" | "probeFailed";
 
 export interface ModStudioRuntimeBatchEvent {
   event: "batch";
@@ -257,6 +267,22 @@ export function parseModStudioDirectorySelection(
     path,
     deployment: parseModStudioDeployment(selection.deployment),
   };
+}
+
+export function parseModStudioGameDirectory(
+  value: unknown,
+): ModStudioGameDirectorySnapshot {
+  const snapshot = record(value, "Mod Studio game directory");
+  const contractVersion = contractVersionOf(
+    snapshot,
+    MOD_STUDIO_DIRECTORY_CONTRACT_VERSION,
+  );
+  const region = gameRegion(snapshot.region, "region");
+  const path =
+    snapshot.path === null
+      ? null
+      : boundedString(snapshot.path, "path", 32_768);
+  return { contractVersion, region, path };
 }
 
 export function parseModMarketCatalog(
@@ -440,12 +466,21 @@ export function parseModStudioRuntimeEvent(
     true,
   );
   if (event.event === "connection") {
+    const status = payload.status;
+    if (
+      status !== "connected" &&
+      status !== "loaderPresent" &&
+      status !== "waiting" &&
+      status !== "probeFailed"
+    ) {
+      throw new ModStudioContractError("payload.status is invalid");
+    }
     return {
       event: "connection",
       payload: {
         contractVersion,
         generation,
-        connected: boolean(payload.connected, "payload.connected"),
+        status,
       },
     };
   }
@@ -615,12 +650,15 @@ function parseRuntimeEntry(
   };
 }
 
-function contractVersionOf(value: Record<string, unknown>): number {
+function contractVersionOf(
+  value: Record<string, unknown>,
+  expectedVersion = MOD_STUDIO_CONTRACT_VERSION,
+): number {
   const contractVersion = nonNegativeInteger(
     value.contractVersion,
     "contractVersion",
   );
-  if (contractVersion !== MOD_STUDIO_CONTRACT_VERSION) {
+  if (contractVersion !== expectedVersion) {
     throw new ModStudioContractError(
       `Unsupported Mod Studio contract version: ${contractVersion}`,
     );

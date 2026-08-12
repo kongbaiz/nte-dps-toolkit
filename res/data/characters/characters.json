@@ -2,7 +2,7 @@
   "characters": {
     "1003": {
       "attribute": "咒",
-      "avatar": "res/images/characters/player_003_256.png",
+      "avatar": "res/images/characters/player_003.png",
       "codename": "Sagiri",
       "name_en": "Sagiri",
       "name_zh": "早雾",
@@ -10,7 +10,7 @@
     },
     "1004": {
       "attribute": "暗",
-      "avatar": "res/images/characters/player_004_256.png",
+      "avatar": "res/images/characters/player_004.png",
       "codename": "Lacrimosa",
       "name_en": "Lacrimosa",
       "name_zh": "安魂曲",
@@ -18,7 +18,7 @@
     },
     "1008": {
       "attribute": "相",
-      "avatar": "res/images/characters/player_008_256.png",
+      "avatar": "res/images/characters/player_008.png",
       "codename": "Skia",
       "name_en": "Skia",
       "name_zh": "翳",
@@ -26,7 +26,7 @@
     },
     "1010": {
       "attribute": "灵",
-      "avatar": "res/images/characters/player_010_256.png",
+      "avatar": "res/images/characters/player_010.png",
       "codename": "Nanally",
       "name_en": "Nanally",
       "name_zh": "娜娜莉",
@@ -34,7 +34,7 @@
     },
     "1019": {
       "attribute": "灵",
-      "avatar": "res/images/characters/player_019_256.png",
+      "avatar": "res/images/characters/player_019.png",
       "codename": "Mint",
       "name_en": "Mint",
       "name_zh": "薄荷",
@@ -42,7 +42,7 @@
     },
     "1020": {
       "attribute": "魂",
-      "avatar": "res/images/characters/player_020_256.png",
+      "avatar": "res/images/characters/player_020.png",
       "codename": "Haniel",
       "name_en": "Haniel",
       "name_zh": "哈尼娅",
@@ -50,7 +50,7 @@
     },
     "1021": {
       "attribute": "光",
-      "avatar": "res/images/characters/player_021_256.png",
+      "avatar": "res/images/characters/player_021.png",
       "codename": "Edgar",
       "name_en": "Edgar",
       "name_zh": "埃德嘉",
@@ -58,7 +58,7 @@
     },
     "1023": {
       "attribute": "咒",
-      "avatar": "res/images/characters/player_028_256.png",
+      "avatar": "res/images/characters/player_028.png",
       "codename": "Cang",
       "name_en": "Cang",
       "name_zh": "白藏",
@@ -66,7 +66,7 @@
     },
     "1025": {
       "attribute": "相",
-      "avatar": "res/images/characters/player_012_256.png",
+      "avatar": "res/images/characters/player_012.png",
       "codename": "Hathor",
       "name_en": "Hathor",
       "name_zh": "哈索尔",
@@ -74,15 +74,23 @@
     },
     "1033": {
       "attribute": "咒",
-      "avatar": "res/images/characters/player_015_256.png",
+      "avatar": "res/images/characters/player_015.png",
       "codename": "Adler",
       "name_en": "Adler",
       "name_zh": "阿德勒",
       "verified": true
     },
+    "1036": {
+      "attribute": "咒",
+      "avatar": "res/images/characters/player_canhong.png",
+      "codename": "zankou",
+      "name_en": "zankou",
+      "name_zh": "残虹",
+      "verified": true
+    },
     "1039": {
       "attribute": "魂",
-      "avatar": "res/images/characters/player_027_256.png",
+      "avatar": "res/images/characters/player_027.png",
       "codename": "Fadia",
       "name_en": "Fadia",
       "name_zh": "法帝娅",
@@ -90,7 +98,7 @@
     },
     "1046": {
       "attribute": "光",
-      "avatar": "res/images/characters/player_046_256.png",
+      "avatar": "res/images/characters/player_046.png",
       "codename": "Male",
       "name_en": "Male",
       "name_zh": "「零」",
@@ -98,7 +106,7 @@
     },
     "1051": {
       "attribute": "光",
-      "avatar": "res/images/characters/player_009_256.png",
+      "avatar": "res/images/characters/player_009.png",
       "codename": "Female",
       "name_en": "Female",
       "name_zh": "「零」",
@@ -106,7 +114,7 @@
     },
     "1052": {
       "attribute": "光",
-      "avatar": "res/images/characters/player_013_256.png",
+      "avatar": "res/images/characters/player_013.png",
       "codename": "Jin",
       "name_en": "Jin",
       "name_zh": "浔",
@@ -114,7 +122,7 @@
     },
     "1054": {
       "attribute": "暗",
-      "avatar": "res/images/characters/player_005_256.png",
+      "avatar": "res/images/characters/player_005.png",
       "codename": "Daffodill",
       "name_en": "Daffodill",
       "name_zh": "达芙蒂尔",
@@ -122,7 +130,7 @@
     },
     "1055": {
       "attribute": "灵",
-      "avatar": "res/images/characters/player_104_256.png",
+      "avatar": "res/images/characters/player_104.png",
       "codename": "Kuhara",
       "name_en": "Kuhara",
       "name_zh": "九原",
@@ -130,7 +138,7 @@
     },
     "1056": {
       "attribute": "暗",
-      "avatar": "res/images/characters/player_004_256.png",
+      "avatar": "res/images/characters/player_004.png",
       "codename": "bat",
       "name_en": "bat",
       "name_zh": "安魂曲",
@@ -138,7 +146,7 @@
     },
     "1070": {
       "attribute": "魂",
-      "avatar": "res/images/characters/player_haiyue_256.png",
+      "avatar": "res/images/characters/player_haiyue.png",
       "codename": "mitsuki",
       "name_en": "mitsuki",
       "name_zh": "海月",
@@ -146,15 +154,23 @@
     },
     "1071": {
       "attribute": "相",
-      "avatar": "res/images/characters/player_kaesi1_256.png",
+      "avatar": "res/images/characters/player_kaesi1.png",
       "codename": "Chaos",
       "name_en": "Chaos",
       "name_zh": "卡厄斯",
       "verified": true
     },
+    "1072": {
+      "attribute": "灵",
+      "avatar": "res/images/characters/player_lingke.png",
+      "codename": "radio",
+      "name_en": "radio",
+      "name_zh": "灵可",
+      "verified": true
+    },
     "1073": {
       "attribute": "光",
-      "avatar": "res/images/characters/player_073_256.png",
+      "avatar": "res/images/characters/player_073.png",
       "codename": "chiichan",
       "name_en": "chiichan",
       "name_zh": "小吱",
@@ -162,7 +178,7 @@
     },
     "1075": {
       "attribute": "灵",
-      "avatar": "res/images/characters/player_yiluoyi_256.png",
+      "avatar": "res/images/characters/player_yiluoyi.png",
       "codename": "Oneiroi",
       "name_en": "Oneiroi",
       "name_zh": "伊洛伊",
@@ -170,7 +186,7 @@
     },
     "1076": {
       "attribute": "光",
-      "avatar": "res/images/characters/player_zhenhong_256.png",
+      "avatar": "res/images/characters/player_zhenhong.png",
       "codename": "shinku",
       "name_en": "shinku",
       "name_zh": "真红",

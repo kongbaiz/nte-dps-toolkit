@@ -8,7 +8,7 @@ import {
 } from "./mod-source-semantic";
 
 const schema: ModStudioSdkSchemaSnapshot = {
-  contractVersion: 9,
+  contractVersion: 10,
   schemaVersion: 1,
   symbols: [
     {
