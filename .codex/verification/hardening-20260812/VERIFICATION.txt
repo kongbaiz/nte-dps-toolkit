@@ -1,0 +1,83 @@
+VERSION SYNCHRONIZATION VERIFICATION
+
+branch=fix/a-group-hardening
+field=version_sync_0_3_8
+
+MODIFIED_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\MODIFIED_FILE
+DIFF_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\DIFF_FILE
+VERIFICATION_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\VERIFICATION.txt
+ROLLBACK_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\ROLLBACK.sh
+
+ORIGINAL_SHA256=5C51EEE0F7655A28EFB23B279ADBEBF60511DA31D03DA9C80819B2E02C3CE8B4
+MODIFIED_SHA256=F8B2E923584F531A7DE98CB646A19B77BB2D1E1CC6A737D2C5449AFE32452ECF
+RESTORED_SHA256=5C51EEE0F7655A28EFB23B279ADBEBF60511DA31D03DA9C80819B2E02C3CE8B4
+
+BASELINE
+command: Get-Content .codex/verification/hardening-20260812/.baseline-source.txt; validate state=BASELINE and value=desktop-version-0.3.7
+input:
+branch=fix/a-group-hardening
+field=version_sync_0_3_8
+state=BASELINE
+value=desktop-version-0.3.7
+literal output: BASELINE_RESULT=desktop-version-0.3.7
+result: original fixture hash preserved
+exit status: 0
+
+MODIFIED
+command: Get-Content .codex/verification/hardening-20260812/MODIFIED_FILE; validate state=MODIFIED and value=desktop-version-0.3.8
+input:
+branch=fix/a-group-hardening
+field=version_sync_0_3_8
+state=MODIFIED
+value=desktop-version-0.3.8
+literal output: MODIFIED_RESULT=desktop-version-0.3.8
+result: changed copy retained as MODIFIED_FILE
+exit status: 0
+
+DIFF
+command: git diff --no-index --no-color -- .codex/verification/hardening-20260812/.baseline-source.txt .codex/verification/hardening-20260812/MODIFIED_FILE > DIFF_FILE
+literal output: DIFF_EXIT=1; DIFF_RESULT=version-copy-verified
+result: expected non-zero difference status recorded in DIFF_FILE
+exit status: 0 for the wrapper; git diff status: 1
+
+ROLLBACK
+command: Copy-Item MODIFIED_FILE rollback-fixture.txt; C:\Program Files\Git\bin\bash.exe ROLLBACK.sh
+input: another copy of MODIFIED_FILE at rollback-fixture.txt
+literal output:
+ROLLBACK_RESULT=restored
+ROLLBACK_VALIDATION_RESULT=restored
+RESTORED_SHA256=5C51EEE0F7655A28EFB23B279ADBEBF60511DA31D03DA9C80819B2E02C3CE8B4
+result: rollback restored the BASELINE version 0.3.7 state and exact original hash on another copy
+exit status: 0
+
+VERSION SOURCES UPDATED
+- Cargo.toml: root shared crate remains 0.3.8.
+- src-tauri/Cargo.toml: desktop Rust package is now 0.3.8.
+- src-tauri/tauri.conf.json: Tauri artifact version is now 0.3.8.
+- frontend/package.json: frontend package version is now 0.3.8.
+- src-tauri/Cargo.lock: nte-dps-tool-tauri lock entry is now 0.3.8.
+
+VERSION VALIDATION
+VERSION_SYNC_RESULT=0.3.8
+ROOT=0.3.8
+TAURI_MANIFEST=0.3.8
+TAURI_CONFIG=0.3.8
+FRONTEND=0.3.8
+nte-dps-tool=0.3.8
+nte-dps-tool-tauri=0.3.8
+CARGO_METADATA_VERSION_SYNC=0.3.8
+TAURI_CARGO_METADATA_VERSION_SYNC=0.3.8
+
+TESTS
+cargo fmt --check: exit 0
+cargo fmt --check --manifest-path src-tauri/Cargo.toml: exit 0
+cargo check: exit 0
+cargo check --manifest-path src-tauri/Cargo.toml: exit 0
+cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 --no-deps: exit 0
+cargo test --manifest-path src-tauri/Cargo.toml: 149 passed, 0 failed, 0 ignored; exit 0
+pnpm --dir frontend install --frozen-lockfile: lockfile up to date; exit 0
+pnpm --dir frontend lint: exit 0
+pnpm --dir frontend typecheck: exit 0
+pnpm --dir frontend test: 76 files and 260 tests passed; exit 0
+
+MODIFIED_FILE remains changed. Temporary baseline and rollback fixture files were removed after verification; the four artifacts above were reopened and retained.
