@@ -388,7 +388,7 @@ impl LiveCaptureService {
         if state.hits.is_empty() && state.stats.is_empty() && !state.abyss.is_active() {
             return None;
         }
-        let detached = std::mem::take(&mut *state);
+        let detached = state.take_battle_preserving_inventory();
         let source = *self
             .0
             .quality_source
@@ -828,7 +828,7 @@ impl LiveCaptureInner {
             .quality_source
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let detached = std::mem::take(state);
+        let detached = state.take_battle_preserving_inventory();
         *self
             .last_outgoing_hit_at
             .lock()
@@ -1055,7 +1055,8 @@ mod tests {
 
     use super::*;
     use crate::engine::model::{
-        AbyssEvent, Hit, HitCharacterSource, HitDirection, PacketObservation,
+        AbyssEvent, EmptyCurtainCharacter, EmptyCurtainItem, Hit, HitCharacterSource, HitDirection,
+        HtItemNetId, PacketObservation,
     };
 
     fn hit(damage: f64) -> EngineEvent {
@@ -1092,6 +1093,53 @@ mod tests {
             follow_up_attack_type: None,
             follow_up_damage_attribute: None,
         }))
+    }
+
+    fn install_test_inventory(service: &LiveCaptureService) -> (u64, u64) {
+        service
+            .0
+            .process_event(EngineEvent::EmptyCurtain(vec![EmptyCurtainItem {
+                id: HtItemNetId { solt: 1, serial: 2 },
+                item_id: "test-item".to_owned(),
+                level: 1,
+                main_stats: Vec::new(),
+                sub_stats: Vec::new(),
+                locked: false,
+                discarded: false,
+                character_net_id: None,
+                equipped_character_id: None,
+                equipped_placement: None,
+            }]));
+        service
+            .0
+            .process_event(EngineEvent::EmptyCurtainCharacters(vec![
+                EmptyCurtainCharacter {
+                    net_id: HtItemNetId { solt: 3, serial: 4 },
+                    character_id: 1020,
+                },
+            ]));
+        service.with_state(|state| {
+            (
+                state.empty_curtain_generation,
+                state.empty_curtain_characters_generation,
+            )
+        })
+    }
+
+    fn assert_test_inventory(service: &LiveCaptureService, generations: (u64, u64)) {
+        service.with_state(|state| {
+            assert_eq!(state.empty_curtain.len(), 1);
+            assert_eq!(state.empty_curtain[0].item_id, "test-item");
+            assert_eq!(state.empty_curtain_characters.len(), 1);
+            assert_eq!(state.empty_curtain_characters[0].character_id, 1020);
+            assert_eq!(
+                (
+                    state.empty_curtain_generation,
+                    state.empty_curtain_characters_generation,
+                ),
+                generations
+            );
+        });
     }
 
     #[test]
@@ -1319,6 +1367,7 @@ mod tests {
     #[test]
     fn cut_round_installs_replacement_before_persistence_work() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let inventory_generations = install_test_inventory(&service);
         service.0.process_event(hit(321.0));
 
         let cut = service.cut_round().expect("archivable round");
@@ -1326,6 +1375,9 @@ mod tests {
 
         assert_eq!(cut.state.total_damage, 321.0);
         assert_eq!(cut.source, CaptureQualitySource::Unknown);
+        assert!(cut.state.empty_curtain.is_empty());
+        assert!(cut.state.empty_curtain_characters.is_empty());
+        assert_test_inventory(&service, inventory_generations);
         assert_eq!(service.with_state(|state| state.total_damage), 99.0);
     }
 
@@ -1350,6 +1402,7 @@ mod tests {
     #[test]
     fn abyss_restart_queues_the_previous_round_before_reducer_changes_state() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let inventory_generations = install_test_inventory(&service);
         *service
             .0
             .quality_source
@@ -1380,11 +1433,48 @@ mod tests {
         assert_eq!(archives[0].details.first_half_hits.len(), 1);
         assert_eq!(archives[0].details.first_half_hits[0].damage, 321.0);
         assert_eq!(archives[0].source, CaptureQualitySource::PcapngReplay);
+        assert_test_inventory(&service, inventory_generations);
+        assert!(service.with_state(|state| state.hits.is_empty()));
+    }
+
+    #[test]
+    fn abyss_floor_transition_archives_previous_round_and_preserves_inventory() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let inventory_generations = install_test_inventory(&service);
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+        service.0.process_event(hit(321.0));
+        service
+            .0
+            .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 3.0,
+                cycle: None,
+                floor: Some(13),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }));
+
+        let archives = service.take_pending_abyss_archives();
+        assert_eq!(archives.len(), 1);
+        assert_eq!(archives[0].details.first_half_hits[0].damage, 321.0);
+        assert_test_inventory(&service, inventory_generations);
+        service.with_state(|state| {
+            assert_eq!(state.abyss.floor, Some(13));
+            assert!(state.hits.is_empty());
+        });
     }
 
     #[test]
     fn abyss_exit_archive_contains_the_real_exit_timestamp() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let inventory_generations = install_test_inventory(&service);
         service
             .0
             .process_event(EngineEvent::Abyss(AbyssEvent::Stage {
@@ -1404,6 +1494,8 @@ mod tests {
         assert_eq!(archives[0].details.first_half_hits.len(), 1);
         assert_eq!(archives[0].details.first_half_hits[0].damage, 321.0);
         assert_eq!(archives[0].details.exited_at, Some(10.0));
+        assert_test_inventory(&service, inventory_generations);
+        assert!(service.with_state(|state| state.hits.is_empty()));
     }
 
     #[test]
@@ -1437,6 +1529,7 @@ mod tests {
     #[test]
     fn capture_stopped_archives_after_prior_semantic_events() {
         let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let inventory_generations = install_test_inventory(&service);
 
         service
             .0
@@ -1460,6 +1553,8 @@ mod tests {
             LiveCapturePhase::Stopped,
             "CaptureStopped is the single final archive and Stopped barrier"
         );
+        assert_test_inventory(&service, inventory_generations);
+        assert!(service.with_state(|state| state.hits.is_empty()));
     }
 
     #[test]

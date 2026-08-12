@@ -2285,16 +2285,17 @@ impl CombatState {
         }
     }
 
+    pub fn take_battle_preserving_inventory(&mut self) -> CombatState {
+        let mut detached = std::mem::take(self);
+        self.empty_curtain = std::mem::take(&mut detached.empty_curtain);
+        self.empty_curtain_characters = std::mem::take(&mut detached.empty_curtain_characters);
+        self.empty_curtain_generation = detached.empty_curtain_generation;
+        self.empty_curtain_characters_generation = detached.empty_curtain_characters_generation;
+        detached
+    }
+
     pub fn clear_battle_preserving_inventory(&mut self) {
-        let empty_curtain = std::mem::take(&mut self.empty_curtain);
-        let empty_curtain_characters = std::mem::take(&mut self.empty_curtain_characters);
-        let empty_curtain_generation = self.empty_curtain_generation;
-        let empty_curtain_characters_generation = self.empty_curtain_characters_generation;
-        *self = Self::default();
-        self.empty_curtain = empty_curtain;
-        self.empty_curtain_characters = empty_curtain_characters;
-        self.empty_curtain_generation = empty_curtain_generation;
-        self.empty_curtain_characters_generation = empty_curtain_characters_generation;
+        let _ = self.take_battle_preserving_inventory();
     }
 
     pub fn apply_abyss_event(&mut self, event: AbyssEvent) {
