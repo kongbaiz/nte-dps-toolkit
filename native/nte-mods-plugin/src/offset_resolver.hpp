@@ -5,14 +5,27 @@
 
 namespace nte::mods::offsets
 {
+	enum class ResolutionSource : uint8_t
+	{
+		None,
+		Signature,
+		KnownProfile,
+	};
+
 	struct ResolvedOffsets
 	{
 		uintptr_t append_name_address;
 		uintptr_t gworld_address;
+		size_t image_size;
+		uint32_t image_checksum;
+		size_t viewport_tick_index;
+		size_t process_event_index;
+		ResolutionSource source;
 	};
 
 	bool Initialize();
 	const ResolvedOffsets* Get();
+	bool IsKnownImageProfile(size_t image_size, uint32_t image_checksum);
 
 	namespace detail
 	{

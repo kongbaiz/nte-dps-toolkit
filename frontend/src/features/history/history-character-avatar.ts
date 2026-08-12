@@ -1,1 +1,1 @@
-export { characterAvatarUrl as historyCharacterAvatarUrl } from "@/lib/character-avatar";
+export { resolveCharacterAvatar as historyCharacterAvatarUrl } from "@/lib/character-avatar";

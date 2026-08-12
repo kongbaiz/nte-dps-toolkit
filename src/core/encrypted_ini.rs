@@ -247,7 +247,7 @@ fn decrypt_encrypted_ini_line(line: &str) -> Result<Option<(EncryptedIniKey, Str
     let Ok(encrypted) = BASE64.decode(line) else {
         return Ok(None);
     };
-    if encrypted.is_empty() || !encrypted.len().is_multiple_of(16) {
+    if encrypted.is_empty() || encrypted.len() % 16 != 0 {
         return Ok(None);
     }
     for key in EncryptedIniKey::all() {
@@ -330,7 +330,7 @@ pub fn encrypt_encrypted_ini_records(
 }
 
 fn decrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    if !data.len().is_multiple_of(16) {
+    if data.len() % 16 != 0 {
         return Err("AES 密文长度不是 16 字节块的整数倍".to_owned());
     }
     let cipher = Aes256::new_from_slice(key).map_err(|error| error.to_string())?;
@@ -343,7 +343,7 @@ fn decrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn encrypt_aes256_ecb(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
-    if !data.len().is_multiple_of(16) {
+    if data.len() % 16 != 0 {
         return Err("AES 明文长度不是 16 字节块的整数倍".to_owned());
     }
     let cipher = Aes256::new_from_slice(key).map_err(|error| error.to_string())?;

@@ -4697,14 +4697,285 @@
       "name_ja": "",
       "descriptions": []
     },
+    "GA_Radio072_Melee": {
+      "name_zh": "普通攻击：恶灵CQC",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵CQC",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「普通攻击：恶灵CQC」，灵可进行至多5段的连续攻击，造成<Ling>灵属性异能伤害</>。每段攻击将积攒「谐频」点数。\r\n「谐频」将在使用「变轨技能：瞬息全频振」时消耗，并强化其触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "释放「普通攻击：恶灵CQC」，灵可进行至多5段的连续攻击，造成<Ling>灵属性异能伤害</>。每段攻击将积攒「谐频」点数。\r\n「谐频」将在使用「变轨技能：瞬息全频振」时消耗，并强化其触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵大巴掌！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "「普通攻击：恶灵CQC」释放期间，长按普通攻击触发，灵可双掌拍击当前目标，造成<Ling>灵属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：恶灵CQC」释放期间，长按普通攻击触发，灵可双掌拍击当前目标，造成<Ling>灵属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵式登场！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "灵可滞空时点按普通攻击，落地后造成1次范围性的<Ling>灵属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "灵可滞空时点按普通攻击，落地后造成1次范围性的<Ling>灵属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "普通攻击：恶灵闪击战！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "灵可处于后台时，每隔8秒，将会派出小贞偷袭目标，进行一次攻击并施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "灵可处于后台时，每隔8秒，将会派出小贞偷袭目标，进行一次攻击并施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "极限反击：挨打必须还「手」！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "触发极限闪避后使用「普通攻击：恶灵CQC」触发，灵可冲向目标造成4次范围性的<Ling>灵属性异能伤害</>并积攒「谐频」点数。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「小贞小贞，我有一个想法……用你的手打出欧拉拳套一样的拳击！快到全是残影的那种！」</>\r\n<Italic>「……那是图个啥？全力一拳撂倒不是更高效吗？」</>\r\n<Italic>「你不懂！这是格斗的艺术！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Radio072_Passive_1": {
+      "name_zh": "弱点感应",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "灵可在队伍中时，覆纹的额外追加攻击伤害提升至30%；受覆纹状态影响的目标，所受追加攻击伤害提高10%。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "灵可在队伍中时，覆纹的额外追加攻击伤害提升至30%；受覆纹状态影响的目标，所受追加攻击伤害提高10%。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>那频段中的噪点，如同一道难以察觉的裂纹，这道伤痕为什么出现？又为什么无法愈合？</>\r\n<Italic>在某个瞬间，她甚至会为此感到难过。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Radio072_Passive_2": {
+      "name_zh": "精确调频",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "精确调频",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "触发<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时，将根据触发此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的角色，降低目标对应属性的异能抗性，该效果有一定的持续时间。目标身上可同时存在多种属性的减抗效果，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成的同种属性的减抗效果不可叠加，重复触发将刷新时间。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "触发<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时，将根据触发此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的角色，降低目标对应属性的异能抗性，该效果有一定的持续时间。目标身上可同时存在多种属性的减抗效果，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成的同种属性的减抗效果不可叠加，重复触发将刷新时间。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>言语和文字不能传达万分之一的感受，而此刻，我们的灵魂将百分之百地相拥。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Radio072_Passive_3": {
+      "name_zh": "灵可I型火箭头槌！",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "灵可I型火箭头槌！",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "非战斗状态下长按普通攻击，灵可借助小贞的幽灵手臂蓄力，松开后会将灵可弹射出去。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "非战斗状态下长按普通攻击，灵可借助小贞的幽灵手臂蓄力，松开后会将灵可弹射出去。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「糟糕！要迟到了！小贞，快启动紧急弹射程序，目的地异象管理局二楼窗户！」</>\r\n<Italic>「……你就不能正常走电话亭吗？」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Radio072_QTE": {
+      "name_zh": "恶灵左直拳！",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "灵可与小贞对目标打出认真一拳，造成1次范围性<Ling>灵属性异能伤害</>。\r\n灵可在战斗中可通过：\r\n击碎<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记，释放「变轨技能：瞬息全频振」，释放「极轨终结：超负荷共鸣」来召唤队友进行<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，此伤害倍率受灵可「援护技：恶灵左直拳！」技能等级影响。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "灵可与小贞对目标打出认真一拳，造成1次范围性<Ling>灵属性异能伤害</>。\r\n灵可在战斗中可通过：\r\n击碎<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记，释放「变轨技能：瞬息全频振」，释放「极轨终结：超负荷共鸣」来召唤队友进行<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，此伤害倍率受灵可「援护技：恶灵左直拳！」技能等级影响。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「假如小贞不在身边，而我遇到了坏人的话……」</>\r\n<Italic>「直接逃呗，你那小短腿不是跑得挺快的。」</>\r\n<Italic>「才不要——噢！我可以抡着电视机砸上去！」</>\r\n<Italic>「不行……绝！对！不！行！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
+    "GA_Radio072_Skill": {
+      "name_zh": "变轨技能：瞬息全频振",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n轮盘下方默认为小贞，队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n轮盘下方默认为小贞，队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>「瞧好了！这就是我们热血沸腾的组合技——」</>\r\n<Italic>「……话说小鬼，刚刚那个人我们真的认识吗？」</>\r\n<Italic>「我没看清楚是谁——但总之接上了！」</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "1",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
     "GA_Radio072_SubUltraSkill": {
       "name_zh": "",
       "name_en": "",
       "name_ja": "",
       "descriptions": []
     },
+    "GA_Radio072_UltraSkill": {
+      "name_zh": "超负荷共鸣",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": [
+        {
+          "type": "ADT_DES",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成范围伤害，最多释放3次；\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态种类数提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。其间队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成范围伤害，最多释放3次；\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态种类数提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。其间队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>没有无法接通的频道，没有无法触达的孤岛，没有无法回应的呼唤，没有无法跨越的阻隔……</>\r\n<Italic>因为电波终将指引我们相遇，即使初见也如久别重逢。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
+        }
+      ]
+    },
     "GA_Radio072_UltraSkillChild": {
       "name_zh": "",
+      "name_en": "",
+      "name_ja": "",
+      "descriptions": []
+    },
+    "GA_Radio091_Shoot": {
+      "name_zh": "恶灵飞弹",
       "name_en": "",
       "name_ja": "",
       "descriptions": []

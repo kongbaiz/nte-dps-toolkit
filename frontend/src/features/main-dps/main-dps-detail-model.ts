@@ -100,6 +100,16 @@ export function mergeLiveDetailSnapshot(
   return { ...next, offset: 0, rows: [...next.rows, ...retained] };
 }
 
+export function mergePagedDetailSnapshot(
+  current: MainDpsDetailSnapshot | null,
+  next: MainDpsDetailSnapshot,
+): MainDpsDetailSnapshot {
+  if (current === null || !sameDetailView(current, next)) return next;
+  const existingIds = new Set(current.rows.map((row) => row.id));
+  const fresh = next.rows.filter((row) => !existingIds.has(row.id));
+  return { ...next, offset: 0, rows: [...current.rows, ...fresh] };
+}
+
 function sameDetailView(
   left: MainDpsDetailSnapshot,
   right: MainDpsDetailSnapshot,

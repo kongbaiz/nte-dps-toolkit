@@ -9,8 +9,14 @@ const dictionaries: Record<
   Exclude<SettingsLanguage, "en">,
   Record<string, string>
 > = {
-  ja: japanese,
-  "zh-CN": simplifiedChinese,
+  ja: {
+    ...japanese,
+    "Follow-up": "追撃",
+  },
+  "zh-CN": {
+    ...simplifiedChinese,
+    "Follow-up": "追击",
+  },
 };
 let language: SettingsLanguage = "zh-CN";
 let revision = 0;

@@ -21,6 +21,7 @@ pub(crate) mod resources;
 pub(crate) mod settings;
 pub(crate) mod skills;
 pub(crate) mod timeline;
+pub(crate) mod update;
 
 pub(crate) const TECHNICAL_CONTRACT_VERSION: u32 = 5;
 

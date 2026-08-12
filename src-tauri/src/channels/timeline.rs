@@ -26,7 +26,7 @@ pub(crate) fn subscribe_timeline(
 
     let stream_key = format!("{STREAM_KEY_PREFIX}{subscription_id}");
     let state = state.inner().clone();
-    let stop = state.begin_stream(stream_key.clone());
+    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
     thread::spawn(move || {
         let mut last_revision = None;
         while !stop.load(Ordering::Acquire) {

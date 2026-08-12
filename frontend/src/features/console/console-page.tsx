@@ -1,7 +1,6 @@
 import { Search, X } from "lucide-react";
 import { Activity, useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
-import { listen } from "@tauri-apps/api/event";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -29,6 +28,7 @@ import { mainDpsClient } from "@/lib/tauri/main-dps-client";
 import { parseMainDpsCommandError } from "@/lib/tauri/main-dps-contract";
 import { settingsClient } from "@/lib/tauri/settings-client";
 import type { InterfaceSettings } from "@/lib/tauri/settings-contract";
+import { subscribeConsoleNavigate } from "@/lib/tauri/window-events";
 
 import { ConsoleCommandPalette } from "./console-command-palette";
 import type { ConsoleCommandAction } from "./console-command-palette-model";
@@ -80,8 +80,8 @@ export function ConsolePage() {
 
   useEffect(() => {
     return cleanupAsyncRegistration(
-      listen<string>("console-navigate", (event) => {
-        if (isConsolePageId(event.payload)) navigateTo(event.payload);
+      subscribeConsoleNavigate((payload) => {
+        if (isConsolePageId(payload)) navigateTo(payload);
       }),
     );
   }, [navigateTo]);

@@ -1,6 +1,9 @@
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 
-export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 3;
+export const MAIN_DPS_DETAIL_CONTRACT_VERSION = 4;
+export const MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES = 32;
+export const MAIN_DPS_DETAIL_MAX_SKILLS = 250;
+export const MAIN_DPS_DETAIL_MAX_ROWS = 250;
 
 export type MainDpsDetailFilter =
   | "all"
@@ -31,7 +34,11 @@ export interface MainDpsDetailSnapshot {
   hitTypes: MainDpsFilterSummary[];
   attribution: MainDpsAttributionSummary;
   qteSummaries: MainDpsQteSummary[];
+  qteSummaryTotalCount: number;
+  qteSummariesTruncated: boolean;
   skills: MainDpsSkillSummary[];
+  skillTotalCount: number;
+  skillsTruncated: boolean;
   totalHits: number;
   totalDamage: number;
   maxRowDamage: number;
@@ -140,6 +147,46 @@ export function parseMainDpsDetailSnapshot(
     throw new TechnicalContractError(
       `Unsupported main DPS detail contract: ${contractVersion}`,
     );
+  const qteSummaries = boundedList(
+    source.qteSummaries,
+    "qteSummaries",
+    MAIN_DPS_DETAIL_MAX_QTE_SUMMARIES,
+  ).map(parseQteSummary);
+  const qteSummaryTotalCount = nonNegativeInteger(
+    source.qteSummaryTotalCount,
+    "qteSummaryTotalCount",
+  );
+  const qteSummariesTruncated = bool(
+    source.qteSummariesTruncated,
+    "qteSummariesTruncated",
+  );
+  validateTruncation(
+    qteSummaryTotalCount,
+    qteSummaries.length,
+    qteSummariesTruncated,
+    "qteSummaries",
+  );
+  const skills = boundedList(
+    source.skills,
+    "skills",
+    MAIN_DPS_DETAIL_MAX_SKILLS,
+  ).map(parseSkillSummary);
+  const skillTotalCount = nonNegativeInteger(
+    source.skillTotalCount,
+    "skillTotalCount",
+  );
+  const skillsTruncated = bool(source.skillsTruncated, "skillsTruncated");
+  validateTruncation(
+    skillTotalCount,
+    skills.length,
+    skillsTruncated,
+    "skills",
+  );
+  const rows = boundedList(
+    source.rows,
+    "rows",
+    MAIN_DPS_DETAIL_MAX_ROWS,
+  ).map(parseHit);
   return {
     contractVersion,
     generation: text(source.generation, "generation"),
@@ -175,15 +222,17 @@ export function parseMainDpsDetailSnapshot(
     direction: parseDirection(source.direction),
     hitTypes: list(source.hitTypes, "hitTypes").map(parseFilterSummary),
     attribution: parseAttribution(source.attribution),
-    qteSummaries: list(source.qteSummaries, "qteSummaries")
-      .slice(0, 32)
-      .map(parseQteSummary),
-    skills: list(source.skills, "skills").slice(0, 250).map(parseSkillSummary),
+    qteSummaries,
+    qteSummaryTotalCount,
+    qteSummariesTruncated,
+    skills,
+    skillTotalCount,
+    skillsTruncated,
     totalHits: integer(source.totalHits, "totalHits"),
     totalDamage: finite(source.totalDamage, "totalDamage"),
     maxRowDamage: finite(source.maxRowDamage, "maxRowDamage"),
     offset: integer(source.offset, "offset"),
-    rows: list(source.rows, "rows").slice(0, 250).map(parseHit),
+    rows,
   };
 }
 
@@ -354,6 +403,12 @@ function list(value: unknown, field: string): unknown[] {
     throw new TechnicalContractError(`${field} must be an array`);
   return value;
 }
+function boundedList(value: unknown, field: string, limit: number): unknown[] {
+  const rows = list(value, field);
+  if (rows.length > limit)
+    throw new TechnicalContractError(`${field} exceeds the contract limit`);
+  return rows;
+}
 function text(value: unknown, field: string): string {
   if (typeof value !== "string")
     throw new TechnicalContractError(`${field} must be a string`);
@@ -372,6 +427,23 @@ function integer(value: unknown, field: string): number {
   if (!Number.isInteger(number))
     throw new TechnicalContractError(`${field} must be an integer`);
   return number;
+}
+function nonNegativeInteger(value: unknown, field: string): number {
+  const number = integer(value, field);
+  if (number < 0)
+    throw new TechnicalContractError(`${field} must be non-negative`);
+  return number;
+}
+function validateTruncation(
+  totalCount: number,
+  returnedCount: number,
+  truncated: boolean,
+  field: string,
+): void {
+  if (totalCount < returnedCount)
+    throw new TechnicalContractError(`${field} total count is below returned rows`);
+  if (truncated !== (totalCount > returnedCount))
+    throw new TechnicalContractError(`${field} truncation metadata is inconsistent`);
 }
 function nullableInteger(value: unknown, field: string): number | null {
   return value === null ? null : integer(value, field);

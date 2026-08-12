@@ -318,9 +318,10 @@ fn project_readout(
         .values()
         .filter(|row| {
             !hidden_character_ids.contains(&row.char_id)
-                && hits
-                    .iter()
-                    .any(|hit| hit.char_id == row.char_id && !is_qte_follow_up_damage_hit(hit))
+                && hits.iter().any(|hit| {
+                    hit.char_id == row.char_id
+                        && (hit.char_known || !is_qte_follow_up_damage_hit(hit))
+                })
         })
         .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
         .filter(character_has_visible_totals)
@@ -596,6 +597,27 @@ mod tests {
 
         assert!(snapshot.characters.is_empty());
         assert_eq!(snapshot.data_state, HudDataState::Live);
+    }
+
+    #[test]
+    fn known_character_with_reaction_follow_up_remains_in_hud_rows() {
+        let mut state = CombatState::default();
+        let mut character = hit(1.0, 1003, 100.0);
+        character.attack_type = Some("普攻".to_owned());
+        character.follow_up_damage = 25.0;
+        character.follow_up_attack_type = Some("覆纹".to_owned());
+        state.push_hit(character);
+
+        let snapshot = project_hud(
+            &state,
+            &HudConfig::default(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        );
+
+        assert_eq!(snapshot.characters.len(), 1);
+        assert_eq!(snapshot.characters[0].character_id, 1003);
+        assert_eq!(snapshot.characters[0].damage, 125.0);
     }
 
     #[test]

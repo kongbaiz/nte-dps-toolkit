@@ -439,14 +439,16 @@ mod tests {
             );
         }
         assert!(bundled_resource("res/data/abyss/abyss_monsters.json").is_none());
-        assert!(bundled_resource("res/images/characters/player_003_256.png").is_none());
+        assert!(bundled_resource("res/images/characters/player_003.png").is_none());
         assert!(bundled_resource("res/icons/app-icon.png").is_none());
     }
 
     #[test]
     #[cfg(all(feature = "desktop", not(feature = "external_resources")))]
     fn desktop_bundle_keeps_full_visual_resources() {
-        assert!(bundled_resource("res/images/characters/player_003_256.png").is_some());
+        assert!(bundled_resource("res/images/characters/player_003.png").is_some());
+        assert!(bundled_resource("res/images/characters/player_canhong.png").is_some());
+        assert!(bundled_resource("res/images/characters/player_lingke.png").is_some());
         assert!(bundled_resource("res/icons/app-icon.png").is_some());
     }
 }

@@ -4,7 +4,7 @@ import {
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const DIAGNOSTICS_CONTRACT_VERSION = 1;
+export const DIAGNOSTICS_CONTRACT_VERSION = 2;
 export const DIAGNOSTICS_MAX_CHECKS = 64;
 
 export type DiagnosticsCommandError = TechnicalCommandError;
@@ -58,6 +58,7 @@ export interface DiagnosticsCaptureSnapshot {
   phase: DiagnosticsCapturePhase;
   replayRunning: boolean;
   activeFilter: string | null;
+  droppedHistoryArchives: string;
   rawCapture: DiagnosticsRawCaptureSnapshot | null;
 }
 
@@ -189,6 +190,10 @@ function parseCapture(value: unknown): DiagnosticsCaptureSnapshot {
       item.activeFilter,
       "diagnostics.capture.activeFilter",
       4_096,
+    ),
+    droppedHistoryArchives: decimalString(
+      item.droppedHistoryArchives,
+      "diagnostics.capture.droppedHistoryArchives",
     ),
     rawCapture:
       item.rawCapture === null

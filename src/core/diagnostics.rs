@@ -117,6 +117,7 @@ pub struct DiagnosticSnapshot {
     pub raw_packet_count: usize,
     pub parsed_packet_count: usize,
     pub hit_count: usize,
+    pub dropped_history_archives: u64,
     pub include_incoming: bool,
     pub server_damage_calibration: bool,
     pub last_diagnostic: Option<String>,
@@ -232,6 +233,17 @@ pub fn run_capture_diagnostics(snapshot: DiagnosticSnapshot) -> DiagnosticRun {
 }
 
 fn append_runtime_checks(checks: &mut Vec<DiagnosticCheck>, snapshot: &DiagnosticSnapshot) {
+    if snapshot.dropped_history_archives > 0 {
+        checks.push(check(
+            DiagnosticStatus::Warning,
+            "History Archive",
+            formatted(
+                "Dropped {} automatic history archive(s)",
+                vec![snapshot.dropped_history_archives.to_string()],
+            ),
+            message("Automatic history archives were dropped after the retry queue filled"),
+        ));
+    }
     if snapshot.capture_running {
         checks.push(check(
             DiagnosticStatus::Passed,
@@ -409,5 +421,22 @@ mod tests {
             check.title_key == "Recent Diagnostic"
                 && check.detail.arguments == ["private runtime detail"]
         }));
+    }
+
+    #[test]
+    fn dropped_history_archives_are_exposed_as_a_runtime_warning() {
+        let snapshot = DiagnosticSnapshot {
+            dropped_history_archives: 3,
+            ..DiagnosticSnapshot::default()
+        };
+        let mut checks = Vec::new();
+        append_runtime_checks(&mut checks, &snapshot);
+
+        let archive = checks
+            .iter()
+            .find(|check| check.title_key == "History Archive")
+            .expect("history archive warning");
+        assert_eq!(archive.status, DiagnosticStatus::Warning);
+        assert_eq!(archive.detail.arguments, ["3"]);
     }
 }

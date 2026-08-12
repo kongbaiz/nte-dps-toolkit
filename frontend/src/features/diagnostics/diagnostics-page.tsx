@@ -175,6 +175,9 @@ export function DiagnosticsPage() {
         {contentKind === "ready" && snapshot ? (
           <div className="mx-auto w-full max-w-[1800px]">
             <EnvironmentSection snapshot={snapshot} />
+            <HistoryArchiveWarning
+              droppedCount={snapshot.capture.droppedHistoryArchives}
+            />
             <FileActions
               snapshot={snapshot}
               pendingAction={pendingAction}
@@ -186,6 +189,24 @@ export function DiagnosticsPage() {
         ) : null}
       </div>
     </section>
+  );
+}
+
+function HistoryArchiveWarning({ droppedCount }: { droppedCount: string }) {
+  if (droppedCount === "0") return null;
+  return (
+    <div className="border-b px-4 py-3">
+      <Alert variant="destructive">
+        <TriangleAlert aria-hidden="true" />
+        <AlertTitle>{t("Automatic history archives were dropped")}</AlertTitle>
+        <AlertDescription>
+          {tf(
+            "The retry queue dropped {0} archive(s); review diagnostics before relying on the history list.",
+            [formatDecimalString(droppedCount)],
+          )}
+        </AlertDescription>
+      </Alert>
+    </div>
   );
 }
 

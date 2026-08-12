@@ -1,0 +1,63 @@
+RELEASE NOTE VERIFICATION
+
+branch=fix/a-group-hardening
+field=release_notes_v0_3_8
+
+MODIFIED_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\MODIFIED_FILE
+DIFF_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\DIFF_FILE
+VERIFICATION_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\VERIFICATION.txt
+ROLLBACK_FILE=D:\NTE_DPS_TOOL\.codex\verification\hardening-20260812\ROLLBACK.sh
+
+ORIGINAL_SHA256=25CE148805B3D2454F6219E41857307F055025536887848DAC86619E2541FDFB
+MODIFIED_SHA256=5CEAB2E90577285FF26E75248652AA586EC5CAF6539CF5BCC92D53E80B2AF811
+RESTORED_SHA256=25CE148805B3D2454F6219E41857307F055025536887848DAC86619E2541FDFB
+
+BASELINE
+command: Get-Content .codex/verification/hardening-20260812/.baseline-source.md; validate v0.3.7 source and confirm docs/releases/0.3.7.md is renamed away
+input: original docs/releases/0.3.7.md content from HEAD
+literal output:
+BASELINE_WORKTREE_RESULT=renamed-away
+BASELINE_RESULT=docs/releases/0.3.7.md-preserved-in-baseline-copy
+BASELINE_SHA256=25CE148805B3D2454F6219E41857307F055025536887848DAC86619E2541FDFB
+result: original release note content preserved in the baseline copy
+exit status: 0
+
+MODIFIED
+command: Get-Content .codex/verification/hardening-20260812/MODIFIED_FILE; validate v0.3.8 title and required Chinese/English update entries
+input: docs/releases/0.3.8.md copied to MODIFIED_FILE
+literal output:
+MODIFIED_RESULT=docs/releases/0.3.8.md-content-verified
+MODIFIED_SHA256=5CEAB2E90577285FF26E75248652AA586EC5CAF6539CF5BCC92D53E80B2AF811
+result: modified release note copy retained
+exit status: 0
+
+DIFF
+command: git diff --no-index --no-color -- .codex/verification/hardening-20260812/.baseline-source.md .codex/verification/hardening-20260812/MODIFIED_FILE > DIFF_FILE
+literal output: DIFF_EXIT=1; DIFF_RESULT=release-note-copy-diff-verified
+result: expected release-note change recorded in DIFF_FILE
+exit status: 0 for the wrapper; git diff status: 1
+
+ROLLBACK
+command: Copy-Item MODIFIED_FILE rollback-fixture.txt; C:\Program Files\Git\bin\bash.exe ROLLBACK.sh
+input: another copy of MODIFIED_FILE at rollback-fixture.txt
+literal output:
+ROLLBACK_RESULT=restored
+ROLLBACK_VALIDATION_RESULT=restored
+RESTORED_SHA256=25CE148805B3D2454F6219E41857307F055025536887848DAC86619E2541FDFB
+result: rollback restored the baseline release-note identity and exact original hash
+exit status: 0
+
+CONTENT
+- Renamed docs/releases/0.3.7.md to docs/releases/0.3.8.md.
+- Updated the release title and kept the existing Chinese, English, and Japanese sections.
+- Added latest-version character parsing support.
+- Added latest-version Abyss floor, monster, and related display data update notes.
+- Briefly documented the current performance, round-boundary/inventory, replay, CLI boundary, parser, and version synchronization fixes.
+
+VALIDATION
+git diff --check: exit 0
+release-note baseline content check: exit 0
+release-note modified content check: exit 0
+temporary baseline and rollback fixture files removed after verification
+
+MODIFIED_FILE remains changed. The four artifacts above were reopened and retained.

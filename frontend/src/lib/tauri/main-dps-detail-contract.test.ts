@@ -4,7 +4,7 @@ import { parseMainDpsDetailSnapshot } from "./main-dps-detail-contract";
 
 function snapshot(overrides: Record<string, unknown> = {}) {
   return {
-    contractVersion: 3,
+    contractVersion: 4,
     generation: "12",
     kind: "character",
     abyssHalf: "first",
@@ -59,6 +59,8 @@ function snapshot(overrides: Record<string, unknown> = {}) {
       separateReactionDamage: false,
     },
     qteSummaries: [],
+    qteSummaryTotalCount: 0,
+    qteSummariesTruncated: false,
     skills: [
       {
         id: "Skill",
@@ -69,6 +71,8 @@ function snapshot(overrides: Record<string, unknown> = {}) {
         sharePercent: 100,
       },
     ],
+    skillTotalCount: 1,
+    skillsTruncated: false,
     totalHits: 1,
     totalDamage: 123,
     maxRowDamage: 123,
@@ -118,6 +122,32 @@ describe("main DPS detail contract", () => {
     );
     expect(parsed.filter).toBe("qteType");
     expect(parsed.qteType).toBe("创生花");
+  });
+
+  it("fails loudly instead of silently repairing bounded arrays", () => {
+    expect(() =>
+      parseMainDpsDetailSnapshot(
+        snapshot({
+          qteSummaries: Array.from({ length: 33 }, () => ({
+            attackType: "创生花",
+            hits: 1,
+            damage: 1,
+            sharePercent: 1,
+          })),
+          qteSummaryTotalCount: 33,
+          qteSummariesTruncated: true,
+        }),
+      ),
+    ).toThrow(/qteSummaries exceeds/);
+    expect(() =>
+      parseMainDpsDetailSnapshot(
+        snapshot({
+          skills: [],
+          skillTotalCount: 1,
+          skillsTruncated: false,
+        }),
+      ),
+    ).toThrow(/truncation metadata/);
   });
 
   it("rejects unknown filters", () => {

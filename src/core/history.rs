@@ -43,6 +43,16 @@ pub struct PreparedHistoryArchive {
     pub details: Option<HistoryCombatDetails>,
 }
 
+/// An Abyss round waiting for the desktop history service to prepare and
+/// persist it. The capture source is frozen at the same event-gated boundary
+/// as the round details so a later replay/live switch cannot rewrite
+/// provenance for an older round.
+#[derive(Clone, Debug)]
+pub struct PendingHistoryArchive {
+    pub details: HistoryCombatDetails,
+    pub source: CaptureQualitySource,
+}
+
 pub fn prepare_history_archive(
     state: &CombatState,
     source: CaptureQualitySource,
@@ -61,6 +71,14 @@ pub fn prepare_history_archive(
 mod tests {
     use super::*;
     use crate::engine::model::{Hit, HitCharacterSource, HitDirection};
+
+    #[test]
+    fn abyss_exit_is_not_a_pre_event_archive_boundary() {
+        assert!(!abyss_event_starts_new_round(
+            Some(12),
+            &AbyssEvent::Exit { timestamp: 10.0 },
+        ));
+    }
 
     #[test]
     fn idle_round_requires_running_unpaused_non_abyss_combat() {

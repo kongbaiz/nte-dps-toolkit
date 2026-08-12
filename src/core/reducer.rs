@@ -3,7 +3,9 @@
 //! [`apply_engine_event`]; neither frontend may keep its own full match over
 //! `EngineEvent` domain-state updates.
 
-use crate::engine::model::{CombatState, EngineEvent, ModScriptEvent};
+use crate::engine::model::{
+    AbyssEvent, CombatState, EngineEvent, ModScriptApplyOutcome, ModScriptEvent,
+};
 
 /// What the caller still has to do after the domain state was updated.
 /// Frontend-only side effects (toasts, cache invalidation, thread cleanup,
@@ -22,7 +24,13 @@ pub enum CoreSignal {
     /// retaining debug payload fields.
     PacketObserved,
     /// A typed script bridge message for frontend pre/post-processing.
-    ModScript(ModScriptEvent),
+    /// `state_changed` is set only when the applied event actually mutated a
+    /// combat projection; revision bumps must key off that outcome, never off
+    /// the event kind alone.
+    ModScript {
+        event: Box<ModScriptEvent>,
+        state_changed: bool,
+    },
     /// Engine status line to surface to the user.
     Status(String),
     /// Non-fatal degradation (e.g. resource load failure).
@@ -56,6 +64,12 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::PacketObserved
         }
         EngineEvent::Abyss(event) => {
+            if matches!(&event, AbyssEvent::RestartDetected { .. })
+                && state.abyss.active_half.is_none()
+                && state.abyss.exited_at.is_some()
+            {
+                state.abyss = Default::default();
+            }
             state.apply_abyss_event(event);
             CoreSignal::StateChanged
         }
@@ -72,8 +86,11 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::InventoryCharactersReplaced
         }
         EngineEvent::ModScript(event) => {
-            state.apply_mod_script_event(&event);
-            CoreSignal::ModScript(event)
+            let outcome = state.apply_mod_script_event(&event);
+            CoreSignal::ModScript {
+                event: Box::new(event),
+                state_changed: outcome == ModScriptApplyOutcome::ProjectionChanged,
+            }
         }
         EngineEvent::Status(status) => CoreSignal::Status(status),
         EngineEvent::Warning(warning) => CoreSignal::Warning(warning),
@@ -162,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn mod_script_event_is_forwarded_without_changing_combat_state() {
+    fn mod_script_event_without_backfill_does_not_change_combat_state() {
         let mut state = CombatState::default();
         let event = ModScriptEvent::from_bridge(
             4,
@@ -174,9 +191,98 @@ mod tests {
 
         let signal = apply_engine_event(&mut state, EngineEvent::ModScript(event.clone()));
 
-        assert_eq!(signal, CoreSignal::ModScript(event));
+        assert_eq!(
+            signal,
+            CoreSignal::ModScript {
+                event: Box::new(event),
+                state_changed: false
+            }
+        );
         assert!(state.hits.is_empty());
         assert_eq!(state.total_damage, 0.0);
+    }
+
+    #[test]
+    fn mod_script_backfill_reports_projection_change_for_revision_bump() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(10.0)),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(10.02, 7, 100.0))),
+        );
+        let generation = state.hits_generation;
+
+        let signal = apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_hit_target_event_for(
+                60,
+                10.04,
+                0x1234,
+                0x4d88_7b49_05d5_dbaf,
+                "Boss_016_BP",
+                "Boss_16",
+                "Imaginadough",
+                "随心泥",
+                "イメージクレイ",
+            )),
+        );
+
+        match signal {
+            CoreSignal::ModScript { state_changed, .. } => {
+                assert!(
+                    state_changed,
+                    "backfill must be reported as a projection change"
+                );
+            }
+            _ => panic!("expected a ModScript signal"),
+        }
+        assert_eq!(state.hits[0].target_name.as_deref(), Some("随心泥"));
+        assert_ne!(state.hits_generation, generation);
+    }
+
+    #[test]
+    fn duplicate_mod_script_backfill_is_reported_as_unchanged() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::ModScript(enemy_identity_event(20.0)),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(20.02, 7, 100.0))),
+        );
+        let event = enemy_hit_target_event_for(
+            70,
+            20.04,
+            0x1234,
+            0x4d88_7b49_05d5_dbaf,
+            "Boss_016_BP",
+            "Boss_16",
+            "Imaginadough",
+            "随心泥",
+            "イメージクレイ",
+        );
+        let first = apply_engine_event(&mut state, EngineEvent::ModScript(event.clone()));
+        let generation = state.hits_generation;
+        let second = apply_engine_event(&mut state, EngineEvent::ModScript(event));
+
+        match first {
+            CoreSignal::ModScript { state_changed, .. } => assert!(state_changed),
+            _ => panic!("expected a ModScript signal"),
+        }
+        match second {
+            CoreSignal::ModScript { state_changed, .. } => {
+                assert!(
+                    !state_changed,
+                    "idempotent backfill must not bump revisions"
+                );
+            }
+            _ => panic!("expected a ModScript signal"),
+        }
+        assert_eq!(state.hits_generation, generation);
     }
 
     fn enemy_identity_event(timestamp: f64) -> ModScriptEvent {
@@ -637,6 +743,67 @@ mod tests {
             EngineEvent::Abyss(AbyssEvent::RestartDetected { timestamp: 1.0 }),
         );
         assert_eq!(signal, CoreSignal::StateChanged);
+    }
+
+    #[test]
+    fn abyss_restart_after_exit_resets_previous_party_ownership() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 1.0,
+                cycle: Some(1),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(2.0, 1, 100.0))),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 3.0,
+                cycle: Some(1),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::Second,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(4.0, 2, 200.0))),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Exit { timestamp: 5.0 }),
+        );
+
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::RestartDetected { timestamp: 6.0 }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 7.0,
+                cycle: Some(2),
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(8.0, 2, 300.0))),
+        );
+
+        assert_eq!(state.abyss.first_half.hits.len(), 1);
+        assert_eq!(state.abyss.first_half.hits[0].char_id, 2);
+        assert_eq!(state.abyss.first_half.hits[0].damage, 300.0);
+        assert!(state.abyss.second_half.hits.is_empty());
     }
 
     #[test]

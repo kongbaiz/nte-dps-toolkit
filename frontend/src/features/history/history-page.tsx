@@ -33,6 +33,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
 import type {
   HistoryCharacter,
@@ -47,7 +48,6 @@ import { parseTechnicalCommandError } from "@/lib/tauri/technical-contract";
 import { diagnosticsClient } from "@/lib/tauri/diagnostics-client";
 import { diagnosticsError } from "@/lib/tauri/diagnostics-contract";
 
-import { historyCharacterAvatarUrl } from "./history-character-avatar";
 import {
   adjacentHistoryRecordId,
   historyComparisonWarningKeys,
@@ -589,7 +589,7 @@ function RecordDetail({
             {t(
               summary.dpsTimeBasis === "subtract_time_stop"
                 ? "Exclude Time Stop"
-                : "Real Time",
+                : "Real Time (incl. time stop)",
             )}
             {` · ${t(summary.reactionDamageSeparated ? "Reactions separated from character damage" : "Reactions included in character damage")}`}
           </CardDescription>
@@ -812,7 +812,7 @@ function CharacterRows({
 }
 
 function CharacterAvatar({ character }: { character: HistoryCharacter }) {
-  const avatarUrl = historyCharacterAvatarUrl(character.charId);
+  const avatarUrl = useCharacterAvatar(character.charId);
   const initial = character.name.trim().charAt(0) || "?";
   return (
     <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-primary/10 text-sm font-semibold text-primary">

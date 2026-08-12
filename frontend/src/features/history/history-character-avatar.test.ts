@@ -11,12 +11,10 @@ describe("History character avatars", () => {
     replaceCharacterAvatarCatalog([
       {
         id: 1076,
-        avatar: "res/images/characters/player_zhenhong_256.png",
+        avatar: "res/images/characters/player_zhenhong.png",
       },
     ]);
-    expect(historyCharacterAvatarUrl(1076)).toContain(
-      "player_zhenhong_256.png",
-    );
+    expect(historyCharacterAvatarUrl(1076)).toContain("player_zhenhong.png");
   });
 
   it("keeps unknown and pseudo characters on the fallback tile", () => {
