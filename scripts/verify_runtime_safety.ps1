@@ -444,10 +444,15 @@ function Test-AddedOccurrence {
         [Parameter(Mandatory)]
         [int]$Line,
         [Parameter(Mandatory)]
+        [AllowNull()]
         [AllowEmptyCollection()]
         [object[]]$AddedLines,
         [int]$Radius = 0
     )
+
+    if ($null -eq $AddedLines -or $AddedLines.Count -eq 0) {
+        return $false
+    }
 
     return @($AddedLines | Where-Object {
             $_.Path -eq $Path -and
@@ -464,6 +469,7 @@ function Test-IsExternalBoundaryPath {
 function Find-ExternalBoundaryDiffWarnings {
     param(
         [Parameter(Mandatory)]
+        [AllowNull()]
         [object[]]$AddedLines,
         [Parameter(Mandatory)]
         [hashtable]$SourceMap
