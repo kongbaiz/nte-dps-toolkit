@@ -45,6 +45,7 @@ if ($LASTEXITCODE -ne 0) { throw "link failed: $LASTEXITCODE" }
 $output = & $exe
 $exitCode = $LASTEXITCODE
 Write-Output $output
-if ($exitCode -ne 0 -or $output -notmatch $expected) { exit 1 }
+$outputText = $output -join "`n"
+if ($exitCode -ne 0 -or $outputText -notmatch $expected) { exit 1 }
 Write-Output ("offset_profile_tests mode={0}: PASS" -f $Mode)
 exit 0

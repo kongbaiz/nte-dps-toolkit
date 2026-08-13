@@ -65,6 +65,54 @@ namespace
 			selected) == nte::signature::SelectionResult::Ambiguous;
 	}
 
+	constexpr bool PreferredSemanticViewportTickWinsGenericAmbiguity()
+	{
+		constexpr std::array<bool, 17> candidates{
+			false, false, false, false, false, false, false, false, true,
+			false, false, true, false, false, false, true, false,
+		};
+		size_t selected = 0;
+		return nte::hook::SelectPreferredSemanticViewportTick(
+			8,
+			0,
+			candidates.size() - 1,
+			8,
+			[&](size_t index) { return candidates[index]; },
+			selected) && selected == 8;
+	}
+
+	constexpr bool NearestShiftedViewportTickIsSelected()
+	{
+		constexpr std::array<bool, 17> candidates{
+			false, false, false, false, true, false, false, false, false,
+			false, false, true, false, false, false, true, false,
+		};
+		size_t selected = 0;
+		return nte::hook::SelectPreferredSemanticViewportTick(
+			8,
+			0,
+			candidates.size() - 1,
+			8,
+			[&](size_t index) { return candidates[index]; },
+			selected) && selected == 11;
+	}
+
+	constexpr bool EquidistantShiftedViewportTicksFailClosed()
+	{
+		constexpr std::array<bool, 17> candidates{
+			false, false, false, false, false, true, false, false, false,
+			false, false, true, false, false, false, false, false,
+		};
+		size_t selected = 0;
+		return !nte::hook::SelectPreferredSemanticViewportTick(
+			8,
+			0,
+			candidates.size() - 1,
+			8,
+			[&](size_t index) { return candidates[index]; },
+			selected);
+	}
+
 	constexpr std::array<uint8_t, 111> APPEND_NAME_READBACK{
 		0x48, 0x89, 0x5C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57, 0x48,
 		0x83, 0xEC, 0x20, 0x80, 0x3D, 0x82, 0x51, 0xD6, 0x0D, 0x00, 0x48, 0x8B,
@@ -134,6 +182,9 @@ namespace
 	static_assert(FixedOpcodeChangesAreRejected());
 	static_assert(UniqueCandidateIsSelected());
 	static_assert(AmbiguousCandidatesFailClosed());
+	static_assert(PreferredSemanticViewportTickWinsGenericAmbiguity());
+	static_assert(NearestShiftedViewportTickIsSelected());
+	static_assert(EquidistantShiftedViewportTicksFailClosed());
 	static_assert(nte::hook::ShouldPreferKnownViewportTick(true, true));
 	static_assert(!nte::hook::ShouldPreferKnownViewportTick(true, false));
 	static_assert(!nte::hook::ShouldPreferKnownViewportTick(false, true));
