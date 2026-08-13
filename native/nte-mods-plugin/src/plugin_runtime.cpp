@@ -24,7 +24,7 @@ namespace nte::mods
 		constexpr size_t LOCAL_PLAYER_VIEWPORT_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_WORLD_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
-		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 4;
+		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 8;
 		constexpr size_t VIEWPORT_TICK_CODE_WINDOW = 0x90;
 		constexpr size_t MAX_PROCESS_EVENT_HOOKS = 16;
 		constexpr size_t MAX_PROCESS_EVENT_CLASS_HOOKS = 4;
@@ -343,21 +343,16 @@ namespace nte::mods
 				return true;
 			}
 
-			const signature::SelectionResult selection =
-				signature::SelectUniqueIndex(
-					begin,
-					end,
-					[&](size_t index)
-					{
-						return IsExpectedViewportTick(vtable[index]);
-					},
-					result);
-			if (selection == signature::SelectionResult::Unique)
-				return true;
-			if (selection == signature::SelectionResult::Ambiguous)
-				return false;
-
-			return false;
+			return nte::hook::SelectPreferredSemanticViewportTick(
+				preferred_index,
+				begin,
+				end,
+				VIEWPORT_TICK_SCAN_RADIUS,
+				[&](size_t index)
+				{
+					return IsExpectedViewportTick(vtable[index]);
+				},
+				result);
 		}
 
 		void __fastcall HookedViewportTick(

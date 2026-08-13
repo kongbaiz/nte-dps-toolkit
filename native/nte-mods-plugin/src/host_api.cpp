@@ -314,12 +314,36 @@ namespace nte::mods
 		bool DecodeName(const UeName& name, DecodedUeName& decoded)
 		{
 			decoded = {};
+			const auto* resolved = offsets::Get();
+			if (resolved == nullptr)
+				return false;
+
+			if (resolved->fname_pool_address != 0)
+			{
+				size_t decoded_length = 0;
+				if (!offsets::detail::DecodeNameFromPool(
+						resolved->fname_pool_address,
+						name.comparison_index,
+						name.number,
+						decoded.buffer,
+						_countof(decoded.buffer),
+						decoded_length) ||
+					decoded_length > static_cast<size_t>(INT32_MAX))
+					return false;
+				decoded.length = static_cast<int32_t>(decoded_length);
+				for (int32_t index = 0; index < decoded.length; ++index)
+				{
+					if (decoded.buffer[index] == L'/')
+						decoded.first = index + 1;
+				}
+				return true;
+			}
+
 			UeStringBuffer output{
 				decoded.buffer,
 				0,
 				static_cast<int32_t>(_countof(decoded.buffer)) };
-			const auto* resolved = offsets::Get();
-			if (resolved == nullptr)
+			if (resolved->append_name_address == 0)
 				return false;
 			const auto append_name = reinterpret_cast<AppendName>(
 				resolved->append_name_address);

@@ -3135,15 +3135,27 @@ mod tests {
         assert!(NATIVE_PLUGIN_RUNTIME.contains("OpenRuntimePresence()"));
         assert!(NATIVE_PLUGIN_RUNTIME.contains("CloseRuntimePresence()"));
         assert!(
-            NATIVE_OFFSET_RESOLVER.contains("{ 0x1064D000, 0x0164A940, 0x0F071DB0, 100, 0x4C }")
+            NATIVE_OFFSET_RESOLVER
+                .contains("{ 0x1064D000, 0, 0x0164A940, 0, 0, 0x0F071DB0, 100, 0x4C }")
         );
+        assert!(
+            NATIVE_OFFSET_RESOLVER.contains("{ 0x1066A000, 0x0FDCF5DD, 0x016491C0, 0x0F3CB500,")
+        );
+        let profile_first = NATIVE_OFFSET_RESOLVER
+            .find("if (ResolveKnownProfile(")
+            .expect("known profile fast path must exist");
+        let semantic_fallback = NATIVE_OFFSET_RESOLVER[profile_first..]
+            .find("if (FindSemanticAnchors(")
+            .expect("semantic fallback must remain available");
+        assert!(semantic_fallback > 0);
         assert!(NATIVE_OFFSET_RESOLVER.contains("IsExecutableCodeAddress"));
         assert!(NATIVE_OFFSET_RESOLVER.contains("IsWritableDataAddress"));
         assert!(NATIVE_OFFSET_RESOLVER.contains("APPEND_NAME_PROLOGUE_MASK"));
         assert!(NATIVE_OFFSET_RESOLVER.contains("IsGWorldSequence"));
         assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
         assert!(NATIVE_PLUGIN_RUNTIME.contains("ResolveViewportTickIndex"));
-        assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 4"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 8"));
+        assert!(NATIVE_PLUGIN_RUNTIME.contains("SelectPreferredSemanticViewportTick"));
     }
 
     #[test]
