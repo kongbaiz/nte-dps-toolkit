@@ -79,4 +79,34 @@ constexpr bool SelectPreferredSemanticViewportTick(
     result = best_index;
     return true;
 }
+
+// Profiles only accelerate selection. When an update preserves the UE viewport
+// vtable layout but changes image identity, a bounded semantic scan can still
+// be ambiguous. The stable slot remains a fallback only after the caller
+// validates that its entry is readable and executable.
+template <typename IsSemanticCandidate, typename IsStableFallbackCandidate>
+constexpr bool SelectSemanticViewportTickWithStableFallback(
+    size_t preferred_index,
+    size_t begin,
+    size_t end,
+    size_t max_drift,
+    IsSemanticCandidate&& is_semantic_candidate,
+    IsStableFallbackCandidate&& is_stable_fallback_candidate,
+    size_t& result) noexcept
+{
+    if (SelectPreferredSemanticViewportTick(
+            preferred_index,
+            begin,
+            end,
+            max_drift,
+            static_cast<IsSemanticCandidate&&>(is_semantic_candidate),
+            result))
+        return true;
+
+    if (!is_stable_fallback_candidate(preferred_index))
+        return false;
+    result = preferred_index;
+    return true;
+}
+
 } // namespace nte::hook

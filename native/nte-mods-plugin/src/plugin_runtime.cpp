@@ -24,7 +24,7 @@ namespace nte::mods
 		constexpr size_t LOCAL_PLAYER_VIEWPORT_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_WORLD_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
-		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 8;
+		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 128;
 		constexpr size_t VIEWPORT_TICK_CODE_WINDOW = 0x90;
 		constexpr size_t MAX_PROCESS_EVENT_HOOKS = 16;
 		constexpr size_t MAX_PROCESS_EVENT_CLASS_HOOKS = 4;
@@ -343,7 +343,7 @@ namespace nte::mods
 				return true;
 			}
 
-			return nte::hook::SelectPreferredSemanticViewportTick(
+			return nte::hook::SelectSemanticViewportTickWithStableFallback(
 				preferred_index,
 				begin,
 				end,
@@ -351,6 +351,12 @@ namespace nte::mods
 				[&](size_t index)
 				{
 					return IsExpectedViewportTick(vtable[index]);
+				},
+				[&](size_t index)
+				{
+					return index == preferred_index &&
+						memory::IsExecutableAddress(vtable[index]) &&
+						memory::IsReadableRange(vtable[index], 16);
 				},
 				result);
 		}

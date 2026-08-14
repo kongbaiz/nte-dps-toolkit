@@ -97,6 +97,40 @@ namespace
 			selected) && selected == 11;
 	}
 
+	constexpr bool UnknownProfileUsesStableViewportTickFallback()
+	{
+		constexpr std::array<bool, 17> candidates{
+			false, false, false, false, false, true, false, false, false,
+			false, false, true, false, false, false, false, false,
+		};
+		size_t selected = 0;
+		return nte::hook::SelectSemanticViewportTickWithStableFallback(
+			8,
+			0,
+			candidates.size() - 1,
+			8,
+			[&](size_t index) { return candidates[index]; },
+			[](size_t index) { return index == 8; },
+			selected) && selected == 8;
+	}
+
+	constexpr bool InvalidStableViewportTickFallbackIsRejected()
+	{
+		constexpr std::array<bool, 17> candidates{
+			false, false, false, false, false, true, false, false, false,
+			false, false, true, false, false, false, false, false,
+		};
+		size_t selected = 0;
+		return !nte::hook::SelectSemanticViewportTickWithStableFallback(
+			8,
+			0,
+			candidates.size() - 1,
+			8,
+			[&](size_t index) { return candidates[index]; },
+			[](size_t) { return false; },
+			selected);
+	}
+
 	constexpr bool EquidistantShiftedViewportTicksFailClosed()
 	{
 		constexpr std::array<bool, 17> candidates{
@@ -185,6 +219,8 @@ namespace
 	static_assert(PreferredSemanticViewportTickWinsGenericAmbiguity());
 	static_assert(NearestShiftedViewportTickIsSelected());
 	static_assert(EquidistantShiftedViewportTicksFailClosed());
+	static_assert(UnknownProfileUsesStableViewportTickFallback());
+	static_assert(InvalidStableViewportTickFallbackIsRejected());
 	static_assert(nte::hook::ShouldPreferKnownViewportTick(true, true));
 	static_assert(!nte::hook::ShouldPreferKnownViewportTick(true, false));
 	static_assert(!nte::hook::ShouldPreferKnownViewportTick(false, true));
