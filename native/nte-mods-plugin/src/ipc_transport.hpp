@@ -21,6 +21,7 @@ namespace nte::mods
 		QueryCombatClockTransitions,
 		QueryModEvents,
 		QueryModLogs,
+		QueryCharacterEffects,
 	};
 
 	enum class IpcPumpResult : int32_t

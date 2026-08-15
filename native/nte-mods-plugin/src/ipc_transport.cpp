@@ -346,6 +346,13 @@ namespace nte::mods
 					response.payload.mod_logs,
 					NTE_MOD_LOG_HISTORY_SIZE);
 				return NTE_MODS_STATUS_DRY_RUN_OK;
+			case IpcKernelService::QueryCharacterEffects:
+				if (!IsEmptyQueryRequest(request))
+					return NTE_MODS_STATUS_INVALID_IPC_REQUEST;
+				response.record_count = CopyCharacterEffects(
+					response.payload.character_effects,
+					NTE_CHARACTER_EFFECT_MAX);
+				return NTE_MODS_STATUS_DRY_RUN_OK;
 			case IpcKernelService::EquipModule:
 				if (!IsZeroItemId(request.core) || request.placement_count != 0 ||
 					request.state != 0 || !HasOnlyZeroPlacements(request, 0))

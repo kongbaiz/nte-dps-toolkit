@@ -598,6 +598,8 @@ namespace nte::mods::runtime
 				return CAPABILITY_UNREAL_REFLECTION;
 			if (Equals(name, "process.event"))
 				return CAPABILITY_PROCESS_EVENT;
+			if (Equals(name, "character.effects"))
+				return CAPABILITY_CHARACTER_EFFECTS;
 			return 0;
 		}
 
@@ -669,6 +671,13 @@ namespace nte::mods::runtime
 			{
 				service = IpcKernelService::QueryModEvents;
 				operation = NTE_MODS_IPC_QUERY_MOD_EVENTS;
+				return true;
+			}
+			else if (Equals(name, "character.query_effects"))
+			{
+				service = IpcKernelService::QueryCharacterEffects;
+				operation = NTE_MODS_IPC_QUERY_CHARACTER_EFFECTS;
+				capability |= CAPABILITY_CHARACTER_EFFECTS;
 				return true;
 			}
 			else
@@ -4484,6 +4493,9 @@ namespace nte::mods::runtime
 					execution))
 				quarantined_programs[index] = true;
 		}
+		if ((enabled_capabilities & CAPABILITY_CHARACTER_EFFECTS) != 0)
+			SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
+				execution, GameValue::PlayerState)));
 		PumpLiveIpc(&execution.ipc_context);
 		ReleaseSRWLockShared(&program_lock);
 	}
