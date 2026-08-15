@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool-tauri"
-version = "0.3.8"
+version = "0.3.9"
 description = "Tauri desktop shell for NTE DPS TOOL"
 authors = ["NTE DPS TOOL contributors"]
 license = "AGPL-3.0-or-later"
