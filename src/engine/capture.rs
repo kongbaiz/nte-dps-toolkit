@@ -56,6 +56,8 @@ use crate::engine::protocol::{
 };
 
 const PCAP_ERRBUF_SIZE: usize = 256;
+const DLT_EN10MB: c_int = 1;
+const DLT_RAW: c_int = 12;
 const MIN_READABLE_TEXT_LEN: usize = 4;
 const MAX_IGNORABLE_BINARY_PACKET_LEN: usize = 96;
 const UNREADABLE_PROTOCOL_TEXT: &str = "未解析到可读协议文本";
@@ -81,6 +83,46 @@ const CAPTURE_FRAME_QUEUE_CAPACITY: usize = 16_384;
 struct CaptureFrame {
     data: Vec<u8>,
     timestamp: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CaptureLinkType {
+    Ethernet,
+    RawIpv4,
+}
+
+impl CaptureLinkType {
+    fn from_npcap_datalink(data_link: c_int) -> Result<Self, String> {
+        match data_link {
+            DLT_EN10MB => Ok(Self::Ethernet),
+            DLT_RAW => Ok(Self::RawIpv4),
+            unsupported => Err(format!(
+                "unsupported Npcap data link type {unsupported}; supported types are DLT_EN10MB ({DLT_EN10MB}) and DLT_RAW ({DLT_RAW})"
+            )),
+        }
+    }
+
+    fn from_pcapng(data_link: DataLink) -> Option<Self> {
+        match data_link {
+            DataLink::ETHERNET => Some(Self::Ethernet),
+            DataLink::RAW => Some(Self::RawIpv4),
+            _ => None,
+        }
+    }
+
+    fn pcapng_data_link(self) -> DataLink {
+        match self {
+            Self::Ethernet => DataLink::ETHERNET,
+            Self::RawIpv4 => DataLink::RAW,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Ethernet => "Ethernet",
+            Self::RawIpv4 => "raw IPv4",
+        }
+    }
 }
 
 #[repr(C)]
@@ -138,6 +180,7 @@ type Compile =
 type SetFilter = unsafe extern "C" fn(*mut PcapT, *mut BpfProgram) -> c_int;
 type FreeCode = unsafe extern "C" fn(*mut BpfProgram);
 type GetErr = unsafe extern "C" fn(*mut PcapT) -> *const c_char;
+type PcapDataLink = unsafe extern "C" fn(*mut PcapT) -> c_int;
 
 struct PcapHandle {
     raw: *mut PcapT,
@@ -368,24 +411,38 @@ struct RawCaptureData {
 }
 
 impl RawCaptureBuffer {
-    fn new(device: CaptureDevice, directory: Option<&std::path::Path>) -> Self {
+    fn new(directory: Option<&std::path::Path>) -> Self {
         let timestamp = Local::now().format("%Y%m%d_%H%M%S_%3f");
         let path = directory.map(|directory| directory.join(format!("nte_raw_{timestamp}.pcapng")));
-        let (writer, write_error) = match path.as_deref() {
-            Some(path) => match RawCaptureWriter::create(path, &device) {
-                Ok(writer) => (Some(writer), None),
-                Err(error) => (None, Some(error)),
-            },
-            None => (None, None),
-        };
         Self {
             inner: Arc::new(Mutex::new(RawCaptureData {
                 path,
-                writer,
+                writer: None,
                 packet_count: 0,
                 captured_bytes: 0,
-                write_error,
+                write_error: None,
             })),
+        }
+    }
+
+    fn initialize(&self, device: &CaptureDevice, link_type: CaptureLinkType) {
+        let path = self.inner.lock().ok().and_then(|capture| {
+            if capture.writer.is_none() && capture.write_error.is_none() {
+                capture.path.clone()
+            } else {
+                None
+            }
+        });
+        let Some(path) = path else {
+            return;
+        };
+        let result = RawCaptureWriter::create(&path, device, link_type);
+        let Ok(mut capture) = self.inner.lock() else {
+            return;
+        };
+        match result {
+            Ok(writer) => capture.writer = Some(writer),
+            Err(error) => capture.write_error = Some(error),
         }
     }
 
@@ -511,7 +568,11 @@ struct RawCaptureWriter {
 }
 
 impl RawCaptureWriter {
-    fn create(path: &std::path::Path, device: &CaptureDevice) -> Result<Self, String> {
+    fn create(
+        path: &std::path::Path,
+        device: &CaptureDevice,
+        link_type: CaptureLinkType,
+    ) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
                 format!(
@@ -528,7 +589,8 @@ impl RawCaptureWriter {
         })?;
         let mut writer =
             PcapNgWriter::new(BufWriter::new(file)).map_err(|error| error.to_string())?;
-        let mut interface = InterfaceDescriptionBlock::new(DataLink::ETHERNET, CAPTURE_SNAPLEN);
+        let mut interface =
+            InterfaceDescriptionBlock::new(link_type.pcapng_data_link(), CAPTURE_SNAPLEN);
         interface
             .options
             .push(InterfaceDescriptionOption::IfName(Cow::Owned(
@@ -1022,20 +1084,29 @@ pub fn list_devices() -> Result<Vec<CaptureDevice>, String> {
     }
 }
 
-fn parse_udp_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, u16, Ipv4Addr, u16, &[u8])> {
-    if packet.len() < 14 {
-        return None;
-    }
-    let mut ethernet_offset = 14;
-    let mut ether_type = u16::from_be_bytes([packet[12], packet[13]]);
-    if ether_type == 0x8100 && packet.len() >= 18 {
-        ether_type = u16::from_be_bytes([packet[16], packet[17]]);
-        ethernet_offset = 18;
-    }
-    if ether_type != 0x0800 || packet.len() < ethernet_offset + 20 {
-        return None;
-    }
-    let ip = &packet[ethernet_offset..];
+fn parse_udp_ipv4(
+    link_type: CaptureLinkType,
+    packet: &[u8],
+) -> Option<(Ipv4Addr, u16, Ipv4Addr, u16, &[u8])> {
+    let ip = match link_type {
+        CaptureLinkType::Ethernet => {
+            if packet.len() < 14 {
+                return None;
+            }
+            let mut ethernet_offset = 14;
+            let mut ether_type = u16::from_be_bytes([packet[12], packet[13]]);
+            if ether_type == 0x8100 && packet.len() >= 18 {
+                ether_type = u16::from_be_bytes([packet[16], packet[17]]);
+                ethernet_offset = 18;
+            }
+            if ether_type != 0x0800 || packet.len() < ethernet_offset + 20 {
+                return None;
+            }
+            &packet[ethernet_offset..]
+        }
+        CaptureLinkType::RawIpv4 if packet.len() >= 20 => packet,
+        CaptureLinkType::RawIpv4 => return None,
+    };
     let ip_header_len = ((ip[0] & 0x0f) as usize) * 4;
     let total_len = u16::from_be_bytes([ip[2], ip[3]]) as usize;
     let fragment = u16::from_be_bytes([ip[6], ip[7]]);
@@ -1067,9 +1138,13 @@ fn parse_udp_ipv4(packet: &[u8]) -> Option<(Ipv4Addr, u16, Ipv4Addr, u16, &[u8])
     ))
 }
 
-fn replay_frame_local_ip_hint(packet: &[u8], local_ip_hint: Option<Ipv4Addr>) -> Option<Ipv4Addr> {
+fn replay_frame_local_ip_hint(
+    link_type: CaptureLinkType,
+    packet: &[u8],
+    local_ip_hint: Option<Ipv4Addr>,
+) -> Option<Ipv4Addr> {
     let local_ip = local_ip_hint?;
-    let (source, _, destination, _, _) = parse_udp_ipv4(packet)?;
+    let (source, _, destination, _, _) = parse_udp_ipv4(link_type, packet)?;
     (source == local_ip || destination == local_ip).then_some(local_ip)
 }
 
@@ -2646,7 +2721,14 @@ enum FrameTimestamp {
     Unknown,
 }
 
-/// Suppresses byte-for-byte duplicate Ethernet frames reported back-to-back by
+#[derive(Clone, Copy)]
+struct CapturedPacket<'a> {
+    link_type: CaptureLinkType,
+    data: &'a [u8],
+    timestamp: FrameTimestamp,
+}
+
+/// Suppresses byte-for-byte duplicate capture frames reported back-to-back by
 /// the capture layer. Full-frame comparison keeps a genuine retransmission with
 /// different network headers distinct, even when its UDP payload is unchanged.
 #[derive(Default)]
@@ -3852,6 +3934,7 @@ impl PacketDecoder {
         self.follow_up_damage.observe_fuwen_trigger_hit(hit);
     }
 
+    #[cfg(test)]
     fn process_ethernet_frame(
         &mut self,
         packet: &[u8],
@@ -3861,11 +3944,34 @@ impl PacketDecoder {
         characters: &HashMap<u32, CharacterInfo>,
         sender: &EngineEventSink,
     ) {
-        let (timestamp, capture_timestamp) = match frame_timestamp {
+        self.process_capture_frame(
+            CapturedPacket {
+                link_type: CaptureLinkType::Ethernet,
+                data: packet,
+                timestamp: frame_timestamp,
+            },
+            local_ip,
+            include_incoming,
+            characters,
+            sender,
+        );
+    }
+
+    fn process_capture_frame(
+        &mut self,
+        packet: CapturedPacket<'_>,
+        local_ip: Option<Ipv4Addr>,
+        include_incoming: bool,
+        characters: &HashMap<u32, CharacterInfo>,
+        sender: &EngineEventSink,
+    ) {
+        let (timestamp, capture_timestamp) = match packet.timestamp {
             FrameTimestamp::Known(timestamp) => (timestamp, Some(timestamp)),
             FrameTimestamp::Unknown => (0.0, None),
         };
-        let Some((src, src_port, dst, dst_port, payload)) = parse_udp_ipv4(packet) else {
+        let Some((src, src_port, dst, dst_port, payload)) =
+            parse_udp_ipv4(packet.link_type, packet.data)
+        else {
             return;
         };
         if local_ip.is_some_and(|ip| src != ip && dst != ip) {
@@ -3873,7 +3979,10 @@ impl PacketDecoder {
         }
         // Drop a frame already reported by the capture layer so its damage
         // records are not counted a second time. See [`FrameDedup`].
-        if self.frame_dedup.is_duplicate(packet, capture_timestamp) {
+        if self
+            .frame_dedup
+            .is_duplicate(packet.data, capture_timestamp)
+        {
             return;
         }
         let expired_hits = self.take_expired_ambiguous_hits(timestamp);
@@ -4326,19 +4435,9 @@ pub fn start_capture(
     } = output;
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
-    let raw_capture = RawCaptureBuffer::new(device.clone(), raw_capture_directory.as_deref());
+    let raw_capture = RawCaptureBuffer::new(raw_capture_directory.as_deref());
     let thread_raw_capture = raw_capture.clone();
     let thread = thread::spawn(move || {
-        let monitor_stop = Arc::new(AtomicBool::new(false));
-        let monitor_thread = {
-            let stop = Arc::clone(&monitor_stop);
-            let raw_capture = thread_raw_capture.clone();
-            let sender = sender.clone();
-            let capture_started_100ns = current_filetime_100ns();
-            thread::spawn(move || {
-                run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
-            })
-        };
         let result = run_capture(CaptureRunConfig {
             device: &device,
             local_ip,
@@ -4351,8 +4450,6 @@ pub fn start_capture(
             raw_capture: &thread_raw_capture,
             packet_emission,
         });
-        monitor_stop.store(true, Ordering::Relaxed);
-        let _ = monitor_thread.join();
         thread_raw_capture.finish();
         let _ = sender.send(EngineEvent::CaptureStopped);
         if let Err(error) = result {
@@ -4379,18 +4476,29 @@ struct CaptureRunConfig<'a> {
     packet_emission: PacketEmissionMode,
 }
 
-/// Parser thread body: drains decoded frames off the bounded queue and runs the stable decode
-/// pipeline, fully decoupled from packet acquisition. It owns its own `PacketDecoder` and exits
-/// once the acquisition thread drops the frame sender, flushing any deferred ambiguous hits.
-fn run_parser(
-    frames: Receiver<CaptureFrame>,
+struct ParserRunConfig {
+    link_type: CaptureLinkType,
     local_ip: Option<Ipv4Addr>,
     include_incoming: bool,
     use_server_damage_calibration: bool,
     packet_emission: PacketEmissionMode,
     resources: CaptureResources,
     sender: EngineEventSink,
-) {
+}
+
+/// Parser thread body: drains decoded frames off the bounded queue and runs the stable decode
+/// pipeline, fully decoupled from packet acquisition. It owns its own `PacketDecoder` and exits
+/// once the acquisition thread drops the frame sender, flushing any deferred ambiguous hits.
+fn run_parser(frames: Receiver<CaptureFrame>, config: ParserRunConfig) {
+    let ParserRunConfig {
+        link_type,
+        local_ip,
+        include_incoming,
+        use_server_damage_calibration,
+        packet_emission,
+        resources,
+        sender,
+    } = config;
     let CaptureResources {
         characters,
         ability_catalog,
@@ -4402,9 +4510,12 @@ fn run_parser(
         let _ = sender.send(EngineEvent::Warning(warning));
     }
     while let Ok(frame) = frames.recv() {
-        decoder.process_ethernet_frame(
-            &frame.data,
-            FrameTimestamp::Known(frame.timestamp),
+        decoder.process_capture_frame(
+            CapturedPacket {
+                link_type,
+                data: &frame.data,
+                timestamp: FrameTimestamp::Known(frame.timestamp),
+            },
             local_ip,
             include_incoming,
             &characters,
@@ -4446,6 +4557,7 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         let set_filter: SetFilter = load_symbol(&library, b"pcap_setfilter\0")?;
         let free_code: FreeCode = load_symbol(&library, b"pcap_freecode\0")?;
         let get_err: GetErr = load_symbol(&library, b"pcap_geterr\0")?;
+        let pcap_datalink: PcapDataLink = load_symbol(&library, b"pcap_datalink\0")?;
 
         let device_name = CString::new(device.name.as_str()).map_err(|error| error.to_string())?;
         let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
@@ -4463,6 +4575,8 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             ));
         }
         let handle = PcapHandle::new(handle, close);
+        let link_type = CaptureLinkType::from_npcap_datalink(pcap_datalink(handle.as_ptr()))?;
+        raw_capture.initialize(device, link_type);
 
         let capture_filter = CString::new(filter).map_err(|error| error.to_string())?;
         let mut program = BpfProgramGuard::new(free_code);
@@ -4484,13 +4598,27 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             |path| format!("; writing raw capture to {}", path.display()),
         );
         let _ = sender.send(EngineEvent::Status(format!(
-            "capturing: {} ({}){}",
+            "capturing: {} ({}, {}){}",
             device.description,
             local_ip
                 .map(|ip| ip.to_string())
                 .unwrap_or_else(|| "local IP not filtered".to_owned()),
+            link_type.label(),
             raw_capture_status
         )));
+
+        // The plugin monitor starts only after the capture link type has been frozen and the raw
+        // writer has emitted its matching interface block, so no custom block can precede it.
+        let monitor_stop = Arc::new(AtomicBool::new(false));
+        let monitor_thread = {
+            let stop = Arc::clone(&monitor_stop);
+            let raw_capture = raw_capture.clone();
+            let sender = sender.clone();
+            let capture_started_100ns = current_filetime_100ns();
+            thread::spawn(move || {
+                run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
+            })
+        };
 
         // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
         // the bounded parser queue, which applies backpressure rather than dropping live-only data.
@@ -4501,12 +4629,15 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             thread::spawn(move || {
                 run_parser(
                     frame_receiver,
-                    local_ip,
-                    include_incoming,
-                    use_server_damage_calibration,
-                    packet_emission,
-                    resources,
-                    sender,
+                    ParserRunConfig {
+                        link_type,
+                        local_ip,
+                        include_incoming,
+                        use_server_damage_calibration,
+                        packet_emission,
+                        resources,
+                        sender,
+                    },
                 );
             })
         };
@@ -4551,8 +4682,13 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
             }
         }
         drop(frame_sender);
+        monitor_stop.store(true, Ordering::Relaxed);
+        let monitor_panicked = monitor_thread.join().is_err();
         if parser_thread.join().is_err() && loop_result.is_ok() {
             loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
+        }
+        if monitor_panicked && loop_result.is_ok() {
+            loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
         }
         loop_result?;
     }
@@ -4655,14 +4791,18 @@ pub fn import_pcapng(
                 let Some(interface) = reader.interfaces().get(interface_id) else {
                     continue;
                 };
-                if interface.linktype != DataLink::ETHERNET {
+                let Some(link_type) = CaptureLinkType::from_pcapng(interface.linktype) else {
                     continue;
-                }
+                };
                 supported_count += 1;
-                let frame_local_ip_hint = replay_frame_local_ip_hint(&data, local_ip_hint);
-                decoder.process_ethernet_frame(
-                    &data,
-                    timestamp,
+                let frame_local_ip_hint =
+                    replay_frame_local_ip_hint(link_type, &data, local_ip_hint);
+                decoder.process_capture_frame(
+                    CapturedPacket {
+                        link_type,
+                        data: &data,
+                        timestamp,
+                    },
                     frame_local_ip_hint,
                     include_incoming,
                     &characters,
@@ -4672,7 +4812,7 @@ pub fn import_pcapng(
             let pending_hits = decoder.take_all_ambiguous_hits();
             decoder.emit_hits(pending_hits, &characters, &sender);
             if packet_count > 0 && supported_count == 0 {
-                return Err("pcapng contains no supported Ethernet packets".to_owned());
+                return Err("pcapng contains no supported Ethernet or raw IPv4 packets".to_owned());
             }
             Ok((packet_count, supported_count))
         })();
@@ -4681,7 +4821,7 @@ pub fn import_pcapng(
         match result {
             Ok((packet_count, supported_count)) => {
                 let _ = sender.send(EngineEvent::Status(format!(
-                    "pcapng import complete: read {packet_count} packets, parsed {supported_count} Ethernet packets; {direction_mode}"
+                    "pcapng import complete: read {packet_count} packets, parsed {supported_count} supported packets; {direction_mode}"
                 )));
             }
             Err(error) => {
@@ -6336,14 +6476,7 @@ mod tests {
         let mut handle = CaptureHandle {
             stop: Arc::new(AtomicBool::new(false)),
             thread: Some(worker),
-            raw_capture: RawCaptureBuffer::new(
-                CaptureDevice {
-                    name: "test".to_owned(),
-                    description: String::new(),
-                    ipv4: Vec::new(),
-                },
-                None,
-            ),
+            raw_capture: RawCaptureBuffer::new(None),
         };
         let mut statuses = Vec::new();
 
@@ -8177,15 +8310,89 @@ mod tests {
     }
 
     #[test]
-    fn disabled_raw_capture_has_no_path_or_writer() {
-        let buffer = RawCaptureBuffer::new(
-            CaptureDevice {
-                name: "test".to_owned(),
-                description: "test".to_owned(),
-                ipv4: Vec::new(),
-            },
-            None,
+    fn capture_link_type_maps_supported_npcap_and_pcapng_values() {
+        assert_eq!(
+            CaptureLinkType::from_npcap_datalink(DLT_EN10MB).unwrap(),
+            CaptureLinkType::Ethernet
         );
+        assert_eq!(
+            CaptureLinkType::from_npcap_datalink(DLT_RAW).unwrap(),
+            CaptureLinkType::RawIpv4
+        );
+        assert_eq!(
+            CaptureLinkType::from_pcapng(DataLink::ETHERNET),
+            Some(CaptureLinkType::Ethernet)
+        );
+        assert_eq!(
+            CaptureLinkType::from_pcapng(DataLink::RAW),
+            Some(CaptureLinkType::RawIpv4)
+        );
+        assert_eq!(CaptureLinkType::from_pcapng(DataLink::NULL), None);
+
+        let error = CaptureLinkType::from_npcap_datalink(0).unwrap_err();
+        assert!(error.contains("unsupported Npcap data link type 0"));
+    }
+
+    #[test]
+    fn raw_ipv4_packet_uses_the_same_udp_decoder_as_ethernet() {
+        let source = Ipv4Addr::new(10, 0, 0, 2);
+        let destination = Ipv4Addr::new(10, 0, 0, 3);
+        let ethernet = udp_ipv4_packet(b"raw-ipv4", source, 50_000, destination, 7_777);
+        let raw_ipv4 = &ethernet[14..];
+
+        assert_eq!(
+            parse_udp_ipv4(CaptureLinkType::Ethernet, &ethernet),
+            parse_udp_ipv4(CaptureLinkType::RawIpv4, raw_ipv4)
+        );
+    }
+
+    #[test]
+    fn raw_capture_writer_records_the_actual_raw_linktype() {
+        let directory = std::env::temp_dir().join(format!(
+            "nte-raw-linktype-test-{}-{}",
+            std::process::id(),
+            current_filetime_100ns()
+        ));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+        let path = directory.join("raw.pcapng");
+        let device = CaptureDevice {
+            name: "test-tun".to_owned(),
+            description: "test TUN".to_owned(),
+            ipv4: Vec::new(),
+        };
+        let ethernet = udp_ipv4_packet(
+            b"raw-ipv4",
+            Ipv4Addr::new(10, 0, 0, 2),
+            50_000,
+            Ipv4Addr::new(10, 0, 0, 3),
+            7_777,
+        );
+        let raw_ipv4 = &ethernet[14..];
+        let mut writer =
+            RawCaptureWriter::create(&path, &device, CaptureLinkType::RawIpv4).unwrap();
+        writer
+            .write_packet(Duration::from_secs(1), raw_ipv4.len() as u32, raw_ipv4)
+            .unwrap();
+        writer.finish().unwrap();
+
+        let file = File::open(&path).unwrap();
+        let mut reader = PcapNgReader::new(file).unwrap();
+        while reader.interfaces().is_empty() {
+            assert!(reader.next_block().is_some());
+        }
+        assert_eq!(reader.interfaces()[0].linktype, DataLink::RAW);
+    }
+
+    #[test]
+    fn disabled_raw_capture_has_no_path_or_writer() {
+        let buffer = RawCaptureBuffer::new(None);
         assert_eq!(buffer.path(), None);
         assert_eq!(buffer.packet_count(), 0);
         assert_eq!(
@@ -9890,11 +10097,11 @@ mod tests {
         let packet = udp_ipv4_packet(&[], remote_ip, 7_777, capture_local_ip, 50_000);
 
         assert_eq!(
-            replay_frame_local_ip_hint(&packet, Some(live_local_ip)),
+            replay_frame_local_ip_hint(CaptureLinkType::Ethernet, &packet, Some(live_local_ip)),
             None
         );
         assert_eq!(
-            replay_frame_local_ip_hint(&packet, Some(capture_local_ip)),
+            replay_frame_local_ip_hint(CaptureLinkType::Ethernet, &packet, Some(capture_local_ip)),
             Some(capture_local_ip)
         );
     }
