@@ -46,13 +46,13 @@
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <SDLCheck>false</SDLCheck>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
-      <ExceptionHandling>false</ExceptionHandling>
+      <ExceptionHandling>Sync</ExceptionHandling>
       <PreprocessorDefinitions>NDEBUG;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <AdditionalOptions>/utf-8 /bigobj /Zl /EHs-c- /GR- %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalIncludeDirectories>include;src;third_party\dumper7;third_party\dumper7\Engine\Public;third_party\dumper7\Generator\Public;third_party\dumper7\Utils;third_party\dumper7\Platform\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 /bigobj /GR- %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
@@ -60,9 +60,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
-      <EntryPointSymbol>DllMain</EntryPointSymbol>
-      <AdditionalDependencies>advapi32.lib;kernel32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;bcrypt.lib;kernel32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/IGNORE:4104 %(AdditionalOptions)</AdditionalOptions>
       <ModuleDefinitionFile>src\dwmapi.def</ModuleDefinitionFile>
       <ImportLibrary>$(OutDir)nte_mods_plugin.lib</ImportLibrary>
@@ -71,6 +69,8 @@
   <ItemGroup>
     <ClInclude Include="include\nte_mods_ipc.h" />
     <ClInclude Include="src\dwmapi_proxy.hpp" />
+    <ClInclude Include="src\dumper7_sdk.hpp" />
+    <ClInclude Include="src\find_offsets_scanner.hpp" />
     <ClInclude Include="src\host_api.hpp" />
     <ClInclude Include="src\ipc_transport.hpp" />
     <ClInclude Include="src\memory_access.hpp" />
@@ -79,12 +79,47 @@
     <ClInclude Include="src\offset_resolver.hpp" />
     <ClInclude Include="src\offset_signatures.hpp" />
     <ClInclude Include="src\plugin_runtime.hpp" />
+    <ClInclude Include="src\sdk_cache.hpp" />
     <ClInclude Include="src\shadow_vtable_hook.hpp" />
     <ClInclude Include="src\signature_policy.hpp" />
     <ClInclude Include="src\viewport_hook_policy.hpp" />
+    <ClInclude Include="third_party\dumper7\Settings.h" />
+    <ClInclude Include="third_party\dumper7\TmpUtils.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\OffsetFinder\OffsetFinder.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\OffsetFinder\Offsets.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\Unreal\Enums.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\Unreal\NameArray.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\Unreal\ObjectArray.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\Unreal\UnrealContainers.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\Unreal\UnrealObjects.h" />
+    <ClInclude Include="third_party\dumper7\Engine\Public\Unreal\UnrealTypes.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Generators\CppGenerator.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Generators\Generator.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\HashStringTable.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Managers\CollisionManager.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Managers\DependencyManager.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Managers\EnumManager.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Managers\MemberManager.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Managers\PackageManager.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Managers\StructManager.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\PredefinedMembers.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Wrappers\EnumWrapper.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Wrappers\MemberWrappers.h" />
+    <ClInclude Include="third_party\dumper7\Generator\Public\Wrappers\StructWrapper.h" />
+    <ClInclude Include="third_party\dumper7\Platform\Private\Arch_x86.h" />
+    <ClInclude Include="third_party\dumper7\Platform\Private\PlatformWindows.h" />
+    <ClInclude Include="third_party\dumper7\Platform\Public\Architecture.h" />
+    <ClInclude Include="third_party\dumper7\Platform\Public\Platform.h" />
+    <ClInclude Include="third_party\dumper7\Utils\Encoding\UnicodeNames.h" />
+    <ClInclude Include="third_party\dumper7\Utils\Encoding\UtfN.hpp" />
+    <ClInclude Include="third_party\dumper7\Utils\Utils.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\dwmapi_proxy.cpp" />
+    <ClCompile Include="src\dumper7_sdk.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="src\find_offsets_scanner.cpp" />
     <ClCompile Include="src\host_api.cpp" />
     <ClCompile Include="src\ipc_transport.cpp" />
     <ClCompile Include="src\memory_access.cpp" />
@@ -94,13 +129,74 @@
     <ClCompile Include="src\shadow_vtable_hook.cpp" />
     <ClCompile Include="src\nte_mods_plugin.cpp" />
     <ClCompile Include="src\plugin_runtime.cpp" />
+    <ClCompile Include="src\sdk_cache.cpp" />
+    <ClCompile Include="third_party\dumper7\Settings.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Engine\Private\OffsetFinder\OffsetFinder.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Engine\Private\OffsetFinder\Offsets.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Engine\Private\Unreal\NameArray.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Engine\Private\Unreal\ObjectArray.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Engine\Private\Unreal\UnrealObjects.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Engine\Private\Unreal\UnrealTypes.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Generators\CppGenerator.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Generators\Generator.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\HashStringTable.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Managers\CollisionManager.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Managers\DependencyManager.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Managers\EnumManager.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Managers\MemberManager.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Managers\PackageManager.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Managers\StructManager.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Wrappers\EnumWrapper.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Wrappers\MemberWrappers.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Generator\Private\Wrappers\StructWrapper.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Platform\Private\Arch_x86.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="third_party\dumper7\Platform\Private\PlatformWindows.cpp">
+      <DisableSpecificWarnings>4018;4100;4127;4189;4201;4244;4245;4267;4305;4389;4456;4458;4505;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="src\dwmapi_stubs.asm">
       <ObjectFileName>$(IntDir)dwmapi_stubs.obj</ObjectFileName>
-    </MASM>
-    <MASM Include="src\runtime_shims.asm">
-      <ObjectFileName>$(IntDir)runtime_shims.obj</ObjectFileName>
     </MASM>
   </ItemGroup>
   <ItemGroup>

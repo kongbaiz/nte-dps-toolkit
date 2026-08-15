@@ -86,7 +86,13 @@ pub(crate) fn publish_notice(
     message_arguments: Vec<String>,
 ) -> Result<(), CommandError> {
     state.publish_island_notice(tone, message_key, message_arguments, None);
-    show_notice(app, state)
+    // Notification presentation is ancillary to the command that already
+    // changed application state. A transient island-window failure must not
+    // turn a successful capture/reset/etc. into a rejected frontend invoke.
+    if let Err(error) = show_notice(app, state) {
+        log::warn!("show notification island failed after state mutation: {error:?}");
+    }
+    Ok(())
 }
 
 pub(crate) fn publish_notice_best_effort(

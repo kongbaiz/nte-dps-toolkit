@@ -64,6 +64,10 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
     await runAction("refresh", () => client.getSnapshot());
   }, [client, runAction]);
 
+  const reset = useCallback(async () => {
+    await runAction("reset", () => client.resetSession());
+  }, [client, runAction]);
+
   const setPassthrough = useCallback(
     async (enabled: boolean) => {
       await runAction("passthrough", () => client.setPassthrough(enabled));
@@ -129,6 +133,7 @@ export function useTechnicalState(client: TechnicalClient = technicalClient) {
     actionNotice,
     clearActionNotice,
     refresh,
+    reset,
     setPassthrough,
     setAlwaysOnTop,
     setHudModuleVisibility,

@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use nte_dps_tool::core::live_capture::LiveCapturePhase;
 use tauri::{AppHandle, State, WebviewWindow};
 
 use crate::{
@@ -130,8 +133,11 @@ pub(crate) fn start_hud_capture(
     window: WebviewWindow,
 ) -> Result<TechnicalSnapshot, CommandError> {
     hud::validate_window(&window)?;
+    // Starting a new capture from the compact HUD is an explicit new-session
+    // action. Replace the stopped session instead of surfacing the main-window
+    // confirmation flow, which the HUD cannot present.
     state
-        .request_capture_start(false)
+        .request_capture_start(true)
         .map_err(CommandError::from_core)?;
     island::publish_notice(
         &app,
@@ -160,5 +166,50 @@ pub(crate) fn stop_hud_capture(
         "Stopping live capture...",
         Vec::new(),
     )?;
+    Ok(state.snapshot())
+}
+
+#[tauri::command]
+pub(crate) async fn reset_hud_session(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<TechnicalSnapshot, CommandError> {
+    hud::validate_window(&window)?;
+    let active = matches!(
+        state.capture_phase(),
+        LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
+    ) || state.replay_running();
+    let state = state.inner().clone();
+    let worker_state = state.clone();
+    let undo_token = tauri::async_runtime::spawn_blocking(move || {
+        let undo_token = if active {
+            worker_state
+                .stop_active_capture_and_wait(Duration::from_secs(5))
+                .map_err(CommandError::from_core)?;
+            worker_state.clear_session();
+            None
+        } else {
+            worker_state.reset_session_with_undo()
+        };
+        worker_state.set_main_processing_paused(false);
+        let _ = worker_state.set_main_selected_round_id(None);
+        Ok::<_, CommandError>(undo_token)
+    })
+    .await
+    .map_err(|_| CommandError::main_dps("reset_failed", "Failed to reset the current session"))??;
+    state.publish_island_notice(
+        "success",
+        if undo_token.is_some() {
+            "Session reset · use Undo within 5 seconds"
+        } else {
+            "Stats reset"
+        },
+        Vec::new(),
+        undo_token,
+    );
+    if let Err(error) = island::show_notice(&app, &state) {
+        log::warn!("show reset notification from HUD failed: {error:?}");
+    }
     Ok(state.snapshot())
 }
