@@ -3138,8 +3138,7 @@ mod tests {
         assert!(NATIVE_OFFSET_RESOLVER.contains("find_offsets::ResolveCurrentProcess("));
         assert!(NATIVE_OFFSET_RESOLVER.contains("if (now < retry_at)"));
         assert!(
-            NATIVE_OFFSET_RESOLVER
-  .contains("InterlockedCompareExchange(&resolution_state, 1, 0)")
+            NATIVE_OFFSET_RESOLVER.contains("InterlockedCompareExchange(&resolution_state, 1, 0)")
         );
         assert!(!NATIVE_OFFSET_RESOLVER.contains("ResolveKnownProfile("));
         assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
