@@ -20,6 +20,7 @@ namespace nte::mods::runtime
 	constexpr uint32_t CAPABILITY_MEMORY_WRITE = 1u << 8;
 	constexpr uint32_t CAPABILITY_UNREAL_REFLECTION = 1u << 9;
 	constexpr uint32_t CAPABILITY_PROCESS_EVENT = 1u << 10;
+	constexpr uint32_t CAPABILITY_CHARACTER_EFFECTS = 1u << 11;
 
 	enum class ReloadResult
 	{

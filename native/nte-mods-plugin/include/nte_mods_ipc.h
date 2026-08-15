@@ -13,6 +13,7 @@
 #define NTE_MOD_LOG_HISTORY_SIZE 18u
 #define NTE_MOD_LOG_ID_SIZE 32u
 #define NTE_MOD_LOG_MESSAGE_SIZE 56u
+#define NTE_CHARACTER_EFFECT_MAX 42u
 #define NTE_MODS_IPC_VERSION 7u
 #define NTE_MODS_PIPE_NAME L"\\\\.\\pipe\\nte-mods-plugin-v7"
 #define NTE_MODS_RUNTIME_PRESENCE_NAME L"Local\\nte-mods-plugin-v1-present"
@@ -54,7 +55,18 @@ typedef enum NteModsIpcOperation
     NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS = 11,
     NTE_MODS_IPC_QUERY_MOD_EVENTS = 12,
     NTE_MODS_IPC_QUERY_MOD_LOGS = 13,
+    NTE_MODS_IPC_QUERY_CHARACTER_EFFECTS = 14,
 } NteModsIpcOperation;
+
+typedef enum NteCharacterEffectKind
+{
+    NTE_CHARACTER_EFFECT_GAMEPLAY_EFFECT = 0,
+    NTE_CHARACTER_EFFECT_BUFF = 1,
+    NTE_CHARACTER_EFFECT_DEBUFF = 2,
+} NteCharacterEffectKind;
+
+#define NTE_CHARACTER_EFFECT_INHIBITED 0x1u
+#define NTE_CHARACTER_EFFECT_INFINITE 0x2u
 
 typedef enum NteModLogLevel
 {
@@ -123,12 +135,28 @@ typedef struct NteModLogEntry
     char message[NTE_MOD_LOG_MESSAGE_SIZE];
 } NteModLogEntry;
 
+typedef struct NteCharacterEffect
+{
+    uint64_t snapshot_sequence;
+    uint64_t timestamp_100ns;
+    uint32_t character_id;
+    uint16_t party_slot;
+    uint16_t reserved;
+    uint64_t effect_key;
+    uint64_t name_hash;
+    uint32_t duration_ms;
+    uint16_t stack_count;
+    uint8_t kind;
+    uint8_t flags;
+} NteCharacterEffect;
+
 typedef union NteModsIpcPayload
 {
     NteCombatClockTransition
         combat_clock_transitions[NTE_COMBAT_CLOCK_HISTORY_SIZE];
     NteModEvent mod_events[NTE_MOD_EVENT_HISTORY_SIZE];
     NteModLogEntry mod_logs[NTE_MOD_LOG_HISTORY_SIZE];
+    NteCharacterEffect character_effects[NTE_CHARACTER_EFFECT_MAX];
     uint8_t bytes[
         NTE_COMBAT_CLOCK_HISTORY_SIZE * sizeof(NteCombatClockTransition)];
 } NteModsIpcPayload;
@@ -150,6 +178,7 @@ static_assert(sizeof(NteEquipmentPlacement) == 16);
 static_assert(sizeof(NteCombatClockTransition) == 32);
 static_assert(sizeof(NteModEvent) == 112);
 static_assert(sizeof(NteModLogEntry) == 112);
+static_assert(sizeof(NteCharacterEffect) == 48);
 static_assert(sizeof(NteModsIpcPayload) == 2048);
 static_assert(sizeof(NteModsIpcRequest) == NTE_MODS_IPC_REQUEST_SIZE);
 static_assert(sizeof(NteModsIpcResponse) == NTE_MODS_IPC_RESPONSE_SIZE);
