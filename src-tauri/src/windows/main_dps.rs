@@ -1,6 +1,6 @@
 use tauri::{
-    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size, WebviewWindow, WindowEvent,
-    webview::PageLoadEvent,
+    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size, State, WebviewWindow,
+    WindowEvent, webview::PageLoadEvent,
 };
 
 use crate::{
@@ -50,6 +50,7 @@ pub(crate) fn set_passthrough(
         CommandError::window_operation_failed()
     })?;
     state.set_passthrough(enabled);
+    reassert_opacity(window, state, "passthrough change");
     Ok(())
 }
 
@@ -73,8 +74,34 @@ pub(crate) fn set_opacity(window: &WebviewWindow, opacity: f32) -> Result<(), Co
     )
 }
 
+pub(crate) fn restore_opacity(
+    window: &WebviewWindow,
+    state: &AppState,
+) -> Result<(), CommandError> {
+    set_opacity(window, state.ui_config_snapshot().opacity)
+}
+
+pub(crate) fn reassert_opacity(window: &WebviewWindow, state: &AppState, reason: &str) {
+    if let Err(error) = restore_opacity(window, state) {
+        log::warn!("reassert main DPS opacity after {reason} failed: {error:?}");
+    }
+}
+
+fn native_window_event_may_reset_opacity(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::Moved(_)
+            | WindowEvent::Resized(_)
+            | WindowEvent::Focused(true)
+            | WindowEvent::ScaleFactorChanged { .. }
+    )
+}
+
 #[tauri::command]
-pub(crate) fn show_main_dps_when_ready(window: WebviewWindow) -> Result<(), CommandError> {
+pub(crate) fn show_main_dps_when_ready(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<(), CommandError> {
     validate_window(&window)?;
     window.show().map_err(|error| {
         log::error!("show main DPS after the frontend first paint failed: {error}");
@@ -87,7 +114,9 @@ pub(crate) fn show_main_dps_when_ready(window: WebviewWindow) -> Result<(), Comm
     window.set_focus().map_err(|error| {
         log::error!("focus main DPS after the frontend first paint failed: {error}");
         CommandError::window_operation_failed()
-    })
+    })?;
+    reassert_opacity(&window, state.inner(), "frontend reveal");
+    Ok(())
 }
 
 pub(crate) fn initialize(window: &WebviewWindow, app: AppHandle, state: AppState) {
@@ -98,11 +127,12 @@ pub(crate) fn initialize(window: &WebviewWindow, app: AppHandle, state: AppState
     if let Err(error) = restore_geometry(window, &state) {
         log::warn!("restore main DPS geometry failed: {error}");
     }
-    if let Err(error) = set_opacity(window, state.ui_config_snapshot().opacity) {
-        log::warn!("restore main DPS opacity failed: {error:?}");
-    }
+    reassert_opacity(window, &state, "startup restore");
     let event_window = window.clone();
     window.on_window_event(move |event| {
+        if native_window_event_may_reset_opacity(event) {
+            reassert_opacity(&event_window, &state, "native window event");
+        }
         if matches!(event, WindowEvent::CloseRequested { .. }) {
             persist_geometry(&event_window, &state);
             for label in [
@@ -200,6 +230,7 @@ fn should_persist_geometry(minimized: bool, maximized: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::{PhysicalPosition, PhysicalSize};
 
     #[test]
     fn native_reveal_fallback_only_targets_finished_main_page() {
@@ -215,6 +246,18 @@ mod tests {
             CONSOLE_WINDOW_LABEL,
             PageLoadEvent::Finished
         ));
+    }
+
+    #[test]
+    fn opacity_is_reasserted_for_native_window_changes() {
+        assert!(native_window_event_may_reset_opacity(&WindowEvent::Moved(
+            PhysicalPosition::new(100, 200),
+        )));
+        assert!(native_window_event_may_reset_opacity(&WindowEvent::Resized(
+            PhysicalSize::new(800, 600),
+        )));
+        assert!(native_window_event_may_reset_opacity(&WindowEvent::Focused(true)));
+        assert!(!native_window_event_may_reset_opacity(&WindowEvent::Focused(false)));
     }
 
     #[test]

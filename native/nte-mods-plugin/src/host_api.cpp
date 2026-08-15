@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace nte::mods
 {
@@ -26,6 +27,21 @@ namespace nte::mods
 			(1u << PAUSED_GAME_TYPE_PLAY_SKILL_VIDEO) |
 			(1u << PAUSED_GAME_TYPE_ULTRA_PASSIVE_EFFECT) |
 			(1u << PAUSED_GAME_TYPE_JIN_EFFECT);
+		constexpr size_t PLAYER_STATE_EQUIPPED_PLAYERS_OFFSET = 0x27E0;
+		constexpr size_t PLAYER_CHARACTER_ASC_OFFSET = 0x08A0;
+		constexpr size_t ASC_ACTIVE_EFFECTS_ARRAY_OFFSET = 0x09C8;
+		constexpr size_t ACTIVE_EFFECT_SIZE = 0x0360;
+		constexpr size_t ACTIVE_EFFECT_DEF_OFFSET = 0x0018;
+		constexpr size_t ACTIVE_EFFECT_MODIFIED_ATTRIBUTES_OFFSET = 0x0020;
+		constexpr size_t ACTIVE_EFFECT_DURATION_OFFSET = 0x0068;
+		constexpr size_t ACTIVE_EFFECT_STACK_COUNT_OFFSET = 0x01D8;
+		constexpr size_t ACTIVE_EFFECT_START_WORLD_TIME_OFFSET = 0x02D8;
+		constexpr size_t ACTIVE_EFFECT_INHIBITED_OFFSET = 0x02DC;
+		constexpr size_t GAMEPLAY_EFFECT_DURATION_POLICY_OFFSET = 0x0030;
+		constexpr size_t MODIFIED_ATTRIBUTE_SIZE = 0x0040;
+		constexpr size_t MODIFIED_ATTRIBUTE_MAGNITUDE_OFFSET = 0x0038;
+		constexpr uint32_t MAX_PARTY_MEMBERS = 4;
+		constexpr uint32_t MAX_ACTIVE_EFFECTS_PER_CHARACTER = 64;
 
 		struct UeName
 		{
@@ -224,6 +240,11 @@ namespace nte::mods
 		constinit uint32_t combat_clock_history_count = 0;
 		constinit uint32_t combat_clock_history_next = 0;
 		constinit uint64_t next_combat_clock_sequence = 1;
+		constinit std::array<NteCharacterEffect, NTE_CHARACTER_EFFECT_MAX>
+			character_effect_snapshot{};
+		constinit uint32_t character_effect_snapshot_count = 0;
+		constinit uint64_t character_effect_snapshot_sequence = 0;
+		constinit uint64_t character_effect_snapshot_fingerprint = 0;
 
 		static_assert(sizeof(PluginContext) == 16);
 		static_assert(sizeof(NteModsStatus) == 4);
@@ -310,6 +331,11 @@ namespace nte::mods
 
 			return NTE_MODS_STATUS_DRY_RUN_OK;
 		}
+
+		UeFunction* FindFunction(
+			UeClass* object_class,
+			const char* class_name,
+			const char* function_name);
 
 		bool DecodeName(const UeName& name, DecodedUeName& decoded)
 		{
@@ -399,6 +425,166 @@ namespace nte::mods
 				hash *= 0x100000001b3ull;
 			}
 			return true;
+		}
+
+		bool HashEffectName(const UeName& name, uint64_t& hash)
+		{
+			DecodedUeName decoded{};
+			if (!DecodeName(name, decoded) || decoded.first >= decoded.length)
+				return false;
+			int32_t first = decoded.first;
+			constexpr char default_prefix[] = "Default__";
+			bool has_default_prefix = decoded.length - first >= 9;
+			for (int32_t index = 0; has_default_prefix && index < 9; ++index)
+			{
+				has_default_prefix = decoded.buffer[first + index] ==
+					default_prefix[index];
+			}
+			if (has_default_prefix)
+				first += 9;
+			int32_t end = decoded.length;
+			if (end - first >= 2 && decoded.buffer[end - 2] == L'_' &&
+				(decoded.buffer[end - 1] == L'C' || decoded.buffer[end - 1] == L'c'))
+				end -= 2;
+			if (first >= end)
+				return false;
+			hash = 0xcbf29ce484222325ull;
+			for (int32_t index = first; index < end; ++index)
+			{
+				wchar_t character = decoded.buffer[index];
+				if (character > 0x7f)
+					return false;
+				if (character >= L'A' && character <= L'Z')
+					character += L'a' - L'A';
+				hash ^= static_cast<uint8_t>(character);
+				hash *= 0x100000001b3ull;
+			}
+			return true;
+		}
+
+		uint32_t CharacterIdFromItem(UeObject* character)
+		{
+			if (!memory::IsReadableRange(character, sizeof(UeObject)))
+				return 0;
+			UeFunction* function = FindFunction(
+				character->object_class,
+				NTE_OBFUSCATE_STRING("HTPlayerCharacter").c_str(),
+				NTE_OBFUSCATE_STRING("GetCharacterItem").c_str());
+			if (function == nullptr || !memory::IsReadableRange(
+					character->vtable, (PROCESS_EVENT_INDEX + 1) * sizeof(void*)))
+				return 0;
+			const auto process_event = reinterpret_cast<ProcessEvent>(
+				character->vtable[PROCESS_EVENT_INDEX]);
+			if (!memory::IsExecutableAddress(reinterpret_cast<const void*>(process_event)))
+				return 0;
+			PointerReturnParams params{};
+			const uint32_t original_flags = function->function_flags;
+			function->function_flags |= NATIVE_FUNCTION_FLAG;
+			process_event(character, function, &params);
+			function->function_flags = original_flags;
+			auto* item = static_cast<UeObject*>(params.return_value);
+			UeName item_id{};
+			if (!memory::ReadValue(item, 0x28, item_id))
+				return 0;
+			DecodedUeName decoded{};
+			if (!DecodeName(item_id, decoded))
+				return 0;
+			uint32_t value = 0;
+			bool found_digit = false;
+			for (int32_t index = decoded.first; index < decoded.length; ++index)
+			{
+				const wchar_t digit = decoded.buffer[index];
+				if (digit >= L'0' && digit <= L'9')
+				{
+					found_digit = true;
+					if (value > (UINT32_MAX - 9) / 10)
+						return 0;
+					value = value * 10 + static_cast<uint32_t>(digit - L'0');
+				}
+				else if (found_digit)
+				{
+					value = 0;
+					found_digit = false;
+				}
+			}
+			return found_digit ? value : 0;
+		}
+
+		bool IsFiniteFloat(float value);
+
+		bool EffectNameContains(const UeName& name, const char* marker)
+		{
+			DecodedUeName decoded{};
+			if (!DecodeName(name, decoded))
+				return false;
+			for (int32_t start = decoded.first; start < decoded.length; ++start)
+			{
+				size_t offset = 0;
+				while (marker[offset] != '\0' && start + static_cast<int32_t>(offset) < decoded.length)
+				{
+					wchar_t value = decoded.buffer[start + offset];
+					if (value >= L'A' && value <= L'Z') value += L'a' - L'A';
+					if (value != static_cast<unsigned char>(marker[offset])) break;
+					++offset;
+				}
+				if (marker[offset] == '\0') return true;
+			}
+			return false;
+		}
+
+		uint8_t ClassifyEffect(const UeName& name, const uint8_t* active_effect)
+		{
+			constexpr const char* debuff_markers[] = { "debuff", "negative", "poison", "burn", "bleed", "stun", "slow", "freeze", "weak", "reduce", "decrease", "minus", "curse", "silence", "control" };
+			for (const char* marker : debuff_markers)
+				if (EffectNameContains(name, marker)) return NTE_CHARACTER_EFFECT_DEBUFF;
+			UeArrayView modified{};
+			if (!memory::ReadValue(
+					active_effect,
+					ACTIVE_EFFECT_MODIFIED_ATTRIBUTES_OFFSET,
+					modified) ||
+				modified.count < 0 || modified.count > 128 ||
+				modified.capacity < modified.count)
+				return NTE_CHARACTER_EFFECT_GAMEPLAY_EFFECT;
+			bool positive = false;
+			bool negative = false;
+			for (int32_t index = 0; index < modified.count; ++index)
+			{
+				float magnitude = 0.0f;
+				const auto* entry = static_cast<const uint8_t*>(modified.data) +
+					static_cast<size_t>(index) * MODIFIED_ATTRIBUTE_SIZE;
+				if (!memory::ReadValue(
+						entry, MODIFIED_ATTRIBUTE_MAGNITUDE_OFFSET, magnitude) ||
+					!IsFiniteFloat(magnitude))
+					continue;
+				positive = positive || magnitude > 0.0f;
+				negative = negative || magnitude < 0.0f;
+			}
+			if (negative && !positive)
+				return NTE_CHARACTER_EFFECT_DEBUFF;
+			if (positive && !negative)
+				return NTE_CHARACTER_EFFECT_BUFF;
+			constexpr const char* buff_markers[] = { "buff", "positive", "increase", "bonus", "haste", "shield", "heal", "regen" };
+			for (const char* marker : buff_markers)
+				if (EffectNameContains(name, marker)) return NTE_CHARACTER_EFFECT_BUFF;
+			return NTE_CHARACTER_EFFECT_GAMEPLAY_EFFECT;
+		}
+
+		uint64_t UpdateEffectFingerprint(uint64_t fingerprint, const void* data, size_t size)
+		{
+			const auto* bytes = static_cast<const uint8_t*>(data);
+			for (size_t index = 0; index < size; ++index)
+			{
+				fingerprint ^= bytes[index];
+				fingerprint *= 0x100000001b3ull;
+			}
+			return fingerprint;
+		}
+
+		bool IsFiniteFloat(float value)
+		{
+			uint32_t bits = 0;
+			std::memcpy(&bits, &value, sizeof(bits));
+			return (bits & 0x7f800000u) != 0x7f800000u;
 		}
 
 		bool NameEquals(const UeName& name, const char* expected)
@@ -1099,6 +1285,129 @@ namespace nte::mods
 			output[index] = combat_clock_history[
 				(first + index) % NTE_COMBAT_CLOCK_HISTORY_SIZE];
 		}
+		return copy_count;
+	}
+
+	void SamplePartyEffects(void* player_state)
+	{
+		std::array<NteCharacterEffect, NTE_CHARACTER_EFFECT_MAX> candidate{};
+		uint32_t candidate_count = 0;
+		UeArrayView players{};
+		if (player_state != nullptr && memory::ReadValue(
+				player_state,
+				PLAYER_STATE_EQUIPPED_PLAYERS_OFFSET,
+				players) &&
+			players.count >= 0 && players.count <= static_cast<int32_t>(MAX_PARTY_MEMBERS) &&
+			players.capacity >= players.count && players.data != nullptr &&
+			memory::IsReadableRange(
+				players.data, static_cast<size_t>(players.count) * sizeof(void*)))
+		{
+			const uint64_t timestamp = CurrentFileTime100ns();
+			for (int32_t party_index = 0; party_index < players.count; ++party_index)
+			{
+				UeObject* character = nullptr;
+				if (!memory::ReadValue(players.data, party_index * sizeof(void*), character) ||
+					!memory::IsReadableRange(character, sizeof(UeObject)))
+					continue;
+				const uint32_t character_id = CharacterIdFromItem(character);
+				void* ability_system = nullptr;
+				UeArrayView effects{};
+				if (character_id == 0 ||
+					!memory::ReadValue(character, PLAYER_CHARACTER_ASC_OFFSET, ability_system) ||
+					!memory::ReadValue(
+						ability_system, ASC_ACTIVE_EFFECTS_ARRAY_OFFSET, effects) ||
+					effects.count < 0 ||
+					effects.count > static_cast<int32_t>(MAX_ACTIVE_EFFECTS_PER_CHARACTER) ||
+					effects.capacity < effects.count ||
+					(effects.count != 0 && !memory::IsReadableRange(
+						effects.data,
+						static_cast<size_t>(effects.count) * ACTIVE_EFFECT_SIZE)))
+					continue;
+				for (int32_t effect_index = 0;
+					effect_index < effects.count && candidate_count < candidate.size();
+					++effect_index)
+				{
+					const auto* effect = static_cast<const uint8_t*>(effects.data) +
+						static_cast<size_t>(effect_index) * ACTIVE_EFFECT_SIZE;
+					UeObject* definition = nullptr;
+					if (!memory::ReadValue(effect, ACTIVE_EFFECT_DEF_OFFSET, definition) ||
+						!memory::IsReadableRange(definition, sizeof(UeObject)))
+						continue;
+					uint64_t name_hash = 0;
+					if (!HashEffectName(definition->name, name_hash))
+						continue;
+					float duration = 0.0f;
+					float started = 0.0f;
+					int32_t stack_count = 1;
+					uint8_t inhibited = 0;
+					uint8_t duration_policy = 0;
+					memory::ReadValue(effect, ACTIVE_EFFECT_DURATION_OFFSET, duration);
+					memory::ReadValue(effect, ACTIVE_EFFECT_START_WORLD_TIME_OFFSET, started);
+					memory::ReadValue(effect, ACTIVE_EFFECT_STACK_COUNT_OFFSET, stack_count);
+					memory::ReadValue(effect, ACTIVE_EFFECT_INHIBITED_OFFSET, inhibited);
+					memory::ReadValue(
+						definition, GAMEPLAY_EFFECT_DURATION_POLICY_OFFSET, duration_policy);
+					uint32_t started_bits = 0;
+					std::memcpy(&started_bits, &started, sizeof(started_bits));
+					uint64_t effect_key = name_hash ^
+						(static_cast<uint64_t>(started_bits) << 32) ^
+						static_cast<uint32_t>(definition->index);
+					uint32_t duration_ms = 0;
+					if (IsFiniteFloat(duration) && duration > 0.0f)
+					{
+						const double milliseconds = static_cast<double>(duration) * 1000.0;
+						duration_ms = milliseconds >= UINT32_MAX
+							? UINT32_MAX
+							: static_cast<uint32_t>(milliseconds);
+					}
+					NteCharacterEffect& output = candidate[candidate_count++];
+					output.timestamp_100ns = timestamp;
+					output.character_id = character_id;
+					output.party_slot = static_cast<uint16_t>(party_index);
+					output.effect_key = effect_key;
+					output.name_hash = name_hash;
+					output.duration_ms = duration_ms;
+					output.stack_count = static_cast<uint16_t>(
+						stack_count <= 0 ? 1 : (stack_count > UINT16_MAX ? UINT16_MAX : stack_count));
+					output.kind = ClassifyEffect(definition->name, effect);
+					output.flags = (inhibited != 0 ? NTE_CHARACTER_EFFECT_INHIBITED : 0) |
+						(duration_policy == 1 || duration < 0.0f
+							? NTE_CHARACTER_EFFECT_INFINITE
+							: 0);
+				}
+			}
+		}
+
+		uint64_t fingerprint = 0xcbf29ce484222325ull;
+		for (uint32_t index = 0; index < candidate_count; ++index)
+		{
+			NteCharacterEffect comparable = candidate[index];
+			comparable.snapshot_sequence = 0;
+			comparable.timestamp_100ns = 0;
+			fingerprint = UpdateEffectFingerprint(
+				fingerprint, &comparable, sizeof(comparable));
+		}
+		if (fingerprint != character_effect_snapshot_fingerprint ||
+			candidate_count != character_effect_snapshot_count)
+		{
+			character_effect_snapshot_fingerprint = fingerprint;
+			++character_effect_snapshot_sequence;
+		}
+		for (uint32_t index = 0; index < candidate_count; ++index)
+			candidate[index].snapshot_sequence = character_effect_snapshot_sequence;
+		character_effect_snapshot = candidate;
+		character_effect_snapshot_count = candidate_count;
+	}
+
+	uint32_t CopyCharacterEffects(NteCharacterEffect* output, uint32_t capacity)
+	{
+		if (output == nullptr || capacity == 0)
+			return 0;
+		const uint32_t copy_count = capacity < character_effect_snapshot_count
+			? capacity
+			: character_effect_snapshot_count;
+		for (uint32_t index = 0; index < copy_count; ++index)
+			output[index] = character_effect_snapshot[index];
 		return copy_count;
 	}
 
