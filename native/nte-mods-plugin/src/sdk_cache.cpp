@@ -38,9 +38,9 @@ namespace nte::mods::sdk_cache
 			L"Software\\NTE DPS Tool\\Mod Loader";
 		constexpr wchar_t MOD_WORKSPACE_REGISTRY_VALUE[] = L"Workspace";
 		constexpr std::array<uint8_t, 8> PACKAGE_MAGIC{
-			'N', 'T', 'E', 'S', 'D', 'K', '0', '1',
+			'N', 'T', 'E', 'S', 'D', 'K', '0', '2',
 		};
-		constexpr uint32_t PACKAGE_VERSION = 1;
+		constexpr uint32_t PACKAGE_VERSION = 2;
 		constexpr uint32_t PACKAGE_ALGORITHM = COMPRESS_ALGORITHM_XPRESS_HUFF;
 		constexpr std::array<const char*, 5> REQUIRED_SDK_FILES{
 			"SDK.hpp",
@@ -522,6 +522,102 @@ namespace nte::mods::sdk_cache
 			return true;
 		}
 
+		bool HashCurrentRange(
+			HANDLE file,
+			uint64_t byte_count,
+			std::array<uint8_t, SHA256_SIZE>& digest,
+			wchar_t* error,
+			size_t error_capacity)
+		{
+			if (file == INVALID_HANDLE_VALUE || byte_count == 0)
+			{
+				SetError(L"SDK package integrity range is invalid", error, error_capacity);
+				return false;
+			}
+
+			BCRYPT_ALG_HANDLE algorithm = nullptr;
+			BCRYPT_HASH_HANDLE hash = nullptr;
+			std::vector<uint8_t> hash_object;
+			bool succeeded = false;
+			do
+			{
+				if (BCryptOpenAlgorithmProvider(
+						&algorithm,
+						BCRYPT_SHA256_ALGORITHM,
+						nullptr,
+						0) < 0)
+				{
+					SetError(L"BCryptOpenAlgorithmProvider(SDK package SHA-256) failed", error, error_capacity);
+					break;
+				}
+				DWORD object_length = 0;
+				DWORD returned = 0;
+				if (BCryptGetProperty(
+						algorithm,
+						BCRYPT_OBJECT_LENGTH,
+						reinterpret_cast<PUCHAR>(&object_length),
+						sizeof(object_length),
+						&returned,
+						0) < 0 ||
+					returned != sizeof(object_length) || object_length == 0 ||
+					object_length > 1024 * 1024)
+				{
+					SetError(L"SDK package SHA-256 object length is invalid", error, error_capacity);
+					break;
+				}
+				hash_object.resize(object_length);
+				if (BCryptCreateHash(
+						algorithm,
+						&hash,
+						hash_object.data(),
+						static_cast<ULONG>(hash_object.size()),
+						nullptr,
+						0,
+						0) < 0)
+				{
+					SetError(L"BCryptCreateHash(SDK package SHA-256) failed", error, error_capacity);
+					break;
+				}
+
+				std::vector<uint8_t> buffer(HASH_READ_CHUNK);
+				uint64_t remaining = byte_count;
+				while (remaining != 0)
+				{
+					const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(remaining, buffer.size()));
+					DWORD bytes_read = 0;
+					if (!ReadFile(file, buffer.data(), chunk, &bytes_read, nullptr) || bytes_read != chunk)
+					{
+						SetError(L"SDK package integrity payload is truncated", error, error_capacity);
+						break;
+					}
+					if (BCryptHashData(hash, buffer.data(), bytes_read, 0) < 0)
+					{
+						SetError(L"BCryptHashData(SDK package SHA-256) failed", error, error_capacity);
+						break;
+					}
+					remaining -= bytes_read;
+				}
+				if (remaining != 0)
+					break;
+				if (BCryptFinishHash(
+						hash,
+						digest.data(),
+						static_cast<ULONG>(digest.size()),
+						0) < 0)
+				{
+					SetError(L"BCryptFinishHash(SDK package SHA-256) failed", error, error_capacity);
+					break;
+				}
+				succeeded = true;
+			} while (false);
+
+			if (hash != nullptr)
+				BCryptDestroyHash(hash);
+			if (algorithm != nullptr)
+				BCryptCloseAlgorithmProvider(algorithm, 0);
+			return succeeded;
+		}
+
 		template <typename T>
 		bool WriteScalar(
 			HANDLE file,
@@ -668,7 +764,7 @@ namespace nte::mods::sdk_cache
 
 			HANDLE output = CreateFileW(
 				package.c_str(),
-				GENERIC_WRITE,
+				GENERIC_READ | GENERIC_WRITE,
 				0,
 				nullptr,
 				CREATE_NEW,
@@ -782,6 +878,43 @@ namespace nte::mods::sdk_cache
 				}
 				if (!all_files_succeeded)
 					break;
+
+				LARGE_INTEGER zero{};
+				LARGE_INTEGER payload_position{};
+				if (!SetFilePointerEx(output, zero, &payload_position, FILE_CURRENT) ||
+					payload_position.QuadPart <= 0 ||
+					static_cast<uint64_t>(payload_position.QuadPart) > MAX_PACKAGE_BYTES - SHA256_SIZE)
+				{
+					SetError(L"SDK package payload exceeds its byte budget", error, error_capacity);
+					break;
+				}
+				if (!FlushFileBuffers(output))
+				{
+					SetSystemError(L"FlushFileBuffers(SDK package payload)", GetLastError(), error, error_capacity);
+					break;
+				}
+				LARGE_INTEGER begin{};
+				if (!SetFilePointerEx(output, begin, nullptr, FILE_BEGIN))
+				{
+					SetSystemError(L"SetFilePointerEx(SDK package begin)", GetLastError(), error, error_capacity);
+					break;
+				}
+				std::array<uint8_t, SHA256_SIZE> integrity{};
+				if (!HashCurrentRange(
+						output,
+						static_cast<uint64_t>(payload_position.QuadPart),
+						integrity,
+						error,
+						error_capacity))
+					break;
+				LARGE_INTEGER payload_end{};
+				payload_end.QuadPart = payload_position.QuadPart;
+				if (!SetFilePointerEx(output, payload_end, nullptr, FILE_BEGIN) ||
+					!WriteExact(output, integrity.data(), integrity.size(), error, error_capacity))
+				{
+					SetError(L"SDK package integrity trailer could not be written", error, error_capacity);
+					break;
+				}
 				if (!FlushFileBuffers(output))
 				{
 					SetSystemError(L"FlushFileBuffers(SDK package)", GetLastError(), error, error_capacity);
@@ -819,7 +952,8 @@ namespace nte::mods::sdk_cache
 				return false;
 
 			LARGE_INTEGER package_size{};
-			if (!GetFileSizeEx(package, &package_size) || package_size.QuadPart <= 0 ||
+			if (!GetFileSizeEx(package, &package_size) ||
+				package_size.QuadPart <= static_cast<LONGLONG>(SHA256_SIZE) ||
 				static_cast<uint64_t>(package_size.QuadPart) > MAX_PACKAGE_BYTES)
 			{
 				CloseHandle(package);
@@ -829,6 +963,35 @@ namespace nte::mods::sdk_cache
 			bool succeeded = false;
 			do
 			{
+				const uint64_t payload_size =
+					static_cast<uint64_t>(package_size.QuadPart) - SHA256_SIZE;
+				std::array<uint8_t, SHA256_SIZE> actual_integrity{};
+				std::array<uint8_t, SHA256_SIZE> expected_integrity{};
+				if (!HashCurrentRange(
+						package,
+						payload_size,
+						actual_integrity,
+						error,
+						error_capacity) ||
+					!ReadExact(
+						package,
+						expected_integrity.data(),
+						expected_integrity.size(),
+						error,
+						error_capacity))
+					break;
+				if (actual_integrity != expected_integrity)
+				{
+					SetError(L"SDK package integrity check failed", error, error_capacity);
+					break;
+				}
+				LARGE_INTEGER begin{};
+				if (!SetFilePointerEx(package, begin, nullptr, FILE_BEGIN))
+				{
+					SetSystemError(L"SetFilePointerEx(SDK package begin)", GetLastError(), error, error_capacity);
+					break;
+				}
+
 				std::array<uint8_t, PACKAGE_MAGIC.size()> magic{};
 				uint32_t version = 0;
 				uint32_t algorithm = 0;
@@ -981,7 +1144,7 @@ namespace nte::mods::sdk_cache
 				LARGE_INTEGER zero{};
 				LARGE_INTEGER position{};
 				if (!SetFilePointerEx(package, zero, &position, FILE_CURRENT) ||
-					position.QuadPart != package_size.QuadPart ||
+					static_cast<uint64_t>(position.QuadPart) != payload_size ||
 					parsed_total != declared_total ||
 					(validate_required &&
 						!std::all_of(required_seen.begin(), required_seen.end(), [](bool value) { return value; })) ||
