@@ -1,0 +1,71 @@
+name: Fix offset scanner test
+
+on:
+  push:
+    branches:
+      - agent/sdk-cache-0.3.9
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/sdk-cache-0.3.9
+          fetch-depth: 0
+      - name: Align Rust source guard with dynamic offset scanner
+        shell: pwsh
+        run: |
+          $path = 'src/platform/mods_plugin.rs'
+          $text = [IO.File]::ReadAllText($path)
+          $start = @'
+              #[test]
+              #[cfg(feature = "desktop")]
+              fn native_runtime_presence_and_test_server_offset_profile_are_bounded() {
+          '@.Replace("              ", "")
+          $next = @'
+              #[test]
+              fn native_host_exposes_generic_name_hash_reading_without_enemy_services() {
+          '@.Replace("              ", "")
+          $startIndex = $text.IndexOf($start, [StringComparison]::Ordinal)
+          if ($startIndex -lt 0) { throw 'stale offset-profile test start marker not found' }
+          $nextIndex = $text.IndexOf($next, $startIndex, [StringComparison]::Ordinal)
+          if ($nextIndex -lt 0) { throw 'next test marker not found' }
+          $replacement = @'
+              #[test]
+              #[cfg(feature = "desktop")]
+              fn native_runtime_presence_and_offset_scanner_are_bounded() {
+                  assert!(NATIVE_IPC_TRANSPORT.contains("bool OpenRuntimePresence()"));
+                  assert!(NATIVE_IPC_TRANSPORT.contains("LocalIpcSecurityAttributes security;"));
+                  assert!(NATIVE_PLUGIN_RUNTIME.contains("OpenRuntimePresence()"));
+                  assert!(NATIVE_PLUGIN_RUNTIME.contains("CloseRuntimePresence()"));
+                  assert!(NATIVE_OFFSET_RESOLVER.contains("RESOLUTION_RETRY_MS = 1000"));
+                  assert!(NATIVE_OFFSET_RESOLVER.contains("find_offsets::ResolveCurrentProcess("));
+                  assert!(NATIVE_OFFSET_RESOLVER.contains("if (now < retry_at)"));
+                  assert!(
+                      NATIVE_OFFSET_RESOLVER
+                          .contains("InterlockedCompareExchange(&resolution_state, 1, 0)")
+                  );
+                  assert!(!NATIVE_OFFSET_RESOLVER.contains("ResolveKnownProfile("));
+                  assert!(NATIVE_SIGNATURE_POLICY.contains("SelectionResult::Ambiguous"));
+                  assert!(NATIVE_PLUGIN_RUNTIME.contains("ResolveViewportTickIndex"));
+                  assert!(NATIVE_PLUGIN_RUNTIME.contains("VIEWPORT_TICK_SCAN_RADIUS = 8"));
+                  assert!(NATIVE_PLUGIN_RUNTIME.contains("SelectPreferredSemanticViewportTick"));
+              }
+
+          '@.Replace("              ", "")
+          $text = $text.Substring(0, $startIndex) + $replacement + $text.Substring($nextIndex)
+          [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+      - name: Commit test update
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/platform/mods_plugin.rs
+          git diff --cached --check
+          git commit -m "test: align offset resolver guard with dynamic scanner"
+          git push origin HEAD:agent/sdk-cache-0.3.9
