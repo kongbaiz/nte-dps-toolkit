@@ -58,6 +58,10 @@ namespace nte::mods
 	uint32_t CopyCombatClockTransitions(
 		NteCombatClockTransition* output,
 		uint32_t capacity);
+	void SamplePartyEffects(void* player_state);
+	uint32_t CopyCharacterEffects(
+		NteCharacterEffect* output,
+		uint32_t capacity);
 
 	NteModsStatus EquipOneKey(
 		const PluginContext* context,

@@ -14,6 +14,7 @@ import {
 const COMMANDS = {
   getSnapshot: "get_technical_snapshot",
   moveModule: "move_hud_module",
+  resetSession: "reset_hud_session",
   setAlwaysOnTop: "set_hud_always_on_top",
   setModuleVisibility: "set_hud_module_visibility",
   setPassthrough: "set_hud_passthrough",
@@ -39,6 +40,7 @@ export interface TechnicalClient {
     target: HudModuleId,
     insertAfter: boolean,
   ): Promise<TechnicalSnapshot>;
+  resetSession(): Promise<TechnicalSnapshot>;
   setAlwaysOnTop(enabled: boolean): Promise<TechnicalSnapshot>;
   setModuleVisibility(
     module: HudModuleId,
@@ -91,6 +93,7 @@ export function createTechnicalClient(
         target,
         insertAfter,
       }),
+    resetSession: () => snapshotCommand(COMMANDS.resetSession),
     setAlwaysOnTop: (enabled) =>
       snapshotCommand(COMMANDS.setAlwaysOnTop, { enabled }),
     setModuleVisibility: (module, visible) =>

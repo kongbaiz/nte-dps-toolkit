@@ -67,6 +67,19 @@ describe("technical client subscription", () => {
     expect(invoke).toHaveBeenNthCalledWith(2, "stop_hud_capture", undefined);
   });
 
+  it("routes HUD reset through the dedicated reset command", async () => {
+    const invoke = vi.fn(() => Promise.resolve(snapshot));
+    const client = createTechnicalClient({
+      invoke,
+      createChannel: () => ({ channel: true }),
+    });
+
+    await expect(client.resetSession()).resolves.toMatchObject({
+      hud: { dataState: "empty" },
+    });
+    expect(invoke).toHaveBeenCalledWith("reset_hud_session", undefined);
+  });
+
   it("sends one typed HUD module visibility intent", async () => {
     const invoke = vi.fn(() => Promise.resolve(snapshot));
     const client = createTechnicalClient({

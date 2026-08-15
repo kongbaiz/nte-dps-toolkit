@@ -5,6 +5,7 @@
 #include "mod_runtime.hpp"
 #include "obfuscated_string.hpp"
 #include "offset_resolver.hpp"
+#include "sdk_cache.hpp"
 #include "shadow_vtable_hook.hpp"
 #include "signature_policy.hpp"
 #include "viewport_hook_policy.hpp"
@@ -131,6 +132,8 @@ namespace nte::mods
 		volatile LONG ipc_dispatch_in_progress = 0;
 		HANDLE runtime_stop_event = nullptr;
 		HANDLE runtime_thread = nullptr;
+		HANDLE sdk_cache_thread = nullptr;
+		sdk_cache::WorkerContext sdk_cache_worker{};
 		SRWLOCK process_event_lock = SRWLOCK_INIT;
 		constinit std::array<
 			ProcessEventHookEntry,
@@ -322,23 +325,10 @@ namespace nte::mods
 			if (!memory::IsReadableRange(vtable, (end + 1) * sizeof(void*)))
 				return false;
 
-			const auto* resolved = offsets::Get();
-			if (resolved == nullptr)
-				return false;
-			const bool known_image_profile =
-				offsets::IsKnownImageProfile(
-					resolved->image_size,
-					resolved->image_checksum);
-			const bool preferred_index_is_valid =
-				memory::IsExecutableAddress(vtable[preferred_index]) &&
-				memory::IsReadableRange(vtable[preferred_index], 16);
-			if (nte::hook::ShouldPreferKnownViewportTick(
-					known_image_profile,
-					preferred_index_is_valid))
+			if (IsExpectedViewportTick(vtable[preferred_index]))
 			{
-				// The current live build has two semantically similar entries in
-				// the bounded scan window. The verified image profile is the
-				// authoritative tie-breaker for its SDK vtable index.
+				// find_offsets already selected this semantic vtable slot. Recheck
+				// the same body predicate before accepting it in the hook path.
 				result = preferred_index;
 				return true;
 			}
@@ -659,7 +649,7 @@ namespace nte::mods
 				{
 					if (!offsets_initialized)
 					{
-						offsets_initialized = offsets::Initialize();
+						offsets_initialized = offsets::Initialize(runtime_stop_event);
 						if (offsets_initialized)
 						{
 							DebugLog(NTE_OBFUSCATE_STRING(
@@ -1047,7 +1037,6 @@ namespace nte::mods
 
 	void StartPluginRuntime(HMODULE module)
 	{
-		static_cast<void>(module);
 		if (IsGameExecutableHost())
 		{
 			runtime_stop_event = CreateEventW(
@@ -1075,6 +1064,23 @@ namespace nte::mods
 					L"NTE Mods plugin: failed to publish runtime presence.\n")
 					.c_str());
 			}
+			if (runtime_thread != nullptr)
+			{
+				sdk_cache_worker = { module, runtime_stop_event };
+				sdk_cache_thread = CreateThread(
+					nullptr,
+					0,
+					sdk_cache::RunWorker,
+					&sdk_cache_worker,
+					0,
+					nullptr);
+				if (sdk_cache_thread == nullptr)
+				{
+					DebugLog(NTE_OBFUSCATE_STRING(
+						L"NTE Mods plugin: failed to start SDK cache worker.\n")
+						.c_str());
+				}
+			}
 		}
 	}
 
@@ -1087,6 +1093,12 @@ namespace nte::mods
 			WaitForSingleObject(runtime_thread, INFINITE);
 			CloseHandle(runtime_thread);
 			runtime_thread = nullptr;
+		}
+		if (sdk_cache_thread != nullptr)
+		{
+			WaitForSingleObject(sdk_cache_thread, INFINITE);
+			CloseHandle(sdk_cache_thread);
+			sdk_cache_thread = nullptr;
 		}
 		if (runtime_stop_event != nullptr)
 		{
