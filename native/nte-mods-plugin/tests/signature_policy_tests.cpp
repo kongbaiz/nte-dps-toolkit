@@ -185,9 +185,6 @@ namespace
 	static_assert(PreferredSemanticViewportTickWinsGenericAmbiguity());
 	static_assert(NearestShiftedViewportTickIsSelected());
 	static_assert(EquidistantShiftedViewportTicksFailClosed());
-	static_assert(nte::hook::ShouldPreferKnownViewportTick(true, true));
-	static_assert(!nte::hook::ShouldPreferKnownViewportTick(true, false));
-	static_assert(!nte::hook::ShouldPreferKnownViewportTick(false, true));
 	static_assert(LiveAppendNameSignatureMatchesReadback());
 	static_assert(LiveAppendNameSignatureMasksRelocations());
 	static_assert(LiveGWorldSignatureMatchesReadback());

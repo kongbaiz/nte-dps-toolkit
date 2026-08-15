@@ -267,6 +267,7 @@ pub fn run() {
             commands::timeline::set_timeline_preferences,
             commands::technical::get_technical_snapshot,
             commands::technical::move_hud_module,
+            commands::technical::reset_hud_session,
             commands::technical::set_hud_always_on_top,
             commands::technical::set_hud_module_visibility,
             commands::technical::set_hud_passthrough,

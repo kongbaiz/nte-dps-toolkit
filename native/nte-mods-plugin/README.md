@@ -25,6 +25,27 @@ msbuild .\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platfor
 `plugins\dwmapi.dll`。随发行包提供的脚本位于 `plugins\nte-mods\`，默认启用集合
 位于 `plugins\nte-mods.enabled`。
 
+## 内置 SDK 缓存
+
+插件在 `HTGame.exe` 中加载后会启动一个由插件运行时拥有、共享停止事件可取消的 SDK
+缓存 worker。它先对当前主 EXE 文件计算 SHA-256（读取前校验文件大小，预算为
+`1..2 GiB`），并在 `dwmapi.dll` 同目录维护两个缓存对象：
+
+- `NTE_SDK.checksum`：64 个小写十六进制字符及换行；
+- `NTE_SDK\`：当前 EXE 对应的 Dumper-7 C++ SDK。
+
+checksum 完全一致且 SDK 必需文件完整时直接复用，不再扫描或生成。checksum 不一致、
+缺失或 SDK 不完整时，插件使用与仓库 `find_offsets` 相同的运行时算法解析
+`FNamePool/GNames`、`GObjects`、`ProcessEvent`、`GWorld`、Viewport Tick 与
+`AppendString`；插件内不保留 `KnownOffsetProfile` 或版本偏移表。
+
+内置 Dumper-7 子集只编译 `CppGenerator` 及其反射依赖，只生成 `CppSDK` 内容；不会生成
+GObjects 文本、Metadata、Mapping、IDA Mapping 或 Dumpspace。生成先写入插件目录内的
+唯一临时目录，校验文件数、总字节数和必需文件后再替换 `NTE_SDK`，checksum 最后通过
+`MoveFileExW(..., MOVEFILE_WRITE_THROUGH)` 发布。生成或发布失败会恢复上一 SDK 和
+checksum；下次加载仍会因 checksum 不匹配而重试。停止事件贯穿偏移扫描与 SDK 初始化、
+对象遍历和逐 package 生成检查点，插件卸载时由运行时主动取消并回收 worker。
+
 ## NTE C++ v5
 
 `.nte` 正式使用受限 NTE C++ v5，由 `dwmapi.dll` 解析并编译为定长 VM 指令。源码采用

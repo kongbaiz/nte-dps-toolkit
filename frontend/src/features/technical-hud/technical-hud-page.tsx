@@ -85,6 +85,7 @@ export function TechnicalHudPage() {
     actionNotice,
     clearActionNotice,
     refresh,
+    reset,
     setPassthrough,
     setAlwaysOnTop,
     setHudModuleVisibility,
@@ -135,6 +136,7 @@ export function TechnicalHudPage() {
         dragFailed={dragFailed}
         onDragPointerDown={startDragging}
         onRetry={refresh}
+        onReset={reset}
         onPassthroughChange={setPassthrough}
         onAlwaysOnTopChange={setAlwaysOnTop}
         onHudModuleVisibilityChange={setHudModuleVisibility}
@@ -152,6 +154,7 @@ interface TechnicalContentProps {
   dragFailed: boolean;
   onDragPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
   onRetry: () => Promise<void>;
+  onReset: () => Promise<void>;
   onPassthroughChange: (enabled: boolean) => Promise<void>;
   onAlwaysOnTopChange: (enabled: boolean) => Promise<void>;
   onHudModuleVisibilityChange: (
@@ -173,6 +176,7 @@ function TechnicalContent({
   dragFailed,
   onDragPointerDown,
   onRetry,
+  onReset,
   onPassthroughChange,
   onAlwaysOnTopChange,
   onHudModuleVisibilityChange,
@@ -226,7 +230,7 @@ function TechnicalContent({
         <HudEditorRail
           snapshot={snapshot}
           onDragPointerDown={onDragPointerDown}
-          onRefresh={onRetry}
+          onReset={onReset}
           onPassthroughChange={onPassthroughChange}
           onAlwaysOnTopChange={onAlwaysOnTopChange}
           onHudModuleVisibilityChange={onHudModuleVisibilityChange}
@@ -260,7 +264,7 @@ function TechnicalContent({
 interface HudEditorRailProps {
   snapshot: TechnicalSnapshot;
   onDragPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
-  onRefresh: () => Promise<void>;
+  onReset: () => Promise<void>;
   onPassthroughChange: (enabled: boolean) => Promise<void>;
   onAlwaysOnTopChange: (enabled: boolean) => Promise<void>;
   onHudModuleVisibilityChange: (
@@ -280,7 +284,7 @@ interface HudEditorRailProps {
 function HudEditorRail({
   snapshot,
   onDragPointerDown,
-  onRefresh,
+  onReset,
   onPassthroughChange,
   onAlwaysOnTopChange,
   onHudModuleVisibilityChange,
@@ -348,14 +352,14 @@ function HudEditorRail({
               variant="ghost"
               size="icon-xs"
               className="text-white/75 hover:bg-white/10 hover:text-white"
-              aria-label={t("Refresh technical state")}
-              onClick={() => void onRefresh()}
+              aria-label={t("Reset")}
+              onClick={() => void onReset()}
             />
           }
         >
           <RefreshCw data-icon="inline-start" aria-hidden="true" />
         </TooltipTrigger>
-        <TooltipContent>{t("Refresh technical state")}</TooltipContent>
+        <TooltipContent>{t("Reset")}</TooltipContent>
       </Tooltip>
 
       <HudToggle
@@ -1311,6 +1315,7 @@ function HudSummaryValue({ hud }: { hud: HudSnapshot }) {
 
 function technicalActionLabelKey(action: string): string {
   if (action === "refresh") return "Refresh technical state";
+  if (action === "reset") return "Reset";
   if (action === "passthrough") return "Mouse passthrough";
   if (action === "always-on-top") return "Always on top";
   if (action === "hud-width") return "HUD Width";
