@@ -1,0 +1,38 @@
+name: Format offset scanner test
+
+on:
+  push:
+    branches:
+      - agent/sdk-cache-0.3.9
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/sdk-cache-0.3.9
+          fetch-depth: 0
+      - name: Apply rustfmt-equivalent assertion layout
+        shell: pwsh
+        run: |
+          $path = 'src/platform/mods_plugin.rs'
+          $text = [IO.File]::ReadAllText($path)
+          $old = "        assert!(`n            NATIVE_OFFSET_RESOLVER`n                .contains(`"InterlockedCompareExchange(&resolution_state, 1, 0)`")`n        );"
+          if (-not $text.Contains($old)) { throw 'expected assertion layout not found' }
+          $new = "        assert!(`n            NATIVE_OFFSET_RESOLVER.contains(`"InterlockedCompareExchange(&resolution_state, 1, 0)`")`n        );"
+          $text = $text.Replace($old, $new)
+          [IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))
+      - name: Commit formatting update
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/platform/mods_plugin.rs
+          git diff --cached --check
+          git commit -m "style: format offset resolver source guard"
+          git push origin HEAD:agent/sdk-cache-0.3.9
