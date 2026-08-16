@@ -35,6 +35,55 @@ fn load_map<T>(
     loader(&path)
 }
 
+fn repair_stale_zankou_names(names: &mut HashMap<String, String>, language: Language) {
+    // Current CN v1.2.1 names from the game's Zankou skill table. Some bundled
+    // ability_tips rows still contain Mitsuki's older music-themed labels.
+    // For non-CN languages, keep any future non-stale translation; until Global
+    // catches up, prefer the correct CN name over a confidently wrong old label.
+    let fixes: [(&str, &str, &[&str]); 7] = [
+        ("GA_Zankou_Melee", "燎原", &["清唱", "Cappella", "アカペラ"]),
+        ("GA_Zankou_MeleeMagic", "燎原", &[""]),
+        (
+            "GA_Zankou_Skill",
+            "绯影闪",
+            &["华彩唱段", "Cadenza Aria", "華麗なるカデンツァ"],
+        ),
+        (
+            "GA_Zankou_UltraSkill",
+            "焚天烬灭舞",
+            &["众声轮唱", "Canon Chorus", "カノン"],
+        ),
+        (
+            "GA_Zankou_QTE",
+            "饲火",
+            &["不协和音", "Dissonance", "不協和音"],
+        ),
+        (
+            "GA_Zankou_Passive1",
+            "暮落残阳",
+            &["泛音", "Harmonics", "ハーモニクス"],
+        ),
+        (
+            "GA_Zankou_Passive2",
+            "殷红幻景",
+            &["泛音", "Harmonics", "ハーモニクス"],
+        ),
+    ];
+
+    for (ability_id, cn_name, stale_names) in fixes {
+        let current = names
+            .get(ability_id)
+            .map(String::as_str)
+            .unwrap_or_default();
+        if language == Language::SimplifiedChinese
+            || current.is_empty()
+            || stale_names.contains(&current)
+        {
+            names.insert(ability_id.to_owned(), cn_name.to_owned());
+        }
+    }
+}
+
 /// Loads both resources for the given `language`. Call once at startup and pass
 /// the returned structural catalog to capture/replay decoders.
 pub fn init(language: Language) -> (Arc<AbilityCatalog>, Option<String>) {
@@ -54,7 +103,7 @@ pub fn init(language: Language) -> (Arc<AbilityCatalog>, Option<String>) {
             Arc::new(AbilityCatalog::default())
         }
     };
-    let ability_tip_names = match load_map(ABILITY_TIPS_PATH, |path| {
+    let mut ability_tip_names = match load_map(ABILITY_TIPS_PATH, |path| {
         load_ability_tip_names(path, language)
     }) {
         Ok(names) => names,
@@ -63,6 +112,7 @@ pub fn init(language: Language) -> (Arc<AbilityCatalog>, Option<String>) {
             HashMap::new()
         }
     };
+    repair_stale_zankou_names(&mut ability_tip_names, language);
     let semantic_names = match load_map(GAMEPLAY_EFFECT_SEMANTICS_PATH, |path| {
         load_gameplay_effect_semantic_names(path, language)
     }) {
@@ -84,7 +134,7 @@ pub fn init(language: Language) -> (Arc<AbilityCatalog>, Option<String>) {
 /// structural and doesn't need reloading.
 pub fn reload(language: Language) -> Option<String> {
     let mut warnings = Vec::new();
-    let ability_tip_names = match load_map(ABILITY_TIPS_PATH, |path| {
+    let mut ability_tip_names = match load_map(ABILITY_TIPS_PATH, |path| {
         load_ability_tip_names(path, language)
     }) {
         Ok(names) => names,
@@ -93,6 +143,7 @@ pub fn reload(language: Language) -> Option<String> {
             HashMap::new()
         }
     };
+    repair_stale_zankou_names(&mut ability_tip_names, language);
     let semantic_names = match load_map(GAMEPLAY_EFFECT_SEMANTICS_PATH, |path| {
         load_gameplay_effect_semantic_names(path, language)
     }) {
@@ -236,6 +287,36 @@ mod tests {
             resolve_from_maps(&catalog, &abilities, &components, effect_name).as_deref(),
             Some("「噩梦」伤害")
         );
+    }
+
+    #[test]
+    fn repairs_stale_zankou_names_without_overwriting_future_translations() {
+        let mut chinese = HashMap::from([
+            ("GA_Zankou_Melee".to_owned(), "清唱".to_owned()),
+            ("GA_Zankou_Skill".to_owned(), "华彩唱段".to_owned()),
+            ("GA_Zankou_UltraSkill".to_owned(), "众声轮唱".to_owned()),
+            ("GA_Zankou_QTE".to_owned(), "不协和音".to_owned()),
+            ("GA_Zankou_Passive1".to_owned(), "泛音".to_owned()),
+            ("GA_Zankou_Passive2".to_owned(), "泛音".to_owned()),
+        ]);
+        repair_stale_zankou_names(&mut chinese, Language::SimplifiedChinese);
+        assert_eq!(chinese["GA_Zankou_Melee"], "燎原");
+        assert_eq!(chinese["GA_Zankou_Skill"], "绯影闪");
+        assert_eq!(chinese["GA_Zankou_UltraSkill"], "焚天烬灭舞");
+        assert_eq!(chinese["GA_Zankou_QTE"], "饲火");
+        assert_eq!(chinese["GA_Zankou_Passive1"], "暮落残阳");
+        assert_eq!(chinese["GA_Zankou_Passive2"], "殷红幻景");
+
+        let mut english = HashMap::from([
+            ("GA_Zankou_Melee".to_owned(), "Cappella".to_owned()),
+            (
+                "GA_Zankou_Skill".to_owned(),
+                "Future Correct Translation".to_owned(),
+            ),
+        ]);
+        repair_stale_zankou_names(&mut english, Language::English);
+        assert_eq!(english["GA_Zankou_Melee"], "燎原");
+        assert_eq!(english["GA_Zankou_Skill"], "Future Correct Translation");
     }
 
     #[test]
