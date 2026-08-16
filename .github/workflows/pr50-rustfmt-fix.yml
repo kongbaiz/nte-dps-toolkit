@@ -29,16 +29,16 @@ jobs:
           old = '''        assert_eq!(
               zankou_dot.ability_name.as_deref(),
               Some("GA_Zankou_Melee")
-          );'''
+          );'''.replace('              ', '            ')
           new = '''        assert_eq!(zankou_dot.ability_name.as_deref(), Some("GA_Zankou_Melee"));'''
           count = text.count(old)
-          if count == 0:
-              print("rustfmt shape already applied; nothing to do")
-          elif count == 1:
+          if count == 1:
               path.write_text(text.replace(old, new, 1), encoding="utf-8")
               print("applied rustfmt shape")
+          elif count == 0 and new in text:
+              print("rustfmt shape already applied")
           else:
-              raise SystemExit(f"refusing ambiguous replacement: found {count} matches")
+              raise SystemExit(f"unexpected assertion state: old matches={count}, new matches={text.count(new)}")
           PY
 
       - name: Commit formatting fix
