@@ -53,7 +53,11 @@ fn repair_stale_zankou_names(names: &mut HashMap<String, String>, language: Lang
             "焚天烬灭舞",
             &["众声轮唱", "Canon Chorus", "カノン"],
         ),
-        ("GA_Zankou_QTE", "饲火", &["不协和音", "Dissonance", "不協和音"]),
+        (
+            "GA_Zankou_QTE",
+            "饲火",
+            &["不协和音", "Dissonance", "不協和音"],
+        ),
         (
             "GA_Zankou_Passive1",
             "暮落残阳",
@@ -67,7 +71,10 @@ fn repair_stale_zankou_names(names: &mut HashMap<String, String>, language: Lang
     ];
 
     for (ability_id, cn_name, stale_names) in fixes {
-        let current = names.get(ability_id).map(String::as_str).unwrap_or_default();
+        let current = names
+            .get(ability_id)
+            .map(String::as_str)
+            .unwrap_or_default();
         if language == Language::SimplifiedChinese
             || current.is_empty()
             || stale_names.contains(&current)
@@ -302,7 +309,10 @@ mod tests {
 
         let mut english = HashMap::from([
             ("GA_Zankou_Melee".to_owned(), "Cappella".to_owned()),
-            ("GA_Zankou_Skill".to_owned(), "Future Correct Translation".to_owned()),
+            (
+                "GA_Zankou_Skill".to_owned(),
+                "Future Correct Translation".to_owned(),
+            ),
         ]);
         repair_stale_zankou_names(&mut english, Language::English);
         assert_eq!(english["GA_Zankou_Melee"], "燎原");
