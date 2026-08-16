@@ -173,8 +173,6 @@
     },
     "GE_Player_Zankou_DotDamage": {
       "owner_character_id": 1036,
-      "ability": "GA_Zankou_Passive1",
-      "attack_type": "Passive Damage",
       "show_parent_ability": true,
       "damage_name_en": "Nova End Damage",
       "damage_name_zh": "黯星结束伤害",

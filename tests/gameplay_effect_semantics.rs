@@ -57,12 +57,16 @@ fn semantic_components_do_not_repeat_the_parent_ability_name() {
 }
 
 #[test]
-fn zankou_dot_semantic_is_component_only() {
+fn zankou_dot_semantic_does_not_override_current_cn_skill_classification() {
     let semantics = load_json("res/data/skills/gameplay_effect_semantics.json");
+    let skill_damage = load_json("res/data/skills/skill_damage.json");
     let effect = &semantics["effects"]["GE_Player_Zankou_DotDamage"];
+    let skill_row = &skill_damage[0]["Rows"]["GE_Player_Zankou_DotDamage"];
 
+    assert_eq!(skill_row["GAName"], "GA_Zankou_Melee");
     assert_eq!(effect["owner_character_id"], 1036);
-    assert_eq!(effect["ability"], "GA_Zankou_Passive1");
+    assert!(effect.get("ability").is_none());
+    assert!(effect.get("attack_type").is_none());
     assert_eq!(effect["show_parent_ability"], true);
     assert_eq!(effect["damage_name_zh"], "黯星结束伤害");
     assert_eq!(effect["damage_name_en"], "Nova End Damage");
