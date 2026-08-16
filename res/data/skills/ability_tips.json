@@ -4421,63 +4421,63 @@
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "普通攻击：分工合作",
-          "title_en": "Basic Attack: Collaboration",
-          "title_ja": "通常攻撃：共同さぎょう",
-          "description_zh": "伊洛伊召唤小羊们，进行至多五段的连续攻击，造成灵属性异能伤害。攻击命中时积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
-          "description_en": "Summons lambs to perform up to 5 consecutive attacks, dealing Anima DMG. Builds up <hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">Imagination</> when attacks hit.",
-          "description_ja": "イロヒが子羊たちを召喚し、最大5段の連続攻撃を行って霊異能ダメージを与える。攻撃が命中すると、<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「白昼夢」</>を蓄積する。",
+          "title_zh": "<Title>普通攻击：分工合作</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "伊洛伊召唤小羊们，进行至多五段的连续攻击，造成<Ling>灵属性异能伤害</>。攻击命中时积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "造成灵属性异能伤害，命中积攒「臆想」。",
-          "short_description_en": "Deals Anima DMG. Builds up Imagination when attacks hit.",
-          "short_description_ja": "霊異能ダメージを与え、命中時に「白昼夢」を蓄積する。"
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "普通攻击：白日梦",
-          "title_en": "Basic Attack: Daydream",
-          "title_ja": "通常攻撃：まどろみの刻",
-          "description_zh": "长按普通攻击，伊洛伊消耗「臆想」进行蓄力，根据蓄力程度，发动至多三段的「普通攻击：白日梦」。",
-          "description_en": "Hold Basic Attack to consume Imagination and charge up. Unleashes up to 3 stages of Daydream depending on the charge level.",
-          "description_ja": "通常攻撃を長押しすると、イロヒは「白昼夢」を消費して力を溜め、チャージ度合いに応じて最大3段の「通常攻撃：まどろみの刻」を繰り出す。",
-          "short_description_zh": "长按蓄力消耗「臆想」发动至多三段的攻击，造成灵属性异能伤害。",
-          "short_description_en": "Hold to charge up by consuming Imagination, then perform up to 3 attack stages, dealing Anima DMG.",
-          "short_description_ja": "長押しチャージで「白昼夢」を消費し、最大3段の攻撃を発動して、霊異能ダメージを与える。"
+          "title_zh": "<Title>普通攻击：白日梦</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "长按普通攻击，伊洛伊消耗<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>进行蓄力，根据蓄力程度，发动至多三段的「普通攻击：白日梦」，造成<Ling>灵属性异能伤害</>。\r\n「无意识响应」、「援护技：砰！」、「变轨技能：未来自我连续性假设」、「极轨终结：三十八亿年的海市蜃楼」期间长按普通攻击，伊洛伊消耗<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>可直接发动第三段的「普通攻击：白日梦」，造成<Ling>灵属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "长按蓄力消耗「臆想」发动至多三段的攻击，造成<Ling>灵属性异能伤害</>。\r\n「无意识响应」、「援护技」、「变轨技能」、「极轨终结」期间长按蓄力消耗「臆想」发动第三段攻击，造成<Ling>灵属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "普通攻击：清明梦",
-          "title_en": "Basic Attack: Lucid Dream",
-          "title_ja": "通常攻撃：明晰夢",
-          "description_zh": "在伊洛伊发动「普通攻击：白日梦」后，再次长按普攻，消耗「臆想」，召唤莫尔甫斯发动长时间的连续射击，造成灵属性异能伤害。",
-          "description_en": "Hold Basic Attack again after Iroi uses Daydream to consume Imagination and summon Morpheus, unleashing sustained fire that deals Anima DMG.",
-          "description_ja": "イロヒが「通常攻撃：まどろみの刻」を発動後、さらに通常攻撃を長押しして「白昼夢」を消費すると、モルペウスを召喚して長時間の連続射撃を発動し、霊異能ダメージを与える。",
-          "short_description_zh": "「普通攻击：白日梦」后再次长按普攻，消耗「臆想」造成灵属性异能伤害。",
-          "short_description_en": "Hold Basic Attack again after using Daydream to consume Imagination and deal Anima DMG.",
-          "short_description_ja": "「通常攻撃：まどろみの刻」のあとに再び通常攻撃を長押しし、「白昼夢」を消費して霊異能ダメージを与える。"
+          "title_zh": "<Title>普通攻击：清明梦</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "在伊洛伊发动「普通攻击：白日梦」后，再次长按普攻，消耗<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>，召唤莫尔甫斯发动长时间的连续射击，造成<Ling>灵属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「普通攻击：白日梦」后再次长按普攻，消耗「臆想」造成<Ling>灵属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "普通攻击：起床时间",
-          "title_en": "Basic Attack: Wakey-Wakey",
-          "title_ja": "通常攻撃：目覚めの鐘",
-          "description_zh": "伊洛伊滞空时点按普攻，落地后造成1次范围性的灵属性异能伤害，伤害随下落高度升高而提升，最高提升1倍。攻击命中时积攒「臆想」。",
-          "description_en": "Press Basic Attack while airborne to plunge, dealing 1 instance of Anima DMG to an area upon impact. Increases DMG based on fall height, up to 100%. Builds up Imagination when attacks hit.",
-          "description_ja": "イロヒが滞空時に通常攻撃を押すと、着地時に霊異能の範囲ダメージを1回与える。落下高度に応じて、ダメージが最大+100％まで増加する。攻撃命中時に「白昼夢」を蓄積する。",
+          "title_zh": "<Title>普通攻击：起床时间</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "伊洛伊滞空时点按普攻，落地后造成1次范围性的<Ling>灵属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。攻击命中时积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "造成灵属性异能伤害，命中积攒「臆想」。",
-          "short_description_en": "Deals Anima DMG. Builds up Imagination when attacks hit.",
-          "short_description_ja": "霊異能ダメージを与え、命中時に「白昼夢」を蓄積する。"
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "无意识响应",
-          "title_en": "Reflexive Response",
-          "title_ja": "無意識の応答",
-          "description_zh": "触发极限闪避后使用「普通攻击：分工合作」触发。伊洛伊将方塔苏斯向目标扔去，造成1次灵属性异能伤害并额外扣除一定倾陷值。攻击命中时积攒「臆想」。",
-          "description_en": "Triggers when using Collaboration after performing a Critical Dodge. Swings Phantasos at the target, dealing 1 instance of Anima DMG and reducing Break. Builds up Imagination when attacks hit.",
-          "description_ja": "極限回避後に「通常攻撃：共同さぎょう」を使用すると発動。イロヒはパンタソスをターゲットに投げつけ、霊異能ダメージを1回与えるとともに、一定のブレイク耐性を削る。攻撃が命中すると、「白昼夢」を蓄積する。",
+          "title_zh": "<Title>无意识响应</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "触发极限闪避后使用「普通攻击：分工合作」触发。伊洛伊将莫尔甫斯向目标扔去，造成1次<Ling>灵属性异能伤害</>并额外扣除一定倾陷值。攻击命中时积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "造成灵属性异能伤害，命中积攒「臆想」。",
-          "short_description_en": "Deals Anima DMG. Builds up Imagination when attacks hit.",
-          "short_description_ja": "霊異能ダメージを与え、命中時に「白昼夢」を蓄積する。"
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
@@ -4503,9 +4503,9 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "「创生」强化：当前创生株生成3秒后再次生成一株创生株复制体（复制体消失后不会再次复制）。",
-          "description_en": "Blossom Enhancement: Generates a Vita Bud copy when the current Vita Bud has existed for 3s. This copy cannot generate another copy.",
-          "description_ja": "「創生」強化：現在の創生株が生成されてから3秒後、再度創生株の複製体を1株生成する（複製体の消滅後は再度複製されない）",
+          "description_zh": "<TextHLT>「创生」强化</>：当前创生株生成3秒后，将额外生成1株「创生株复制体」。复制体消失后不会再次生成复制体，且不计入创生株数量上限。复制体共绽放20朵「复制创生花」；每隔0.5秒，「复制创生花」会飞向射程内的目标并爆炸，每朵造成原「创生花」37.5%的伤害。",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -4534,9 +4534,9 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "伊洛伊在提供治疗时，额外提供群体无视防御效果，持续一段时间。",
-          "description_en": "Grants the team an additional DEF Ignore for a short duration when healing an ally.",
-          "description_ja": "イロヒが治療を行う時、追加でチーム全員に敵の防御力を一定時間無視する効果を付与する。",
+          "description_zh": "伊洛伊在提供治疗时，额外为全队提供5%的无视防御的效果，持续20秒。",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -4596,12 +4596,12 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "及时赶到！伊洛伊抱起莫尔甫斯向前方发动攻击，造成1次灵属性异能伤害，治疗全体友方角色，同时积攒「臆想」。",
-          "description_en": "Just in time! Picks up Morpheus and attacks forward, dealing 1 instance of Anima DMG, healing all allies, and building up Imagination.",
-          "description_ja": "間に合いました！イロヒはモルペウスを抱きかかえて前方へ攻撃を放ち、霊異能ダメージを1回与え、チーム全員を治療すると同時に「白昼夢」を蓄積する。",
-          "short_description_zh": "造成灵属性异能伤害并治疗全体友方角色，同时积攒「臆想」。",
-          "short_description_en": "Deals Anima DMG and heals all allies, building up Imagination.",
-          "short_description_ja": "霊異能ダメージを与え、チーム全員を治療すると同時に「白昼夢」を蓄積する。"
+          "description_zh": "及时赶到！伊洛伊抱起莫尔甫斯向前方发动攻击，造成1次<Ling>灵属性异能伤害</>，治疗全体友方角色，同时积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>并治疗全体友方角色，同时积攒「臆想」。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
@@ -4624,15 +4624,39 @@
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "",
+          "title_zh": "<Title>自我认同延伸</>",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "变轨技能：自我认同延伸\r\n点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，吸附附近范围内的敌人，每名处于「退行」状态的队友额外造成一定基础攻击力的伤害。\r\n使用技能可积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动。战斗状态下的伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
-          "description_en": "Redirect Skill: Self-Identity Extension\r\nPress to activate. Summons lambs to heal the team once and grant Bonus ATK based on her ATK.\r\nSummons lambs to attack independently and pull in targets within range. Each ally in the Regression state deals additional DMG based on her Base ATK.\r\nUsing this skill builds up Imagination.\r\n\r\nRedirect Skill: Future Self Continuity\r\nHold to activate. Creates dreamlike illusions while in combat, causing 3 allies to enter the <hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">Regression</> state and assist in battle. Regression is automatically removed after leaving combat.\r\n\r\nPassive: Fallen allies enter the Regression state while Iroi is active and in combat.\r\nBuilds up Imagination when any fallen allies enter the Regression state.",
-          "description_ja": "バイレールスキル：自己同一性の拡張\r\n押して発動。イロヒが小羊たちを召喚してチーム全員を1回治療し、さらにイロヒの攻撃力に基づいた攻撃バフをチーム全員に付与する。\r\n同時に近くの敵を引き寄せ、3匹の小羊がそれぞれ攻撃を行う。この時、チーム内に「トランス」状態の仲間が存在する場合、その人数に応じて、一定の基礎攻撃力の追加ダメージを与える。\r\nスキル使用時に「白昼夢」を蓄積できる。\r\n\r\nバイレールスキル：自己連続性の仮説\r\n長押しで発動。戦闘中にイロヒは夢の世界を利用して幻覚を作り出し、仲間3人を<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「トランス」</>状態にして戦闘をサポートさせる。戦闘離脱後、この状態は自動的に解除される。\r\n\r\nパッシブ：イロヒがチームに編成されており、かつ戦闘状態にある場合、戦闘不能になった仲間は「トランス」状態になる。\r\n仲間が戦闘不能となり「トランス」状態に入る時、「白昼夢」を蓄積する。",
-          "short_description_zh": "变轨技能：自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成灵属性异能伤害，吸附敌人，并积攒「臆想」。\r\n\r\n变轨技能：未来自我连续性假设\r\n长按发动，战斗状态下使3名队友进入「退行」状态协助战斗。\r\n\r\n被动：伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
-          "short_description_en": "Redirect Skill: Self-Identity Extension\r\nPress to activate. Heals the team, grants allies Bonus ATK, deals Anima DMG, pulls in targets within range, and builds up Imagination.\r\n\r\nRedirect Skill: Future Self Continuity\r\nHold to activate. While in combat, causes 3 allies to enter the Regression state and assist in battle.\r\n\r\nPassive: Fallen allies enter the Regression state while Iroi is active and in combat.\r\nBuilds up Imagination when any fallen allies enter the Regression state.",
-          "short_description_ja": "バイレールスキル：自己同一性の拡張\r\n押して発動。チーム全員を治療して、攻撃バフを付与する。同時に霊異能ダメージを与えて敵を引き寄せ、「白昼夢」を蓄積する。\r\n\r\nバイレールスキル：自己連続性の仮説\r\n長押しで発動。戦闘中、仲間3人を「トランス」状態にして戦闘をサポートさせる。\r\n\r\nパッシブ：イロヒがチームに編成されており、かつ戦闘状態にある場合、戦闘不能になった仲間は「トランス」状態になる。\r\n仲間が戦闘不能となり「トランス」状態に入る時、「白昼夢」を蓄積する。"
+          "description_zh": "点按发动。伊洛伊召唤小羊们对全队进行一次治疗，并为全队提供基于伊洛伊基础攻击力的攻击增益。\r\n与此同时，三只小羊分别进行攻击，造成<Ling>灵属性异能伤害</>，并吸附附近范围内的敌人。\r\n使用技能可积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "自我认同延伸\r\n点按发动，治疗全队并提供攻击增益，同时造成<Ling>灵属性异能伤害</>，吸附敌人，并积攒「臆想」。\r\n\r\n未来自我连续性假设\r\n长按发动，战斗状态下使3名队友进入「退行」状态协助战斗。\r\n\r\n被动\r\n伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "<Title>未来自我连续性假设</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "长按发动。战斗状态下的伊洛伊利用梦境制造幻觉，使3名队友进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态协助战斗，脱战后该状态自动解除。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "长按发动，战斗状态下使3名队友进入「退行」状态协助战斗。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "<Title>被动</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。\r\n任意队友死亡进入「退行」状态时，积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "伊洛伊在队伍中且处于战斗状态时，其他队友死亡后将进入「退行」状态。\r\n任意队友死亡进入「退行」状态时，积攒「臆想」。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
@@ -4658,12 +4682,12 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据「臆想」积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，提供持续全体治疗，梦境期间对身处其中的敌人持续造成伤害。在此期间长按「退行」状态角色头像，则在梦境期间暂时则复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境持续消耗「臆想」，消耗完毕后梦境结束，被复活的角色将回到「退行」状态。\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "description_en": "Return to the first dream. Opens the gate to a dream and triggers different effects based on the amount of Imagination built up.\r\nIf Imagination has not reached the required threshold: Iroi opens the Dream of the Horned Gate, continuously healing all allies.\r\nIf Imagination has reached the required threshold: Iroi opens the Dream of the Ivory Gate, continuously dealing DMG to enemies inside the dream. During this time, press and hold the avatar icon of a character in the Regression state to revive them and restore some HP. This effect can revive up to 1 character during each dream.\r\nThe dream continuously consumes Imagination. When Imagination is depleted, the dream ends, and revived characters return to the Regression state.\r\nWhile the Ultimate's effect is active, Imagination cannot be built up, but Daydream and Lucid Dream do not consume Imagination.",
-          "description_ja": "最初の夢の世界に帰りましょう。イロヒは夢の世界の扉を開き、「白昼夢」の蓄積度合いに応じて異なる効果を発動する。\r\n「白昼夢」の蓄積が一定量に達していない場合：イロヒは角の門の夢を開き、チーム全員を持続的に治療する。\r\n「白昼夢」の蓄積が一定量に達している場合：イロヒは象牙の門の夢を開き、チーム全員を持続的に治療する。また、夢の世界が開いている間、その中にいる敵に持続ダメージを与える。この期間中に「トランス」状態のキャラのアイコンを長押しすると、夢の世界が開いている間のみ、そのキャラを一時的に復活させ、一定量のHPを回復する（この期間中に復活できるキャラは最大1人まで）。\r\n夢の世界は持続的に「白昼夢」を消費し、消費し尽くすと夢の世界は終了し、復活していたキャラは再び「トランス」状態に戻る。\r\nEXレール終結のスキル効果持続中、「白昼夢」を蓄積することはできないが、この間に「通常攻撃：まどろみの刻」「通常攻撃：明晰夢」を使用しても「白昼夢」は消費されない。",
-          "short_description_zh": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成伤害。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n极轨终结的技能效果持续期间，无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
-          "short_description_en": "Opens a dream and triggers different effects based on the Imagination built up.\r\nBelow threshold: Continuously heals all allies.\r\nAt threshold: Continuously deals DMG to enemies. Switching to a character in Regression during the dream revives them and restores some HP.\r\nThe dream ends when Imagination is depleted. The revived character returns to Regression after the dream ends.\r\nWhile the Ultimate's effect is active, Imagination cannot be built up, but Daydream and Lucid Dream do not consume Imagination.",
-          "short_description_ja": "夢の世界を開き、「白昼夢」の蓄積度合いに応じて異なる効果を発動する。\r\n蓄積が一定量に達していない場合：チーム全員を持続的に治療する。\r\n蓄積が一定量に達している場合：敵に持続ダメージを与える。この期間中に「トランス」状態のキャラに切り替えると、そのキャラを一時的に復活させ、一定量のHPを回復する。\r\n「白昼夢」を消費し尽くすと夢の世界は終了し、復活していたキャラは再び「トランス」状態に戻る。\r\nEXレール終結のスキル効果持続中、「白昼夢」を蓄積することはできないが、この間に「通常攻撃：まどろみの刻」「通常攻撃：明晰夢」を使用しても「白昼夢」は消費されない。"
+          "description_zh": "回到最初的梦境中去吧。伊洛伊开启梦境的大门，根据<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>积攒程度，发动不同效果。\r\n若「臆想」未积攒到阈值：伊洛伊开启牛角门的梦境，梦境期间提供持续全体治疗。\r\n若「臆想」已积攒到阈值：伊洛伊开启象牙门的梦境，梦境期间提供持续全体治疗，并对身处其中的敌人持续造成<Ling>灵属性异能伤害</>。在此期间长按<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态角色头像，则在梦境期间暂时复活该角色并回复一定生命值（期间最多只能复活1名角色）。\r\n梦境期间持续消耗<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>，消耗完毕后梦境结束，被复活的角色将回到<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes2\">「退行」</>状态。\r\n梦境期间无法积攒<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗<hot textstyle=\"TextEXPL\" param=\"nouns&OneiroiRes1\">「臆想」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "开启梦境，根据「臆想」积攒程度发动不同效果。\r\n未达积攒阈值：提供持续全体治疗。\r\n达到积攒阈值：对敌人持续造成<Ling>灵属性异能伤害</>。在此期间如切换至「退行」角色，则复活该角色并回复一定生命值。\r\n梦境在「臆想」消耗完毕后结束，结束后被复活角色回到「退行」状态。\r\n梦境期间无法积攒「臆想」，但在此期间使用「普通攻击：白日梦」「普通攻击：清明梦」将不消耗「臆想」。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
@@ -4710,7 +4734,7 @@
           "description_zh": "释放「普通攻击：恶灵CQC」，灵可进行至多5段的连续攻击，造成<Ling>灵属性异能伤害</>。每段攻击将积攒「谐频」点数。\r\n「谐频」将在使用「变轨技能：瞬息全频振」时消耗，并强化其触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "释放「普通攻击：恶灵CQC」，灵可进行至多5段的连续攻击，造成<Ling>灵属性异能伤害</>。每段攻击将积攒「谐频」点数。\r\n「谐频」将在使用「变轨技能：瞬息全频振」时消耗，并强化其触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>，积攒「谐频」点数。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4722,7 +4746,7 @@
           "description_zh": "「普通攻击：恶灵CQC」释放期间，长按普通攻击触发，灵可双掌拍击当前目标，造成<Ling>灵属性异能伤害</>。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "「普通攻击：恶灵CQC」释放期间，长按普通攻击触发，灵可双掌拍击当前目标，造成<Ling>灵属性异能伤害</>。",
+          "short_description_zh": "「普通攻击：恶灵CQC」释放期间长按普通攻击，造成<Ling>灵属性异能伤害</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4734,7 +4758,7 @@
           "description_zh": "灵可滞空时点按普通攻击，落地后造成1次范围性的<Ling>灵属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "灵可滞空时点按普通攻击，落地后造成1次范围性的<Ling>灵属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4746,7 +4770,7 @@
           "description_zh": "灵可处于后台时，每隔8秒，将会派出小贞偷袭目标，进行一次攻击并施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "灵可处于后台时，每隔8秒，将会派出小贞偷袭目标，进行一次攻击并施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
+          "short_description_zh": "灵可处于后台时，定期给敌人施加<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4758,7 +4782,7 @@
           "description_zh": "触发极限闪避后使用「普通攻击：恶灵CQC」触发，灵可冲向目标造成4次范围性的<Ling>灵属性异能伤害</>并积攒「谐频」点数。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>，积攒「谐频」点数。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4817,10 +4841,10 @@
           "title_zh": "精确调频",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "触发<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时，将根据触发此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的角色，降低目标对应属性的异能抗性，该效果有一定的持续时间。目标身上可同时存在多种属性的减抗效果，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成的同种属性的减抗效果不可叠加，重复触发将刷新时间。",
+          "description_zh": "触发<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时，将根据触发此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的角色，降低目标对应属性8%的异能抗性，持续12秒。目标身上可同时存在多种属性的减抗效果，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成的同种属性的减抗效果不可叠加，重复触发将刷新持续时间。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "触发<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时，将根据触发此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的角色，降低目标对应属性的异能抗性，该效果有一定的持续时间。目标身上可同时存在多种属性的减抗效果，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成的同种属性的减抗效果不可叠加，重复触发将刷新时间。",
+          "short_description_zh": "触发<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>时，将根据触发此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的角色，降低目标对应属性8%的异能抗性，持续12秒。目标身上可同时存在多种属性的减抗效果，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成的同种属性的减抗效果不可叠加，重复触发将刷新持续时间。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4848,10 +4872,10 @@
           "title_zh": "灵可I型火箭头槌！",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "非战斗状态下长按普通攻击，灵可借助小贞的幽灵手臂蓄力，松开后会将灵可弹射出去。",
+          "description_zh": "非战斗状态下长按普通攻击，灵可借助小贞的幽灵手臂蓄力，松开后会将灵可弹射出去，蓄力时间越长，弹射力度越大，最多蓄力2秒。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "非战斗状态下长按普通攻击，灵可借助小贞的幽灵手臂蓄力，松开后会将灵可弹射出去。",
+          "short_description_zh": "非战斗状态下长按普通攻击，灵可借助小贞的幽灵手臂蓄力，松开后会将灵可弹射出去，蓄力时间越长，弹射力度越大，最多蓄力2秒。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4879,10 +4903,10 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "灵可与小贞对目标打出认真一拳，造成1次范围性<Ling>灵属性异能伤害</>。\r\n灵可在战斗中可通过：\r\n击碎<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记，释放「变轨技能：瞬息全频振」，释放「极轨终结：超负荷共鸣」来召唤队友进行<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，此伤害倍率受灵可「援护技：恶灵左直拳！」技能等级影响。",
+          "description_zh": "灵可与小贞对目标打出认真一拳，造成1次范围性<Ling>灵属性异能伤害</>。\r\n灵可在战斗中可通过：\r\n击碎<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记，释放「变轨技能：瞬息全频振」，释放「极轨终结：超负荷共鸣」三种方式召唤队友进行<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的伤害倍率受灵可「援护技：恶灵左直拳！」技能等级影响。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "灵可与小贞对目标打出认真一拳，造成1次范围性<Ling>灵属性异能伤害</>。\r\n灵可在战斗中可通过：\r\n击碎<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoXiaozhenMark\">「小鬼打这里！」</>标记，释放「变轨技能：瞬息全频振」，释放「极轨终结：超负荷共鸣」来召唤队友进行<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，此伤害倍率受灵可「援护技：恶灵左直拳！」技能等级影响。",
+          "short_description_zh": "造成<Ling>灵属性异能伤害</>。\r\n<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的伤害倍率受灵可「援护技：恶灵左直拳！」技能等级影响。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4913,7 +4937,7 @@
           "description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n轮盘下方默认为小贞，队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "释放「变轨技能：瞬息全频振」，灵可激发异能，用幽灵能量体轰击目标，造成最多4段<Ling>灵属性异能伤害</>，并呼唤小贞或一名队友发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>；此时，将出现可选择发起攻击者的轮盘，可通过点按选择一名队友或者小贞，来释放该角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应的属性伤害。该次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>将获得伤害增益，且会消耗此前积攒的「谐频」点数，转化为额外的伤害增益。\r\n在点选队友、发动<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的这段时间内，将有短暂的暂停计时效果。\r\n轮盘下方默认为小贞，队友不可行动或未编入队伍时，小贞会替代轮盘中队友的位置，每额外有一个小贞，选择小贞触发的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>额外获得一次伤害增益。",
+          "short_description_zh": "点按发动，造成<Ling>灵属性异能伤害</>，选择并发动小贞或一名同队角色的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，造成对应属性异能伤害，并消耗已有「谐频」点数，增幅此次<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>的伤害。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -4947,10 +4971,10 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成范围伤害，最多释放3次；\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态种类数提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。其间队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。",
+          "description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成范围伤害，最多释放3次；\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态种类数提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。「共鸣领域」内队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。",
           "description_en": "",
           "description_ja": "",
-          "short_description_zh": "释放「极轨终结：超负荷共鸣」，灵可进入异能过载状态，展开持续一定时间的「共鸣领域」，并与至多3名同队角色达成同频。可以通过点按变轨技能依次呼唤队友释放的<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>造成范围伤害，最多释放3次；\r\n等待异能过载状态结束、或者点按「极轨终结：超负荷共鸣」提前结束时，灵可释放过载的噪波，对「共鸣领域」内的所有敌方单位造成多次范围性的<Ling>灵属性异能伤害</>和一次<Ling>灵属性爆发伤害</>。该<Ling>灵属性爆发伤害</>根据目标身上的负面状态种类数提升。\r\n在「超负荷共鸣」持续时间结束后，灵可的「共鸣领域」将延续一段时间。其间队伍角色触发的援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，视为追加攻击伤害，并额外享受「精确调频」、「星星也说悄悄话！」、「世界将予你回声！」的加成。",
+          "short_description_zh": "点按发动，展开持续一定时间的「共鸣领域」；点按变轨技能发动同队角色<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>，最多发动三次；再次点按极轨终结技能，造成范围性<Ling>灵属性异能伤害</>。\r\n「共鸣领域」内，角色援护技均视为<hot textstyle=\"TextEXPL\" param=\"nouns&LinkoLTE\">「同频合击」</>。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -6001,30 +6025,30 @@
       ]
     },
     "GA_Zankou_InvisibleSkill": {
-      "name_zh": "柯林斯·嗷呜术",
-      "name_en": "Colucci Howling Technique",
-      "name_ja": "コリンス・アウー術",
+      "name_zh": "谲影迷踪",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "哼哼，来点惊喜！娜娜莉立即对周围敌人造成<NumGreen>5</>次范围性的<Ling>灵属性异能伤害</>，并使用灵系异能包裹全身，进入<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目的权柄」</>状态。\r\n该状态将在娜娜莉退场时解除，至多持续<NumGreen>12</>秒。\r\n在<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目的权柄」</>持续期间再次释放将退出该状态。",
-          "description_en": "Hehe, surprise time! Deals <NumGreen>5</> instances of <Ling>Anima DMG</> to surrounding enemies and wraps herself in Anima Esper Ability, gaining the <hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">Ichi-daime's Authority</> effect.\r\nLasts <NumGreen>12s</> or until Nanally is switched out.\r\nEnds <hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">Ichi-daime's Authority</> early when recast.",
-          "description_ja": "ふふーん、サプライズっすよ！ナナリが周囲の敵に<Ling>霊異能</>の範囲ダメージを<NumGreen>5</>回与え、霊異能をその身に纏い<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目の権限」</>状態に入る。\r\n この状態はナナリが控えに戻ると共に解除される（最大<NumGreen>12</>秒持続）\r\nまた、<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目の権限」</>は、効果時間中にもう一度スキルを発動することでも解除できる。",
-          "short_description_zh": "造成<Ling>灵属性异能伤害</>，进入<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目的权柄」</>状态。",
-          "short_description_en": "造成<Ling>灵属性异能伤害</>，进入<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目的权柄」</>状态。",
-          "short_description_ja": "造成<Ling>灵属性异能伤害</>，进入<hot textstyle=\"TextEXPL\" param=\"nouns&NanallyWalkOnWall\">「一代目的权柄」</>状态。"
+          "description_zh": "「无影无形。」\r\n非战斗状态下可使用特殊技能「谲影迷踪」，使残虹进入隐身状态，持续<NumGreen>20</>秒。隐身期间移动速度提升<NumGreen>50%</>，不会被目标发现。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "「无影无形。」\r\n非战斗状态下可使用特殊技能「谲影迷踪」，使残虹进入隐身状态，持续<NumGreen>20</>秒。隐身期间移动速度提升<NumGreen>50%</>，不会被目标发现。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<Italic>薄荷试图向娜娜莉学习这招，但看到静电后的毛发弯曲毛糙分叉打结，瞬间放弃了这个想法，毕竟异象管理局里可没有精通毛发护理的阿德勒先生。</>",
-          "description_en": "<Italic>Mint tried to learn this move from Nanally, but the moment she saw that Nanally's hair went rough, curved, split, and knotted, she gave up the idea. Adler is not with her in the Bureau of Anomaly Control to take care of her hair, after all.</>",
-          "description_ja": "<Italic>ミントはナナリからこの技を教わろうとしたが、静電気でボサボサになった毛髪を見て、すぐにその考えを諦めた。なんせ、異象管理局には身だしなみを整えてくれるアドレーがいないからね。</>",
+          "description_zh": "<Italic>最初只是一次短暂的对视，随后，整个世界都开始缓缓失焦。</>",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -6032,66 +6056,90 @@
       ]
     },
     "GA_Zankou_Melee": {
-      "name_zh": "清唱",
-      "name_en": "Cappella",
-      "name_ja": "アカペラ",
+      "name_zh": "燎原",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "<Title>普通攻击：连音</>",
-          "title_en": "<Title>Basic Attack: Legato</>",
-          "title_ja": "<Title>通常攻撃：レガート</>",
-          "description_zh": "要唱得流畅而自然！海月挥动指挥棒，进行至多4段的连续攻击，造成<Hun>魂属性异能伤害</>。",
-          "description_en": "Sing smoothly and naturally! Wields her weapon and performs up to 4 consecutive attacks, dealing <Hun>Psyche DMG</>.",
-          "description_ja": "流れるように自然に歌おう！海月が指揮棒を振るって、最大4段の連続攻撃を行い、<Hun>魂異能ダメージ</>を与える。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
-          "short_description_en": "Deals<Hun>Psyche DMG</>.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与える。"
+          "title_zh": "<Title>普通攻击：燎原</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "现实形态下，残虹挥动妖刀进行至多<NumGreen>5</>段的连续攻击，造成<Zhou>咒属性异能伤害</>，其中普攻第5段可以吸附范围内的敌人。期间残虹拥有增益效果<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouShou\">「狩」</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "现实形态下进行至多<NumGreen>5</>段连续攻击，造成<Zhou>咒属性异能伤害</>，其中普攻第5段可以吸附范围内的敌人。拥有增益效果<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouShou\">「狩」</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "<Title>普通攻击：顿音</>",
-          "title_en": "<Title>Basic Attack: Staccato</>",
-          "title_ja": "<Title>通常攻撃：マルカート</>",
-          "description_zh": "要唱得响亮而饱满！移动时长按闪避，海月可乘坐水母，持续高速移动。周围存在目标时，每隔一段时间生成水母弹，攻击范围内的随机目标，造成<Hun>魂属性异能伤害</>。\r\n在此状态下，海月会使用特殊闪避动作，「极限闪避反击：切分节奏」变为自动发射四枚水母弹。\r\n剩余一定耐力值后，自动退出该状态。",
-          "description_en": "Sing loudly and fully! Hold Dodge while moving to ride a jellyfish, sprinting at high speed for the duration. Generates a jellyfish blast at intervals when targets are nearby, dealing <Hun>Psyche DMG</>.\r\nPerforms a special Dodge in this state, and \"Critical Dodge Riposte: Syncopation\" automatically fires four jellyfish blasts.\r\nEnds automatically when stamina drops below a certain amount.",
-          "description_ja": "大きく豊かに歌い上げよう！移動中に回避を長押しすると、海月はクラゲに乗り、高速で移動し続ける。周囲にターゲットが存在する場合、一定時間ごとにクラゲ弾を生成し、攻撃範囲内のランダムなターゲットを攻撃して、<Hun>魂異能ダメージ</>を与える。\r\nこの状態中、海月は特殊回避アクションが使用可能となり、「極限回避反撃：シンコペーション」が自動的に4発のクラゲ弾を発射するように変化する。\r\n残りスタミナが一定値以下になると、この状態は終了する。",
-          "short_description_zh": "移动时长按闪避，进入特殊状态。每隔一段时间生成水母弹，造成<Hun>魂属性异能伤害</>。\r\n在此状态下，「极限闪避反击：切分节奏」变为发射水母弹。\r\n剩余一定耐力值后，自动退出该状态。",
-          "short_description_en": "Hold Dodge while moving to enter a special state. Generates a jellyfish blast at intervals, dealing <Hun>Psyche DMG</>.\r\nPerforms a special Dodge in this state, and Syncopation automatically fires four jellyfish blasts.\r\nEnds automatically when stamina drops low.",
-          "short_description_ja": "移動中に回避を長押しすると、特殊状態に入る。一定時間ごとにクラゲ弾を生成し、<Hun>魂異能ダメージ</>を与える。\r\nこの状態中、「極限回避反撃：シンコペーション」はクラゲ弾の発射に変化する。\r\n残りスタミナが一定値以下になると、この状態は終了する。"
+          "title_zh": "<Title>普通攻击：魇舞</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "幻境形态下，残虹驱动妖刀和缎带进行至多<NumGreen>4</>段的连续攻击，攻击命中时对目标施加<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>，并造成<Zhou>咒属性异能伤害</>，其中普攻第3段可以吸附范围内的敌人。每段「普通攻击：魇舞」释放时，残虹能将目标身上最多<NumGreen>4</>种持续伤害效果扩散至一定范围内的目标，包括原目标。期间残虹拥有增益效果<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouHuo\">「惑」</>。此外，「普通攻击：魇舞」造成的伤害视为追加攻击。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "幻境形态下进行至多<NumGreen>4</>段连续攻击，造成<Zhou>咒属性异能伤害</>，其中普攻第3段可以吸附范围内的敌人。命中时对目标施加<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>，每段攻击释放时，残虹能将目标身上的持续伤害扩散至一定范围内的目标，包括原目标。拥有增益效果<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouHuo\">「惑」</>。此外，「普通攻击：魇舞」造成的伤害视为追加攻击。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "<Title>普通攻击：跳音</>",
-          "title_en": "<Title>Basic Attack: Portamento</>",
-          "title_ja": "<Title>通常攻撃：スタッカート</>",
-          "description_zh": "要唱得清越而优美！海月在空中挥动指挥棒，并迅速下落冲击地面，落地时造成<NumGreen>1</>次范围性的<Hun>魂属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
-          "description_en": "Sing clearly and beautifully! Wields the weapon mid-air and plunges, dealing <NumGreen>1</> instance of <Hun>Psyche DMG</> to an area upon impact. Increases DMG based on fall height, up to 100%.",
-          "description_ja": "澄み切った美しい声で歌おう！海月は空中で指揮棒を振りながら素早く地面に落下し、その衝撃で<Hun>魂異能ダメージ</>の範囲ダメージを<NumGreen>1</>回与える。落下高度に応じてダメージが増加し、最大で+100%まで。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
-          "short_description_en": "Deals<Hun>Psyche DMG</>.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与える。"
+          "title_zh": "<Title>普通攻击：绰影</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "残虹在现实形态下，「普通攻击：燎原」第<NumGreen>1</>/<NumGreen>2</>段中，长按普通攻击触发「普通攻击：绰影」，造成<Zhou>咒属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "现实形态下，普攻第<NumGreen>1</>/<NumGreen>2</>段中长按普攻，造成<Zhou>咒属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_DES",
-          "title_zh": "<Title>极限反击：切分节奏</>",
-          "title_en": "<Title>Critical Riposte: Syncopation</>",
-          "title_ja": "<Title>極限反撃：シンコペーション</>",
-          "description_zh": "触发极限闪避后，释放「普通攻击：连音」触发。\r\n不如来试试我的节奏吧？海月挥动指挥棒，造成<NumGreen>1</>次范围性的<Hun>魂属性异能伤害</>，并额外扣除一定倾陷值。",
-          "description_en": "Triggers when casting Legato after a Critical Dodge.\r\nThink you can handle my rhythm? Wields her weapon to deal <NumGreen>1</> instance of <Hun>Psyche DMG</> to an area and reduces Break.",
-          "description_ja": "極限回避後に「通常攻撃：レガート」を使用すると発動。\r\n私のリズムどうかな？海月が指揮棒を振るって、<Hun>魂異能</>の範囲ダメージを<NumGreen>1</>回与えるとともに、一定のブレイク値耐性を削る。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
-          "short_description_en": "Deals<Hun>Psyche DMG</>.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与える。"
+          "title_zh": "<Title>普通攻击：落月</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "残虹在幻境形态下，「普通攻击：魇舞」第<NumGreen>1</>/<NumGreen>2</>段中，长按普通攻击触发「普通攻击：落月」，造成<Zhou>咒属性异能伤害</>。命中时对目标施加<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>。「普通攻击：落月」造成的伤害视为追加攻击。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "幻境形态下，普攻第<NumGreen>1</>/<NumGreen>2</>段中长按普攻，造成<Zhou>咒属性异能伤害</>。命中时对目标施加<NumGreen>1</>层<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>。「普通攻击：落月」造成的伤害视为追加攻击。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>普通攻击：折枝</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "残虹滞空时点按普通攻击，落地后造成<NumGreen>1</>次范围性的<Zhou>咒属性异能伤害</>，伤害随下落高度升高而提升，最高提升1倍。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "滞空时点按普攻，造成<Zhou>咒属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>极限反击：虚徊</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "触发极限闪避后点击普通攻击触发，造成<Zhou>咒属性异能伤害</>，并额外扣除一定倾陷值。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Zhou>咒属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<Italic>声乐也是指挥不可或缺的素养，要勤加练习。腹部发力，牙关打开，感受声音穿过后脑、从眉心位置发出来……是这里吗？</>\r\n<Italic>「啊——啊——」</>\r\n<Italic>……怎么感觉歌声好像也在迷路。</>",
-          "description_en": "<Italic>Vocal technique is key for any conductor, so I keep practicing. Engage the core, relax the jaw, let the sound flow from the back of my head and out through my brow…</>\r\n<Italic>\"Ah—ah—\"</>\r\n<Italic>…Why does it feel like even my own voice is slipping away?</>",
-          "description_ja": "<Italic>声楽も指揮には欠かせない素養だから、しっかり練習しないと。お腹に力を入れて、口を開き、声が後頭部を通り抜けて眉間の位置から出るのを感じて…ここかな？</>\r\n<Italic>「あーあー」</>\r\n<Italic>…なんだか歌声まで迷子になってる気がするよ。</>",
+          "description_zh": "<Italic>梦魇翩然而至，绝望如火焚身。</>",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -6099,25 +6147,25 @@
       ]
     },
     "GA_Zankou_MeleeMagic": {
-      "name_zh": "",
+      "name_zh": "燎原",
       "name_en": "",
       "name_ja": "",
       "descriptions": []
     },
     "GA_Zankou_Passive1": {
-      "name_zh": "泛音",
-      "name_en": "Harmonics",
-      "name_ja": "ハーモニクス",
+      "name_zh": "暮落残阳",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<TextHLT>「黯星」强化</>：目标的「黯星」状态结束后，将受到3次来自海月50%攻击力的<Hun>魂属性异能伤害</>。",
-          "description_en": "<TextHLT>Nova Enhancement</>: Deals 3 instances of <Hun>Psyche DMG</> to the target after their Nova status ends, each equal to 50% of ATK.",
-          "description_ja": "<TextHLT>「暗星」強化</>：ターゲットの「暗星」状態が終了する時、海月の攻撃力の50％に相当する<Hun>魂異能ダメージ</>を3回与える。",
-          "short_description_zh": "",
+          "description_zh": "<TextHLT>「浊燃」强化</>：「浊燃」效果可叠加，上限<NumGreen>3</>层。全队对「浊燃」状态下的目标施加持续伤害效果时，每施加<NumGreen>1</>层持续伤害效果，就由残虹为其施加<NumGreen>1</>层「浊燃」，已有「浊燃」的伤害、元素类型、持续时间刷新为本次施加的「浊燃」的效果。施加「浊燃」不重复触发此效果。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "<TextHLT>「浊燃」强化</>：「浊燃」效果可叠加，上限<NumGreen>3</>层。全队对「浊燃」状态下的目标施加持续伤害效果时，每施加<NumGreen>1</>层持续伤害效果，就由残虹为其施加<NumGreen>1</>层「浊燃」，已有「浊燃」的伤害、元素类型、持续时间刷新为本次施加的「浊燃」的效果。施加「浊燃」不重复触发此效果。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -6126,9 +6174,9 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<Italic>要怎么证明声音是一种波呢？向水里丢一枚石子，涟漪便会一圈圈漾开；向人丢一枚石子，同样也能听到连绵不绝的声音。</>\r\n<Italic>「……这里该笑吗？」</>\r\n<Italic>「海月姐的玩笑，一点也不好笑——」</>\r\n<Italic>「怎么这样！以前她们可都很捧场的……是你们这些小家伙笑点太高了吧。」</>",
-          "description_en": "<Italic>How do you prove that sound is a wave? Toss a stone into water and see the ripples spread; toss a stone at someone, and you’ll hear wave after wave of noise.</>\r\n<Italic>\"…Am I supposed to laugh?\"</>\r\n<Italic>\"Aurelia's jokes aren't funny at all—\"</>\r\n<Italic>\"No way! People used to eat that up… you kids just have your humor standards way too high.\"</>",
-          "description_ja": "<Italic>音が波であることをどう証明すればいいかな？水に石を投げれば、波が次々と広がっていくよね。人に向かって石を投げても、同じようにずっと音が聞こえるはずだよ。</>\r\n<Italic>「…ここ、笑うとこ？」</>\r\n<Italic>「海月お姉ちゃんの冗談は、全然面白くないよー」</>\r\n<Italic>「えええっ！昔の子たちにはすごくウケてたのに…最近の子たちって笑いのハードル高すぎない？」</>",
+          "description_zh": "<Italic>众生的火焰汇聚成一轮沉默的太阳，将所有的目光灼烧出成同一种颜色。</>",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -6136,19 +6184,19 @@
       ]
     },
     "GA_Zankou_Passive2": {
-      "name_zh": "泛音",
-      "name_en": "Harmonics",
-      "name_ja": "ハーモニクス",
+      "name_zh": "殷红幻景",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<TextHLT>「黯星」强化</>：目标的「黯星」状态结束后，将受到3次来自海月50%攻击力的<Hun>魂属性异能伤害</>。",
-          "description_en": "<TextHLT>Nova Enhancement</>: Deals 3 instances of <Hun>Psyche DMG</> to the target after their Nova status ends, each equal to 50% of ATK.",
-          "description_ja": "<TextHLT>「暗星」強化</>：ターゲットの「暗星」状態が終了する時、海月の攻撃力の50％に相当する<Hun>魂異能ダメージ</>を3回与える。",
-          "short_description_zh": "",
+          "description_zh": "进入战斗时，残虹的「环合值」为<NumGreen>100</>点，此效果有<NumGreen>30</>秒冷却且单场战斗中最多生效<NumGreen>1</>次。此外，残虹在队伍时，自身「环合强度」提升<NumGreen>100</>点。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "进入战斗时，残虹的「环合值」为<NumGreen>100</>点，此效果有<NumGreen>30</>秒冷却且单场战斗中最多生效<NumGreen>1</>次。此外，残虹在队伍时，自身「环合强度」提升<NumGreen>100</>点。",
           "short_description_en": "",
           "short_description_ja": ""
         },
@@ -6157,9 +6205,9 @@
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<Italic>要怎么证明声音是一种波呢？向水里丢一枚石子，涟漪便会一圈圈漾开；向人丢一枚石子，同样也能听到连绵不绝的声音。</>\r\n<Italic>「……这里该笑吗？」</>\r\n<Italic>「海月姐的玩笑，一点也不好笑——」</>\r\n<Italic>「怎么这样！以前她们可都很捧场的……是你们这些小家伙笑点太高了吧。」</>",
-          "description_en": "<Italic>How do you prove that sound is a wave? Toss a stone into water and see the ripples spread; toss a stone at someone, and you’ll hear wave after wave of noise.</>\r\n<Italic>\"…Am I supposed to laugh?\"</>\r\n<Italic>\"Aurelia's jokes aren't funny at all—\"</>\r\n<Italic>\"No way! People used to eat that up… you kids just have your humor standards way too high.\"</>",
-          "description_ja": "<Italic>音が波であることをどう証明すればいいかな？水に石を投げれば、波が次々と広がっていくよね。人に向かって石を投げても、同じようにずっと音が聞こえるはずだよ。</>\r\n<Italic>「…ここ、笑うとこ？」</>\r\n<Italic>「海月お姉ちゃんの冗談は、全然面白くないよー」</>\r\n<Italic>「えええっ！昔の子たちにはすごくウケてたのに…最近の子たちって笑いのハードル高すぎない？」</>",
+          "description_zh": "<Italic>沉沦于这片令人迷醉的猩红，在她的眼底永远睡去。</>",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -6167,21 +6215,33 @@
       ]
     },
     "GA_Zankou_QTE": {
-      "name_zh": "不协和音",
-      "name_en": "Dissonance",
-      "name_ja": "不協和音",
+      "name_zh": "饲火",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "优秀的指挥可从不会误判时机！海月指挥水母发动突袭，在命中目标时造成1次范围性的<Hun>魂属性异能伤害</>。",
-          "description_en": "True command means never mistaking the timing. Commands the jellyfish to strike, dealing 1 instance of AoE <Hun>Psyche DMG</> on hit.",
-          "description_ja": "優秀な指揮者は決してタイミングを見誤らないよ！海月はクラゲに奇襲を指示し、ターゲットに命中すると<Hun>魂異能</>の範囲ダメージを1回与える。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>。",
-          "short_description_en": "Deals<Hun>Psyche DMG</>.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与える。"
+          "description_zh": "残虹挥动妖刀发动攻击，造成<NumGreen>1</>次<Zhou>咒属性异能伤害</>。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "造成<Zhou>咒属性异能伤害</>。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_AFFIX",
+          "title_zh": "",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "<Italic>敌人的恐惧是最好的燃料。</>",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "",
+          "short_description_en": "",
+          "short_description_ja": ""
         }
       ]
     },
@@ -6192,30 +6252,42 @@
       "descriptions": []
     },
     "GA_Zankou_Skill": {
-      "name_zh": "华彩唱段",
-      "name_en": "Cadenza Aria",
-      "name_ja": "華麗なるカデンツァ",
+      "name_zh": "绯影闪",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
-          "title_zh": "",
+          "title_zh": "<Title>变轨技能：绯影闪</>",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "将随处可见的日常谱成虹色的旋律，让它们响彻天际吧。造成<NumGreen>1</>次范围性的<Hun>魂属性异能伤害</>并进入<hot textstyle=\"TextEXPL\" param=\"nouns&MitsukiSkill\">「华彩」</>状态，持续<NumGreen>12</>秒。",
-          "description_en": "Transform the everyday into a rainbow melody and let it roar across the skyline. Deals <NumGreen>1</> instance of AoE <Hun>Psyche DMG</> and enters the <hot textstyle=\"TextEXPL\" param=\"nouns&MitsukiSkill\">Cadenza</> state for <NumGreen>12</>s.",
-          "description_ja": "平凡な日常を虹色の旋律にして、空の彼方まで響かせよう。<Hun>魂異能</>の範囲ダメージを<NumGreen>1</>回与え、<hot textstyle=\"TextEXPL\" param=\"nouns&MitsukiSkill\">「カデンツァ」</>状態に入る。<NumGreen>12</>秒持続。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>，进入<hot textstyle=\"TextEXPL\" param=\"nouns&MitsukiSkill\">「华彩」</>状态。",
-          "short_description_en": "Deals <Hun>Psyche DMG</> and enters the <hot textstyle=\"TextEXPL\" param=\"nouns&MitsukiSkill\">Cadenza</> state.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与え、<hot textstyle=\"TextEXPL\" param=\"nouns&MitsukiSkill\">「カデンツァ」</>状態に入る。"
+          "description_zh": "残虹在现实形态下，成功释放「变轨技能：绯影闪」后切换为幻境形态。在释放「普通攻击：燎原」<NumGreen>4</>/<NumGreen>5</>段、「普通攻击：绰影」、「极限反击：虚徊」后一定时间内，可释放强化「变轨技能：绯影闪」，对命中的目标施加<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>，并触发<TextHLT>「乱」</>：扣除大范围目标高额倾陷值。释放「变轨技能：绯影闪」切换为幻境形态时，现实形态的<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouShou\">「狩」</>延迟清除。技能在完成形态切换前被打断时，形态不会改变。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "现实形态下成功释放变轨技能后切换为幻境形态，同时<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouShou\">「狩」</>延迟清除。在现实形态下特定攻击后释放强化变轨技能，可对命中的目标施加<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>，并触发<TextHLT>「乱」</>：扣除大范围目标高额倾陷值。技能在完成形态切换前被打断时，形态不会改变。",
+          "short_description_en": "",
+          "short_description_ja": ""
+        },
+        {
+          "type": "ADT_DES",
+          "title_zh": "<Title>变轨技能：离魂错</>",
+          "title_en": "",
+          "title_ja": "",
+          "description_zh": "残虹在幻境形态下，成功释放「变轨技能：离魂错」后切换为现实形态。幻境状态即将结束时，可释放强化「变轨技能：离魂错」对大范围目标造成高额伤害，对命中的目标施加<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>，并触发<TextHLT>「灭」</>：激活「极轨终结：血宴入梦时」。\r\n幻境状态持续一段时间；成功释放「变轨技能：离魂错」或「极轨终结：血宴入梦时」、持续时间结束或残虹离场时，幻境状态解除，残虹回到现实形态。释放「变轨技能：离魂错」切换为现实形态时，幻境形态的<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouHuo\">「惑」</>延迟清除。「变轨技能：离魂错」及其强化版本造成的伤害均视为追加攻击。技能在完成形态切换前被打断时，形态不会改变。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "幻境形态下成功释放变轨技能后切换为现实形态，同时<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouHuo\">「惑」</>延迟清除。幻境状态即将结束时释放强化变轨技能，可对命中的目标施加<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouDot\">「蚀心」</>，并触发<TextHLT>「灭」</>：对大范围目标造成高额伤害，同时激活「极轨终结：血宴入梦时」。幻境状态持续一段时间；成功释放变轨技能或「极轨终结：血宴入梦时」、持续时间结束或残虹离场时，幻境状态解除，残虹回到现实形态。幻境形态下的变轨技能及其强化版本造成的伤害均视为追加攻击。技能在完成形态切换前被打断时，形态不会改变。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<Italic>如果没有加入玉饼街居民协会，海月说不定会去华彩街做管理员。或许冥冥之中，一切自有缘分。</>",
-          "description_en": "<Italic>If she hadn't joined the Tamamochi Street Resident Association, Aurelia might have ended up as an administrator on Cadenza Street instead. In the end, perhaps it's all just a matter of fate.</>",
-          "description_ja": "<Italic>玉餅商店街の自治会に入っていなかったら、海月はゴージャス横丁の管理人になっていただろう。見えないところで、全ては縁で結ばれているのかもしれない。</>",
+          "description_zh": "<Italic>别着急醒来，噩梦才刚刚开始。</>",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -6223,30 +6295,30 @@
       ]
     },
     "GA_Zankou_UltraSkill": {
-      "name_zh": "众声轮唱",
-      "name_en": "Canon Chorus",
-      "name_ja": "カノン",
+      "name_zh": "焚天烬灭舞",
+      "name_en": "",
+      "name_ja": "",
       "descriptions": [
         {
           "type": "ADT_DES",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "接下来的唱段，就让我们一同完成吧。海月将水母群聚拢至身边，造成6段范围性的<Hun>魂属性异能伤害</>，并小幅聚集敌人。",
-          "description_en": "Let's play the next verse together. Gathers nearby jellyfish, dealing 6 instances of AoE <Hun>Psyche DMG</> and slightly pulling targets together.",
-          "description_ja": "このあとのパートは、私たちで一緒に完成させようね。海月がクラゲの群れを自分の周囲に集め、6段の範囲<Hun>魂異能ダメージ</>を与え、敵を少し引き寄せる。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>，聚集敌人。",
-          "short_description_en": "Deals <Hun>Psyche DMG</> and pulls enemies together.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与え、敵を引き寄せる。"
+          "description_zh": "终结能量蓄满后，点按即可释放极轨终结技能。残虹拥有「极轨终结：焚天烬灭舞」和「极轨终结：血宴入梦时」<NumGreen>2</>种极轨终结技能。\r\n如果「极轨终结：血宴入梦时」处于未激活状态，则直接释放「极轨终结：焚天烬灭舞」；\r\n如果「极轨终结：血宴入梦时」处于激活状态，将会优先释放「极轨终结：血宴入梦时」。「极轨终结：血宴入梦时」造成的伤害视为追加攻击，并为大范围目标施加<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouUltraDot\">「鸩火」</>。成功释放「极轨终结：血宴入梦时」后，在限定时间内再次点按，可释放一次不消耗终结能量且获得强化的「极轨终结：焚天烬灭舞」。如果超过限定时间，则此次释放机会消失。",
+          "description_en": "",
+          "description_ja": "",
+          "short_description_zh": "终结能量蓄满后，点按即可释放极轨终结技能。残虹拥有「极轨终结：焚天烬灭舞」和「极轨终结：血宴入梦时」<NumGreen>2</>种极轨终结技能。\r\n如果「极轨终结：血宴入梦时」处于未激活状态，则直接释放「极轨终结：焚天烬灭舞」；\r\n如果「极轨终结：血宴入梦时」处于激活状态，将会优先释放「极轨终结：血宴入梦时」。「极轨终结：血宴入梦时」造成的伤害视为追加攻击，并为大范围目标施加<hot textstyle=\"TextEXPL\" param=\"nouns&ZankouUltraDot\">「鸩火」</>。成功释放「极轨终结：血宴入梦时」后，在限定时间内再次点按，可释放一次不消耗终结能量且获得强化的「极轨终结：焚天烬灭舞」。如果超过限定时间，则此次释放机会消失。",
+          "short_description_en": "",
+          "short_description_ja": ""
         },
         {
           "type": "ADT_AFFIX",
           "title_zh": "",
           "title_en": "",
           "title_ja": "",
-          "description_zh": "<Italic>无论是学生时代的合唱团，还是那支昙花一现的乐队，都是海月最珍贵的宝物。辉煌的乐章若是只有一人独奏，实在有些太寂寞了。</>",
-          "description_en": "<Italic>Whether it was the school choir or that short-lived, chaotic band, these were Aurelia's most cherished memories. Even a brilliant solo would feel far too lonely.</>",
-          "description_ja": "<Italic>学生時代の合唱団も、短命に終わったあのバンドも、海月にとってはかけがえのない宝物だ。輝かしい楽章を独奏するなんて、やっぱり寂しすぎるから。</>",
+          "description_zh": "<Italic>灵魂之火在幻景中寂灭，如同沉入不必苏醒的酣眠。</>",
+          "description_en": "",
+          "description_ja": "",
           "short_description_zh": "",
           "short_description_en": "",
           "short_description_ja": ""
@@ -6257,63 +6329,13 @@
       "name_zh": "众声轮唱",
       "name_en": "Canon Chorus",
       "name_ja": "カノン",
-      "descriptions": [
-        {
-          "type": "ADT_DES",
-          "title_zh": "",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "接下来的唱段，就让我们一同完成吧。海月将水母群聚拢至身边，造成6段范围性的<Hun>魂属性异能伤害</>，并小幅聚集敌人。",
-          "description_en": "Let's play the next verse together. Gathers nearby jellyfish, dealing 6 instances of AoE <Hun>Psyche DMG</> and slightly pulling targets together.",
-          "description_ja": "このあとのパートは、私たちで一緒に完成させようね。海月がクラゲの群れを自分の周囲に集め、6段の範囲<Hun>魂異能ダメージ</>を与え、敵を少し引き寄せる。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>，聚集敌人。",
-          "short_description_en": "Deals <Hun>Psyche DMG</> and pulls enemies together.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与え、敵を引き寄せる。"
-        },
-        {
-          "type": "ADT_AFFIX",
-          "title_zh": "",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "<Italic>无论是学生时代的合唱团，还是那支昙花一现的乐队，都是海月最珍贵的宝物。辉煌的乐章若是只有一人独奏，实在有些太寂寞了。</>",
-          "description_en": "<Italic>Whether it was the school choir or that short-lived, chaotic band, these were Aurelia's most cherished memories. Even a brilliant solo would feel far too lonely.</>",
-          "description_ja": "<Italic>学生時代の合唱団も、短命に終わったあのバンドも、海月にとってはかけがえのない宝物だ。輝かしい楽章を独奏するなんて、やっぱり寂しすぎるから。</>",
-          "short_description_zh": "",
-          "short_description_en": "",
-          "short_description_ja": ""
-        }
-      ]
+      "descriptions": []
     },
     "GA_Zankou_UltraSkillMagic": {
       "name_zh": "众声轮唱",
       "name_en": "Canon Chorus",
       "name_ja": "カノン",
-      "descriptions": [
-        {
-          "type": "ADT_DES",
-          "title_zh": "",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "接下来的唱段，就让我们一同完成吧。海月将水母群聚拢至身边，造成6段范围性的<Hun>魂属性异能伤害</>，并小幅聚集敌人。",
-          "description_en": "Let's play the next verse together. Gathers nearby jellyfish, dealing 6 instances of AoE <Hun>Psyche DMG</> and slightly pulling targets together.",
-          "description_ja": "このあとのパートは、私たちで一緒に完成させようね。海月がクラゲの群れを自分の周囲に集め、6段の範囲<Hun>魂異能ダメージ</>を与え、敵を少し引き寄せる。",
-          "short_description_zh": "造成<Hun>魂属性异能伤害</>，聚集敌人。",
-          "short_description_en": "Deals <Hun>Psyche DMG</> and pulls enemies together.",
-          "short_description_ja": "<Hun>魂異能ダメージ</>を与え、敵を引き寄せる。"
-        },
-        {
-          "type": "ADT_AFFIX",
-          "title_zh": "",
-          "title_en": "",
-          "title_ja": "",
-          "description_zh": "<Italic>无论是学生时代的合唱团，还是那支昙花一现的乐队，都是海月最珍贵的宝物。辉煌的乐章若是只有一人独奏，实在有些太寂寞了。</>",
-          "description_en": "<Italic>Whether it was the school choir or that short-lived, chaotic band, these were Aurelia's most cherished memories. Even a brilliant solo would feel far too lonely.</>",
-          "description_ja": "<Italic>学生時代の合唱団も、短命に終わったあのバンドも、海月にとってはかけがえのない宝物だ。輝かしい楽章を独奏するなんて、やっぱり寂しすぎるから。</>",
-          "short_description_zh": "",
-          "short_description_en": "",
-          "short_description_ja": ""
-        }
-      ]
+      "descriptions": []
     }
   }
 }
