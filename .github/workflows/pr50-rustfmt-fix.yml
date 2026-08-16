@@ -1,0 +1,55 @@
+name: PR50 rustfmt fix
+
+on:
+  push:
+    branches:
+      - fix/zankou-authoritative-assets
+
+permissions:
+  contents: write
+
+jobs:
+  patch-rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/zankou-authoritative-assets
+          fetch-depth: 0
+
+      - name: Apply rustfmt shape to Zankou assertion
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/engine/parser.rs")
+          text = path.read_text(encoding="utf-8")
+          old = '''        assert_eq!(
+              zankou_dot.ability_name.as_deref(),
+              Some("GA_Zankou_Melee")
+          );'''
+          new = '''        assert_eq!(zankou_dot.ability_name.as_deref(), Some("GA_Zankou_Melee"));'''
+          count = text.count(old)
+          if count == 0:
+              print("rustfmt shape already applied; nothing to do")
+          elif count == 1:
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+              print("applied rustfmt shape")
+          else:
+              raise SystemExit(f"refusing ambiguous replacement: found {count} matches")
+          PY
+
+      - name: Commit formatting fix
+        shell: bash
+        run: |
+          if git diff --quiet -- src/engine/parser.rs; then
+            echo "No parser.rs change required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/engine/parser.rs
+          git commit -m "style: format Zankou parser assertion"
+          git push origin HEAD:fix/zankou-authoritative-assets
