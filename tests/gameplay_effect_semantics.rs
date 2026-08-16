@@ -24,11 +24,7 @@ fn semantic_components_do_not_repeat_the_parent_ability_name() {
         .expect("ability tips must contain an abilities object");
 
     for (effect_name, semantic) in effects {
-        if semantic
-            .get("show_parent_ability")
-            .and_then(Value::as_bool)
-            == Some(false)
-        {
+        if semantic.get("show_parent_ability").and_then(Value::as_bool) == Some(false) {
             continue;
         }
         let Some(ability_id) = semantic.get("ability").and_then(Value::as_str) else {
@@ -57,18 +53,26 @@ fn semantic_components_do_not_repeat_the_parent_ability_name() {
 }
 
 #[test]
-fn zankou_dot_semantic_does_not_override_current_cn_skill_classification() {
+fn zankou_dot_semantics_follow_current_cn_assets() {
     let semantics = load_json("res/data/skills/gameplay_effect_semantics.json");
     let skill_damage = load_json("res/data/skills/skill_damage.json");
-    let effect = &semantics["effects"]["GE_Player_Zankou_DotDamage"];
-    let skill_row = &skill_damage[0]["Rows"]["GE_Player_Zankou_DotDamage"];
+    let effects = &semantics["effects"];
 
-    assert_eq!(skill_row["GAName"], "GA_Zankou_Melee");
-    assert_eq!(effect["owner_character_id"], 1036);
-    assert!(effect.get("ability").is_none());
-    assert!(effect.get("attack_type").is_none());
-    assert_eq!(effect["show_parent_ability"], true);
-    assert_eq!(effect["damage_name_zh"], "黯星结束伤害");
-    assert_eq!(effect["damage_name_en"], "Nova End Damage");
-    assert_eq!(effect["damage_name_ja"], "暗星終了ダメージ");
+    let dot = &effects["GE_Player_Zankou_DotDamage"];
+    let dot_skill = &skill_damage[0]["Rows"]["GE_Player_Zankou_DotDamage"];
+    assert_eq!(dot_skill["GAName"], "GA_Zankou_Melee");
+    assert_eq!(dot["owner_character_id"], 1036);
+    assert!(dot.get("ability").is_none());
+    assert!(dot.get("attack_type").is_none());
+    assert_eq!(dot["show_parent_ability"], false);
+    assert_eq!(dot["damage_name_zh"], "蚀心");
+
+    let ultra_dot = &effects["GE_Player_Zankou_DotUltraDamage"];
+    let ultra_dot_skill = &skill_damage[0]["Rows"]["GE_Player_Zankou_DotUltraDamage"];
+    assert_eq!(ultra_dot_skill["GAName"], "GA_Zankou_UltraSkill");
+    assert_eq!(ultra_dot["owner_character_id"], 1036);
+    assert!(ultra_dot.get("ability").is_none());
+    assert!(ultra_dot.get("attack_type").is_none());
+    assert_eq!(ultra_dot["show_parent_ability"], false);
+    assert_eq!(ultra_dot["damage_name_zh"], "鸩火");
 }

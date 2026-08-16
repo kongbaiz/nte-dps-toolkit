@@ -40597,6 +40597,1084 @@
           "SubPathString": ""
         },
         "UniqueIndex": 5798
+      },
+      "Boss_36_act07_NEAR_Buff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36/Buff/Boss_36_act07_NEAR_Buff.Boss_36_act07_NEAR_Buff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5799
+      },
+      "Boss_36_act07_far_Buff": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36/Buff/Boss_36_act07_far_Buff.Boss_36_act07_far_Buff_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5800
+      },
+      "GE_boss_36_2_act10_out_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE_boss_36_2_act10_out_BP.GE_boss_36_2_act10_out_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5801
+      },
+      "GE_boss_36_2_act15_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act15_Dmg02_BP.GE_boss_36_2_act15_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5802
+      },
+      "GE_boss_36_2_act15_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act15_Dmg01_BP.GE_boss_36_2_act15_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5803
+      },
+      "GE_boss_36_2_act14_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act14_Dmg01_BP.GE_boss_36_2_act14_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5804
+      },
+      "GE_boss_36_2_act13_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act13_Dmg01_BP.GE_boss_36_2_act13_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5805
+      },
+      "GE_boss_36_2_act12_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act12_Dmg03_BP.GE_boss_36_2_act12_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5806
+      },
+      "GE_boss_36_2_act12_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act12_Dmg02_BP.GE_boss_36_2_act12_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5807
+      },
+      "GE_boss_36_2_act12_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act12_Dmg01_BP.GE_boss_36_2_act12_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5808
+      },
+      "GE_boss_36_2_act11_Dmg04_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act11_Dmg04_BP.GE_boss_36_2_act11_Dmg04_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5809
+      },
+      "GE_boss_36_2_act11_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act11_Dmg03_BP.GE_boss_36_2_act11_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5810
+      },
+      "GE_boss_36_2_act11_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act11_Dmg02_BP.GE_boss_36_2_act11_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5811
+      },
+      "GE_boss_36_2_act11_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act11_Dmg01_BP.GE_boss_36_2_act11_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5812
+      },
+      "GE_boss_36_2_act10_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act10_Dmg02_BP.GE_boss_36_2_act10_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5813
+      },
+      "GE_boss_36_2_act10_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act10_Dmg01_BP.GE_boss_36_2_act10_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5814
+      },
+      "GE_boss_36_2_act09_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act09_Dmg01_BP.GE_boss_36_2_act09_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5815
+      },
+      "GE_boss_36_2_act08_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act08_Dmg02_BP.GE_boss_36_2_act08_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5816
+      },
+      "GE_boss_36_2_act08_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act08_Dmg01_BP.GE_boss_36_2_act08_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5817
+      },
+      "GE_boss_36_2_act07_Dmg05_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act07_Dmg05_BP.GE_boss_36_2_act07_Dmg05_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5818
+      },
+      "GE_boss_36_2_act07_Dmg04_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act07_Dmg04_BP.GE_boss_36_2_act07_Dmg04_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5819
+      },
+      "GE_boss_36_2_act07_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act07_Dmg03_BP.GE_boss_36_2_act07_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5820
+      },
+      "GE_boss_36_2_act07_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act07_Dmg02_BP.GE_boss_36_2_act07_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5821
+      },
+      "GE_boss_36_2_act07_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act07_Dmg01_BP.GE_boss_36_2_act07_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5822
+      },
+      "GE_boss_36_2_act06_Dmg05_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act06_Dmg05_BP.GE_boss_36_2_act06_Dmg05_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5823
+      },
+      "GE_boss_36_2_act06_Dmg04_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act06_Dmg04_BP.GE_boss_36_2_act06_Dmg04_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5824
+      },
+      "GE_boss_36_2_act06_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act06_Dmg03_BP.GE_boss_36_2_act06_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5825
+      },
+      "GE_boss_36_2_act06_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act06_Dmg02_BP.GE_boss_36_2_act06_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5826
+      },
+      "GE_boss_36_2_act06_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act06_Dmg01_BP.GE_boss_36_2_act06_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5827
+      },
+      "GE_boss_36_2_act05_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act05_Dmg03_BP.GE_boss_36_2_act05_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5828
+      },
+      "GE_boss_36_2_act05_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act05_Dmg02_BP.GE_boss_36_2_act05_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5829
+      },
+      "GE_boss_36_2_act05_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act05_Dmg01_BP.GE_boss_36_2_act05_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5830
+      },
+      "GE_boss_36_2_act04_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act04_Dmg03_BP.GE_boss_36_2_act04_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5831
+      },
+      "GE_boss_36_2_act04_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act04_Dmg02_BP.GE_boss_36_2_act04_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5832
+      },
+      "GE_boss_36_2_act04_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act04_Dmg01_BP.GE_boss_36_2_act04_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5833
+      },
+      "GE_boss_36_2_act03_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act03_Dmg02_BP.GE_boss_36_2_act03_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5834
+      },
+      "GE_boss_36_2_act03_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act03_Dmg01_BP.GE_boss_36_2_act03_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5835
+      },
+      "GE_boss_36_2_act02_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act02_Dmg03_BP.GE_boss_36_2_act02_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5836
+      },
+      "GE_boss_36_2_act02_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act02_Dmg02_BP.GE_boss_36_2_act02_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5837
+      },
+      "GE_boss_36_2_act02_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act02_Dmg01_BP.GE_boss_36_2_act02_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5838
+      },
+      "GE_boss_36_2_act01_Dmg07_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg07_BP.GE_boss_36_2_act01_Dmg07_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5839
+      },
+      "GE_boss_36_2_act01_Dmg06_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg06_BP.GE_boss_36_2_act01_Dmg06_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5840
+      },
+      "GE_boss_36_2_act01_Dmg05_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg05_BP.GE_boss_36_2_act01_Dmg05_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5841
+      },
+      "GE_boss_36_2_act01_Dmg04_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg04_BP.GE_boss_36_2_act01_Dmg04_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5842
+      },
+      "GE_boss_36_2_act01_Dmg03_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg03_BP.GE_boss_36_2_act01_Dmg03_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5843
+      },
+      "GE_boss_36_2_act01_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg02_BP.GE_boss_36_2_act01_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5844
+      },
+      "GE_boss_36_2_act01_Dmg01_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act01_Dmg01_BP.GE_boss_36_2_act01_Dmg01_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5845
+      },
+      "GE_Player_Akane_Skill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Damage/GE_Player_Akane_Skill_Damage.GE_Player_Akane_Skill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5846
+      },
+      "Buff_Chaos_LevelEX_DmgResistDown_CheckAdd": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_071_Chaos/Upgrade/LevelExtra/Buff_Chaos_LevelEX_DmgResistDown_CheckAdd.Buff_Chaos_LevelEX_DmgResistDown_CheckAdd_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5847
+      },
+      "Buff_boss36_s2_LockUnbal": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/Buff_boss36_s2_LockUnbal.Buff_boss36_s2_LockUnbal_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5848
+      },
+      "Buff_BlackBird042_UltraSkill_Change": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_UltraSkill_Change.Buff_BlackBird042_UltraSkill_Change_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5849
+      },
+      "Buff_BlackBird042_Skill_ChangeTarget": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Skill_ChangeTarget.Buff_BlackBird042_Skill_ChangeTarget_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5850
+      },
+      "Buff_Oneiroi075_Passive2_LV4_DamUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_075_Oneiroi/PassiveEffect/Buff_Oneiroi075_Passive2_LV4_DamUP.Buff_Oneiroi075_Passive2_LV4_DamUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5851
+      },
+      "buff_flotage_ypl_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_1.buff_flotage_ypl_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5852
+      },
+      "buff_flotage_ypl_base": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base.buff_flotage_ypl_base_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5853
+      },
+      "buff_flotage_ypl_base_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_3.buff_flotage_ypl_base_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5854
+      },
+      "buff_flotage_ypl_base_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_4.buff_flotage_ypl_base_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5855
+      },
+      "buff_flotage_ypl_base_5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_5.buff_flotage_ypl_base_5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5856
+      },
+      "buff_flotage_ypl_base_6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_6.buff_flotage_ypl_base_6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5857
+      },
+      "buff_flotage_ypl_base_7": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_7.buff_flotage_ypl_base_7_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5858
+      },
+      "buff_flotage_ypl_base_8": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_8.buff_flotage_ypl_base_8_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5859
+      },
+      "buff_flotage_ypl_base_9": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_9.buff_flotage_ypl_base_9_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5860
+      },
+      "buff_flotage_ypl_base_10": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_10.buff_flotage_ypl_base_10_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5861
+      },
+      "buff_flotage_ypl_base_11": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_11.buff_flotage_ypl_base_11_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5862
+      },
+      "buff_flotage_ypl_base_12": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_12.buff_flotage_ypl_base_12_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5863
+      },
+      "buff_flotage_ypl_base_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/YPL/Flotage/buff_flotage_ypl_base_2.buff_flotage_ypl_base_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5864
+      },
+      "Buff_boss38_LockUnbal": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_38/Buff_boss38_LockUnbal.Buff_boss38_LockUnbal_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5865
+      },
+      "GE_Boss_38_seq_Dmg_03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_38/GE/GE_Boss_38_seq_Dmg_03.GE_Boss_38_seq_Dmg_03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5866
+      },
+      "GE_Boss_38_seq_Dmg_02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_38/GE/GE_Boss_38_seq_Dmg_02.GE_Boss_38_seq_Dmg_02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5867
+      },
+      "GE_Boss_38_seq_Dmg_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_38/GE/GE_Boss_38_seq_Dmg_01.GE_Boss_38_seq_Dmg_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5868
+      },
+      "Buff_Akane_Skill_SoundMark": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Buff/Buff_Akane_Skill_SoundMark.Buff_Akane_Skill_SoundMark_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5869
+      },
+      "Buff_Speedup_WXY": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXY/Buff_Speedup_WXY.Buff_Speedup_WXY_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5870
+      },
+      "Buff_RecoverHp_WXY": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Level/WXY/Buff_RecoverHp_WXY.Buff_RecoverHp_WXY_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5871
+      },
+      "Buff_HpReply20p_Daff_Wuchao": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Level/Quest/WXY/Quest_Wuchao/WuChao_BP/Norm_BP/Buff_HpReply20p_Daff_Wuchao.Buff_HpReply20p_Daff_Wuchao_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5872
+      },
+      "Buff_Equipment_Chaos2_4_Effect_Power": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Equipment/Equipment_022/Buff_Equipment_Chaos2_4_Effect_Power.Buff_Equipment_Chaos2_4_Effect_Power_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5873
+      },
+      "GE_Rouge_Bullet_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Bullet/Bullet2/GE_Rouge_Bullet_Damage2.GE_Rouge_Bullet_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5874
+      },
+      "Buff_Rouge_Bullet2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Bullet/Bullet2/Buff_Rouge_Bullet2.Buff_Rouge_Bullet2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5875
+      },
+      "GE_Rouge_Bullet_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Bullet/Bullet3/GE_Rouge_Bullet_Damage3.GE_Rouge_Bullet_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5876
+      },
+      "Buff_Rouge_Bullet3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Bullet/Bullet3/Buff_Rouge_Bullet3.Buff_Rouge_Bullet3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5877
+      },
+      "Buff_Rouge_DmgUp_2_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/DmgUp/Buff_Rouge_DmgUp_2_Effect.Buff_Rouge_DmgUp_2_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5878
+      },
+      "Buff_Rouge_DmgUp_2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/DmgUp/Buff_Rouge_DmgUp_2.Buff_Rouge_DmgUp_2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5879
+      },
+      "Buff_Rouge_DmgUp_1_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/DmgUp/Buff_Rouge_DmgUp_1_Effect.Buff_Rouge_DmgUp_1_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5880
+      },
+      "Buff_Rouge_DmgUp_1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/DmgUp/Buff_Rouge_DmgUp_1.Buff_Rouge_DmgUp_1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5881
+      },
+      "Buff_Rouge_Meteor_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Meteor/Buff_Rouge_Meteor_Hurted.Buff_Rouge_Meteor_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5882
+      },
+      "Buff_Rouge_Shield_1_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Buff_Rouge_Shield_1_Effect.Buff_Rouge_Shield_1_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5883
+      },
+      "Buff_Rouge_Shield_2_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield2/Buff_Rouge_Shield_2_Effect.Buff_Rouge_Shield_2_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5884
+      },
+      "Buff_Rouge_Shield_3_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield3/Buff_Rouge_Shield_3_Effect.Buff_Rouge_Shield_3_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5885
+      },
+      "Buff_Rouge_Shield_3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield3/Buff_Rouge_Shield_3.Buff_Rouge_Shield_3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5886
+      },
+      "Buff_Rouge_Shield_4_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield4/Buff_Rouge_Shield_4_Effect.Buff_Rouge_Shield_4_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5887
+      },
+      "Buff_Rouge_Shield_4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield4/Buff_Rouge_Shield_4.Buff_Rouge_Shield_4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5888
+      },
+      "Buff_Rouge_Shield_5_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield5/Buff_Rouge_Shield_5_Effect.Buff_Rouge_Shield_5_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5889
+      },
+      "Buff_Rouge_Shield_5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield5/Buff_Rouge_Shield_5.Buff_Rouge_Shield_5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5890
+      },
+      "Buff_Rouge_Shield_6_Effect": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield6/Buff_Rouge_Shield_6_Effect.Buff_Rouge_Shield_6_Effect_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5891
+      },
+      "Buff_Rouge_Shield_6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Shield/Shield6/Buff_Rouge_Shield_6.Buff_Rouge_Shield_6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5892
+      },
+      "GE_CoolDown_Rouge_Shield1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Shield1.GE_CoolDown_Rouge_Shield1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5893
+      },
+      "GE_CoolDown_Rouge_Wave3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Wave3.GE_CoolDown_Rouge_Wave3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5894
+      },
+      "GE_CoolDown_Rouge_Wave2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Wave2.GE_CoolDown_Rouge_Wave2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5895
+      },
+      "GE_CoolDown_Rouge_Wave1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Wave1.GE_CoolDown_Rouge_Wave1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5896
+      },
+      "GE_CoolDown_Rouge_Thunder3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Thunder3.GE_CoolDown_Rouge_Thunder3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5897
+      },
+      "GE_CoolDown_Rouge_Thunder2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Thunder2.GE_CoolDown_Rouge_Thunder2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5898
+      },
+      "GE_CoolDown_Rouge_Thunder1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Thunder1.GE_CoolDown_Rouge_Thunder1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5899
+      },
+      "GE_CoolDown_Rouge_Shield6": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Shield6.GE_CoolDown_Rouge_Shield6_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5900
+      },
+      "GE_CoolDown_Rouge_Shield5": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Shield5.GE_CoolDown_Rouge_Shield5_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5901
+      },
+      "GE_CoolDown_Rouge_Shield4": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Shield4.GE_CoolDown_Rouge_Shield4_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5902
+      },
+      "GE_CoolDown_Rouge_Shield3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Shield3.GE_CoolDown_Rouge_Shield3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5903
+      },
+      "GE_CoolDown_Rouge_Shield2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Shield2.GE_CoolDown_Rouge_Shield2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5904
+      },
+      "GE_CoolDown_Rouge_Quake3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Quake3.GE_CoolDown_Rouge_Quake3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5905
+      },
+      "GE_CoolDown_Rouge_Quake2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Quake2.GE_CoolDown_Rouge_Quake2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5906
+      },
+      "GE_CoolDown_Rouge_Quake1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Quake1.GE_CoolDown_Rouge_Quake1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5907
+      },
+      "GE_CoolDown_Rouge_Light3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Light3.GE_CoolDown_Rouge_Light3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5908
+      },
+      "GE_CoolDown_Rouge_Light2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Light2.GE_CoolDown_Rouge_Light2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5909
+      },
+      "GE_CoolDown_Rouge_Light1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Light1.GE_CoolDown_Rouge_Light1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5910
+      },
+      "GE_CoolDown_Rouge_Knife3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Knife3.GE_CoolDown_Rouge_Knife3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5911
+      },
+      "GE_CoolDown_Rouge_Knife2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Knife2.GE_CoolDown_Rouge_Knife2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5912
+      },
+      "GE_CoolDown_Rouge_Knife1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Knife1.GE_CoolDown_Rouge_Knife1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5913
+      },
+      "GE_CoolDown_Rouge_Fire3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Fire3.GE_CoolDown_Rouge_Fire3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5914
+      },
+      "GE_CoolDown_Rouge_Fire2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Fire2.GE_CoolDown_Rouge_Fire2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5915
+      },
+      "GE_CoolDown_Rouge_Fire1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_Fire1.GE_CoolDown_Rouge_Fire1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5916
+      },
+      "GE_CoolDown_Rouge_evade": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_evade.GE_CoolDown_Rouge_evade_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5917
+      },
+      "GE_CoolDown_Rouge_DmgUp2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_DmgUp2.GE_CoolDown_Rouge_DmgUp2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5918
+      },
+      "GE_CoolDown_Rouge_DmgUp1": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/CoolDown/Rouge/GE_CoolDown_Rouge_DmgUp1.GE_CoolDown_Rouge_DmgUp1_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5919
+      },
+      "Buff_bossbattle_reduce_HP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36/Buff/Buff_bossbattle_reduce_HP.Buff_bossbattle_reduce_HP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5920
+      },
+      "buff_mon_13_Wudi_2s": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_13/buff_mon_13_Wudi_2s.buff_mon_13_Wudi_2s_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5921
+      },
+      "GE_mon_53_out": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_out.GE_mon_53_out_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5922
+      },
+      "GE_mon_53_back": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_back.GE_mon_53_back_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5923
+      },
+      "GE_mon_53_actult_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_actult_Dmg01.GE_mon_53_actult_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5924
+      },
+      "GE_mon_53_act10_Dmg02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act10_Dmg02.GE_mon_53_act10_Dmg02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5925
+      },
+      "GE_mon_53_act10_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act10_Dmg01.GE_mon_53_act10_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5926
+      },
+      "GE_mon_53_act07_Dmg04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act07_Dmg04.GE_mon_53_act07_Dmg04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5927
+      },
+      "GE_mon_53_act07_Dmg03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act07_Dmg03.GE_mon_53_act07_Dmg03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5928
+      },
+      "GE_mon_53_act07_Dmg02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act07_Dmg02.GE_mon_53_act07_Dmg02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5929
+      },
+      "GE_mon_53_act07_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act07_Dmg01.GE_mon_53_act07_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5930
+      },
+      "GE_mon_53_act06_Dmg05": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act06_Dmg05.GE_mon_53_act06_Dmg05_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5931
+      },
+      "GE_mon_53_act06_Dmg04": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act06_Dmg04.GE_mon_53_act06_Dmg04_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5932
+      },
+      "GE_mon_53_act06_Dmg03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act06_Dmg03.GE_mon_53_act06_Dmg03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5933
+      },
+      "GE_mon_53_act06_Dmg02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act06_Dmg02.GE_mon_53_act06_Dmg02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5934
+      },
+      "GE_mon_53_act06_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act06_Dmg01.GE_mon_53_act06_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5935
+      },
+      "GE_mon_53_act04_Dmg03": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act04_Dmg03.GE_mon_53_act04_Dmg03_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5936
+      },
+      "GE_mon_53_act04_Dmg02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act04_Dmg02.GE_mon_53_act04_Dmg02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5937
+      },
+      "GE_mon_53_act04_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act04_Dmg01.GE_mon_53_act04_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5938
+      },
+      "GE_mon_53_act02_Dmg02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act02_Dmg02.GE_mon_53_act02_Dmg02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5939
+      },
+      "GE_mon_53_act02_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act02_Dmg01.GE_mon_53_act02_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5940
+      },
+      "GE_mon_53_act01_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_53/GE/GE_mon_53_act01_Dmg01.GE_mon_53_act01_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5941
+      },
+      "GE_mon_54_out": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_54/GE/GE_mon_54_out.GE_mon_54_out_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5942
+      },
+      "GE_mon_54_back": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_54/GE/GE_mon_54_back.GE_mon_54_back_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5943
+      },
+      "GE_mon_54_act03_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_54/GE/GE_mon_54_act03_Dmg01.GE_mon_54_act03_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5944
+      },
+      "GE_mon_54_act01_Dmg02": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_54/GE/GE_mon_54_act01_Dmg02.GE_mon_54_act01_Dmg02_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5945
+      },
+      "GE_mon_54_act01_Dmg01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/mon_54/GE/GE_mon_54_act01_Dmg01.GE_mon_54_act01_Dmg01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5946
+      },
+      "Buff_BlackBird042_UltraSkill_Transform": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_UltraSkill_Transform.Buff_BlackBird042_UltraSkill_Transform_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5947
+      },
+      "Buff_BlackBird042_Skill_Bird": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Skill_Bird.Buff_BlackBird042_Skill_Bird_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5948
+      },
+      "GE_Boss_32_HitBullet_Dmg_01": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/Boss_32/GE/GE_Boss_32_HitBullet_Dmg_01.GE_Boss_32_HitBullet_Dmg_01_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5949
+      },
+      "GE_boss_36_2_act09_Dmg02_BP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36_2/GE/GE_boss_36_2_act09_Dmg02_BP.GE_boss_36_2_act09_Dmg02_BP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5950
+      },
+      "Buff_BlackBird042_SpecialDamage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_SpecialDamage.Buff_BlackBird042_SpecialDamage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5951
+      },
+      "Buff_BlackBird042_Melee5_Skill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Melee5_Skill.Buff_BlackBird042_Melee5_Skill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5952
       }
     }
   }

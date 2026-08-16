@@ -3689,10 +3689,7 @@ mod character_tests {
 
         let zankou_dot = catalog.skill("GE_Player_Zankou_DotDamage").unwrap();
         assert_eq!(zankou_dot.owner_character_id, Some(1036));
-        assert_eq!(
-            zankou_dot.ability_name.as_deref(),
-            Some("GA_Zankou_Passive1")
-        );
+        assert_eq!(zankou_dot.ability_name.as_deref(), Some("GA_Zankou_Melee"));
 
         let names = load_gameplay_effect_semantic_names(
             Path::new(GAMEPLAY_EFFECT_SEMANTICS_PATH),
