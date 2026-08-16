@@ -175,9 +175,10 @@
       "owner_character_id": 1036,
       "ability": "GA_Zankou_Passive1",
       "attack_type": "Passive Damage",
-      "damage_name_en": "Harmonics: Nova End Damage",
-      "damage_name_zh": "泛音·黯星结束伤害",
-      "damage_name_ja": "ハーモニクス・暗星終了ダメージ"
+      "show_parent_ability": true,
+      "damage_name_en": "Nova End Damage",
+      "damage_name_zh": "黯星结束伤害",
+      "damage_name_ja": "暗星終了ダメージ"
     }
   }
 }
