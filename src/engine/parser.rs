@@ -3691,7 +3691,7 @@ mod character_tests {
         assert_eq!(zankou_dot.owner_character_id, Some(1036));
         assert_eq!(
             zankou_dot.ability_name.as_deref(),
-            Some("GA_Zankou_Passive1")
+            Some("GA_Zankou_Melee")
         );
 
         let names = load_gameplay_effect_semantic_names(
