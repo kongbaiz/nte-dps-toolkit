@@ -1026,6 +1026,10 @@ namespace nte::mods::sdk_cache
 
 		void RemoveLegacyCache(const std::filesystem::path& directory)
 		{
+			// manual map 注入的插件模块无法解析自身路径时 directory 为空,
+			// 直接跳过, 避免对相对路径 "NTE_SDK" 误删当前工作目录。
+			if (directory.empty())
+				return;
 			std::error_code error;
 			std::filesystem::remove_all(directory / LEGACY_SDK_DIRECTORY_NAME, error);
 			error.clear();
@@ -1150,15 +1154,21 @@ namespace nte::mods::sdk_cache
 		std::filesystem::path executable;
 		std::filesystem::path plugin_file;
 		wchar_t error[512]{};
-		if (!ModulePath(nullptr, executable, error, _countof(error)) ||
-			!ModulePath(worker->plugin_module, plugin_file, error, _countof(error)))
+		if (!ModulePath(nullptr, executable, error, _countof(error)))
 		{
 			OutputDebugStringW(L"NTE Mods plugin SDK cache: ");
 			OutputDebugStringW(error);
 			OutputDebugStringW(L"\n");
 			return ERROR_INVALID_DATA;
 		}
-		const std::filesystem::path legacy_game_cache_directory = plugin_file.parent_path();
+		// manual map 注入的插件模块不在 PEB/Ldr 模块链表中, GetModuleFileNameW
+		// 拿不到自身路径。插件路径只用于清理旧版 NTE_SDK/NTE_SDK.checksum 目录,
+		// 解析失败时置空跳过清理, 不影响 SDK 生成（生成/读取走注册表 Mod
+		// Workspace, 与插件所在目录无关）。
+		const std::filesystem::path legacy_game_cache_directory =
+			ModulePath(worker->plugin_module, plugin_file, error, _countof(error))
+				? plugin_file.parent_path()
+				: std::filesystem::path{};
 
 		std::filesystem::path plugin;
 		while (WaitForSingleObject(worker->stop_event, 0) == WAIT_TIMEOUT)

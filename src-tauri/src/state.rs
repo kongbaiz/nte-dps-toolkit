@@ -59,16 +59,19 @@ use nte_dps_tool::{
             CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_equipment_catalog,
         },
     },
-    platform::mods_plugin::{
-        ModsPluginClient, ModsPluginGameRegion, ModsPluginOperation, ModsPluginReceiveError,
-        ModsPluginSubmitError,
+    platform::{
+        mod_loader::ModLoaderRuntimeService,
+        mods_plugin::{
+            ModsPluginClient, ModsPluginGameRegion, ModsPluginOperation, ModsPluginReceiveError,
+            ModsPluginSubmitError,
+        },
     },
     storage::{
         capture_logs::{ClearOutcome, clear_capture_logs, scan_capture_logs},
         config::{
-            self, AccentColor, DpsTimeMode, GlobalHotkeys, HudConfig, HudModule, PassthroughHotkey,
-            ThemePreset, TimelineDpsViewMode, UiConfig, UiDensity,
-            sanitize_timeline_bucket_seconds,
+            self, AccentColor, DpsTimeMode, GlobalHotkeys, HudConfig, HudModule,
+            ModStudioLoadingMethod, PassthroughHotkey, ThemePreset, TimelineDpsViewMode, UiConfig,
+            UiDensity, sanitize_timeline_bucket_seconds,
         },
         history::{
             HistoryCombatDetails, HistoryIndexRecord, HistoryRecord, load_history_index,
@@ -340,6 +343,7 @@ struct AppStateInner {
     streams: Mutex<HashMap<String, StreamEntry>>,
     live_capture: LiveCaptureService,
     mod_studio: ModStudioWorkspaceService,
+    mod_loader: ModLoaderRuntimeService,
     equipment_catalog: Arc<EquipmentCatalog>,
     mods_plugin: Mutex<ModsPluginClient>,
     empty_curtain_operation: Mutex<EmptyCurtainOperationState>,
@@ -571,6 +575,7 @@ impl AppState {
             streams: Mutex::new(HashMap::new()),
             live_capture,
             mod_studio: ModStudioWorkspaceService::default(),
+            mod_loader: ModLoaderRuntimeService::default(),
             equipment_catalog: Arc::new(equipment_catalog),
             mods_plugin: Mutex::new(ModsPluginClient::new()),
             empty_curtain_operation: Mutex::new(EmptyCurtainOperationState::default()),
@@ -3199,6 +3204,10 @@ impl AppState {
         self.0.mod_studio.clone()
     }
 
+    pub(crate) fn mod_loader(&self) -> ModLoaderRuntimeService {
+        self.0.mod_loader.clone()
+    }
+
     pub(crate) fn mod_studio_game_directory(&self, region: ModsPluginGameRegion) -> Option<String> {
         let config = self.ui_config();
         match region {
@@ -3216,6 +3225,25 @@ impl AppState {
             ModsPluginGameRegion::China => config.mod_studio_china_game_directory = directory,
             ModsPluginGameRegion::Global => config.mod_studio_global_game_directory = directory,
         })
+    }
+
+    pub(crate) fn mod_studio_loading_method(&self) -> ModStudioLoadingMethod {
+        self.ui_config().mod_studio_loading_method
+    }
+
+    pub(crate) fn set_mod_studio_loading_method(
+        &self,
+        method: ModStudioLoadingMethod,
+    ) -> Result<bool, String> {
+        self.update_ui_config(|config| config.mod_studio_loading_method = method)
+    }
+
+    pub(crate) fn mod_studio_risk_acknowledged(&self) -> bool {
+        self.ui_config().mod_studio_risk_acknowledged
+    }
+
+    pub(crate) fn acknowledge_mod_studio_risk(&self) -> Result<bool, String> {
+        self.update_ui_config(|config| config.mod_studio_risk_acknowledged = true)
     }
 
     pub(crate) fn uptime_ms(&self) -> u128 {
@@ -4196,6 +4224,49 @@ mod tests {
             restored.mod_studio_game_directory(ModsPluginGameRegion::China),
             None
         );
+
+        fs::remove_dir_all(config_path.parent().expect("config parent"))
+            .expect("remove temporary config");
+    }
+
+    #[test]
+    fn mod_studio_loading_method_survives_state_reload() {
+        let config_path = temporary_config_path("mod_studio_loading_method");
+        let state = AppState::new_with_config_path(
+            UiConfig::default(),
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+
+        assert_eq!(
+            state.mod_studio_loading_method(),
+            ModStudioLoadingMethod::Proxy
+        );
+        assert!(!state.mod_studio_risk_acknowledged());
+        assert!(
+            state
+                .set_mod_studio_loading_method(ModStudioLoadingMethod::Loader)
+                .expect("save Mod Studio loading method")
+        );
+        assert!(
+            state
+                .acknowledge_mod_studio_risk()
+                .expect("save Mod Studio risk acknowledgement")
+        );
+
+        let saved: UiConfig =
+            serde_json::from_str(&fs::read_to_string(&config_path).expect("saved UI config"))
+                .expect("valid saved UI config");
+        let restored = AppState::new_with_config_path(
+            saved,
+            LiveCaptureService::new(LiveCaptureResources::default()),
+            config_path.clone(),
+        );
+        assert_eq!(
+            restored.mod_studio_loading_method(),
+            ModStudioLoadingMethod::Loader
+        );
+        assert!(restored.mod_studio_risk_acknowledged());
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
             .expect("remove temporary config");

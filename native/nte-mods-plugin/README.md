@@ -1,7 +1,8 @@
 # NTE Mods Plugin
 
-`nte-mods-plugin` 是 NTE DPS Toolkit 的原生 Windows x64 受限 Mod 加载器。
-它构建为单个 `dwmapi.dll` 代理，从 NTE DPS TOOL 软件目录读取受限 `.nte` 程序。常用游戏会话对象
+`nte-mods-plugin` 是 NTE DPS Tool 的原生 Windows x64 受限 Mod 运行时。
+同一个 `dwmapi.dll` 可由游戏目录代理方式加载，也可由 `nte-mod-loader.exe`
+manual map 加载；它始终从 NTE DPS Tool 注册的工作区读取受限 `.nte` 程序。常用游戏会话对象
 由 Postman 环境变量风格的 `nte::game::*` 内置值提供；条件判断、状态机和宿主调用顺序
 由外部程序定义。DLL 只提供解释器、稳定对象入口、共享事件入口和白名单宿主原语。
 
@@ -295,7 +296,7 @@ IPC 管道；后续再次启用 Mod 时会重新解析脚本并安装共享 Hook
 查询示例位于 `plugins\examples\query_mod_events.py`，可直接加载的
 `character-telemetry.nte` 与 `reflection-events.nte` 自定义 Mod 示例也位于同一目录。
 
-NTE DPS TOOL 在实时抓包期间持续读取这条事件流，并把它送入共享
+NTE DPS Tool 在实时抓包期间持续读取这条事件流，并把它送入共享
 `EngineEvent -> CoreSignal` 管线。事件名以 `pre.` 开头时进入 `Preprocess` 阶段，
 以 `post.` 开头时进入 `Postprocess` 阶段，其余事件进入普通 `Event` 阶段；前缀在
 进入程序后会被去除。例如 `nte::ipc::emit("pre.hit", id, value)` 会得到名称为 `hit`
@@ -306,28 +307,27 @@ NTE DPS TOOL 在实时抓包期间持续读取这条事件流，并把它送入�
 或预算超限时仅跳过该 Mod；启用集合本身包含重复 ID、路径字符或格式错误时，整个
 集合保持未激活。
 
-## 通过 GUI 安装
+## 通过 GUI 加载
 
-Windows GUI 发布压缩包会把 `plugins` 目录放在 `nte-dps-tool.exe` 同级。在
-“控制台 → Mod 工坊”中启用“游戏内 Mod 加载器”后，程序会展示风险与加载原理，
-并锁定启用按钮 5 秒；取消按钮和
-`Esc` 可立即关闭弹窗。
-确认时必须先关闭 `HTGame.exe`；若同时检测到国服与国际服，需先选择客户端。
-程序随后只将 DLL 写入所选客户端的
-`Client\WindowsNoEditor\HT\Binaries\Win64` 目录。默认启用集合及脚本保留在
-`nte-dps-tool.exe` 同级的 `plugins` 目录；程序把该工作区写入当前用户注册表，
-游戏启动时会把 DLL 作为 `dwmapi.dll` 代理加载，DLL 再从软件工作区读取
-`nte-mods.enabled` 和受限 C++ 程序。监听器会在游戏运行期间检测保存、启用和
-禁用更改；最后一个 Mod 被禁用后共享 Hook 与 IPC 都会退出。
-刷新托管安装时，发行包原始的 `.nte` v1/v2/v3/v4 默认程序会迁移到当前 NTE C++ v5
-版本；用户编辑过的脚本保持原内容。
+Windows GUI 发布压缩包会把 `plugins` 目录、`nte-mod-loader.exe` 和
+`nte-dps-tool.exe` 放在同一发布根目录。在“控制台 → Mod 工坊”中默认使用代理加载：
+确认风险后，程序把 `plugins\dwmapi.dll` 复制到所选客户端的 `HTGame.exe` 同级目录。
+启用前必须关闭游戏；若该目录已存在其他来源的 `dwmapi.dll`，程序会保留文件并报告冲突。
 
-关闭该选项会删除带有本工具二进制签名的 DLL。程序不会覆盖其他
-`dwmapi.dll`，也不会删除被外部替换的文件；这两种情况都会提示用户手动
-处理。旧版曾写入游戏目录的启用集合与脚本会先迁移到软件工作区，再从游戏目录清理。
-游戏目录最终只保留启用状态下的 `dwmapi.dll`。游戏目录改动可能触发完整性或反作弊检查，启用前应阅读并接受
-GUI 中的完整风险声明。
+只有代理加载无效时才选择备用 `nte-mod-loader`。GUI 通过 UAC 启动同目录的
+`nte-mod-loader.exe`；Loader 监控官方启动器，并从 `plugins\dwmapi.dll` manual map
+加载插件，不向游戏目录写入代理 DLL。程序只展示风险提示，并锁定确认按钮 5 秒；
+取消按钮和 `Esc` 可立即关闭弹窗。
 
+默认启用集合及脚本保留在 `nte-dps-tool.exe` 同级的 `plugins` 目录；程序把该工作区
+写入当前用户注册表，DLL 从软件工作区读取 `nte-mods.enabled` 和受限 C++ 程序。
+监听器会在游戏运行期间检测保存、启用和禁用更改；最后一个 Mod 被禁用后共享 Hook
+与 IPC 都会退出。刷新托管安装时，发行包原始的 `.nte` v1/v2/v3/v4 默认程序会迁移到
+当前 NTE C++ v5 版本；用户编辑过的脚本保持原内容。
+
+关闭代理开关会删除由本工具管理的代理 DLL；关闭 Loader 开关会通过受管停止事件结束
+Loader，并终止本次会话已注入 shim 的游戏启动器，避免启动器残留注入功能。
+风险提示只在首次启用时显示，确认结果和上次使用的加载方式会保存到配置文件。
 公开的固定 IPC 布局位于 `include\nte_mods_ipc.h`。底层内存边界校验、Viewport Hook、
 稳定会话对象、IPC 传输和白名单宿主原语保留在 DLL 内部；服务发布、功能分支、持久
 状态和执行顺序位于外部 `.nte` 程序。

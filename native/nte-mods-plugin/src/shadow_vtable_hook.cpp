@@ -68,15 +68,22 @@ bool IsWritableAddress(const void* address)
     }
 }
 
-bool QueryExecutableImageRange(const void* address, MemoryRange& range)
+bool QueryExecutableRange(
+    const void* address,
+    bool allow_private,
+    MemoryRange& range)
 {
     MEMORY_BASIC_INFORMATION memory{};
     if (address == nullptr ||
         VirtualQuery(address, &memory, sizeof(memory)) != sizeof(memory) ||
-        memory.State != MEM_COMMIT || memory.Type != MEM_IMAGE ||
+        memory.State != MEM_COMMIT ||
+        (memory.Type != MEM_IMAGE &&
+         !(allow_private && memory.Type == MEM_PRIVATE)) ||
         (memory.Protect & PAGE_GUARD) != 0)
         return false;
 
+    // manual-map 的 detour 代码页是 MEM_PRIVATE；游戏原始 vtable
+    // 条目仍必须位于 MEM_IMAGE，不得因适配 detour 而放宽原函数边界。
     const DWORD protection = memory.Protect & 0xFF;
     if (protection != PAGE_EXECUTE && protection != PAGE_EXECUTE_READ &&
         protection != PAGE_EXECUTE_READWRITE &&
@@ -95,7 +102,7 @@ bool QueryExecutableImageRange(const void* address, MemoryRange& range)
 bool IsExecutableAddress(const void* address)
 {
     MemoryRange range{};
-    return QueryExecutableImageRange(address, range);
+    return QueryExecutableRange(address, true, range);
 }
 
 size_t CountVTableEntries(void** vtable, size_t maximum)
@@ -113,7 +120,7 @@ size_t CountVTableEntries(void** vtable, size_t maximum)
 
         void* function = *entry;
         if (!executable_range.Contains(function, 1) &&
-            !QueryExecutableImageRange(function, executable_range))
+            !QueryExecutableRange(function, false, executable_range))
             break;
 
         ++count;

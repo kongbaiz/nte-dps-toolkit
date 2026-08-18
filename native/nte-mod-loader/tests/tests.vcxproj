@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals"><VCProjectVersion>17.0</VCProjectVersion><Keyword>Win32Proj</Keyword><ProjectGuid>{E4EFD3F3-9E81-465A-B2FC-FF2D5679BB03}</ProjectGuid><RootNamespace>NteModLoaderTests</RootNamespace><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <!-- 独立构建时 SolutionDir 回退到仓库根目录 -->
+  <PropertyGroup>
+    <SolutionDir Condition="'$(SolutionDir)' == '' or !Exists('$(SolutionDir)')">$(MSBuildThisFileDirectory)..\</SolutionDir>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup><OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir><IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir><TargetName>nte-mod-loader-tests</TargetName></PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile><RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebug</RuntimeLibrary><RuntimeLibrary Condition="'$(Configuration)'=='Release'">MultiThreaded</RuntimeLibrary><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp17</LanguageStandard><AdditionalIncludeDirectories>$(SolutionDir)core\include;$(SolutionDir)shim\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <Link><SubSystem>Console</SubSystem><AdditionalDependencies>Advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+  </ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="tests.cpp" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\core\core.vcxproj"><Project>{A55FD293-3BF6-4ED4-95AE-BA8A0C8A5C01}</Project></ProjectReference></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

@@ -1,0 +1,5 @@
+// 嵌入的 shim: 由 app.vcxproj 的 CopyRebuiltShim 目标在
+// ResourceCompile 前把 $(SolutionDir)bin\$(Configuration)\nte_shim.dll
+// （shim 工程构建产物）复制到 resources\nte_shim.dll。
+#define IDR_NTE_SHIM 101
+IDR_NTE_SHIM RCDATA "resources\\nte_shim.dll"

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals"><VCProjectVersion>17.0</VCProjectVersion><Keyword>Win32Proj</Keyword><ProjectGuid>{389A330A-72B4-469A-A1A0-7C67DC1E6D02}</ProjectGuid><RootNamespace>NteModLoader</RootNamespace><WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion></PropertyGroup>
+  <!-- 独立构建（不经 .sln）时 SolutionDir 未定义, 回退到仓库根目录 -->
+  <PropertyGroup>
+    <SolutionDir Condition="'$(SolutionDir)' == '' or !Exists('$(SolutionDir)')">$(MSBuildThisFileDirectory)..\</SolutionDir>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration"><ConfigurationType>Application</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v143</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>Unicode</CharacterSet></PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup><OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir><IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir><TargetName>nte-mod-loader</TargetName></PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile><RuntimeLibrary Condition="'$(Configuration)'=='Debug'">MultiThreadedDebug</RuntimeLibrary><RuntimeLibrary Condition="'$(Configuration)'=='Release'">MultiThreaded</RuntimeLibrary><WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><ConformanceMode>true</ConformanceMode><LanguageStandard>stdcpp17</LanguageStandard><AdditionalIncludeDirectories>$(SolutionDir)core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions><PreprocessorDefinitions>UNICODE;_UNICODE;NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <Link><SubSystem>Console</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation><UACExecutionLevel>RequireAdministrator</UACExecutionLevel><AdditionalDependencies>Advapi32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+  </ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="main.cpp" /></ItemGroup>
+  <ItemGroup><ResourceCompile Include="AppResources.rc" /></ItemGroup>
+  <ItemGroup>
+    <None Include="resources\nte_shim.dll" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\core\core.vcxproj"><Project>{A55FD293-3BF6-4ED4-95AE-BA8A0C8A5C01}</Project></ProjectReference>
+    <ProjectReference Include="..\shim\shim.vcxproj"><Project>{5C2E8B41-9F7D-4C1A-B3D6-2E8A41C9F0E7}</Project><LinkLibraryDependencies>false</LinkLibraryDependencies></ProjectReference>
+  </ItemGroup>
+  <!-- 让 app 内嵌资源 101 始终是“刚构建的”shim 产物。ProjectReference 保证 shim
+       先构建; 本目标在 ResourceCompile 之前把 $(SolutionDir)bin\$(Configuration)\nte_shim.dll
+       复制到资源目录。 -->
+  <Target Name="CopyRebuiltShim" BeforeTargets="ResourceCompile">
+    <Error Text="Rebuilt shim not found: $(SolutionDir)bin\$(Configuration)\nte_shim.dll. Build shim first." Condition="!Exists('$(SolutionDir)bin\$(Configuration)\nte_shim.dll')" />
+    <MakeDir Directories="$(ProjectDir)resources" />
+    <Copy SourceFiles="$(SolutionDir)bin\$(Configuration)\nte_shim.dll" DestinationFolder="$(ProjectDir)resources\" SkipUnchangedFiles="true" />
+  </Target>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

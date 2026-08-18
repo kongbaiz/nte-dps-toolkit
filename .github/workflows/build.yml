@@ -166,6 +166,39 @@ jobs:
             }
           }
 
+          & $msbuild `
+            native/nte-mod-loader/nte-mod-loader.sln `
+            /t:Rebuild `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          New-Item -ItemType Directory -Force native/nte-mod-loader/bin/Release/plugins | Out-Null
+          Copy-Item plugins/dwmapi.dll native/nte-mod-loader/bin/Release/plugins/dwmapi.dll -Force
+          & native/nte-mod-loader/bin/Release/nte-mod-loader-tests.exe
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $dumpbin = Get-ChildItem `
+            (Join-Path $installation "VC\Tools\MSVC") `
+            -Filter dumpbin.exe `
+            -Recurse | `
+            Where-Object FullName -Match 'Hostx64\\x64' | `
+            Sort-Object FullName -Descending | `
+            Select-Object -First 1 -ExpandProperty FullName
+          if (-not $dumpbin) {
+            throw "dumpbin.exe was not found"
+          }
+          $loaderDependencies = & $dumpbin `
+            /nologo `
+            /dependents `
+            native/nte-mod-loader/bin/Release/nte-mod-loader.exe
+          if (($loaderDependencies -join "`n") -match 'VCRUNTIME|MSVCP') {
+            throw "nte-mod-loader.exe must statically link the MSVC runtime"
+          }
+
       - name: Check formatting
         run: cargo fmt --check
 
@@ -225,6 +258,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-x64 | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-x64/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-x64/
+          Copy-Item native/nte-mod-loader/bin/Release/nte-mod-loader.exe dist/nte-dps-tool-windows-x64/
           Copy-Item plugins dist/nte-dps-tool-windows-x64/plugins -Recurse
 
           cargo build --release --bin nte-core --no-default-features --features cli
@@ -238,6 +272,7 @@ jobs:
           New-Item -ItemType Directory -Force dist/nte-dps-tool-windows-external-resources | Out-Null
           Copy-Item src-tauri/target/release/nte-dps-tool.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item target/release/nte-updater.exe dist/nte-dps-tool-windows-external-resources/
+          Copy-Item native/nte-mod-loader/bin/Release/nte-mod-loader.exe dist/nte-dps-tool-windows-external-resources/
           Copy-Item res dist/nte-dps-tool-windows-external-resources/res -Recurse
           Copy-Item plugins dist/nte-dps-tool-windows-external-resources/plugins -Recurse
 

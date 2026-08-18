@@ -21,9 +21,10 @@ use crate::{
     contract::{
         CommandError,
         mod_studio::{
-            ModMarketCatalogSnapshot, ModStudioDeploymentSnapshot,
+            ModLoaderRuntimeStateSnapshot, ModMarketCatalogSnapshot, ModStudioDeploymentSnapshot,
             ModStudioDirectorySelectionSnapshot, ModStudioDocumentSnapshot,
-            ModStudioGameDirectorySnapshot, ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
+            ModStudioGameDirectorySnapshot, ModStudioLoadingMethodPreferenceSnapshot,
+            ModStudioLoadingMethodSnapshot, ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
         },
     },
     state::AppState,
@@ -208,6 +209,94 @@ pub(crate) async fn open_mod_studio_folder(
 }
 
 #[tauri::command]
+pub(crate) async fn get_mod_loader_runtime(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModLoaderRuntimeStateSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let loader = state.mod_loader();
+    tauri::async_runtime::spawn_blocking(move || loader.snapshot())
+        .await
+        .map_err(|error| {
+            log::error!("Mod Loader status task failed: {error}");
+            CommandError::mod_workspace_task_failed()
+        })?
+        .map(Into::into)
+        .map_err(|error| {
+            log::error!("Mod Loader status failed: {error:?}");
+            CommandError::from_mod_loader_runtime(error)
+        })
+}
+
+#[tauri::command]
+pub(crate) async fn set_mod_loader_running(
+    running: bool,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModLoaderRuntimeStateSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    let loader = state.mod_loader();
+    let workspace = state.mod_studio();
+    tauri::async_runtime::spawn_blocking(move || {
+        if running {
+            workspace.load_workspace().map_err(|error| {
+                log::error!(
+                    "prepare Mod workspace before loader start failed: {}",
+                    error.detail
+                );
+                CommandError::from_mod_studio(error)
+            })?;
+            loader.start()
+        } else {
+            loader.stop()
+        }
+        .map_err(|error| {
+            log::error!("Mod Loader runtime operation failed: {error:?}");
+            CommandError::from_mod_loader_runtime(error)
+        })
+    })
+    .await
+    .map_err(|error| {
+        log::error!("Mod Loader runtime task failed: {error}");
+        CommandError::mod_workspace_task_failed()
+    })?
+    .map(Into::into)
+}
+
+#[tauri::command]
+pub(crate) async fn open_mod_loader_directory(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<bool, CommandError> {
+    console::validate_window(&window)?;
+    let loader = state.mod_loader();
+    tauri::async_runtime::spawn_blocking(move || {
+        let directory = loader.application_directory().map_err(|error| {
+            log::error!("resolve Mod Loader directory failed: {error:?}");
+            CommandError::from_mod_loader_runtime(error)
+        })?;
+        #[cfg(windows)]
+        {
+            nte_dps_tool::platform::file_dialog::open_directory(&directory).map_err(|error| {
+                log::error!("open Mod Loader directory failed: {error}");
+                CommandError::mod_studio_folder_open_failed()
+            })?;
+            Ok(true)
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = directory;
+            Err(CommandError::mod_studio_folder_open_failed())
+        }
+    })
+    .await
+    .map_err(|error| {
+        log::error!("open Mod Loader directory task failed: {error}");
+        CommandError::mod_workspace_task_failed()
+    })?
+}
+
+#[tauri::command]
 pub(crate) async fn get_mod_studio_deployment(
     region: Option<String>,
     game_directory: Option<String>,
@@ -332,6 +421,56 @@ pub(crate) fn set_mod_studio_game_directory(
         contract_version: crate::contract::mod_studio::MOD_STUDIO_DIRECTORY_CONTRACT_VERSION,
         region: region.into(),
         path: directory,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_mod_studio_loading_method(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModStudioLoadingMethodPreferenceSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    Ok(ModStudioLoadingMethodPreferenceSnapshot {
+        contract_version: crate::contract::mod_studio::MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION,
+        method: state.mod_studio_loading_method().into(),
+        risk_acknowledged: state.mod_studio_risk_acknowledged(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_mod_studio_loading_method(
+    method: ModStudioLoadingMethodSnapshot,
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModStudioLoadingMethodPreferenceSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    state
+        .set_mod_studio_loading_method(method.into())
+        .map_err(|error| {
+            log::error!("save Mod Studio loading method preference failed: {error}");
+            CommandError::settings_config_save_failed()
+        })?;
+    Ok(ModStudioLoadingMethodPreferenceSnapshot {
+        contract_version: crate::contract::mod_studio::MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION,
+        method,
+        risk_acknowledged: state.mod_studio_risk_acknowledged(),
+    })
+}
+
+#[tauri::command]
+pub(crate) fn acknowledge_mod_studio_risk(
+    state: State<'_, AppState>,
+    window: WebviewWindow,
+) -> Result<ModStudioLoadingMethodPreferenceSnapshot, CommandError> {
+    console::validate_window(&window)?;
+    state.acknowledge_mod_studio_risk().map_err(|error| {
+        log::error!("save Mod Studio risk acknowledgement failed: {error}");
+        CommandError::settings_config_save_failed()
+    })?;
+    Ok(ModStudioLoadingMethodPreferenceSnapshot {
+        contract_version: crate::contract::mod_studio::MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION,
+        method: state.mod_studio_loading_method().into(),
+        risk_acknowledged: true,
     })
 }
 

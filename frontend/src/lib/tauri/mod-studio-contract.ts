@@ -1,6 +1,8 @@
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
 export const MOD_STUDIO_CONTRACT_VERSION = 10;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
+export const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION = 1;
+export const MOD_LOADER_RUNTIME_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_SDK_SCHEMA_VERSION = 2;
 export const MOD_STUDIO_MAX_DOCUMENTS = 256;
 export const MOD_STUDIO_MAX_SOURCE_BYTES = 16_384;
@@ -58,6 +60,27 @@ export interface ModStudioGameDirectorySnapshot {
   contractVersion: number;
   region: ModStudioGameRegion;
   path: string | null;
+}
+
+export type ModLoadingMethod = "proxy" | "loader";
+
+export interface ModStudioLoadingMethodPreferenceSnapshot {
+  contractVersion: number;
+  method: ModLoadingMethod;
+  riskAcknowledged: boolean;
+}
+
+export type ModLoaderRuntimePhase =
+  "missingLoader" | "missingPayload" | "stopped" | "running";
+
+export interface ModLoaderRuntimeSnapshot {
+  contractVersion: number;
+  phase: ModLoaderRuntimePhase;
+  loaderPresent: boolean;
+  payloadPresent: boolean;
+  loaderFileName: "nte-mod-loader.exe";
+  payloadRelativePath: "plugins/dwmapi.dll";
+  placement: "applicationDirectory";
 }
 
 export interface ModMarketItem {
@@ -283,6 +306,80 @@ export function parseModStudioGameDirectory(
       ? null
       : boundedString(snapshot.path, "path", 32_768);
   return { contractVersion, region, path };
+}
+
+export function parseModStudioLoadingMethodPreference(
+  value: unknown,
+): ModStudioLoadingMethodPreferenceSnapshot {
+  const snapshot = record(value, "Mod Studio loading method");
+  const contractVersion = contractVersionOf(
+    snapshot,
+    MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION,
+  );
+  const method = string(snapshot.method, "method");
+  if (method !== "proxy" && method !== "loader") {
+    throw new ModStudioContractError("method is invalid");
+  }
+  const riskAcknowledged = boolean(
+    snapshot.riskAcknowledged,
+    "riskAcknowledged",
+  );
+  return { contractVersion, method, riskAcknowledged };
+}
+
+export function parseModLoaderRuntime(
+  value: unknown,
+): ModLoaderRuntimeSnapshot {
+  const snapshot = record(value, "Mod Loader runtime");
+  const contractVersion = contractVersionOf(
+    snapshot,
+    MOD_LOADER_RUNTIME_CONTRACT_VERSION,
+  );
+  const phase = snapshot.phase;
+  if (
+    phase !== "missingLoader" &&
+    phase !== "missingPayload" &&
+    phase !== "stopped" &&
+    phase !== "running"
+  ) {
+    throw new ModStudioContractError("phase is invalid");
+  }
+  const loaderPresent = boolean(snapshot.loaderPresent, "loaderPresent");
+  const payloadPresent = boolean(snapshot.payloadPresent, "payloadPresent");
+  const loaderFileName = string(snapshot.loaderFileName, "loaderFileName");
+  const payloadRelativePath = string(
+    snapshot.payloadRelativePath,
+    "payloadRelativePath",
+  );
+  const placement = string(snapshot.placement, "placement");
+  if (
+    loaderFileName !== "nte-mod-loader.exe" ||
+    payloadRelativePath !== "plugins/dwmapi.dll" ||
+    placement !== "applicationDirectory"
+  ) {
+    throw new ModStudioContractError(
+      "Mod Loader placement contract is invalid",
+    );
+  }
+  if (
+    (phase === "missingLoader" && loaderPresent) ||
+    (phase === "missingPayload" && (!loaderPresent || payloadPresent)) ||
+    ((phase === "stopped" || phase === "running") &&
+      (!loaderPresent || !payloadPresent))
+  ) {
+    throw new ModStudioContractError(
+      "Mod Loader runtime state is inconsistent",
+    );
+  }
+  return {
+    contractVersion,
+    phase,
+    loaderPresent,
+    payloadPresent,
+    loaderFileName,
+    payloadRelativePath,
+    placement,
+  };
 }
 
 export function parseModMarketCatalog(

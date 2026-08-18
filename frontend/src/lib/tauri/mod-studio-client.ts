@@ -3,43 +3,54 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import {
   ModStudioContractError,
   parseModMarketCatalog,
+  parseModLoaderRuntime,
   parseModStudioCommandError,
   parseModStudioDeployment,
   parseModStudioDirectorySelection,
   parseModStudioDocument,
   parseModStudioGameDirectory,
+  parseModStudioLoadingMethodPreference,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
   parseModStudioSubscriptionReceipt,
   parseModStudioWorkspace,
   type ModStudioCommandError,
   type ModMarketCatalogSnapshot,
+  type ModLoaderRuntimeSnapshot,
   type ModStudioDocumentSnapshot,
   type ModStudioDeploymentSnapshot,
   type ModStudioDirectorySelectionSnapshot,
   type ModStudioGameDirectorySnapshot,
   type ModStudioGameRegion,
+  type ModLoadingMethod,
+  type ModStudioLoadingMethodPreferenceSnapshot,
   type ModStudioRuntimeEvent,
   type ModStudioSdkSchemaSnapshot,
   type ModStudioWorkspaceSnapshot,
 } from "@/lib/tauri/mod-studio-contract";
 
 const COMMANDS = {
+  acknowledgeRisk: "acknowledge_mod_studio_risk",
   getMarketCatalog: "get_mod_market_catalog",
+  getLoaderRuntime: "get_mod_loader_runtime",
   installMarketItem: "install_mod_market_item",
   deleteDocument: "delete_mod_studio_document",
   chooseGameDirectory: "choose_mod_studio_game_directory",
   createDocument: "create_mod_studio_document",
   getDeployment: "get_mod_studio_deployment",
   getGameDirectory: "get_mod_studio_game_directory",
+  getLoadingMethod: "get_mod_studio_loading_method",
   getDocument: "get_mod_studio_document",
   getSdkSchema: "get_mod_studio_sdk_schema",
   getWorkspace: "get_mod_studio_workspace",
   openFolder: "open_mod_studio_folder",
+  openLoaderDirectory: "open_mod_loader_directory",
   saveDocument: "save_mod_studio_document",
   setEnabled: "set_mod_studio_document_enabled",
   setGameDirectory: "set_mod_studio_game_directory",
+  setLoadingMethod: "set_mod_studio_loading_method",
   setLoaderEnabled: "set_mod_studio_loader_enabled",
+  setLoaderRunning: "set_mod_loader_running",
   subscribeRuntime: "subscribe_mod_studio_runtime",
   unsubscribeRuntime: "unsubscribe_mod_studio_runtime",
 } as const;
@@ -53,6 +64,8 @@ interface ModStudioTransport {
 }
 
 export interface ModStudioClient {
+  acknowledgeRisk(): Promise<ModStudioLoadingMethodPreferenceSnapshot>;
+  getLoaderRuntime(): Promise<ModLoaderRuntimeSnapshot>;
   getMarketCatalog(): Promise<ModMarketCatalogSnapshot>;
   installMarketItem(id: string): Promise<ModStudioDocumentSnapshot>;
   deleteDocument(id: string): Promise<ModStudioWorkspaceSnapshot>;
@@ -67,21 +80,27 @@ export interface ModStudioClient {
   getGameDirectory(
     region: ModStudioGameRegion,
   ): Promise<ModStudioGameDirectorySnapshot>;
+  getLoadingMethod(): Promise<ModStudioLoadingMethodPreferenceSnapshot>;
   getDocument(id: string): Promise<ModStudioDocumentSnapshot>;
   getSdkSchema(): Promise<ModStudioSdkSchemaSnapshot>;
   getWorkspace(): Promise<ModStudioWorkspaceSnapshot>;
   openFolder(): Promise<true>;
+  openLoaderDirectory(): Promise<true>;
   saveDocument(id: string, source: string): Promise<ModStudioDocumentSnapshot>;
   setEnabled(id: string, enabled: boolean): Promise<ModStudioWorkspaceSnapshot>;
   setGameDirectory(
     region: ModStudioGameRegion,
     gameDirectory: string | null,
   ): Promise<ModStudioGameDirectorySnapshot>;
+  setLoadingMethod(
+    method: ModLoadingMethod,
+  ): Promise<ModStudioLoadingMethodPreferenceSnapshot>;
   setLoaderEnabled(
     region: ModStudioGameRegion,
     enabled: boolean,
     gameDirectory: string | null,
   ): Promise<ModStudioDeploymentSnapshot>;
+  setLoaderRunning(running: boolean): Promise<ModLoaderRuntimeSnapshot>;
   subscribeRuntime(
     onEvent: (event: ModStudioRuntimeEvent) => void,
     onError: (error: ModStudioCommandError) => void,
@@ -117,6 +136,10 @@ export function createModStudioClient(
   }
 
   return {
+    acknowledgeRisk: () =>
+      request(COMMANDS.acknowledgeRisk, parseModStudioLoadingMethodPreference),
+    getLoaderRuntime: () =>
+      request(COMMANDS.getLoaderRuntime, parseModLoaderRuntime),
     getMarketCatalog: () =>
       request(COMMANDS.getMarketCatalog, parseModMarketCatalog),
     installMarketItem: (id) =>
@@ -138,6 +161,8 @@ export function createModStudioClient(
       request(COMMANDS.getGameDirectory, parseModStudioGameDirectory, {
         region,
       }),
+    getLoadingMethod: () =>
+      request(COMMANDS.getLoadingMethod, parseModStudioLoadingMethodPreference),
     getDocument: (id) =>
       request(COMMANDS.getDocument, parseModStudioDocument, { id }),
     getSdkSchema: () => request(COMMANDS.getSdkSchema, parseModStudioSdkSchema),
@@ -146,6 +171,15 @@ export function createModStudioClient(
       request(COMMANDS.openFolder, (value) => {
         if (value !== true) {
           throw new ModStudioContractError("open Mod folder result is invalid");
+        }
+        return true as const;
+      }),
+    openLoaderDirectory: () =>
+      request(COMMANDS.openLoaderDirectory, (value) => {
+        if (value !== true) {
+          throw new ModStudioContractError(
+            "open Mod Loader directory result is invalid",
+          );
         }
         return true as const;
       }),
@@ -158,12 +192,20 @@ export function createModStudioClient(
         region,
         gameDirectory,
       }),
+    setLoadingMethod: (method) =>
+      request(
+        COMMANDS.setLoadingMethod,
+        parseModStudioLoadingMethodPreference,
+        { method },
+      ),
     setLoaderEnabled: (region, enabled, gameDirectory) =>
       request(COMMANDS.setLoaderEnabled, parseModStudioDeployment, {
         region,
         enabled,
         gameDirectory,
       }),
+    setLoaderRunning: (running) =>
+      request(COMMANDS.setLoaderRunning, parseModLoaderRuntime, { running }),
     subscribeRuntime: (onEvent, onError) => {
       const subscriptionId = createSubscriptionId();
       let closed = false;

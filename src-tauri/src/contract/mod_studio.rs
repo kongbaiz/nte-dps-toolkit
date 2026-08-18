@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use nte_dps_tool::core::{
     mod_market::{
@@ -11,15 +11,24 @@ use nte_dps_tool::core::{
         ModStudioRuntimeLevel, ModStudioRuntimeLog, VersionedModStudioWorkspace,
     },
 };
-use nte_dps_tool::platform::mods_plugin::{
-    ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
-    ModsPluginGameStatus,
+use nte_dps_tool::platform::{
+    mod_loader::{
+        MOD_LOADER_FILE_NAME, MOD_LOADER_PAYLOAD_RELATIVE_PATH, ModLoaderRuntimeError,
+        ModLoaderRuntimePhase, ModLoaderRuntimeSnapshot,
+    },
+    mods_plugin::{
+        ModsPluginDeploymentError, ModsPluginDeploymentStatus, ModsPluginGameRegion,
+        ModsPluginGameStatus,
+    },
 };
+use nte_dps_tool::storage::config::ModStudioLoadingMethod;
 
 use super::CommandError;
 
 pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 10;
 pub(crate) const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION: u32 = 1;
+pub(crate) const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION: u32 = 1;
+pub(crate) const MOD_LOADER_RUNTIME_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +73,39 @@ pub(crate) struct ModStudioSdkSymbolSnapshot {
     pub kind: &'static str,
     pub return_type: Option<&'static str>,
     pub documentation_key: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ModStudioLoadingMethodSnapshot {
+    Proxy,
+    Loader,
+}
+
+impl From<ModStudioLoadingMethod> for ModStudioLoadingMethodSnapshot {
+    fn from(value: ModStudioLoadingMethod) -> Self {
+        match value {
+            ModStudioLoadingMethod::Proxy => Self::Proxy,
+            ModStudioLoadingMethod::Loader => Self::Loader,
+        }
+    }
+}
+
+impl From<ModStudioLoadingMethodSnapshot> for ModStudioLoadingMethod {
+    fn from(value: ModStudioLoadingMethodSnapshot) -> Self {
+        match value {
+            ModStudioLoadingMethodSnapshot::Proxy => Self::Proxy,
+            ModStudioLoadingMethodSnapshot::Loader => Self::Loader,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModStudioLoadingMethodPreferenceSnapshot {
+    pub contract_version: u32,
+    pub method: ModStudioLoadingMethodSnapshot,
+    pub risk_acknowledged: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -183,6 +225,27 @@ pub(crate) struct ModStudioGameDirectorySnapshot {
     pub path: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum ModLoaderRuntimePhaseSnapshot {
+    MissingLoader,
+    MissingPayload,
+    Stopped,
+    Running,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModLoaderRuntimeStateSnapshot {
+    pub contract_version: u32,
+    pub phase: ModLoaderRuntimePhaseSnapshot,
+    pub loader_present: bool,
+    pub payload_present: bool,
+    pub loader_file_name: &'static str,
+    pub payload_relative_path: &'static str,
+    pub placement: &'static str,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModMarketCatalogSnapshot {
@@ -299,6 +362,26 @@ impl From<ModsPluginGameStatus> for ModStudioGameStatusSnapshot {
             region: status.region.into(),
             installed: status.installed,
             current: status.current,
+        }
+    }
+}
+
+impl From<ModLoaderRuntimeSnapshot> for ModLoaderRuntimeStateSnapshot {
+    fn from(snapshot: ModLoaderRuntimeSnapshot) -> Self {
+        let phase = match snapshot.phase {
+            ModLoaderRuntimePhase::MissingLoader => ModLoaderRuntimePhaseSnapshot::MissingLoader,
+            ModLoaderRuntimePhase::MissingPayload => ModLoaderRuntimePhaseSnapshot::MissingPayload,
+            ModLoaderRuntimePhase::Stopped => ModLoaderRuntimePhaseSnapshot::Stopped,
+            ModLoaderRuntimePhase::Running => ModLoaderRuntimePhaseSnapshot::Running,
+        };
+        Self {
+            contract_version: MOD_LOADER_RUNTIME_CONTRACT_VERSION,
+            phase,
+            loader_present: snapshot.loader_present,
+            payload_present: snapshot.payload_present,
+            loader_file_name: MOD_LOADER_FILE_NAME,
+            payload_relative_path: MOD_LOADER_PAYLOAD_RELATIVE_PATH,
+            placement: "applicationDirectory",
         }
     }
 }
@@ -572,6 +655,56 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn from_mod_loader_runtime(error: ModLoaderRuntimeError) -> Self {
+        let (code, message_key) = match error {
+            ModLoaderRuntimeError::Busy => (
+                "mod_loader_runtime_busy",
+                "Another Mod Loader operation is already in progress.",
+            ),
+            ModLoaderRuntimeError::LayoutUnavailable => (
+                "mod_loader_layout_unavailable",
+                "The application directory could not be located.",
+            ),
+            ModLoaderRuntimeError::LoaderMissing => (
+                "mod_loader_executable_missing",
+                "Place nte-mod-loader.exe next to nte-dps-tool.exe.",
+            ),
+            ModLoaderRuntimeError::PayloadMissing => (
+                "mod_loader_payload_missing",
+                "Place dwmapi.dll in the plugins folder next to nte-dps-tool.exe.",
+            ),
+            ModLoaderRuntimeError::LaunchCancelled => (
+                "mod_loader_elevation_cancelled",
+                "Administrator approval for nte-mod-loader was cancelled.",
+            ),
+            ModLoaderRuntimeError::LaunchFailed(_) => (
+                "mod_loader_launch_failed",
+                "Failed to start nte-mod-loader.",
+            ),
+            ModLoaderRuntimeError::StopFailed(_) => {
+                ("mod_loader_stop_failed", "Failed to stop nte-mod-loader.")
+            }
+            ModLoaderRuntimeError::StopTimedOut => (
+                "mod_loader_stop_timed_out",
+                "nte-mod-loader did not stop in time.",
+            ),
+            ModLoaderRuntimeError::ProbeFailed(_) => (
+                "mod_loader_probe_failed",
+                "Failed to check nte-mod-loader status.",
+            ),
+            ModLoaderRuntimeError::StatePoisoned => (
+                "mod_loader_state_unavailable",
+                "The Mod Loader runtime state is unavailable.",
+            ),
+        };
+        Self {
+            code,
+            message_key,
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn mod_studio_file_dialog_failed() -> Self {
         Self {
             code: "mod_studio_file_dialog_failed",
@@ -658,6 +791,26 @@ mod tests {
         assert_eq!(value["contractVersion"], MOD_STUDIO_CONTRACT_VERSION);
         assert_eq!(value["games"][0]["region"], "global");
         assert!(value.get("path").is_none());
+    }
+
+    #[test]
+    fn loader_runtime_snapshot_freezes_the_release_layout_without_absolute_paths() {
+        let snapshot = ModLoaderRuntimeStateSnapshot::from(ModLoaderRuntimeSnapshot {
+            phase: ModLoaderRuntimePhase::Running,
+            loader_present: true,
+            payload_present: true,
+        });
+        let value = serde_json::to_value(snapshot).expect("serialize loader runtime");
+
+        assert_eq!(
+            value["contractVersion"],
+            MOD_LOADER_RUNTIME_CONTRACT_VERSION
+        );
+        assert_eq!(value["phase"], "running");
+        assert_eq!(value["loaderFileName"], "nte-mod-loader.exe");
+        assert_eq!(value["payloadRelativePath"], "plugins/dwmapi.dll");
+        assert_eq!(value["placement"], "applicationDirectory");
+        assert!(value.to_string().find(":\\\\Users\\\\").is_none());
     }
 
     #[test]
@@ -826,6 +979,20 @@ mod tests {
         assert_eq!(value["timestamp100ns"], (u64::MAX - 2).to_string());
         assert_eq!(value["values"][0], "0");
         assert_eq!(value["values"][1], u64::MAX.to_string());
+    }
+
+    #[test]
+    fn loading_method_preference_uses_a_versioned_stable_contract() {
+        let snapshot = ModStudioLoadingMethodPreferenceSnapshot {
+            contract_version: MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION,
+            method: ModStudioLoadingMethodSnapshot::Loader,
+            risk_acknowledged: true,
+        };
+        let value = serde_json::to_value(snapshot).expect("serialize loading method");
+
+        assert_eq!(value["contractVersion"], 1);
+        assert_eq!(value["method"], "loader");
+        assert_eq!(value["riskAcknowledged"], true);
     }
 
     #[test]

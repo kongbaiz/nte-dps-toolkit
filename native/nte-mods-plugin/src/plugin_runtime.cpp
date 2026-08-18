@@ -616,7 +616,6 @@ namespace nte::mods
 
 		DWORD WINAPI WatchModWorkspace(void*)
 		{
-			bool offsets_initialized = false;
 			for (;;)
 			{
 				std::array<wchar_t, MAX_PATH> workspace{};
@@ -647,17 +646,11 @@ namespace nte::mods
 
 				if (runtime::HasViewportTickPrograms())
 				{
-					if (!offsets_initialized)
-					{
-						offsets_initialized = offsets::Initialize(runtime_stop_event);
-						if (offsets_initialized)
-						{
-							DebugLog(NTE_OBFUSCATE_STRING(
-								L"NTE Mods plugin: offsets resolved.\n")
-								.c_str());
-						}
-					}
-					if (offsets_initialized)
+					// 偏移在成功解析后只发布一次；未就绪或解析失败时
+					// Initialize 按自身节流策略重试，避免读者持有指针时改写已发布数据。
+					if (offsets::Get() == nullptr)
+						offsets::Initialize(runtime_stop_event);
+					if (offsets::Get() != nullptr)
 					{
 						if (auto* viewport = ResolveViewport())
 							InstallViewportHook(viewport);
