@@ -16,7 +16,11 @@ namespace nte::mods::dumper7
 {
 		namespace
 		{
-		thread_local HANDLE sdk_stop_event = nullptr;
+		// thread_local 在 manual map 注入下不可靠: loader 不会为手动映射的
+		// 模块初始化 _tls_index, TlsGetValue(0) 读到的是其他 DLL 的 TLS 槽,
+		// 取消检测会被垃圾句柄误触发。SDK 生成只在 worker 线程内执行,
+		// 普通全局即可。
+		HANDLE sdk_stop_event = nullptr;
 
 		bool IsSdkCancellationRequested() noexcept
 		{

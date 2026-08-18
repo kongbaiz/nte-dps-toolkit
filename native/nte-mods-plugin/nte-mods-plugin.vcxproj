@@ -50,7 +50,7 @@
       <PreprocessorDefinitions>NDEBUG;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <AdditionalIncludeDirectories>include;src;third_party\dumper7;third_party\dumper7\Engine\Public;third_party\dumper7\Generator\Public;third_party\dumper7\Utils;third_party\dumper7\Platform\Public;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 /bigobj /GR- %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>

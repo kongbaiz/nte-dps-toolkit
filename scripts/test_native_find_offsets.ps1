@@ -26,7 +26,7 @@ foreach ($source in $sources) {
     $objects += $object
     $compileCommand = @(
         'call', ('"{0}"' -f $developerShell), '-arch=x64', '-host_arch=x64', '>', 'nul', '&&',
-        'cl.exe', '/nologo', '/std:c++20', '/W4', '/WX', '/EHsc', '/DNOMINMAX', '/c',
+        'cl.exe', '/nologo', '/std:c++20', '/utf-8', '/W4', '/WX', '/EHsc', '/DNOMINMAX', '/c',
         ('/I"{0}"' -f (Join-Path $repoRoot "native\nte-mods-plugin\src")),
         ('"{0}"' -f $source), ('/Fo"{0}"' -f $object)
     ) -join ' '

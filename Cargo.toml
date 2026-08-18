@@ -1,6 +1,6 @@
 [package]
 name = "nte-dps-tool"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Local Windows DPS diagnostics tool for NTE."
@@ -55,6 +55,7 @@ windows-sys = { version = "0.60", features = [
     "Win32_Networking_WinSock",
     "Win32_Networking_WinHttp",
     "Win32_Storage_FileSystem",
+    "Win32_Security",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Pipes",
     "Win32_System_Registry",

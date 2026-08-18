@@ -106,11 +106,20 @@ nte-dps-tool.exe
 部分高级能力，例如使用游戏权威暂停状态进行精确时停扣除，依赖可选原生插件。该模式：
 
 - 默认不启用，必须由用户在 **Console → Mod 工坊**中明确确认；
-- 会把仓库提供的 `dwmapi.dll` 安装到所选客户端的 `HTGame.exe` 同级目录；
+- 默认使用代理加载，把 `plugins/dwmapi.dll` 复制到所选客户端的 `HTGame.exe`
+  同级目录；
+- 仅当代理加载无效时，改用与 `nte-dps-tool.exe` 同目录的
+  `nte-mod-loader.exe`；
 - 使用受限脚本、只读内存读取、事件订阅和明确的 capability 白名单；
-- 具有与纯抓包模式不同的风险边界，启用前请阅读程序内说明与 [`native/nte-mods-plugin/README.md`](native/nte-mods-plugin/README.md)。
+- 具有与纯抓包模式不同的风险边界，首次启用时确认风险；确认结果和上次使用的加载方式会写入配置文件。
 
-更改插件安装状态前必须关闭游戏。若目标目录已存在其他来源的 `dwmapi.dll`，工具会保留并报告冲突，不会覆盖或删除其他 Mod。
+备用 Loader 在发布包中的位置如下，不需要把 `nte-mod-loader.exe` 移到游戏目录：
+
+```text
+nte-dps-tool.exe
+nte-mod-loader.exe
+plugins/dwmapi.dll
+```
 
 ---
 

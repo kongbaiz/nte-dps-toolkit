@@ -126,6 +126,14 @@ pub enum DpsTimeMode {
     RealTime,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModStudioLoadingMethod {
+    #[default]
+    Proxy,
+    Loader,
+}
+
 impl DpsTimeMode {
     pub fn all() -> &'static [Self] {
         &DPS_TIME_MODES
@@ -744,6 +752,10 @@ pub struct UiConfig {
     pub mod_studio_china_game_directory: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mod_studio_global_game_directory: Option<String>,
+    #[serde(default)]
+    pub mod_studio_loading_method: ModStudioLoadingMethod,
+    #[serde(default)]
+    pub mod_studio_risk_acknowledged: bool,
     pub always_on_top: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub main_dps_always_on_top: Option<bool>,
@@ -834,6 +846,8 @@ impl Default for UiConfig {
             auto_download_updates: false,
             mod_studio_china_game_directory: None,
             mod_studio_global_game_directory: None,
+            mod_studio_loading_method: ModStudioLoadingMethod::default(),
+            mod_studio_risk_acknowledged: false,
             always_on_top: true,
             main_dps_always_on_top: None,
             hud_always_on_top: None,
@@ -1357,6 +1371,29 @@ mod tests {
             .mod_studio_china_game_directory,
             None
         );
+    }
+
+    #[test]
+    fn mod_studio_preferences_default_and_round_trip() {
+        let defaulted: UiConfig = serde_json::from_str("{}").expect("default UI config");
+        assert_eq!(
+            defaulted.mod_studio_loading_method,
+            ModStudioLoadingMethod::Proxy
+        );
+        assert!(!defaulted.mod_studio_risk_acknowledged);
+
+        let encoded = serde_json::to_string(&UiConfig {
+            mod_studio_loading_method: ModStudioLoadingMethod::Loader,
+            mod_studio_risk_acknowledged: true,
+            ..UiConfig::default()
+        })
+        .expect("serialize UI config");
+        let decoded: UiConfig = serde_json::from_str(&encoded).expect("deserialize UI config");
+        assert_eq!(
+            decoded.mod_studio_loading_method,
+            ModStudioLoadingMethod::Loader
+        );
+        assert!(decoded.mod_studio_risk_acknowledged);
     }
 
     #[test]

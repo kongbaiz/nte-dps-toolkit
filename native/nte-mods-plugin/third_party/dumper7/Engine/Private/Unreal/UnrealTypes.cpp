@@ -129,7 +129,9 @@ void FName::Init_Windows(bool bForceGNames)
 
 			ToStr = [](const void* Name) -> std::wstring
 			{
-				thread_local FFreableString TempString(1024);
+				// manual map 注入的模块没有 _tls_index（loader 不参与）,
+				// thread_local 会读到无关 TLS 槽; SDK 生成单线程, static 等价。
+				static FFreableString TempString(1024);
 
 				AppendString(GetNameEntryFromName(FName(Name).GetCompIdx()), TempString);
 
@@ -190,7 +192,7 @@ void FName::Init_Windows(bool bForceGNames)
 
 	ToStr = [](const void* Name) -> std::wstring
 	{
-		thread_local FFreableString TempString(1024);
+		static FFreableString TempString(1024); // manual map 下 thread_local 不可用; 生成单线程
 
 		AppendString(Name, TempString);
 
@@ -235,7 +237,7 @@ void FName::Init(int32 OverrideOffset, EOffsetOverrideType OverrideType, bool bI
 
 	ToStr = [](const void* Name) -> std::wstring
 	{
-		thread_local FFreableString TempString(1024);
+		static FFreableString TempString(1024); // manual map 下 thread_local 不可用; 生成单线程
 
 		AppendString(Name, TempString);
 

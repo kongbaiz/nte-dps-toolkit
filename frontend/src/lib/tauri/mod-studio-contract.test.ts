@@ -4,11 +4,13 @@ import {
   ModStudioContractError,
   compareModStudioSequence,
   parseModMarketCatalog,
+  parseModLoaderRuntime,
   parseModStudioCommandError,
   parseModStudioDeployment,
   parseModStudioDirectorySelection,
   parseModStudioDocument,
   parseModStudioGameDirectory,
+  parseModStudioLoadingMethodPreference,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
   parseModStudioSubscriptionReceipt,
@@ -16,6 +18,27 @@ import {
 } from "./mod-studio-contract";
 
 describe("Mod Studio contract", () => {
+  it("parses the persisted loading method preference", () => {
+    expect(
+      parseModStudioLoadingMethodPreference({
+        contractVersion: 1,
+        method: "loader",
+        riskAcknowledged: true,
+      }),
+    ).toEqual({
+      contractVersion: 1,
+      method: "loader",
+      riskAcknowledged: true,
+    });
+    expect(() =>
+      parseModStudioLoadingMethodPreference({
+        contractVersion: 1,
+        method: "future",
+        riskAcknowledged: false,
+      }),
+    ).toThrow(ModStudioContractError);
+  });
+
   it("parses a bounded workspace index without source bodies", () => {
     expect(
       parseModStudioWorkspace({
@@ -233,6 +256,31 @@ describe("Mod Studio contract", () => {
         contractVersion: 2,
         region: "china",
         path: null,
+      }),
+    ).toThrow(ModStudioContractError);
+  });
+
+  it("enforces the managed Mod Loader placement and runtime invariants", () => {
+    const running = {
+      contractVersion: 1,
+      phase: "running",
+      loaderPresent: true,
+      payloadPresent: true,
+      loaderFileName: "nte-mod-loader.exe",
+      payloadRelativePath: "plugins/dwmapi.dll",
+      placement: "applicationDirectory",
+    };
+    expect(parseModLoaderRuntime(running)).toEqual(running);
+    expect(() =>
+      parseModLoaderRuntime({
+        ...running,
+        loaderFileName: "dwmapi.dll",
+      }),
+    ).toThrow(ModStudioContractError);
+    expect(() =>
+      parseModLoaderRuntime({
+        ...running,
+        phase: "missingPayload",
       }),
     ).toThrow(ModStudioContractError);
   });

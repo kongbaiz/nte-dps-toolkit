@@ -10,6 +10,43 @@ const workspace = {
 };
 
 describe("Mod Studio client", () => {
+  it("loads and stores the persisted loading method", async () => {
+    const proxy = {
+      contractVersion: 1,
+      method: "proxy" as const,
+      riskAcknowledged: false,
+    };
+    const loader = {
+      contractVersion: 1,
+      method: "loader" as const,
+      riskAcknowledged: false,
+    };
+    const acknowledged = { ...loader, riskAcknowledged: true };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce(proxy)
+      .mockResolvedValueOnce(loader)
+      .mockResolvedValueOnce(acknowledged);
+    const client = createModStudioClient({ invoke, createChannel: vi.fn() });
+
+    await expect(client.getLoadingMethod()).resolves.toEqual(proxy);
+    await expect(client.setLoadingMethod("loader")).resolves.toEqual(loader);
+    await expect(client.acknowledgeRisk()).resolves.toEqual(acknowledged);
+    expect(invoke).toHaveBeenNthCalledWith(
+      1,
+      "get_mod_studio_loading_method",
+      undefined,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(2, "set_mod_studio_loading_method", {
+      method: "loader",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(
+      3,
+      "acknowledge_mod_studio_risk",
+      undefined,
+    );
+  });
+
   it("loads and clears the persisted game directory preference", async () => {
     const preference = {
       contractVersion: 1,
@@ -174,6 +211,42 @@ describe("Mod Studio client", () => {
       enabled: true,
       gameDirectory: "D:\\Game",
     });
+  });
+
+  it("controls the managed loader without writing a proxy DLL into the game folder", async () => {
+    const runtime = {
+      contractVersion: 1,
+      phase: "stopped",
+      loaderPresent: true,
+      payloadPresent: true,
+      loaderFileName: "nte-mod-loader.exe",
+      payloadRelativePath: "plugins/dwmapi.dll",
+      placement: "applicationDirectory",
+    };
+    const invoke = vi
+      .fn()
+      .mockResolvedValueOnce(runtime)
+      .mockResolvedValueOnce({ ...runtime, phase: "running" })
+      .mockResolvedValueOnce(true);
+    const client = createModStudioClient({ invoke, createChannel: vi.fn() });
+
+    await client.getLoaderRuntime();
+    await client.setLoaderRunning(true);
+    await client.openLoaderDirectory();
+
+    expect(invoke).toHaveBeenNthCalledWith(
+      1,
+      "get_mod_loader_runtime",
+      undefined,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(2, "set_mod_loader_running", {
+      running: true,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(
+      3,
+      "open_mod_loader_directory",
+      undefined,
+    );
   });
 
   it("uses typed commands for workspace and on-demand source", async () => {

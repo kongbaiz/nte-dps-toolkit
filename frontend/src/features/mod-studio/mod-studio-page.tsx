@@ -7,7 +7,6 @@ import {
   Code2,
   Copy,
   FolderOpen,
-  MapPin,
   Minus,
   Radio,
   RefreshCw,
@@ -69,6 +68,9 @@ import {
   useModStudio,
   type ModStudioActionState,
   type ModStudioDeploymentState,
+  type ModStudioPreferenceState,
+  type ModLoadingMethod,
+  type ModLoaderControlState,
   type ModStudioDeleteState,
   type ModStudioEnableState,
   type ModStudioSaveState,
@@ -98,13 +100,22 @@ export function ModStudioWorkspace() {
     createState,
     openFolder,
     folderState,
+    loadingMethod,
+    preferenceState,
+    setLoadingMethod,
+    acknowledgeRisk,
     selectedRegion,
     setSelectedRegion,
     manualGameDirectory,
     deploymentState,
     chooseGameDirectory,
     useAutomaticGameDirectory,
-    setLoaderEnabled,
+    setProxyEnabled,
+    loaderState,
+    retryLoader,
+    setLoaderRunning,
+    openLoaderDirectory,
+    loaderDirectoryState,
   } = useModStudio();
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<"editor" | "market">("editor");
@@ -118,13 +129,22 @@ export function ModStudioWorkspace() {
         onRefresh={refresh}
         onOpenFolder={openFolder}
         folderState={folderState}
+        loadingMethod={loadingMethod}
+        preferenceState={preferenceState}
+        onSelectLoadingMethod={setLoadingMethod}
+        onAcknowledgeRisk={acknowledgeRisk}
         selectedRegion={selectedRegion}
         onSelectRegion={setSelectedRegion}
         manualGameDirectory={manualGameDirectory}
         deploymentState={deploymentState}
         onChooseGameDirectory={chooseGameDirectory}
         onUseAutomaticGameDirectory={useAutomaticGameDirectory}
-        onSetLoaderEnabled={setLoaderEnabled}
+        onSetProxyEnabled={setProxyEnabled}
+        loaderState={loaderState}
+        onRetryLoader={retryLoader}
+        onSetLoaderRunning={setLoaderRunning}
+        onOpenLoaderDirectory={openLoaderDirectory}
+        loaderDirectoryState={loaderDirectoryState}
         dirty={dirtyDocumentIds.size > 0}
       />
       {activePanel === "market" ? (
@@ -198,13 +218,22 @@ function ModStudioHeader({
   onRefresh,
   onOpenFolder,
   folderState,
+  loadingMethod,
+  preferenceState,
+  onSelectLoadingMethod,
+  onAcknowledgeRisk,
   selectedRegion,
   onSelectRegion,
   manualGameDirectory,
   deploymentState,
   onChooseGameDirectory,
   onUseAutomaticGameDirectory,
-  onSetLoaderEnabled,
+  onSetProxyEnabled,
+  loaderState,
+  onRetryLoader,
+  onSetLoaderRunning,
+  onOpenLoaderDirectory,
+  loaderDirectoryState,
   dirty,
 }: {
   activePanel: "editor" | "market";
@@ -213,43 +242,88 @@ function ModStudioHeader({
   onRefresh: () => void | Promise<void>;
   onOpenFolder: () => void | Promise<void>;
   folderState: ModStudioActionState;
+  loadingMethod: ModLoadingMethod;
+  preferenceState: ModStudioPreferenceState;
+  onSelectLoadingMethod: (method: ModLoadingMethod) => void | Promise<void>;
+  onAcknowledgeRisk: () => Promise<boolean>;
   selectedRegion: ModStudioGameRegion;
   onSelectRegion: (region: ModStudioGameRegion) => void;
   manualGameDirectory: string | null;
   deploymentState: ModStudioDeploymentState;
   onChooseGameDirectory: () => void | Promise<void>;
   onUseAutomaticGameDirectory: () => void | Promise<void>;
-  onSetLoaderEnabled: (enabled: boolean) => void | Promise<void>;
+  onSetProxyEnabled: (enabled: boolean) => void | Promise<void>;
+  loaderState: ModLoaderControlState;
+  onRetryLoader: () => void | Promise<void>;
+  onSetLoaderRunning: (running: boolean) => void | Promise<void>;
+  onOpenLoaderDirectory: () => void | Promise<void>;
+  loaderDirectoryState: ModStudioActionState;
   dirty: boolean;
 }) {
   const runtimeConnected = runtimeState.connection === "connected";
-  const [riskOpen, setRiskOpen] = useState(false);
+  const [riskMethod, setRiskMethod] = useState<ModLoadingMethod | null>(null);
+  const preferencesReady = preferenceState.status === "ready";
+  const preferenceBusy =
+    preferenceState.status === "loading" ||
+    (preferenceState.status === "ready" &&
+      preferenceState.operation !== "idle");
+  const riskAcknowledged =
+    preferenceState.status === "ready" && preferenceState.riskAcknowledged;
   const selectedGame =
     deploymentState.status === "ready"
       ? (deploymentState.snapshot.games.find(
           (game) => game.region === selectedRegion,
         ) ?? null)
       : null;
-  const loaderEnabled = selectedGame?.installed ?? false;
-  const deploymentBusy =
+  const proxyEnabled = selectedGame?.installed ?? false;
+  const proxyBusy =
     deploymentState.status === "loading" ||
     (deploymentState.status === "ready" &&
       deploymentState.operation !== "idle");
-  const loaderInteractive =
+  const proxyInteractive =
     !dirty &&
-    !deploymentBusy &&
+    preferencesReady &&
+    !preferenceBusy &&
+    !proxyBusy &&
     deploymentState.status === "ready" &&
     (selectedGame !== null || manualGameDirectory !== null) &&
-    (loaderEnabled || deploymentState.snapshot.sourceAvailable);
+    (proxyEnabled || deploymentState.snapshot.sourceAvailable);
+  const loaderRunning =
+    loaderState.status === "ready" && loaderState.snapshot.phase === "running";
+  const loaderBusy =
+    loaderState.status === "loading" ||
+    (loaderState.status === "ready" && loaderState.operation !== "idle");
+  const loaderInteractive =
+    !dirty &&
+    preferencesReady &&
+    !preferenceBusy &&
+    !loaderBusy &&
+    loaderState.status === "ready" &&
+    (loaderRunning || loaderState.snapshot.phase === "stopped");
   const actionError =
-    deploymentState.status === "error"
+    preferenceState.status === "error"
       ? tf(
-          deploymentState.error.messageKey,
-          deploymentState.error.messageArguments,
+          preferenceState.error.messageKey,
+          preferenceState.error.messageArguments,
         )
-      : folderState.status === "error"
-        ? tf(folderState.error.messageKey, folderState.error.messageArguments)
-        : null;
+      : deploymentState.status === "error"
+        ? tf(
+            deploymentState.error.messageKey,
+            deploymentState.error.messageArguments,
+          )
+        : loaderState.status === "error"
+          ? tf(loaderState.error.messageKey, loaderState.error.messageArguments)
+          : loaderDirectoryState.status === "error"
+            ? tf(
+                loaderDirectoryState.error.messageKey,
+                loaderDirectoryState.error.messageArguments,
+              )
+            : folderState.status === "error"
+              ? tf(
+                  folderState.error.messageKey,
+                  folderState.error.messageArguments,
+                )
+              : null;
   return (
     <header className="border bg-card px-3 py-2.5">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -300,19 +374,6 @@ function ModStudioHeader({
         </Button>
       </nav>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-muted-foreground">{t("Game client")}</span>
-        <select
-          className="h-8 rounded-md border bg-background px-3 text-sm"
-          aria-label={t("Game client")}
-          value={selectedRegion}
-          disabled={dirty || deploymentBusy}
-          onChange={(event) =>
-            onSelectRegion(event.target.value as ModStudioGameRegion)
-          }
-        >
-          <option value="china">{t("China client")}</option>
-          <option value="global">{t("Global client")}</option>
-        </select>
         <Button
           variant="outline"
           size="sm"
@@ -333,82 +394,178 @@ function ModStudioHeader({
           <FolderOpen aria-hidden="true" />
           {t("Open Mod folder")}
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8"
-          disabled={dirty || deploymentBusy}
-          onClick={() => void onChooseGameDirectory()}
-        >
-          <MapPin aria-hidden="true" />
-          {t("Choose game folder")}
-        </Button>
-        {manualGameDirectory !== null ? (
-          <>
-            <span
-              className="max-w-64 truncate font-mono text-xs text-muted-foreground"
-              title={manualGameDirectory}
-            >
-              {manualGameDirectory}
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8"
-              disabled={dirty || deploymentBusy}
-              onClick={() => void onUseAutomaticGameDirectory()}
-            >
-              {t("Use automatic detection")}
-            </Button>
-          </>
-        ) : null}
         <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
-        <Radio
-          className={cn(
-            "size-4",
-            runtimeConnected
-              ? "text-[var(--console-success)]"
-              : "text-[var(--console-warning)]",
-          )}
-          aria-hidden="true"
-        />
-        <span className="font-medium">{t("In-game Mod loader")}</span>
-        <Switch
-          size="sm"
-          checked={loaderEnabled}
-          disabled={!loaderInteractive}
-          aria-label={t("Enable")}
-          onCheckedChange={(enabled) => {
-            if (enabled) {
-              setRiskOpen(true);
-            } else {
-              void onSetLoaderEnabled(false);
-            }
-          }}
-        />
-        <span className="text-muted-foreground">
-          {t(deploymentStatusKey(deploymentState, selectedRegion))}
-        </span>
-        <span className="text-muted-foreground">·</span>
-        <span className="text-muted-foreground">
-          {t(runtimeConnectionMessage(runtimeState.connection))}
-        </span>
+        <span className="text-muted-foreground">{t("Loading method")}</span>
+        <select
+          className="h-8 rounded-md border bg-background px-3 text-sm"
+          aria-label={t("Loading method")}
+          value={loadingMethod}
+          disabled={dirty || preferenceBusy || proxyBusy || loaderBusy}
+          onChange={(event) =>
+            void onSelectLoadingMethod(event.target.value as ModLoadingMethod)
+          }
+        >
+          <option value="proxy">{t("Proxy loading (recommended)")}</option>
+          <option value="loader">{t("Mod Loader (fallback)")}</option>
+        </select>
+        {loadingMethod === "proxy" ? (
+          <>
+            <select
+              className="h-8 rounded-md border bg-background px-3 text-sm"
+              aria-label={t("Game client")}
+              value={selectedRegion}
+              disabled={dirty || proxyBusy}
+              onChange={(event) =>
+                onSelectRegion(event.target.value as ModStudioGameRegion)
+              }
+            >
+              <option value="china">{t("China client")}</option>
+              <option value="global">{t("Global client")}</option>
+            </select>
+            <Radio
+              className={cn(
+                "size-4",
+                runtimeConnected
+                  ? "text-[var(--console-success)]"
+                  : proxyEnabled
+                    ? "text-[var(--console-warning)]"
+                    : "text-muted-foreground",
+              )}
+              aria-hidden="true"
+            />
+            <Switch
+              size="sm"
+              checked={proxyEnabled}
+              disabled={!proxyInteractive}
+              aria-label={t("Enable proxy loading")}
+              onCheckedChange={(enabled) => {
+                if (enabled) {
+                  if (riskAcknowledged) {
+                    void onSetProxyEnabled(true);
+                  } else {
+                    setRiskMethod("proxy");
+                  }
+                } else {
+                  void onSetProxyEnabled(false);
+                }
+              }}
+            />
+            <span className="text-muted-foreground">
+              {t(proxyDeploymentStatusKey(deploymentState, selectedGame))}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={dirty || proxyBusy}
+                    aria-label={t("Choose game folder")}
+                    onClick={() => void onChooseGameDirectory()}
+                  />
+                }
+              >
+                <FolderOpen aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipContent>{t("Choose game folder")}</TooltipContent>
+            </Tooltip>
+            {manualGameDirectory !== null ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8"
+                disabled={dirty || proxyBusy}
+                onClick={() => void onUseAutomaticGameDirectory()}
+              >
+                {t("Use automatic detection")}
+              </Button>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Radio
+              className={cn(
+                "size-4",
+                runtimeConnected
+                  ? "text-[var(--console-success)]"
+                  : loaderRunning
+                    ? "text-[var(--console-warning)]"
+                    : "text-muted-foreground",
+              )}
+              aria-hidden="true"
+            />
+            <Switch
+              size="sm"
+              checked={loaderRunning}
+              disabled={!loaderInteractive}
+              aria-label={t("Run Mod Loader")}
+              onCheckedChange={(running) => {
+                if (running) {
+                  if (riskAcknowledged) {
+                    void onSetLoaderRunning(true);
+                  } else {
+                    setRiskMethod("loader");
+                  }
+                } else {
+                  void onSetLoaderRunning(false);
+                }
+              }}
+            />
+            <span className="text-muted-foreground">
+              {t(loaderRuntimeStatusKey(loaderState))}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={loaderDirectoryState.status === "working"}
+                    aria-label={t("Open loader folder")}
+                    onClick={() => void onOpenLoaderDirectory()}
+                  />
+                }
+              >
+                <FolderOpen aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipContent>
+                {t("nte-mod-loader.exe is placed beside nte-dps-tool.exe")}
+              </TooltipContent>
+            </Tooltip>
+            {loaderState.status === "error" ||
+            (loaderState.status === "ready" &&
+              (loaderState.snapshot.phase === "missingLoader" ||
+                loaderState.snapshot.phase === "missingPayload")) ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("Check again")}
+                onClick={() => void onRetryLoader()}
+              >
+                <RefreshCw className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
+          </>
+        )}
       </div>
       {actionError !== null ? (
         <p className="mt-2 text-sm text-destructive" role="alert">
           {actionError}
         </p>
-      ) : folderState.status === "done" ? (
-        <p className="mt-2 text-sm text-muted-foreground">
-          {t("Mod folder opened")}
-        </p>
       ) : null}
-      {riskOpen ? (
+      {riskMethod !== null ? (
         <ModLoaderRiskDialog
-          onCancel={() => setRiskOpen(false)}
-          onConfirm={() => {
-            setRiskOpen(false);
-            void onSetLoaderEnabled(true);
+          onCancel={() => setRiskMethod(null)}
+          onConfirm={async () => {
+            const method = riskMethod;
+            if (!(await onAcknowledgeRisk())) return false;
+            setRiskMethod(null);
+            if (method === "proxy") {
+              void onSetProxyEnabled(true);
+            } else {
+              void onSetLoaderRunning(true);
+            }
+            return true;
           }}
         />
       ) : null}
@@ -416,38 +573,40 @@ function ModStudioHeader({
   );
 }
 
-function deploymentStatusKey(
+function proxyDeploymentStatusKey(
   state: ModStudioDeploymentState,
-  region: ModStudioGameRegion,
+  selectedGame: { installed: boolean; current: boolean } | null,
 ): string {
+  if (state.status === "loading") return "Checking proxy loading...";
+  if (state.status === "error") return state.error.messageKey;
+  if (state.operation !== "idle") return "Updating proxy loading...";
+  if (selectedGame === null) return "Game folder not found";
+  if (!selectedGame.installed) return "Proxy loading is not installed";
+  return selectedGame.current
+    ? "Proxy loading is enabled"
+    : "Proxy loading update required";
+}
+
+function loaderRuntimeStatusKey(state: ModLoaderControlState): string {
   if (state.status === "loading") {
-    return "Checking Mod loader status...";
+    return "Checking nte-mod-loader status...";
   }
   if (state.status === "error") {
     return state.error.messageKey;
   }
-  if (state.operation === "choosing") {
-    return "Checking Mod loader status...";
-  }
   if (state.operation === "updating") {
-    return "Updating the Mod loader...";
+    return "Updating nte-mod-loader...";
   }
-  const game = state.snapshot.games.find(
-    (candidate) => candidate.region === region,
-  );
-  if (game === undefined) {
-    return "Game installation not detected";
+  switch (state.snapshot.phase) {
+    case "missingLoader":
+      return "nte-mod-loader.exe is missing from the application folder";
+    case "missingPayload":
+      return "plugins/dwmapi.dll is missing from the application folder";
+    case "stopped":
+      return "nte-mod-loader is stopped";
+    case "running":
+      return "nte-mod-loader is running";
   }
-  if (!state.snapshot.sourceAvailable) {
-    return "Mod loader file plugins/dwmapi.dll was not found";
-  }
-  if (!game.installed) {
-    return "Mod loader is not installed";
-  }
-  if (!game.current) {
-    return "Mod loader is installed, but the installed copy differs from this app version";
-  }
-  return "Mod loader is installed for the selected game client";
 }
 
 function runtimeConnectionMessage(
@@ -471,9 +630,10 @@ function ModLoaderRiskDialog({
   onConfirm,
 }: {
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: () => Promise<boolean>;
 }) {
   const [remainingSeconds, setRemainingSeconds] = useState(5);
+  const [confirming, setConfirming] = useState(false);
   useEffect(() => {
     const started = Date.now();
     const timer = window.setInterval(() => {
@@ -501,43 +661,33 @@ function ModLoaderRiskDialog({
           id="mod-loader-risk-title"
           className="text-lg font-semibold text-destructive"
         >
-          {t("Warning: third-party game plugin")}
+          {t("Risk warning")}
         </h2>
-        <p className="mt-3 font-medium text-[var(--console-success)]">
+        <p className="mt-3 text-sm text-destructive">
           {t(
-            "This loader runs only the restricted mods listed in nte-mods.enabled. Keep only the mods you use enabled.",
+            "Third-party Mods may cause game crashes, integrity-check failures, or account penalties.",
           )}
         </p>
-        <div className="mt-3 flex flex-col gap-2 text-sm text-destructive">
-          <p>
-            {t(
-              "Enabling this option installs a third-party mod into the game directory.",
-            )}
-          </p>
-          <p>
-            {t(
-              "It installs only dwmapi.dll beside HTGame.exe. The DLL reads restricted NTE C++ v5 .nte programs from the software plugins directory and watches saved enable or source changes at runtime. With no enabled Mod, it removes its hook and closes IPC.",
-            )}
-          </p>
-          <p>
-            {t(
-              "Changing the game directory may trigger integrity or anti-cheat checks and may cause client or account risk. Enable it only after accepting these risks.",
-            )}
-          </p>
-        </div>
         {remainingSeconds > 0 ? (
           <p className="mt-3 text-sm font-medium text-[var(--console-warning)]">
-            {tf(
-              "Please read the warning. Enable unlocks in {} seconds; you can close this dialog at any time.",
-              [remainingSeconds.toString()],
-            )}
+            {tf("Enable available in {} seconds.", [
+              remainingSeconds.toString(),
+            ])}
           </p>
         ) : null}
         <div className="mt-4 flex gap-2">
-          <Button disabled={remainingSeconds > 0} onClick={onConfirm}>
+          <Button
+            disabled={remainingSeconds > 0 || confirming}
+            onClick={() => {
+              setConfirming(true);
+              void onConfirm().then((confirmed) => {
+                if (!confirmed) setConfirming(false);
+              });
+            }}
+          >
             {t("Accept Risk and Enable")}
           </Button>
-          <Button variant="outline" onClick={onCancel}>
+          <Button variant="outline" disabled={confirming} onClick={onCancel}>
             {t("Cancel")}
           </Button>
         </div>
@@ -953,10 +1103,6 @@ function EditorPane({
             {t("Revert changes")}
           </Button>
         </div>
-      </div>
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2 text-sm font-medium">
-        <ChevronDown className="size-4 -rotate-90" aria-hidden="true" />
-        {t("Getting started")}
       </div>
       <div className="flex min-h-11 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 text-xs text-muted-foreground">
         <span>{t("NTE Mods")}</span>

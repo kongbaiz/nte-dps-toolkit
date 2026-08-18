@@ -253,11 +253,15 @@ mod tests {
         assert!(native_window_event_may_reset_opacity(&WindowEvent::Moved(
             PhysicalPosition::new(100, 200),
         )));
-        assert!(native_window_event_may_reset_opacity(&WindowEvent::Resized(
-            PhysicalSize::new(800, 600),
-        )));
-        assert!(native_window_event_may_reset_opacity(&WindowEvent::Focused(true)));
-        assert!(!native_window_event_may_reset_opacity(&WindowEvent::Focused(false)));
+        assert!(native_window_event_may_reset_opacity(
+            &WindowEvent::Resized(PhysicalSize::new(800, 600),)
+        ));
+        assert!(native_window_event_may_reset_opacity(
+            &WindowEvent::Focused(true)
+        ));
+        assert!(!native_window_event_may_reset_opacity(
+            &WindowEvent::Focused(false)
+        ));
     }
 
     #[test]

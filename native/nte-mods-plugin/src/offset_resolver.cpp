@@ -4,20 +4,85 @@
 #include "memory_access.hpp"
 
 #include <Windows.h>
+#include <TlHelp32.h>
 
 namespace nte::mods::offsets
 {
 	namespace
 	{
 		constexpr ULONGLONG RESOLUTION_RETRY_MS = 1000;
+		// UE 引擎就绪门槛: manual map 注入发生在进程创建早期（CREATE_SUSPENDED
+		// 时）, UE 引擎尚未加载。过早扫描会反复失败（FNamePool/GObjects 未建立）
+		// 并可能缓存未就绪的中间状态。等最小预热时间 + 游戏主模块
+		// （HTGameBase.dll, UE 引擎宿主）加载后再开始扫描。
+		constexpr ULONGLONG ENGINE_MIN_WARMUP_MS = 10000;
+		constexpr ULONGLONG ENGINE_MODULE_POLL_MS = 5000;
+		constexpr wchar_t ENGINE_MODULE_NAME[] = L"HTGameBase.dll";
 
 		ResolvedOffsets resolved_offsets{};
 		volatile LONG resolution_state = 0;
 		volatile LONG64 next_retry_tick = 0;
+		volatile LONG64 engine_start_tick = 0;
+		volatile LONG engine_module_ready = 0;
+		volatile LONG64 engine_module_poll_tick = 0;
+
+		bool IsEngineModuleReady()
+		{
+			if (InterlockedCompareExchange(&engine_module_ready, 0, 0) != 0)
+				return true;
+			const ULONGLONG now = GetTickCount64();
+			if (now - static_cast<ULONGLONG>(
+					InterlockedCompareExchange64(&engine_module_poll_tick, 0, 0)) <
+				ENGINE_MODULE_POLL_MS)
+				return false;
+			InterlockedExchange64(&engine_module_poll_tick, static_cast<LONG64>(now));
+
+			HANDLE snapshot = CreateToolhelp32Snapshot(
+				TH32CS_SNAPMODULE, GetCurrentProcessId());
+			if (snapshot == INVALID_HANDLE_VALUE)
+				return false;
+			bool found = false;
+			MODULEENTRY32W me{};
+			me.dwSize = sizeof(me);
+			if (Module32FirstW(snapshot, &me))
+			{
+				do
+				{
+					if (_wcsicmp(me.szModule, ENGINE_MODULE_NAME) == 0)
+					{
+						found = true;
+						break;
+					}
+				} while (Module32NextW(snapshot, &me));
+			}
+			CloseHandle(snapshot);
+			if (found)
+				InterlockedExchange(&engine_module_ready, 1);
+			return found;
+		}
+
+		bool EngineReady()
+		{
+			if (InterlockedCompareExchange64(&engine_start_tick, 0, 0) == 0)
+			{
+				InterlockedCompareExchange64(
+					&engine_start_tick, static_cast<LONG64>(GetTickCount64()), 0);
+			}
+			const ULONGLONG now = GetTickCount64();
+			if (now - static_cast<ULONGLONG>(
+					InterlockedCompareExchange64(&engine_start_tick, 0, 0)) <
+				ENGINE_MIN_WARMUP_MS)
+				return false;
+			return IsEngineModuleReady();
+		}
 	}
 
 	bool Initialize(void* cancellation_event)
 	{
+		// UE 引擎就绪门槛: 引擎未就绪前不发起扫描（调用方会定期重试）
+		if (!EngineReady())
+			return false;
+
 		if (InterlockedCompareExchange(&resolution_state, 0, 0) == 2)
 			return true;
 

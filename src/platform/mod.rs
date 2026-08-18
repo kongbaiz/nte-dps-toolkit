@@ -3,6 +3,8 @@
 #[cfg(all(windows, feature = "desktop"))]
 pub mod file_dialog;
 pub mod locale;
+#[cfg(all(windows, feature = "desktop"))]
+pub mod mod_loader;
 pub mod mods_plugin;
 pub mod network;
 #[cfg(windows)]
