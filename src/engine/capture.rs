@@ -58,6 +58,8 @@ use crate::engine::protocol::{
 const PCAP_ERRBUF_SIZE: usize = 256;
 const DLT_EN10MB: c_int = 1;
 const DLT_RAW: c_int = 12;
+const DLT_IPV4: c_int = 228;
+const IANA_DYNAMIC_PORT_START: u16 = 49_152;
 const MIN_READABLE_TEXT_LEN: usize = 4;
 const MAX_IGNORABLE_BINARY_PACKET_LEN: usize = 96;
 const UNREADABLE_PROTOCOL_TEXT: &str = "未解析到可读协议文本";
@@ -89,6 +91,7 @@ struct CaptureFrame {
 enum CaptureLinkType {
     Ethernet,
     RawIpv4,
+    Ipv4,
 }
 
 impl CaptureLinkType {
@@ -96,8 +99,9 @@ impl CaptureLinkType {
         match data_link {
             DLT_EN10MB => Ok(Self::Ethernet),
             DLT_RAW => Ok(Self::RawIpv4),
+            DLT_IPV4 => Ok(Self::Ipv4),
             unsupported => Err(format!(
-                "unsupported Npcap data link type {unsupported}; supported types are DLT_EN10MB ({DLT_EN10MB}) and DLT_RAW ({DLT_RAW})"
+                "unsupported Npcap data link type {unsupported}; supported types are DLT_EN10MB ({DLT_EN10MB}), DLT_RAW ({DLT_RAW}), and DLT_IPV4 ({DLT_IPV4})"
             )),
         }
     }
@@ -105,7 +109,11 @@ impl CaptureLinkType {
     fn from_pcapng(data_link: DataLink) -> Option<Self> {
         match data_link {
             DataLink::ETHERNET => Some(Self::Ethernet),
+            // LINKTYPE_RAW can contain IPv4 or IPv6, while LINKTYPE_IPV4 is the
+            // IPv4-only form emitted by some capture stacks for layer-3 TUN
+            // interfaces. Both carry the IPv4 header at byte zero.
             DataLink::RAW => Some(Self::RawIpv4),
+            DataLink::IPV4 => Some(Self::Ipv4),
             _ => None,
         }
     }
@@ -114,6 +122,7 @@ impl CaptureLinkType {
         match self {
             Self::Ethernet => DataLink::ETHERNET,
             Self::RawIpv4 => DataLink::RAW,
+            Self::Ipv4 => DataLink::IPV4,
         }
     }
 
@@ -121,6 +130,7 @@ impl CaptureLinkType {
         match self {
             Self::Ethernet => "Ethernet",
             Self::RawIpv4 => "raw IPv4",
+            Self::Ipv4 => "IPv4",
         }
     }
 }
@@ -1104,9 +1114,12 @@ fn parse_udp_ipv4(
             }
             &packet[ethernet_offset..]
         }
-        CaptureLinkType::RawIpv4 if packet.len() >= 20 => packet,
-        CaptureLinkType::RawIpv4 => return None,
+        CaptureLinkType::RawIpv4 | CaptureLinkType::Ipv4 if packet.len() >= 20 => packet,
+        CaptureLinkType::RawIpv4 | CaptureLinkType::Ipv4 => return None,
     };
+    if ip[0] >> 4 != 4 {
+        return None;
+    }
     let ip_header_len = ((ip[0] & 0x0f) as usize) * 4;
     let total_len = u16::from_be_bytes([ip[2], ip[3]]) as usize;
     let fragment = u16::from_be_bytes([ip[6], ip[7]]);
@@ -1152,6 +1165,7 @@ fn infer_outgoing(
     src: Ipv4Addr,
     src_port: u16,
     dst: Ipv4Addr,
+    dst_port: u16,
     local_ip: Option<Ipv4Addr>,
     ids: &[u32],
     client_endpoints: &HashSet<(Ipv4Addr, u16)>,
@@ -1159,10 +1173,28 @@ fn infer_outgoing(
     if let Some(local_ip) = local_ip {
         return src == local_ip;
     }
+    if client_endpoints.contains(&(src, src_port)) {
+        return true;
+    }
+    if client_endpoints.contains(&(dst, dst_port)) {
+        return false;
+    }
     match (src.is_private(), dst.is_private()) {
         (true, false) => true,
         (false, true) => false,
-        _ => ids.len() == 1 || client_endpoints.contains(&(src, src_port)),
+        // A replay from another machine cannot use this machine's local IP.
+        // TUN captures commonly keep the client's dynamic UDP port while both
+        // addresses are non-private (for example, 198.18.0.0/15 inside the
+        // tunnel), so use the IANA dynamic-port boundary before payload-only
+        // character evidence.
+        _ => match (
+            src_port >= IANA_DYNAMIC_PORT_START,
+            dst_port >= IANA_DYNAMIC_PORT_START,
+        ) {
+            (true, false) => true,
+            (false, true) => false,
+            _ => ids.len() == 1,
+        },
     }
 }
 
@@ -1968,6 +2000,10 @@ const MAX_INVENTORY_CONNECTIONS: usize = 16;
 const MAX_INVENTORY_FRAGMENTS_PER_CONNECTION: usize = 4096;
 const MAX_INVENTORY_STREAM_BITS: usize = 16 * 1024 * 1024;
 const MAX_INVENTORY_ITEMS: usize = 4096;
+// Reliable retransmission can put a missing bunch behind continuations in transport order. A
+// 96-packet window covers several retry intervals while remaining a small fraction of the 10-bit
+// reliable-bunch sequence space, so sequence reuse cannot bridge arbitrarily old cached fragments.
+const MAX_INVENTORY_FRAGMENT_PACKET_SPAN: i64 = 96;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct InventoryConnectionKey {
@@ -2117,19 +2153,28 @@ impl InventoryConnectionState {
             let mut sequence = initial_sequence;
             let mut is_complete = false;
             let mut chain_keys = Vec::new();
-            let mut previous_packet_order = None;
+            let mut min_packet_order = None;
+            let mut max_packet_order = None;
             for index in 0..1024 {
                 let key = (channel, sequence);
                 let Some(stored) = self.fragments.get(&key) else {
                     break;
                 };
-                // Bunches may arrive out of order, but their original transport packet order must
-                // still move forward across one reconstructed stream. This keeps recent future
-                // fragments while preventing stale fragments from an older generation joining it.
-                if previous_packet_order.is_some_and(|previous| previous > stored.packet_order) {
+                // Reliable bunches can be retransmitted in a later transport packet after their
+                // continuation fragments have already arrived. Accept that bounded reordering,
+                // while preventing a sequence reused by a later generation from joining stale
+                // fragments retained in the cache.
+                let next_min = min_packet_order.map_or(stored.packet_order, |current: i64| {
+                    current.min(stored.packet_order)
+                });
+                let next_max = max_packet_order.map_or(stored.packet_order, |current: i64| {
+                    current.max(stored.packet_order)
+                });
+                if next_max - next_min > MAX_INVENTORY_FRAGMENT_PACKET_SPAN {
                     break;
                 }
-                previous_packet_order = Some(stored.packet_order);
+                min_packet_order = Some(next_min);
+                max_packet_order = Some(next_max);
                 let fragment = &stored.bunch;
                 let valid_flag = if index == 0 {
                     fragment.partial_flags == 0x09
@@ -4022,7 +4067,15 @@ impl PacketDecoder {
         let ids = character_ids_from_evidence_sources(&evidence, &final_tower_evidence);
         self.follow_up_damage
             .observe_characters(ids.iter().copied(), characters);
-        let outgoing = infer_outgoing(src, src_port, dst, local_ip, &ids, &self.client_endpoints);
+        let outgoing = infer_outgoing(
+            src,
+            src_port,
+            dst,
+            dst_port,
+            local_ip,
+            &ids,
+            &self.client_endpoints,
+        );
         if outgoing && !ids.is_empty() {
             self.client_endpoints.insert((src, src_port));
         }
@@ -6923,6 +6976,32 @@ mod tests {
     }
 
     #[test]
+    fn inventory_reassembly_accepts_a_late_retransmitted_start_fragment() {
+        let mut state = InventoryConnectionState::default();
+        assert!(
+            state
+                .push_bunches(4_684, vec![inventory_bunch(992, 0x08, 0xa2)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(4_685, vec![inventory_bunch(993, 0x08, 0xa3)])
+                .is_empty()
+        );
+        assert!(
+            state
+                .push_bunches(4_686, vec![inventory_bunch(994, 0x0c, 0xa4)])
+                .is_empty()
+        );
+
+        let completed = state.push_bunches(4_763, vec![inventory_bunch(991, 0x09, 0xa1)]);
+
+        assert_eq!(completed.len(), 1);
+        assert_eq!(completed[0].data, vec![0xa1, 0xa2, 0xa3, 0xa4]);
+        assert_eq!(completed[0].bit_len, 32);
+    }
+
+    #[test]
     fn inventory_reassembly_accepts_transport_packet_id_wrap() {
         let mut state = InventoryConnectionState::default();
         assert!(
@@ -8320,6 +8399,10 @@ mod tests {
             CaptureLinkType::RawIpv4
         );
         assert_eq!(
+            CaptureLinkType::from_npcap_datalink(DLT_IPV4).unwrap(),
+            CaptureLinkType::Ipv4
+        );
+        assert_eq!(
             CaptureLinkType::from_pcapng(DataLink::ETHERNET),
             Some(CaptureLinkType::Ethernet)
         );
@@ -8327,6 +8410,12 @@ mod tests {
             CaptureLinkType::from_pcapng(DataLink::RAW),
             Some(CaptureLinkType::RawIpv4)
         );
+        assert_eq!(
+            CaptureLinkType::from_pcapng(DataLink::IPV4),
+            Some(CaptureLinkType::Ipv4)
+        );
+        assert_eq!(CaptureLinkType::RawIpv4.pcapng_data_link(), DataLink::RAW);
+        assert_eq!(CaptureLinkType::Ipv4.pcapng_data_link(), DataLink::IPV4);
         assert_eq!(CaptureLinkType::from_pcapng(DataLink::NULL), None);
 
         let error = CaptureLinkType::from_npcap_datalink(0).unwrap_err();
@@ -8343,6 +8432,89 @@ mod tests {
         assert_eq!(
             parse_udp_ipv4(CaptureLinkType::Ethernet, &ethernet),
             parse_udp_ipv4(CaptureLinkType::RawIpv4, raw_ipv4)
+        );
+        assert_eq!(
+            parse_udp_ipv4(CaptureLinkType::RawIpv4, raw_ipv4),
+            parse_udp_ipv4(CaptureLinkType::Ipv4, raw_ipv4)
+        );
+
+        let mut ipv6 = raw_ipv4.to_vec();
+        ipv6[0] = 0x60;
+        assert_eq!(parse_udp_ipv4(CaptureLinkType::RawIpv4, &ipv6), None);
+    }
+
+    #[test]
+    fn pcapng_import_accepts_foreign_tun_linktype_ipv4() {
+        let directory = std::env::temp_dir().join(format!(
+            "nte-foreign-tun-import-test-{}-{}",
+            std::process::id(),
+            current_filetime_100ns()
+        ));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        struct Cleanup(std::path::PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+        let path = directory.join("foreign-tun.pcapng");
+        let capture_local_ip = Ipv4Addr::new(198, 18, 0, 2);
+        let remote_ip = Ipv4Addr::new(203, 0, 113, 9);
+        let ethernet = udp_ipv4_packet(b"Foreign_Tun", capture_local_ip, 50_000, remote_ip, 30_196);
+        let raw_ipv4 = &ethernet[14..];
+        {
+            let file = File::create(&path).expect("create pcapng fixture");
+            let mut writer =
+                PcapNgWriter::new(BufWriter::new(file)).expect("initialize pcapng fixture");
+            writer
+                .write_pcapng_block(InterfaceDescriptionBlock::new(
+                    DataLink::IPV4,
+                    CAPTURE_SNAPLEN,
+                ))
+                .expect("write IPv4 interface");
+            writer
+                .write_pcapng_block(EnhancedPacketBlock {
+                    interface_id: 0,
+                    timestamp: Duration::from_secs(1),
+                    original_len: raw_ipv4.len() as u32,
+                    data: Cow::Borrowed(raw_ipv4),
+                    options: Vec::new(),
+                })
+                .expect("write raw IPv4 packet");
+            writer.get_mut().flush().expect("flush pcapng fixture");
+        }
+
+        let (sender, receiver) = unbounded();
+        let handle = import_pcapng(
+            path,
+            CaptureResources {
+                characters: Arc::new(HashMap::new()),
+                ability_catalog: Arc::new(AbilityCatalog::default()),
+            },
+            Some(Ipv4Addr::new(192, 0, 2, 99)),
+            true,
+            false,
+            EngineEventSink::reliable(sender),
+            Arc::new(AtomicBool::new(false)),
+        );
+        handle.join().expect("pcapng import thread should finish");
+
+        let events = receiver.try_iter().collect::<Vec<_>>();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                EngineEvent::Packet(packet)
+                    if packet.decoded_text.contains("Foreign_Tun")
+                        && packet.direction == "C2S"
+            )),
+            "foreign TUN packet should reach the shared decoder: {events:#?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| !matches!(event, EngineEvent::Error(_))),
+            "foreign TUN import should not emit an error: {events:#?}"
         );
     }
 
@@ -10067,6 +10239,7 @@ mod tests {
             local_ip,
             50_000,
             remote_ip,
+            40_000,
             Some(local_ip),
             &[],
             &endpoints,
@@ -10075,16 +10248,27 @@ mod tests {
             remote_ip,
             40_000,
             local_ip,
+            50_000,
             Some(local_ip),
             &[1001],
             &endpoints,
         ));
-        assert!(infer_outgoing(
+        assert!(!infer_outgoing(
             remote_ip,
             40_000,
             local_ip,
+            50_000,
             None,
             &[1001],
+            &endpoints,
+        ));
+        assert!(infer_outgoing(
+            local_ip,
+            50_000,
+            remote_ip,
+            40_000,
+            None,
+            &[],
             &endpoints,
         ));
     }
