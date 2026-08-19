@@ -1,4 +1,5 @@
 #include "../src/signature_policy.hpp"
+#include "../src/ipc_transport_policy.hpp"
 #include "../src/offset_signatures.hpp"
 #include "../src/viewport_hook_policy.hpp"
 
@@ -8,6 +9,42 @@
 
 namespace
 {
+	constexpr int VIEWPORT_A = 1;
+	constexpr int VIEWPORT_B = 2;
+	constexpr int ORIGINAL_A = 3;
+	constexpr int ORIGINAL_B = 4;
+
+	constexpr bool OverlappedEpochCannotBeReusedBeforeCompletion()
+	{
+		nte::mods::ipc::OperationEpoch operation;
+		return operation.Begin(7) && !operation.Begin(7) &&
+			!operation.CanReuse() && operation.BelongsTo(7);
+	}
+
+	constexpr bool OverlappedEpochRejectsStaleCompletion()
+	{
+		nte::mods::ipc::OperationEpoch operation;
+		return operation.Begin(7) && !operation.Complete(6) &&
+			operation.BelongsTo(7) && operation.Complete(7) &&
+			operation.CanReuse() && operation.Begin(8);
+	}
+
+	constexpr bool ViewportOriginalIsBoundPerObject()
+	{
+		constexpr std::array<nte::hook::ViewportOriginalBinding, 2> bindings{{
+			{&VIEWPORT_A, &ORIGINAL_A},
+			{&VIEWPORT_B, &ORIGINAL_B},
+		}};
+		return nte::hook::FindViewportOriginal(
+			bindings.data(), bindings.size(), &VIEWPORT_A) == &ORIGINAL_A &&
+			nte::hook::FindViewportOriginal(
+				bindings.data(), bindings.size(), &VIEWPORT_B) == &ORIGINAL_B &&
+			nte::hook::CanReuseViewportBinding(
+				bindings[0], &VIEWPORT_A, &ORIGINAL_A) &&
+			!nte::hook::CanReuseViewportBinding(
+				bindings[0], &VIEWPORT_A, &ORIGINAL_B);
+	}
+
 	constexpr std::array<uint8_t, 6> PATTERN_BYTES{
 		0x48, 0x81, 0xEC, 0x00, 0x00, 0x00,
 	};
@@ -179,6 +216,9 @@ namespace
 	}
 
 	static_assert(MaskedBytesIgnoreVersionSpecificOperands());
+	static_assert(OverlappedEpochCannotBeReusedBeforeCompletion());
+	static_assert(OverlappedEpochRejectsStaleCompletion());
+	static_assert(ViewportOriginalIsBoundPerObject());
 	static_assert(FixedOpcodeChangesAreRejected());
 	static_assert(UniqueCandidateIsSelected());
 	static_assert(AmbiguousCandidatesFailClosed());

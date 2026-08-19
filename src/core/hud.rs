@@ -10,10 +10,13 @@ use serde::Serialize;
 use crate::{
     engine::model::{
         AbyssHalf, CharacterStats, CombatState, DpsTimeBasis, Hit, PartyCombatState,
-        TEAM_DPS_MAX_MEMBERS, TimelineSeries, is_qte_follow_up_damage_hit,
+        TEAM_DPS_MAX_MEMBERS, is_qte_follow_up_damage_hit,
     },
     storage::config::{HudConfig, HudModule},
 };
+
+#[cfg(test)]
+use crate::engine::model::TimelineSeries;
 
 pub const HUD_SNAPSHOT_VERSION: u32 = 3;
 pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
@@ -248,21 +251,12 @@ pub fn project_hud(
             HudDataState::Empty => None,
             HudDataState::Preview => Some(preview_timeline()),
             HudDataState::Live => {
-                let series = selected_half.map_or_else(
-                    || {
-                        state.timeline(
-                            options.timeline_bucket_seconds,
-                            options.dps_time_basis.subtracts_time_stop(),
-                        )
-                    },
-                    |half| {
-                        state.abyss.half(half).timeline(
-                            options.timeline_bucket_seconds,
-                            options.dps_time_basis.subtracts_time_stop(),
-                        )
-                    },
-                );
-                project_timeline(series)
+                let hits = selected_half.map_or(&state.hits, |half| &state.abyss.half(half).hits);
+                // The HUD contract does not expose engine markers or time-stop bands, and its
+                // timeline buckets have always used wall-clock widths. Aggregate the bounded HUD
+                // read model directly instead of first materializing every engine bucket while the
+                // authoritative state is locked.
+                project_live_timeline(hits, options.timeline_bucket_seconds)
             }
         }
     };
@@ -314,14 +308,19 @@ fn project_readout(
     separate_reaction_damage: bool,
     character_dps: impl Fn(&CharacterStats) -> f64,
 ) -> (Vec<HudCharacterSnapshot>, HudSummarySnapshot) {
+    let visible_character_ids = hits
+        .iter()
+        .filter(|hit| {
+            stats.contains_key(&hit.char_id)
+                && (hit.char_known || !is_qte_follow_up_damage_hit(hit))
+        })
+        .map(|hit| hit.char_id)
+        .collect::<HashSet<_>>();
     let mut rows = stats
         .values()
         .filter(|row| {
             !hidden_character_ids.contains(&row.char_id)
-                && hits.iter().any(|hit| {
-                    hit.char_id == row.char_id
-                        && (hit.char_known || !is_qte_follow_up_damage_hit(hit))
-                })
+                && visible_character_ids.contains(&row.char_id)
         })
         .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
         .filter(character_has_visible_totals)
@@ -420,6 +419,146 @@ fn preview_timeline() -> HudTimelineSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BoundedTimelineLayout {
+    base_bucket_seconds: f64,
+    base_bucket_count: usize,
+    group_size: usize,
+    bucket_seconds: f64,
+    bucket_count: usize,
+}
+
+impl BoundedTimelineLayout {
+    fn bucket_index(self, offset: f64) -> usize {
+        let base_index = ((offset.max(0.0) / self.base_bucket_seconds).floor() as usize)
+            .min(self.base_bucket_count.saturating_sub(1));
+        (base_index / self.group_size).min(self.bucket_count.saturating_sub(1))
+    }
+
+    fn bucket_bounds(self, index: usize) -> (f64, f64) {
+        let first_base_bucket = index.saturating_mul(self.group_size);
+        let end_base_bucket = index
+            .saturating_add(1)
+            .saturating_mul(self.group_size)
+            .min(self.base_bucket_count);
+        (
+            first_base_bucket as f64 * self.base_bucket_seconds,
+            end_base_bucket as f64 * self.base_bucket_seconds,
+        )
+    }
+}
+
+fn bounded_timeline_layout(
+    start: f64,
+    end: f64,
+    requested_bucket_seconds: f64,
+    max_buckets: usize,
+) -> Option<BoundedTimelineLayout> {
+    if !start.is_finite() || !end.is_finite() || max_buckets == 0 {
+        return None;
+    }
+    let base_bucket_seconds =
+        if requested_bucket_seconds.is_finite() && requested_bucket_seconds > 0.0 {
+            requested_bucket_seconds
+        } else {
+            1.0
+        };
+    let span = (end - start).max(0.0);
+    let base_bucket_count = ((span / base_bucket_seconds).floor() as usize).saturating_add(1);
+    let group_size = base_bucket_count.div_ceil(max_buckets).max(1);
+    let bucket_count = base_bucket_count.div_ceil(group_size);
+
+    Some(BoundedTimelineLayout {
+        base_bucket_seconds,
+        base_bucket_count,
+        group_size,
+        bucket_seconds: base_bucket_seconds * group_size as f64,
+        bucket_count,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct HudTimelineBucketAccumulator {
+    start_seconds: f64,
+    end_seconds: f64,
+    damage: f64,
+    hits: u64,
+}
+
+fn project_live_timeline(
+    hits: &VecDeque<Hit>,
+    requested_bucket_seconds: f64,
+) -> Option<HudTimelineSnapshot> {
+    let mut start: Option<f64> = None;
+    let mut end: Option<f64> = None;
+    for hit in hits
+        .iter()
+        .filter(|hit| !hit.direction.is_incoming() && hit.timestamp.is_finite())
+    {
+        start = Some(start.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
+        end = Some(end.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
+    }
+    let (start, end) = start.zip(end)?;
+    let layout = bounded_timeline_layout(
+        start,
+        end,
+        requested_bucket_seconds,
+        HUD_TIMELINE_MAX_BUCKETS,
+    )?;
+    let mut buckets = (0..layout.bucket_count)
+        .map(|index| {
+            let (start_seconds, end_seconds) = layout.bucket_bounds(index);
+            HudTimelineBucketAccumulator {
+                start_seconds,
+                end_seconds,
+                ..Default::default()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for hit in hits
+        .iter()
+        .filter(|hit| !hit.direction.is_incoming() && hit.timestamp.is_finite())
+    {
+        let damage = hit.total_damage();
+        if !damage.is_finite() {
+            continue;
+        }
+        let bucket = &mut buckets[layout.bucket_index(hit.timestamp - start)];
+        bucket.damage += damage;
+        bucket.hits = bucket.hits.saturating_add(1);
+    }
+
+    let buckets = buckets
+        .into_iter()
+        .map(|bucket| {
+            let start_seconds = finite_nonnegative(bucket.start_seconds);
+            let end_seconds = finite_nonnegative(bucket.end_seconds).max(start_seconds);
+            let damage = finite_nonnegative(bucket.damage);
+            HudTimelineBucketSnapshot {
+                start_seconds,
+                end_seconds,
+                damage,
+                dps: finite_nonnegative(damage / (end_seconds - start_seconds).max(0.001)),
+                hits: bucket.hits.to_string(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let duration_seconds = buckets
+        .last()
+        .map_or(0.0, |bucket| bucket.end_seconds)
+        .max(0.0);
+    let peak_dps = buckets.iter().map(|bucket| bucket.dps).fold(0.0, f64::max);
+
+    Some(HudTimelineSnapshot {
+        bucket_seconds: finite_nonnegative(layout.bucket_seconds),
+        duration_seconds,
+        peak_dps,
+        buckets,
+    })
+}
+
+#[cfg(test)]
 fn project_timeline(series: TimelineSeries) -> Option<HudTimelineSnapshot> {
     if series.buckets.is_empty() {
         return None;
@@ -492,7 +631,7 @@ fn finite_nonnegative(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::model::{HitCharacterSource, HitDirection};
+    use crate::engine::model::{AbyssEvent, HitCharacterSource, HitDirection, TimeStopEvent};
 
     fn hit(timestamp: f64, character_id: u32, damage: f64) -> Hit {
         Hit {
@@ -674,6 +813,9 @@ mod tests {
             state.push_hit(hit(index as f64, 1, 100.0));
         }
 
+        let legacy_projection =
+            project_timeline(state.timeline(1.0, true)).expect("legacy live timeline projection");
+
         let snapshot = project_hud(
             &state,
             &HudConfig::detailed(),
@@ -682,6 +824,7 @@ mod tests {
         );
         let timeline = snapshot.timeline.expect("live timeline");
 
+        assert_eq!(timeline, legacy_projection);
         assert!(timeline.buckets.len() <= HUD_TIMELINE_MAX_BUCKETS);
         assert_eq!(
             timeline
@@ -701,5 +844,125 @@ mod tests {
         );
         assert_eq!(timeline.duration_seconds, 121.0);
         assert!(timeline.peak_dps > 0.0);
+    }
+
+    #[test]
+    fn long_span_live_timeline_bounds_the_source_layout_before_allocation() {
+        const LONG_SPAN_SECONDS: f64 = 10_000_000.0;
+        const REQUESTED_BUCKET_SECONDS: f64 = 0.001;
+
+        let layout = bounded_timeline_layout(
+            0.0,
+            LONG_SPAN_SECONDS,
+            REQUESTED_BUCKET_SECONDS,
+            HUD_TIMELINE_MAX_BUCKETS,
+        )
+        .expect("bounded timeline layout");
+
+        assert_eq!(layout.bucket_count, HUD_TIMELINE_MAX_BUCKETS);
+        assert!(layout.bucket_seconds >= LONG_SPAN_SECONDS / HUD_TIMELINE_MAX_BUCKETS as f64);
+
+        let mut state = CombatState::default();
+        state.push_hit(hit(0.0, 1, 100.0));
+        state.push_hit(hit(LONG_SPAN_SECONDS / 2.0, 1, 250.0));
+        state.push_hit(hit(LONG_SPAN_SECONDS, 1, 400.0));
+
+        let timeline = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                timeline_bucket_seconds: REQUESTED_BUCKET_SECONDS,
+                ..HudProjectionOptions::default()
+            },
+        )
+        .timeline
+        .expect("long-span live timeline");
+
+        assert_eq!(timeline.buckets.len(), HUD_TIMELINE_MAX_BUCKETS);
+        assert_eq!(
+            timeline
+                .buckets
+                .iter()
+                .map(|bucket| bucket.damage)
+                .sum::<f64>(),
+            750.0
+        );
+        assert_eq!(
+            timeline
+                .buckets
+                .iter()
+                .map(|bucket| bucket.hits.parse::<u64>().expect("bucket hits"))
+                .sum::<u64>(),
+            3
+        );
+    }
+
+    #[test]
+    fn bounded_hud_timeline_keeps_wall_clock_and_engine_annotation_semantics() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(hit(1.0, 1, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 1.25,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 1.75,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(hit(2.0, 1, 200.0));
+        state.apply_abyss_event(AbyssEvent::Success { timestamp: 3.0 });
+        state.apply_abyss_event(AbyssEvent::Exit { timestamp: 4.0 });
+
+        let wall_clock = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                dps_time_basis: DpsTimeBasis::WallClock,
+                ..HudProjectionOptions::default()
+            },
+        )
+        .timeline
+        .expect("wall-clock HUD timeline");
+        let subtract_time_stop = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                dps_time_basis: DpsTimeBasis::SubtractTimeStop,
+                ..HudProjectionOptions::default()
+            },
+        )
+        .timeline
+        .expect("time-stop-adjusted HUD timeline");
+
+        assert_eq!(wall_clock, subtract_time_stop);
+        assert_eq!(wall_clock.duration_seconds, 2.0);
+        assert_eq!(wall_clock.buckets[0].dps, 100.0);
+
+        let engine_timeline = state.timeline(1.0, true);
+        assert_eq!(engine_timeline.time_stop_intervals.len(), 1);
+        assert!((engine_timeline.time_stop_intervals[0].start_offset - 0.25).abs() < 1e-9);
+        assert!((engine_timeline.time_stop_intervals[0].end_offset - 0.75).abs() < 1e-9);
+        assert!(
+            engine_timeline
+                .markers
+                .iter()
+                .any(|marker| marker.label == "Ascending Line" && marker.offset == 0.0)
+        );
+        assert!(
+            engine_timeline
+                .markers
+                .iter()
+                .any(|marker| marker.label == "Cleared" && (marker.offset - 1.0).abs() < 1e-9)
+        );
     }
 }

@@ -465,6 +465,7 @@ impl Runtime {
             0
         };
         match signal {
+            CoreSignal::Unchanged => {}
             CoreSignal::StateChanged => {
                 let battle_projection_changed = self.state.hits_generation
                     != previous_hits_generation

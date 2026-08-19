@@ -910,6 +910,7 @@ impl LiveCaptureInner {
                 | CoreSignal::CaptureStopped
         );
         let affects_frontend_projection = match signal {
+            CoreSignal::Unchanged => false,
             CoreSignal::StateChanged => true,
             CoreSignal::InventoryReplaced
             | CoreSignal::InventoryCharactersReplaced

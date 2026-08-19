@@ -11,6 +11,26 @@ const MAX_COMBAT_HITS: usize = 50_000;
 /// subsequent push. This turns the O(n) rebuild from per-hit into amortized O(1) at the cap while
 /// keeping memory bounded by `MAX_COMBAT_HITS`.
 const COMBAT_HITS_RETAIN: usize = 46_000;
+/// Follow-up and server-correction producers retain at most 256 pending hits.
+/// Keep twice that window so a reliable event burst can overtake newly decoded
+/// hits without turning a single mutation into a scan of all 50,000 retained
+/// hits. Records store immutable locators and a few source aliases, so later
+/// corrections can still find a hit after an earlier correction changed its
+/// damage/HP fields.
+const RECENT_HIT_MUTATION_WINDOW: usize = 512;
+const RECENT_HIT_SOURCE_ALIASES: usize = 4;
+const MAX_DEBUG_PACKETS: usize = 10_000;
+/// Debug packets are an optional diagnostic read model; raw PCAPNG is the
+/// authoritative export. Bound both count and retained heap bytes so an
+/// explicit FullDebug session cannot accumulate gigabytes of hex/text.
+const MAX_DEBUG_PACKET_BYTES: usize = 16 * 1024 * 1024;
+
+#[cfg(test)]
+std::thread_local! {
+    static COMBAT_TOTAL_REBUILD_COUNT: std::cell::Cell<usize> = const {
+        std::cell::Cell::new(0)
+    };
+}
 
 /// Compact, exportable team DPS snapshot used to predict abyss clear time.
 /// Deliberately holds no packets or per-hit data — only the latest total DPS and
@@ -223,6 +243,24 @@ pub struct PacketDebug {
     pub payload_preview: String,
     pub payload_hex: String,
     pub decoded_text: String,
+}
+
+impl PacketDebug {
+    fn retained_heap_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.source.capacity())
+            .saturating_add(self.destination.capacity())
+            .saturating_add(self.direction.capacity())
+            .saturating_add(
+                self.declared_ids
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<u32>()),
+            )
+            .saturating_add(self.note.capacity())
+            .saturating_add(self.payload_preview.capacity())
+            .saturating_add(self.payload_hex.capacity())
+            .saturating_add(self.decoded_text.capacity())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1097,6 +1135,10 @@ pub fn reaction_damage_for_hit(hit: &Hit) -> f64 {
     primary + follow_up
 }
 
+fn direct_damage_for_hit(hit: &Hit) -> f64 {
+    (hit.total_damage() - reaction_damage_for_hit(hit)).max(0.0)
+}
+
 /// The `attack_type` classification used for "倾陷伤害" (Unbalance/Tenacity
 /// burst) ticks — see [`is_unbalance_damage_hit`].
 pub const UNBALANCE_ATTACK_TYPE: &str = "倾陷伤害";
@@ -1192,7 +1234,7 @@ fn update_combat_totals(
         row.attributed_hits += 1;
         row.attributed_damage += damage;
 
-        let direct_damage = (damage - reaction_damage_for_hit(hit)).max(0.0);
+        let direct_damage = direct_damage_for_hit(hit);
         if direct_damage > 0.0 {
             if row.direct_hits == 0 {
                 row.direct_first_hit = Some(hit.timestamp);
@@ -1221,6 +1263,8 @@ fn rebuild_combat_totals(
     total_damage: &mut f64,
     total_damage_taken: &mut f64,
 ) {
+    #[cfg(test)]
+    COMBAT_TOTAL_REBUILD_COUNT.with(|count| count.set(count.get().saturating_add(1)));
     stats.clear();
     *started_at = None;
     *ended_at = None;
@@ -1235,6 +1279,137 @@ fn rebuild_combat_totals(
             total_damage_taken,
             hit,
         );
+    }
+}
+
+fn add_damage_delta(value: &mut f64, delta: f64) {
+    *value += delta;
+    // Repeated floating-point corrections can leave a negative zero or a tiny
+    // residual even though every authoritative damage input is non-negative.
+    if value.abs() <= 1e-9 {
+        *value = 0.0;
+    }
+}
+
+fn direct_totals_for_character(
+    hits: &VecDeque<Hit>,
+    char_id: u32,
+) -> (u64, f64, Option<f64>, Option<f64>) {
+    let mut count = 0_u64;
+    let mut damage = 0.0;
+    let mut first: Option<f64> = None;
+    let mut last: Option<f64> = None;
+    for hit in hits.iter().filter(|hit| {
+        hit.char_id == char_id
+            && !hit.direction.is_incoming()
+            && !is_unbalance_damage_hit(hit)
+            && matches!(hit.direction, HitDirection::Outgoing)
+            && hit.char_known
+    }) {
+        let direct_damage = direct_damage_for_hit(hit);
+        if direct_damage <= 0.0 {
+            continue;
+        }
+        count = count.saturating_add(1);
+        damage += direct_damage;
+        first = Some(first.map_or(hit.timestamp, |value| value.min(hit.timestamp)));
+        last = Some(last.map_or(hit.timestamp, |value| value.max(hit.timestamp)));
+    }
+    (count, damage, first, last)
+}
+
+/// Applies a mutation that cannot change hit ownership, direction or timestamp
+/// by adjusting only that hit's aggregate contribution. A full rebuild remains
+/// available for trim/import/recovery, but normal follow-up/correction traffic
+/// is O(1); the only scan below is the rare direct-damage true -> false boundary
+/// needed to recover that character's first/last direct timestamp.
+#[allow(clippy::too_many_arguments)]
+fn apply_combat_totals_delta(
+    hits: &VecDeque<Hit>,
+    stats: &mut HashMap<u32, CharacterStats>,
+    started_at: &mut Option<f64>,
+    ended_at: &mut Option<f64>,
+    total_damage: &mut f64,
+    total_damage_taken: &mut f64,
+    mutation: HitAggregateMutation,
+) {
+    let before = mutation.before;
+    let after = mutation.after;
+    if before.char_id != after.char_id
+        || before.timestamp.to_bits() != after.timestamp.to_bits()
+        || before.incoming != after.incoming
+        || before.character_counted != after.character_counted
+        || before.attributed != after.attributed
+    {
+        // Internal recovery only: the public mutation helpers do not alter any
+        // of these structural fields. Rebuild rather than propagating a partial
+        // aggregate if a future mutation violates that contract.
+        rebuild_combat_totals(
+            hits,
+            stats,
+            started_at,
+            ended_at,
+            total_damage,
+            total_damage_taken,
+        );
+        return;
+    }
+    let damage_delta = after.total_damage - before.total_damage;
+    let Some(row) = stats.get_mut(&after.char_id) else {
+        rebuild_combat_totals(
+            hits,
+            stats,
+            started_at,
+            ended_at,
+            total_damage,
+            total_damage_taken,
+        );
+        return;
+    };
+
+    if after.incoming {
+        add_damage_delta(&mut row.damage_taken, damage_delta);
+        add_damage_delta(total_damage_taken, damage_delta);
+        return;
+    }
+
+    add_damage_delta(total_damage, damage_delta);
+    if !after.character_counted {
+        return;
+    }
+    add_damage_delta(&mut row.damage, damage_delta);
+    if !after.attributed {
+        return;
+    }
+    add_damage_delta(&mut row.attributed_damage, damage_delta);
+
+    match (before.direct_counted, after.direct_counted) {
+        (false, true) => {
+            row.direct_hits = row.direct_hits.saturating_add(1);
+            add_damage_delta(&mut row.direct_damage, after.direct_damage);
+            row.direct_first_hit = Some(
+                row.direct_first_hit
+                    .map_or(after.timestamp, |value| value.min(after.timestamp)),
+            );
+            row.direct_last_hit = Some(
+                row.direct_last_hit
+                    .map_or(after.timestamp, |value| value.max(after.timestamp)),
+            );
+        }
+        (true, false) => {
+            let (count, damage, first, last) = direct_totals_for_character(hits, after.char_id);
+            row.direct_hits = count;
+            row.direct_damage = damage;
+            row.direct_first_hit = first;
+            row.direct_last_hit = last;
+        }
+        (true, true) => {
+            add_damage_delta(
+                &mut row.direct_damage,
+                after.direct_damage - before.direct_damage,
+            );
+        }
+        (false, false) => {}
     }
 }
 
@@ -1458,38 +1633,44 @@ impl PartyCombatState {
         self.sync_clock_with_time_stops();
     }
 
-    pub fn apply_follow_up(&mut self, follow_up: &HitFollowUp) -> bool {
-        let updated = apply_follow_up_to_hits(&mut self.hits, follow_up);
-        if updated {
+    fn apply_follow_up_at(&mut self, locator: HitLocator, follow_up: &HitFollowUp) -> bool {
+        let mutation = apply_follow_up_to_recent_hit(&mut self.hits, locator, follow_up);
+        if let Some(mutation) = mutation {
             self.hits_generation = self.hits_generation.wrapping_add(1);
-            rebuild_combat_totals(
+            apply_combat_totals_delta(
                 &self.hits,
                 &mut self.stats,
                 &mut self.started_at,
                 &mut self.ended_at,
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
+                mutation,
             );
-            self.sync_clock_with_time_stops();
+            return true;
         }
-        updated
+        false
     }
 
-    pub fn apply_damage_correction(&mut self, correction: &HitDamageCorrection) -> bool {
-        let updated = apply_damage_correction_to_hits(&mut self.hits, correction);
-        if updated {
+    fn apply_damage_correction_at(
+        &mut self,
+        locator: HitLocator,
+        correction: &HitDamageCorrection,
+    ) -> bool {
+        let mutation = apply_damage_correction_to_recent_hit(&mut self.hits, locator, correction);
+        if let Some(mutation) = mutation {
             self.hits_generation = self.hits_generation.wrapping_add(1);
-            rebuild_combat_totals(
+            apply_combat_totals_delta(
                 &self.hits,
                 &mut self.stats,
                 &mut self.started_at,
                 &mut self.ended_at,
                 &mut self.total_damage,
                 &mut self.total_damage_taken,
+                mutation,
             );
-            self.sync_clock_with_time_stops();
+            return true;
         }
-        updated
+        false
     }
 
     fn apply_enemy_target_projection_result(&mut self, result: EnemyTargetProjectionResult) {
@@ -1721,10 +1902,8 @@ impl AbyssRunState {
         }
     }
 
-    pub fn push_hit(&mut self, hit: Hit) {
-        let Some(active_half) = self.active_half else {
-            return;
-        };
+    pub fn push_hit(&mut self, hit: Hit) -> Option<AbyssHalf> {
+        let active_half = self.active_half?;
         let half = if hit.char_known {
             *self
                 .character_halves
@@ -1734,6 +1913,7 @@ impl AbyssRunState {
             active_half
         };
         self.half_mut(half).push_hit(hit);
+        Some(half)
     }
 
     pub fn apply_time_stop_event(&mut self, event: &TimeStopEvent) {
@@ -2103,6 +2283,11 @@ pub struct CombatState {
     pub time_stop_events: Vec<TimeStopEvent>,
     time_stop: TimeStopTracker,
     enemy_telemetry: EnemyTelemetryTracker,
+    packet_debug_bytes: usize,
+    /// Bounded mutation index for delayed follow-up/correction events. This is
+    /// runtime-only state and is rebuilt naturally by the import/replay push
+    /// path; it is never part of a persisted or cross-boundary contract.
+    recent_hit_records: VecDeque<RecentHitRecord>,
 }
 
 impl CombatState {
@@ -2110,7 +2295,7 @@ impl CombatState {
         if let Some(target) = self.enemy_telemetry.take_hit_target_for_hit(&hit) {
             project_enemy_hit_target(&mut hit, &target);
         }
-        self.abyss.push_hit(hit.clone());
+        let abyss_half = self.abyss.push_hit(hit.clone());
         update_combat_totals(
             &mut self.stats,
             &mut self.started_at,
@@ -2119,6 +2304,7 @@ impl CombatState {
             &mut self.total_damage_taken,
             &hit,
         );
+        remember_recent_hit(&mut self.recent_hit_records, &hit, abyss_half);
         self.hits.push_back(hit);
         self.hits_generation = self.hits_generation.wrapping_add(1);
         if self.hits.len() > MAX_COMBAT_HITS {
@@ -2137,49 +2323,120 @@ impl CombatState {
         self.sync_clock_with_time_stops();
     }
 
-    pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) {
-        let updated = apply_follow_up_to_hits(&mut self.hits, &follow_up);
-        if updated {
-            self.hits_generation = self.hits_generation.wrapping_add(1);
-            rebuild_combat_totals(
-                &self.hits,
-                &mut self.stats,
-                &mut self.started_at,
-                &mut self.ended_at,
-                &mut self.total_damage,
-                &mut self.total_damage_taken,
-            );
-            self.sync_clock_with_time_stops();
+    fn locate_recent_hit(
+        &mut self,
+        source: HitSourceIdentity,
+    ) -> Option<(usize, HitLocator, Option<AbyssHalf>)> {
+        if let Some(index) = self
+            .recent_hit_records
+            .iter()
+            .rposition(|record| record.matches_source(source))
+        {
+            let record = self.recent_hit_records[index];
+            return Some((index, record.locator, record.abyss_half));
         }
-        self.abyss.first_half.apply_follow_up(&follow_up);
-        self.abyss.second_half.apply_follow_up(&follow_up);
+
+        // Recovery path for states constructed by older in-memory fixtures or
+        // an internal index invariant failure. The scan is deliberately capped;
+        // an unbounded miss must not stall the capture reducer under its hot
+        // event/state locks.
+        let locator = find_recent_hit_locator(&self.hits, source)?;
+        let abyss_half = if recent_hits_contain_locator(&self.abyss.first_half.hits, locator) {
+            Some(AbyssHalf::First)
+        } else if recent_hits_contain_locator(&self.abyss.second_half.hits, locator) {
+            Some(AbyssHalf::Second)
+        } else {
+            None
+        };
+        let mut record = RecentHitRecord::from_source(locator, source, abyss_half);
+        if let Some(hit) = find_recent_hit(&self.hits, locator) {
+            record.remember_source(HitSourceIdentity::from(hit));
+        }
+        push_recent_hit_record(&mut self.recent_hit_records, record);
+        let index = self.recent_hit_records.len().saturating_sub(1);
+        Some((index, locator, abyss_half))
     }
 
-    pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) {
-        let updated = apply_damage_correction_to_hits(&mut self.hits, &correction);
-        if updated {
-            self.damage_correction_count = self.damage_correction_count.saturating_add(1);
-            self.hits_generation = self.hits_generation.wrapping_add(1);
-            rebuild_combat_totals(
-                &self.hits,
-                &mut self.stats,
-                &mut self.started_at,
-                &mut self.ended_at,
-                &mut self.total_damage,
-                &mut self.total_damage_taken,
-            );
-            self.sync_clock_with_time_stops();
+    pub fn apply_follow_up(&mut self, follow_up: HitFollowUp) -> bool {
+        let source = HitSourceIdentity::from(&follow_up);
+        let Some((record_index, locator, abyss_half)) = self.locate_recent_hit(source) else {
+            return false;
+        };
+        let Some(mutation) = apply_follow_up_to_recent_hit(&mut self.hits, locator, &follow_up)
+        else {
+            return false;
+        };
+
+        self.hits_generation = self.hits_generation.wrapping_add(1);
+        apply_combat_totals_delta(
+            &self.hits,
+            &mut self.stats,
+            &mut self.started_at,
+            &mut self.ended_at,
+            &mut self.total_damage,
+            &mut self.total_damage_taken,
+            mutation,
+        );
+        self.recent_hit_records[record_index].remember_source(mutation.after_source);
+        if let Some(half) = abyss_half {
+            self.abyss
+                .half_mut(half)
+                .apply_follow_up_at(locator, &follow_up);
         }
-        self.abyss.first_half.apply_damage_correction(&correction);
-        self.abyss.second_half.apply_damage_correction(&correction);
+        true
     }
 
-    pub fn push_packet(&mut self, packet: PacketDebug) {
+    pub fn apply_damage_correction(&mut self, correction: HitDamageCorrection) -> bool {
+        let source = HitSourceIdentity::from(&correction);
+        let Some((record_index, locator, abyss_half)) = self.locate_recent_hit(source) else {
+            return false;
+        };
+        let Some(mutation) =
+            apply_damage_correction_to_recent_hit(&mut self.hits, locator, &correction)
+        else {
+            return false;
+        };
+
+        self.damage_correction_count = self.damage_correction_count.saturating_add(1);
+        self.hits_generation = self.hits_generation.wrapping_add(1);
+        apply_combat_totals_delta(
+            &self.hits,
+            &mut self.stats,
+            &mut self.started_at,
+            &mut self.ended_at,
+            &mut self.total_damage,
+            &mut self.total_damage_taken,
+            mutation,
+        );
+        self.recent_hit_records[record_index].remember_source(mutation.after_source);
+        if let Some(half) = abyss_half {
+            self.abyss
+                .half_mut(half)
+                .apply_damage_correction_at(locator, &correction);
+        }
+        true
+    }
+
+    pub fn push_packet(&mut self, packet: PacketDebug) -> bool {
+        let retained_bytes = packet.retained_heap_bytes();
+        if retained_bytes > MAX_DEBUG_PACKET_BYTES {
+            return false;
+        }
+        self.packet_debug_bytes = self.packet_debug_bytes.saturating_add(retained_bytes);
         self.packets.push_back(packet);
         self.packets_generation = self.packets_generation.wrapping_add(1);
-        while self.packets.len() > 10_000 {
-            self.packets.pop_front();
+        while self.packets.len() > MAX_DEBUG_PACKETS
+            || self.packet_debug_bytes > MAX_DEBUG_PACKET_BYTES
+        {
+            let Some(removed) = self.packets.pop_front() else {
+                self.packet_debug_bytes = 0;
+                break;
+            };
+            self.packet_debug_bytes = self
+                .packet_debug_bytes
+                .saturating_sub(removed.retained_heap_bytes());
         }
+        true
     }
 
     pub fn replace_empty_curtain(&mut self, items: Vec<EmptyCurtainItem>) {
@@ -2337,16 +2594,29 @@ impl CombatState {
             .first_half
             .hits
             .iter()
-            .chain(self.abyss.second_half.hits.iter())
             .cloned()
+            .map(|hit| (hit, AbyssHalf::First))
+            .chain(
+                self.abyss
+                    .second_half
+                    .hits
+                    .iter()
+                    .cloned()
+                    .map(|hit| (hit, AbyssHalf::Second)),
+            )
             .collect::<Vec<_>>();
         hits.sort_by(|left, right| {
-            left.timestamp
-                .total_cmp(&right.timestamp)
-                .then_with(|| left.byte_offset.cmp(&right.byte_offset))
-                .then_with(|| left.bit_shift.cmp(&right.bit_shift))
+            left.0
+                .timestamp
+                .total_cmp(&right.0.timestamp)
+                .then_with(|| left.0.byte_offset.cmp(&right.0.byte_offset))
+                .then_with(|| left.0.bit_shift.cmp(&right.0.bit_shift))
         });
-        self.hits = hits.into();
+        self.recent_hit_records.clear();
+        for (hit, half) in hits.iter().rev().take(RECENT_HIT_MUTATION_WINDOW).rev() {
+            remember_recent_hit(&mut self.recent_hit_records, hit, Some(*half));
+        }
+        self.hits = hits.into_iter().map(|(hit, _)| hit).collect();
         self.hits_generation = self.hits_generation.wrapping_add(1);
         rebuild_combat_totals(
             &self.hits,
@@ -2474,6 +2744,9 @@ impl CombatState {
                 self.abyss.character_halves.insert(hit.char_id, half);
             }
             self.abyss.half_mut(half).push_hit(hit);
+        }
+        for record in &mut self.recent_hit_records {
+            record.abyss_half = Some(half);
         }
         self.abyss.half_mut(half).time_stop = self.time_stop.clone();
         self.abyss.half_mut(half).sync_clock_with_time_stops();
@@ -2839,40 +3112,235 @@ impl EngineEvent {
     }
 }
 
-fn apply_follow_up_to_hits(hits: &mut VecDeque<Hit>, follow_up: &HitFollowUp) -> bool {
-    let Some(hit) = hits
-        .iter_mut()
-        .rev()
-        .find(|hit| hit_matches_follow_up_source(hit, follow_up))
-    else {
-        return false;
-    };
-    hit.follow_up_damage += follow_up.damage;
-    hit.follow_up_timestamp = Some(follow_up.timestamp);
-    hit.follow_up_damage_name = follow_up.damage_name.clone();
-    hit.follow_up_attack_type = follow_up.attack_type.clone();
-    hit.follow_up_damage_attribute = follow_up.damage_attribute.clone();
-    hit.target_hp_after = follow_up.target_hp_after;
-    hit.target_hp_percent = follow_up.target_hp_percent;
-    true
+#[derive(Clone, Copy, Debug)]
+struct HitAggregateContribution {
+    char_id: u32,
+    timestamp: f64,
+    total_damage: f64,
+    incoming: bool,
+    character_counted: bool,
+    attributed: bool,
+    direct_counted: bool,
+    direct_damage: f64,
 }
 
-fn apply_damage_correction_to_hits(
-    hits: &mut VecDeque<Hit>,
-    correction: &HitDamageCorrection,
-) -> bool {
-    let Some(hit) = hits
-        .iter_mut()
+impl From<&Hit> for HitAggregateContribution {
+    fn from(hit: &Hit) -> Self {
+        let incoming = hit.direction.is_incoming();
+        let character_counted = !incoming && !is_unbalance_damage_hit(hit);
+        let attributed =
+            character_counted && matches!(hit.direction, HitDirection::Outgoing) && hit.char_known;
+        let direct_damage = if attributed {
+            direct_damage_for_hit(hit)
+        } else {
+            0.0
+        };
+        Self {
+            char_id: hit.char_id,
+            timestamp: hit.timestamp,
+            total_damage: hit.total_damage(),
+            incoming,
+            character_counted,
+            attributed,
+            direct_counted: direct_damage > 0.0,
+            direct_damage,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HitAggregateMutation {
+    before: HitAggregateContribution,
+    after: HitAggregateContribution,
+    after_source: HitSourceIdentity,
+}
+
+impl HitAggregateMutation {
+    fn new(before: HitAggregateContribution, hit: &Hit) -> Self {
+        Self {
+            before,
+            after: HitAggregateContribution::from(hit),
+            after_source: HitSourceIdentity::from(hit),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HitLocator {
+    char_id: u32,
+    timestamp_bits: u64,
+    byte_offset: usize,
+    bit_shift: u8,
+    gameplay_effect_index: Option<u32>,
+    target_max_hp_bits: u64,
+}
+
+impl HitLocator {
+    fn matches(self, hit: &Hit) -> bool {
+        hit.char_id == self.char_id
+            && hit.timestamp.to_bits() == self.timestamp_bits
+            && hit.byte_offset == self.byte_offset
+            && hit.bit_shift == self.bit_shift
+            && hit.gameplay_effect_index == self.gameplay_effect_index
+            && hit.target_max_hp.to_bits() == self.target_max_hp_bits
+    }
+}
+
+impl From<&Hit> for HitLocator {
+    fn from(hit: &Hit) -> Self {
+        Self {
+            char_id: hit.char_id,
+            timestamp_bits: hit.timestamp.to_bits(),
+            byte_offset: hit.byte_offset,
+            bit_shift: hit.bit_shift,
+            gameplay_effect_index: hit.gameplay_effect_index,
+            target_max_hp_bits: hit.target_max_hp.to_bits(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RecentHitRecord {
+    locator: HitLocator,
+    sources: [Option<HitSourceIdentity>; RECENT_HIT_SOURCE_ALIASES],
+    next_source: usize,
+    abyss_half: Option<AbyssHalf>,
+}
+
+impl RecentHitRecord {
+    fn from_hit(hit: &Hit, abyss_half: Option<AbyssHalf>) -> Self {
+        Self::from_source(
+            HitLocator::from(hit),
+            HitSourceIdentity::from(hit),
+            abyss_half,
+        )
+    }
+
+    fn from_source(
+        locator: HitLocator,
+        source: HitSourceIdentity,
+        abyss_half: Option<AbyssHalf>,
+    ) -> Self {
+        let mut sources = [None; RECENT_HIT_SOURCE_ALIASES];
+        sources[0] = Some(source);
+        Self {
+            locator,
+            sources,
+            next_source: 1,
+            abyss_half,
+        }
+    }
+
+    fn matches_source(self, source: HitSourceIdentity) -> bool {
+        self.sources
+            .iter()
+            .flatten()
+            .any(|candidate| candidate.matches_source(source))
+    }
+
+    fn remember_source(&mut self, source: HitSourceIdentity) {
+        if self.matches_source(source) {
+            return;
+        }
+        if let Some(index) = self.sources.iter().position(Option::is_none) {
+            self.sources[index] = Some(source);
+            self.next_source = (index + 1) % RECENT_HIT_SOURCE_ALIASES;
+            return;
+        }
+        self.sources[self.next_source] = Some(source);
+        self.next_source = (self.next_source + 1) % RECENT_HIT_SOURCE_ALIASES;
+    }
+}
+
+fn push_recent_hit_record(records: &mut VecDeque<RecentHitRecord>, record: RecentHitRecord) {
+    records.push_back(record);
+    while records.len() > RECENT_HIT_MUTATION_WINDOW {
+        records.pop_front();
+    }
+}
+
+fn remember_recent_hit(
+    records: &mut VecDeque<RecentHitRecord>,
+    hit: &Hit,
+    abyss_half: Option<AbyssHalf>,
+) {
+    push_recent_hit_record(records, RecentHitRecord::from_hit(hit, abyss_half));
+}
+
+fn find_recent_hit(hits: &VecDeque<Hit>, locator: HitLocator) -> Option<&Hit> {
+    hits.iter()
         .rev()
-        .find(|hit| hit_matches_damage_correction_source(hit, correction))
-    else {
-        return false;
-    };
+        .take(RECENT_HIT_MUTATION_WINDOW)
+        .find(|hit| locator.matches(hit))
+}
+
+fn find_recent_hit_mut(hits: &mut VecDeque<Hit>, locator: HitLocator) -> Option<&mut Hit> {
+    hits.iter_mut()
+        .rev()
+        .take(RECENT_HIT_MUTATION_WINDOW)
+        .find(|hit| locator.matches(hit))
+}
+
+fn recent_hits_contain_locator(hits: &VecDeque<Hit>, locator: HitLocator) -> bool {
+    find_recent_hit(hits, locator).is_some()
+}
+
+fn find_recent_hit_locator(hits: &VecDeque<Hit>, source: HitSourceIdentity) -> Option<HitLocator> {
+    hits.iter()
+        .rev()
+        .take(RECENT_HIT_MUTATION_WINDOW)
+        .find(|hit| source.matches_hit(hit))
+        .map(HitLocator::from)
+}
+
+fn apply_follow_up_to_recent_hit(
+    hits: &mut VecDeque<Hit>,
+    locator: HitLocator,
+    follow_up: &HitFollowUp,
+) -> Option<HitAggregateMutation> {
+    let hit = find_recent_hit_mut(hits, locator)?;
+    let next_follow_up_damage = hit.follow_up_damage + follow_up.damage;
+    let changed = hit.follow_up_damage.to_bits() != next_follow_up_damage.to_bits()
+        || hit.follow_up_timestamp.map(f64::to_bits) != Some(follow_up.timestamp.to_bits())
+        || hit.follow_up_damage_name != follow_up.damage_name
+        || hit.follow_up_attack_type != follow_up.attack_type
+        || hit.follow_up_damage_attribute != follow_up.damage_attribute
+        || hit.target_hp_after.to_bits() != follow_up.target_hp_after.to_bits()
+        || hit.target_hp_percent.to_bits() != follow_up.target_hp_percent.to_bits();
+    if !changed {
+        return None;
+    }
+    let before = HitAggregateContribution::from(&*hit);
+    hit.follow_up_damage = next_follow_up_damage;
+    hit.follow_up_timestamp = Some(follow_up.timestamp);
+    hit.follow_up_damage_name.clone_from(&follow_up.damage_name);
+    hit.follow_up_attack_type.clone_from(&follow_up.attack_type);
+    hit.follow_up_damage_attribute
+        .clone_from(&follow_up.damage_attribute);
+    hit.target_hp_after = follow_up.target_hp_after;
+    hit.target_hp_percent = follow_up.target_hp_percent;
+    Some(HitAggregateMutation::new(before, hit))
+}
+
+fn apply_damage_correction_to_recent_hit(
+    hits: &mut VecDeque<Hit>,
+    locator: HitLocator,
+    correction: &HitDamageCorrection,
+) -> Option<HitAggregateMutation> {
+    let hit = find_recent_hit_mut(hits, locator)?;
+    let changed = hit.damage.to_bits() != correction.damage.to_bits()
+        || hit.target_hp_before.to_bits() != correction.target_hp_before.to_bits()
+        || hit.target_hp_after.to_bits() != correction.target_hp_after.to_bits()
+        || hit.target_hp_percent.to_bits() != correction.target_hp_percent.to_bits();
+    if !changed {
+        return None;
+    }
+    let before = HitAggregateContribution::from(&*hit);
     hit.damage = correction.damage;
     hit.target_hp_before = correction.target_hp_before;
     hit.target_hp_after = correction.target_hp_after;
     hit.target_hp_percent = correction.target_hp_percent;
-    true
+    Some(HitAggregateMutation::new(before, hit))
 }
 
 /// Identifies the `Hit` a follow-up or damage correction was derived from.
@@ -2886,6 +3354,7 @@ fn apply_damage_correction_to_hits(
 /// damage/HP reconciliation mechanisms are now mutually exclusive per boss-HP
 /// update (see `PacketDecoder::reconcile_boss_hp_updates`) specifically so a
 /// hit's fields never get mutated out from under a still-pending match.
+#[derive(Clone, Copy, Debug)]
 struct HitSourceIdentity {
     char_id: u32,
     timestamp: f64,
@@ -2897,7 +3366,7 @@ struct HitSourceIdentity {
 }
 
 impl HitSourceIdentity {
-    fn matches(&self, hit: &Hit) -> bool {
+    fn matches_hit(self, hit: &Hit) -> bool {
         hit.char_id == self.char_id
             && (hit.timestamp - self.timestamp).abs() <= 0.001
             && hit.gameplay_effect_index == self.gameplay_effect_index
@@ -2905,6 +3374,30 @@ impl HitSourceIdentity {
             && (hit.target_hp_before - self.target_hp_before).abs() <= 0.5
             && (hit.target_hp_after - self.target_hp_after).abs() <= 0.5
             && (hit.target_max_hp - self.target_max_hp).abs() <= 0.5
+    }
+
+    fn matches_source(self, other: Self) -> bool {
+        self.char_id == other.char_id
+            && (self.timestamp - other.timestamp).abs() <= 0.001
+            && self.gameplay_effect_index == other.gameplay_effect_index
+            && (self.damage - other.damage).abs() <= 0.5
+            && (self.target_hp_before - other.target_hp_before).abs() <= 0.5
+            && (self.target_hp_after - other.target_hp_after).abs() <= 0.5
+            && (self.target_max_hp - other.target_max_hp).abs() <= 0.5
+    }
+}
+
+impl From<&Hit> for HitSourceIdentity {
+    fn from(hit: &Hit) -> Self {
+        Self {
+            char_id: hit.char_id,
+            timestamp: hit.timestamp,
+            gameplay_effect_index: hit.gameplay_effect_index,
+            damage: hit.damage,
+            target_hp_before: hit.target_hp_before,
+            target_hp_after: hit.target_hp_after,
+            target_max_hp: hit.target_max_hp,
+        }
     }
 }
 
@@ -2934,14 +3427,6 @@ impl From<&HitDamageCorrection> for HitSourceIdentity {
             target_max_hp: correction.source_target_max_hp,
         }
     }
-}
-
-fn hit_matches_follow_up_source(hit: &Hit, follow_up: &HitFollowUp) -> bool {
-    HitSourceIdentity::from(follow_up).matches(hit)
-}
-
-fn hit_matches_damage_correction_source(hit: &Hit, correction: &HitDamageCorrection) -> bool {
-    HitSourceIdentity::from(correction).matches(hit)
 }
 
 #[cfg(test)]
@@ -3167,6 +3652,14 @@ mod tests {
         });
     }
 
+    fn reset_combat_total_rebuild_count() {
+        COMBAT_TOTAL_REBUILD_COUNT.with(|count| count.set(0));
+    }
+
+    fn combat_total_rebuild_count() -> usize {
+        COMBAT_TOTAL_REBUILD_COUNT.with(std::cell::Cell::get)
+    }
+
     #[test]
     fn only_full_debug_packets_are_droppable_under_backpressure() {
         let packet = PacketDebug {
@@ -3194,6 +3687,53 @@ mod tests {
         );
         assert!(!EngineEvent::EmptyCurtain(Vec::new()).is_droppable_debug_packet());
         assert!(!EngineEvent::CaptureStopped.is_droppable_debug_packet());
+    }
+
+    fn debug_packet(index: usize, payload_hex_bytes: usize) -> PacketDebug {
+        PacketDebug {
+            timestamp: index as f64,
+            source: "127.0.0.1:1".to_owned(),
+            destination: "127.0.0.1:2".to_owned(),
+            direction: "outgoing".to_owned(),
+            payload_len: payload_hex_bytes / 2,
+            declared_ids: vec![index as u32],
+            parsed_hits: 0,
+            note: format!("packet-{index}"),
+            payload_preview: String::new(),
+            payload_hex: "A".repeat(payload_hex_bytes),
+            decoded_text: String::new(),
+        }
+    }
+
+    #[test]
+    fn debug_packet_ring_is_bounded_by_items_and_retained_bytes() {
+        let mut state = CombatState::default();
+        for index in 0..20 {
+            assert!(state.push_packet(debug_packet(index, 1024 * 1024)));
+        }
+
+        assert!(state.packets.len() < 20);
+        assert!(state.packets.len() <= MAX_DEBUG_PACKETS);
+        assert!(state.packet_debug_bytes <= MAX_DEBUG_PACKET_BYTES);
+        assert_eq!(
+            state.packet_debug_bytes,
+            state
+                .packets
+                .iter()
+                .map(PacketDebug::retained_heap_bytes)
+                .sum::<usize>()
+        );
+        assert_eq!(
+            state.packets.back().map(|packet| packet.note.as_str()),
+            Some("packet-19")
+        );
+
+        let generation = state.packets_generation;
+        let mut oversized = debug_packet(99, 0);
+        oversized.payload_hex = String::with_capacity(MAX_DEBUG_PACKET_BYTES + 1);
+        assert!(!state.push_packet(oversized));
+        assert_eq!(state.packets_generation, generation);
+        assert!(state.packet_debug_bytes <= MAX_DEBUG_PACKET_BYTES);
     }
 
     fn assert_totals_match_hits(
@@ -3726,6 +4266,87 @@ mod tests {
         let stats = state.stats.get(&7).unwrap();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.damage, 1_250.0);
+        assert_eq!(state.damage_correction_count, 1);
+    }
+
+    #[test]
+    fn recent_corrections_and_follow_ups_update_only_deltas_and_the_recorded_half() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        for index in 0..2_000 {
+            state.push_hit(test_hit(index as f64 + 1.0, 1, "outgoing", 10.0));
+        }
+        let mut source = test_hit(3_000.0, 7, "outgoing", 100.0);
+        source.byte_offset = 77;
+        source.bit_shift = 3;
+        source.target_hp_before = 1_000.0;
+        source.target_hp_after = 900.0;
+        source.target_max_hp = 1_000.0;
+        source.gameplay_effect_index = Some(42);
+        state.push_hit(source);
+
+        assert_eq!(
+            state.recent_hit_records.len(),
+            RECENT_HIT_MUTATION_WINDOW,
+            "the mutation index must stay independently bounded"
+        );
+        let global_generation = state.hits_generation;
+        let first_generation = state.abyss.first_half.hits_generation;
+        let second_generation = state.abyss.second_half.hits_generation;
+        let total_before = state.total_damage;
+        reset_combat_total_rebuild_count();
+
+        assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 3_000.0,
+            source_char_id: 7,
+            source_damage: 100.0,
+            source_target_hp_before: 1_000.0,
+            source_target_hp_after: 900.0,
+            source_target_max_hp: 1_000.0,
+            source_gameplay_effect_index: Some(42),
+            damage: 150.0,
+            target_hp_before: 1_050.0,
+            target_hp_after: 900.0,
+            target_hp_percent: 90.0,
+        }));
+        // The follow-up still names the original hit. The bounded record keeps
+        // that source alias even though the correction changed damage/HP.
+        assert!(state.apply_follow_up(HitFollowUp {
+            source_timestamp: 3_000.0,
+            source_char_id: 7,
+            source_damage: 100.0,
+            source_target_hp_before: 1_000.0,
+            source_target_hp_after: 900.0,
+            source_target_max_hp: 1_000.0,
+            source_gameplay_effect_index: Some(42),
+            timestamp: 3_000.1,
+            damage: 25.0,
+            target_hp_after: 875.0,
+            target_hp_percent: 87.5,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
+            damage_attribute: Some("灵".to_owned()),
+        }));
+
+        assert_eq!(combat_total_rebuild_count(), 0);
+        assert_eq!(state.hits_generation, global_generation.wrapping_add(2));
+        assert_eq!(
+            state.abyss.first_half.hits_generation,
+            first_generation.wrapping_add(2)
+        );
+        assert_eq!(
+            state.abyss.second_half.hits_generation, second_generation,
+            "the unrelated half must not be searched or mutated"
+        );
+        assert!((state.total_damage - (total_before + 75.0)).abs() < 1e-9);
+        assert!((state.stats[&7].damage - 175.0).abs() < 1e-9);
+        assert!((state.abyss.first_half.stats[&7].damage - 175.0).abs() < 1e-9);
         assert_eq!(state.damage_correction_count, 1);
     }
 

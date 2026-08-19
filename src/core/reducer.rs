@@ -12,6 +12,9 @@ use crate::engine::model::{
 /// event forwarding) key off this instead of re-matching the event.
 #[derive(Debug, PartialEq)]
 pub enum CoreSignal {
+    /// The event was valid but did not match or alter retained authoritative
+    /// state. Callers must not advance combat revisions for this outcome.
+    Unchanged,
     /// Combat state changed (hit, follow-up, correction, abyss, time stop).
     StateChanged,
     /// The equipment snapshot was replaced wholesale.
@@ -48,16 +51,25 @@ pub fn apply_engine_event(state: &mut CombatState, event: EngineEvent) -> CoreSi
             CoreSignal::StateChanged
         }
         EngineEvent::HitFollowUp(follow_up) => {
-            state.apply_follow_up(follow_up);
-            CoreSignal::StateChanged
+            if state.apply_follow_up(follow_up) {
+                CoreSignal::StateChanged
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::HitDamageCorrection(correction) => {
-            state.apply_damage_correction(correction);
-            CoreSignal::StateChanged
+            if state.apply_damage_correction(correction) {
+                CoreSignal::StateChanged
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::Packet(packet) => {
-            state.push_packet(*packet);
-            CoreSignal::DebugPacket
+            if state.push_packet(*packet) {
+                CoreSignal::DebugPacket
+            } else {
+                CoreSignal::Unchanged
+            }
         }
         EngineEvent::PacketObservation(observation) => {
             state.observe_packet(observation);
@@ -700,12 +712,78 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_or_identical_hit_mutations_do_not_advance_combat_state() {
+        let mut state = CombatState::default();
+        apply_engine_event(
+            &mut state,
+            EngineEvent::Hit(Box::new(test_hit(1.0, 7, 100.0))),
+        );
+        let generation = state.hits_generation;
+        let total_damage = state.total_damage;
+
+        let unmatched = apply_engine_event(
+            &mut state,
+            EngineEvent::HitFollowUp(HitFollowUp {
+                source_timestamp: 99.0,
+                source_char_id: 7,
+                source_damage: 100.0,
+                source_target_hp_before: 0.0,
+                source_target_hp_after: 0.0,
+                source_target_max_hp: 0.0,
+                source_gameplay_effect_index: None,
+                timestamp: 99.1,
+                damage: 25.0,
+                target_hp_after: 0.0,
+                target_hp_percent: 0.0,
+                damage_name: None,
+                attack_type: None,
+                damage_attribute: None,
+            }),
+        );
+        assert_eq!(unmatched, CoreSignal::Unchanged);
+
+        let identical = apply_engine_event(
+            &mut state,
+            EngineEvent::HitDamageCorrection(HitDamageCorrection {
+                source_timestamp: 1.0,
+                source_char_id: 7,
+                source_damage: 100.0,
+                source_target_hp_before: 0.0,
+                source_target_hp_after: 0.0,
+                source_target_max_hp: 0.0,
+                source_gameplay_effect_index: None,
+                damage: 100.0,
+                target_hp_before: 0.0,
+                target_hp_after: 0.0,
+                target_hp_percent: 0.0,
+            }),
+        );
+        assert_eq!(identical, CoreSignal::Unchanged);
+        assert_eq!(state.hits_generation, generation);
+        assert_eq!(state.total_damage, total_damage);
+        assert_eq!(state.damage_correction_count, 0);
+    }
+
+    #[test]
     fn packet_lands_in_debug_ring() {
         let mut state = CombatState::default();
         let signal = apply_engine_event(&mut state, EngineEvent::Packet(Box::new(test_packet())));
         assert_eq!(signal, CoreSignal::DebugPacket);
         assert_eq!(state.packets.len(), 1);
         assert_eq!(state.packet_count, 0);
+    }
+
+    #[test]
+    fn oversized_debug_packet_is_a_noop_instead_of_breaking_the_byte_budget() {
+        let mut state = CombatState::default();
+        let mut packet = test_packet();
+        packet.payload_hex = String::with_capacity(17 * 1024 * 1024);
+
+        let signal = apply_engine_event(&mut state, EngineEvent::Packet(Box::new(packet)));
+
+        assert_eq!(signal, CoreSignal::Unchanged);
+        assert!(state.packets.is_empty());
+        assert_eq!(state.packets_generation, 0);
     }
 
     #[test]

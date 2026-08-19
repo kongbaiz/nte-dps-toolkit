@@ -1,25 +1,19 @@
-#include "dwmapi_proxy.hpp"
-#include "plugin_runtime.hpp"
-
 #include <Windows.h>
 
+#include "nte_mods_plugin_manual_map.hpp"
+#include "plugin_runtime.hpp"
+
 extern "C" __declspec(dllexport) const char NteModsPluginSignature[] =
-	"NTE_DPS_TOOL_MODS_PLUGIN_V1";
+	NTE_MODS_PLUGIN_IMAGE_SIGNATURE;
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved)
 {
-	if (reason == DLL_PROCESS_ATTACH)
-	{
-		if (!InitializeDwmapiProxy())
-			return FALSE;
-		DisableThreadLibraryCalls(module);
+	// The OS loader always reaches this entry without the private marker, so its
+	// loader-lock path performs no worker or library operation. The vendored
+	// manual-map shellcode invokes this same entry on its dedicated remote thread
+	// and supplies the marker only after imports, TLS, and unwind registration.
+	if (reason == DLL_PROCESS_ATTACH &&
+		nte::mods::manual_map::IsExplicitAttach(reserved))
 		nte::mods::StartPluginRuntime(module);
-	}
-	else if (reason == DLL_PROCESS_DETACH && reserved == nullptr)
-	{
-		nte::mods::StopPluginRuntime();
-		ShutdownDwmapiProxy();
-	}
-
 	return TRUE;
 }
