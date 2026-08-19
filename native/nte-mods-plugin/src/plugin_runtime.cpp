@@ -15,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace nte::mods
 {
@@ -27,6 +28,7 @@ namespace nte::mods
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
 		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 8;
 		constexpr size_t VIEWPORT_TICK_CODE_WINDOW = 0x90;
+		constexpr size_t MAX_VIEWPORT_HOOK_RECORDS = 64;
 		constexpr size_t MAX_PROCESS_EVENT_HOOKS = 16;
 		constexpr size_t MAX_PROCESS_EVENT_CLASS_HOOKS = 4;
 		constexpr size_t MAX_PROCESS_EVENT_SUBSCRIPTIONS = 32;
@@ -88,6 +90,7 @@ namespace nte::mods
 		struct ProcessEventHookEntry
 		{
 			void* object;
+			void** original_vtable;
 			ProcessEvent original;
 			nte::hook::ShadowVTableHook hook;
 		};
@@ -96,6 +99,7 @@ namespace nte::mods
 		{
 			void** vtable;
 			ProcessEvent original;
+			bool installed;
 		};
 
 		struct ProcessEventSubscription
@@ -125,10 +129,15 @@ namespace nte::mods
 		};
 		static_assert(sizeof(ProcessEventArray) == 16);
 
-		constinit nte::hook::ShadowVTableHook viewport_hooks[2];
-		size_t active_viewport_hook_index = 0;
+		constinit std::array<
+			nte::hook::ShadowVTableHook,
+			MAX_VIEWPORT_HOOK_RECORDS> viewport_hooks{};
+		constinit std::array<
+			nte::hook::ViewportOriginalBinding,
+			MAX_VIEWPORT_HOOK_RECORDS> viewport_original_bindings{};
+		volatile LONG viewport_hook_record_count = 0;
+		volatile LONG active_viewport_hook_index = -1;
 		PVOID volatile hooked_viewport = nullptr;
-		PVOID volatile original_viewport_tick = nullptr;
 		volatile LONG ipc_dispatch_in_progress = 0;
 		HANDLE runtime_stop_event = nullptr;
 		HANDLE runtime_thread = nullptr;
@@ -138,11 +147,14 @@ namespace nte::mods
 		constinit std::array<
 			ProcessEventHookEntry,
 			MAX_PROCESS_EVENT_HOOKS> process_event_hooks{};
-		constinit size_t process_event_hook_count = 0;
+		// Published object/original bindings are immutable. A dispatch can have
+		// captured a ProcessEvent detour before the vtable is restored, so reset and
+		// unwatch retire the hook but keep its binding for late dispatches.
+		constinit size_t process_event_hook_binding_count = 0;
 		constinit std::array<
 			ProcessEventClassHookEntry,
 			MAX_PROCESS_EVENT_CLASS_HOOKS> process_event_class_hooks{};
-		constinit size_t process_event_class_hook_count = 0;
+		constinit size_t process_event_class_hook_binding_count = 0;
 		constinit std::array<
 			ProcessEventSubscription,
 			MAX_PROCESS_EVENT_SUBSCRIPTIONS> process_event_subscriptions{};
@@ -207,11 +219,61 @@ namespace nte::mods
 				&hooked_viewport, nullptr, nullptr);
 		}
 
-		ViewportTick CurrentOriginalViewportTick()
+		size_t PublishedViewportHookRecordCount()
 		{
-			return reinterpret_cast<ViewportTick>(
-				InterlockedCompareExchangePointer(
-					&original_viewport_tick, nullptr, nullptr));
+			const LONG count = InterlockedCompareExchange(
+				&viewport_hook_record_count, 0, 0);
+			return count > 0 &&
+				static_cast<size_t>(count) <= viewport_original_bindings.size()
+				? static_cast<size_t>(count)
+				: 0;
+		}
+
+		ViewportTick OriginalViewportTickFor(const void* viewport)
+		{
+			return reinterpret_cast<ViewportTick>(const_cast<void*>(
+				nte::hook::FindViewportOriginal(
+					viewport_original_bindings.data(),
+					PublishedViewportHookRecordCount(),
+					viewport)));
+		}
+
+		bool FindOrPublishViewportHookRecord(
+			void* viewport,
+			ViewportTick original,
+			size_t& result)
+		{
+			const size_t count = PublishedViewportHookRecordCount();
+			const nte::hook::ViewportOriginalBinding candidate{
+				viewport,
+				reinterpret_cast<void*>(original),
+			};
+			for (size_t index = 0; index < count; ++index)
+			{
+				const auto& binding = viewport_original_bindings[index];
+				if (binding.viewport != viewport)
+					continue;
+				if (!nte::hook::CanReuseViewportBinding(
+						binding, candidate.viewport, candidate.original))
+					return false;
+				if (viewport_hooks[index].CanInstall())
+				{
+					result = index;
+					return true;
+				}
+			}
+			if (count == viewport_original_bindings.size())
+				return false;
+
+			// The workspace worker is the only publisher. The interlocked count
+			// release-publishes an immutable object/original binding before the
+			// shadow vptr can make HookedViewportTick reachable for this object.
+			viewport_original_bindings[count] = candidate;
+			InterlockedExchange(
+				&viewport_hook_record_count,
+				static_cast<LONG>(count + 1));
+			result = count;
+			return true;
 		}
 
 		bool EqualsAsciiCaseInsensitive(const wchar_t* left, const wchar_t* right)
@@ -253,7 +315,7 @@ namespace nte::mods
 				!memory::IsReadableRange(local_players.data, sizeof(*local_players.data)))
 				return nullptr;
 
-			return local_players.data[0];
+			return memory::ReadPointer<void>(local_players.data, 0);
 		}
 
 		void* ResolveViewport()
@@ -272,7 +334,13 @@ namespace nte::mods
 				viewport, VIEWPORT_WORLD_OFFSET);
 			auto* viewport_game_instance = memory::ReadPointer<void>(
 				viewport, VIEWPORT_GAME_INSTANCE_OFFSET);
-			return nte::hook::IsConsistentViewportChain(
+			auto* confirmed_world = memory::ReadPointer<void>(
+				reinterpret_cast<const void*>(resolved->gworld_address), 0);
+			auto* confirmed_game_instance = memory::ReadPointer<void>(
+				confirmed_world, WORLD_GAME_INSTANCE_OFFSET);
+			return world == confirmed_world &&
+				game_instance == confirmed_game_instance &&
+				nte::hook::IsConsistentViewportChain(
 				world,
 				game_instance,
 				viewport,
@@ -288,23 +356,26 @@ namespace nte::mods
 				!memory::IsReadableRange(address, VIEWPORT_TICK_CODE_WINDOW))
 				return false;
 
-			const auto* code = static_cast<const uint8_t*>(address);
+			std::array<uint8_t, VIEWPORT_TICK_CODE_WINDOW> code{};
+			if (!memory::ReadBytes(
+					address, 0, code.data(), code.size()))
+				return false;
 			const bool has_stack_frame =
 				signature::Find(
-					code,
+					code.data(),
 					VIEWPORT_TICK_CODE_WINDOW,
 					0,
 					32,
 					STACK_ALLOC_LARGE) != VIEWPORT_TICK_CODE_WINDOW ||
 				signature::Find(
-					code,
+					code.data(),
 					VIEWPORT_TICK_CODE_WINDOW,
 					0,
 					32,
 					STACK_ALLOC_SMALL) != VIEWPORT_TICK_CODE_WINDOW;
 			return has_stack_frame &&
 				signature::Find(
-					code,
+					code.data(),
 					VIEWPORT_TICK_CODE_WINDOW,
 					0,
 					VIEWPORT_TICK_CODE_WINDOW,
@@ -325,7 +396,12 @@ namespace nte::mods
 			if (!memory::IsReadableRange(vtable, (end + 1) * sizeof(void*)))
 				return false;
 
-			if (IsExpectedViewportTick(vtable[preferred_index]))
+			void* preferred_tick = nullptr;
+			if (memory::ReadValue(
+					vtable,
+					preferred_index * sizeof(void*),
+					preferred_tick) &&
+				IsExpectedViewportTick(preferred_tick))
 			{
 				// find_offsets already selected this semantic vtable slot. Recheck
 				// the same body predicate before accepting it in the hook path.
@@ -340,7 +416,10 @@ namespace nte::mods
 				VIEWPORT_TICK_SCAN_RADIUS,
 				[&](size_t index)
 				{
-					return IsExpectedViewportTick(vtable[index]);
+					void* candidate = nullptr;
+					return memory::ReadValue(
+						vtable, index * sizeof(void*), candidate) &&
+						IsExpectedViewportTick(candidate);
 				},
 				result);
 		}
@@ -349,7 +428,7 @@ namespace nte::mods
 			void* viewport,
 			float delta_seconds)
 		{
-			const auto original_tick = CurrentOriginalViewportTick();
+			const auto original_tick = OriginalViewportTickFor(viewport);
 			if (original_tick == nullptr)
 				return;
 			original_tick(viewport, delta_seconds);
@@ -368,39 +447,12 @@ namespace nte::mods
 			InterlockedExchange(&ipc_dispatch_in_progress, 0);
 		}
 
-		void __fastcall HookedProcessEvent(
+		void CaptureProcessEvent(
 			void* object,
+			void** object_vtable,
 			void* function,
 			void* params)
 		{
-			ProcessEvent original = nullptr;
-			void** object_vtable = nullptr;
-			memory::ReadValue(object, 0, object_vtable);
-			AcquireSRWLockShared(&process_event_lock);
-			for (size_t index = 0; index < process_event_hooks.size(); ++index)
-			{
-				if (process_event_hooks[index].object == object)
-				{
-					original = process_event_hooks[index].original;
-					break;
-				}
-			}
-			if (original == nullptr)
-			{
-				for (const ProcessEventClassHookEntry& hook :
-					process_event_class_hooks)
-				{
-					if (hook.vtable == object_vtable)
-					{
-						original = hook.original;
-						break;
-					}
-				}
-			}
-			ReleaseSRWLockShared(&process_event_lock);
-			if (original == nullptr)
-				return;
-
 			AcquireSRWLockExclusive(&process_event_lock);
 			for (size_t index = 0;
 				index < process_event_subscription_count;
@@ -408,6 +460,8 @@ namespace nte::mods
 			{
 				const ProcessEventSubscription& subscription =
 					process_event_subscriptions[index];
+				std::array<uint8_t, PROCESS_EVENT_PARAM_CAPACITY>
+					captured_params{};
 				if (!MatchesProcessEventSubscription(
 						subscription,
 						object,
@@ -415,8 +469,10 @@ namespace nte::mods
 						function) ||
 					subscription.program_index >= process_event_queues.size() ||
 					(subscription.params_size != 0 &&
-						!memory::IsReadableRange(
+						!memory::ReadBytes(
 							params,
+							0,
+							captured_params.data(),
 							subscription.params_size)))
 					continue;
 
@@ -435,9 +491,7 @@ namespace nte::mods
 					event.object = object;
 					event.function = function;
 					event.params_size = subscription.params_size;
-					for (size_t byte = 0; byte < subscription.params_size; ++byte)
-						event.params[byte] =
-							static_cast<const uint8_t*>(params)[byte];
+					event.params = captured_params;
 					event.captured_u64 = captured_u64;
 					++queue.count;
 				};
@@ -451,9 +505,7 @@ namespace nte::mods
 				ProcessEventArray array{};
 				if (subscription.params_size < sizeof(array))
 					continue;
-				for (size_t byte = 0; byte < sizeof(array); ++byte)
-					reinterpret_cast<uint8_t*>(&array)[byte] =
-						static_cast<const uint8_t*>(params)[byte];
+				std::memcpy(&array, captured_params.data(), sizeof(array));
 				if (array.count < 0 ||
 					array.count > static_cast<int32_t>(
 						MAX_PROCESS_EVENT_ARRAY_ELEMENTS) ||
@@ -474,19 +526,76 @@ namespace nte::mods
 				}
 			}
 			ReleaseSRWLockExclusive(&process_event_lock);
+		}
+
+		void __fastcall HookedProcessEventInstance(
+			void* object,
+			void* function,
+			void* params)
+		{
+			ProcessEvent original = nullptr;
+			AcquireSRWLockShared(&process_event_lock);
+			for (const ProcessEventHookEntry& hook : process_event_hooks)
+			{
+				if (hook.object == object)
+				{
+					original = hook.original;
+					break;
+				}
+			}
+			ReleaseSRWLockShared(&process_event_lock);
+			if (original == nullptr)
+				return;
+
+			void** object_vtable = nullptr;
+			memory::ReadValue(object, 0, object_vtable);
+			CaptureProcessEvent(object, object_vtable, function, params);
+			original(object, function, params);
+		}
+
+		void __fastcall HookedProcessEventClass(
+			void* object,
+			void* function,
+			void* params)
+		{
+			void** object_vtable = nullptr;
+			if (!memory::ReadValue(object, 0, object_vtable))
+				return;
+			ProcessEvent original = nullptr;
+			AcquireSRWLockShared(&process_event_lock);
+			for (const ProcessEventClassHookEntry& hook :
+				process_event_class_hooks)
+			{
+				if (hook.vtable == object_vtable)
+				{
+					original = hook.original;
+					break;
+				}
+			}
+			ReleaseSRWLockShared(&process_event_lock);
+			if (original == nullptr)
+				return;
+
+			CaptureProcessEvent(object, object_vtable, function, params);
 			original(object, function, params);
 		}
 
 		bool InstallViewportHook(void* viewport)
 		{
+			const LONG current_active_index = InterlockedCompareExchange(
+				&active_viewport_hook_index, -1, -1);
 			if (viewport == CurrentHookedViewport() &&
-				viewport_hooks[active_viewport_hook_index].IsInstalled())
+				current_active_index >= 0 &&
+				static_cast<size_t>(current_active_index) < viewport_hooks.size() &&
+				viewport_hooks[current_active_index].IsInstalled())
 				return true;
 
 			if (!memory::IsReadableRange(viewport, sizeof(void*)))
 				return false;
 
-			auto** vtable = *reinterpret_cast<void***>(viewport);
+			void** vtable = nullptr;
+			if (!memory::ReadValue(viewport, 0, vtable))
+				return false;
 			const auto* resolved = offsets::Get();
 			size_t viewport_tick_index = 0;
 			if (resolved == nullptr ||
@@ -501,37 +610,43 @@ namespace nte::mods
 				return false;
 			}
 
-			const auto candidate_tick = reinterpret_cast<ViewportTick>(
-				vtable[viewport_tick_index]);
-			const bool had_active_hook =
-				viewport_hooks[active_viewport_hook_index].IsInstalled();
-			const size_t target_hook_index = had_active_hook
-				? 1 - active_viewport_hook_index
-				: active_viewport_hook_index;
-			viewport_hooks[target_hook_index].Remove();
-
-			const auto previous_tick = CurrentOriginalViewportTick();
-			InterlockedExchangePointer(
-				&original_viewport_tick,
-				reinterpret_cast<void*>(candidate_tick));
+			ViewportTick candidate_tick = nullptr;
+			if (!memory::ReadValue(
+					vtable,
+					viewport_tick_index * sizeof(void*),
+					candidate_tick))
+				return false;
+			// The workspace watcher does not own Unreal object lifetime. Re-resolve
+			// the complete GWorld -> game instance -> local player -> viewport chain
+			// immediately before publication; ShadowVTableHook then CASes the exact
+			// captured vptr, so a stale or different object fails closed.
+			if (ResolveViewport() != viewport)
+				return false;
+			size_t target_hook_index = 0;
+			if (!FindOrPublishViewportHookRecord(
+					viewport, candidate_tick, target_hook_index))
+				return false;
+			if (viewport_hooks[target_hook_index].IsInstalled())
+				viewport_hooks[target_hook_index].Remove();
 			if (!viewport_hooks[target_hook_index].Install(
 				viewport,
 				viewport_tick_index,
-				reinterpret_cast<void*>(&HookedViewportTick)) ||
-				viewport_hooks[target_hook_index].OriginalFunction() !=
-				reinterpret_cast<void*>(candidate_tick))
+				reinterpret_cast<void*>(&HookedViewportTick),
+				vtable,
+				reinterpret_cast<void*>(candidate_tick)))
 			{
 				viewport_hooks[target_hook_index].Remove();
-				InterlockedExchangePointer(
-					&original_viewport_tick,
-					reinterpret_cast<void*>(previous_tick));
 				return false;
 			}
 
-			if (had_active_hook)
-				viewport_hooks[active_viewport_hook_index].Remove();
-			active_viewport_hook_index = target_hook_index;
+			InterlockedExchange(
+				&active_viewport_hook_index,
+				static_cast<LONG>(target_hook_index));
 			InterlockedExchangePointer(&hooked_viewport, viewport);
+			if (current_active_index >= 0 &&
+				static_cast<size_t>(current_active_index) < viewport_hooks.size() &&
+				static_cast<size_t>(current_active_index) != target_hook_index)
+				viewport_hooks[current_active_index].Remove();
 
 			DebugLog(NTE_OBFUSCATE_STRING(
 				L"NTE Mods plugin: viewport Tick hook installed.\n")
@@ -541,11 +656,11 @@ namespace nte::mods
 
 		void RestoreViewportHook()
 		{
-			viewport_hooks[0].Remove();
-			viewport_hooks[1].Remove();
-			active_viewport_hook_index = 0;
 			InterlockedExchangePointer(&hooked_viewport, nullptr);
-			InterlockedExchangePointer(&original_viewport_tick, nullptr);
+			InterlockedExchange(&active_viewport_hook_index, -1);
+			const size_t count = PublishedViewportHookRecordCount();
+			for (size_t index = 0; index < count; ++index)
+				viewport_hooks[index].Remove();
 		}
 
 		bool IsGameExecutableHost()
@@ -696,11 +811,19 @@ namespace nte::mods
 						array_element_size - array_value_offset)))
 			return false;
 
-		auto** vtable = *reinterpret_cast<void***>(object);
+		void** vtable = nullptr;
+		if (!memory::ReadValue(object, 0, vtable))
+			return false;
+		ProcessEvent process_event_original = nullptr;
 		if (!memory::IsReadableRange(
 				vtable,
 				(process_event_index + 1) * sizeof(void*)) ||
-			!memory::IsExecutableAddress(vtable[process_event_index]))
+			!memory::ReadValue(
+				vtable,
+				process_event_index * sizeof(void*),
+				process_event_original) ||
+			!memory::IsExecutableAddress(
+				reinterpret_cast<void*>(process_event_original)))
 			return false;
 		uint16_t params_size = 0;
 		if (!ReflectedFunctionParamSize(function, params_size) ||
@@ -739,19 +862,44 @@ namespace nte::mods
 
 		if (class_wide)
 		{
+			// Permanently assign a vtable lineage to one hook mode. The distinct
+			// detours keep late dispatch lookup unambiguous, while this gate also
+			// prevents treating either detour as a new original during re-hooking.
+			for (const ProcessEventHookEntry& hook : process_event_hooks)
+			{
+				if (hook.object == object || hook.original_vtable == vtable)
+				{
+					ReleaseSRWLockExclusive(&process_event_lock);
+					return false;
+				}
+			}
 			ProcessEventClassHookEntry* target_hook = nullptr;
 			for (ProcessEventClassHookEntry& hook :
 				process_event_class_hooks)
 			{
 				if (hook.vtable == vtable)
 				{
+					const ProcessEvent expected_slot = hook.installed
+						? &HookedProcessEventClass
+						: hook.original;
+					if (expected_slot != process_event_original)
+					{
+						ReleaseSRWLockExclusive(&process_event_lock);
+						return false;
+					}
 					target_hook = &hook;
 					break;
 				}
 			}
 			if (target_hook == nullptr)
 			{
-				if (process_event_class_hook_count ==
+				if (process_event_original == &HookedProcessEventClass ||
+					process_event_original == &HookedProcessEventInstance)
+				{
+					ReleaseSRWLockExclusive(&process_event_lock);
+					return false;
+				}
+				if (process_event_class_hook_binding_count ==
 					process_event_class_hooks.size())
 				{
 					ReleaseSRWLockExclusive(&process_event_lock);
@@ -766,44 +914,90 @@ namespace nte::mods
 						break;
 					}
 				}
-				const auto original = reinterpret_cast<ProcessEvent>(
-					vtable[process_event_index]);
-				if (target_hook == nullptr ||
-					!ReplaceProcessEventVTableEntry(
-						vtable,
-						reinterpret_cast<void*>(original),
-						reinterpret_cast<void*>(&HookedProcessEvent)))
+				if (target_hook == nullptr)
 				{
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
 				target_hook->vtable = vtable;
-				target_hook->original = original;
-				++process_event_class_hook_count;
+				target_hook->original = process_event_original;
+				++process_event_class_hook_binding_count;
+			}
+			if (!target_hook->installed)
+			{
+				if (!ReplaceProcessEventVTableEntry(
+						target_hook->vtable,
+						reinterpret_cast<void*>(target_hook->original),
+						reinterpret_cast<void*>(&HookedProcessEventClass)))
+				{
+					ReleaseSRWLockExclusive(&process_event_lock);
+					return false;
+				}
+				target_hook->installed = true;
 			}
 		}
 		else
 		{
-			ProcessEventHookEntry* target_hook = nullptr;
-			for (size_t index = 0; index < process_event_hooks.size(); ++index)
+			for (const ProcessEventClassHookEntry& hook :
+				process_event_class_hooks)
 			{
-				if (process_event_hooks[index].object == object &&
-					process_event_hooks[index].hook.IsInstalled())
+				if (hook.vtable == vtable)
 				{
-					target_hook = &process_event_hooks[index];
+					ReleaseSRWLockExclusive(&process_event_lock);
+					return false;
+				}
+			}
+			ProcessEventHookEntry* target_hook = nullptr;
+			for (ProcessEventHookEntry& hook : process_event_hooks)
+			{
+				if (hook.object == object && hook.hook.IsInstalled())
+				{
+					if (process_event_original != &HookedProcessEventInstance)
+					{
+						ReleaseSRWLockExclusive(&process_event_lock);
+						return false;
+					}
+					target_hook = &hook;
 					break;
+				}
+			}
+			if (target_hook == nullptr &&
+				(process_event_original == &HookedProcessEventClass ||
+					process_event_original == &HookedProcessEventInstance))
+			{
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return false;
+			}
+			if (target_hook == nullptr)
+			{
+				for (ProcessEventHookEntry& hook : process_event_hooks)
+				{
+					if (hook.object != object)
+						continue;
+					if (hook.original_vtable != vtable ||
+						hook.original != process_event_original)
+					{
+						ReleaseSRWLockExclusive(&process_event_lock);
+						return false;
+					}
+					if (hook.hook.CanInstall())
+					{
+						target_hook = &hook;
+						break;
+					}
 				}
 			}
 			if (target_hook == nullptr)
 			{
-				if (process_event_hook_count == process_event_hooks.size())
+				if (process_event_hook_binding_count == process_event_hooks.size())
 				{
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
 				for (ProcessEventHookEntry& candidate : process_event_hooks)
 				{
-					if (candidate.object == nullptr)
+					if (candidate.object == nullptr &&
+						candidate.hook.CanInstall())
 					{
 						target_hook = &candidate;
 						break;
@@ -816,23 +1010,22 @@ namespace nte::mods
 				}
 				target_hook->hook.Remove();
 				target_hook->object = object;
-				target_hook->original =
-					reinterpret_cast<ProcessEvent>(vtable[process_event_index]);
-				if (!target_hook->hook.Install(
+				target_hook->original_vtable = vtable;
+				target_hook->original = process_event_original;
+				++process_event_hook_binding_count;
+			}
+			if (!target_hook->hook.IsInstalled() &&
+				(!target_hook->hook.Install(
 						object,
 						process_event_index,
-						reinterpret_cast<void*>(&HookedProcessEvent)) ||
-					target_hook->hook.OriginalFunction() !=
-						reinterpret_cast<void*>(target_hook->original))
+						reinterpret_cast<void*>(&HookedProcessEventInstance),
+					target_hook->original_vtable,
+					reinterpret_cast<void*>(target_hook->original))))
 				{
 					target_hook->hook.Remove();
-					target_hook->object = nullptr;
-					target_hook->original = nullptr;
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
-				++process_event_hook_count;
-			}
 		}
 
 		process_event_subscriptions[process_event_subscription_count++] = {
@@ -951,11 +1144,9 @@ namespace nte::mods
 						continue;
 					ReplaceProcessEventVTableEntry(
 						hook.vtable,
-						reinterpret_cast<void*>(&HookedProcessEvent),
+						reinterpret_cast<void*>(&HookedProcessEventClass),
 						reinterpret_cast<void*>(hook.original));
-					hook.vtable = nullptr;
-					hook.original = nullptr;
-					--process_event_class_hook_count;
+					hook.installed = false;
 					break;
 				}
 			}
@@ -963,12 +1154,9 @@ namespace nte::mods
 			{
 				for (ProcessEventHookEntry& hook : process_event_hooks)
 				{
-					if (hook.object != object)
+					if (hook.object != object || !hook.hook.IsInstalled())
 						continue;
 					hook.hook.Remove();
-					hook.object = nullptr;
-					hook.original = nullptr;
-					--process_event_hook_count;
 					break;
 				}
 			}
@@ -1002,23 +1190,16 @@ namespace nte::mods
 	{
 		AcquireSRWLockExclusive(&process_event_lock);
 		for (ProcessEventHookEntry& hook : process_event_hooks)
-		{
 			hook.hook.Remove();
-			hook.object = nullptr;
-			hook.original = nullptr;
-		}
 		for (ProcessEventClassHookEntry& hook : process_event_class_hooks)
 		{
-			if (hook.vtable != nullptr && hook.original != nullptr)
+			if (hook.installed && hook.vtable != nullptr && hook.original != nullptr)
 				ReplaceProcessEventVTableEntry(
 					hook.vtable,
-					reinterpret_cast<void*>(&HookedProcessEvent),
+					reinterpret_cast<void*>(&HookedProcessEventClass),
 					reinterpret_cast<void*>(hook.original));
-			hook.vtable = nullptr;
-			hook.original = nullptr;
+			hook.installed = false;
 		}
-		process_event_hook_count = 0;
-		process_event_class_hook_count = 0;
 		process_event_subscription_count = 0;
 		for (ProcessEventQueue& queue : process_event_queues)
 		{

@@ -106,6 +106,10 @@ const HUD_OPTIONAL_TITLE_HEIGHT: u16 = 22;
 const HUD_OPTIONAL_STATUS_HEIGHT: u16 = 22;
 const HUD_MINI_TIMELINE_HEIGHT: u16 = 42;
 const MAIN_DPS_DETAIL_CACHE_CAPACITY: usize = 4;
+/// Normal desktop capture keeps only bounded semantic events. Raw PCAPNG
+/// remains enabled independently; `FullDebug` is reserved for explicit
+/// diagnostics/replay tooling that opts into retaining packet payload text.
+const DESKTOP_PACKET_EMISSION_MODE: PacketEmissionMode = PacketEmissionMode::SummaryOnly;
 
 #[derive(Clone)]
 pub(crate) struct AppState(Arc<AppStateInner>);
@@ -1404,7 +1408,7 @@ impl AppState {
             raw_capture: RawCaptureMode::Enabled,
             raw_capture_directory: capture_log_dir(),
             expose_raw_capture_path: false,
-            packet_emission: PacketEmissionMode::FullDebug,
+            packet_emission: DESKTOP_PACKET_EMISSION_MODE,
         });
         drop(replay_import_reserved);
         if result.is_ok() {
@@ -3357,6 +3361,14 @@ mod tests {
 
     use super::*;
     use nte_dps_tool::core::hud::{HudDataState, HudModuleSnapshot};
+
+    #[test]
+    fn desktop_capture_uses_summary_only_by_default() {
+        assert_eq!(
+            DESKTOP_PACKET_EMISSION_MODE,
+            PacketEmissionMode::SummaryOnly
+        );
+    }
 
     fn test_hit(damage: f64) -> nte_dps_tool::engine::model::Hit {
         use nte_dps_tool::engine::model::{Hit, HitCharacterSource, HitDirection};

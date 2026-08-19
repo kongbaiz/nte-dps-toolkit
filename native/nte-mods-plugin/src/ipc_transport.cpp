@@ -1,5 +1,6 @@
 #include "ipc_transport.hpp"
 
+#include "ipc_transport_policy.hpp"
 #include "mod_runtime.hpp"
 #include "obfuscated_string.hpp"
 
@@ -24,6 +25,7 @@ namespace nte::mods
 			Reading,
 			Ready,
 			Writing,
+			Closing,
 		};
 
 		enum class IpcPollResult
@@ -37,10 +39,56 @@ namespace nte::mods
 		HANDLE ipc_event = nullptr;
 		HANDLE runtime_presence_event = nullptr;
 		OVERLAPPED ipc_overlapped{};
+		SRWLOCK ipc_transport_lock = SRWLOCK_INIT;
 		IpcTransportState ipc_transport_state = IpcTransportState::Closed;
 		ULONGLONG ipc_io_deadline = 0;
+		uint64_t ipc_generation = 0;
+		ipc::OperationEpoch ipc_operation{};
 		NteModsIpcRequest ipc_request{};
 		NteModsIpcResponse ipc_response{};
+
+		class IpcTransportGuard
+		{
+		public:
+			IpcTransportGuard()
+			{
+				AcquireSRWLockExclusive(&ipc_transport_lock);
+			}
+
+			IpcTransportGuard(const IpcTransportGuard&) = delete;
+			IpcTransportGuard& operator=(const IpcTransportGuard&) = delete;
+
+			~IpcTransportGuard()
+			{
+				ReleaseSRWLockExclusive(&ipc_transport_lock);
+			}
+		};
+
+		class IpcTransportTryGuard
+		{
+		public:
+			IpcTransportTryGuard()
+				: acquired_(TryAcquireSRWLockExclusive(&ipc_transport_lock) != FALSE)
+			{
+			}
+
+			IpcTransportTryGuard(const IpcTransportTryGuard&) = delete;
+			IpcTransportTryGuard& operator=(const IpcTransportTryGuard&) = delete;
+
+			~IpcTransportTryGuard()
+			{
+				if (acquired_)
+					ReleaseSRWLockExclusive(&ipc_transport_lock);
+			}
+
+			bool Acquired() const
+			{
+				return acquired_;
+			}
+
+		private:
+			bool acquired_;
+		};
 
 		class LocalIpcSecurityAttributes
 		{
@@ -136,13 +184,41 @@ namespace nte::mods
 				HasOnlyZeroPlacements(request, 0);
 		}
 
-		void CloseIpcPipe()
+		bool DrainIpcOperation()
+		{
+			if (!ipc_operation.IsPending())
+				return true;
+			if (ipc_pipe == INVALID_HANDLE_VALUE ||
+				!ipc_operation.BelongsTo(ipc_generation))
+				return false;
+
+			// CancelIoEx only requests cancellation. The OVERLAPPED, event, pipe,
+			// and request/response buffers remain owned by this generation until
+			// GetOverlappedResult observes its terminal completion status.
+			CancelIoEx(ipc_pipe, &ipc_overlapped);
+			DWORD transferred = 0;
+			if (!GetOverlappedResult(
+					ipc_pipe, &ipc_overlapped, &transferred, TRUE))
+			{
+				const DWORD error = GetLastError();
+				if (error == ERROR_IO_INCOMPLETE)
+					return false;
+			}
+			return ipc_operation.Complete(ipc_generation);
+		}
+
+		bool CloseIpcPipe()
 		{
 			if (ipc_pipe != INVALID_HANDLE_VALUE)
 			{
-				CancelIoEx(ipc_pipe, &ipc_overlapped);
+				if (!DrainIpcOperation())
+					return false;
 				DisconnectNamedPipe(ipc_pipe);
 				CloseHandle(ipc_pipe);
+			}
+			else if (!ipc_operation.CanReuse())
+			{
+				return false;
 			}
 			if (ipc_event != nullptr)
 				CloseHandle(ipc_event);
@@ -154,28 +230,84 @@ namespace nte::mods
 			ipc_io_deadline = 0;
 			ipc_request = {};
 			ipc_response = {};
+			return true;
 		}
 
-		void ResetIpcOverlapped()
+		IpcPollResult BeginIpcClose()
 		{
+			if (!ipc_operation.IsPending())
+				return CloseIpcPipe()
+					? IpcPollResult::Idle
+					: IpcPollResult::Error;
+			if (ipc_pipe == INVALID_HANDLE_VALUE ||
+				!ipc_operation.BelongsTo(ipc_generation))
+				return IpcPollResult::Error;
+
+			// The viewport thread never waits for cancellation. It remains the
+			// operation owner and consumes the terminal completion on a later pump.
+			CancelIoEx(ipc_pipe, &ipc_overlapped);
+			ipc_transport_state = IpcTransportState::Closing;
+			ipc_io_deadline = 0;
+			return IpcPollResult::Idle;
+		}
+
+		IpcPollResult PollIpcClose()
+		{
+			if (!ipc_operation.IsPending())
+				return CloseIpcPipe()
+					? IpcPollResult::Idle
+					: IpcPollResult::Error;
+			if (!ipc_operation.BelongsTo(ipc_generation))
+				return IpcPollResult::Error;
+			if (!HasOverlappedIoCompleted(&ipc_overlapped))
+			{
+				CancelIoEx(ipc_pipe, &ipc_overlapped);
+				return IpcPollResult::Idle;
+			}
+
+			DWORD transferred = 0;
+			if (!GetOverlappedResult(
+					ipc_pipe, &ipc_overlapped, &transferred, FALSE) &&
+				GetLastError() == ERROR_IO_INCOMPLETE)
+				return IpcPollResult::Idle;
+			if (!ipc_operation.Complete(ipc_generation))
+				return IpcPollResult::Error;
+			return CloseIpcPipe()
+				? IpcPollResult::Idle
+				: IpcPollResult::Error;
+		}
+
+		bool ResetIpcOverlapped()
+		{
+			if (ipc_event == nullptr || !ipc_operation.CanReuse())
+				return false;
 			ipc_overlapped = {};
 			ipc_overlapped.hEvent = ipc_event;
-			ResetEvent(ipc_event);
+			return ResetEvent(ipc_event) != FALSE;
 		}
 
 		IpcPollResult BeginIpcRead();
 
 		IpcPollResult BeginIpcConnect()
 		{
-			ResetIpcOverlapped();
+			if (!ResetIpcOverlapped() ||
+				!ipc_operation.Begin(ipc_generation))
+				return IpcPollResult::Error;
 			if (ConnectNamedPipe(ipc_pipe, &ipc_overlapped))
+			{
+				ipc_operation.Complete(ipc_generation);
 				return BeginIpcRead();
+			}
 
 			const DWORD error = GetLastError();
 			if (error == ERROR_PIPE_CONNECTED)
+			{
+				ipc_operation.Complete(ipc_generation);
 				return BeginIpcRead();
+			}
 			if (error != ERROR_IO_PENDING)
 			{
+				ipc_operation.Complete(ipc_generation);
 				CloseIpcPipe();
 				return IpcPollResult::Error;
 			}
@@ -187,7 +319,9 @@ namespace nte::mods
 		IpcPollResult BeginIpcRead()
 		{
 			ipc_request = {};
-			ResetIpcOverlapped();
+			if (!ResetIpcOverlapped() ||
+				!ipc_operation.Begin(ipc_generation))
+				return IpcPollResult::Error;
 
 			DWORD bytes_read = 0;
 			if (ReadFile(
@@ -197,6 +331,7 @@ namespace nte::mods
 				&bytes_read,
 				&ipc_overlapped))
 			{
+				ipc_operation.Complete(ipc_generation);
 				if (bytes_read != sizeof(ipc_request))
 				{
 					CloseIpcPipe();
@@ -209,6 +344,7 @@ namespace nte::mods
 			const DWORD error = GetLastError();
 			if (error != ERROR_IO_PENDING)
 			{
+				ipc_operation.Complete(ipc_generation);
 				CloseIpcPipe();
 				return IpcPollResult::Error;
 			}
@@ -248,6 +384,9 @@ namespace nte::mods
 				CloseIpcPipe();
 				return false;
 			}
+			++ipc_generation;
+			if (ipc_generation == 0)
+				++ipc_generation;
 
 			return BeginIpcConnect() != IpcPollResult::Error;
 		}
@@ -262,13 +401,19 @@ namespace nte::mods
 
 			if (ipc_transport_state == IpcTransportState::Closed)
 				return BeginIpcConnect();
+			if (ipc_transport_state == IpcTransportState::Closing)
+				return PollIpcClose();
+			if (!ipc_operation.BelongsTo(ipc_generation))
+			{
+				CloseIpcPipe();
+				return IpcPollResult::Error;
+			}
 
 			if ((ipc_transport_state == IpcTransportState::Reading ||
 				ipc_transport_state == IpcTransportState::Writing) &&
 				GetTickCount64() >= ipc_io_deadline)
 			{
-				CloseIpcPipe();
-				return IpcPollResult::Idle;
+				return BeginIpcClose();
 			}
 			if (!HasOverlappedIoCompleted(&ipc_overlapped))
 				return IpcPollResult::Idle;
@@ -280,12 +425,16 @@ namespace nte::mods
 				const DWORD error = GetLastError();
 				if (error == ERROR_IO_INCOMPLETE)
 					return IpcPollResult::Idle;
+				if (!ipc_operation.Complete(ipc_generation))
+					return IpcPollResult::Error;
 
 				CloseIpcPipe();
 				return error == ERROR_BROKEN_PIPE || error == ERROR_NO_DATA
 					? IpcPollResult::Idle
 					: IpcPollResult::Error;
 			}
+			if (!ipc_operation.Complete(ipc_generation))
+				return IpcPollResult::Error;
 
 			switch (ipc_transport_state)
 			{
@@ -473,7 +622,12 @@ namespace nte::mods
 				context, ipc_request, ipc_response);
 			ipc_response.status = static_cast<uint32_t>(status);
 
-			ResetIpcOverlapped();
+			if (!ResetIpcOverlapped() ||
+				!ipc_operation.Begin(ipc_generation))
+			{
+				CloseIpcPipe();
+				return IpcPumpResult::Error;
+			}
 			DWORD bytes_written = 0;
 			if (WriteFile(
 				ipc_pipe,
@@ -482,6 +636,7 @@ namespace nte::mods
 				&bytes_written,
 				&ipc_overlapped))
 			{
+				ipc_operation.Complete(ipc_generation);
 				if (bytes_written != sizeof(ipc_response))
 				{
 					CloseIpcPipe();
@@ -497,6 +652,7 @@ namespace nte::mods
 
 			if (GetLastError() != ERROR_IO_PENDING)
 			{
+				ipc_operation.Complete(ipc_generation);
 				CloseIpcPipe();
 				return IpcPumpResult::Error;
 			}
@@ -551,6 +707,14 @@ namespace nte::mods
 	{
 		if (context == nullptr)
 			return IpcPumpResult::Error;
+		IpcTransportTryGuard guard;
+		if (!guard.Acquired())
+			return IpcPumpResult::Idle;
+		// Revalidate after taking the transport lock. A tick that snapshotted the
+		// old capability before a workspace reload must not reopen a pipe that the
+		// worker just closed. Lock order remains transport -> program.
+		if ((runtime::EnabledCapabilities() & runtime::CAPABILITY_IPC) == 0)
+			return IpcPumpResult::Idle;
 
 		const IpcPollResult poll_result = PollIpcRequest();
 		if (poll_result == IpcPollResult::Error)
@@ -562,6 +726,7 @@ namespace nte::mods
 
 	void CloseIpc()
 	{
+		IpcTransportGuard guard;
 		CloseIpcPipe();
 	}
 } // namespace nte::mods

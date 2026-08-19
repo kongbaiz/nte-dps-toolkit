@@ -68,6 +68,38 @@ bool IsWritableAddress(const void* address)
     }
 }
 
+bool TryReadPointer(void* const* address, void*& result)
+{
+    __try
+    {
+        result = *address;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        result = nullptr;
+        return false;
+    }
+}
+
+bool TryCompareExchangePointer(
+    PVOID volatile* slot,
+    void* exchange,
+    void* comparand,
+    void*& observed)
+{
+    __try
+    {
+        observed = InterlockedCompareExchangePointer(slot, exchange, comparand);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        observed = nullptr;
+        return false;
+    }
+}
+
 bool QueryExecutableRange(
     const void* address,
     bool allow_private,
@@ -118,7 +150,9 @@ size_t CountVTableEntries(void** vtable, size_t maximum)
             !vtable_range.Contains(entry, sizeof(*entry)))
             break;
 
-        void* function = *entry;
+        void* function = nullptr;
+        if (!TryReadPointer(entry, function))
+            break;
         if (!executable_range.Contains(function, 1) &&
             !QueryExecutableRange(function, false, executable_range))
             break;
@@ -129,18 +163,24 @@ size_t CountVTableEntries(void** vtable, size_t maximum)
 }
 } // namespace
 
-bool ShadowVTableHook::Install(void* object, size_t index, void* detour)
+bool ShadowVTableHook::Install(
+    void* object,
+    size_t index,
+    void* detour,
+    void** expected_vtable,
+    void* expected_original)
 {
     if (object == nullptr || detour == nullptr ||
+        expected_vtable == nullptr || expected_original == nullptr ||
         index >= MAX_VTABLE_ENTRIES ||
+        retired_allocation_count_ >= MAX_RETIRED_ALLOCATIONS ||
         InterlockedCompareExchange(&installed_, 0, 0) != 0 ||
         !IsReadableRange(object, sizeof(void*)) || !IsWritableAddress(object) ||
         !IsExecutableAddress(detour))
         return false;
 
-    auto** original_vtable = *reinterpret_cast<void***>(object);
-    if (original_vtable == nullptr ||
-        !IsReadableRange(original_vtable, (index + 1) * sizeof(void*)))
+    void** original_vtable = expected_vtable;
+    if (!IsReadableRange(original_vtable, (index + 1) * sizeof(void*)))
         return false;
 
     const size_t entry_count =
@@ -164,13 +204,25 @@ bool ShadowVTableHook::Install(void* object, size_t index, void* detour)
 
     // Preserve the MSVC complete-object-locator slot immediately before the
     // address point. Builds without RTTI still retain the preceding value.
-    allocation[0] = IsReadableRange(original_vtable - 1, sizeof(void*))
-                        ? original_vtable[-1]
-                        : nullptr;
+    void* complete_object_locator = nullptr;
+    if (IsReadableRange(original_vtable - 1, sizeof(void*)))
+        TryReadPointer(original_vtable - 1, complete_object_locator);
+    allocation[0] = complete_object_locator;
     auto** shadow_vtable = allocation + prefix_entries;
     for (size_t entry = 0; entry < entry_count; ++entry)
-        shadow_vtable[entry] = original_vtable[entry];
+    {
+        if (!TryReadPointer(original_vtable + entry, shadow_vtable[entry]))
+        {
+            VirtualFree(allocation, 0, MEM_RELEASE);
+            return false;
+        }
+    }
     const void* original_function = shadow_vtable[index];
+    if (original_function != expected_original)
+    {
+        VirtualFree(allocation, 0, MEM_RELEASE);
+        return false;
+    }
     shadow_vtable[index] = detour;
 
     DWORD old_protection = 0;
@@ -182,9 +234,13 @@ bool ShadowVTableHook::Install(void* object, size_t index, void* detour)
     }
 
     auto* object_vtable_slot = reinterpret_cast<PVOID volatile*>(object);
-    if (InterlockedCompareExchangePointer(
-            object_vtable_slot, shadow_vtable, original_vtable) !=
-        original_vtable)
+    void* observed_vtable = nullptr;
+    if (!TryCompareExchangePointer(
+            object_vtable_slot,
+            shadow_vtable,
+            original_vtable,
+            observed_vtable) ||
+        observed_vtable != original_vtable)
     {
         VirtualFree(allocation, 0, MEM_RELEASE);
         return false;
@@ -210,12 +266,21 @@ void ShadowVTableHook::Remove() noexcept
             const_cast<PVOID*>(object_vtable_slot_), sizeof(void*)) &&
         IsWritableAddress(const_cast<PVOID*>(object_vtable_slot_)))
     {
-        InterlockedCompareExchangePointer(
-            object_vtable_slot_, original_vtable_, shadow_vtable_);
+        void* observed_vtable = nullptr;
+        TryCompareExchangePointer(
+            object_vtable_slot_,
+            original_vtable_,
+            shadow_vtable_,
+            observed_vtable);
     }
 
+    // A CPU may have read the published shadow vptr and be descheduled before
+    // it loads the target entry. Restoring the object's vptr therefore does
+    // not prove dispatch quiescence. Published tables are deliberately retired
+    // for the remaining process lifetime; install failures above may still be
+    // freed because those allocations were never published.
     if (shadow_allocation_ != nullptr)
-        VirtualFree(shadow_allocation_, 0, MEM_RELEASE);
+        ++retired_allocation_count_;
 
     object_vtable_slot_ = nullptr;
     original_vtable_ = nullptr;
@@ -234,5 +299,11 @@ bool ShadowVTableHook::IsInstalled() const noexcept
 {
     return InterlockedCompareExchange(
         const_cast<volatile LONG*>(&installed_), 0, 0) != 0;
+}
+
+bool ShadowVTableHook::CanInstall() const noexcept
+{
+    return !IsInstalled() &&
+           retired_allocation_count_ < MAX_RETIRED_ALLOCATIONS;
 }
 } // namespace nte::hook

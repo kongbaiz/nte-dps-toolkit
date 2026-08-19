@@ -14,6 +14,19 @@ namespace nte::mods::memory
 				output[index] = input[index];
 		}
 
+		bool TryCopyBytes(void* destination, const void* source, size_t size)
+		{
+			__try
+			{
+				CopyBytes(destination, source, size);
+				return true;
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return false;
+			}
+		}
+
 		bool IsWritableRange(void* address, size_t size)
 		{
 			if (address == nullptr || size == 0)
@@ -98,8 +111,10 @@ namespace nte::mods::memory
 		if (!IsReadableRange(address, size))
 			return false;
 
-		CopyBytes(destination, address, size);
-		return true;
+		// VirtualQuery is only an inexpensive rejection filter; it does not pin
+		// a game-owned page between the check and use. The minimal SEH boundary
+		// converts concurrent unmap/protection changes into a failed read.
+		return TryCopyBytes(destination, address, size);
 	}
 
 	bool WriteBytes(
@@ -118,7 +133,6 @@ namespace nte::mods::memory
 		if (!IsWritableRange(address, size))
 			return false;
 
-		CopyBytes(address, source, size);
-		return true;
+		return TryCopyBytes(address, source, size);
 	}
 } // namespace nte::mods::memory

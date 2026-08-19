@@ -4,6 +4,37 @@
 
 namespace nte::hook
 {
+struct ViewportOriginalBinding
+{
+    const void* viewport;
+    const void* original;
+};
+
+constexpr const void* FindViewportOriginal(
+    const ViewportOriginalBinding* bindings,
+    size_t count,
+    const void* viewport) noexcept
+{
+    if (bindings == nullptr || viewport == nullptr)
+        return nullptr;
+    for (size_t index = count; index != 0; --index)
+    {
+        const ViewportOriginalBinding& binding = bindings[index - 1];
+        if (binding.viewport == viewport)
+            return binding.original;
+    }
+    return nullptr;
+}
+
+constexpr bool CanReuseViewportBinding(
+    const ViewportOriginalBinding& binding,
+    const void* viewport,
+    const void* original) noexcept
+{
+    return viewport != nullptr && original != nullptr &&
+           binding.viewport == viewport && binding.original == original;
+}
+
 constexpr bool IsConsistentViewportChain(
     const void* world,
     const void* game_instance,

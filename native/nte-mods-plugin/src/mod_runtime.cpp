@@ -3243,10 +3243,9 @@ namespace nte::mods::runtime
 			if (!memory::ReadValue(
 					base, static_cast<size_t>(offset), array) ||
 				array.data == nullptr || array.count < 1 ||
-				array.capacity < array.count ||
-				!memory::IsReadableRange(array.data, sizeof(*array.data)))
+				array.capacity < array.count)
 				return nullptr;
-			return array.data[0];
+			return memory::ReadPointer<void>(array.data, 0);
 		}
 
 		uint64_t ReadPointerArrayCount(const void* base, uint64_t offset)
@@ -4311,6 +4310,25 @@ namespace nte::mods::runtime
 			return true;
 		#endif
 		}
+
+		void SamplePartyEffectsGuarded(TickExecution& execution)
+		{
+		#if defined(_MSC_VER)
+			__try
+			{
+				SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
+					execution, GameValue::PlayerState)));
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				// The game owns this UObject graph. Drop a faulting sample and
+				// preserve the last fully published snapshot.
+			}
+		#else
+			SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
+				execution, GameValue::PlayerState)));
+		#endif
+		}
 	} // namespace
 
 	ReloadResult ReloadEnabledPrograms(const wchar_t* workspace)
@@ -4494,10 +4512,16 @@ namespace nte::mods::runtime
 				quarantined_programs[index] = true;
 		}
 		if ((enabled_capabilities & CAPABILITY_CHARACTER_EFFECTS) != 0)
-			SamplePartyEffects(reinterpret_cast<void*>(ResolveGameValue(
-				execution, GameValue::PlayerState)));
-		PumpLiveIpc(&execution.ipc_context);
+			SamplePartyEffectsGuarded(execution);
+		const PluginContext ipc_context = execution.ipc_context;
+		const bool ipc_enabled = (enabled_capabilities & CAPABILITY_IPC) != 0;
 		ReleaseSRWLockShared(&program_lock);
+
+		// Lock order is ipc_transport_lock -> program_lock. Do not retain the
+		// hot program lock while an expired OVERLAPPED operation is cancelled
+		// and synchronously drained by the transport owner.
+		if (ipc_enabled)
+			PumpLiveIpc(&ipc_context);
 	}
 
 	NteModsStatus DispatchIpcRequestPrograms(
@@ -4505,6 +4529,7 @@ namespace nte::mods::runtime
 		const NteModsIpcRequest& request,
 		NteModsIpcResponse& response)
 	{
+		AcquireSRWLockShared(&program_lock);
 		for (size_t program_index = 0;
 			program_index < program_count;
 			++program_index)
@@ -4517,14 +4542,17 @@ namespace nte::mods::runtime
 				const IpcRoute& route = program.ipc_routes[route_index];
 				if (route.operation == request.operation)
 				{
-					return InvokeIpcKernelService(
-						route.service,
-						context,
-						request,
-						response);
+					const NteModsStatus result = InvokeIpcKernelService(
+							route.service,
+							context,
+							request,
+							response);
+					ReleaseSRWLockShared(&program_lock);
+					return result;
 				}
 			}
 		}
+		ReleaseSRWLockShared(&program_lock);
 		return NTE_MODS_STATUS_MOD_DISABLED;
 	}
 

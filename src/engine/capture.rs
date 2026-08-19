@@ -1367,12 +1367,284 @@ fn decode_payload_text(data: &[u8]) -> String {
     decode_payload_text_filtered(data, |_| true).text
 }
 
-fn decode_summary_payload_text(data: &[u8]) -> DecodedPayloadText {
-    decode_payload_text_filtered(data, |value| {
-        value.contains("Abyss")
-            || value.contains("ConditionState_Success")
-            || value.contains("UltraSkill")
+const SUMMARY_MARKER_ABYSS: usize = 0;
+const SUMMARY_MARKER_ABYSS_GAMEPLAY: usize = 1;
+const SUMMARY_MARKER_SUCCESS: usize = 2;
+const SUMMARY_MARKER_FIRST_HALF: usize = 3;
+const SUMMARY_MARKER_SECOND_HALF: usize = 4;
+const SUMMARY_MARKER_ABYSS_CLONE: usize = 5;
+const SUMMARY_MARKER_ABYSS_RESTART: usize = 6;
+const SUMMARY_MARKER_ABYSS_EXIT: usize = 7;
+const SUMMARY_MARKER_ULTRA_SKILL: usize = 8;
+const SUMMARY_MARKER_COUNT: usize = 9;
+const SUMMARY_TEXT_MAX_LEN: usize = 256;
+const SUMMARY_MARKER_PATTERNS: [&[u8]; SUMMARY_MARKER_COUNT] = [
+    b"Abyss",
+    b"FAbyssGamePlayData",
+    b"ConditionState_Success",
+    b"EAbyssFightStage::FirstHalf",
+    b"EAbyssFightStage::SecondHalf",
+    b"AbyssClone",
+    b"Abyss_Battle_Born",
+    b"Abyss_Station_LeaveClone",
+    b"UltraSkill",
+];
+
+#[derive(Default)]
+struct SummaryPayloadMarkers {
+    found: [bool; SUMMARY_MARKER_COUNT],
+    explicit_stage: Option<(u32, u32, AbyssHalf)>,
+}
+
+/// Streaming parser for a printable identifier that starts with `Abyss_`.
+/// It retains only the last three underscore-delimited numeric components,
+/// matching [`parse_abyss_stage_id`] without allocating the complete token.
+struct AbyssStageTokenScanner {
+    position: usize,
+    prefix_matches: bool,
+    capturing_components: bool,
+    component_count: usize,
+    component_value: u32,
+    component_has_digit: bool,
+    component_is_numeric: bool,
+    component_trailing_spaces: bool,
+    last_components: [Option<u32>; 3],
+}
+
+impl AbyssStageTokenScanner {
+    const PREFIX: &'static [u8] = b"Abyss_";
+
+    fn new() -> Self {
+        Self {
+            position: 0,
+            prefix_matches: true,
+            capturing_components: false,
+            component_count: 0,
+            component_value: 0,
+            component_has_digit: false,
+            component_is_numeric: true,
+            component_trailing_spaces: false,
+            last_components: [None; 3],
+        }
+    }
+
+    fn push_printable(&mut self, byte: u8) {
+        // The full decoder trims printable runs before parsing identifiers.
+        if self.position == 0 && byte == b' ' {
+            return;
+        }
+        if self.position < Self::PREFIX.len() {
+            self.prefix_matches &= byte == Self::PREFIX[self.position];
+            self.position += 1;
+            self.capturing_components = self.position == Self::PREFIX.len() && self.prefix_matches;
+            return;
+        }
+        self.position += 1;
+        if !self.capturing_components {
+            return;
+        }
+        if byte == b' ' && self.component_has_digit && self.component_is_numeric {
+            self.component_trailing_spaces = true;
+            return;
+        }
+        if self.component_trailing_spaces {
+            // Spaces are valid only when they are trimmed from the end of the
+            // whole printable run. Any following byte makes them internal.
+            self.component_is_numeric = false;
+            self.component_trailing_spaces = false;
+        }
+        if byte == b'_' {
+            self.finish_component();
+            return;
+        }
+        self.component_has_digit = true;
+        let Some(digit) = byte.checked_sub(b'0').filter(|digit| *digit <= 9) else {
+            self.component_is_numeric = false;
+            return;
+        };
+        if self.component_is_numeric {
+            match self
+                .component_value
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u32::from(digit)))
+            {
+                Some(value) => self.component_value = value,
+                None => self.component_is_numeric = false,
+            }
+        }
+    }
+
+    fn finish_component(&mut self) {
+        self.last_components.rotate_left(1);
+        self.last_components[2] =
+            (self.component_has_digit && self.component_is_numeric).then_some(self.component_value);
+        self.component_count = self.component_count.saturating_add(1);
+        self.component_value = 0;
+        self.component_has_digit = false;
+        self.component_is_numeric = true;
+        self.component_trailing_spaces = false;
+    }
+
+    fn finish(mut self) -> Option<(u32, u32, AbyssHalf)> {
+        if !self.capturing_components {
+            return None;
+        }
+        self.finish_component();
+        if self.component_count < 3 {
+            return None;
+        }
+        let [Some(cycle), Some(floor), Some(half)] = self.last_components else {
+            return None;
+        };
+        let half = match half {
+            0 => AbyssHalf::First,
+            1 => AbyssHalf::Second,
+            _ => return None,
+        };
+        Some((cycle, floor, half))
+    }
+}
+
+fn shifted_payload_len(data: &[u8], bit_shift: u8) -> usize {
+    match bit_shift {
+        0 => data.len(),
+        1..=7 => data.len().saturating_sub(1),
+        _ => 0,
+    }
+}
+
+fn shifted_payload_byte(data: &[u8], bit_shift: u8, index: usize) -> Option<u8> {
+    match bit_shift {
+        0 => data.get(index).copied(),
+        1..=7 => Some(
+            (data.get(index).copied()? >> bit_shift)
+                | (data.get(index.checked_add(1)?).copied()? << (8 - bit_shift)),
+        ),
+        _ => None,
+    }
+}
+
+fn shifted_payload_ends_with(data: &[u8], bit_shift: u8, end_index: usize, pattern: &[u8]) -> bool {
+    let Some(end_exclusive) = end_index.checked_add(1) else {
+        return false;
+    };
+    let Some(start) = end_exclusive.checked_sub(pattern.len()) else {
+        return false;
+    };
+    pattern.iter().enumerate().all(|(offset, expected)| {
+        shifted_payload_byte(data, bit_shift, start + offset) == Some(*expected)
     })
+}
+
+fn scan_summary_payload_markers(data: &[u8]) -> SummaryPayloadMarkers {
+    let mut markers = SummaryPayloadMarkers::default();
+    for bit_shift in 0..8 {
+        let mut stage_token = AbyssStageTokenScanner::new();
+        for index in 0..shifted_payload_len(data, bit_shift) {
+            let Some(byte) = shifted_payload_byte(data, bit_shift, index) else {
+                break;
+            };
+            // One streaming pass per bit alignment. Only a possible terminal
+            // byte triggers a bounded comparison against its fixed marker;
+            // unrelated bytes do not fan out over every pattern.
+            let candidates: &[usize] = match byte {
+                b'a' => &[SUMMARY_MARKER_ABYSS_GAMEPLAY],
+                b'e' => &[SUMMARY_MARKER_ABYSS_CLONE, SUMMARY_MARKER_ABYSS_EXIT],
+                b'f' => &[SUMMARY_MARKER_FIRST_HALF, SUMMARY_MARKER_SECOND_HALF],
+                b'l' => &[SUMMARY_MARKER_ULTRA_SKILL],
+                b'n' => &[SUMMARY_MARKER_ABYSS_RESTART],
+                b's' => &[SUMMARY_MARKER_ABYSS, SUMMARY_MARKER_SUCCESS],
+                _ => &[],
+            };
+            for marker_index in candidates {
+                if !markers.found[*marker_index]
+                    && shifted_payload_ends_with(
+                        data,
+                        bit_shift,
+                        index,
+                        SUMMARY_MARKER_PATTERNS[*marker_index],
+                    )
+                {
+                    markers.found[*marker_index] = true;
+                }
+            }
+
+            if (0x20..=0x7e).contains(&byte) {
+                stage_token.push_printable(byte);
+            } else {
+                if let Some(stage) = stage_token.finish() {
+                    markers.explicit_stage = Some(stage);
+                }
+                stage_token = AbyssStageTokenScanner::new();
+            }
+        }
+        if let Some(stage) = stage_token.finish() {
+            markers.explicit_stage = Some(stage);
+        }
+    }
+    markers
+}
+
+fn append_summary_marker(text: &mut String, marker: &str) {
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(marker);
+}
+
+fn decode_summary_payload_text(data: &[u8]) -> DecodedPayloadText {
+    let markers = scan_summary_payload_markers(data);
+    let mut text = String::with_capacity(SUMMARY_TEXT_MAX_LEN);
+    if markers.found[SUMMARY_MARKER_ABYSS_GAMEPLAY] {
+        append_summary_marker(&mut text, "FAbyssGamePlayData");
+    }
+    if markers.found[SUMMARY_MARKER_SUCCESS] {
+        append_summary_marker(&mut text, "ConditionState_Success");
+    }
+    if markers.found[SUMMARY_MARKER_FIRST_HALF] {
+        append_summary_marker(&mut text, "EAbyssFightStage::FirstHalf");
+    }
+    if markers.found[SUMMARY_MARKER_SECOND_HALF] {
+        append_summary_marker(&mut text, "EAbyssFightStage::SecondHalf");
+    }
+    if markers.found[SUMMARY_MARKER_ABYSS_CLONE] {
+        append_summary_marker(&mut text, "AbyssClone");
+    }
+    if markers.found[SUMMARY_MARKER_ABYSS_RESTART] {
+        append_summary_marker(&mut text, "Abyss_Battle_Born");
+    }
+    if markers.found[SUMMARY_MARKER_ABYSS_EXIT] {
+        append_summary_marker(&mut text, "Abyss_Station_LeaveClone");
+    }
+    if let Some((cycle, floor, half)) = markers.explicit_stage {
+        let half = match half {
+            AbyssHalf::First => 0,
+            AbyssHalf::Second => 1,
+        };
+        append_summary_marker(&mut text, &format!("Abyss_{cycle}_{floor}_{half}"));
+    }
+    let has_specific_abyss_marker = markers.found[SUMMARY_MARKER_ABYSS_GAMEPLAY]
+        || markers.found[SUMMARY_MARKER_FIRST_HALF]
+        || markers.found[SUMMARY_MARKER_SECOND_HALF]
+        || markers.found[SUMMARY_MARKER_ABYSS_CLONE]
+        || markers.found[SUMMARY_MARKER_ABYSS_RESTART]
+        || markers.found[SUMMARY_MARKER_ABYSS_EXIT]
+        || markers.explicit_stage.is_some();
+    if markers.found[SUMMARY_MARKER_ABYSS] && !has_specific_abyss_marker {
+        append_summary_marker(&mut text, "Abyss");
+    }
+    if markers.found[SUMMARY_MARKER_ULTRA_SKILL] {
+        append_summary_marker(&mut text, "UltraSkill");
+    }
+    debug_assert!(text.len() <= SUMMARY_TEXT_MAX_LEN);
+    let has_readable_text = !text.is_empty();
+    if !has_readable_text {
+        text.push_str(UNREADABLE_PROTOCOL_TEXT);
+    }
+    DecodedPayloadText {
+        text,
+        has_readable_text,
+    }
 }
 
 fn decode_payload_text_filtered(data: &[u8], keep: impl Fn(&str) -> bool) -> DecodedPayloadText {
@@ -4775,6 +5047,9 @@ pub fn import_pcapng(
             let mut reader = PcapNgReader::new(file).map_err(|error| error.to_string())?;
             let mut decoder =
                 PacketDecoder::with_ability_catalog(ability_catalog, use_server_damage_calibration);
+            // PCAP replay is an explicit diagnostics/import operation and
+            // retains the legacy full packet projection for export fidelity.
+            decoder.packet_emission = PacketEmissionMode::FullDebug;
             let mut game_pause = GamePauseIntervalTracker::default();
             let mut resource_warnings = Vec::new();
             let enemy_catalog = load_resource(
@@ -9239,7 +9514,7 @@ mod tests {
     #[test]
     fn summary_payload_text_retains_only_runtime_markers() {
         let irrelevant = decode_summary_payload_text(b"Some.DebugProtocolIdentifier");
-        assert!(irrelevant.has_readable_text);
+        assert!(!irrelevant.has_readable_text);
         assert_eq!(irrelevant.text, UNREADABLE_PROTOCOL_TEXT);
 
         let abyss = decode_summary_payload_text(b"FAbyssGamePlayData ConditionState_Success");
@@ -9249,7 +9524,139 @@ mod tests {
 
         let ultra = decode_summary_payload_text(b"Event.Montage.Player.UltraSkillB");
         assert!(ultra.has_readable_text);
-        assert_eq!(ultra.text, "Event.Montage.Player.UltraSkillB");
+        assert_eq!(ultra.text, "UltraSkill");
+    }
+
+    #[test]
+    fn summary_payload_text_is_bounded_to_canonical_markers() {
+        let mut payload = vec![b'X'; CAPTURE_SNAPLEN as usize];
+        payload[32_000..32_010].copy_from_slice(b"UltraSkill");
+
+        let summary = decode_summary_payload_text(&payload);
+
+        assert_eq!(summary.text, "UltraSkill");
+        assert!(summary.text.len() < 256);
+    }
+
+    fn summary_marker_presence(text: &str) -> [bool; 8] {
+        [
+            text.contains("FAbyssGamePlayData"),
+            text.contains("ConditionState_Success"),
+            text.contains("EAbyssFightStage::FirstHalf"),
+            text.contains("EAbyssFightStage::SecondHalf"),
+            text.contains("AbyssClone"),
+            text.contains("Abyss_Battle_Born"),
+            text.contains("Abyss_Station_LeaveClone"),
+            text.contains("UltraSkill"),
+        ]
+    }
+
+    #[test]
+    fn summary_payload_markers_match_full_debug_for_every_bit_shift() {
+        let text = b"FAbyssGamePlayData ConditionState_Success EAbyssFightStage::SecondHalf AbyssCloneCharacterItemData Event.Montage.Player.UltraSkillB";
+
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; text.len() + 4];
+            write_shifted_bytes(&mut payload, bit_shift, 1, text);
+
+            let full = decode_payload_text_filtered(&payload, |value| {
+                value.contains("Abyss")
+                    || value.contains("ConditionState_Success")
+                    || value.contains("UltraSkill")
+            });
+            let summary = decode_summary_payload_text(&payload);
+
+            assert_eq!(
+                summary_marker_presence(&summary.text),
+                summary_marker_presence(&full.text),
+                "marker parity failed at bit shift {bit_shift}"
+            );
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(30.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(30.0, &full.text)),
+                "Abyss event parity failed at bit shift {bit_shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_payload_scanner_handles_stream_boundaries_and_no_match() {
+        for (bit_shift, marker, expected) in [
+            (0, b"Abyss_Battle_Born".as_slice(), "Abyss_Battle_Born"),
+            (
+                3,
+                b"ConditionState_Success".as_slice(),
+                "ConditionState_Success",
+            ),
+            (7, b"UltraSkill".as_slice(), "UltraSkill"),
+        ] {
+            let mut payload = vec![0_u8; marker.len() + usize::from(bit_shift > 0)];
+            write_shifted_bytes(&mut payload, bit_shift, 0, marker);
+            let summary = decode_summary_payload_text(&payload);
+            assert!(summary.text.contains(expected));
+        }
+
+        for payload in [
+            Vec::new(),
+            b"Abys".to_vec(),
+            b"ConditionState_Succes".to_vec(),
+            b"Event.Montage.Player.UltraSkil".to_vec(),
+            vec![0xff; 257],
+        ] {
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(summary.text, UNREADABLE_PROTOCOL_TEXT);
+            assert!(!summary.has_readable_text);
+        }
+    }
+
+    #[test]
+    fn summary_payload_explicit_stage_matches_full_debug() {
+        let text = b"  Abyss_12_6_1  ";
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; text.len() + 3];
+            write_shifted_bytes(&mut payload, bit_shift, 1, text);
+            let full = decode_payload_text_filtered(&payload, |value| value.contains("Abyss"));
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(40.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(40.0, &full.text)),
+                "explicit stage parity failed at bit shift {bit_shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_payload_length_prefixed_stage_matches_full_debug() {
+        let identifier = b"Abyss_12_6_1";
+        let mut logical_payload = Vec::with_capacity(identifier.len() + 5);
+        logical_payload.extend_from_slice(&((identifier.len() + 1) as u32).to_le_bytes());
+        logical_payload.extend_from_slice(identifier);
+        logical_payload.push(0);
+
+        for bit_shift in 0..8 {
+            let mut payload = vec![0_u8; logical_payload.len() + 3];
+            write_shifted_bytes(&mut payload, bit_shift, 1, &logical_payload);
+            let full = decode_payload_text_filtered(&payload, |value| value.contains("Abyss"));
+            let summary = decode_summary_payload_text(&payload);
+            assert_eq!(
+                format!("{:?}", abyss_events_from_text(50.0, &summary.text)),
+                format!("{:?}", abyss_events_from_text(50.0, &full.text)),
+                "length-prefixed stage parity failed at bit shift {bit_shift}"
+            );
+        }
+    }
+
+    #[test]
+    fn summary_payload_scanner_never_panics_on_untrusted_payloads() {
+        for length in 0..=CAPTURE_SNAPLEN as usize {
+            if length > 512 && length != CAPTURE_SNAPLEN as usize {
+                continue;
+            }
+            let payload = (0..length)
+                .map(|index| (index as u8).wrapping_mul(37).wrapping_add(length as u8))
+                .collect::<Vec<_>>();
+            let _ = decode_summary_payload_text(&payload);
+        }
     }
 
     #[test]
@@ -9264,7 +9671,11 @@ mod tests {
 
         let (full_sender, full_receiver) = unbounded();
         let full_sender = EngineEventSink::reliable(full_sender);
-        PacketDecoder::default().process_ethernet_frame(
+        PacketDecoder {
+            packet_emission: PacketEmissionMode::FullDebug,
+            ..PacketDecoder::default()
+        }
+        .process_ethernet_frame(
             &packet,
             FrameTimestamp::Known(10.0),
             Some(local_ip),
