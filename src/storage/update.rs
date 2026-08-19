@@ -819,19 +819,30 @@ mod tests {
     }
 
     #[test]
-    fn release_allowlist_accepts_managed_files() {
+    fn release_path_policy_accepts_signed_package_files_without_filename_allowlist() {
         assert!(safe_managed_release_path(Path::new("nte-dps-tool.exe")));
+        assert!(safe_managed_release_path(Path::new("nte-mod-loader.exe")));
+        assert!(safe_managed_release_path(Path::new("future-sidecar.exe")));
         assert!(safe_managed_release_path(Path::new("plugins/dwmapi.dll")));
         assert!(safe_managed_release_path(Path::new("licenses/dep/LICENSE")));
     }
 
     #[test]
-    fn release_allowlist_rejects_user_data_and_scripts() {
+    fn release_path_policy_rejects_protected_user_and_update_state() {
         assert!(!safe_managed_release_path(Path::new("config.json")));
         assert!(!safe_managed_release_path(Path::new(
             "history/session.json"
         )));
-        assert!(!safe_managed_release_path(Path::new("install.ps1")));
+        assert!(!safe_managed_release_path(Path::new("logs/capture.pcapng")));
+        assert!(!safe_managed_release_path(Path::new(
+            ".update/staging/file"
+        )));
+        assert!(!safe_managed_release_path(Path::new(
+            "plugins/mods-plugin.state.json"
+        )));
+        assert!(!safe_managed_release_path(Path::new(
+            "plugins/equipment-plugin.state.json"
+        )));
     }
 
     #[test]
@@ -846,6 +857,41 @@ mod tests {
             release_path_key(Path::new("plugins/dwmapi.dll")),
             release_path_key(Path::new("PLUGINS/DWMAPI.DLL"))
         );
+    }
+
+    #[test]
+    fn verified_app_archive_extracts_new_root_sidecar_without_client_filename_change() {
+        let root = update_test_directory("dynamic-release-path");
+        let package = root.join("release.zip");
+        let file = File::create(&package).expect("release archive should be created");
+        let mut archive = zip::ZipWriter::new(file);
+        for (path, contents) in [
+            ("nte-dps-tool.exe", b"app".as_slice()),
+            ("nte-mod-loader.exe", b"loader".as_slice()),
+            ("nte-updater.exe", b"updater".as_slice()),
+        ] {
+            archive
+                .start_file(path, zip::write::SimpleFileOptions::default())
+                .expect("release entry should start");
+            archive
+                .write_all(contents)
+                .expect("release entry should be written");
+        }
+        archive.finish().expect("release archive should finish");
+
+        let staging = root.join("staging");
+        fs::create_dir_all(&staging).expect("staging directory should be created");
+        let files = extract_release_archive(&package, &staging)
+            .expect("verified release archive should extract");
+
+        assert!(files.contains(&PathBuf::from("nte-dps-tool.exe")));
+        assert!(files.contains(&PathBuf::from("nte-mod-loader.exe")));
+        assert!(files.contains(&PathBuf::from("nte-updater.exe")));
+        assert_eq!(
+            fs::read(staging.join("nte-mod-loader.exe")).unwrap(),
+            b"loader"
+        );
+        fs::remove_dir_all(root).expect("test directory should be removed");
     }
 
     #[test]
