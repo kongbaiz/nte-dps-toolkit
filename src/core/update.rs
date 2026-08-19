@@ -376,16 +376,25 @@ pub fn safe_managed_release_path(path: &Path) -> bool {
             return false;
         }
     }
-    matches!(
-        path.to_string_lossy().replace('\\', "/").as_str(),
-        "nte-dps-tool.exe"
-            | "nte-updater.exe"
-            | "BUILD_VARIANT.md"
-            | "THIRD_PARTY_LICENSES.md"
-            | "NOTICE.md"
-    ) || path.starts_with("plugins")
-        || path.starts_with("licenses")
-        || path.starts_with("res")
+
+    // Artifact authenticity is established before extraction by verifying the package SHA-256
+    // from the signed update manifest. This policy therefore isolates installer-owned paths from
+    // mutable user/runtime state instead of duplicating every release filename in the client.
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    let root = normalized.split('/').next().unwrap_or_default();
+    if matches!(root, ".update" | "history" | "logs") {
+        return false;
+    }
+    if !normalized.contains('/') && (root == "config.json" || root.ends_with(".pcapng")) {
+        return false;
+    }
+    !matches!(
+        normalized.as_str(),
+        "plugins/mods-plugin.state.json" | "plugins/equipment-plugin.state.json"
+    )
 }
 
 fn safe_windows_release_name(name: &OsStr) -> bool {
@@ -657,8 +666,20 @@ mod tests {
     #[test]
     fn managed_release_paths_exclude_user_data_and_traversal() {
         assert!(safe_managed_release_path(Path::new("nte-dps-tool.exe")));
+        assert!(safe_managed_release_path(Path::new("nte-mod-loader.exe")));
+        assert!(safe_managed_release_path(Path::new("future-sidecar.exe")));
         assert!(safe_managed_release_path(Path::new("plugins/dwmapi.dll")));
         assert!(!safe_managed_release_path(Path::new("config.json")));
+        assert!(!safe_managed_release_path(Path::new(
+            ".update/staging/file"
+        )));
+        assert!(!safe_managed_release_path(Path::new(
+            "history/session.json"
+        )));
+        assert!(!safe_managed_release_path(Path::new("logs/capture.pcapng")));
+        assert!(!safe_managed_release_path(Path::new(
+            "plugins/mods-plugin.state.json"
+        )));
         assert!(!safe_managed_release_path(Path::new("../nte-dps-tool.exe")));
         assert!(!safe_managed_release_path(Path::new(
             "plugins/dwmapi.dll:payload"
