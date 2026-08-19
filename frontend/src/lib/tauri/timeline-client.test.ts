@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTimelineClient } from "@/lib/tauri/timeline-client";
+import { MAX_STREAM_DELIVERY_BYTES } from "@/lib/tauri/stream-contract";
+
+const encodeDelivery = (events: unknown[]): ArrayBuffer => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ streamProtocolVersion: 1, events }),
+  );
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+};
 
 const EMPTY_SNAPSHOT = {
   contractVersion: 2,
@@ -28,8 +39,20 @@ describe("Timeline client", () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_timeline") {
-        return { subscriptionId: "timeline-test", streamIntervalMs: 100 };
+        return {
+          subscriptionId: "timeline-test",
+          streamKind: "timeline",
+          streamIntervalMs: 100,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+          maxInFlightDeliveries: 1,
+          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
+        };
       }
+      if (command === "read_stream_delivery") {
+        return encodeDelivery([{ event: "snapshot", payload: EMPTY_SNAPSHOT }]);
+      }
+      if (command === "ack_stream_delivery") return { accepted: true };
       return undefined;
     });
     const client = createTimelineClient(
@@ -44,7 +67,14 @@ describe("Timeline client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe("all", received, vi.fn());
-    onMessage?.({ event: "snapshot", payload: EMPTY_SNAPSHOT });
+    onMessage?.({
+      streamProtocolVersion: 1,
+      streamKind: "timeline",
+      subscriptionId: "timeline-test",
+      streamGeneration: "1",
+      deliverySequence: "1",
+    });
+    await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
     expect(received).toHaveBeenCalledWith(

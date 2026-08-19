@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   ModStudioContractError,
   parseModMarketCatalog,
@@ -12,7 +10,6 @@ import {
   parseModStudioLoadingMethodPreference,
   parseModStudioRuntimeEvent,
   parseModStudioSdkSchema,
-  parseModStudioSubscriptionReceipt,
   parseModStudioWorkspace,
   type ModStudioCommandError,
   type ModMarketCatalogSnapshot,
@@ -28,6 +25,10 @@ import {
   type ModStudioSdkSchemaSnapshot,
   type ModStudioWorkspaceSnapshot,
 } from "@/lib/tauri/mod-studio-contract";
+import {
+  subscribeAckedStream,
+  tauriAckedStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   acknowledgeRisk: "acknowledge_mod_studio_risk",
@@ -107,14 +108,7 @@ export interface ModStudioClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: ModStudioTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: ModStudioTransport = tauriAckedStreamTransport;
 
 export function createModStudioClient(
   transport: ModStudioTransport = tauriTransport,
@@ -208,43 +202,16 @@ export function createModStudioClient(
       request(COMMANDS.setLoaderRunning, parseModLoaderRuntime, { running }),
     subscribeRuntime: (onEvent, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onMessage = (message: unknown) => {
-        if (closed) {
-          return;
-        }
-        try {
-          onEvent(parseModStudioRuntimeEvent(message));
-        } catch (error) {
-          onError(parseModStudioCommandError(error));
-        }
-      };
-      const onEventChannel = transport.createChannel(onMessage);
-      const receipt = transport
-        .invoke(COMMANDS.subscribeRuntime, {
-          subscriptionId,
-          onEvent: onEventChannel,
-        })
-        .then(parseModStudioSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) {
-            onError(parseModStudioCommandError(error));
-          }
-          return undefined;
-        });
-
-      return async () => {
-        if (closed) {
-          return;
-        }
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribeRuntime, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
+      return subscribeAckedStream({
+        transport,
+        streamKind: "modStudioRuntime",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribeRuntime,
+        unsubscribeCommand: COMMANDS.unsubscribeRuntime,
+        parseEvent: parseModStudioRuntimeEvent,
+        onEvent,
+        onError: (error) => onError(parseModStudioCommandError(error)),
+      });
     },
   };
 }

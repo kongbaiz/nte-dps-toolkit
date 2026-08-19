@@ -35,14 +35,14 @@ std::thread_local! {
 /// Compact, exportable team DPS snapshot used to predict abyss clear time.
 /// Deliberately holds no packets or per-hit data — only the latest total DPS and
 /// up to 4 members — so the exported file stays tiny.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TeamDps {
     pub dps: f64,
     #[serde(default)]
     pub members: Vec<TeamDpsMember>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TeamDpsMember {
     pub id: u32,
     pub dps: f64,
@@ -67,6 +67,7 @@ pub struct TeamDpsExport {
 
 pub const TEAM_DPS_EXPORT_VERSION: u32 = 1;
 pub const TEAM_DPS_MAX_MEMBERS: usize = 4;
+pub const TEAM_DPS_MAX_MEMBER_NAME_BYTES: usize = 256;
 
 fn team_dps_export_version() -> u32 {
     TEAM_DPS_EXPORT_VERSION
@@ -543,6 +544,23 @@ pub struct CaptureQualitySummary {
     pub unmapped_skill_rows: usize,
     pub unmapped_skill_hits: u64,
     pub unmapped_gameplay_effect_count: usize,
+    pub time_stop_event_count: u64,
+    pub time_stop_interval_count: usize,
+    pub abyss_event_count: u64,
+    pub server_damage_corrections: u64,
+}
+
+/// Allocation-free scalar portion of [`CaptureQualitySummary`]. The live
+/// diagnostics service combines this snapshot with its generation-aware hit
+/// attribution cache, avoiding the string-rich skill projection on every
+/// packet revision.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg(feature = "desktop")]
+pub(crate) struct CaptureQualityScalars {
+    pub hits_generation: u64,
+    pub packet_count: usize,
+    pub packets_with_hits: usize,
+    pub hit_count: usize,
     pub time_stop_event_count: u64,
     pub time_stop_interval_count: usize,
     pub abyss_event_count: u64,
@@ -1557,6 +1575,101 @@ impl TimeStopTracker {
             .filter_map(|interval| Self::clip_interval(interval, start, end))
             .collect::<Vec<_>>();
         Self::merge_intervals(intervals)
+    }
+
+    /// Counts the same clipped union as [`Self::intervals_between`] without
+    /// allocating or sorting a temporary vector. Capture events normally
+    /// arrive in timestamp order, so the first pass is linear. The allocation-
+    /// free fallback preserves exact semantics for older or out-of-order
+    /// replay fixtures.
+    #[cfg(feature = "desktop")]
+    fn interval_count_between(&self, start: f64, end: f64) -> usize {
+        if !start.is_finite() || !end.is_finite() || end <= start {
+            return 0;
+        }
+
+        let visit = |visitor: &mut dyn FnMut(TimeStopInterval)| {
+            for interval in self.intervals.iter().copied() {
+                if let Some(interval) = Self::clip_interval(interval, start, end) {
+                    visitor(interval);
+                }
+            }
+            if let Some((active_start, _)) = self.active_game_pause
+                && let Some(interval) = Self::clip_interval(
+                    TimeStopInterval {
+                        start: active_start,
+                        end,
+                    },
+                    start,
+                    end,
+                )
+            {
+                visitor(interval);
+            }
+        };
+
+        let mut previous_start = None;
+        let mut sorted = true;
+        visit(&mut |interval| {
+            if previous_start.is_some_and(|previous| interval.start < previous) {
+                sorted = false;
+            }
+            previous_start = Some(interval.start);
+        });
+        if sorted {
+            let mut count = 0_usize;
+            let mut merged_end = None::<f64>;
+            visit(&mut |interval| match merged_end {
+                Some(current_end) if interval.start <= current_end => {
+                    merged_end = Some(current_end.max(interval.end));
+                }
+                Some(_) => {
+                    count = count.saturating_add(1);
+                    merged_end = Some(interval.end);
+                }
+                None => merged_end = Some(interval.end),
+            });
+            return count.saturating_add(usize::from(merged_end.is_some()));
+        }
+
+        // No-allocation union count for out-of-order input. Find the next
+        // component seed, then repeatedly extend its right edge until every
+        // touching/overlapping interval has been consumed.
+        let mut count = 0_usize;
+        let mut previous_component_end = None::<f64>;
+        loop {
+            let mut seed = None::<TimeStopInterval>;
+            visit(&mut |interval| {
+                if previous_component_end.is_some_and(|end| interval.start <= end) {
+                    return;
+                }
+                let replace = seed.is_none_or(|current| {
+                    interval.start < current.start
+                        || (interval.start == current.start && interval.end > current.end)
+                });
+                if replace {
+                    seed = Some(interval);
+                }
+            });
+            let Some(seed) = seed else {
+                break;
+            };
+            let mut component_end = seed.end;
+            loop {
+                let before = component_end;
+                visit(&mut |interval| {
+                    if interval.start <= component_end && interval.end > component_end {
+                        component_end = interval.end;
+                    }
+                });
+                if component_end == before {
+                    break;
+                }
+            }
+            count = count.saturating_add(1);
+            previous_component_end = Some(component_end);
+        }
+        count
     }
 
     fn clip_interval(interval: TimeStopInterval, start: f64, end: f64) -> Option<TimeStopInterval> {
@@ -2658,6 +2771,22 @@ impl CombatState {
 
     pub fn skill_breakdown(&self, char_filter: Option<u32>) -> SkillBreakdown {
         summarize_skill_breakdown(&self.hits, char_filter)
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) fn capture_quality_scalars(&self) -> CaptureQualityScalars {
+        let start = self.started_at.unwrap_or_default();
+        let end = self.ended_at.unwrap_or_default();
+        CaptureQualityScalars {
+            hits_generation: self.hits_generation,
+            packet_count: self.packet_count,
+            packets_with_hits: self.packets_with_hits,
+            hit_count: self.hits.len(),
+            time_stop_event_count: self.time_stop.event_count,
+            time_stop_interval_count: self.time_stop.interval_count_between(start, end),
+            abyss_event_count: self.abyss.event_count,
+            server_damage_corrections: self.damage_correction_count,
+        }
     }
 
     pub fn capture_quality_summary(&self, source: CaptureQualitySource) -> CaptureQualitySummary {
@@ -4124,6 +4253,119 @@ mod tests {
         assert!(!text.contains("deadbeef"));
         assert!(!text.contains("192.0.2.1"));
         assert!(!text.contains("decoded text"));
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn allocation_free_quality_scalars_match_legacy_out_of_order_time_stops() {
+        let mut state = CombatState::default();
+        state.push_hit(test_hit(0.0, 1, "outgoing", 1.0));
+        state.push_hit(test_hit(30.0, 1, "outgoing", 1.0));
+        for event in [
+            TimeStopEvent::GamePauseStarted {
+                timestamp: 10.0,
+                pause_type_mask: 1,
+            },
+            TimeStopEvent::GamePauseEnded {
+                timestamp: 20.0,
+                pause_type_mask: 1,
+            },
+            TimeStopEvent::GamePauseStarted {
+                timestamp: 1.0,
+                pause_type_mask: 1,
+            },
+            TimeStopEvent::GamePauseEnded {
+                timestamp: 5.0,
+                pause_type_mask: 1,
+            },
+            TimeStopEvent::GamePauseStarted {
+                timestamp: 4.0,
+                pause_type_mask: 1,
+            },
+            TimeStopEvent::GamePauseEnded {
+                timestamp: 12.0,
+                pause_type_mask: 1,
+            },
+        ] {
+            state.apply_time_stop_event(event);
+        }
+
+        let legacy = state.capture_quality_summary(CaptureQualitySource::Live);
+        let scalars = state.capture_quality_scalars();
+
+        assert_eq!(scalars.hits_generation, state.hits_generation);
+        assert_eq!(scalars.hit_count, legacy.hit_count);
+        assert_eq!(scalars.packet_count, legacy.packet_count);
+        assert_eq!(scalars.packets_with_hits, legacy.packets_with_hits);
+        assert_eq!(scalars.time_stop_event_count, legacy.time_stop_event_count);
+        assert_eq!(
+            scalars.time_stop_interval_count,
+            legacy.time_stop_interval_count
+        );
+        assert_eq!(scalars.abyss_event_count, legacy.abyss_event_count);
+        assert_eq!(
+            scalars.server_damage_corrections,
+            legacy.server_damage_corrections
+        );
+        assert_eq!(scalars.time_stop_event_count, 3);
+        assert_eq!(scalars.time_stop_interval_count, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn allocation_free_interval_count_matches_materialized_union_cases() {
+        let trackers = [
+            TimeStopTracker::default(),
+            TimeStopTracker {
+                intervals: vec![
+                    TimeStopInterval {
+                        start: 1.0,
+                        end: 3.0,
+                    },
+                    TimeStopInterval {
+                        start: 3.0,
+                        end: 4.0,
+                    },
+                    TimeStopInterval {
+                        start: 8.0,
+                        end: 9.0,
+                    },
+                ],
+                active_game_pause: Some((10.0, 1)),
+                ..TimeStopTracker::default()
+            },
+            TimeStopTracker {
+                intervals: vec![
+                    TimeStopInterval {
+                        start: 10.0,
+                        end: 20.0,
+                    },
+                    TimeStopInterval {
+                        start: 1.0,
+                        end: 5.0,
+                    },
+                    TimeStopInterval {
+                        start: 4.0,
+                        end: 12.0,
+                    },
+                    TimeStopInterval {
+                        start: 30.0,
+                        end: 40.0,
+                    },
+                ],
+                active_game_pause: Some((39.0, 1)),
+                ..TimeStopTracker::default()
+            },
+        ];
+        for (case, tracker) in trackers.iter().enumerate() {
+            for (start, end) in [(0.0, 50.0), (2.0, 11.0), (11.0, 35.0), (5.0, 5.0)] {
+                assert_eq!(
+                    tracker.interval_count_between(start, end),
+                    tracker.intervals_between(start, end).len(),
+                    "case {case}, window {start}..{end}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -43,8 +43,8 @@
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <BufferSecurityCheck>false</BufferSecurityCheck>
-      <SDLCheck>false</SDLCheck>
+      <BufferSecurityCheck>true</BufferSecurityCheck>
+      <SDLCheck>true</SDLCheck>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <ExceptionHandling>Sync</ExceptionHandling>
       <PreprocessorDefinitions>NDEBUG;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -77,6 +77,7 @@
     <ClInclude Include="src\ipc_transport_policy.hpp" />
     <ClInclude Include="src\memory_access.hpp" />
     <ClInclude Include="src\mod_runtime.hpp" />
+    <ClInclude Include="src\mod_runtime_schema.generated.hpp" />
     <ClInclude Include="src\obfuscated_string.hpp" />
     <ClInclude Include="src\offset_resolver.hpp" />
     <ClInclude Include="src\offset_signatures.hpp" />
@@ -85,6 +86,7 @@
     <ClInclude Include="src\shadow_vtable_hook.hpp" />
     <ClInclude Include="src\signature_policy.hpp" />
     <ClInclude Include="src\viewport_hook_policy.hpp" />
+    <ClInclude Include="src\vtable_patch_policy.hpp" />
     <ClInclude Include="third_party\dumper7\Settings.h" />
     <ClInclude Include="third_party\dumper7\TmpUtils.h" />
     <ClInclude Include="third_party\dumper7\Engine\Public\OffsetFinder\OffsetFinder.h" />

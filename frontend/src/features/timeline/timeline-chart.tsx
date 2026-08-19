@@ -7,6 +7,15 @@ import {
   type PointerEvent,
 } from "react";
 
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuPortal,
+  ContextMenuPositioner,
+  ContextMenuTrigger,
+} from "@/components/ui/menu";
 import { t, tf } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -39,8 +48,6 @@ interface ChartSize {
 }
 
 interface TimelineContextMenu {
-  left: number;
-  top: number;
   time: number;
 }
 
@@ -148,15 +155,10 @@ export function TimelineChart({
 
   useEffect(() => {
     if (contextMenu === null) return;
-    const close = () => setContextMenu(null);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", onKeyDown);
+    const closeContextMenuOnWindowBlur = () => setContextMenu(null);
+    window.addEventListener("blur", closeContextMenuOnWindowBlur);
     return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("blur", closeContextMenuOnWindowBlur);
     };
   }, [contextMenu]);
 
@@ -227,7 +229,6 @@ export function TimelineChart({
   };
 
   const openContextMenu = (event: MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - bounds.left;
     const y = event.clientY - bounds.top;
@@ -241,279 +242,291 @@ export function TimelineChart({
       return;
     }
     setContextMenu({
-      left: Math.min(x, Math.max(8, size.width - 196)),
-      top: Math.min(y, Math.max(8, size.height - 166)),
       time: timelineXToTime(model, x),
     });
   };
 
   return (
-    <div
-      ref={containerRef}
-      className="timeline-chart-shell relative min-h-64 w-full touch-none flex-[1_1_26rem] overflow-hidden rounded-xl"
-      onContextMenu={openContextMenu}
-      onPointerDown={beginSelection}
-      onPointerMove={updateHover}
-      onPointerUp={finishSelection}
-      onPointerCancel={() => setDragAnchor(null)}
-      onPointerLeave={() => setHoveredBucketIndex(null)}
+    <ContextMenu
+      open={contextMenu !== null}
+      onOpenChange={(open) =>
+        dismissLayerWhenClosed(open, () => setContextMenu(null))
+      }
     >
-      <canvas
-        ref={canvasRef}
-        className="timeline-chart-canvas pointer-events-none absolute inset-0 size-full text-primary"
-        aria-hidden="true"
-      />
-      <div className="timeline-chart-glass pointer-events-none absolute inset-x-3 top-2 z-[2] flex items-center justify-between gap-4 rounded-lg border px-2.5 py-1.5 text-xs">
-        <span className="font-mono font-semibold text-primary">
-          {t(mode === "team" ? "Peak DPS" : "Peak Character DPS")}:{" "}
-          {number(model.maxDps)}
-        </span>
-        <span className="font-mono text-muted-foreground">
-          {t("Total Damage")}: {number(snapshot.totalDamage)}
-        </span>
-      </div>
-      <div className="pointer-events-none absolute inset-x-0 top-[4.25rem] z-[1] h-12 bg-gradient-to-b from-card/55 to-transparent" />
-      {snapshot.markers
-        .filter(
-          (marker) =>
-            marker.offset >= model.viewRange[0] &&
-            marker.offset <= model.viewRange[1],
-        )
-        .map((marker) => (
-          <span
-            key={`${marker.kind}-${marker.offset}`}
-            className={cn(
-              "timeline-marker-label pointer-events-none absolute top-11 z-[3] rounded-full border px-1.5 py-0.5 font-mono text-[9px] tracking-wide",
-              marker.offset <= snapshot.bucketSeconds * 0.5
-                ? "translate-x-0"
-                : marker.offset >=
-                    model.viewRange[1] - snapshot.bucketSeconds * 0.5
-                  ? "-translate-x-full"
-                  : "-translate-x-1/2",
-              marker.kind === "clear"
-                ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
-                : "border-border bg-background text-muted-foreground",
-            )}
-            style={{
-              left: timelineTimeToX(model, marker.offset),
-            }}
-          >
-            {t(marker.labelKey)}
-          </span>
-        ))}
-      {snapshot.timeStopIntervals.map((interval, index) => {
-        const visible = intersectTimelineRange(
-          [interval.start, interval.end],
-          model.viewRange,
-        );
-        if (visible === null) return null;
-        const left = timelineTimeToX(model, visible[0]);
-        const width = timelineTimeToX(model, visible[1]) - left;
-        if (width < 36) return null;
-        return (
-          <span
-            key={`${interval.start}-${interval.end}-${index}`}
-            className="pointer-events-none absolute z-[3] -translate-x-1/2 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-700 dark:text-amber-300"
-            style={{
-              left: left + width / 2,
-              top: model.plot.top + 7,
-              maxWidth: Math.max(28, width - 8),
-            }}
-          >
-            {(interval.end - interval.start).toFixed(1)}s
-          </span>
-        );
-      })}
-      {userMarkers.map((marker, index) => {
-        if (marker < model.viewRange[0] || marker > model.viewRange[1]) {
-          return null;
-        }
-        const left = timelineTimeToX(model, marker);
-        return (
+      <ContextMenuTrigger
+        render={
           <div
-            key={`${marker}-${index}`}
-            className="pointer-events-none absolute z-[3] border-l border-primary/70"
-            style={{
-              left,
-              top: model.plot.top,
-              height: model.plot.height,
-            }}
+            ref={containerRef}
+            className="timeline-chart-shell relative min-h-64 w-full touch-none flex-[1_1_26rem] overflow-hidden rounded-xl"
+            onContextMenu={openContextMenu}
+            onPointerDown={beginSelection}
+            onPointerMove={updateHover}
+            onPointerUp={finishSelection}
+            onPointerCancel={() => setDragAnchor(null)}
+            onPointerLeave={() => setHoveredBucketIndex(null)}
           >
-            <span className="absolute top-1 left-1 max-w-36 whitespace-nowrap rounded-full border border-primary/30 bg-background/90 px-1.5 py-0.5 font-mono text-[9px] text-primary shadow-sm">
-              {tf("Marker {} · {}s", [
-                String(index + 1),
-                formatSeconds(marker),
-              ])}
-            </span>
-          </div>
-        );
-      })}
-      {visibleSelection && (
-        <div
-          className="pointer-events-none absolute z-[2] border-x border-primary/75 bg-primary/12"
-          style={{
-            left: timelineTimeToX(model, visibleSelection[0]),
-            top: model.plot.top,
-            width:
-              timelineTimeToX(model, visibleSelection[1]) -
-              timelineTimeToX(model, visibleSelection[0]),
-            height: model.plot.height,
-          }}
-        >
-          <span className="absolute top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-background/90 px-2 py-0.5 text-[9px] text-primary shadow-sm">
-            {tf("Selection · {}s - {}s", [
-              formatSeconds(selection?.[0] ?? 0),
-              formatSeconds(selection?.[1] ?? 0),
-            ])}
-          </span>
-        </div>
-      )}
-      {hoveredBucket && (
-        <>
-          <div
-            className="timeline-hover-lens pointer-events-none absolute bottom-7 z-[1] w-16 -translate-x-1/2"
-            style={{ left: hoveredX, top: model.plot.top }}
-          />
-          <div
-            className="pointer-events-none absolute bottom-1.5 z-[4] -translate-x-1/2 rounded-full border bg-background px-2 py-0.5 font-mono text-[10px] shadow-sm"
-            style={{ left: hoveredX }}
-          >
-            {hoveredTime.toFixed(1)}s
-          </div>
-        </>
-      )}
-      {contextMenu && (
-        <div
-          aria-label={t("Timeline")}
-          className="absolute z-20 flex w-48 flex-col gap-0.5 rounded-lg border bg-popover p-1.5 text-sm text-popover-foreground shadow-xl"
-          role="menu"
-          style={{ left: contextMenu.left, top: contextMenu.top }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <TimelineMenuButton
-            label="Add marker here"
-            onClick={() => {
-              setUserMarkers((current) =>
-                addTimelineMarker(current, contextMenu.time),
+            <canvas
+              ref={canvasRef}
+              className="timeline-chart-canvas pointer-events-none absolute inset-0 size-full text-primary"
+              aria-hidden="true"
+            />
+            <div className="timeline-chart-glass pointer-events-none absolute inset-x-3 top-2 z-[2] flex items-center justify-between gap-4 rounded-lg border px-2.5 py-1.5 text-xs">
+              <span className="font-mono font-semibold text-primary">
+                {t(mode === "team" ? "Peak DPS" : "Peak Character DPS")}:{" "}
+                {number(model.maxDps)}
+              </span>
+              <span className="font-mono text-muted-foreground">
+                {t("Total Damage")}: {number(snapshot.totalDamage)}
+              </span>
+            </div>
+            <div className="pointer-events-none absolute inset-x-0 top-[4.25rem] z-[1] h-12 bg-gradient-to-b from-card/55 to-transparent" />
+            {snapshot.markers
+              .filter(
+                (marker) =>
+                  marker.offset >= model.viewRange[0] &&
+                  marker.offset <= model.viewRange[1],
+              )
+              .map((marker) => (
+                <span
+                  key={`${marker.kind}-${marker.offset}`}
+                  className={cn(
+                    "timeline-marker-label pointer-events-none absolute top-11 z-[3] rounded-full border px-1.5 py-0.5 font-mono text-[9px] tracking-wide",
+                    marker.offset <= snapshot.bucketSeconds * 0.5
+                      ? "translate-x-0"
+                      : marker.offset >=
+                          model.viewRange[1] - snapshot.bucketSeconds * 0.5
+                        ? "-translate-x-full"
+                        : "-translate-x-1/2",
+                    marker.kind === "clear"
+                      ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+                      : "border-border bg-background text-muted-foreground",
+                  )}
+                  style={{
+                    left: timelineTimeToX(model, marker.offset),
+                  }}
+                >
+                  {t(marker.labelKey)}
+                </span>
+              ))}
+            {snapshot.timeStopIntervals.map((interval, index) => {
+              const visible = intersectTimelineRange(
+                [interval.start, interval.end],
+                model.viewRange,
               );
-              setContextMenu(null);
-            }}
-          />
-          <TimelineMenuButton
-            disabled={zoomSelection === null}
-            label="Zoom to selection"
-            onClick={() => {
-              setZoom(zoomSelection);
-              setDragSelection(null);
-              setContextMenu(null);
-            }}
-          />
-          <TimelineMenuButton
-            disabled={effectiveZoom === null}
-            label="Reset zoom"
-            onClick={() => {
-              setZoom(null);
-              setContextMenu(null);
-            }}
-          />
-          <TimelineMenuButton
-            disabled={userMarkers.length === 0}
-            label="Remove nearest marker"
-            onClick={() => {
-              setUserMarkers((current) =>
-                removeNearestTimelineMarker(current, contextMenu.time),
+              if (visible === null) return null;
+              const left = timelineTimeToX(model, visible[0]);
+              const width = timelineTimeToX(model, visible[1]) - left;
+              if (width < 36) return null;
+              return (
+                <span
+                  key={`${interval.start}-${interval.end}-${index}`}
+                  className="pointer-events-none absolute z-[3] -translate-x-1/2 rounded-full border border-amber-500/25 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[9px] text-amber-700 dark:text-amber-300"
+                  style={{
+                    left: left + width / 2,
+                    top: model.plot.top + 7,
+                    maxWidth: Math.max(28, width - 8),
+                  }}
+                >
+                  {(interval.end - interval.start).toFixed(1)}s
+                </span>
               );
-              setContextMenu(null);
-            }}
-          />
-        </div>
-      )}
-      {hoveredBucket && (
-        <div
-          className={cn(
-            "timeline-tooltip pointer-events-none absolute top-20 z-10 min-w-48 rounded-lg border bg-popover p-3 text-xs text-popover-foreground shadow-lg",
-            hoveredX > size.width - 224 ? "right-3" : "left-3",
-          )}
-          style={
-            hoveredX > size.width - 224 ? undefined : { left: hoveredX + 12 }
-          }
-        >
-          <p className="mb-1 font-mono font-semibold">
-            {hoveredTimeStop
-              ? t("Time-stop Interval")
-              : `${formatSeconds(hoveredBucket.start)}s – ${formatSeconds(hoveredBucket.end)}s`}
-          </p>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
-            {hoveredTimeStop && (
-              <>
-                <dt>{t("Range")}</dt>
-                <dd className="text-right font-mono text-foreground">
-                  {formatSeconds(hoveredTimeStop.start)}s –{" "}
-                  {formatSeconds(hoveredTimeStop.end)}s
-                </dd>
-                <dt>{t("Duration")}</dt>
-                <dd className="text-right font-mono text-foreground">
-                  {formatSeconds(hoveredTimeStop.end - hoveredTimeStop.start)}s
-                </dd>
-                <dt>{t("Current Bucket")}</dt>
-                <dd className="text-right font-mono text-foreground">
-                  {formatSeconds(hoveredBucket.start)}s –{" "}
-                  {formatSeconds(hoveredBucket.end)}s
-                </dd>
-              </>
-            )}
-            <dt>{t(mode === "team" ? "DPS" : "Top Character DPS")}</dt>
-            <dd className="text-right font-mono text-foreground">
-              {number(hoveredDps)}
-            </dd>
-            <dt>{t("Damage")}</dt>
-            <dd className="text-right font-mono text-foreground">
-              {number(hoveredBucket.damage)}
-            </dd>
-            <dt>{t("Hits")}</dt>
-            <dd className="text-right font-mono text-foreground">
-              {hoveredBucket.hits}
-            </dd>
-            <dt>{t("Cumulative")}</dt>
-            <dd className="text-right font-mono text-foreground">
-              {number(hoveredBucket.cumulativeDamage)}
-            </dd>
-          </dl>
-          <div className="mt-2.5 space-y-1.5 border-t pt-2">
-            {hoveredBucket.roles.map((role) => {
-              const character = snapshot.characters.find(
-                (candidate) => candidate.id === role.characterId,
-              );
-              const ratio = hoveredDps > 0 ? (role.dps / hoveredDps) * 100 : 0;
+            })}
+            {userMarkers.map((marker, index) => {
+              if (marker < model.viewRange[0] || marker > model.viewRange[1]) {
+                return null;
+              }
+              const left = timelineTimeToX(model, marker);
               return (
                 <div
-                  key={role.characterId}
-                  className="grid grid-cols-[4rem_1fr_3.5rem] items-center gap-2"
+                  key={`${marker}-${index}`}
+                  className="pointer-events-none absolute z-[3] border-l border-primary/70"
+                  style={{
+                    left,
+                    top: model.plot.top,
+                    height: model.plot.height,
+                  }}
                 >
-                  <span className="truncate">{character?.name ?? "—"}</span>
-                  <span className="h-1 overflow-hidden rounded-full bg-muted">
-                    <span
-                      className="block h-full rounded-full"
-                      style={{
-                        width: `${ratio}%`,
-                        backgroundColor: character?.color,
-                      }}
-                    />
-                  </span>
-                  <span className="text-right font-mono text-muted-foreground">
-                    {number(role.dps)}
+                  <span className="absolute top-1 left-1 max-w-36 whitespace-nowrap rounded-full border border-primary/30 bg-background/90 px-1.5 py-0.5 font-mono text-[9px] text-primary shadow-sm">
+                    {tf("Marker {} · {}s", [
+                      String(index + 1),
+                      formatSeconds(marker),
+                    ])}
                   </span>
                 </div>
               );
             })}
+            {visibleSelection && (
+              <div
+                className="pointer-events-none absolute z-[2] border-x border-primary/75 bg-primary/12"
+                style={{
+                  left: timelineTimeToX(model, visibleSelection[0]),
+                  top: model.plot.top,
+                  width:
+                    timelineTimeToX(model, visibleSelection[1]) -
+                    timelineTimeToX(model, visibleSelection[0]),
+                  height: model.plot.height,
+                }}
+              >
+                <span className="absolute top-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-background/90 px-2 py-0.5 text-[9px] text-primary shadow-sm">
+                  {tf("Selection · {}s - {}s", [
+                    formatSeconds(selection?.[0] ?? 0),
+                    formatSeconds(selection?.[1] ?? 0),
+                  ])}
+                </span>
+              </div>
+            )}
+            {hoveredBucket && (
+              <>
+                <div
+                  className="timeline-hover-lens pointer-events-none absolute bottom-7 z-[1] w-16 -translate-x-1/2"
+                  style={{ left: hoveredX, top: model.plot.top }}
+                />
+                <div
+                  className="pointer-events-none absolute bottom-1.5 z-[4] -translate-x-1/2 rounded-full border bg-background px-2 py-0.5 font-mono text-[10px] shadow-sm"
+                  style={{ left: hoveredX }}
+                >
+                  {hoveredTime.toFixed(1)}s
+                </div>
+              </>
+            )}
+            {hoveredBucket && (
+              <div
+                className={cn(
+                  "timeline-tooltip pointer-events-none absolute top-20 z-10 min-w-48 rounded-lg border bg-popover p-3 text-xs text-popover-foreground shadow-lg",
+                  hoveredX > size.width - 224 ? "right-3" : "left-3",
+                )}
+                style={
+                  hoveredX > size.width - 224
+                    ? undefined
+                    : { left: hoveredX + 12 }
+                }
+              >
+                <p className="mb-1 font-mono font-semibold">
+                  {hoveredTimeStop
+                    ? t("Time-stop Interval")
+                    : `${formatSeconds(hoveredBucket.start)}s – ${formatSeconds(hoveredBucket.end)}s`}
+                </p>
+                <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-muted-foreground">
+                  {hoveredTimeStop && (
+                    <>
+                      <dt>{t("Range")}</dt>
+                      <dd className="text-right font-mono text-foreground">
+                        {formatSeconds(hoveredTimeStop.start)}s –{" "}
+                        {formatSeconds(hoveredTimeStop.end)}s
+                      </dd>
+                      <dt>{t("Duration")}</dt>
+                      <dd className="text-right font-mono text-foreground">
+                        {formatSeconds(
+                          hoveredTimeStop.end - hoveredTimeStop.start,
+                        )}
+                        s
+                      </dd>
+                      <dt>{t("Current Bucket")}</dt>
+                      <dd className="text-right font-mono text-foreground">
+                        {formatSeconds(hoveredBucket.start)}s –{" "}
+                        {formatSeconds(hoveredBucket.end)}s
+                      </dd>
+                    </>
+                  )}
+                  <dt>{t(mode === "team" ? "DPS" : "Top Character DPS")}</dt>
+                  <dd className="text-right font-mono text-foreground">
+                    {number(hoveredDps)}
+                  </dd>
+                  <dt>{t("Damage")}</dt>
+                  <dd className="text-right font-mono text-foreground">
+                    {number(hoveredBucket.damage)}
+                  </dd>
+                  <dt>{t("Hits")}</dt>
+                  <dd className="text-right font-mono text-foreground">
+                    {hoveredBucket.hits}
+                  </dd>
+                  <dt>{t("Cumulative")}</dt>
+                  <dd className="text-right font-mono text-foreground">
+                    {number(hoveredBucket.cumulativeDamage)}
+                  </dd>
+                </dl>
+                <div className="mt-2.5 space-y-1.5 border-t pt-2">
+                  {hoveredBucket.roles.map((role) => {
+                    const character = snapshot.characters.find(
+                      (candidate) => candidate.id === role.characterId,
+                    );
+                    const ratio =
+                      hoveredDps > 0 ? (role.dps / hoveredDps) * 100 : 0;
+                    return (
+                      <div
+                        key={role.characterId}
+                        className="grid grid-cols-[4rem_1fr_3.5rem] items-center gap-2"
+                      >
+                        <span className="truncate">
+                          {character?.name ?? "—"}
+                        </span>
+                        <span className="h-1 overflow-hidden rounded-full bg-muted">
+                          <span
+                            className="block h-full rounded-full"
+                            style={{
+                              width: `${ratio}%`,
+                              backgroundColor: character?.color,
+                            }}
+                          />
+                        </span>
+                        <span className="text-right font-mono text-muted-foreground">
+                          {number(role.dps)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            <p className="sr-only">
+              {t("Timeline")}. {t("Peak DPS")}: {number(model.maxDps)}.{" "}
+              {t("Total Damage")}: {number(snapshot.totalDamage)}.
+            </p>
           </div>
-        </div>
+        }
+      />
+      {contextMenu !== null && (
+        <ContextMenuPortal>
+          <ContextMenuPositioner>
+            <ContextMenuPopup
+              aria-label={t("Timeline")}
+              className="flex w-48 flex-col gap-0.5 p-1.5"
+            >
+              <TimelineMenuButton
+                label="Add marker here"
+                onClick={() => {
+                  setUserMarkers((current) =>
+                    addTimelineMarker(current, contextMenu.time),
+                  );
+                }}
+              />
+              <TimelineMenuButton
+                disabled={zoomSelection === null}
+                label="Zoom to selection"
+                onClick={() => {
+                  setZoom(zoomSelection);
+                  setDragSelection(null);
+                }}
+              />
+              <TimelineMenuButton
+                disabled={effectiveZoom === null}
+                label="Reset zoom"
+                onClick={() => setZoom(null)}
+              />
+              <TimelineMenuButton
+                disabled={userMarkers.length === 0}
+                label="Remove nearest marker"
+                onClick={() => {
+                  setUserMarkers((current) =>
+                    removeNearestTimelineMarker(current, contextMenu.time),
+                  );
+                }}
+              />
+            </ContextMenuPopup>
+          </ContextMenuPositioner>
+        </ContextMenuPortal>
       )}
-      <p className="sr-only">
-        {t("Timeline")}. {t("Peak DPS")}: {number(model.maxDps)}.{" "}
-        {t("Total Damage")}: {number(snapshot.totalDamage)}.
-      </p>
-    </div>
+    </ContextMenu>
   );
 }
 
@@ -740,15 +753,13 @@ function TimelineMenuButton({
   onClick(): void;
 }) {
   return (
-    <button
-      className="rounded-md px-2 py-1.5 text-left hover:bg-muted disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent"
+    <ContextMenuItem
+      className="disabled:cursor-default disabled:hover:bg-transparent"
       disabled={disabled}
       onClick={onClick}
-      role="menuitem"
-      type="button"
     >
       {t(label)}
-    </button>
+    </ContextMenuItem>
   );
 }
 

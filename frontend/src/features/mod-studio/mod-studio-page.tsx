@@ -21,6 +21,15 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogBackdrop,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogPopup,
+  AlertDialogPortal,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -38,6 +47,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { t, tf, useTranslationRevision } from "@/lib/i18n";
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
 import { useSettingsPresentation } from "@/lib/settings-presentation";
 import type {
   ModStudioCommandError,
@@ -650,49 +660,49 @@ function ModLoaderRiskDialog({
   }, []);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="mod-loader-risk-title"
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
     >
-      <section className="w-full max-w-lg rounded-xl border border-destructive bg-card p-5 shadow-xl">
-        <h2
-          id="mod-loader-risk-title"
-          className="text-lg font-semibold text-destructive"
-        >
-          {t("Risk warning")}
-        </h2>
-        <p className="mt-3 text-sm text-destructive">
-          {t(
-            "Third-party Mods may cause game crashes, integrity-check failures, or account penalties.",
-          )}
-        </p>
-        {remainingSeconds > 0 ? (
-          <p className="mt-3 text-sm font-medium text-[var(--console-warning)]">
-            {tf("Enable available in {} seconds.", [
-              remainingSeconds.toString(),
-            ])}
-          </p>
-        ) : null}
-        <div className="mt-4 flex gap-2">
-          <Button
-            disabled={remainingSeconds > 0 || confirming}
-            onClick={() => {
-              setConfirming(true);
-              void onConfirm().then((confirmed) => {
-                if (!confirmed) setConfirming(false);
-              });
-            }}
-          >
-            {t("Accept Risk and Enable")}
-          </Button>
-          <Button variant="outline" disabled={confirming} onClick={onCancel}>
-            {t("Cancel")}
-          </Button>
-        </div>
-      </section>
-    </div>
+      <AlertDialogPortal>
+        <AlertDialogBackdrop />
+        <AlertDialogPopup className="top-1/2 left-1/2 w-[calc(100vw-3rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border border-destructive bg-card p-5 shadow-xl">
+          <AlertDialogTitle className="text-destructive">
+            {t("Risk warning")}
+          </AlertDialogTitle>
+          <AlertDialogDescription className="mt-3 text-destructive">
+            {t(
+              "Third-party Mods may cause game crashes, integrity-check failures, or account penalties.",
+            )}
+          </AlertDialogDescription>
+          {remainingSeconds > 0 ? (
+            <p className="mt-3 text-sm font-medium text-[var(--console-warning)]">
+              {tf("Enable available in {} seconds.", [
+                remainingSeconds.toString(),
+              ])}
+            </p>
+          ) : null}
+          <div className="mt-4 flex gap-2">
+            <Button
+              disabled={remainingSeconds > 0 || confirming}
+              onClick={() => {
+                setConfirming(true);
+                void onConfirm().then((confirmed) => {
+                  if (!confirmed) setConfirming(false);
+                });
+              }}
+            >
+              {t("Accept Risk and Enable")}
+            </Button>
+            <AlertDialogClose
+              render={<Button variant="outline" disabled={confirming} />}
+            >
+              {t("Cancel")}
+            </AlertDialogClose>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
   );
 }
 
@@ -994,33 +1004,32 @@ function DeleteModDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="delete-mod-title"
+    <AlertDialog
+      open
+      onOpenChange={(open) => dismissLayerWhenClosed(open, onCancel)}
     >
-      <section className="w-full max-w-md rounded-xl border bg-card p-5 shadow-xl">
-        <h2 id="delete-mod-title" className="text-lg font-semibold">
-          {t("Delete Mod")}
-        </h2>
-        <p className="mt-3 text-sm text-muted-foreground">
-          {tf(
-            "Delete {0}.nte from the Mod workspace? This also disables the Mod.",
-            [id],
-          )}
-        </p>
-        <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" onClick={onCancel}>
-            {t("Cancel")}
-          </Button>
-          <Button variant="destructive" onClick={onConfirm}>
-            <Trash2 aria-hidden="true" />
-            {t("Delete")}
-          </Button>
-        </div>
-      </section>
-    </div>
+      <AlertDialogPortal>
+        <AlertDialogBackdrop />
+        <AlertDialogPopup className="top-1/2 left-1/2 w-[calc(100vw-3rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card p-5 shadow-xl">
+          <AlertDialogTitle>{t("Delete Mod")}</AlertDialogTitle>
+          <AlertDialogDescription className="mt-3">
+            {tf(
+              "Delete {0}.nte from the Mod workspace? This also disables the Mod.",
+              [id],
+            )}
+          </AlertDialogDescription>
+          <div className="mt-5 flex justify-end gap-2">
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("Cancel")}
+            </AlertDialogClose>
+            <Button variant="destructive" onClick={onConfirm}>
+              <Trash2 aria-hidden="true" />
+              {t("Delete")}
+            </Button>
+          </div>
+        </AlertDialogPopup>
+      </AlertDialogPortal>
+    </AlertDialog>
   );
 }
 

@@ -16,7 +16,8 @@ use crate::engine::capture::{
 use crate::engine::model::CharacterInfo;
 use crate::engine::parser::AbilityCatalog;
 use crate::platform::network::{
-    GameNetwork, detect_game_device, detect_game_network, game_process_is_running,
+    GameNetwork, GameNetworkProbe, GameNetworkUnavailable, NetworkProbeFailure,
+    detect_game_network, game_process_is_running,
 };
 use crate::storage::paths::capture_log_dir;
 
@@ -43,15 +44,13 @@ pub struct CaptureEnvironment {
 
 pub fn detect_environment() -> Result<CaptureEnvironment, CoreError> {
     let devices = enumerate_devices()?;
-    let game_process_detected = probe_game_process()?;
-    let network = if game_process_detected {
-        // The platform probe currently reports "no active connection" and OS
-        // lookup failures as the same String. Detection is best-effort, so both
-        // remain a soft "local IP unavailable" result until that boundary gains
-        // typed errors.
-        detect_game_network().ok()
-    } else {
-        None
+    let (game_process_detected, network) = match detect_game_network() {
+        GameNetworkProbe::Connected(network) => (true, Some(network)),
+        GameNetworkProbe::NotConnected(GameNetworkUnavailable::ProcessNotFound) => (false, None),
+        GameNetworkProbe::NotConnected(GameNetworkUnavailable::NoUsableConnection { .. }) => {
+            (true, None)
+        }
+        GameNetworkProbe::ProbeFailed(failure) => return Err(system_probe_error(failure)),
     };
     let recommended_device = network.as_ref().and_then(|network| {
         devices
@@ -68,31 +67,113 @@ pub fn detect_environment() -> Result<CaptureEnvironment, CoreError> {
     })
 }
 
-/// Auto mode: locate the game's active TCP connection and the NIC that owns
-/// its local IP. The detail distinguishes "game not detected" from "no NIC
-/// carries the game's local IP"; both map to `GameProcessNotFound` because the
-/// underlying probe reports them as one opaque message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutoDeviceResolution {
+    Resolved {
+        device_index: usize,
+        network: GameNetwork,
+    },
+    NotConnected(GameNetworkUnavailable),
+    ProbeFailed(NetworkProbeFailure),
+    DeviceNotFound {
+        network: GameNetwork,
+    },
+}
+
+pub fn probe_auto_device(devices: &[CaptureDevice]) -> AutoDeviceResolution {
+    classify_auto_device_probe(devices, detect_game_network())
+}
+
+fn classify_auto_device_probe(
+    devices: &[CaptureDevice],
+    probe: GameNetworkProbe,
+) -> AutoDeviceResolution {
+    match probe {
+        GameNetworkProbe::Connected(network) => {
+            if let Some(device_index) = devices
+                .iter()
+                .position(|device| device.ipv4.contains(&network.local_ip))
+            {
+                AutoDeviceResolution::Resolved {
+                    device_index,
+                    network,
+                }
+            } else {
+                AutoDeviceResolution::DeviceNotFound { network }
+            }
+        }
+        GameNetworkProbe::NotConnected(unavailable) => {
+            AutoDeviceResolution::NotConnected(unavailable)
+        }
+        GameNetworkProbe::ProbeFailed(failure) => AutoDeviceResolution::ProbeFailed(failure),
+    }
+}
+
+fn system_probe_error(failure: NetworkProbeFailure) -> CoreError {
+    CoreError::new(
+        CoreErrorCode::SystemProbeFailed,
+        format!("{}: {}", failure.code.as_str(), failure.detail),
+    )
+}
+
+/// Auto mode requires both an active game connection and a matching Npcap
+/// device. Normal negative state and OS probe failure retain distinct typed
+/// outcomes until this frontend-neutral error boundary.
 pub fn resolve_auto_device(devices: &[CaptureDevice]) -> Result<(usize, GameNetwork), CoreError> {
-    detect_game_device(devices)
-        .map_err(|detail| CoreError::new(CoreErrorCode::GameProcessNotFound, detail))
+    match probe_auto_device(devices) {
+        AutoDeviceResolution::Resolved {
+            device_index,
+            network,
+        } => Ok((device_index, network)),
+        AutoDeviceResolution::NotConnected(unavailable) => Err(CoreError::new(
+            CoreErrorCode::GameProcessNotFound,
+            unavailable.detail(),
+        )),
+        AutoDeviceResolution::ProbeFailed(failure) => Err(system_probe_error(failure)),
+        AutoDeviceResolution::DeviceNotFound { network } => Err(CoreError::new(
+            CoreErrorCode::CaptureDeviceNotFound,
+            format!(
+                "no Npcap device matches the game's local IP {}",
+                network.local_ip
+            ),
+        )),
+    }
 }
 
 /// Manual mode: pin capture to the named NIC. The outer error means the NIC
-/// vanished (`detail` = the requested name). The inner result is the
-/// best-effort game-connection probe: a miss is non-fatal — capture still
-/// proceeds and direction inference falls back to its public/private
-/// heuristic.
+/// vanished (`detail` = the requested name). The typed game-connection probe
+/// is best-effort: both a normal miss and a probe failure are non-fatal, but a
+/// probe failure remains attached to the controller as a degradation while
+/// direction inference falls back to its public/private heuristic.
 pub fn resolve_manual_device(
     devices: &[CaptureDevice],
     name: &str,
-) -> Result<(usize, Result<GameNetwork, CoreError>), CoreError> {
+) -> Result<(usize, GameNetworkProbe), CoreError> {
     let index = devices
         .iter()
         .position(|device| device.name == name)
         .ok_or_else(|| CoreError::new(CoreErrorCode::CaptureDeviceNotFound, name))?;
-    let network = detect_game_network()
-        .map_err(|detail| CoreError::new(CoreErrorCode::GameProcessNotFound, detail));
-    Ok((index, network))
+    Ok((index, detect_game_network()))
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ManualNetworkSelection {
+    network: Option<GameNetwork>,
+    degradation: Option<NetworkProbeFailure>,
+}
+
+fn manual_network_selection(probe: GameNetworkProbe) -> ManualNetworkSelection {
+    match probe {
+        GameNetworkProbe::Connected(network) => ManualNetworkSelection {
+            network: Some(network),
+            degradation: None,
+        },
+        GameNetworkProbe::NotConnected(_) => ManualNetworkSelection::default(),
+        GameNetworkProbe::ProbeFailed(failure) => ManualNetworkSelection {
+            network: None,
+            degradation: Some(failure),
+        },
+    }
 }
 
 /// The base filter (`base`, "udp") keeps all UDP, which covers the game-world
@@ -166,6 +247,7 @@ pub struct CaptureController {
     profile: Option<CaptureProfile>,
     expose_raw_capture_path: bool,
     active_filter: Option<String>,
+    network_probe_degradation: Option<NetworkProbeFailure>,
 }
 
 impl CaptureController {
@@ -186,6 +268,10 @@ impl CaptureController {
 
     pub fn active_filter(&self) -> Option<String> {
         self.active_filter.clone()
+    }
+
+    pub fn network_probe_degradation(&self) -> Option<NetworkProbeFailure> {
+        self.network_probe_degradation.clone()
     }
 
     pub fn raw_capture_snapshot(&self) -> Option<RawCaptureSnapshot> {
@@ -217,16 +303,18 @@ impl CaptureController {
                 "capture is already running",
             ));
         }
+        self.network_probe_degradation = None;
 
         let devices = enumerate_devices()?;
-        let (device_index, network) = match &options.device {
+        let (device_index, network, network_probe_degradation) = match &options.device {
             CaptureDeviceSelector::Auto => {
                 let (device_index, network) = resolve_auto_device(&devices)?;
-                (device_index, Some(network))
+                (device_index, Some(network), None)
             }
             CaptureDeviceSelector::Name(name) => {
-                let (device_index, network) = resolve_manual_device(&devices, name)?;
-                (device_index, network.ok())
+                let (device_index, probe) = resolve_manual_device(&devices, name)?;
+                let selection = manual_network_selection(probe);
+                (device_index, selection.network, selection.degradation)
             }
         };
         let device = devices[device_index].clone();
@@ -255,6 +343,7 @@ impl CaptureController {
         self.profile = Some(options.profile);
         self.expose_raw_capture_path = options.expose_raw_capture_path;
         self.active_filter = Some(filter);
+        self.network_probe_degradation = network_probe_degradation;
         Ok(())
     }
 
@@ -271,6 +360,7 @@ impl CaptureController {
         self.profile = None;
         self.expose_raw_capture_path = false;
         self.active_filter = None;
+        self.network_probe_degradation = None;
         Ok(())
     }
 
@@ -283,6 +373,7 @@ impl CaptureController {
         self.profile = None;
         self.expose_raw_capture_path = false;
         self.active_filter = None;
+        self.network_probe_degradation = None;
     }
 
     pub fn capture_stopped(&mut self) {
@@ -292,6 +383,7 @@ impl CaptureController {
         self.profile = None;
         self.expose_raw_capture_path = false;
         self.active_filter = None;
+        self.network_probe_degradation = None;
     }
 }
 
@@ -332,6 +424,7 @@ pub fn start(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::network::NetworkProbeErrorCode;
 
     fn device(name: &str) -> CaptureDevice {
         CaptureDevice {
@@ -362,6 +455,73 @@ mod tests {
         let error = resolve_manual_device(&devices, "gone").unwrap_err();
         assert_eq!(error.code, CoreErrorCode::CaptureDeviceNotFound);
         assert_eq!(error.detail, "gone");
+    }
+
+    #[test]
+    fn auto_resolution_keeps_normal_negative_and_probe_failure_distinct() {
+        let devices = vec![device("a")];
+        assert!(matches!(
+            classify_auto_device_probe(
+                &devices,
+                GameNetworkProbe::NotConnected(GameNetworkUnavailable::ProcessNotFound),
+            ),
+            AutoDeviceResolution::NotConnected(GameNetworkUnavailable::ProcessNotFound)
+        ));
+
+        let failure = NetworkProbeFailure::new(
+            NetworkProbeErrorCode::TcpTableQueryFailed,
+            "fixture TCP failure",
+        );
+        assert_eq!(
+            classify_auto_device_probe(&devices, GameNetworkProbe::ProbeFailed(failure.clone()),),
+            AutoDeviceResolution::ProbeFailed(failure)
+        );
+    }
+
+    #[test]
+    fn manual_probe_failure_continues_without_network_and_records_degradation() {
+        let failure = NetworkProbeFailure::new(
+            NetworkProbeErrorCode::ProcessSnapshotFailed,
+            "fixture process failure",
+        );
+
+        let selection = manual_network_selection(GameNetworkProbe::ProbeFailed(failure.clone()));
+
+        assert!(selection.network.is_none());
+        assert_eq!(selection.degradation, Some(failure));
+
+        let normal_negative = manual_network_selection(GameNetworkProbe::NotConnected(
+            GameNetworkUnavailable::NoUsableConnection { pid: 11 },
+        ));
+        assert!(normal_negative.network.is_none());
+        assert!(normal_negative.degradation.is_none());
+    }
+
+    #[test]
+    fn connected_auto_resolution_requires_a_matching_nic() {
+        let mut matching = device("matching");
+        matching.ipv4.push("192.168.1.2".parse().unwrap());
+        let network = GameNetwork {
+            pid: 1,
+            local_ip: "192.168.1.2".parse().unwrap(),
+            remote_ip: "203.0.113.9".parse().unwrap(),
+            remote_port: 30031,
+        };
+
+        assert!(matches!(
+            classify_auto_device_probe(
+                std::slice::from_ref(&matching),
+                GameNetworkProbe::Connected(network.clone()),
+            ),
+            AutoDeviceResolution::Resolved {
+                device_index: 0,
+                network: resolved,
+            } if resolved == network
+        ));
+        assert!(matches!(
+            classify_auto_device_probe(&[], GameNetworkProbe::Connected(network)),
+            AutoDeviceResolution::DeviceNotFound { .. }
+        ));
     }
 
     #[test]

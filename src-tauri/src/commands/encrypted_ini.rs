@@ -12,7 +12,9 @@ use crate::{
             SaveEncryptedIniResult, parse_encrypted_ini_key, parse_generation,
         },
     },
-    state::{AppState, EncryptedIniRuntimeError},
+    encrypted_ini_service::EncryptedIniServiceError,
+    file_dialog::{self, DialogOutcome},
+    state::AppState,
     windows::{console, island},
 };
 
@@ -22,7 +24,10 @@ pub(crate) fn get_encrypted_ini_snapshot(
     window: WebviewWindow,
 ) -> Result<EncryptedIniSnapshot, CommandError> {
     console::validate_window(&window)?;
-    Ok(state.encrypted_ini_snapshot().into())
+    state
+        .encrypted_ini_snapshot()
+        .map(EncryptedIniSnapshot::from)
+        .map_err(encrypted_ini_error)
 }
 
 #[tauri::command]
@@ -35,33 +40,35 @@ pub(crate) async fn open_encrypted_ini(
 
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_ini_open_path};
-
-        let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
         let title = i18n::t("Open Encrypted INI");
         let state = state.inner().clone();
         let notice_state = state.clone();
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            match choose_ini_open_path(owner, &title) {
-                Ok(OpenFileDialogOutcome::Selected(path)) => state
+        let selection = file_dialog::choose_ini_open_path(&window, title)
+            .await
+            .map_err(|error| {
+                log::error!("native encrypted INI open dialog failed: {error}");
+                file_dialog_error()
+            })?;
+        let result = match selection {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                state
                     .open_encrypted_ini(path)
                     .map(|snapshot| OpenEncryptedIniResult {
                         opened: true,
                         snapshot: snapshot.into(),
                     })
-                    .map_err(encrypted_ini_error),
-                Ok(OpenFileDialogOutcome::Cancelled) => Ok(OpenEncryptedIniResult {
-                    opened: false,
-                    snapshot: state.encrypted_ini_snapshot().into(),
-                }),
-                Err(code) => {
-                    log::error!("native encrypted INI open dialog failed: {code:#010x}");
-                    Err(file_dialog_error())
-                }
-            }
-        })
-        .await
-        .map_err(|_| operation_error())??;
+                    .map_err(encrypted_ini_error)
+            })
+            .await
+            .map_err(|_| operation_error())??,
+            DialogOutcome::Cancelled => OpenEncryptedIniResult {
+                opened: false,
+                snapshot: state
+                    .encrypted_ini_snapshot()
+                    .map_err(encrypted_ini_error)?
+                    .into(),
+            },
+        };
         if result.opened {
             island::publish_notice_best_effort(
                 &app,
@@ -153,7 +160,10 @@ pub(crate) fn clear_encrypted_ini(
     window: WebviewWindow,
 ) -> Result<EncryptedIniSnapshot, CommandError> {
     console::validate_window(&window)?;
-    let snapshot = state.clear_encrypted_ini().into();
+    let snapshot = state
+        .clear_encrypted_ini()
+        .map_err(encrypted_ini_error)?
+        .into();
     island::publish_notice_best_effort(
         &app,
         state.inner(),
@@ -164,19 +174,29 @@ pub(crate) fn clear_encrypted_ini(
     Ok(snapshot)
 }
 
-fn encrypted_ini_error(error: EncryptedIniRuntimeError) -> CommandError {
+fn encrypted_ini_error(error: EncryptedIniServiceError) -> CommandError {
     match error {
-        EncryptedIniRuntimeError::NoFile => CommandError::encrypted_ini(
+        EncryptedIniServiceError::Busy => CommandError::encrypted_ini(
+            "encrypted_ini_busy",
+            "Another encrypted INI operation is in progress.",
+            Vec::new(),
+        ),
+        EncryptedIniServiceError::Unavailable => CommandError::encrypted_ini(
+            "encrypted_ini_state_unavailable",
+            "Encrypted INI editor state is unavailable.",
+            Vec::new(),
+        ),
+        EncryptedIniServiceError::NoFile => CommandError::encrypted_ini(
             "encrypted_ini_not_open",
             "Open an INI file first",
             Vec::new(),
         ),
-        EncryptedIniRuntimeError::StaleGeneration => CommandError::encrypted_ini(
+        EncryptedIniServiceError::StaleGeneration => CommandError::encrypted_ini(
             "encrypted_ini_stale_generation",
             "Encrypted INI editor changed; reload and try again.",
             Vec::new(),
         ),
-        EncryptedIniRuntimeError::Document(error) => encrypted_ini_document_error(error),
+        EncryptedIniServiceError::Document(error) => encrypted_ini_document_error(error),
     }
 }
 
@@ -244,8 +264,17 @@ mod tests {
 
     #[test]
     fn runtime_generation_error_does_not_expose_internal_state() {
-        let error = encrypted_ini_error(EncryptedIniRuntimeError::StaleGeneration);
+        let error = encrypted_ini_error(EncryptedIniServiceError::StaleGeneration);
         assert_eq!(error.code, "encrypted_ini_stale_generation");
+        assert!(error.diagnostic_line.is_none());
+    }
+
+    #[test]
+    fn unavailable_runtime_error_is_stable_and_redacted() {
+        let error = encrypted_ini_error(EncryptedIniServiceError::Unavailable);
+
+        assert_eq!(error.code, "encrypted_ini_state_unavailable");
+        assert!(error.message_arguments.is_empty());
         assert!(error.diagnostic_line.is_none());
     }
 }

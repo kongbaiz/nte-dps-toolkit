@@ -21,12 +21,14 @@ use crate::{
     contract::{
         CommandError,
         mod_studio::{
-            ModLoaderRuntimeStateSnapshot, ModMarketCatalogSnapshot, ModStudioDeploymentSnapshot,
-            ModStudioDirectorySelectionSnapshot, ModStudioDocumentSnapshot,
-            ModStudioGameDirectorySnapshot, ModStudioLoadingMethodPreferenceSnapshot,
-            ModStudioLoadingMethodSnapshot, ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
+            ModLoaderRuntimeStateSnapshot, ModMarketCatalogSnapshot, ModMarketLocalStateSnapshot,
+            ModStudioDeploymentSnapshot, ModStudioDirectorySelectionSnapshot,
+            ModStudioDocumentSnapshot, ModStudioGameDirectorySnapshot,
+            ModStudioLoadingMethodPreferenceSnapshot, ModStudioLoadingMethodSnapshot,
+            ModStudioSdkSchemaSnapshot, ModStudioWorkspaceSnapshot,
         },
     },
+    file_dialog::{self, DialogOutcome},
     state::AppState,
     windows::console,
 };
@@ -40,26 +42,48 @@ pub(crate) async fn get_mod_market_catalog(
     let service = state.mod_studio();
     tauri::async_runtime::spawn_blocking(move || {
         let catalog = fetch_mod_market_catalog()?;
-        Ok(ModMarketCatalogSnapshot::from_catalog(
-            catalog,
-            |item| match service.load_document(&item.id) {
-                Ok(document) => (
-                    true,
+        Ok(ModMarketCatalogSnapshot::from_catalog(catalog, |item| {
+            let local = service.load_document(&item.id).map(|document| {
+                (
                     document.enabled,
                     mod_market_package_is_current(item, &document.source),
-                ),
-                Err(error) if error.code == ModStudioErrorCode::DocumentNotFound => {
-                    (false, false, false)
-                }
-                Err(_) => (true, false, false),
-            },
-        ))
+                )
+            });
+            project_mod_market_local_state(local)
+        }))
     })
     .await
     .map_err(|error| {
         log::error!("Mod Market catalog task failed: {error}");
         CommandError::mod_workspace_task_failed()
     })?
+}
+
+fn project_mod_market_local_state(
+    result: Result<(bool, bool), nte_dps_tool::core::mod_studio::ModStudioError>,
+) -> ModMarketLocalStateSnapshot {
+    match result {
+        Ok((enabled, current)) => ModMarketLocalStateSnapshot::Installed { enabled, current },
+        Err(error) if error.code == ModStudioErrorCode::DocumentNotFound => {
+            ModMarketLocalStateSnapshot::NotInstalled
+        }
+        Err(error) => {
+            log::warn!(
+                "Mod Market local document is unreadable in category {:?}",
+                error.code
+            );
+            match error.code {
+                ModStudioErrorCode::FileSystem => ModMarketLocalStateSnapshot::Unreadable {
+                    code: "mod_workspace_read_failed",
+                    message_key: "Failed to read the Mod workspace.",
+                },
+                _ => ModMarketLocalStateSnapshot::Unreadable {
+                    code: "mod_workspace_invalid",
+                    message_key: "The Mod workspace data is invalid.",
+                },
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -180,32 +204,33 @@ pub(crate) async fn open_mod_studio_folder(
 ) -> Result<bool, CommandError> {
     console::validate_window(&window)?;
     let service = state.mod_studio();
-    tauri::async_runtime::spawn_blocking(move || {
+    let directory = tauri::async_runtime::spawn_blocking(move || {
         service.load_workspace().map_err(|error| {
             log::error!("prepare Mod folder failed: {}", error.detail);
             CommandError::from_mod_studio(error)
         })?;
-        #[cfg(windows)]
-        {
-            nte_dps_tool::platform::file_dialog::open_directory(
-                &service.workspace_directory().join("nte-mods"),
-            )
-            .map_err(|error| {
-                log::error!("open Mod folder failed: {error}");
-                CommandError::mod_studio_folder_open_failed()
-            })?;
-            Ok(true)
-        }
-        #[cfg(not(windows))]
-        {
-            Err(CommandError::mod_studio_folder_open_failed())
-        }
+        Ok::<_, CommandError>(service.workspace_directory().join("nte-mods"))
     })
     .await
     .map_err(|error| {
         log::error!("open Mod folder task failed: {error}");
         CommandError::mod_workspace_task_failed()
-    })?
+    })??;
+    #[cfg(windows)]
+    {
+        file_dialog::open_directory(directory)
+            .await
+            .map_err(|error| {
+                log::error!("open Mod folder failed: {error}");
+                CommandError::mod_studio_folder_open_failed()
+            })?;
+        Ok(true)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = directory;
+        Err(CommandError::mod_studio_folder_open_failed())
+    }
 }
 
 #[tauri::command]
@@ -270,30 +295,32 @@ pub(crate) async fn open_mod_loader_directory(
 ) -> Result<bool, CommandError> {
     console::validate_window(&window)?;
     let loader = state.mod_loader();
-    tauri::async_runtime::spawn_blocking(move || {
-        let directory = loader.application_directory().map_err(|error| {
+    let directory = tauri::async_runtime::spawn_blocking(move || {
+        loader.application_directory().map_err(|error| {
             log::error!("resolve Mod Loader directory failed: {error:?}");
             CommandError::from_mod_loader_runtime(error)
-        })?;
-        #[cfg(windows)]
-        {
-            nte_dps_tool::platform::file_dialog::open_directory(&directory).map_err(|error| {
-                log::error!("open Mod Loader directory failed: {error}");
-                CommandError::mod_studio_folder_open_failed()
-            })?;
-            Ok(true)
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = directory;
-            Err(CommandError::mod_studio_folder_open_failed())
-        }
+        })
     })
     .await
     .map_err(|error| {
         log::error!("open Mod Loader directory task failed: {error}");
         CommandError::mod_workspace_task_failed()
-    })?
+    })??;
+    #[cfg(windows)]
+    {
+        file_dialog::open_directory(directory)
+            .await
+            .map_err(|error| {
+                log::error!("open Mod Loader directory failed: {error}");
+                CommandError::mod_studio_folder_open_failed()
+            })?;
+        Ok(true)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = directory;
+        Err(CommandError::mod_studio_folder_open_failed())
+    }
 }
 
 #[tauri::command]
@@ -326,15 +353,15 @@ pub(crate) async fn choose_mod_studio_game_directory(
     let state = state.inner().clone();
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{FolderDialogOutcome, choose_folder};
-
-        let owner = window
-            .hwnd()
-            .map_err(|_| CommandError::mod_studio_file_dialog_failed())?
-            .0 as isize;
         let title = i18n::t("Select game installation folder");
-        tauri::async_runtime::spawn_blocking(move || match choose_folder(owner, &title) {
-            Ok(FolderDialogOutcome::Selected(path)) => {
+        let selection = file_dialog::choose_folder(&window, title)
+            .await
+            .map_err(|error| {
+                log::error!("native game directory dialog failed: {error}");
+                CommandError::mod_studio_file_dialog_failed()
+            })?;
+        tauri::async_runtime::spawn_blocking(move || match selection {
+            DialogOutcome::Selected(path) => {
                 let deployment =
                     inspect_deployment(Some(&(region, path.clone()))).map_err(deployment_error)?;
                 let path = path.to_string_lossy().into_owned();
@@ -350,15 +377,11 @@ pub(crate) async fn choose_mod_studio_game_directory(
                     deployment: deployment.into(),
                 })
             }
-            Ok(FolderDialogOutcome::Cancelled) => Ok(ModStudioDirectorySelectionSnapshot {
+            DialogOutcome::Cancelled => Ok(ModStudioDirectorySelectionSnapshot {
                 selected: false,
                 path: None,
                 deployment: inspect_deployment(None).map_err(deployment_error)?.into(),
             }),
-            Err(code) => {
-                log::error!("native game directory dialog failed: {code:#010x}");
-                Err(CommandError::mod_studio_file_dialog_failed())
-            }
         })
         .await
         .map_err(|error| {
@@ -686,6 +709,63 @@ pub(crate) async fn set_mod_studio_document_enabled(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn local_load_error(
+        code: ModStudioErrorCode,
+    ) -> nte_dps_tool::core::mod_studio::ModStudioError {
+        nte_dps_tool::core::mod_studio::ModStudioError {
+            code,
+            detail: r"C:\Users\private\plugins\nte-mods\equipment.nte".to_owned(),
+            diagnostic_line: None,
+        }
+    }
+
+    #[test]
+    fn market_local_state_distinguishes_missing_installed_and_unreadable() {
+        use crate::contract::mod_studio::ModMarketLocalStateSnapshot;
+
+        assert_eq!(
+            project_mod_market_local_state(Ok((true, true))),
+            ModMarketLocalStateSnapshot::Installed {
+                enabled: true,
+                current: true,
+            }
+        );
+        assert_eq!(
+            project_mod_market_local_state(Err(local_load_error(
+                ModStudioErrorCode::DocumentNotFound,
+            ))),
+            ModMarketLocalStateSnapshot::NotInstalled
+        );
+        assert_eq!(
+            project_mod_market_local_state(Err(local_load_error(
+                ModStudioErrorCode::InvalidWorkspace,
+            ))),
+            ModMarketLocalStateSnapshot::Unreadable {
+                code: "mod_workspace_invalid",
+                message_key: "The Mod workspace data is invalid.",
+            }
+        );
+        assert_eq!(
+            project_mod_market_local_state(Err(local_load_error(ModStudioErrorCode::FileSystem,))),
+            ModMarketLocalStateSnapshot::Unreadable {
+                code: "mod_workspace_read_failed",
+                message_key: "Failed to read the Mod workspace.",
+            }
+        );
+    }
+
+    #[test]
+    fn unreadable_market_local_state_omits_private_error_detail() {
+        let state =
+            project_mod_market_local_state(Err(local_load_error(ModStudioErrorCode::FileSystem)));
+        let serialized = serde_json::to_string(&state).expect("serialize local state");
+
+        assert!(serialized.contains("mod_workspace_read_failed"));
+        assert!(!serialized.contains("Users"));
+        assert!(!serialized.contains("equipment.nte"));
+        assert!(!serialized.contains("detail"));
+    }
 
     #[test]
     fn manual_game_directory_requires_a_known_region_and_nonempty_path() {

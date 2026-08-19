@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createPacketsClient } from "./packets-client";
+import { MAX_STREAM_DELIVERY_BYTES } from "./stream-contract";
+
+const encodeDelivery = (events: unknown[]): ArrayBuffer => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ streamProtocolVersion: 1, events }),
+  );
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+};
 
 const PACKETS_FIXTURE = {
   contractVersion: 1,
@@ -35,8 +46,22 @@ describe("Packets client", () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_packets") {
-        return { subscriptionId: "packets-test", streamIntervalMs: 100 };
+        return {
+          subscriptionId: "packets-test",
+          streamKind: "packets",
+          streamIntervalMs: 100,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+          maxInFlightDeliveries: 1,
+          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
+        };
       }
+      if (command === "read_stream_delivery") {
+        return encodeDelivery([
+          { event: "snapshot", payload: PACKETS_FIXTURE },
+        ]);
+      }
+      if (command === "ack_stream_delivery") return { accepted: true };
       if (command === "get_packets_snapshot") return PACKETS_FIXTURE;
       return undefined;
     });
@@ -52,7 +77,14 @@ describe("Packets client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.({ event: "snapshot", payload: PACKETS_FIXTURE });
+    onMessage?.({
+      streamProtocolVersion: 1,
+      streamKind: "packets",
+      subscriptionId: "packets-test",
+      streamGeneration: "1",
+      deliverySequence: "1",
+    });
+    await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
     expect(received).toHaveBeenCalledWith(

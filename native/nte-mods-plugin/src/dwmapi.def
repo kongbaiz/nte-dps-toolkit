@@ -1,5 +1,6 @@
 LIBRARY dwmapi
 EXPORTS
+  NteModsPluginShutdown
   DllCanUnloadNow=f0 @12
   DllGetClassObject=f1 @16
   DwmAttachMilContent=f2 @17

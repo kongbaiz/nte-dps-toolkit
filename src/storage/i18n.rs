@@ -16,11 +16,15 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::{Deserialize, Serialize};
 
-use crate::storage::resource::read_resource_text;
+use crate::storage::resource::{BoundedResourceTextError, read_resource_text_bounded};
+
+const MAX_LOCALE_RESOURCE_BYTES: usize = 1024 * 1024;
+const MAX_LOCALE_ENTRIES: usize = 4096;
+const MAX_LOCALE_FIELD_BYTES: usize = 1024;
 
 /// Languages the UI can render. English is the key language; every other variant
 /// has a matching `res/languages/<code>.json`.
@@ -113,53 +117,179 @@ impl Language {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocaleLoadDiagnostic {
+    ReadFailed,
+    TooLarge,
+    InvalidUtf8,
+    InvalidJson,
+    InvalidShape,
+    StateRecovered,
+}
+
+impl LocaleLoadDiagnostic {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::ReadFailed => "resource_read_failed",
+            Self::TooLarge => "resource_too_large",
+            Self::InvalidUtf8 => "resource_invalid_utf8",
+            Self::InvalidJson => "resource_invalid_json",
+            Self::InvalidShape => "resource_invalid_shape",
+            Self::StateRecovered => "state_recovered",
+        }
+    }
+}
+
 #[derive(Default)]
 struct Store {
     language: Language,
     /// `"English key" -> "localized value"`; empty for English.
     map: HashMap<String, String>,
+    diagnostic: Option<LocaleLoadDiagnostic>,
+    auxiliary_diagnostic: Option<LocaleLoadDiagnostic>,
+}
+
+impl Store {
+    fn poison_fallback() -> Self {
+        Self {
+            language: Language::English,
+            map: HashMap::new(),
+            diagnostic: Some(LocaleLoadDiagnostic::StateRecovered),
+            auxiliary_diagnostic: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct LocaleOverlay {
+    map: HashMap<String, String>,
+    diagnostic: Option<LocaleLoadDiagnostic>,
 }
 
 static STORE: LazyLock<RwLock<Store>> = LazyLock::new(|| RwLock::new(Store::default()));
-static SIMPLIFIED_CHINESE_MAP: LazyLock<HashMap<String, String>> =
-    LazyLock::new(|| load_map(Language::SimplifiedChinese));
-static JAPANESE_MAP: LazyLock<HashMap<String, String>> =
-    LazyLock::new(|| load_map(Language::Japanese));
+static SIMPLIFIED_CHINESE_OVERLAY: LazyLock<LocaleOverlay> =
+    LazyLock::new(|| load_overlay(Language::SimplifiedChinese));
+static JAPANESE_OVERLAY: LazyLock<LocaleOverlay> =
+    LazyLock::new(|| load_overlay(Language::Japanese));
+
+/// Locale data is a rebuildable projection. If a writer panics, discard the
+/// entire partially-updated projection before allowing any later read/write.
+fn write_rebuildable_store(store: &RwLock<Store>) -> RwLockWriteGuard<'_, Store> {
+    match store.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = Store::poison_fallback();
+            store.clear_poison();
+            guard
+        }
+    }
+}
+
+fn read_rebuildable_store(store: &RwLock<Store>) -> RwLockReadGuard<'_, Store> {
+    loop {
+        match store.read() {
+            Ok(guard) => return guard,
+            Err(poisoned) => {
+                drop(poisoned);
+                drop(write_rebuildable_store(store));
+            }
+        }
+    }
+}
 
 /// Load the overlay map for `language`. Missing/invalid files degrade to an empty
-/// map (keys fall back to their English text) rather than failing startup.
-fn load_map(language: Language) -> HashMap<String, String> {
+/// map (keys fall back to their English text) and retain one bounded diagnostic.
+fn load_overlay(language: Language) -> LocaleOverlay {
     let Some(path) = language.resource_path() else {
-        return HashMap::new();
+        return LocaleOverlay::default();
     };
-    read_resource_text(Path::new(&path))
-        .ok()
-        .and_then(|text| serde_json::from_str::<HashMap<String, String>>(&text).ok())
-        .unwrap_or_default()
+    let text = match read_resource_text_bounded(Path::new(&path), MAX_LOCALE_RESOURCE_BYTES) {
+        Ok(text) => text,
+        Err(error) => {
+            let diagnostic = match error {
+                BoundedResourceTextError::ReadFailed => LocaleLoadDiagnostic::ReadFailed,
+                BoundedResourceTextError::TooLarge => LocaleLoadDiagnostic::TooLarge,
+                BoundedResourceTextError::InvalidUtf8 => LocaleLoadDiagnostic::InvalidUtf8,
+            };
+            return LocaleOverlay {
+                diagnostic: Some(diagnostic),
+                ..LocaleOverlay::default()
+            };
+        }
+    };
+    match parse_overlay_text(&text) {
+        Ok(map) => LocaleOverlay {
+            map,
+            diagnostic: None,
+        },
+        Err(diagnostic) => LocaleOverlay {
+            diagnostic: Some(diagnostic),
+            ..LocaleOverlay::default()
+        },
+    }
+}
+
+fn parse_overlay_text(text: &str) -> Result<HashMap<String, String>, LocaleLoadDiagnostic> {
+    let map = serde_json::from_str::<HashMap<String, String>>(text)
+        .map_err(|_| LocaleLoadDiagnostic::InvalidJson)?;
+    if map.len() > MAX_LOCALE_ENTRIES
+        || map.iter().any(|(key, value)| {
+            key.is_empty()
+                || key.len() > MAX_LOCALE_FIELD_BYTES
+                || value.len() > MAX_LOCALE_FIELD_BYTES
+        })
+    {
+        return Err(LocaleLoadDiagnostic::InvalidShape);
+    }
+    Ok(map)
 }
 
 /// Switch the active UI language and load its overlay map. Call once at startup and
 /// whenever the settings dropdown changes.
 pub fn set_language(language: Language) {
-    let map = load_map(language);
-    let mut store = STORE.write().unwrap_or_else(|poison| poison.into_inner());
+    let overlay = load_overlay(language);
+    let mut store = write_rebuildable_store(&STORE);
     store.language = language;
-    store.map = map;
+    store.map = overlay.map;
+    store.diagnostic = overlay.diagnostic;
 }
 
 /// The active UI language. Lets non-UI display helpers pick a localized field
 /// without threading the setting through every call.
 pub fn current_language() -> Language {
-    STORE
-        .read()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .language
+    read_rebuildable_store(&STORE).language
+}
+
+/// The current bounded localization degradation marker, without a path, JSON
+/// payload, or parser detail crossing the diagnostics boundary.
+pub fn locale_load_diagnostic() -> Option<LocaleLoadDiagnostic> {
+    locale_load_diagnostic_for(&STORE)
+}
+
+fn locale_load_diagnostic_for(store: &RwLock<Store>) -> Option<LocaleLoadDiagnostic> {
+    let store = read_rebuildable_store(store);
+    store.diagnostic.or(store.auxiliary_diagnostic)
+}
+
+fn record_auxiliary_locale_diagnostic(diagnostic: Option<LocaleLoadDiagnostic>) {
+    record_auxiliary_locale_diagnostic_for(&STORE, diagnostic);
+}
+
+fn record_auxiliary_locale_diagnostic_for(
+    store: &RwLock<Store>,
+    diagnostic: Option<LocaleLoadDiagnostic>,
+) {
+    let Some(diagnostic) = diagnostic else {
+        return;
+    };
+    write_rebuildable_store(store).auxiliary_diagnostic = Some(diagnostic);
 }
 
 /// Translate an English key into the active language. Returns the key unchanged for
 /// English or when the locale map has no entry for it.
 pub fn t(key: &str) -> String {
-    let store = STORE.read().unwrap_or_else(|poison| poison.into_inner());
+    let store = read_rebuildable_store(&STORE);
     if matches!(store.language, Language::English) {
         return key.to_owned();
     }
@@ -172,45 +302,125 @@ pub fn t(key: &str) -> String {
 /// Translate without changing the active UI language. Command search uses this
 /// to match both the English source key and Simplified Chinese in every locale.
 pub fn t_for(language: Language, key: &str) -> String {
-    let map = match language {
+    let overlay = match language {
         Language::English => return key.to_owned(),
-        Language::Japanese => &*JAPANESE_MAP,
-        Language::SimplifiedChinese => &*SIMPLIFIED_CHINESE_MAP,
+        Language::Japanese => &*JAPANESE_OVERLAY,
+        Language::SimplifiedChinese => &*SIMPLIFIED_CHINESE_OVERLAY,
     };
-    map.get(key).cloned().unwrap_or_else(|| key.to_owned())
+    record_auxiliary_locale_diagnostic(overlay.diagnostic);
+    overlay
+        .map
+        .get(key)
+        .cloned()
+        .unwrap_or_else(|| key.to_owned())
 }
 
-/// Translate `key`, then substitute each `{}` placeholder left-to-right with `args`.
+/// Translate `key`, then apply the shared Rust/TypeScript placeholder grammar.
 ///
-/// Runtime substitution (rather than `format!`) is required because the template
-/// text is chosen at runtime from the locale map. Extra `{}` beyond `args` are left
-/// literal; unused `args` are dropped.
+/// `{n}` reuses argument `n` anywhere in the template. When argument `n` has no
+/// indexed token, it consumes the next `{}` token. Unknown or unfilled tokens are
+/// left literal. Runtime substitution is required because the template comes from
+/// the locale map rather than a compile-time `format!` string.
 pub fn tf(key: &str, args: &[&str]) -> String {
     let template = t(key);
     format_template(&template, args)
 }
 
 fn format_template(template: &str, args: &[&str]) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut args = args.iter();
-    let mut chars = template.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '{' && chars.peek() == Some(&'}') {
-            chars.next();
-            match args.next() {
-                Some(arg) => out.push_str(arg),
-                None => out.push_str("{}"),
-            }
-        } else {
-            out.push(ch);
+    let mut message = template.to_owned();
+    for (index, argument) in args.iter().enumerate() {
+        let indexed = format!("{{{index}}}");
+        if message.contains(&indexed) {
+            message = message.replace(&indexed, argument);
+        } else if let Some(position) = message.find("{}") {
+            message.replace_range(position..position + 2, argument);
         }
     }
-    out
+    message
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Deserialize)]
+    struct PlaceholderConformanceCase {
+        template: String,
+        arguments: Vec<String>,
+        expected: String,
+    }
+
+    #[test]
+    fn placeholder_formatter_matches_the_shared_conformance_corpus() {
+        let cases: Vec<PlaceholderConformanceCase> = serde_json::from_str(include_str!(
+            "../../res/languages/placeholder-conformance.json"
+        ))
+        .expect("placeholder conformance corpus should be valid JSON");
+
+        for case in cases {
+            let arguments = case
+                .arguments
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                format_template(&case.template, &arguments),
+                case.expected,
+                "template: {}",
+                case.template
+            );
+        }
+    }
+
+    fn placeholder_arity(template: &str) -> usize {
+        let bytes = template.as_bytes();
+        let mut indexed = std::collections::BTreeSet::new();
+        let mut sequential = 0usize;
+        let mut cursor = 0usize;
+        while cursor < bytes.len() {
+            if bytes[cursor] != b'{' {
+                cursor += 1;
+                continue;
+            }
+            let Some(relative_end) = bytes[cursor + 1..].iter().position(|byte| *byte == b'}')
+            else {
+                break;
+            };
+            let end = cursor + 1 + relative_end;
+            let token = &bytes[cursor + 1..end];
+            if token.is_empty() {
+                sequential += 1;
+            } else if token.iter().all(u8::is_ascii_digit) {
+                let token = std::str::from_utf8(token).expect("ASCII placeholder index");
+                indexed.insert(
+                    token
+                        .parse::<usize>()
+                        .expect("placeholder index should fit usize"),
+                );
+            }
+            cursor = end + 1;
+        }
+
+        let mut arity = indexed.iter().next_back().map_or(0, |index| index + 1);
+        while (0..arity).filter(|index| !indexed.contains(index)).count() < sequential {
+            arity += 1;
+        }
+        arity
+    }
+
+    #[test]
+    fn every_locale_preserves_the_source_placeholder_arity() {
+        for language in [Language::SimplifiedChinese, Language::Japanese] {
+            for (key, translation) in load_overlay(language).map {
+                assert_eq!(
+                    placeholder_arity(&translation),
+                    placeholder_arity(&key),
+                    "{} placeholder mismatch for key {key:?}: {translation:?}",
+                    language.code()
+                );
+            }
+        }
+    }
 
     #[test]
     fn language_codes_and_names_are_stable() {
@@ -280,8 +490,8 @@ mod tests {
         // zh-CN.json is the most complete locale map today; ja.json should
         // have a translation for every key it defines so switching to
         // Japanese doesn't silently fall back to raw English key text.
-        let zh_map = load_map(Language::SimplifiedChinese);
-        let ja_map = load_map(Language::Japanese);
+        let zh_map = load_overlay(Language::SimplifiedChinese).map;
+        let ja_map = load_overlay(Language::Japanese).map;
         assert!(!zh_map.is_empty());
         assert!(!ja_map.is_empty());
 
@@ -290,5 +500,78 @@ mod tests {
             .filter(|key| !ja_map.contains_key(*key))
             .collect();
         assert!(missing.is_empty(), "ja.json is missing keys: {missing:?}");
+    }
+
+    #[test]
+    fn malformed_or_structurally_unbounded_locale_maps_return_stable_diagnostics() {
+        assert_eq!(
+            parse_overlay_text("not json"),
+            Err(LocaleLoadDiagnostic::InvalidJson)
+        );
+        let oversized_key = "x".repeat(MAX_LOCALE_FIELD_BYTES + 1);
+        let oversized = serde_json::to_string(&HashMap::from([(oversized_key, "ok")]))
+            .expect("locale test JSON");
+        assert_eq!(
+            parse_overlay_text(&oversized),
+            Err(LocaleLoadDiagnostic::InvalidShape)
+        );
+        assert_eq!(LocaleLoadDiagnostic::TooLarge.code(), "resource_too_large");
+    }
+
+    #[test]
+    fn auxiliary_locale_caches_retain_typed_load_diagnostics() {
+        let source = include_str!("i18n.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production source");
+
+        assert!(production.contains("LazyLock<LocaleOverlay>"));
+        assert!(!production.contains("LazyLock<HashMap<String, String>>"));
+        assert!(production.contains("record_auxiliary_locale_diagnostic"));
+    }
+
+    #[test]
+    fn auxiliary_locale_failure_is_visible_without_a_healthy_false_positive() {
+        let store = RwLock::new(Store::default());
+
+        record_auxiliary_locale_diagnostic_for(&store, None);
+        assert_eq!(locale_load_diagnostic_for(&store), None);
+
+        record_auxiliary_locale_diagnostic_for(&store, Some(LocaleLoadDiagnostic::InvalidJson));
+        assert_eq!(
+            locale_load_diagnostic_for(&store),
+            Some(LocaleLoadDiagnostic::InvalidJson)
+        );
+
+        record_auxiliary_locale_diagnostic_for(&store, None);
+        assert_eq!(
+            locale_load_diagnostic_for(&store),
+            Some(LocaleLoadDiagnostic::InvalidJson),
+            "a later healthy auxiliary lookup must not erase an observed failure"
+        );
+    }
+
+    #[test]
+    fn poisoned_locale_store_discards_partial_state_before_reads_continue() {
+        let store = RwLock::new(Store {
+            language: Language::Japanese,
+            map: HashMap::from([("Settings".to_owned(), "partial".to_owned())]),
+            diagnostic: None,
+            auxiliary_diagnostic: None,
+        });
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = store.write().expect("test locale store");
+            guard.language = Language::Japanese;
+            guard.map.insert("leaked".to_owned(), "value".to_owned());
+            panic!("poison test locale store");
+        });
+
+        let guard = read_rebuildable_store(&store);
+        assert_eq!(guard.language, Language::English);
+        assert!(guard.map.is_empty());
+        assert_eq!(guard.diagnostic, Some(LocaleLoadDiagnostic::StateRecovered));
+        drop(guard);
+        assert!(!store.is_poisoned());
     }
 }

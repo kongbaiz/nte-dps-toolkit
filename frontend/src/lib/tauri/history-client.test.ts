@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createHistoryClient } from "./history-client";
+import { MAX_STREAM_DELIVERY_BYTES } from "./stream-contract";
+
+const encodeDelivery = (events: unknown[]): ArrayBuffer => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ streamProtocolVersion: 1, events }),
+  );
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+};
 
 describe("History client", () => {
   it("routes comparison through the typed Tauri command", async () => {
@@ -76,8 +87,31 @@ describe("History client", () => {
         async invoke(command) {
           calls.push(command);
           if (command === "subscribe_history") {
-            return { subscriptionId: "history-test", streamIntervalMs: 250 };
+            return {
+              subscriptionId: "history-test",
+              streamKind: "history",
+              streamIntervalMs: 250,
+              streamProtocolVersion: 1,
+              streamGeneration: "1",
+              maxInFlightDeliveries: 1,
+              maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
+            };
           }
+          if (command === "read_stream_delivery") {
+            return encodeDelivery([
+              {
+                event: "snapshot",
+                payload: {
+                  contractVersion: 2,
+                  revision: "1",
+                  maxImportBytes: "1",
+                  skippedFiles: 0,
+                  records: [],
+                },
+              },
+            ]);
+          }
+          if (command === "ack_stream_delivery") return { accepted: true };
           return undefined;
         },
         createChannel(handler) {
@@ -95,17 +129,20 @@ describe("History client", () => {
       },
     );
     onMessage?.({
-      event: "snapshot",
-      payload: {
-        contractVersion: 2,
-        revision: "1",
-        maxImportBytes: "1",
-        skippedFiles: 0,
-        records: [],
-      },
+      streamProtocolVersion: 1,
+      streamKind: "history",
+      subscriptionId: "history-test",
+      streamGeneration: "1",
+      deliverySequence: "1",
     });
+    await vi.waitFor(() => expect(snapshots).toHaveLength(1));
     await unsubscribe();
     expect(snapshots).toHaveLength(1);
-    expect(calls).toEqual(["subscribe_history", "unsubscribe_history"]);
+    expect(calls).toEqual([
+      "subscribe_history",
+      "read_stream_delivery",
+      "ack_stream_delivery",
+      "unsubscribe_history",
+    ]);
   });
 });

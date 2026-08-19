@@ -10,6 +10,7 @@ export const MAIN_DPS_CONTRACT_VERSION = 4;
 export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
 export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
 export const MAIN_DPS_MAX_CHARACTERS = 4;
+const U64_MAX_DECIMAL = "18446744073709551615";
 
 export interface MainDpsSnapshot {
   contractVersion: number;
@@ -52,6 +53,7 @@ export interface MainDpsOnboarding {
   done: boolean;
   step: number;
   captureDeviceCount: number;
+  captureDevicesAvailable: boolean;
   gameDetected: boolean;
   gameDetectionStatus: GameDetectionStatus;
   passthroughHotkeyLabel: string;
@@ -156,21 +158,27 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
 
   return {
     contractVersion: version,
-    generation: text(source.generation, "generation"),
-    captureGeneration: text(source.captureGeneration, "captureGeneration"),
-    presentationGeneration: text(
+    generation: u64DecimalText(source.generation, "generation"),
+    captureGeneration: u64DecimalText(
+      source.captureGeneration,
+      "captureGeneration",
+    ),
+    presentationGeneration: u64DecimalText(
       source.presentationGeneration,
       "presentationGeneration",
     ),
-    historyGeneration: text(source.historyGeneration, "historyGeneration"),
+    historyGeneration: u64DecimalText(
+      source.historyGeneration,
+      "historyGeneration",
+    ),
     adapterVersion: text(source.adapterVersion, "adapterVersion"),
     capture: parseCaptureSnapshot(source.capture),
     processingPaused: boolean(source.processingPaused, "processingPaused"),
-    pausedPendingEvents: unsignedIntegerText(
+    pausedPendingEvents: u64DecimalText(
       source.pausedPendingEvents,
       "pausedPendingEvents",
     ),
-    pausedDebugPackets: unsignedIntegerText(
+    pausedDebugPackets: u64DecimalText(
       source.pausedDebugPackets,
       "pausedDebugPackets",
     ),
@@ -314,6 +322,10 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
         onboarding.captureDeviceCount,
         "onboarding.captureDeviceCount",
       ),
+      captureDevicesAvailable: boolean(
+        onboarding.captureDevicesAvailable,
+        "onboarding.captureDevicesAvailable",
+      ),
       gameDetected: boolean(onboarding.gameDetected, "onboarding.gameDetected"),
       gameDetectionStatus: oneOf(
         onboarding.gameDetectionStatus,
@@ -442,12 +454,15 @@ function integer(value: unknown, field: string): number {
 function nullableInteger(value: unknown, field: string): number | null {
   return value === null ? null : integer(value, field);
 }
-function unsignedIntegerText(value: unknown, field: string): string {
+function u64DecimalText(value: unknown, field: string): string {
   const candidate = text(value, field);
-  if (!/^\d+$/.test(candidate))
-    throw new TechnicalContractError(
-      `${field} must be an unsigned integer string`,
-    );
+  if (
+    candidate.length === 0 ||
+    candidate.length > U64_MAX_DECIMAL.length ||
+    !/^(0|[1-9]\d*)$/.test(candidate) ||
+    (candidate.length === U64_MAX_DECIMAL.length && candidate > U64_MAX_DECIMAL)
+  )
+    throw new TechnicalContractError(`${field} must be a u64 decimal string`);
   return candidate;
 }
 function boolean(value: unknown, field: string): boolean {

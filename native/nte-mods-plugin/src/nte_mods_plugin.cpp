@@ -6,6 +6,16 @@
 extern "C" __declspec(dllexport) const char NteModsPluginSignature[] =
 	NTE_MODS_PLUGIN_IMAGE_SIGNATURE;
 
+// Manual-map owners may call this export from a normal thread before unmapping.
+// TRUE is deliberately strict: any published detour lineage keeps the image
+// resident because foreign game-thread instruction-pointer quiescence cannot be
+// proven without suspending those threads.
+extern "C" __declspec(dllexport) BOOL WINAPI NteModsPluginShutdown() noexcept
+{
+	return nte::mods::PluginStopAllowsUnload(
+		nte::mods::StopPluginRuntime()) ? TRUE : FALSE;
+}
+
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved)
 {
 	// The OS loader always reaches this entry without the private marker, so its

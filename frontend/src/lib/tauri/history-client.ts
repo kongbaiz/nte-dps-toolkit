@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   historyError,
   parseHistoryFileActionResult,
@@ -19,7 +17,10 @@ import {
   type HistorySnapshot,
 } from "@/lib/tauri/history-contract";
 import { TechnicalContractError } from "@/lib/tauri/technical-contract";
-import { parseSubscriptionReceipt } from "@/lib/tauri/technical-contract";
+import {
+  subscribeAckedStream,
+  tauriAckedStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   compare: "compare_history_records",
@@ -61,14 +62,7 @@ export interface HistoryClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: HistoryTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: HistoryTransport = tauriAckedStreamTransport;
 
 export function createHistoryClient(
   transport: HistoryTransport = tauriTransport,
@@ -106,32 +100,16 @@ export function createHistoryClient(
       snapshot(COMMANDS.setPrediction, { recordId, line }),
     subscribe: (onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onEvent = transport.createChannel((message) => {
-        if (closed) return;
-        try {
-          onSnapshot(parseHistoryEvent(message));
-        } catch (error) {
-          onError(historyError(error));
-        }
+      return subscribeAckedStream({
+        transport,
+        streamKind: "history",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        parseEvent: parseHistoryEvent,
+        onEvent: onSnapshot,
+        onError: (error) => onError(historyError(error)),
       });
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) onError(historyError(error));
-          return undefined;
-        });
-      return async () => {
-        if (closed) return;
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
     },
   };
 }

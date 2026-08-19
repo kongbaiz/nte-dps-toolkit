@@ -11,7 +11,7 @@ use nte_dps_tool::{
         ability_names,
         history::{
             HistoryCharacterDelta, HistoryComparison, HistoryLoadResult, HistoryRecord,
-            HistorySkillDelta, MAX_HISTORY_IMPORT_BYTES,
+            HistorySkillDelta, MAX_HISTORY_IMPORT_BYTES, MAX_HISTORY_RECORDS,
         },
         i18n::{self, Language},
     },
@@ -32,6 +32,7 @@ pub(crate) struct HistorySnapshot {
 
 impl HistorySnapshot {
     pub(crate) fn from_load(value: HistoryLoadResult, revision: u64) -> Self {
+        let value = bounded_history_load(value);
         Self {
             contract_version: HISTORY_CONTRACT_VERSION,
             revision: revision.to_string(),
@@ -40,21 +41,44 @@ impl HistorySnapshot {
             records: value
                 .records
                 .iter()
+                .take(MAX_HISTORY_RECORDS)
                 .map(HistoryRecordSnapshot::from)
                 .collect(),
         }
     }
 
     pub(crate) fn from_localized_load(
-        mut value: HistoryLoadResult,
+        value: HistoryLoadResult,
         revision: u64,
         characters: &HashMap<u32, CharacterInfo>,
     ) -> Self {
+        Self::from_localized_load_for_language(
+            value,
+            revision,
+            characters,
+            i18n::current_language(),
+        )
+    }
+
+    pub(crate) fn from_localized_load_for_language(
+        value: HistoryLoadResult,
+        revision: u64,
+        characters: &HashMap<u32, CharacterInfo>,
+        language: Language,
+    ) -> Self {
+        let mut value = bounded_history_load(value);
         for record in &mut value.records {
-            localize_summary(&mut record.summary, characters);
+            localize_summary(&mut record.summary, characters, language);
         }
         Self::from_load(value, revision)
     }
+}
+
+fn bounded_history_load(mut value: HistoryLoadResult) -> HistoryLoadResult {
+    let overflow = value.records.len().saturating_sub(MAX_HISTORY_RECORDS);
+    value.records.truncate(MAX_HISTORY_RECORDS);
+    value.skipped_files = value.skipped_files.saturating_add(overflow);
+    value
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -372,7 +396,8 @@ impl From<&HistoryCharacterDelta> for HistoryCharacterDeltaSnapshot {
 impl HistoryCharacterDeltaSnapshot {
     fn localized(row: &HistoryCharacterDelta, characters: &HashMap<u32, CharacterInfo>) -> Self {
         let mut snapshot = Self::from(row);
-        snapshot.name = localized_character_name(characters, row.char_id, &row.name);
+        snapshot.name =
+            localized_character_name(characters, row.char_id, &row.name, i18n::current_language());
         snapshot
     }
 }
@@ -439,12 +464,16 @@ fn hidden_count(len: usize) -> u32 {
     len.saturating_sub(DISPLAY_ROW_LIMIT).min(u32::MAX as usize) as u32
 }
 
-fn localize_summary(summary: &mut CombatSessionSummary, characters: &HashMap<u32, CharacterInfo>) {
+fn localize_summary(
+    summary: &mut CombatSessionSummary,
+    characters: &HashMap<u32, CharacterInfo>,
+    language: Language,
+) {
     for row in &mut summary.characters {
-        row.name = localized_character_name(characters, row.char_id, &row.name);
+        row.name = localized_character_name(characters, row.char_id, &row.name, language);
     }
     for row in &mut summary.skills {
-        row.char_name = localized_character_name(characters, row.char_id, &row.char_name);
+        row.char_name = localized_character_name(characters, row.char_id, &row.char_name, language);
         row.name = localized_skill_name(
             &row.name,
             row.ability_name.as_deref(),
@@ -460,10 +489,11 @@ fn localize_summary(summary: &mut CombatSessionSummary, characters: &HashMap<u32
     .flatten()
     {
         for row in &mut half.characters {
-            row.name = localized_character_name(characters, row.char_id, &row.name);
+            row.name = localized_character_name(characters, row.char_id, &row.name, language);
         }
         for row in &mut half.skills {
-            row.char_name = localized_character_name(characters, row.char_id, &row.char_name);
+            row.char_name =
+                localized_character_name(characters, row.char_id, &row.char_name, language);
             row.name = localized_skill_name(
                 &row.name,
                 row.ability_name.as_deref(),
@@ -478,11 +508,12 @@ fn localized_character_name(
     characters: &HashMap<u32, CharacterInfo>,
     char_id: u32,
     fallback: &str,
+    language: Language,
 ) -> String {
     let Some(info) = characters.get(&char_id) else {
         return fallback.to_owned();
     };
-    let candidate = if i18n::current_language() == Language::SimplifiedChinese {
+    let candidate = if language == Language::SimplifiedChinese {
         info.name_zh.trim()
     } else {
         info.name_en.trim()
@@ -527,6 +558,30 @@ fn history_party_label(record: &HistoryRecord) -> String {
 mod tests {
     use super::*;
     use nte_dps_tool::engine::model::DpsTimeBasis;
+
+    #[test]
+    fn history_snapshot_never_projects_more_than_the_rust_record_limit() {
+        let records = (0..=nte_dps_tool::storage::history::MAX_HISTORY_RECORDS)
+            .map(|index| HistoryRecord {
+                id: format!("record-{index}"),
+                ..Default::default()
+            })
+            .collect();
+
+        let snapshot = HistorySnapshot::from_load(
+            HistoryLoadResult {
+                records,
+                skipped_files: 2,
+            },
+            9,
+        );
+
+        assert_eq!(
+            snapshot.records.len(),
+            nte_dps_tool::storage::history::MAX_HISTORY_RECORDS
+        );
+        assert_eq!(snapshot.skipped_files, 3);
+    }
 
     #[test]
     fn record_projection_uses_stable_codes_and_string_counters() {

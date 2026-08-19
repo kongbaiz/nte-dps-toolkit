@@ -656,17 +656,7 @@ fn normalize_cpp_expression(expression: &str, states: &[String]) -> String {
     output
 }
 
-const CAPABILITY_VIEWPORT_TICK: u16 = 1 << 0;
-const CAPABILITY_MEMORY_READ: u16 = 1 << 1;
-const CAPABILITY_IPC: u16 = 1 << 2;
-const CAPABILITY_SDK_READ: u16 = 1 << 3;
-const CAPABILITY_EQUIPMENT: u16 = 1 << 4;
-const CAPABILITY_COMBAT_CLOCK: u16 = 1 << 5;
-const CAPABILITY_LOG: u16 = 1 << 6;
-const CAPABILITY_GAME_SESSION: u16 = 1 << 7;
-const CAPABILITY_MEMORY_WRITE: u16 = 1 << 8;
-const CAPABILITY_UNREAL_REFLECTION: u16 = 1 << 9;
-const CAPABILITY_PROCESS_EVENT: u16 = 1 << 10;
+include!("mod_runtime_schema.generated.rs");
 
 #[derive(Clone, Copy)]
 struct ModSourceLine<'a> {
@@ -1503,38 +1493,17 @@ pub(crate) fn is_mod_binding_id(name: &str) -> bool {
 }
 
 fn mod_capability(name: &str) -> Option<u16> {
-    Some(match name {
-        "viewport.tick" => CAPABILITY_VIEWPORT_TICK,
-        "memory.read" => CAPABILITY_MEMORY_READ,
-        "ipc" => CAPABILITY_IPC,
-        "sdk.read" => CAPABILITY_SDK_READ,
-        "equipment" => CAPABILITY_EQUIPMENT,
-        "combat-clock" => CAPABILITY_COMBAT_CLOCK,
-        "log" => CAPABILITY_LOG,
-        "game.session" => CAPABILITY_GAME_SESSION,
-        "memory.write" => CAPABILITY_MEMORY_WRITE,
-        "unreal.reflection" => CAPABILITY_UNREAL_REFLECTION,
-        "process.event" => CAPABILITY_PROCESS_EVENT,
-        _ => return None,
-    })
+    MOD_CAPABILITIES
+        .iter()
+        .find_map(|(candidate, value)| (*candidate == name).then_some(*value))
 }
 
 fn mod_ipc_service(name: &str) -> Option<(u16, u16)> {
-    Some(match name {
-        "equipment.equip_module" => (1, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.equip_core" => (2, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.unequip_module" => (3, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.unequip_core" => (4, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.unequip_all" => (5, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.equip_one_key" => (6, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.move_module_to_character" => (7, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.move_core_to_character" => (8, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.set_item_discarded" => (9, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "equipment.set_item_locked" => (10, CAPABILITY_IPC | CAPABILITY_EQUIPMENT),
-        "combat_clock.query_transitions" => (11, CAPABILITY_IPC | CAPABILITY_COMBAT_CLOCK),
-        "ipc.query_mod_events" => (12, CAPABILITY_IPC),
-        _ => return None,
-    })
+    MOD_IPC_SERVICES
+        .iter()
+        .find_map(|(candidate, operation, capability)| {
+            (*candidate == name).then_some((*operation, *capability))
+        })
 }
 
 fn split_mod_arguments(arguments: &str, capacity: usize) -> Option<Vec<&str>> {
@@ -1939,6 +1908,51 @@ mod tests {
             ),
             Err(ModScriptError::CapabilityMismatch)
         );
+    }
+
+    #[test]
+    fn source_validation_accepts_character_effects_runtime_route() {
+        validate_mod_source(
+            "effect-probe",
+            concat!(
+                "nte_mod(4)\n",
+                "mod(\"effect-probe\")\n",
+                "requires(\"viewport.tick\")\n",
+                "requires(\"ipc\")\n",
+                "requires(\"character.effects\")\n",
+                "route_ipc(14, \"character.query_effects\")\n",
+                "def on_viewport_tick(event):\n",
+                "    value = 0\n",
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn generated_mod_runtime_schema_matches_shared_conformance_source() {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../res/mod-runtime-schema.json")).unwrap();
+        let capabilities = schema["capabilities"].as_array().unwrap();
+        assert_eq!(capabilities.len(), MOD_CAPABILITIES.len());
+        for capability in capabilities {
+            let name = capability["name"].as_str().unwrap();
+            let bit = capability["bit"].as_u64().unwrap();
+            assert_eq!(mod_capability(name), Some(1u16 << bit));
+        }
+
+        let services = schema["services"].as_array().unwrap();
+        assert_eq!(services.len(), MOD_IPC_SERVICES.len());
+        for service in services {
+            let name = service["name"].as_str().unwrap();
+            let operation = service["operation"].as_u64().unwrap() as u16;
+            let capability = service["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|name| mod_capability(name.as_str().unwrap()).unwrap())
+                .fold(0, |mask, value| mask | value);
+            assert_eq!(mod_ipc_service(name), Some((operation, capability)));
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use nte_dps_tool::{
     core::{
+        CoreError,
         combat_details::{
             CombatDetailFilter, damage_digit_key_for_hit, follow_up_damage_digit_key_for_hit,
             reaction_text_key_for_hit,
@@ -68,20 +69,20 @@ impl MainDpsDetailSnapshot {
         kind: MainDpsDetailKind,
         offset: usize,
         limit: usize,
-    ) -> Self {
+    ) -> Result<Self, CoreError> {
         let request = state.main_dps_detail_request(kind);
-        let cache_revision = state.main_dps_stream_revision();
+        let cache_revision = state.main_dps_stream_revision()?;
         if let Some(snapshot) =
             state.main_dps_detail_cache_get(cache_revision, kind, &request, offset, limit)
         {
-            return (*snapshot).clone();
+            return Ok((*snapshot).clone());
         }
         let resources = state.live_capture_resources();
         let config = state.ui_config_snapshot();
         let language = config.language;
         let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
         let generation = state.next_sequence().to_string();
-        let actions = MainDpsDetailActions::from_state(state);
+        let actions = MainDpsDetailActions::from_state(state)?;
         let snapshot = state.with_main_dps_detail_state(|combat, selected_half| {
             let source = selected_half
                 .map(|half| DetailSource::Party(combat.abyss.half(half)))
@@ -209,7 +210,7 @@ impl MainDpsDetailSnapshot {
                 offset,
                 rows,
             }
-        });
+        })?;
         state.main_dps_detail_cache_store(
             cache_revision,
             kind,
@@ -218,7 +219,7 @@ impl MainDpsDetailSnapshot {
             limit,
             std::sync::Arc::new(snapshot.clone()),
         );
-        snapshot
+        Ok(snapshot)
     }
 }
 
@@ -280,16 +281,16 @@ pub(crate) struct MainDpsDetailActions {
 }
 
 impl MainDpsDetailActions {
-    fn from_state(state: &AppState) -> Self {
+    fn from_state(state: &AppState) -> Result<Self, CoreError> {
         let capture_active = matches!(
             state.capture_phase(),
             LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
         );
-        let replay_running = state.replay_running();
-        Self {
+        let replay_running = state.replay_running()?;
+        Ok(Self {
             can_start_capture: !capture_active && !replay_running,
             can_import_replay: !capture_active && !replay_running,
-        }
+        })
     }
 }
 
@@ -952,7 +953,8 @@ mod tests {
             MainDpsDetailKind::Team,
             0,
             200,
-        );
+        )
+        .expect("healthy live-capture detail snapshot");
         let value = serde_json::to_value(snapshot).expect("detail snapshot serializes");
 
         assert_eq!(value["contractVersion"], MAIN_DPS_DETAIL_CONTRACT_VERSION);
@@ -984,7 +986,8 @@ mod tests {
             MainDpsDetailKind::Team,
             49_990,
             MAIN_DPS_DETAIL_PAGE_LIMIT,
-        );
+        )
+        .expect("healthy live-capture detail snapshot");
 
         assert_eq!(snapshot.total_hits, 50_000);
         assert_eq!(snapshot.total_damage, 50_000.0);
@@ -1002,13 +1005,15 @@ mod tests {
             combat.push_hit(hit);
         }
         let state = AppState::default();
-        state.set_main_dps_detail_request(
-            MainDpsDetailKind::Character,
-            MainDpsDetailRequest {
-                character_id: Some(1010),
-                ..Default::default()
-            },
-        );
+        state
+            .set_main_dps_detail_request(
+                MainDpsDetailKind::Character,
+                MainDpsDetailRequest {
+                    character_id: Some(1010),
+                    ..Default::default()
+                },
+            )
+            .expect("set character detail request");
         state.restore_live_state_for_test(
             combat,
             nte_dps_tool::engine::model::CaptureQualitySource::Live,
@@ -1019,7 +1024,8 @@ mod tests {
             MainDpsDetailKind::Character,
             0,
             MAIN_DPS_DETAIL_DEFAULT_LIMIT,
-        );
+        )
+        .expect("healthy live-capture detail snapshot");
 
         assert_eq!(snapshot.skill_total_count, MAIN_DPS_DETAIL_SKILL_LIMIT + 1);
         assert_eq!(snapshot.skills.len(), MAIN_DPS_DETAIL_SKILL_LIMIT);

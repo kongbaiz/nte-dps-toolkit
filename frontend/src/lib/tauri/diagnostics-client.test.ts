@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createDiagnosticsClient } from "@/lib/tauri/diagnostics-client";
+import { MAX_STREAM_DELIVERY_BYTES } from "@/lib/tauri/stream-contract";
+
+const encodeDelivery = (events: unknown[]): ArrayBuffer => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ streamProtocolVersion: 1, events }),
+  );
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+};
 
 const SNAPSHOT = {
   contractVersion: 2,
@@ -74,8 +85,20 @@ describe("Diagnostics client", () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_diagnostics") {
-        return { subscriptionId: "diagnostics-test", streamIntervalMs: 500 };
+        return {
+          subscriptionId: "diagnostics-test",
+          streamKind: "diagnostics",
+          streamIntervalMs: 500,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+          maxInFlightDeliveries: 1,
+          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
+        };
       }
+      if (command === "read_stream_delivery") {
+        return encodeDelivery([{ event: "snapshot", payload: SNAPSHOT }]);
+      }
+      if (command === "ack_stream_delivery") return { accepted: true };
       return undefined;
     });
     const client = createDiagnosticsClient(
@@ -90,7 +113,14 @@ describe("Diagnostics client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.({ event: "snapshot", payload: SNAPSHOT });
+    onMessage?.({
+      streamProtocolVersion: 1,
+      streamKind: "diagnostics",
+      subscriptionId: "diagnostics-test",
+      streamGeneration: "1",
+      deliverySequence: "1",
+    });
+    await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
     expect(received).toHaveBeenCalledWith(

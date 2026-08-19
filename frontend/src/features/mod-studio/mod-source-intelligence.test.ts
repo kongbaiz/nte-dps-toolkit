@@ -9,6 +9,7 @@ import {
 
 import {
   modSourceCompletion,
+  modSourceDocumentSymbols,
   modSourceHover,
   modSourceOccurrences,
   modSourceSignatureHelp,
@@ -70,6 +71,20 @@ describe("Mod source intelligence", () => {
 
     expect(completion?.items.map((item) => item.label)).toContain(
       "player_state",
+    );
+  });
+
+  it("keeps line-comment markers inside quoted and raw string literals", () => {
+    const quoted =
+      'std::string endpoint(const char* value = "https://example.test") {';
+    const raw =
+      'std::string raw_endpoint(const char* value = R"(https://example.test)") {';
+
+    expect(modSourceDocumentSymbols(quoted)[0]?.label).toBe(
+      'endpoint(const char* value = "https://example.test")',
+    );
+    expect(modSourceDocumentSymbols(raw)[0]?.label).toBe(
+      'raw_endpoint(const char* value = R"(https://example.test)")',
     );
   });
 

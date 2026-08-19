@@ -1,5 +1,12 @@
 use std::{
-    fs,
+    fs::File,
+    future::Future,
+    io::Read,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -8,8 +15,8 @@ use nte_dps_tool::{
         mod_studio::MOD_BINDING_DPS_TIME_STOP,
         team_data::{MAX_TEAM_DPS_EXPORT_BYTES, parse_team_data},
         update::{
-            MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint, UpdateError,
-            installed_app_version, verify_manifest,
+            AvailableComponentUpdate, MAX_MANIFEST_BYTES, UpdateComponent, UpdateEndpoint,
+            UpdateError, installed_app_version, verify_manifest,
         },
     },
     platform::update_http,
@@ -20,7 +27,7 @@ use nte_dps_tool::{
         },
         i18n::{self, Language},
         io_util::atomic_write_text,
-        update::{self as update_storage, installed_component_versions},
+        update::{self as update_storage, PreparedUpdate, installed_component_versions},
     },
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
@@ -33,7 +40,10 @@ use crate::{
             TeamDataExportResult, TeamDataImportFileResult, UpdateSettingsInput,
         },
     },
-    state::{AppState, HudPreset, HudSettingOption, UpdateActionError},
+    file_dialog::{self, DialogOutcome},
+    settings_service::SettingsServiceError,
+    state::{AppState, HudPreset, HudSettingOption, TeamOperationError, UpdateActionError},
+    team_import_service::TeamImportError,
     windows::{abyss_values, combat_details, console, hud, island, main_dps},
 };
 
@@ -69,7 +79,6 @@ pub(crate) fn set_settings_interface(
     if let Some(error) = nte_dps_tool::storage::ability_names::reload(language) {
         log::warn!("reload localized ability names after language change failed: {error}");
     }
-    state.bump_history_revision();
     if let Some(console_window) = app.get_webview_window(console::CONSOLE_WINDOW_LABEL)
         && let Err(error) = console_window.set_title(&nte_dps_tool::storage::i18n::t("NTE Console"))
     {
@@ -136,7 +145,10 @@ pub(crate) async fn install_settings_update(
 ) -> Result<SettingsSnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    if let Some(message_key) = state.update_install_blocked_message_key() {
+    if let Some(message_key) = state
+        .update_install_blocked_message_key()
+        .map_err(update_action_error)?
+    {
         return Err(CommandError::update_install_blocked(message_key));
     }
     install_update(app, state.clone())
@@ -149,40 +161,54 @@ pub(crate) async fn install_update(
     app: AppHandle,
     state: AppState,
 ) -> Result<(), UpdateActionError> {
-    let prepared = state.begin_update_install()?;
-    let version = prepared.version().to_string();
-    match prepared.component() {
-        UpdateComponent::App => match update_storage::launch_prepared_app_update(&prepared) {
-            Ok(_) => {
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(200));
-                    app.exit(0);
-                });
-            }
-            Err(error) => {
-                log::error!("launch prepared application update failed: {error}");
-                state.fail_update_install();
-            }
-        },
-        UpdateComponent::ModsPlugin => {
-            let result = tauri::async_runtime::spawn_blocking(move || {
-                update_storage::install_prepared_plugin_update(&prepared)
-            })
-            .await;
-            match result {
-                Ok(Ok(())) => state.finish_plugin_update_install(version),
-                Ok(Err(error)) => {
-                    log::error!("install prepared Mod loader update failed: {error}");
-                    state.fail_update_install();
+    install_update_with(state, move |prepared, state| async move {
+        let version = prepared.version().to_string();
+        match prepared.component() {
+            UpdateComponent::App => match update_storage::launch_prepared_app_update(&prepared) {
+                Ok(_) => {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(200));
+                        app.exit(0);
+                    });
                 }
                 Err(error) => {
-                    log::error!("Mod loader update worker failed: {error}");
-                    state.fail_update_install();
+                    log::error!("launch prepared application update failed: {error}");
+                    state.fail_update_install()?;
+                }
+            },
+            UpdateComponent::ModsPlugin => {
+                let result = tauri::async_runtime::spawn_blocking(move || {
+                    update_storage::install_prepared_plugin_update(&prepared)
+                })
+                .await;
+                match result {
+                    Ok(Ok(())) => state.finish_plugin_update_install(version)?,
+                    Ok(Err(error)) => {
+                        log::error!("install prepared Mod loader update failed: {error}");
+                        state.fail_update_install()?;
+                    }
+                    Err(error) => {
+                        log::error!("Mod loader update worker failed: {error}");
+                        state.fail_update_install()?;
+                    }
                 }
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+}
+
+async fn install_update_with<Start, Worker>(
+    state: AppState,
+    start: Start,
+) -> Result<(), UpdateActionError>
+where
+    Start: FnOnce(PreparedUpdate, AppState) -> Worker,
+    Worker: Future<Output = Result<(), UpdateActionError>>,
+{
+    let prepared = state.begin_update_install()?;
+    start(prepared, state).await
 }
 
 pub(crate) fn schedule_automatic_update_check(app: AppHandle, state: AppState) {
@@ -218,29 +244,48 @@ pub(crate) fn schedule_completed_update_cleanup() {
 }
 
 async fn run_update_check(state: AppState) -> Result<(), UpdateActionError> {
+    run_update_check_with(state, || async {
+        match tauri::async_runtime::spawn_blocking(check_for_updates).await {
+            Ok(result) => result,
+            Err(error) => {
+                log::error!("Settings update worker failed: {error}");
+                Err(CheckSettingsUpdateError::WorkerFailed)
+            }
+        }
+    })
+    .await
+}
+
+async fn run_update_check_with<Start, Worker>(
+    state: AppState,
+    start: Start,
+) -> Result<(), UpdateActionError>
+where
+    Start: FnOnce() -> Worker,
+    Worker: Future<Output = Result<Vec<AvailableComponentUpdate>, CheckSettingsUpdateError>>,
+{
     state.begin_update_check()?;
-    let result = tauri::async_runtime::spawn_blocking(check_for_updates).await;
-    match result {
-        Ok(Ok(updates)) => {
+    match start().await {
+        Ok(updates) => {
             let auto_download = state
                 .auto_download_updates()
                 .then(|| updates.first().map(|update| update.component))
                 .flatten();
-            state.finish_update_check(updates);
+            state.finish_update_check(updates)?;
             if let Some(component) = auto_download {
                 run_update_download(state, component).await?;
             }
         }
-        Ok(Err(CheckSettingsUpdateError::NotConfigured)) => {
-            state.fail_update_check("The official update channel is not configured in this build");
+        Err(CheckSettingsUpdateError::NotConfigured) => {
+            state
+                .fail_update_check("The official update channel is not configured in this build")?;
         }
-        Ok(Err(CheckSettingsUpdateError::Failed(error))) => {
+        Err(CheckSettingsUpdateError::Failed(error)) => {
             log::error!("Settings update check failed: {error}");
-            state.fail_update_check("Update check failed.");
+            state.fail_update_check("Update check failed.")?;
         }
-        Err(error) => {
-            log::error!("Settings update worker failed: {error}");
-            state.fail_update_check("Update check failed.");
+        Err(CheckSettingsUpdateError::WorkerFailed) => {
+            state.fail_update_check("Update check failed.")?;
         }
     }
     Ok(())
@@ -250,30 +295,62 @@ pub(crate) async fn run_update_download(
     state: AppState,
     component: UpdateComponent,
 ) -> Result<(), UpdateActionError> {
-    let update = state.begin_update_download(component)?;
-    let progress_state = state.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut last_progress = Instant::now() - UPDATE_PROGRESS_INTERVAL;
-        update_storage::prepare_update(&update, |downloaded, total| {
-            let now = Instant::now();
-            if downloaded == total
-                || now.saturating_duration_since(last_progress) >= UPDATE_PROGRESS_INTERVAL
-            {
-                last_progress = now;
-                progress_state.update_download_progress(component, downloaded, total);
-            }
+    run_update_download_with(state, component, |update, progress_state| async move {
+        let runtime_unavailable = Arc::new(AtomicBool::new(false));
+        let progress_runtime_unavailable = Arc::clone(&runtime_unavailable);
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let mut last_progress = Instant::now() - UPDATE_PROGRESS_INTERVAL;
+            update_storage::prepare_update(&update, |downloaded, total| {
+                let now = Instant::now();
+                if downloaded == total
+                    || now.saturating_duration_since(last_progress) >= UPDATE_PROGRESS_INTERVAL
+                {
+                    last_progress = now;
+                    if matches!(
+                        progress_state.update_download_progress(component, downloaded, total),
+                        Err(UpdateActionError::RuntimeUnavailable)
+                    ) {
+                        progress_runtime_unavailable.store(true, Ordering::Release);
+                    }
+                }
+            })
         })
-    })
-    .await;
-    match result {
-        Ok(Ok(prepared)) => state.finish_update_download(prepared),
-        Ok(Err(error)) => {
-            log::error!("prepare signed update failed: {error}");
-            state.fail_update_download();
+        .await;
+        if runtime_unavailable.load(Ordering::Acquire) {
+            return Err(UpdateDownloadWorkerError::RuntimeUnavailable);
         }
-        Err(error) => {
-            log::error!("update download worker failed: {error}");
-            state.fail_update_download();
+        match result {
+            Ok(Ok(prepared)) => Ok(prepared),
+            Ok(Err(error)) => {
+                log::error!("prepare signed update failed: {error}");
+                Err(UpdateDownloadWorkerError::Failed)
+            }
+            Err(error) => {
+                log::error!("update download worker failed: {error}");
+                Err(UpdateDownloadWorkerError::Failed)
+            }
+        }
+    })
+    .await
+}
+
+async fn run_update_download_with<Start, Worker>(
+    state: AppState,
+    component: UpdateComponent,
+    start: Start,
+) -> Result<(), UpdateActionError>
+where
+    Start: FnOnce(AvailableComponentUpdate, AppState) -> Worker,
+    Worker: Future<Output = Result<PreparedUpdate, UpdateDownloadWorkerError>>,
+{
+    let update = state.begin_update_download(component)?;
+    match start(update, state.clone()).await {
+        Ok(prepared) => state.finish_update_download(prepared)?,
+        Err(UpdateDownloadWorkerError::Failed) => {
+            state.fail_update_download()?;
+        }
+        Err(UpdateDownloadWorkerError::RuntimeUnavailable) => {
+            return Err(UpdateActionError::RuntimeUnavailable);
         }
     }
     Ok(())
@@ -331,7 +408,7 @@ pub(crate) fn refresh_settings_capture_devices(
     console::validate_window(&window)?;
     state
         .refresh_capture_devices()
-        .map_err(CommandError::from_core)?;
+        .map_err(|_| CommandError::capture_devices_unavailable())?;
     Ok(state.settings_snapshot())
 }
 
@@ -443,7 +520,7 @@ pub(crate) fn apply_settings_layout_profile(
             for detail_window in detail_windows.iter().flatten() {
                 detail_window.hide().map_err(window_operation_error)?;
             }
-            if super::main_dps::snapshot(state.inner())
+            if super::main_dps::snapshot(state.inner())?
                 .actions
                 .team_details_available
             {
@@ -467,7 +544,7 @@ pub(crate) fn import_settings_team_data(
         log::warn!("reject imported team DPS data: {detail}");
         CommandError::team_data_invalid()
     })?;
-    state.import_team_data(export);
+    state.import_team_data(export).map_err(team_import_error)?;
     Ok(state.settings_snapshot())
 }
 
@@ -480,41 +557,28 @@ pub(crate) async fn import_settings_team_data_file(
 
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_json_open_path};
-
-        let owner = window
-            .hwnd()
-            .map_err(|_| CommandError::window_operation_failed())?
-            .0 as isize;
         let title = i18n::t("Import DPS Data");
-        let json = tauri::async_runtime::spawn_blocking(move || {
-            match choose_json_open_path(owner, &title) {
-                Ok(OpenFileDialogOutcome::Selected(path)) => {
-                    let metadata =
-                        fs::metadata(&path).map_err(|_| CommandError::team_data_import_failed())?;
-                    if metadata.len() > MAX_TEAM_DPS_EXPORT_BYTES as u64 {
-                        return Err(CommandError::team_data_invalid());
-                    }
-                    fs::read_to_string(path)
-                        .map(Some)
-                        .map_err(|_| CommandError::team_data_import_failed())
-                }
-                Ok(OpenFileDialogOutcome::Cancelled) => Ok(None),
-                Err(code) => {
-                    log::error!("native team DPS import dialog failed with code {code:#010x}");
-                    Err(CommandError::team_data_file_dialog_failed())
-                }
+        let selection = file_dialog::choose_json_open_path(&window, title)
+            .await
+            .map_err(|error| {
+                log::error!("native team DPS import dialog failed: {error}");
+                CommandError::team_data_file_dialog_failed()
+            })?;
+        let json = match selection {
+            DialogOutcome::Selected(path) => {
+                tauri::async_runtime::spawn_blocking(move || read_team_data_file(&path).map(Some))
+                    .await
+                    .map_err(|_| CommandError::team_data_import_failed())??
             }
-        })
-        .await
-        .map_err(|_| CommandError::team_data_import_failed())??;
+            DialogOutcome::Cancelled => None,
+        };
 
         let performed = if let Some(json) = json {
             let export = parse_team_data(&json).map_err(|detail| {
                 log::warn!("reject imported team DPS data: {detail}");
                 CommandError::team_data_invalid()
             })?;
-            state.import_team_data(export);
+            state.import_team_data(export).map_err(team_import_error)?;
             true
         } else {
             false
@@ -540,44 +604,32 @@ pub(crate) async fn export_settings_team_data(
     console::validate_window(&window)?;
     let export = state
         .export_team_data()
+        .map_err(team_operation_error)?
         .ok_or_else(CommandError::team_data_unavailable)?;
-    let json = serde_json::to_string_pretty(&export).map_err(|error| {
-        log::error!("serialize team DPS export failed: {error}");
-        CommandError::team_data_unavailable()
-    })?;
+    let json = serialize_team_data(&export)?;
 
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_json_save_path};
-
-        let owner = window
-            .hwnd()
-            .map_err(|_| CommandError::window_operation_failed())?
-            .0 as isize;
         let title = i18n::t("Export Team Data");
-        let result = tauri::async_runtime::spawn_blocking(move || {
-            match choose_json_save_path(owner, &title, "nte-team-dps.json") {
-                Ok(SaveFileDialogOutcome::Selected(path)) => atomic_write_text(&path, &json)
-                    .map(|_| true)
-                    .map_err(|_| None),
-                Ok(SaveFileDialogOutcome::Cancelled) => Ok(false),
-                Err(code) => Err(Some(code)),
-            }
-        })
-        .await
-        .map_err(|_| CommandError::team_data_export_failed())?;
-
-        match result {
-            Ok(saved) => Ok(TeamDataExportResult { saved }),
-            Err(Some(code)) => {
-                log::error!("native team DPS export dialog failed with code {code:#010x}");
-                Err(CommandError::team_data_export_failed())
-            }
-            Err(None) => {
-                log::error!("team DPS export file write failed");
-                Err(CommandError::team_data_export_failed())
-            }
-        }
+        let selection =
+            file_dialog::choose_json_save_path(&window, title, "nte-team-dps.json".to_owned())
+                .await
+                .map_err(|error| {
+                    log::error!("native team DPS export dialog failed: {error}");
+                    CommandError::team_data_export_failed()
+                })?;
+        let saved = match selection {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                atomic_write_text(&path, &json).map(|_| true).map_err(|_| {
+                    log::error!("team DPS export file write failed");
+                    CommandError::team_data_export_failed()
+                })
+            })
+            .await
+            .map_err(|_| CommandError::team_data_export_failed())??,
+            DialogOutcome::Cancelled => false,
+        };
+        Ok(TeamDataExportResult { saved })
     }
 
     #[cfg(not(windows))]
@@ -783,9 +835,54 @@ fn parse_hud_preset(preset: &str) -> Result<HudPreset, CommandError> {
     }
 }
 
-fn config_save_error(error: String) -> CommandError {
-    log::error!("save HUD configuration from Settings failed: {error}");
-    CommandError::hud_config_save_failed()
+fn read_team_data_file(path: &Path) -> Result<String, CommandError> {
+    // Use one opened handle for type/size validation and bounded reading so a
+    // path replacement cannot bypass the pre-read budget.
+    let file = File::open(path).map_err(|_| CommandError::team_data_import_failed())?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| CommandError::team_data_import_failed())?;
+    if !metadata.is_file() {
+        return Err(CommandError::team_data_import_failed());
+    }
+    if metadata.len() > MAX_TEAM_DPS_EXPORT_BYTES as u64 {
+        return Err(CommandError::team_data_invalid());
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take((MAX_TEAM_DPS_EXPORT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| CommandError::team_data_import_failed())?;
+    if bytes.len() > MAX_TEAM_DPS_EXPORT_BYTES {
+        return Err(CommandError::team_data_invalid());
+    }
+    String::from_utf8(bytes).map_err(|_| CommandError::team_data_invalid())
+}
+
+fn serialize_team_data(
+    export: &nte_dps_tool::engine::model::TeamDpsExport,
+) -> Result<String, CommandError> {
+    let json = serde_json::to_string_pretty(export).map_err(|error| {
+        log::error!("serialize team DPS export failed: {error}");
+        CommandError::team_data_unavailable()
+    })?;
+    if json.len() > MAX_TEAM_DPS_EXPORT_BYTES {
+        log::error!("serialized team DPS export exceeded its byte budget");
+        return Err(CommandError::team_data_export_failed());
+    }
+    Ok(json)
+}
+
+fn config_save_error(error: SettingsServiceError) -> CommandError {
+    log::error!("save HUD configuration from Settings failed: {error:?}");
+    match error {
+        SettingsServiceError::ConfigSave => CommandError::hud_config_save_failed(),
+        SettingsServiceError::TransactionUnavailable => {
+            CommandError::settings_transaction_unavailable()
+        }
+        SettingsServiceError::PassthroughUnavailable => {
+            CommandError::passthrough_state_unavailable()
+        }
+    }
 }
 
 fn hud_window(app: &AppHandle) -> Result<WebviewWindow, CommandError> {
@@ -806,19 +903,44 @@ fn window_operation_error(error: tauri::Error) -> CommandError {
     CommandError::window_operation_failed()
 }
 
-fn settings_save_error(error: String) -> CommandError {
-    log::error!("save Settings configuration failed: {error}");
-    CommandError::settings_config_save_failed()
+fn settings_save_error(error: SettingsServiceError) -> CommandError {
+    log::error!("save Settings configuration failed: {error:?}");
+    match error {
+        SettingsServiceError::ConfigSave => CommandError::settings_config_save_failed(),
+        SettingsServiceError::TransactionUnavailable => {
+            CommandError::settings_transaction_unavailable()
+        }
+        SettingsServiceError::PassthroughUnavailable => {
+            CommandError::passthrough_state_unavailable()
+        }
+    }
+}
+
+fn team_import_error(_error: TeamImportError) -> CommandError {
+    CommandError::team_import_state_unavailable()
+}
+
+fn team_operation_error(error: TeamOperationError) -> CommandError {
+    match error {
+        TeamOperationError::State(error) => team_import_error(error),
+        TeamOperationError::Capture(error) => CommandError::from_core(error),
+    }
 }
 
 #[derive(Debug)]
 enum CheckSettingsUpdateError {
     NotConfigured,
     Failed(String),
+    WorkerFailed,
 }
 
-fn check_for_updates()
--> Result<Vec<nte_dps_tool::core::update::AvailableComponentUpdate>, CheckSettingsUpdateError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UpdateDownloadWorkerError {
+    Failed,
+    RuntimeUnavailable,
+}
+
+fn check_for_updates() -> Result<Vec<AvailableComponentUpdate>, CheckSettingsUpdateError> {
     let endpoint = match UpdateEndpoint::official() {
         Ok(endpoint) => endpoint,
         Err(UpdateError::ClientNotConfigured) => {
@@ -850,6 +972,7 @@ pub(crate) fn update_action_error(error: UpdateActionError) -> CommandError {
         UpdateActionError::Busy => CommandError::update_operation_busy(),
         UpdateActionError::Unavailable => CommandError::update_component_unavailable(),
         UpdateActionError::NotPrepared => CommandError::update_not_prepared(),
+        UpdateActionError::RuntimeUnavailable => CommandError::update_runtime_unavailable(),
     }
 }
 
@@ -965,7 +1088,47 @@ fn refresh_hotkey_configuration(state: &AppState) {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use nte_dps_tool::engine::model::{TeamDps, TeamDpsExport, TeamDpsMember};
+
     use super::*;
+
+    struct TeamFileFixture {
+        root: PathBuf,
+        path: PathBuf,
+    }
+
+    impl TeamFileFixture {
+        fn new(tag: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "nte_team_import_{tag}_{}_{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("system clock after epoch")
+                    .as_nanos()
+            ));
+            fs::create_dir_all(&root).expect("create team import fixture directory");
+            let path = root.join("team.json");
+            Self { root, path }
+        }
+    }
+
+    impl Drop for TeamFileFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.path);
+            let _ = fs::remove_dir(&self.root);
+        }
+    }
+
+    fn serialized_error(error: &CommandError) -> String {
+        serde_json::to_string(error).expect("serialize command error")
+    }
 
     #[test]
     fn hud_option_input_accepts_only_stable_contract_values() {
@@ -1013,6 +1176,65 @@ mod tests {
     }
 
     #[test]
+    fn team_file_reader_accepts_only_bounded_regular_utf8_files() {
+        let valid = TeamFileFixture::new("valid");
+        fs::write(&valid.path, br#"{"version":1}"#).expect("write valid fixture");
+        assert_eq!(
+            read_team_data_file(&valid.path).expect("read regular UTF-8 file"),
+            r#"{"version":1}"#
+        );
+
+        let directory = TeamFileFixture::new("directory");
+        let directory_error =
+            read_team_data_file(&directory.root).expect_err("directory is not a regular file");
+        assert_eq!(directory_error.code, "team_data_import_failed");
+
+        let invalid_utf8 = TeamFileFixture::new("invalid_utf8");
+        fs::write(&invalid_utf8.path, [0xff, 0xfe]).expect("write invalid UTF-8 fixture");
+        let utf8_error =
+            read_team_data_file(&invalid_utf8.path).expect_err("invalid UTF-8 must fail");
+        assert_eq!(utf8_error.code, "team_data_invalid");
+
+        let oversized = TeamFileFixture::new("oversized");
+        fs::write(&oversized.path, vec![b'x'; MAX_TEAM_DPS_EXPORT_BYTES + 1])
+            .expect("write oversized fixture");
+        let size_error =
+            read_team_data_file(&oversized.path).expect_err("oversized input must fail");
+        assert_eq!(size_error.code, "team_data_invalid");
+    }
+
+    #[test]
+    fn team_file_errors_do_not_expose_the_selected_path() {
+        let fixture = TeamFileFixture::new("private_selected_path");
+        let error = read_team_data_file(&fixture.path).expect_err("missing file must fail");
+        let serialized = serialized_error(&error);
+
+        assert!(!serialized.contains("private_selected_path"));
+        assert!(!serialized.contains(fixture.root.to_string_lossy().as_ref()));
+        assert!(error.diagnostic_line.is_none());
+    }
+
+    #[test]
+    fn serialized_team_export_is_bounded_before_file_io() {
+        let export = TeamDpsExport {
+            version: 1,
+            single: Some(TeamDps {
+                dps: 1.0,
+                members: vec![TeamDpsMember {
+                    id: 1,
+                    dps: 1.0,
+                    name: "x".repeat(MAX_TEAM_DPS_EXPORT_BYTES),
+                }],
+            }),
+            upper: None,
+            lower: None,
+        };
+
+        let error = serialize_team_data(&export).expect_err("oversized export must fail");
+        assert_eq!(error.code, "team_data_export_failed");
+    }
+
+    #[test]
     fn update_component_input_accepts_only_stable_contract_values() {
         assert_eq!(
             parse_update_component("app").expect("application update"),
@@ -1024,5 +1246,60 @@ mod tests {
         );
         assert!(parse_update_component("../app").is_err());
         assert!(parse_update_component("future").is_err());
+    }
+
+    #[test]
+    fn poisoned_update_runtime_stops_workers_before_spawn_or_io() {
+        let state = AppState::default();
+        state.poison_update_runtime_for_test();
+        let initial_revision = state.settings_revision();
+
+        let check_started = Arc::new(AtomicBool::new(false));
+        let check_marker = Arc::clone(&check_started);
+        let check_result =
+            tauri::async_runtime::block_on(run_update_check_with(state.clone(), move || {
+                check_marker.store(true, Ordering::Release);
+                std::future::ready(Ok(Vec::new()))
+            }));
+
+        let download_started = Arc::new(AtomicBool::new(false));
+        let download_marker = Arc::clone(&download_started);
+        let download_result = tauri::async_runtime::block_on(run_update_download_with(
+            state.clone(),
+            UpdateComponent::App,
+            move |_, _| {
+                download_marker.store(true, Ordering::Release);
+                std::future::ready(Err(UpdateDownloadWorkerError::Failed))
+            },
+        ));
+
+        let install_started = Arc::new(AtomicBool::new(false));
+        let install_marker = Arc::clone(&install_started);
+        let install_result =
+            tauri::async_runtime::block_on(install_update_with(state.clone(), move |_, _| {
+                install_marker.store(true, Ordering::Release);
+                std::future::ready(Ok(()))
+            }));
+
+        assert_eq!(check_result, Err(UpdateActionError::RuntimeUnavailable));
+        assert_eq!(download_result, Err(UpdateActionError::RuntimeUnavailable));
+        assert_eq!(install_result, Err(UpdateActionError::RuntimeUnavailable));
+        assert!(!check_started.load(Ordering::Acquire));
+        assert!(!download_started.load(Ordering::Acquire));
+        assert!(!install_started.load(Ordering::Acquire));
+        assert_eq!(state.settings_revision(), initial_revision);
+    }
+
+    #[test]
+    fn update_runtime_unavailable_has_a_stable_redacted_command_error() {
+        let error = update_action_error(UpdateActionError::RuntimeUnavailable);
+
+        assert_eq!(error.code, "update_runtime_unavailable");
+        assert_eq!(error.message_key, "Update operation did not finish.");
+        assert!(error.message_arguments.is_empty());
+        let serialized = serde_json::to_string(&error).expect("serialize command error");
+        assert!(!serialized.contains("private-update-transaction"));
+        assert!(!serialized.contains("poison"));
+        assert!(!serialized.contains("mutex"));
     }
 }

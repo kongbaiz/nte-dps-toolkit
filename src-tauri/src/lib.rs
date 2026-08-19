@@ -1,8 +1,16 @@
 mod channels;
+mod character_data_service;
 mod commands;
 mod contract;
+mod diagnostics_runtime;
+mod encrypted_ini_service;
+mod equipment_operation_service;
+mod file_dialog;
 mod history_runtime;
+mod settings_service;
 mod state;
+mod team_import_service;
+mod update_runtime;
 mod windows;
 
 use state::{AppState, DesktopWindowKind};
@@ -35,9 +43,16 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                window
+                if window
                     .state::<AppState>()
-                    .stop_streams_for_window(window.label());
+                    .stop_streams_for_window(window.label())
+                    .is_err()
+                {
+                    log::warn!("Window stream registry reset after an interrupted update");
+                }
+                if let Some(runtime) = window.try_state::<history_runtime::HistoryRuntime>() {
+                    runtime.wake();
+                }
             }
         })
         .setup(|app| {
@@ -132,13 +147,16 @@ pub fn run() {
                 app.handle().clone(),
                 state.inner().clone(),
             );
-            match history_runtime::HistoryRuntime::start(state.inner().clone()) {
-                Ok(runtime) => {
-                    let managed = app.manage(runtime);
-                    debug_assert!(managed, "History runtime is managed once");
-                }
-                Err(error) => eprintln!("Tauri History maintenance unavailable: {error}"),
-            }
+            let history_runtime =
+                match history_runtime::HistoryRuntime::start(state.inner().clone()) {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        eprintln!("Tauri History maintenance unavailable: {error}");
+                        history_runtime::HistoryRuntime::unavailable()
+                    }
+                };
+            let managed = app.manage(history_runtime);
+            debug_assert!(managed, "History runtime is managed once");
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -269,6 +287,8 @@ pub fn run() {
             commands::settings::set_settings_interface,
             commands::settings::set_settings_update_preferences,
             commands::skills::get_skills_snapshot,
+            commands::stream::read_stream_delivery,
+            commands::stream::ack_stream_delivery,
             commands::timeline::get_timeline_snapshot,
             commands::timeline::set_timeline_preferences,
             commands::technical::get_technical_snapshot,
@@ -305,6 +325,18 @@ pub fn run() {
             channels::timeline::subscribe_timeline,
             channels::timeline::unsubscribe_timeline,
         ])
-        .run(tauri::generate_context!())
-        .expect("Tauri application runtime failed");
+        .build(tauri::generate_context!())
+        .expect("Tauri application runtime failed")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if app.state::<AppState>().shutdown_streams().is_err() {
+                    log::warn!("Stream registry reset during application shutdown");
+                }
+                if let Some(runtime) = app.try_state::<history_runtime::HistoryRuntime>() {
+                    runtime.shutdown();
+                }
+                channels::mod_studio_runtime::shutdown_mod_studio_poll_runtime();
+                channels::stream_runtime::shutdown_polling_stream_runtime();
+            }
+        });
 }

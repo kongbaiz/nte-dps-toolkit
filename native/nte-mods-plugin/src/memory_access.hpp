@@ -7,7 +7,9 @@ namespace nte::mods::memory
 {
 	uintptr_t ImageBase();
 	bool IsReadableRange(const void* address, size_t size);
+	bool IsImageRange(const void* address, size_t size);
 	bool IsExecutableAddress(const void* address);
+	bool IsImageExecutableAddress(const void* address);
 	bool ReadBytes(
 		const void* base,
 		size_t offset,

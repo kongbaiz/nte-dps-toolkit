@@ -8,7 +8,7 @@ import {
 } from "@/lib/tauri/technical-contract";
 import { compareDecimalStrings } from "@/lib/decimal-string";
 
-export const SETTINGS_CONTRACT_VERSION = 4;
+export const SETTINGS_CONTRACT_VERSION = 5;
 export const HUD_SETTING_OPTION_IDS = [
   "title",
   "team_dps",
@@ -98,6 +98,7 @@ export interface CaptureDevice {
 export interface CaptureSettings {
   bpfFilter: string;
   devices: CaptureDevice[];
+  devicesAvailable: boolean;
   manualCaptureDevice: string | null;
   serverDamageCalibration: boolean;
   separateReactionDamage: boolean;
@@ -133,6 +134,7 @@ export interface CaptureFiles {
 }
 
 export interface TeamDataSettings {
+  available: boolean;
   upperImported: boolean;
   lowerImported: boolean;
 }
@@ -273,6 +275,10 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
     updates: parseUpdateSettings(updates),
     capture: {
       bpfFilter: string(capture.bpfFilter, "settings.capture.bpfFilter"),
+      devicesAvailable: boolean(
+        capture.devicesAvailable,
+        "settings.capture.devicesAvailable",
+      ),
       devices: array(capture.devices, "settings.capture.devices").map(
         (device, index) => {
           const parsed = record(device, `settings.capture.devices[${index}]`);
@@ -334,6 +340,7 @@ export function parseSettingsSnapshot(value: unknown): SettingsSnapshot {
       ),
     },
     teamData: {
+      available: boolean(teamData.available, "settings.teamData.available"),
       upperImported: boolean(
         teamData.upperImported,
         "settings.teamData.upperImported",

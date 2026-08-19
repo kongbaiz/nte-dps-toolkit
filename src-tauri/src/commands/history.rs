@@ -13,7 +13,10 @@ use crate::{
             HistoryFileActionSnapshot, HistoryImportFileSnapshot, HistorySnapshot,
         },
     },
+    file_dialog::{self, DialogOutcome},
+    history_runtime::history_runtime_unavailable,
     state::AppState,
+    team_import_service::TeamImportError,
     windows::{console, island},
 };
 
@@ -34,13 +37,16 @@ pub(crate) async fn import_history_record_file(
     console::validate_window(&window)?;
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{OpenFileDialogOutcome, choose_json_open_path};
-
-        let owner = window.hwnd().map_err(|_| history_file_dialog_failed())?.0 as isize;
         let title = i18n::t("NTE history summary");
+        let selection = file_dialog::choose_json_open_path(&window, title)
+            .await
+            .map_err(|error| {
+                log::error!("native History import dialog failed: {error}");
+                history_file_dialog_failed()
+            })?;
         let state = state.inner().clone();
-        tauri::async_runtime::spawn_blocking(move || match choose_json_open_path(owner, &title) {
-            Ok(OpenFileDialogOutcome::Selected(path)) => state.with_history_transaction(|| {
+        tauri::async_runtime::spawn_blocking(move || match selection {
+            DialogOutcome::Selected(path) => run_history_operation(&state, || {
                 let record = import_record(&path).map_err(history_import_error)?;
                 let imported_record_id = record.id;
                 let revision = state.bump_history_revision();
@@ -50,17 +56,13 @@ pub(crate) async fn import_history_record_file(
                     history: project_snapshot(&state, load_history(), revision),
                 })
             }),
-            Ok(OpenFileDialogOutcome::Cancelled) => state.with_history_transaction(|| {
+            DialogOutcome::Cancelled => run_history_operation(&state, || {
                 Ok(HistoryImportFileSnapshot {
                     performed: false,
                     imported_record_id: None,
                     history: project_snapshot(&state, load_history(), state.history_revision()),
                 })
             }),
-            Err(code) => {
-                log::error!("native History import dialog failed: {code:#010x}");
-                Err(history_file_dialog_failed())
-            }
         })
         .await
         .map_err(history_task_failed)?
@@ -80,15 +82,18 @@ pub(crate) async fn save_current_history_summary(
 ) -> Result<HistorySnapshot, CommandError> {
     console::validate_window(&window)?;
     let state = state.inner().clone();
-    let archive = state.prepare_current_history_archive().ok_or_else(|| {
-        CommandError::history(
-            "history_no_current_summary",
-            "No combat summary to save; capture first or import a replay",
-        )
-    })?;
+    let archive = state
+        .prepare_current_history_archive()
+        .map_err(CommandError::from_core)?
+        .ok_or_else(|| {
+            CommandError::history(
+                "history_no_current_summary",
+                "No combat summary to save; capture first or import a replay",
+            )
+        })?;
     let state_for_task = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        state_for_task.with_history_transaction(|| {
+        run_history_operation(&state_for_task, || {
             let result = match archive.details {
                 Some(details) => save_summary_with_details(archive.summary, details),
                 None => save_summary(archive.summary),
@@ -130,7 +135,7 @@ pub(crate) async fn import_history_record_json(
     let state = state.inner().clone();
     let notice_state = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        state.with_history_transaction(|| {
+        run_history_operation(&state, || {
             import_record_json(&json).map_err(history_import_error)?;
             let revision = state.bump_history_revision();
             Ok(project_snapshot(&state, load_history(), revision))
@@ -159,7 +164,10 @@ pub(crate) async fn delete_history_record(
     let state = state.inner().clone();
     let notice_state = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        state.with_history_transaction(|| {
+        run_history_operation(&state, || {
+            state
+                .ensure_history_undo_available()
+                .map_err(history_runtime_unavailable)?;
             let record = find_record(&record_id)?;
             if !delete_record(&record_id).map_err(|error| {
                 log::warn!("delete History record failed: {error}");
@@ -170,7 +178,9 @@ pub(crate) async fn delete_history_record(
             })? {
                 return Err(history_record_not_found());
             }
-            let undo_token = state.remember_deleted_history(record);
+            let undo_token = state
+                .remember_deleted_history(record)
+                .map_err(history_runtime_unavailable)?;
             let revision = state.bump_history_revision();
             Ok(HistoryDeleteSnapshot {
                 history: project_snapshot(&state, load_history(), revision),
@@ -202,19 +212,15 @@ pub(crate) async fn restore_deleted_history_record(
     let state = state.inner().clone();
     let notice_state = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        state.with_history_transaction(|| {
-            let record = state.take_deleted_history(&undo_token).ok_or_else(|| {
-                CommandError::history(
-                    "history_undo_expired",
-                    "The deleted history record can no longer be restored.",
-                )
-            })?;
-            restore_record(&record).map_err(|error| {
-                log::warn!("restore History record failed: {error}");
-                CommandError::history(
-                    "history_restore_failed",
-                    "History record could not be restored.",
-                )
+        run_history_operation(&state, || {
+            restore_deleted_history_operation(&state, &undo_token, |record| {
+                restore_record(record).map_err(|_| {
+                    log::warn!("restore History record storage operation did not finish");
+                    CommandError::history(
+                        "history_restore_failed",
+                        "History record could not be restored.",
+                    )
+                })
             })?;
             let revision = state.bump_history_revision();
             Ok(project_snapshot(&state, load_history(), revision))
@@ -241,7 +247,7 @@ pub(crate) async fn export_history_record_json(
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        state.with_history_transaction(|| prepare_history_export(&record_id))
+        run_history_operation(&state, || prepare_history_export(&record_id))
     })
     .await
     .map_err(history_task_failed)?
@@ -256,39 +262,33 @@ pub(crate) async fn export_history_record_file(
     console::validate_window(&window)?;
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_json_save_path};
-
-        let owner = window.hwnd().map_err(|_| history_file_dialog_failed())?.0 as isize;
         let state = state.inner().clone();
         let export = tauri::async_runtime::spawn_blocking(move || {
-            state.with_history_transaction(|| prepare_history_export(&record_id))
+            run_history_operation(&state, || prepare_history_export(&record_id))
         })
         .await
         .map_err(history_task_failed)??;
         let title = i18n::t("NTE history summary");
-        tauri::async_runtime::spawn_blocking(move || {
-            match choose_json_save_path(owner, &title, &export.file_name) {
-                Ok(SaveFileDialogOutcome::Selected(path)) => {
-                    atomic_write_text(&path, &export.json).map_err(|error| {
-                        log::warn!("write History export failed: {error}");
-                        CommandError::history(
-                            "history_export_failed",
-                            "History record could not be exported.",
-                        )
-                    })?;
-                    Ok(HistoryFileActionSnapshot { performed: true })
-                }
-                Ok(SaveFileDialogOutcome::Cancelled) => {
-                    Ok(HistoryFileActionSnapshot { performed: false })
-                }
-                Err(code) => {
-                    log::error!("native History export dialog failed: {code:#010x}");
-                    Err(history_file_dialog_failed())
-                }
-            }
-        })
-        .await
-        .map_err(history_task_failed)?
+        match file_dialog::choose_json_save_path(&window, title, export.file_name)
+            .await
+            .map_err(|error| {
+                log::error!("native History export dialog failed: {error}");
+                history_file_dialog_failed()
+            })? {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                atomic_write_text(&path, &export.json).map_err(|error| {
+                    log::warn!("write History export failed: {error}");
+                    CommandError::history(
+                        "history_export_failed",
+                        "History record could not be exported.",
+                    )
+                })?;
+                Ok(HistoryFileActionSnapshot { performed: true })
+            })
+            .await
+            .map_err(history_task_failed)?,
+            DialogOutcome::Cancelled => Ok(HistoryFileActionSnapshot { performed: false }),
+        }
     }
     #[cfg(not(windows))]
     {
@@ -313,7 +313,7 @@ pub(crate) async fn compare_history_records(
     }
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        state.with_history_transaction(|| {
+        run_history_operation(&state, || {
             let loaded = load_history();
             let left = loaded
                 .records
@@ -358,7 +358,7 @@ pub(crate) async fn set_history_prediction_team(
     let state = state.inner().clone();
     let state_for_task = state.clone();
     let team = tauri::async_runtime::spawn_blocking(move || {
-        state_for_task.with_history_transaction(|| {
+        run_history_operation(&state_for_task, || {
             let record = find_record(&record_id)?;
             let team = if upper {
                 record.upper_team_dps()
@@ -375,18 +375,28 @@ pub(crate) async fn set_history_prediction_team(
     })
     .await
     .map_err(history_task_failed)??;
-    state.set_history_prediction_team(team, upper);
+    state
+        .set_history_prediction_team(team, upper)
+        .map_err(team_import_error)?;
     load_snapshot(state).await
+}
+
+fn team_import_error(_error: TeamImportError) -> CommandError {
+    CommandError::team_import_state_unavailable()
 }
 
 async fn load_snapshot(state: AppState) -> Result<HistorySnapshot, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
-        state.with_history_transaction(|| {
-            project_snapshot(&state, load_history(), state.history_revision())
+        run_history_operation(&state, || {
+            Ok(project_snapshot(
+                &state,
+                load_history(),
+                state.history_revision(),
+            ))
         })
     })
     .await
-    .map_err(history_task_failed)
+    .map_err(history_task_failed)?
 }
 
 fn project_snapshot(
@@ -423,6 +433,41 @@ fn prepare_history_export(record_id: &str) -> Result<HistoryExportSnapshot, Comm
         file_name: format!("nte_history_{}_{}.json", record.file_timestamp(), record.id),
         json,
     })
+}
+
+fn run_history_operation<T>(
+    state: &AppState,
+    action: impl FnOnce() -> Result<T, CommandError>,
+) -> Result<T, CommandError> {
+    state
+        .with_history_transaction(action)
+        .map_err(history_runtime_unavailable)?
+}
+
+fn restore_deleted_history_operation(
+    state: &AppState,
+    undo_token: &str,
+    restore: impl FnOnce(&HistoryRecord) -> Result<(), CommandError>,
+) -> Result<(), CommandError> {
+    let record = state
+        .peek_deleted_history(undo_token)
+        .map_err(history_runtime_unavailable)?
+        .ok_or_else(|| {
+            CommandError::history(
+                "history_undo_expired",
+                "The deleted history record can no longer be restored.",
+            )
+        })?;
+    restore(&record)?;
+    if !state
+        .consume_deleted_history(undo_token)
+        .map_err(history_runtime_unavailable)?
+    {
+        return Err(history_runtime_unavailable(
+            crate::state::HistoryRuntimeError::Unavailable,
+        ));
+    }
+    Ok(())
 }
 
 fn history_import_error(error: String) -> CommandError {
@@ -472,6 +517,56 @@ mod tests {
         assert_eq!(
             invalid.message_key,
             "History record JSON is invalid or unsupported."
+        );
+    }
+
+    #[test]
+    fn poisoned_history_runtime_has_a_stable_boundary_error() {
+        let error = history_runtime_unavailable(crate::state::HistoryRuntimeError::Unavailable);
+
+        assert_eq!(error.code, "history_runtime_unavailable");
+        assert_eq!(error.message_key, "History operation did not finish.");
+        assert!(error.message_arguments.is_empty());
+        assert_eq!(error.diagnostic_line, None);
+    }
+
+    #[test]
+    fn failed_restore_keeps_deleted_history_available_for_retry() {
+        let state = AppState::default();
+        let token = state
+            .remember_deleted_history(HistoryRecord {
+                id: "retry-history-record".to_owned(),
+                ..Default::default()
+            })
+            .expect("remember deleted History record");
+
+        let failed = run_history_operation(&state, || {
+            restore_deleted_history_operation(&state, &token, |_| {
+                Err(CommandError::history(
+                    "history_restore_failed",
+                    "History record could not be restored.",
+                ))
+            })
+        });
+
+        assert!(failed.is_err());
+        assert_eq!(
+            state
+                .peek_deleted_history(&token)
+                .expect("peek History undo after failed restore")
+                .expect("failed restore must retain History undo")
+                .id,
+            "retry-history-record"
+        );
+        run_history_operation(&state, || {
+            restore_deleted_history_operation(&state, &token, |_| Ok(()))
+        })
+        .expect("retry deleted History restore");
+        assert!(
+            state
+                .peek_deleted_history(&token)
+                .expect("peek consumed History undo")
+                .is_none()
         );
     }
 }
