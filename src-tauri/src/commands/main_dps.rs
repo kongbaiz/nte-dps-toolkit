@@ -1,11 +1,6 @@
 use nte_dps_tool::{
-    core::combat_details::CombatDetailFilter,
-    core::live_capture::CaptureReplayKind,
-    engine::model::AbyssHalf,
-    platform::file_dialog::{
-        OpenFileDialogOutcome, choose_json_open_path, choose_pcapng_open_path,
-    },
-    storage::i18n,
+    core::combat_details::CombatDetailFilter, core::live_capture::CaptureReplayKind,
+    engine::model::AbyssHalf, storage::i18n,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
@@ -19,8 +14,10 @@ use crate::{
         },
         update::UpdatePromptSnapshot,
     },
+    file_dialog::{self, DialogOutcome},
     state::{
-        AppState, DesktopWindowKind, MainDpsDetailKind, MainDpsDetailRequest, SessionUndoError,
+        AppState, DesktopWindowKind, MainDpsDetailKind, MainDpsDetailRequest, PresentationError,
+        ReplayImportError, SessionUndoError,
     },
     windows::{combat_details, console, hud, island, main_dps},
 };
@@ -31,7 +28,7 @@ pub(crate) fn get_main_dps_snapshot(
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -70,7 +67,10 @@ pub(crate) async fn install_main_dps_update(
 ) -> Result<UpdatePromptSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
     let state = state.inner().clone();
-    if let Some(message_key) = state.update_install_blocked_message_key() {
+    if let Some(message_key) = state
+        .update_install_blocked_message_key()
+        .map_err(settings::update_action_error)?
+    {
         return Err(CommandError::update_install_blocked(message_key));
     }
     settings::install_update(app, state.clone())
@@ -89,7 +89,7 @@ pub(crate) fn start_main_dps_capture(
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     validate_main_or_detail_window(&window)?;
-    if state.session_has_data() && !replace_current {
+    if state.session_has_data().map_err(CommandError::from_core)? && !replace_current {
         return Err(confirmation_required());
     }
     state
@@ -102,7 +102,7 @@ pub(crate) fn start_main_dps_capture(
         "Starting live capture...",
         Vec::new(),
     )?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -122,7 +122,7 @@ pub(crate) fn stop_main_dps_capture(
         "Stopping live capture...",
         Vec::new(),
     )?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -133,12 +133,15 @@ pub(crate) async fn reset_main_dps_session(
     window: WebviewWindow,
 ) -> Result<MainDpsResetResult, CommandError> {
     main_dps::validate_window(&window)?;
+    state
+        .ensure_session_undo_runtime_available()
+        .map_err(session_undo_error)?;
     let active = matches!(
         state.capture_phase(),
         nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
             | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
-    ) || state.replay_running();
+    ) || state.replay_running().map_err(CommandError::from_core)?;
     if active && !confirmed {
         return Err(confirmation_required());
     }
@@ -149,17 +152,23 @@ pub(crate) async fn reset_main_dps_session(
             worker_state
                 .stop_active_capture_and_wait(std::time::Duration::from_secs(5))
                 .map_err(CommandError::from_core)?;
-            worker_state.clear_session();
+            worker_state
+                .clear_session_action()
+                .map_err(session_undo_error)?;
             None
         } else {
-            worker_state.reset_session_with_undo()
+            worker_state
+                .reset_session_with_undo_action()
+                .map_err(session_undo_error)?
         };
-        worker_state.set_main_processing_paused(false);
+        worker_state
+            .set_main_processing_paused(false)
+            .map_err(presentation_error)?;
         worker_state
             .set_main_selected_round_id(None)
-            .expect("live main DPS round is always valid");
+            .map_err(presentation_selection_error)?;
         Ok(MainDpsResetResult {
-            snapshot: snapshot(&worker_state),
+            snapshot: snapshot(&worker_state)?,
             undo_token,
         })
     })
@@ -189,22 +198,10 @@ pub(crate) fn undo_main_dps_reset(
     main_dps::validate_window(&window)?;
     state
         .undo_session_reset(&undo_token)
-        .map_err(|error| match error {
-            SessionUndoError::Expired => {
-                CommandError::main_dps("session_undo_expired", "The reset undo window has expired")
-            }
-            SessionUndoError::Busy | SessionUndoError::NewData => CommandError::main_dps(
-                "session_undo_unavailable",
-                "The previous session cannot be restored after new activity",
-            ),
-            SessionUndoError::Missing => CommandError::main_dps(
-                "session_undo_missing",
-                "The previous session is no longer available",
-            ),
-        })?;
+        .map_err(session_undo_error)?;
     state.publish_island_notice("success", "Previous session restored", Vec::new(), None);
     island::show_notice(&app, state.inner())?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -214,7 +211,7 @@ pub(crate) fn start_main_dps_new_round(
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    let current = snapshot(state.inner());
+    let current = snapshot(state.inner())?;
     if !current.actions.can_start_new_round {
         return Err(action_unavailable());
     }
@@ -229,7 +226,7 @@ pub(crate) fn start_main_dps_new_round(
         "New combat round started",
         Vec::new(),
     )?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -240,7 +237,9 @@ pub(crate) fn set_main_dps_paused(
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    state.set_main_processing_paused(paused);
+    state
+        .set_main_processing_paused(paused)
+        .map_err(presentation_error)?;
     island::publish_notice(
         &app,
         state.inner(),
@@ -252,7 +251,7 @@ pub(crate) fn set_main_dps_paused(
         },
         Vec::new(),
     )?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -262,10 +261,10 @@ pub(crate) fn select_main_dps_round(
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    state.set_main_selected_round_id(record_id).map_err(|_| {
-        CommandError::main_dps("history_round_missing", "Combat round no longer exists")
-    })?;
-    Ok(snapshot(state.inner()))
+    state
+        .set_main_selected_round_id(record_id)
+        .map_err(presentation_selection_error)?;
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -284,7 +283,7 @@ pub(crate) fn set_main_dps_onboarding_step(
             log::error!("save main DPS onboarding step failed: {error}");
             CommandError::main_dps("config_save_failed", "Failed to save onboarding progress")
         })?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -309,7 +308,7 @@ pub(crate) fn finish_main_dps_onboarding(
         let _ = hud::sync_content_height(&hud_window, state.inner());
     }
     island::publish_notice(&app, state.inner(), "success", "Setup complete", Vec::new())?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -325,8 +324,10 @@ pub(crate) fn select_main_dps_abyss_half(
         "second" => Some(AbyssHalf::Second),
         _ => return Err(action_unavailable()),
     };
-    state.set_main_selected_abyss_half(half);
-    Ok(snapshot(state.inner()))
+    state
+        .set_main_selected_abyss_half(half)
+        .map_err(presentation_error)?;
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -338,57 +339,54 @@ pub(crate) async fn import_main_dps_replay(
     window: WebviewWindow,
 ) -> Result<MainDpsActionResult, CommandError> {
     validate_main_detail_or_console_window(&window)?;
-    if (state.session_has_data()
+    if (state.session_has_data().map_err(CommandError::from_core)?
         || matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         )
-        || state.replay_running())
+        || state.replay_running().map_err(CommandError::from_core)?)
         && !replace_current
     {
         return Err(confirmation_required());
     }
     let reservation = state
         .begin_replay_import(replace_current)
-        .map_err(CommandError::from_core)?;
+        .map_err(replay_import_error)?;
     let kind = match kind.as_str() {
         "pcapng" => CaptureReplayKind::Pcapng,
         "json" => CaptureReplayKind::Json,
         _ => return Err(action_unavailable()),
     };
-    let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
     let title = i18n::t(match kind {
         CaptureReplayKind::Pcapng => "Wireshark capture",
         CaptureReplayKind::Json => "NTE exported capture",
     });
+    let selection = match kind {
+        CaptureReplayKind::Pcapng => file_dialog::choose_pcapng_open_path(&window, title).await,
+        CaptureReplayKind::Json => file_dialog::choose_json_open_path(&window, title).await,
+    }
+    .map_err(|error| {
+        log::error!("native main DPS replay dialog failed: {error}");
+        file_dialog_error()
+    })?;
     let state = state.inner().clone();
     let worker_state = state.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let selection = match kind {
-            CaptureReplayKind::Pcapng => choose_pcapng_open_path(owner, &title),
-            CaptureReplayKind::Json => choose_json_open_path(owner, &title),
-        };
-        match selection {
-            Ok(OpenFileDialogOutcome::Selected(path)) => {
-                reservation
-                    .start(kind, path, replace_current)
-                    .map_err(CommandError::from_core)?;
-                Ok(MainDpsActionResult {
-                    performed: true,
-                    snapshot: snapshot(&worker_state),
-                })
-            }
-            Ok(OpenFileDialogOutcome::Cancelled) => Ok(MainDpsActionResult {
-                performed: false,
-                snapshot: snapshot(&worker_state),
-            }),
-            Err(code) => {
-                log::error!("native main DPS replay dialog failed: {code:#010x}");
-                Err(file_dialog_error())
-            }
+    let result = tauri::async_runtime::spawn_blocking(move || match selection {
+        DialogOutcome::Selected(path) => {
+            reservation
+                .start(kind, path, replace_current)
+                .map_err(replay_import_error)?;
+            Ok(MainDpsActionResult {
+                performed: true,
+                snapshot: snapshot(&worker_state)?,
+            })
         }
+        DialogOutcome::Cancelled => Ok(MainDpsActionResult {
+            performed: false,
+            snapshot: snapshot(&worker_state)?,
+        }),
     })
     .await
     .map_err(|_| {
@@ -437,30 +435,30 @@ pub(crate) async fn import_main_dps_replay_path(
             ));
         }
     };
-    if (state.session_has_data()
+    if (state.session_has_data().map_err(CommandError::from_core)?
         || matches!(
             state.capture_phase(),
             nte_dps_tool::core::live_capture::LiveCapturePhase::Starting
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Running
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         )
-        || state.replay_running())
+        || state.replay_running().map_err(CommandError::from_core)?)
         && !replace_current
     {
         return Err(confirmation_required());
     }
     let reservation = state
         .begin_replay_import(replace_current)
-        .map_err(CommandError::from_core)?;
+        .map_err(replay_import_error)?;
     let state = state.inner().clone();
     let worker_state = state.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         reservation
             .start(kind, path, replace_current)
-            .map_err(CommandError::from_core)?;
+            .map_err(replay_import_error)?;
         Ok(MainDpsActionResult {
             performed: true,
-            snapshot: snapshot(&worker_state),
+            snapshot: snapshot(&worker_state)?,
         })
     })
     .await
@@ -526,7 +524,7 @@ pub(crate) fn set_main_dps_always_on_top(
         },
         Vec::new(),
     )?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -548,7 +546,7 @@ pub(crate) fn set_main_dps_appearance(
             "Failed to save the appearance preference",
         ));
     }
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -598,7 +596,7 @@ pub(crate) fn open_main_dps_character_details(
     window: WebviewWindow,
 ) -> Result<(), CommandError> {
     main_dps::validate_window(&window)?;
-    if !snapshot(state.inner())
+    if !snapshot(state.inner())?
         .readout
         .characters
         .iter()
@@ -606,14 +604,16 @@ pub(crate) fn open_main_dps_character_details(
     {
         return Err(action_unavailable());
     }
-    state.set_main_dps_detail_request(
-        MainDpsDetailKind::Character,
-        MainDpsDetailRequest {
-            character_id: Some(character_id),
-            filter: CombatDetailFilter::All,
-            skill_filter: None,
-        },
-    );
+    state
+        .set_main_dps_detail_request(
+            MainDpsDetailKind::Character,
+            MainDpsDetailRequest {
+                character_id: Some(character_id),
+                filter: CombatDetailFilter::All,
+                skill_filter: None,
+            },
+        )
+        .map_err(presentation_error)?;
     show_combat_details(&app, state.inner(), MainDpsDetailKind::Character)
 }
 
@@ -638,17 +638,19 @@ fn open_team_details_with_filter(
     state: &AppState,
     filter: CombatDetailFilter,
 ) -> Result<(), CommandError> {
-    if !snapshot(state).actions.team_details_available {
+    if !snapshot(state)?.actions.team_details_available {
         return Err(action_unavailable());
     }
-    state.set_main_dps_detail_request(
-        MainDpsDetailKind::Team,
-        MainDpsDetailRequest {
-            character_id: None,
-            filter,
-            skill_filter: None,
-        },
-    );
+    state
+        .set_main_dps_detail_request(
+            MainDpsDetailKind::Team,
+            MainDpsDetailRequest {
+                character_id: None,
+                filter,
+                skill_filter: None,
+            },
+        )
+        .map_err(presentation_error)?;
     show_combat_details(app, state, MainDpsDetailKind::Team)
 }
 
@@ -661,12 +663,13 @@ pub(crate) fn get_main_dps_detail_snapshot(
 ) -> Result<MainDpsDetailSnapshot, CommandError> {
     combat_details::validate_window(&window)?;
     let kind = combat_details::window_kind(&window)?;
-    Ok(MainDpsDetailSnapshot::from_state(
+    MainDpsDetailSnapshot::from_state(
         state.inner(),
         kind,
         offset,
         limit.unwrap_or(MAIN_DPS_DETAIL_DEFAULT_LIMIT),
-    ))
+    )
+    .map_err(CommandError::from_core)
 }
 
 #[tauri::command]
@@ -688,20 +691,18 @@ pub(crate) fn set_main_dps_detail_view(
     } else {
         parse_detail_filter(&filter)?
     };
-    state.set_main_dps_detail_request(
-        kind,
-        MainDpsDetailRequest {
-            character_id: current.character_id,
-            filter,
-            skill_filter: skill_filter.filter(|value| !value.trim().is_empty()),
-        },
-    );
-    Ok(MainDpsDetailSnapshot::from_state(
-        state.inner(),
-        kind,
-        0,
-        MAIN_DPS_DETAIL_DEFAULT_LIMIT,
-    ))
+    state
+        .set_main_dps_detail_request(
+            kind,
+            MainDpsDetailRequest {
+                character_id: current.character_id,
+                filter,
+                skill_filter: skill_filter.filter(|value| !value.trim().is_empty()),
+            },
+        )
+        .map_err(presentation_error)?;
+    MainDpsDetailSnapshot::from_state(state.inner(), kind, 0, MAIN_DPS_DETAIL_DEFAULT_LIMIT)
+        .map_err(CommandError::from_core)
 }
 
 #[tauri::command]
@@ -721,12 +722,8 @@ pub(crate) fn set_main_dps_detail_columns(
                 "Failed to save the column preferences",
             )
         })?;
-    Ok(MainDpsDetailSnapshot::from_state(
-        state.inner(),
-        kind,
-        0,
-        MAIN_DPS_DETAIL_DEFAULT_LIMIT,
-    ))
+    MainDpsDetailSnapshot::from_state(state.inner(), kind, 0, MAIN_DPS_DETAIL_DEFAULT_LIMIT)
+        .map_err(CommandError::from_core)
 }
 
 #[tauri::command]
@@ -753,7 +750,7 @@ pub(crate) fn set_main_dps_passthrough(
         message_key,
         message_arguments,
     )?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -802,8 +799,8 @@ pub(crate) fn close_main_dps_window(window: WebviewWindow) -> Result<(), Command
     window.close().map_err(window_error)
 }
 
-pub(crate) fn snapshot(state: &AppState) -> MainDpsSnapshot {
-    MainDpsSnapshot::from_state(state)
+pub(crate) fn snapshot(state: &AppState) -> Result<MainDpsSnapshot, CommandError> {
+    MainDpsSnapshot::from_state(state).map_err(CommandError::from_core)
 }
 
 fn show_combat_details(
@@ -859,6 +856,51 @@ fn action_unavailable() -> CommandError {
     )
 }
 
+pub(crate) fn presentation_error(error: PresentationError) -> CommandError {
+    match error {
+        PresentationError::StateUnavailable => CommandError::main_dps(
+            "presentation_state_unavailable",
+            "Presentation state is unavailable",
+        ),
+        PresentationError::Capture(error) => CommandError::from_core(error),
+        PresentationError::RoundUnavailable => {
+            CommandError::main_dps("history_round_missing", "Combat round no longer exists")
+        }
+    }
+}
+
+fn presentation_selection_error(error: PresentationError) -> CommandError {
+    presentation_error(error)
+}
+
+fn replay_import_error(error: ReplayImportError) -> CommandError {
+    match error {
+        ReplayImportError::RuntimeUnavailable => CommandError::replay_import_runtime_unavailable(),
+        ReplayImportError::Capture(error) => CommandError::from_core(error),
+    }
+}
+
+pub(crate) fn session_undo_error(error: SessionUndoError) -> CommandError {
+    match error {
+        SessionUndoError::Expired => {
+            CommandError::main_dps("session_undo_expired", "The reset undo window has expired")
+        }
+        SessionUndoError::Busy | SessionUndoError::NewData => CommandError::main_dps(
+            "session_undo_unavailable",
+            "The previous session cannot be restored after new activity",
+        ),
+        SessionUndoError::Missing => CommandError::main_dps(
+            "session_undo_missing",
+            "The previous session is no longer available",
+        ),
+        SessionUndoError::StateUnavailable => CommandError::main_dps(
+            "capture_state_unavailable",
+            "Live capture state is unavailable",
+        ),
+        SessionUndoError::RuntimeUnavailable => CommandError::session_undo_runtime_unavailable(),
+    }
+}
+
 fn confirmation_required() -> CommandError {
     CommandError::main_dps(
         "confirmation_required",
@@ -891,5 +933,35 @@ mod tests {
         );
         assert!(parse_detail_filter("../all").is_err());
         assert!(parse_detail_filter("qteType").is_err());
+    }
+
+    #[test]
+    fn poisoned_replay_and_session_runtimes_use_stable_command_errors() {
+        let replay = replay_import_error(ReplayImportError::RuntimeUnavailable);
+        assert_eq!(replay.code, "replay_import_runtime_unavailable");
+        assert_eq!(replay.message_key, "Replay import did not complete");
+
+        let session = session_undo_error(SessionUndoError::RuntimeUnavailable);
+        assert_eq!(session.code, "session_undo_runtime_unavailable");
+        assert_eq!(
+            session.message_key,
+            "The previous session is no longer available"
+        );
+        let serialized =
+            serde_json::to_string(&(replay, session)).expect("runtime command errors serialize");
+        assert!(!serialized.contains("poison"));
+        assert!(!serialized.contains("private"));
+    }
+
+    #[test]
+    fn presentation_unavailable_uses_a_stable_redacted_command_error() {
+        let error = presentation_error(PresentationError::StateUnavailable);
+
+        assert_eq!(error.code, "presentation_state_unavailable");
+        assert_eq!(error.message_key, "Presentation state is unavailable");
+        assert!(error.message_arguments.is_empty());
+        let serialized = serde_json::to_string(&error).expect("presentation error serializes");
+        assert!(!serialized.contains("poison"));
+        assert!(!serialized.contains("private"));
     }
 }

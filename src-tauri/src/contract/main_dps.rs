@@ -1,7 +1,10 @@
 use serde::Serialize;
 
 use nte_dps_tool::{
-    core::hud::{HudCharacterSnapshot, HudDataState, HudSnapshot, HudSummarySnapshot},
+    core::{
+        CoreError,
+        hud::{HudCharacterSnapshot, HudDataState, HudSnapshot, HudSummarySnapshot},
+    },
     engine::model::{CharacterInfo, DamageAttributionSummary},
     storage::{
         config::{AccentColor, ThemePreset, UiConfig, UiDensity},
@@ -70,14 +73,14 @@ pub(crate) struct MainDpsSnapshot {
 }
 
 impl MainDpsSnapshot {
-    pub(crate) fn from_state(state: &AppState) -> Self {
+    pub(crate) fn from_state(state: &AppState) -> Result<Self, CoreError> {
         let generation = state.next_sequence();
-        let revisions = state.main_dps_stream_revision();
+        let revisions = state.main_dps_stream_revision()?;
         let config = state.ui_config_snapshot();
         let capture_status = state.live_capture_status();
-        let replay_running = state.replay_running();
+        let replay_running = state.replay_running()?;
         let processing_paused = state.main_processing_paused();
-        let (paused_pending_events, paused_debug_packets) = state.main_paused_event_counts();
+        let (paused_pending_events, paused_debug_packets) = state.main_paused_event_counts()?;
         let always_on_top = state.window_always_on_top(crate::state::DesktopWindowKind::MainDps);
         let rounds = state.main_round_index();
         let selected_round_id = state.main_selected_round_id();
@@ -89,7 +92,7 @@ impl MainDpsSnapshot {
             damage_attribution,
             separate_reaction_damage,
             character_durations,
-        } = state.main_dps_readout(selected_round_id.as_deref());
+        } = state.main_dps_readout()?;
         let resources = state.live_capture_resources();
         let data_empty = matches!(hud.data_state, HudDataState::Empty);
         let abyss_detected = hud.status.abyss_detected;
@@ -100,14 +103,14 @@ impl MainDpsSnapshot {
                 | nte_dps_tool::core::live_capture::LiveCapturePhase::Stopping
         );
         let live_round_selected = selected_round_id.is_none();
-        let has_live_session_data = state.session_has_data();
+        let has_live_session_data = state.session_has_data()?;
         let can_import_replay = !capture_active && !replay_running;
         let game_detection_status = resolve_game_detection_status(data_empty, || {
             nte_dps_tool::platform::network::game_process_is_running()
         });
         let game_detected = game_detection_status == GameDetectionStatus::Running;
 
-        Self {
+        Ok(Self {
             contract_version: MAIN_DPS_CONTRACT_VERSION,
             generation: generation.to_string(),
             capture_generation: revisions.capture.to_string(),
@@ -161,16 +164,21 @@ impl MainDpsSnapshot {
             game_detected,
             game_detection_status,
             has_live_session_data,
-            onboarding: MainDpsOnboardingSnapshot {
-                done: config.onboarding_done,
-                step: state.onboarding_step(),
-                capture_device_count: state.capture_device_count(),
-                game_detected,
-                game_detection_status,
-                passthrough_hotkey_label: state.passthrough_hotkey().label(),
-                passthrough_hotkey_ready: state.passthrough_hotkey_ready(),
+            onboarding: {
+                let (capture_device_count, capture_devices_available) =
+                    state.capture_device_catalog_status();
+                MainDpsOnboardingSnapshot {
+                    done: config.onboarding_done,
+                    step: state.onboarding_step(),
+                    capture_device_count,
+                    capture_devices_available,
+                    game_detected,
+                    game_detection_status,
+                    passthrough_hotkey_label: state.passthrough_hotkey().label(),
+                    passthrough_hotkey_ready: state.passthrough_hotkey_ready(),
+                }
             },
-        }
+        })
     }
 }
 
@@ -388,6 +396,7 @@ pub(crate) struct MainDpsOnboardingSnapshot {
     pub done: bool,
     pub step: usize,
     pub capture_device_count: usize,
+    pub capture_devices_available: bool,
     pub game_detected: bool,
     pub game_detection_status: GameDetectionStatus,
     pub passthrough_hotkey_label: &'static str,
@@ -526,7 +535,8 @@ mod tests {
 
     #[test]
     fn empty_snapshot_is_bounded_and_uses_string_generations() {
-        let snapshot = MainDpsSnapshot::from_state(&AppState::default());
+        let snapshot = MainDpsSnapshot::from_state(&AppState::default())
+            .expect("healthy live-capture main DPS snapshot");
         let value = serde_json::to_value(snapshot).expect("snapshot serializes");
 
         assert_eq!(value["contractVersion"], MAIN_DPS_CONTRACT_VERSION);

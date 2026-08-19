@@ -20,7 +20,9 @@ public:
         void* detour,
         void** expected_vtable,
         void* expected_original);
-    void Remove() noexcept;
+    // Returns true only when no published object vptr still references this
+    // hook's shadow table. The allocation remains retired for late readers.
+    bool Remove() noexcept;
 
     void* OriginalFunction() const noexcept;
     bool IsInstalled() const noexcept;

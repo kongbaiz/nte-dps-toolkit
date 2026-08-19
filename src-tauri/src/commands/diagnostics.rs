@@ -16,7 +16,8 @@ use crate::{
         CommandError,
         diagnostics::{DiagnosticsActionResult, DiagnosticsSnapshot},
     },
-    state::AppState,
+    file_dialog::{self, DialogOutcome},
+    state::{AppState, ReplayImportError},
     windows::console,
 };
 
@@ -26,7 +27,7 @@ pub(crate) fn get_diagnostics_snapshot(
     window: WebviewWindow,
 ) -> Result<DiagnosticsSnapshot, CommandError> {
     console::validate_window(&window)?;
-    Ok(snapshot(state.inner()))
+    snapshot(state.inner())
 }
 
 #[tauri::command]
@@ -37,12 +38,13 @@ pub(crate) async fn run_diagnostics(
     console::validate_window(&window)?;
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let report = run_capture_diagnostics(state.diagnostics_input());
+        let report =
+            run_capture_diagnostics(state.diagnostics_input().map_err(CommandError::from_core)?);
         state.store_diagnostics_report(report);
         snapshot(&state)
     })
     .await
-    .map_err(|_| operation_error())
+    .map_err(|_| operation_error())?
 }
 
 #[tauri::command]
@@ -68,7 +70,10 @@ pub(crate) async fn export_diagnostics_json(
 ) -> Result<DiagnosticsActionResult, CommandError> {
     console::validate_window(&window)?;
     ensure_inactive(state.inner())?;
-    if !state.diagnostics_has_exportable_state() {
+    if !state
+        .diagnostics_has_exportable_state()
+        .map_err(CommandError::from_core)?
+    {
         return Err(CommandError::diagnostics(
             "no_capture_info",
             "No capture info to export",
@@ -77,41 +82,39 @@ pub(crate) async fn export_diagnostics_json(
 
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_json_save_path};
-
-        let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
         let title = i18n::t("Capture info JSON");
         let default_file_name = format!("nte_capture_{}.json", timestamp_suffix());
         let state = state.inner().clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            match choose_json_save_path(owner, &title, &default_file_name) {
-                Ok(SaveFileDialogOutcome::Selected(path)) => {
-                    ensure_inactive(&state)?;
-                    let document = state.diagnostics_capture_export();
-                    write_capture_export(&path, &document).map_err(|error| {
-                        log::error!("write diagnostics capture export failed: {error}");
-                        CommandError::diagnostics(
-                            "capture_export_failed",
-                            "Failed to export capture info",
-                        )
-                    })?;
-                    Ok(DiagnosticsActionResult {
-                        performed: true,
-                        snapshot: snapshot(&state),
-                    })
-                }
-                Ok(SaveFileDialogOutcome::Cancelled) => Ok(DiagnosticsActionResult {
-                    performed: false,
-                    snapshot: snapshot(&state),
-                }),
-                Err(code) => {
-                    log::error!("native capture JSON export dialog failed: {code:#010x}");
-                    Err(file_dialog_error())
-                }
-            }
-        })
-        .await
-        .map_err(|_| operation_error())?
+        match file_dialog::choose_json_save_path(&window, title, default_file_name)
+            .await
+            .map_err(|error| {
+                log::error!("native capture JSON export dialog failed: {error}");
+                file_dialog_error()
+            })? {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                ensure_inactive(&state)?;
+                let document = state
+                    .diagnostics_capture_export()
+                    .map_err(CommandError::from_core)?;
+                write_capture_export(&path, &document).map_err(|error| {
+                    log::error!("write diagnostics capture export failed: {error}");
+                    CommandError::diagnostics(
+                        "capture_export_failed",
+                        "Failed to export capture info",
+                    )
+                })?;
+                Ok(DiagnosticsActionResult {
+                    performed: true,
+                    snapshot: snapshot(&state)?,
+                })
+            })
+            .await
+            .map_err(|_| operation_error())?,
+            DialogOutcome::Cancelled => Ok(DiagnosticsActionResult {
+                performed: false,
+                snapshot: snapshot(&state)?,
+            }),
+        }
     }
 
     #[cfg(not(windows))]
@@ -131,40 +134,39 @@ pub(crate) async fn export_diagnostics_pcapng(
 
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{SaveFileDialogOutcome, choose_pcapng_save_path};
-
-        let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
         let title = i18n::t("Full raw capture");
         let default_file_name = format!("nte_raw_{}.pcapng", timestamp_suffix());
         let state = state.inner().clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            match choose_pcapng_save_path(owner, &title, &default_file_name) {
-                Ok(SaveFileDialogOutcome::Selected(path)) => {
-                    ensure_inactive(&state)?;
-                    state.save_diagnostics_raw_capture(&path).map_err(|error| {
-                        log::error!("save diagnostics raw capture failed: {error}");
+        match file_dialog::choose_pcapng_save_path(&window, title, default_file_name)
+            .await
+            .map_err(|error| {
+                log::error!("native PCAPNG export dialog failed: {error}");
+                file_dialog_error()
+            })? {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                ensure_inactive(&state)?;
+                state
+                    .save_diagnostics_raw_capture(&path)
+                    .map_err(CommandError::from_core)?
+                    .map_err(|_| {
+                        log::error!("save diagnostics raw capture did not finish");
                         CommandError::diagnostics(
                             "raw_capture_export_failed",
                             "Failed to save the full capture",
                         )
                     })?;
-                    Ok(DiagnosticsActionResult {
-                        performed: true,
-                        snapshot: snapshot(&state),
-                    })
-                }
-                Ok(SaveFileDialogOutcome::Cancelled) => Ok(DiagnosticsActionResult {
-                    performed: false,
-                    snapshot: snapshot(&state),
-                }),
-                Err(code) => {
-                    log::error!("native PCAPNG export dialog failed: {code:#010x}");
-                    Err(file_dialog_error())
-                }
-            }
-        })
-        .await
-        .map_err(|_| operation_error())?
+                Ok(DiagnosticsActionResult {
+                    performed: true,
+                    snapshot: snapshot(&state)?,
+                })
+            })
+            .await
+            .map_err(|_| operation_error())?,
+            DialogOutcome::Cancelled => Ok(DiagnosticsActionResult {
+                performed: false,
+                snapshot: snapshot(&state)?,
+            }),
+        }
     }
 
     #[cfg(not(windows))]
@@ -174,8 +176,8 @@ pub(crate) async fn export_diagnostics_pcapng(
     }
 }
 
-pub(crate) fn snapshot(state: &AppState) -> DiagnosticsSnapshot {
-    DiagnosticsSnapshot::from_state(state)
+pub(crate) fn snapshot(state: &AppState) -> Result<DiagnosticsSnapshot, CommandError> {
+    DiagnosticsSnapshot::from_state(state).map_err(CommandError::from_core)
 }
 
 async fn import_capture(
@@ -184,47 +186,42 @@ async fn import_capture(
     kind: CaptureReplayKind,
 ) -> Result<DiagnosticsActionResult, CommandError> {
     console::validate_window(&window)?;
-    let reservation = state.begin_replay_import(false).map_err(capture_error)?;
+    let reservation = state
+        .begin_replay_import(false)
+        .map_err(replay_import_error)?;
 
     #[cfg(windows)]
     {
-        use nte_dps_tool::platform::file_dialog::{
-            OpenFileDialogOutcome, choose_json_open_path, choose_pcapng_open_path,
-        };
-
-        let owner = window.hwnd().map_err(|_| file_dialog_error())?.0 as isize;
         let title = i18n::t(match kind {
             CaptureReplayKind::Pcapng => "Wireshark capture",
             CaptureReplayKind::Json => "NTE exported capture",
         });
+        let selection = match kind {
+            CaptureReplayKind::Pcapng => file_dialog::choose_pcapng_open_path(&window, title).await,
+            CaptureReplayKind::Json => file_dialog::choose_json_open_path(&window, title).await,
+        }
+        .map_err(|error| {
+            log::error!("native diagnostics import dialog failed: {error}");
+            file_dialog_error()
+        })?;
         let state = state.inner().clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let selection = match kind {
-                CaptureReplayKind::Pcapng => choose_pcapng_open_path(owner, &title),
-                CaptureReplayKind::Json => choose_json_open_path(owner, &title),
-            };
-            match selection {
-                Ok(OpenFileDialogOutcome::Selected(path)) => {
-                    reservation
-                        .start(kind, path, false)
-                        .map_err(capture_error)?;
-                    Ok(DiagnosticsActionResult {
-                        performed: true,
-                        snapshot: snapshot(&state),
-                    })
-                }
-                Ok(OpenFileDialogOutcome::Cancelled) => Ok(DiagnosticsActionResult {
-                    performed: false,
-                    snapshot: snapshot(&state),
-                }),
-                Err(code) => {
-                    log::error!("native diagnostics import dialog failed: {code:#010x}");
-                    Err(file_dialog_error())
-                }
-            }
-        })
-        .await
-        .map_err(|_| operation_error())?
+        match selection {
+            DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
+                reservation
+                    .start(kind, path, false)
+                    .map_err(replay_import_error)?;
+                Ok(DiagnosticsActionResult {
+                    performed: true,
+                    snapshot: snapshot(&state)?,
+                })
+            })
+            .await
+            .map_err(|_| operation_error())?,
+            DialogOutcome::Cancelled => Ok(DiagnosticsActionResult {
+                performed: false,
+                snapshot: snapshot(&state)?,
+            }),
+        }
     }
 
     #[cfg(not(windows))]
@@ -238,7 +235,10 @@ fn ensure_inactive(state: &AppState) -> Result<(), CommandError> {
     if matches!(
         state.capture_phase(),
         LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
-    ) || state.diagnostics_input().replay_running
+    ) || state
+        .diagnostics_input()
+        .map_err(CommandError::from_core)?
+        .replay_running
     {
         Err(CommandError::diagnostics(
             "capture_busy",
@@ -259,8 +259,18 @@ fn capture_error(error: CoreError) -> CommandError {
         CoreErrorCode::CaptureDeviceNotFound => "The selected capture device is unavailable",
         CoreErrorCode::SystemProbeFailed => "Failed to start capture replay",
         CoreErrorCode::CaptureNotRunning => "No live capture task right now",
+        CoreErrorCode::CaptureStateUnavailable => {
+            return CommandError::from_core(error);
+        }
     };
     CommandError::diagnostics("capture_operation_failed", message_key)
+}
+
+fn replay_import_error(error: ReplayImportError) -> CommandError {
+    match error {
+        ReplayImportError::RuntimeUnavailable => CommandError::replay_import_runtime_unavailable(),
+        ReplayImportError::Capture(error) => capture_error(error),
+    }
 }
 
 fn file_dialog_error() -> CommandError {
@@ -296,6 +306,15 @@ mod tests {
             error.message_key,
             "The selected capture device is unavailable"
         );
+        assert!(error.message_arguments.is_empty());
+    }
+
+    #[test]
+    fn replay_runtime_poison_uses_the_shared_stable_error() {
+        let error = replay_import_error(ReplayImportError::RuntimeUnavailable);
+
+        assert_eq!(error.code, "replay_import_runtime_unavailable");
+        assert_eq!(error.message_key, "Replay import did not complete");
         assert!(error.message_arguments.is_empty());
     }
 }

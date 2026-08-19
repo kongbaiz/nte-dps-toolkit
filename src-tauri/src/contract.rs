@@ -20,6 +20,7 @@ pub(crate) mod packets;
 pub(crate) mod resources;
 pub(crate) mod settings;
 pub(crate) mod skills;
+pub(crate) mod stream;
 pub(crate) mod timeline;
 pub(crate) mod update;
 
@@ -93,8 +94,32 @@ pub(crate) enum TechnicalEvent {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SubscriptionReceipt {
+    pub stream_protocol_version: u32,
     pub subscription_id: String,
+    pub stream_kind: stream::StreamKind,
+    pub stream_generation: String,
     pub stream_interval_ms: u32,
+    pub max_in_flight_deliveries: u32,
+    pub max_delivery_bytes: usize,
+}
+
+impl SubscriptionReceipt {
+    pub(crate) fn new(
+        subscription_id: String,
+        stream_kind: stream::StreamKind,
+        stream_generation: u64,
+        stream_interval_ms: u32,
+    ) -> Self {
+        Self {
+            stream_protocol_version: stream::STREAM_PROTOCOL_VERSION,
+            subscription_id,
+            stream_kind,
+            stream_generation: stream_generation.to_string(),
+            stream_interval_ms,
+            max_in_flight_deliveries: stream::MAX_IN_FLIGHT_STREAM_DELIVERIES,
+            max_delivery_bytes: stream::MAX_STREAM_DELIVERY_BYTES,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -219,6 +244,33 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn stream_runtime_unavailable() -> Self {
+        Self {
+            code: "stream_runtime_unavailable",
+            message_key: "The live view did not start.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn invalid_stream_delivery() -> Self {
+        Self {
+            code: "invalid_stream_delivery",
+            message_key: "The live view did not start.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn stream_delivery_too_large() -> Self {
+        Self {
+            code: "stream_delivery_too_large",
+            message_key: "The live view did not start.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn invalid_window() -> Self {
         Self {
             code: "invalid_window",
@@ -300,6 +352,33 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn settings_transaction_unavailable() -> Self {
+        Self {
+            code: "settings_transaction_unavailable",
+            message_key: "Settings change did not complete.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn capture_devices_unavailable() -> Self {
+        Self {
+            code: "capture_devices_unavailable",
+            message_key: "Capture devices are unavailable.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn passthrough_state_unavailable() -> Self {
+        Self {
+            code: "passthrough_state_unavailable",
+            message_key: "HUD interaction state is unavailable.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn update_operation_busy() -> Self {
         Self {
             code: "update_operation_busy",
@@ -327,6 +406,33 @@ impl CommandError {
         }
     }
 
+    pub(crate) fn update_runtime_unavailable() -> Self {
+        Self {
+            code: "update_runtime_unavailable",
+            message_key: "Update operation did not finish.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn replay_import_runtime_unavailable() -> Self {
+        Self {
+            code: "replay_import_runtime_unavailable",
+            message_key: "Replay import did not complete",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn session_undo_runtime_unavailable() -> Self {
+        Self {
+            code: "session_undo_runtime_unavailable",
+            message_key: "The previous session is no longer available",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn update_install_blocked(message_key: &'static str) -> Self {
         Self {
             code: "update_install_blocked",
@@ -349,6 +455,15 @@ impl CommandError {
         Self {
             code: "team_data_unavailable",
             message_key: "No team DPS data is available to export.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
+    pub(crate) fn team_import_state_unavailable() -> Self {
+        Self {
+            code: "team_import_state_unavailable",
+            message_key: "Imported team data is unavailable.",
             message_arguments: Vec::new(),
             diagnostic_line: None,
         }
@@ -413,6 +528,11 @@ impl CommandError {
 fn capture_issue_snapshot(issue: LiveCaptureIssue) -> CaptureIssueSnapshot {
     match issue {
         LiveCaptureIssue::Start(code) => start_issue_snapshot(code),
+        LiveCaptureIssue::NetworkProbeDegraded(code) => CaptureIssueSnapshot {
+            code: code.as_str(),
+            message_key: "Game process check failed: {}",
+            message_arguments: vec![code.as_str().to_owned()],
+        },
         LiveCaptureIssue::RuntimeWarning => CaptureIssueSnapshot {
             code: "capture_warning",
             message_key: "Capture warning",
@@ -421,6 +541,11 @@ fn capture_issue_snapshot(issue: LiveCaptureIssue) -> CaptureIssueSnapshot {
         LiveCaptureIssue::RuntimeError => CaptureIssueSnapshot {
             code: "capture_failed",
             message_key: "Capture parser stopped unexpectedly",
+            message_arguments: Vec::new(),
+        },
+        LiveCaptureIssue::StateUnavailable => CaptureIssueSnapshot {
+            code: "capture_state_unavailable",
+            message_key: "Live capture state is unavailable",
             message_arguments: Vec::new(),
         },
     }
@@ -445,6 +570,10 @@ fn start_issue_snapshot(code: CoreErrorCode) -> CaptureIssueSnapshot {
             ("capture_already_running", "Live capture is already running")
         }
         CoreErrorCode::CaptureNotRunning => ("capture_not_running", "Live capture is not running"),
+        CoreErrorCode::CaptureStateUnavailable => (
+            "capture_state_unavailable",
+            "Live capture state is unavailable",
+        ),
     };
     CaptureIssueSnapshot {
         code,
@@ -461,6 +590,7 @@ mod tests {
     use nte_dps_tool::{
         core::hud::{HudProjectionOptions, project_hud},
         engine::model::CombatState,
+        platform::network::NetworkProbeErrorCode,
         storage::config::HudConfig,
     };
 
@@ -551,5 +681,76 @@ mod tests {
         let issue = capture.issue.expect("capture issue");
         assert_eq!(issue.code, "capture_failed");
         assert_eq!(issue.message_key, "Capture parser stopped unexpectedly");
+    }
+
+    #[test]
+    fn capture_status_preserves_network_probe_code_without_private_detail() {
+        let capture: CaptureSnapshot = LiveCaptureStatus {
+            phase: LiveCapturePhase::Running,
+            issue: Some(LiveCaptureIssue::NetworkProbeDegraded(
+                NetworkProbeErrorCode::TcpTableQueryFailed,
+            )),
+        }
+        .into();
+
+        assert_eq!(capture.phase, "running");
+        let issue = capture.issue.expect("capture issue");
+        assert_eq!(issue.code, "TCP_TABLE_QUERY_FAILED");
+        assert_eq!(issue.message_key, "Game process check failed: {}");
+        assert_eq!(issue.message_arguments, ["TCP_TABLE_QUERY_FAILED"]);
+
+        let serialized = serde_json::to_string(&issue).expect("capture issue must serialize");
+        assert!(!serialized.contains("fixture private probe detail"));
+    }
+
+    #[test]
+    fn capture_state_unavailable_command_error_omits_private_poison_details() {
+        let error = CommandError::from_core(CoreError::new(
+            CoreErrorCode::CaptureStateUnavailable,
+            "poisoned mutex at C:\\private\\capture.json",
+        ));
+
+        assert_eq!(error.code, "capture_state_unavailable");
+        assert_eq!(error.message_key, "Live capture state is unavailable");
+        assert!(error.message_arguments.is_empty());
+        let serialized = serde_json::to_string(&error).expect("command error must serialize");
+        assert!(!serialized.contains("poison"));
+        assert!(!serialized.contains("mutex"));
+        assert!(!serialized.contains("private"));
+    }
+
+    #[test]
+    fn replay_and_session_runtime_errors_have_stable_redacted_contracts() {
+        let replay = CommandError::replay_import_runtime_unavailable();
+        assert_eq!(replay.code, "replay_import_runtime_unavailable");
+        assert_eq!(replay.message_key, "Replay import did not complete");
+        assert!(replay.message_arguments.is_empty());
+
+        let session = CommandError::session_undo_runtime_unavailable();
+        assert_eq!(session.code, "session_undo_runtime_unavailable");
+        assert_eq!(
+            session.message_key,
+            "The previous session is no longer available"
+        );
+        assert!(session.message_arguments.is_empty());
+
+        let serialized =
+            serde_json::to_string(&(replay, session)).expect("runtime errors must serialize");
+        assert!(!serialized.contains("poison"));
+        assert!(!serialized.contains("mutex"));
+        assert!(!serialized.contains("private"));
+    }
+
+    #[test]
+    fn stream_registry_error_has_a_stable_redacted_contract() {
+        let error = CommandError::stream_runtime_unavailable();
+
+        assert_eq!(error.code, "stream_runtime_unavailable");
+        assert_eq!(error.message_key, "The live view did not start.");
+        assert!(error.message_arguments.is_empty());
+        let serialized = serde_json::to_string(&error).expect("stream error must serialize");
+        assert!(!serialized.contains("poison"));
+        assert!(!serialized.contains("mutex"));
+        assert!(!serialized.contains("private"));
     }
 }

@@ -17,6 +17,8 @@ $script:RuleIds = @{
     ReplayBudget    = "RUNTIME-REPLAY-BUDGET"
     BoundaryPanic   = "RUNTIME-BOUNDARY-PANIC"
     ContractSlice   = "RUNTIME-CONTRACT-SLICE"
+    RetiredModCode  = "RUNTIME-RETIRED-MOD-CODE"
+    PoisonRecovery  = "RUNTIME-BLIND-POISON-RECOVERY"
 }
 
 # Baselines use counts so a line move does not silently make a finding
@@ -164,6 +166,46 @@ function Test-RustTestRegion {
         }
     }
     return $testModuleDepth -ne $null
+}
+
+function Test-BlindPoisonRecoveryText {
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    return $Text -match 'unwrap_or_else\s*\(\s*\|\s*(?<guard>[A-Za-z_][A-Za-z0-9_]*)\s*\|\s*\k<guard>\s*\.\s*into_inner\s*\(\s*\)\s*\)'
+}
+
+function Find-BlindPoisonRecoveries {
+    param(
+        [Parameter(Mandatory)]
+        [System.IO.FileInfo[]]$Files
+    )
+
+    $occurrences = @()
+    $pattern = [regex]::new(
+        'unwrap_or_else\s*\(\s*\|\s*(?<guard>[A-Za-z_][A-Za-z0-9_]*)\s*\|\s*\k<guard>\s*\.\s*into_inner\s*\(\s*\)\s*\)',
+        [Text.RegularExpressions.RegexOptions]::Multiline
+    )
+    foreach ($file in $Files) {
+        $text = Get-Content -LiteralPath $file.FullName -Raw
+        $lines = @(Get-Content -LiteralPath $file.FullName)
+        foreach ($match in $pattern.Matches($text)) {
+            $line = ([regex]::Matches($text.Substring(0, $match.Index), "`n")).Count + 1
+            $lineIndex = [Math]::Max(0, $line - 1)
+            $function = Get-NearestRustFunction -Lines $lines -Index $lineIndex
+            if ($function.IsTest -or (Test-RustTestRegion -Lines $lines -Index $lineIndex)) {
+                continue
+            }
+            $occurrences += [pscustomobject]@{
+                Path = ConvertTo-RelativePath $file.FullName
+                Line = $line
+            }
+        }
+    }
+    return @($occurrences)
 }
 
 function Test-HotProjectionContext {
@@ -586,6 +628,12 @@ function Test-PolicyHelpers {
         "Hot clone helper must detect archive conversion inside event processing"
     Assert-Policy (-not (Test-HotCloneFingerprint "HistoryCombatDetails::from_state(&state)" "queue_detached_abyss_round")) `
         "Hot clone helper must allow detached archive conversion outside process_event"
+    Assert-Policy (Test-BlindPoisonRecoveryText 'lock.lock().unwrap_or_else(|poison| poison.into_inner())') `
+        "Poison helper must detect blind one-line recovery"
+    Assert-Policy (Test-BlindPoisonRecoveryText "lock.lock()`n    .unwrap_or_else(|error| error.into_inner())") `
+        "Poison helper must detect blind multiline recovery"
+    Assert-Policy (-not (Test-BlindPoisonRecoveryText 'let mut guard = poisoned.into_inner(); guard.clear(); lock.clear_poison();')) `
+        "Poison helper must allow an explicit recovery strategy"
 
     $replayLines = @(
         "fn import_capture_json(path: &Path) {",
@@ -633,9 +681,29 @@ if ($SelfTestOnly) {
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repositoryRoot
 try {
+    & (Join-Path $PSScriptRoot "generate_mod_runtime_schema.ps1") -Check
     $rustFiles = Get-RepositoryFiles @("src", "src-tauri/src") @(".rs")
     $frontendFiles = Get-RepositoryFiles @("frontend/src") @(".ts", ".tsx")
     $diagnostics = [System.Collections.Generic.List[object]]::new()
+
+    $modsPluginSourcePath = Join-Path $repositoryRoot "src/platform/mods_plugin.rs"
+    $modsPluginSource = Get-Content -LiteralPath $modsPluginSourcePath -Raw
+    if ($modsPluginSource -match 'LEGACY_ENEMY_TELEMETRY_MOD_V\d+') {
+        $diagnostics.Add((New-Diagnostic `
+                    -Severity Error `
+                    -Rule $script:RuleIds['RetiredModCode'] `
+                    -Path "src/platform/mods_plugin.rs" `
+                    -Message "Retired enemy-telemetry source programs must remain in Git history instead of the production module."))
+    }
+
+    foreach ($occurrence in @(Find-BlindPoisonRecoveries $rustFiles)) {
+        $diagnostics.Add((New-Diagnostic `
+                    -Severity Error `
+                    -Rule $script:RuleIds['PoisonRecovery'] `
+                    -Path $occurrence.Path `
+                    -Line $occurrence.Line `
+                    -Message "Blind Mutex poison recovery is forbidden; classify the protected invariant and use typed fail-closed or explicit full-state rebuild semantics."))
+    }
 
     $hotOccurrences = @(Find-HotCloneOccurrences $rustFiles)
     $hotCounts = @{}
@@ -654,7 +722,10 @@ try {
 
     $channelOccurrences = @(Find-ChannelThreadSleepOccurrences $rustFiles)
     foreach ($occurrence in $channelOccurrences) {
-        if (-not $occurrence.OwnerCancellation) {
+        if ($occurrence.Path -ne "src-tauri/src/channels/history.rs") {
+            $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line $occurrence.FirstSpawn -Message "Polling Channel workers must use channels/stream_runtime.rs instead of copying thread::spawn + thread::sleep."))
+        }
+        elseif (-not $occurrence.OwnerCancellation) {
             $diagnostics.Add((New-Diagnostic -Severity Error -Rule $script:RuleIds['ChannelWorker'] -Path $occurrence.Path -Line $occurrence.FirstSpawn -Message "Channel worker uses thread::spawn + thread::sleep without an owner-bound stop token and cleanup path."))
         }
     }

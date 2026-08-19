@@ -76,15 +76,16 @@ int main()
 		reinterpret_cast<Tick>(published_shadow[0])(&viewport, 3) != 1010)
 		return 4;
 
-	hook.Remove();
+	if (!hook.Remove())
+		return 5;
 	if (viewport.vtable != original_vtable ||
 		reinterpret_cast<Tick>(viewport.vtable[0])(&viewport, 3) != 10)
-		return 5;
+		return 6;
 
 	// A dispatch may have captured the shadow vptr just before Remove. The
 	// published allocation must remain readable for the process lifetime.
 	if (reinterpret_cast<Tick>(published_shadow[0])(&viewport, 3) != 1010)
-		return 6;
+		return 7;
 	for (size_t index = 1; index < 16; ++index)
 	{
 		if (!hook.Install(
@@ -93,8 +94,9 @@ int main()
 				reinterpret_cast<void*>(&HookedTick),
 				original_vtable,
 				reinterpret_cast<void*>(&OriginalTick)))
-			return 7;
-		hook.Remove();
+			return 8;
+		if (!hook.Remove())
+			return 9;
 	}
 	if (hook.Install(
 			&viewport,
@@ -102,7 +104,7 @@ int main()
 			reinterpret_cast<void*>(&HookedTick),
 			original_vtable,
 			reinterpret_cast<void*>(&OriginalTick)))
-		return 8;
+		return 10;
 
 	std::puts("shadow_vtable_hook_tests: PASS");
 	return 0;

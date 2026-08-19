@@ -2,14 +2,39 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createEmptyCurtainClient } from "@/lib/tauri/empty-curtain-client";
 import { EMPTY_CURTAIN_FIXTURE } from "@/lib/tauri/empty-curtain-contract.test";
+import { MAX_STREAM_DELIVERY_BYTES } from "@/lib/tauri/stream-contract";
+
+const encodeDelivery = (events: unknown[]): ArrayBuffer => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ streamProtocolVersion: 1, events }),
+  );
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+};
 
 describe("Console equipment client", () => {
   it("releases the acknowledged coalesced stream", async () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_empty_curtain") {
-        return { subscriptionId: "empty-curtain-test", streamIntervalMs: 100 };
+        return {
+          subscriptionId: "empty-curtain-test",
+          streamKind: "emptyCurtain",
+          streamIntervalMs: 100,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+          maxInFlightDeliveries: 1,
+          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
+        };
       }
+      if (command === "read_stream_delivery") {
+        return encodeDelivery([
+          { event: "snapshot", payload: EMPTY_CURTAIN_FIXTURE },
+        ]);
+      }
+      if (command === "ack_stream_delivery") return { accepted: true };
       return undefined;
     });
     const client = createEmptyCurtainClient(
@@ -24,7 +49,14 @@ describe("Console equipment client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe(received, vi.fn());
-    onMessage?.({ event: "snapshot", payload: EMPTY_CURTAIN_FIXTURE });
+    onMessage?.({
+      streamProtocolVersion: 1,
+      streamKind: "emptyCurtain",
+      subscriptionId: "empty-curtain-test",
+      streamGeneration: "1",
+      deliverySequence: "1",
+    });
+    await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
     expect(received).toHaveBeenCalledWith(

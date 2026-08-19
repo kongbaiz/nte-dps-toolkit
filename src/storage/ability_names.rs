@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::engine::parser::{
     ABILITY_TIPS_PATH, AbilityCatalog, GAMEPLAY_EFFECT_SEMANTICS_PATH, SKILL_DAMAGE_DATA_PATH,
@@ -18,6 +18,9 @@ use crate::storage::i18n::Language;
 #[derive(Default)]
 struct Store {
     catalog: Arc<AbilityCatalog>,
+    /// False only for an empty poison-recovery fallback that requires `init`
+    /// before a localized-only reload can be considered complete.
+    catalog_initialized: bool,
     /// ability name -> localized display text; reloaded on language switch.
     ability_tip_names: HashMap<String, String>,
     /// GameplayEffect name -> (localized component text, show parent ability).
@@ -25,6 +28,66 @@ struct Store {
 }
 
 static STORE: LazyLock<RwLock<Store>> = LazyLock::new(|| RwLock::new(Store::default()));
+
+/// Ability display data is a rebuildable projection. A poisoned write may
+/// contain a mixed catalog/name generation, so discard it wholesale rather
+/// than exposing the poisoned guard's contents.
+fn write_rebuildable_store(store: &RwLock<Store>) -> RwLockWriteGuard<'_, Store> {
+    match store.write() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = Store::default();
+            store.clear_poison();
+            guard
+        }
+    }
+}
+
+fn read_rebuildable_store(store: &RwLock<Store>) -> RwLockReadGuard<'_, Store> {
+    loop {
+        match store.read() {
+            Ok(guard) => return guard,
+            Err(poisoned) => {
+                drop(poisoned);
+                drop(write_rebuildable_store(store));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReloadDisposition {
+    Applied,
+    RequiresFullInit,
+}
+
+fn replace_initialized_store(
+    store: &RwLock<Store>,
+    catalog: Arc<AbilityCatalog>,
+    ability_tip_names: HashMap<String, String>,
+    semantic_names: HashMap<String, (String, bool)>,
+) {
+    let mut store = write_rebuildable_store(store);
+    store.catalog = catalog;
+    store.catalog_initialized = true;
+    store.ability_tip_names = ability_tip_names;
+    store.semantic_names = semantic_names;
+}
+
+fn install_reloaded_names(
+    store: &RwLock<Store>,
+    ability_tip_names: HashMap<String, String>,
+    semantic_names: HashMap<String, (String, bool)>,
+) -> ReloadDisposition {
+    let mut store = write_rebuildable_store(store);
+    if !store.catalog_initialized {
+        return ReloadDisposition::RequiresFullInit;
+    }
+    store.ability_tip_names = ability_tip_names;
+    store.semantic_names = semantic_names;
+    ReloadDisposition::Applied
+}
 
 fn load_map<T>(
     relative_path: &str,
@@ -122,10 +185,12 @@ pub fn init(language: Language) -> (Arc<AbilityCatalog>, Option<String>) {
             HashMap::new()
         }
     };
-    let mut store = STORE.write().unwrap_or_else(|poison| poison.into_inner());
-    store.catalog = Arc::clone(&catalog);
-    store.ability_tip_names = ability_tip_names;
-    store.semantic_names = semantic_names;
+    replace_initialized_store(
+        &STORE,
+        Arc::clone(&catalog),
+        ability_tip_names,
+        semantic_names,
+    );
     let warning = (!warnings.is_empty()).then(|| warnings.join("; "));
     (catalog, warning)
 }
@@ -153,14 +218,16 @@ pub fn reload(language: Language) -> Option<String> {
             HashMap::new()
         }
     };
-    let mut store = STORE.write().unwrap_or_else(|poison| poison.into_inner());
-    store.ability_tip_names = ability_tip_names;
-    store.semantic_names = semantic_names;
+    if install_reloaded_names(&STORE, ability_tip_names, semantic_names)
+        == ReloadDisposition::RequiresFullInit
+    {
+        return init(language).1;
+    }
     (!warnings.is_empty()).then(|| warnings.join("; "))
 }
 
 pub fn resolve_damage_name(effect_name: &str) -> Option<String> {
-    let store = STORE.read().unwrap_or_else(|poison| poison.into_inner());
+    let store = read_rebuildable_store(&STORE);
     resolve_from_maps(
         &store.catalog,
         &store.ability_tip_names,
@@ -170,9 +237,7 @@ pub fn resolve_damage_name(effect_name: &str) -> Option<String> {
 }
 
 pub fn resolve_ability_name(ability_name: &str) -> Option<String> {
-    STORE
-        .read()
-        .unwrap_or_else(|poison| poison.into_inner())
+    read_rebuildable_store(&STORE)
         .ability_tip_names
         .get(ability_name)
         .cloned()
@@ -328,5 +393,62 @@ mod tests {
         .expect_err("missing structural skill data must remain visible");
 
         assert!(error.to_string().contains("missing resource"));
+    }
+
+    #[test]
+    fn poisoned_ability_store_discards_partial_catalog_and_names() {
+        let store = RwLock::new(Store {
+            catalog: Arc::new(catalog()),
+            catalog_initialized: true,
+            ability_tip_names: HashMap::from([("ability".to_owned(), "partial".to_owned())]),
+            semantic_names: HashMap::from([("effect".to_owned(), ("partial".to_owned(), true))]),
+        });
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = store.write().expect("test ability store");
+            guard
+                .ability_tip_names
+                .insert("leaked".to_owned(), "value".to_owned());
+            panic!("poison test ability store");
+        });
+
+        let guard = read_rebuildable_store(&store);
+        assert!(
+            guard
+                .catalog
+                .ability_name("GE_Player_Sagiri_UltraSkill1_Damage")
+                .is_none()
+        );
+        assert!(guard.ability_tip_names.is_empty());
+        assert!(guard.semantic_names.is_empty());
+        assert!(!guard.catalog_initialized);
+        drop(guard);
+        assert!(!store.is_poisoned());
+
+        assert_eq!(
+            install_reloaded_names(
+                &store,
+                HashMap::from([("GA_Sagiri_UltraSkill".to_owned(), "restored".to_owned())]),
+                HashMap::new(),
+            ),
+            ReloadDisposition::RequiresFullInit
+        );
+        replace_initialized_store(
+            &store,
+            Arc::new(catalog()),
+            HashMap::from([("GA_Sagiri_UltraSkill".to_owned(), "restored".to_owned())]),
+            HashMap::new(),
+        );
+        let guard = read_rebuildable_store(&store);
+        assert!(guard.catalog_initialized);
+        assert_eq!(
+            resolve_from_maps(
+                &guard.catalog,
+                &guard.ability_tip_names,
+                &guard.semantic_names,
+                "GE_Player_Sagiri_UltraSkill1_Damage",
+            )
+            .as_deref(),
+            Some("restored")
+        );
     }
 }

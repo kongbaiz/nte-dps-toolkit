@@ -17,7 +17,7 @@ use nte_dps_tool::{
     },
 };
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 4;
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +109,7 @@ pub(crate) struct PreparedUpdateSnapshot {
 pub(crate) struct CaptureSettingsSnapshot {
     pub bpf_filter: String,
     pub devices: Vec<CaptureDeviceSnapshot>,
+    pub devices_available: bool,
     pub manual_capture_device: Option<String>,
     pub server_damage_calibration: bool,
     pub separate_reaction_damage: bool,
@@ -120,7 +121,7 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub passthrough_hotkey: &'static str,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureDeviceSnapshot {
     pub id: String,
@@ -184,6 +185,7 @@ pub(crate) struct CaptureFilesSnapshot {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamDataSnapshot {
+    pub available: bool,
     pub upper_imported: bool,
     pub lower_imported: bool,
 }
@@ -228,7 +230,9 @@ impl SettingsSnapshot {
         generation: u64,
         always_on_top: bool,
         devices: Vec<CaptureDeviceSnapshot>,
+        devices_available: bool,
         capture_files: CaptureLogStats,
+        team_data_available: bool,
         upper_imported: bool,
         lower_imported: bool,
         updates: UpdateSettingsSnapshot,
@@ -251,6 +255,7 @@ impl SettingsSnapshot {
             capture: CaptureSettingsSnapshot {
                 bpf_filter: config.capture_filter.clone(),
                 devices,
+                devices_available,
                 manual_capture_device: config.manual_capture_device.clone(),
                 server_damage_calibration: config.server_damage_calibration,
                 separate_reaction_damage: config.separate_reaction_damage,
@@ -270,6 +275,7 @@ impl SettingsSnapshot {
                 formatted_size: format_bytes(capture_files.total_bytes),
             },
             team_data: TeamDataSnapshot {
+                available: team_data_available,
                 upper_imported,
                 lower_imported,
             },
@@ -492,7 +498,9 @@ mod tests {
             7,
             false,
             Vec::new(),
+            true,
             CaptureLogStats::default(),
+            true,
             false,
             false,
             UpdateSettingsSnapshot::from_runtime(
@@ -520,6 +528,8 @@ mod tests {
         );
         assert_eq!(value["updates"]["downloadedBytes"], "0");
         assert_eq!(value["capture"]["bpfFilter"], "udp");
+        assert_eq!(value["capture"]["devicesAvailable"], true);
+        assert_eq!(value["teamData"]["available"], true);
         assert_eq!(value["hotkeys"]["bindings"][0]["action"], "capture");
         assert_eq!(value["hud"]["width"], 512);
         assert_eq!(value["hud"]["moduleOrder"][0], "timeline");
@@ -549,7 +559,9 @@ mod tests {
             8,
             false,
             Vec::new(),
+            true,
             CaptureLogStats::default(),
+            true,
             false,
             false,
             UpdateSettingsSnapshot::from_runtime(

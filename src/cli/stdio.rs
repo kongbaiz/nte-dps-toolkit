@@ -90,6 +90,22 @@ struct LatestMessageReceiver {
     _wake_guard: Sender<()>,
 }
 
+/// The coalescing slot is ephemeral. A panic can leave an arbitrary partial
+/// JSON value in it, so reset to empty and clear poison before reuse.
+fn lock_latest_message_slot(
+    slot: &Mutex<Option<Value>>,
+) -> std::sync::MutexGuard<'_, Option<Value>> {
+    match slot.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            *guard = None;
+            slot.clear_poison();
+            guard
+        }
+    }
+}
+
 fn latest_message_channel() -> (LatestMessageSender, LatestMessageReceiver) {
     let slot = Arc::new(Mutex::new(None));
     let (wake, wake_receiver) = bounded(1);
@@ -108,27 +124,18 @@ fn latest_message_channel() -> (LatestMessageSender, LatestMessageReceiver) {
 
 impl LatestMessageSender {
     fn publish(&self, message: Value) {
-        *self
-            .slot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = Some(message);
+        *lock_latest_message_slot(&self.slot) = Some(message);
         let _ = self.wake.try_send(());
     }
 
     fn clear(&self) {
-        *self
-            .slot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner()) = None;
+        *lock_latest_message_slot(&self.slot) = None;
     }
 }
 
 impl LatestMessageReceiver {
     fn take(&self) -> Option<Value> {
-        self.slot
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .take()
+        lock_latest_message_slot(&self.slot).take()
     }
 }
 
@@ -1302,6 +1309,10 @@ fn core_error(code: CoreErrorCode) -> RpcError {
         CoreErrorCode::CaptureNotRunning => {
             RpcError::domain("CAPTURE_NOT_RUNNING", "No capture is running")
         }
+        CoreErrorCode::CaptureStateUnavailable => RpcError::domain(
+            "CAPTURE_STATE_UNAVAILABLE",
+            "The live capture state is unavailable",
+        ),
     }
 }
 
@@ -2045,6 +2056,26 @@ mod tests {
         assert_eq!(lines, vec![serde_json::json!({"generation": 2})]);
     }
 
+    #[test]
+    fn poisoned_latest_message_slot_drops_partial_value_and_recovers_empty() {
+        let slot = Mutex::new(Some(serde_json::json!({"partial": true})));
+        let _ = std::panic::catch_unwind(|| {
+            let mut guard = slot.lock().expect("test latest-message slot");
+            *guard = Some(serde_json::json!({"leaked": true}));
+            panic!("poison test latest-message slot");
+        });
+
+        let mut guard = lock_latest_message_slot(&slot);
+        assert!(guard.is_none());
+        *guard = Some(serde_json::json!({"generation": 2}));
+        drop(guard);
+        assert!(!slot.is_poisoned());
+        assert_eq!(
+            lock_latest_message_slot(&slot).take(),
+            Some(serde_json::json!({"generation": 2}))
+        );
+    }
+
     fn test_hit(timestamp: f64, damage: f64) -> Hit {
         Hit {
             timestamp,
@@ -2100,4 +2131,15 @@ mod tests {
             Ok(())
         }
     }
+}
+#[test]
+fn capture_state_unavailable_has_a_stable_private_detail_free_rpc_error() {
+    let error = core_error(CoreErrorCode::CaptureStateUnavailable);
+
+    assert_eq!(error.message, "Core error");
+    let data = error.data.expect("domain error data");
+    assert_eq!(data.domain_code, "CAPTURE_STATE_UNAVAILABLE");
+    assert_eq!(data.detail, "The live capture state is unavailable");
+    assert!(!data.detail.contains("poison"));
+    assert!(!data.detail.contains("mutex"));
 }

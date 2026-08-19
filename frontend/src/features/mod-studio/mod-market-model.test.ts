@@ -4,6 +4,7 @@ import type { ModMarketItem } from "@/lib/tauri/mod-studio-contract";
 
 import {
   localizedModMarketText,
+  modMarketLocalStatus,
   modMarketSearchText,
 } from "./mod-market-model";
 
@@ -19,9 +20,7 @@ const ITEM: ModMarketItem = {
   author: "NTE",
   capabilities: ["viewport.tick"],
   packageSize: 1024,
-  installed: false,
-  enabled: false,
-  current: false,
+  localState: { status: "notInstalled" },
 };
 
 describe("Mod Market localization", () => {
@@ -42,5 +41,26 @@ describe("Mod Market localization", () => {
     expect(modMarketSearchText(ITEM, "zh-CN")).not.toContain(
       "English description",
     );
+  });
+
+  it("keeps unreadable state distinct from installed or disabled", () => {
+    expect(
+      modMarketLocalStatus({
+        ...ITEM,
+        localState: {
+          status: "unreadable",
+          code: "mod_workspace_read_failed",
+          messageKey: "Failed to read the Mod workspace.",
+        },
+      }),
+    ).toEqual({
+      installed: false,
+      enabled: false,
+      current: false,
+      unreadable: {
+        code: "mod_workspace_read_failed",
+        messageKey: "Failed to read the Mod workspace.",
+      },
+    });
   });
 });

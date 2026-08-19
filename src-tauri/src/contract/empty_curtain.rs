@@ -7,7 +7,7 @@ use nte_dps_tool::{
     storage::i18n::{self, Language},
 };
 
-use crate::state::EmptyCurtainOperationState;
+use crate::equipment_operation_service::EmptyCurtainOperationState;
 
 pub(crate) const EMPTY_CURTAIN_CONTRACT_VERSION: u32 = 2;
 

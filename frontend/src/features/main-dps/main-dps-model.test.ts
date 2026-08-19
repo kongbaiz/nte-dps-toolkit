@@ -43,6 +43,16 @@ describe("main DPS view model", () => {
     expect(isGenerationNewer("9007199254740992", "9007199254740993")).toBe(
       false,
     );
+    expect(
+      isGenerationNewer("18446744073709551615", "18446744073709551614"),
+    ).toBe(true);
+    expect(
+      isGenerationNewer("18446744073709551614", "18446744073709551615"),
+    ).toBe(false);
+    expect(isGenerationNewer("18446744073709551615", null)).toBe(true);
+    expect(
+      isGenerationNewer("18446744073709551615", "18446744073709551615"),
+    ).toBe(false);
   });
 
   it("distinguishes capture and empty ranking presentation states", () => {

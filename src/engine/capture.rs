@@ -1,13 +1,16 @@
 use std::borrow::Cow;
+use std::collections::hash_map::RandomState;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::{CStr, CString, c_char, c_int, c_uchar, c_uint};
 use std::fs::File;
+use std::hash::BuildHasher;
 use std::io::{BufWriter, Read, Write};
+use std::marker::PhantomData;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::{
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::thread;
@@ -81,10 +84,188 @@ const MAX_GAMEPLAY_EFFECT_FRAGMENT_STREAMS: usize = 64;
 const MAX_GAMEPLAY_EFFECT_FRAGMENT_BITS: usize = 256 * 1024 * 8;
 const GAMEPLAY_EFFECT_FRAGMENT_TIMEOUT_SECONDS: f64 = 0.5;
 const CAPTURE_FRAME_QUEUE_CAPACITY: usize = 16_384;
+// The frame-count bound protects queue metadata; this independent high-water
+// mark caps payload ownership at 32 MiB. A 1,500-byte Ethernet workload can
+// still use the full count capacity, while large snaplen frames backpressure
+// acquisition much earlier.
+const CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER: usize = 32 * 1024 * 1024;
 
 struct CaptureFrame {
     data: Vec<u8>,
     timestamp: f64,
+    _byte_reservation: Option<CaptureFrameByteReservation>,
+}
+
+impl CaptureFrame {
+    fn new(data: Vec<u8>, timestamp: f64) -> Self {
+        Self {
+            data,
+            timestamp,
+            _byte_reservation: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CaptureFrameSender {
+    frames: Sender<CaptureFrame>,
+    byte_budget: Arc<CaptureFrameByteBudget>,
+}
+
+struct CaptureFrameReceiver {
+    frames: Receiver<CaptureFrame>,
+    byte_budget: Arc<CaptureFrameByteBudget>,
+}
+
+struct CaptureFrameByteBudget {
+    high_water: usize,
+    state: Mutex<CaptureFrameByteBudgetState>,
+    available: Condvar,
+}
+
+struct CaptureFrameByteBudgetState {
+    reserved: usize,
+    observed_high_water: usize,
+    receiver_connected: bool,
+}
+
+struct CaptureFrameByteReservation {
+    byte_budget: Arc<CaptureFrameByteBudget>,
+    bytes: usize,
+}
+
+fn capture_frame_queue(
+    frame_capacity: usize,
+    byte_high_water: usize,
+) -> (CaptureFrameSender, CaptureFrameReceiver) {
+    let (frames, receiver) = bounded(frame_capacity);
+    let byte_budget = Arc::new(CaptureFrameByteBudget {
+        high_water: byte_high_water,
+        state: Mutex::new(CaptureFrameByteBudgetState {
+            reserved: 0,
+            observed_high_water: 0,
+            receiver_connected: true,
+        }),
+        available: Condvar::new(),
+    });
+    (
+        CaptureFrameSender {
+            frames,
+            byte_budget: Arc::clone(&byte_budget),
+        },
+        CaptureFrameReceiver {
+            frames: receiver,
+            byte_budget,
+        },
+    )
+}
+
+impl CaptureFrameSender {
+    fn send(&self, mut frame: CaptureFrame) -> Result<(), String> {
+        let reservation = self.byte_budget.reserve(frame.data.capacity())?;
+        frame._byte_reservation = Some(reservation);
+        self.frames
+            .send(frame)
+            .map_err(|_| "capture parser thread stopped unexpectedly".to_owned())
+    }
+
+    fn byte_high_water_mark(&self) -> usize {
+        self.byte_budget.observed_high_water()
+    }
+}
+
+impl CaptureFrameReceiver {
+    fn recv(&self) -> Result<CaptureFrame, crossbeam_channel::RecvError> {
+        self.frames.recv()
+    }
+}
+
+impl Drop for CaptureFrameReceiver {
+    fn drop(&mut self) {
+        self.byte_budget.disconnect_receiver();
+    }
+}
+
+impl CaptureFrameByteBudget {
+    fn reserve(self: &Arc<Self>, bytes: usize) -> Result<CaptureFrameByteReservation, String> {
+        if bytes > self.high_water {
+            return Err(format!(
+                "capture frame size {bytes} exceeds parser queue byte budget {}",
+                self.high_water
+            ));
+        }
+        let mut state = self.lock_state()?;
+        while state.receiver_connected && bytes > self.high_water - state.reserved {
+            state = match self.available.wait(state) {
+                Ok(state) => state,
+                Err(mut error) => {
+                    error.get_mut().receiver_connected = false;
+                    self.state.clear_poison();
+                    self.available.notify_all();
+                    return Err("capture frame queue byte budget became unavailable".to_owned());
+                }
+            };
+        }
+        if !state.receiver_connected {
+            return Err("capture parser thread stopped unexpectedly".to_owned());
+        }
+        state.reserved += bytes;
+        state.observed_high_water = state.observed_high_water.max(state.reserved);
+        Ok(CaptureFrameByteReservation {
+            byte_budget: Arc::clone(self),
+            bytes,
+        })
+    }
+
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, CaptureFrameByteBudgetState>, String> {
+        match self.state.lock() {
+            Ok(state) => Ok(state),
+            Err(mut error) => {
+                error.get_mut().receiver_connected = false;
+                self.state.clear_poison();
+                self.available.notify_all();
+                Err("capture frame queue byte budget became unavailable".to_owned())
+            }
+        }
+    }
+
+    fn release(&self, bytes: usize) {
+        match self.state.lock() {
+            Ok(mut state) => {
+                state.reserved = state.reserved.saturating_sub(bytes);
+            }
+            Err(mut error) => {
+                let state = error.get_mut();
+                state.reserved = 0;
+                state.receiver_connected = false;
+                self.state.clear_poison();
+            }
+        }
+        self.available.notify_all();
+    }
+
+    fn disconnect_receiver(&self) {
+        match self.state.lock() {
+            Ok(mut state) => state.receiver_connected = false,
+            Err(mut error) => {
+                error.get_mut().receiver_connected = false;
+                self.state.clear_poison();
+            }
+        }
+        self.available.notify_all();
+    }
+
+    fn observed_high_water(&self) -> usize {
+        self.state
+            .lock()
+            .map_or(self.high_water, |state| state.observed_high_water)
+    }
+}
+
+impl Drop for CaptureFrameByteReservation {
+    fn drop(&mut self) {
+        self.byte_budget.release(self.bytes);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,65 +373,86 @@ type FreeCode = unsafe extern "C" fn(*mut BpfProgram);
 type GetErr = unsafe extern "C" fn(*mut PcapT) -> *const c_char;
 type PcapDataLink = unsafe extern "C" fn(*mut PcapT) -> c_int;
 
-struct PcapHandle {
-    raw: *mut PcapT,
+struct PcapHandle<'library> {
+    raw: NonNull<PcapT>,
     close: Close,
+    _library: PhantomData<&'library Library>,
 }
 
-impl PcapHandle {
-    fn new(raw: *mut PcapT, close: Close) -> Self {
-        Self { raw, close }
+impl<'library> PcapHandle<'library> {
+    /// # Safety
+    ///
+    /// `raw` must be an exclusively owned handle returned by `pcap_open_live`,
+    /// `close` must come from the same `library`, and no other owner may close
+    /// the handle. The lifetime marker keeps that DLL loaded through Drop.
+    unsafe fn from_raw(raw: NonNull<PcapT>, close: Close, _library: &'library Library) -> Self {
+        Self {
+            raw,
+            close,
+            _library: PhantomData,
+        }
     }
 
     fn as_ptr(&self) -> *mut PcapT {
-        self.raw
+        self.raw.as_ptr()
     }
 }
 
-impl Drop for PcapHandle {
+impl Drop for PcapHandle<'_> {
     fn drop(&mut self) {
-        if !self.raw.is_null() {
-            unsafe {
-                (self.close)(self.raw);
-            }
-            self.raw = ptr::null_mut();
+        // SAFETY: `from_raw` accepts exclusive ownership of a live handle and
+        // ties the matching close symbol to its loaded library until this Drop.
+        unsafe {
+            (self.close)(self.raw.as_ptr());
         }
     }
 }
 
-struct BpfProgramGuard {
+struct BpfProgramGuard<'library> {
     program: BpfProgram,
     free_code: FreeCode,
-    active: bool,
+    compiled: bool,
+    _library: PhantomData<&'library Library>,
 }
 
-impl BpfProgramGuard {
-    fn new(free_code: FreeCode) -> Self {
+impl<'library> BpfProgramGuard<'library> {
+    fn new(free_code: FreeCode, _library: &'library Library) -> Self {
         Self {
             program: BpfProgram {
                 bf_len: 0,
                 bf_insns: ptr::null_mut(),
             },
             free_code,
-            active: true,
+            compiled: false,
+            _library: PhantomData,
         }
     }
 
-    fn as_mut(&mut self) -> &mut BpfProgram {
+    fn as_mut_ptr(&mut self) -> *mut BpfProgram {
         &mut self.program
     }
 
+    /// # Safety
+    ///
+    /// The preceding `pcap_compile` call must have returned success after
+    /// initializing this exact program through `as_mut_ptr`.
+    unsafe fn mark_compiled(&mut self) {
+        self.compiled = true;
+    }
+
     fn release(&mut self) {
-        if self.active {
+        if self.compiled {
+            // SAFETY: `compiled` is set only after successful pcap_compile;
+            // the matching symbol's library is retained by the lifetime marker.
             unsafe {
                 (self.free_code)(&mut self.program);
             }
-            self.active = false;
+            self.compiled = false;
         }
     }
 }
 
-impl Drop for BpfProgramGuard {
+impl Drop for BpfProgramGuard<'_> {
     fn drop(&mut self) {
         self.release();
     }
@@ -289,6 +491,27 @@ pub struct EngineEventSink {
     reliable: Sender<EngineEvent>,
     debug: Option<Sender<EngineEvent>>,
     dropped_debug_packets: Arc<AtomicU64>,
+    delivery_gate: Option<Arc<EngineEventDeliveryGate>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineEventDeliveryState {
+    Pending,
+    Released,
+    Cancelled,
+}
+
+struct EngineEventDeliveryGate {
+    state: Mutex<EngineEventDeliveryState>,
+    ready: Condvar,
+}
+
+/// One-shot owner for a producer delivery barrier. The capture/replay producer
+/// may be started before an authoritative session transaction commits, but no
+/// event can cross the sink until this permit is explicitly released. Dropping
+/// the permit cancels delivery and wakes blocked producers fail-closed.
+pub struct EngineEventDeliveryPermit {
+    gate: Option<Arc<EngineEventDeliveryGate>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -308,6 +531,7 @@ impl EngineEventSink {
             reliable: sender,
             debug: None,
             dropped_debug_packets: Arc::new(AtomicU64::new(0)),
+            delivery_gate: None,
         }
     }
 
@@ -316,10 +540,25 @@ impl EngineEventSink {
             reliable,
             debug: Some(debug),
             dropped_debug_packets: Arc::new(AtomicU64::new(0)),
+            delivery_gate: None,
         }
     }
 
+    /// Returns a cloneable sink whose producers block before their first event
+    /// until the paired permit is released or cancelled.
+    pub fn pause_delivery(mut self) -> (Self, EngineEventDeliveryPermit) {
+        let gate = Arc::new(EngineEventDeliveryGate {
+            state: Mutex::new(EngineEventDeliveryState::Pending),
+            ready: Condvar::new(),
+        });
+        self.delivery_gate = Some(Arc::clone(&gate));
+        (self, EngineEventDeliveryPermit { gate: Some(gate) })
+    }
+
     pub fn send(&self, event: EngineEvent) -> Result<(), EngineEventSendError> {
+        if let Some(gate) = &self.delivery_gate {
+            gate.wait_until_ready()?;
+        }
         if !event.is_droppable_debug_packet() {
             return self.reliable.send(event).map_err(|_| EngineEventSendError);
         }
@@ -1035,6 +1274,31 @@ fn windows_system_directory() -> PathBuf {
         .join("System32")
 }
 
+struct NpcapLibraries {
+    // Fields drop in declaration order: unload wpcap before its Packet.dll
+    // dependency. Handles and compiled programs borrow `wpcap`, so Rust also
+    // prevents either library owner from being dropped before their guards.
+    wpcap: Library,
+    _packet: Library,
+}
+
+impl NpcapLibraries {
+    fn load() -> Result<Self, String> {
+        // SAFETY: The absolute System32/Npcap path selects the installed Npcap
+        // dependency; the returned owner remains live in this struct.
+        let packet =
+            unsafe { Library::new(packet_library_path()) }.map_err(|error| error.to_string())?;
+        // SAFETY: The absolute System32/Npcap path selects wpcap.dll. Packet.dll
+        // was loaded first and both owners are retained for the full API use.
+        let wpcap =
+            unsafe { Library::new(npcap_library_path()) }.map_err(|error| error.to_string())?;
+        Ok(Self {
+            wpcap,
+            _packet: packet,
+        })
+    }
+}
+
 unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, String> {
     // SAFETY: The requested names and signatures match the public libpcap API.
     unsafe {
@@ -1045,11 +1309,15 @@ unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, Stri
     }
 }
 
-fn c_string(value: *const c_char) -> String {
+/// # Safety
+///
+/// A non-null `value` must point to a readable NUL-terminated string for the
+/// duration of this call. Null is accepted and maps to an empty string.
+unsafe fn c_string(value: *const c_char) -> String {
     if value.is_null() {
         String::new()
     } else {
-        // SAFETY: libpcap returns null-terminated strings valid during this call.
+        // SAFETY: The caller guarantees a readable NUL-terminated buffer.
         unsafe { CStr::from_ptr(value).to_string_lossy().into_owned() }
     }
 }
@@ -1947,6 +2215,7 @@ const AMBIGUOUS_HIT_CONFIRMATION_WINDOW_SECONDS: f64 = 0.5;
 const DUPLICATE_FRAME_WINDOW_SECONDS: f64 = 0.001;
 /// Bounds memory for external captures containing many frames with one timestamp.
 const MAX_RECENT_CAPTURE_FRAMES: usize = 512;
+const FRAME_DEDUP_VERIFICATION_BYTE_BUDGET: usize = 256 * 1024;
 const FUWEN_START_SIGNATURE_SHIFT: u8 = 3;
 const FUWEN_START_SIGNATURE_OFFSET: usize = 22;
 const FUWEN_START_SIGNATURE: &[u8] = &[1, 0, 0, 0, 2, 0, 0, 0];
@@ -3028,8 +3297,15 @@ impl EmptyCurtainDecoder {
 }
 
 struct RecentCaptureFrame {
+    sequence: u64,
     timestamp: f64,
-    bytes: Vec<u8>,
+    fingerprint: u64,
+    frame_len: usize,
+}
+
+struct RecentCaptureFrameBytes {
+    sequence: u64,
+    bytes: Box<[u8]>,
 }
 
 #[derive(Clone, Copy)]
@@ -3046,18 +3322,40 @@ struct CapturedPacket<'a> {
 }
 
 /// Suppresses byte-for-byte duplicate capture frames reported back-to-back by
-/// the capture layer. Full-frame comparison keeps a genuine retransmission with
-/// different network headers distinct, even when its UDP payload is unchanged.
-#[derive(Default)]
+/// the capture layer. Fingerprint/length metadata covers the full 512-entry
+/// window, while exact comparison bodies have a separate byte budget. A hash
+/// match whose body was evicted is deliberately treated as fresh, so collision
+/// or memory pressure can cause only a safe false negative, never false dedup.
 struct FrameDedup {
     recent: VecDeque<RecentCaptureFrame>,
+    verification: VecDeque<RecentCaptureFrameBytes>,
+    retained_verification_bytes: usize,
+    verification_byte_budget: usize,
+    next_sequence: u64,
     last_timestamp: Option<f64>,
+    fingerprint_builder: RandomState,
+}
+
+impl Default for FrameDedup {
+    fn default() -> Self {
+        Self::with_verification_byte_budget(FRAME_DEDUP_VERIFICATION_BYTE_BUDGET)
+    }
 }
 
 impl FrameDedup {
     fn is_duplicate(&mut self, frame: &[u8], timestamp: Option<f64>) -> bool {
+        let fingerprint = self.fingerprint_builder.hash_one(frame);
+        self.is_duplicate_with_fingerprint(frame, timestamp, fingerprint)
+    }
+
+    fn is_duplicate_with_fingerprint(
+        &mut self,
+        frame: &[u8],
+        timestamp: Option<f64>,
+        fingerprint: u64,
+    ) -> bool {
         let Some(timestamp) = timestamp.filter(|timestamp| timestamp.is_finite()) else {
-            self.recent.clear();
+            self.clear_recent();
             self.last_timestamp = None;
             return false;
         };
@@ -3065,7 +3363,7 @@ impl FrameDedup {
             .last_timestamp
             .is_some_and(|previous| timestamp < previous)
         {
-            self.recent.clear();
+            self.clear_recent();
         }
         self.last_timestamp = Some(timestamp);
 
@@ -3073,19 +3371,96 @@ impl FrameDedup {
             if timestamp - entry.timestamp <= DUPLICATE_FRAME_WINDOW_SECONDS {
                 break;
             }
-            self.recent.pop_front();
+            self.pop_oldest_recent();
         }
-        if self.recent.iter().any(|entry| entry.bytes == frame) {
+        if self.recent.iter().any(|entry| {
+            entry.fingerprint == fingerprint
+                && entry.frame_len == frame.len()
+                && self
+                    .verification
+                    .iter()
+                    .find(|body| body.sequence == entry.sequence)
+                    .is_some_and(|body| body.bytes.as_ref() == frame)
+        }) {
             return true;
         }
         if self.recent.len() == MAX_RECENT_CAPTURE_FRAMES {
-            self.recent.pop_front();
+            self.pop_oldest_recent();
+        }
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.wrapping_add(1);
+        if self.next_sequence == 0 {
+            // Sequence identity is internal to this bounded cache. Clear on
+            // wrap rather than allowing an ancient verification body to alias.
+            self.clear_recent();
         }
         self.recent.push_back(RecentCaptureFrame {
+            sequence,
             timestamp,
-            bytes: frame.to_vec(),
+            fingerprint,
+            frame_len: frame.len(),
         });
+        self.retain_verification_body(sequence, frame);
         false
+    }
+
+    fn with_verification_byte_budget(verification_byte_budget: usize) -> Self {
+        Self {
+            recent: VecDeque::new(),
+            verification: VecDeque::new(),
+            retained_verification_bytes: 0,
+            verification_byte_budget,
+            next_sequence: 0,
+            last_timestamp: None,
+            fingerprint_builder: RandomState::new(),
+        }
+    }
+
+    fn retain_verification_body(&mut self, sequence: u64, frame: &[u8]) {
+        if frame.len() > self.verification_byte_budget {
+            return;
+        }
+        while frame.len() > self.verification_byte_budget - self.retained_verification_bytes {
+            let Some(expired) = self.verification.pop_front() else {
+                self.retained_verification_bytes = 0;
+                break;
+            };
+            self.retained_verification_bytes = self
+                .retained_verification_bytes
+                .saturating_sub(expired.bytes.len());
+        }
+        self.retained_verification_bytes += frame.len();
+        self.verification.push_back(RecentCaptureFrameBytes {
+            sequence,
+            bytes: frame.into(),
+        });
+    }
+
+    fn pop_oldest_recent(&mut self) {
+        let Some(expired) = self.recent.pop_front() else {
+            return;
+        };
+        if self
+            .verification
+            .front()
+            .is_some_and(|body| body.sequence == expired.sequence)
+            && let Some(body) = self.verification.pop_front()
+        {
+            self.retained_verification_bytes = self
+                .retained_verification_bytes
+                .saturating_sub(body.bytes.len());
+        }
+    }
+
+    fn clear_recent(&mut self) {
+        self.recent.clear();
+        self.verification.clear();
+        self.retained_verification_bytes = 0;
+    }
+
+    #[cfg(test)]
+    fn retained_verification_bytes(&self) -> usize {
+        self.retained_verification_bytes
     }
 }
 
@@ -4776,10 +5151,13 @@ pub fn start_capture(
             packet_emission,
         });
         thread_raw_capture.finish();
-        let _ = sender.send(EngineEvent::CaptureStopped);
         if let Err(error) = result {
             let _ = sender.send(EngineEvent::Error(error));
         }
+        // Lifecycle completion is the final reliable event. Consumers may
+        // safely join the producer after observing it without blocking on a
+        // later reliable send into the bounded queue.
+        let _ = sender.send(EngineEvent::CaptureStopped);
     });
     CaptureHandle {
         stop,
@@ -4814,7 +5192,7 @@ struct ParserRunConfig {
 /// Parser thread body: drains decoded frames off the bounded queue and runs the stable decode
 /// pipeline, fully decoupled from packet acquisition. It owns its own `PacketDecoder` and exits
 /// once the acquisition thread drops the frame sender, flushing any deferred ambiguous hits.
-fn run_parser(frames: Receiver<CaptureFrame>, config: ParserRunConfig) {
+fn run_parser(frames: CaptureFrameReceiver, config: ParserRunConfig) {
     let ParserRunConfig {
         link_type,
         local_ip,
@@ -4851,10 +5229,8 @@ fn run_parser(frames: Receiver<CaptureFrame>, config: ParserRunConfig) {
     decoder.emit_hits(pending_hits, &characters, &sender);
 }
 
-fn forward_capture_frame(sender: &Sender<CaptureFrame>, frame: CaptureFrame) -> Result<(), String> {
-    sender
-        .send(frame)
-        .map_err(|_| "capture parser thread stopped unexpectedly".to_owned())
+fn forward_capture_frame(sender: &CaptureFrameSender, frame: CaptureFrame) -> Result<(), String> {
+    sender.send(frame)
 }
 
 fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
@@ -4870,153 +5246,209 @@ fn run_capture(config: CaptureRunConfig<'_>) -> Result<(), String> {
         raw_capture,
         packet_emission,
     } = config;
-    // SAFETY: Function pointers are loaded from Npcap and used per the libpcap API.
-    unsafe {
-        let _packet_library =
-            Library::new(packet_library_path()).map_err(|error| error.to_string())?;
-        let library = Library::new(npcap_library_path()).map_err(|error| error.to_string())?;
-        let open_live: OpenLive = load_symbol(&library, b"pcap_open_live\0")?;
-        let next_ex: NextEx = load_symbol(&library, b"pcap_next_ex\0")?;
-        let close: Close = load_symbol(&library, b"pcap_close\0")?;
-        let compile: Compile = load_symbol(&library, b"pcap_compile\0")?;
-        let set_filter: SetFilter = load_symbol(&library, b"pcap_setfilter\0")?;
-        let free_code: FreeCode = load_symbol(&library, b"pcap_freecode\0")?;
-        let get_err: GetErr = load_symbol(&library, b"pcap_geterr\0")?;
-        let pcap_datalink: PcapDataLink = load_symbol(&library, b"pcap_datalink\0")?;
+    let libraries = NpcapLibraries::load()?;
+    let library = &libraries.wpcap;
+    // SAFETY: This exact export has the documented OpenLive signature.
+    let open_live: OpenLive = unsafe { load_symbol(library, b"pcap_open_live\0")? };
+    // SAFETY: This exact export has the documented NextEx signature.
+    let next_ex: NextEx = unsafe { load_symbol(library, b"pcap_next_ex\0")? };
+    // SAFETY: This exact export has the documented Close signature.
+    let close: Close = unsafe { load_symbol(library, b"pcap_close\0")? };
+    // SAFETY: This exact export has the documented Compile signature.
+    let compile: Compile = unsafe { load_symbol(library, b"pcap_compile\0")? };
+    // SAFETY: This exact export has the documented SetFilter signature.
+    let set_filter: SetFilter = unsafe { load_symbol(library, b"pcap_setfilter\0")? };
+    // SAFETY: This exact export has the documented FreeCode signature.
+    let free_code: FreeCode = unsafe { load_symbol(library, b"pcap_freecode\0")? };
+    // SAFETY: This exact export has the documented GetErr signature.
+    let get_err: GetErr = unsafe { load_symbol(library, b"pcap_geterr\0")? };
+    // SAFETY: This exact export has the documented PcapDataLink signature.
+    let pcap_datalink: PcapDataLink = unsafe { load_symbol(library, b"pcap_datalink\0")? };
 
-        let device_name = CString::new(device.name.as_str()).map_err(|error| error.to_string())?;
-        let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
-        let handle = open_live(
+    let device_name = CString::new(device.name.as_str()).map_err(|error| error.to_string())?;
+    let mut error_buffer = [0_i8; PCAP_ERRBUF_SIZE];
+    // SAFETY: All pointers reference live writable/readable buffers for the
+    // duration of this documented pcap_open_live call.
+    let raw_handle = unsafe {
+        open_live(
             device_name.as_ptr(),
-            65_535,
+            CAPTURE_SNAPLEN as c_int,
             1,
             100,
             error_buffer.as_mut_ptr(),
-        );
-        if handle.is_null() {
-            return Err(format!(
-                "failed to open device: {}",
-                c_string(error_buffer.as_ptr())
-            ));
-        }
-        let handle = PcapHandle::new(handle, close);
-        let link_type = CaptureLinkType::from_npcap_datalink(pcap_datalink(handle.as_ptr()))?;
-        raw_capture.initialize(device, link_type);
+        )
+    };
+    let Some(raw_handle) = NonNull::new(raw_handle) else {
+        // SAFETY: Npcap writes a NUL-terminated PCAP_ERRBUF_SIZE error buffer
+        // when pcap_open_live reports failure.
+        let error = unsafe { c_string(error_buffer.as_ptr()) };
+        return Err(format!("failed to open device: {error}"));
+    };
+    // SAFETY: The non-null pointer was just returned by this library's
+    // pcap_open_live and this guard becomes its sole close owner.
+    let handle = unsafe { PcapHandle::from_raw(raw_handle, close, library) };
+    // SAFETY: `handle` is live and owned, and the typed symbol's DLL is retained.
+    let data_link = unsafe { pcap_datalink(handle.as_ptr()) };
+    let link_type = CaptureLinkType::from_npcap_datalink(data_link)?;
+    raw_capture.initialize(device, link_type);
 
-        let capture_filter = CString::new(filter).map_err(|error| error.to_string())?;
-        let mut program = BpfProgramGuard::new(free_code);
-        if compile(
+    let capture_filter = CString::new(filter).map_err(|error| error.to_string())?;
+    let mut program = BpfProgramGuard::new(free_code, library);
+    // SAFETY: The handle and filter C string are live; `program` exposes its
+    // exact writable BpfProgram storage for initialization by pcap_compile.
+    let compile_result = unsafe {
+        compile(
             handle.as_ptr(),
-            program.as_mut(),
+            program.as_mut_ptr(),
             capture_filter.as_ptr(),
             1,
             u32::MAX,
-        ) != 0
-            || set_filter(handle.as_ptr(), program.as_mut()) != 0
-        {
-            let error = c_string(get_err(handle.as_ptr()));
-            return Err(format!("failed to set capture filter: {error}"));
-        }
-        program.release();
-        let raw_capture_status = raw_capture.path().map_or_else(
-            || "; raw capture unavailable".to_owned(),
-            |path| format!("; writing raw capture to {}", path.display()),
-        );
-        let _ = sender.send(EngineEvent::Status(format!(
-            "capturing: {} ({}, {}){}",
-            device.description,
-            local_ip
-                .map(|ip| ip.to_string())
-                .unwrap_or_else(|| "local IP not filtered".to_owned()),
-            link_type.label(),
-            raw_capture_status
-        )));
-
-        // The plugin monitor starts only after the capture link type has been frozen and the raw
-        // writer has emitted its matching interface block, so no custom block can precede it.
-        let monitor_stop = Arc::new(AtomicBool::new(false));
-        let monitor_thread = {
-            let stop = Arc::clone(&monitor_stop);
-            let raw_capture = raw_capture.clone();
-            let sender = sender.clone();
-            let capture_started_100ns = current_filetime_100ns();
-            thread::spawn(move || {
-                run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
-            })
-        };
-
-        // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
-        // the bounded parser queue, which applies backpressure rather than dropping live-only data.
-        let (frame_sender, frame_receiver) = bounded::<CaptureFrame>(CAPTURE_FRAME_QUEUE_CAPACITY);
-        let parser_thread = {
-            let resources = resources.clone();
-            let sender = sender.clone();
-            thread::spawn(move || {
-                run_parser(
-                    frame_receiver,
-                    ParserRunConfig {
-                        link_type,
-                        local_ip,
-                        include_incoming,
-                        use_server_damage_calibration,
-                        packet_emission,
-                        resources,
-                        sender,
-                    },
-                );
-            })
-        };
-
-        let mut loop_result = Ok(());
-        while !stop.load(Ordering::Relaxed) {
-            let mut header = ptr::null();
-            let mut packet_data = ptr::null();
-            let result = next_ex(handle.as_ptr(), &mut header, &mut packet_data);
-            if result == 0 {
-                continue;
-            }
-            if result < 0 {
-                let error = c_string(get_err(handle.as_ptr()));
-                loop_result = Err(format!("failed to read packet: {error}"));
-                break;
-            }
-            if header.is_null() || packet_data.is_null() {
-                continue;
-            }
-            let header_ref = &*header;
-            if header_ref.caplen == 0 {
-                continue;
-            }
-            let packet = std::slice::from_raw_parts(packet_data, header_ref.caplen as usize);
-            let timestamp =
-                header_ref.ts.tv_sec as f64 + header_ref.ts.tv_usec as f64 / 1_000_000.0;
-            let raw_timestamp = Duration::new(
-                header_ref.ts.tv_sec.max(0) as u64,
-                header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
-            );
-            raw_capture.push(raw_timestamp, header_ref.len, packet);
-            if let Err(error) = forward_capture_frame(
-                &frame_sender,
-                CaptureFrame {
-                    data: packet.to_vec(),
-                    timestamp,
-                },
-            ) {
-                loop_result = Err(error);
-                break;
-            }
-        }
-        drop(frame_sender);
-        monitor_stop.store(true, Ordering::Relaxed);
-        let monitor_panicked = monitor_thread.join().is_err();
-        if parser_thread.join().is_err() && loop_result.is_ok() {
-            loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
-        }
-        if monitor_panicked && loop_result.is_ok() {
-            loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
-        }
-        loop_result?;
+        )
+    };
+    if compile_result != 0 {
+        // SAFETY: The handle remains live and pcap_geterr returns a borrowed
+        // string valid until the next operation on this handle.
+        let error_ptr = unsafe { get_err(handle.as_ptr()) };
+        // SAFETY: The returned Npcap error pointer is NUL-terminated and is
+        // consumed before another operation can invalidate it.
+        let error = unsafe { c_string(error_ptr) };
+        return Err(format!("failed to set capture filter: {error}"));
     }
+    // SAFETY: A zero compile result initialized this exact program, making it
+    // eligible for pcap_freecode on every subsequent exit path.
+    unsafe { program.mark_compiled() };
+    // SAFETY: The handle is live and `program` was successfully compiled by the
+    // same loaded Npcap library.
+    let set_filter_result = unsafe { set_filter(handle.as_ptr(), program.as_mut_ptr()) };
+    if set_filter_result != 0 {
+        // SAFETY: The handle remains live and pcap_geterr returns a borrowed
+        // string valid until the next operation on this handle.
+        let error_ptr = unsafe { get_err(handle.as_ptr()) };
+        // SAFETY: The returned Npcap error pointer is NUL-terminated and is
+        // consumed before another operation can invalidate it.
+        let error = unsafe { c_string(error_ptr) };
+        return Err(format!("failed to set capture filter: {error}"));
+    }
+    program.release();
+    let raw_capture_status = raw_capture.path().map_or_else(
+        || "; raw capture unavailable".to_owned(),
+        |path| format!("; writing raw capture to {}", path.display()),
+    );
+    let _ = sender.send(EngineEvent::Status(format!(
+        "capturing: {} ({}, {}){}",
+        device.description,
+        local_ip
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "local IP not filtered".to_owned()),
+        link_type.label(),
+        raw_capture_status
+    )));
+
+    // The plugin monitor starts only after the capture link type has been frozen and the raw
+    // writer has emitted its matching interface block, so no custom block can precede it.
+    let monitor_stop = Arc::new(AtomicBool::new(false));
+    let monitor_thread = {
+        let stop = Arc::clone(&monitor_stop);
+        let raw_capture = raw_capture.clone();
+        let sender = sender.clone();
+        let capture_started_100ns = current_filetime_100ns();
+        thread::spawn(move || {
+            run_plugin_monitor(&stop, capture_started_100ns, &raw_capture, &sender);
+        })
+    };
+
+    // Decode on a dedicated thread. Acquisition writes every raw frame before forwarding it to
+    // the FIFO parser queue. Both the frame count and payload-byte high-water are reliable
+    // backpressure bounds: full blocks the acquisition producer, no frame is dropped, and a
+    // disconnected parser fails the capture session.
+    let (frame_sender, frame_receiver) = capture_frame_queue(
+        CAPTURE_FRAME_QUEUE_CAPACITY,
+        CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER,
+    );
+    let parser_thread = {
+        let resources = resources.clone();
+        let sender = sender.clone();
+        thread::spawn(move || {
+            run_parser(
+                frame_receiver,
+                ParserRunConfig {
+                    link_type,
+                    local_ip,
+                    include_incoming,
+                    use_server_damage_calibration,
+                    packet_emission,
+                    resources,
+                    sender,
+                },
+            );
+        })
+    };
+
+    let mut loop_result = Ok(());
+    while !stop.load(Ordering::Relaxed) {
+        let mut header = ptr::null();
+        let mut packet_data = ptr::null();
+        // SAFETY: The live handle and output-pointer storage meet pcap_next_ex's
+        // contract; returned packet pointers are consumed before the next call.
+        let result = unsafe { next_ex(handle.as_ptr(), &mut header, &mut packet_data) };
+        if result == 0 {
+            continue;
+        }
+        if result < 0 {
+            // SAFETY: The handle remains live and pcap_geterr returns a borrowed
+            // string valid until the next operation on this handle.
+            let error_ptr = unsafe { get_err(handle.as_ptr()) };
+            // SAFETY: The returned pointer is NUL-terminated and copied now.
+            let error = unsafe { c_string(error_ptr) };
+            loop_result = Err(format!("failed to read packet: {error}"));
+            break;
+        }
+        if header.is_null() || packet_data.is_null() {
+            continue;
+        }
+        // SAFETY: A positive pcap_next_ex result guarantees a readable header
+        // valid until the next call; null was rejected above.
+        let header_ref = unsafe { &*header };
+        if header_ref.caplen == 0 {
+            continue;
+        }
+        if header_ref.caplen > CAPTURE_SNAPLEN {
+            loop_result = Err(format!(
+                "Npcap frame length {} exceeds configured snaplen {CAPTURE_SNAPLEN}",
+                header_ref.caplen
+            ));
+            break;
+        }
+        // SAFETY: A positive pcap_next_ex result guarantees at least `caplen`
+        // readable bytes until the next call, and caplen is snaplen-bounded.
+        let packet = unsafe { std::slice::from_raw_parts(packet_data, header_ref.caplen as usize) };
+        let timestamp = header_ref.ts.tv_sec as f64 + header_ref.ts.tv_usec as f64 / 1_000_000.0;
+        let raw_timestamp = Duration::new(
+            header_ref.ts.tv_sec.max(0) as u64,
+            header_ref.ts.tv_usec.clamp(0, 999_999) as u32 * 1_000,
+        );
+        raw_capture.push(raw_timestamp, header_ref.len, packet);
+        if let Err(error) =
+            forward_capture_frame(&frame_sender, CaptureFrame::new(packet.to_vec(), timestamp))
+        {
+            loop_result = Err(error);
+            break;
+        }
+    }
+    let frame_queue_high_water = frame_sender.byte_high_water_mark();
+    drop(frame_sender);
+    monitor_stop.store(true, Ordering::Relaxed);
+    let monitor_panicked = monitor_thread.join().is_err();
+    if parser_thread.join().is_err() && loop_result.is_ok() {
+        loop_result = Err("capture parser thread stopped unexpectedly".to_owned());
+    }
+    if monitor_panicked && loop_result.is_ok() {
+        loop_result = Err("capture plugin monitor stopped unexpectedly".to_owned());
+    }
+    if frame_queue_high_water > CAPTURE_FRAME_QUEUE_BYTE_HIGH_WATER && loop_result.is_ok() {
+        loop_result = Err("capture parser queue exceeded its byte budget".to_owned());
+    }
+    loop_result?;
     Ok(())
 }
 
@@ -5028,9 +5460,11 @@ pub fn import_pcapng(
     use_server_damage_calibration: bool,
     sender: impl Into<EngineEventSink>,
     stop: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
+) -> std::io::Result<thread::JoinHandle<()>> {
     let sender = sender.into();
-    thread::spawn(move || {
+    thread::Builder::new()
+        .name("nte-pcapng-replay".to_owned())
+        .spawn(move || {
         let CaptureResources {
             characters,
             ability_catalog,
@@ -5145,7 +5579,6 @@ pub fn import_pcapng(
             Ok((packet_count, supported_count))
         })();
 
-        let _ = sender.send(EngineEvent::CaptureStopped);
         match result {
             Ok((packet_count, supported_count)) => {
                 let _ = sender.send(EngineEvent::Status(format!(
@@ -5156,6 +5589,7 @@ pub fn import_pcapng(
                 let _ = sender.send(EngineEvent::Error(format!("pcapng import failed: {error}")));
             }
         }
+        let _ = sender.send(EngineEvent::CaptureStopped);
     })
 }
 
@@ -5932,150 +6366,222 @@ pub fn import_capture_json(
     path: PathBuf,
     sender: impl Into<EngineEventSink>,
     stop: Arc<AtomicBool>,
-) -> thread::JoinHandle<()> {
+) -> std::io::Result<thread::JoinHandle<()>> {
     let sender = sender.into();
-    thread::spawn(move || {
-        let result = (|| -> Result<(usize, usize), String> {
-            let text = read_capture_json_import_with_limit(&path, MAX_CAPTURE_JSON_IMPORT_BYTES)
-                .map_err(|error| error.to_string())?;
-            let mut document = parse_capture_export(&text)?;
-            drop(text);
-            validate_capture_export_structure(&document).map_err(|error| error.to_string())?;
-            let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
-            let mut saved_time_stop_events = std::mem::take(&mut document.time_stop_events);
-            let mut saved_empty_curtain_characters =
-                std::mem::take(&mut document.empty_curtain_characters);
-            if saved_empty_curtain_characters.is_empty() {
-                saved_empty_curtain_characters = saved_empty_curtain
-                    .iter()
-                    .filter_map(|item| {
-                        Some(EmptyCurtainCharacter {
-                            net_id: item.character_net_id?,
-                            character_id: item.equipped_character_id?,
-                        })
-                    })
-                    .collect();
-                saved_empty_curtain_characters.sort_by_key(|character| {
-                    (
-                        character.character_id,
-                        character.net_id.solt,
-                        character.net_id.serial,
-                    )
-                });
-                saved_empty_curtain_characters.dedup();
-            }
-            let saved_empty_curtain_characters =
-                validate_empty_curtain_characters(saved_empty_curtain_characters)
-                    .ok_or_else(|| "invalid Console equipment snapshot".to_owned())?;
-            let equipment_catalog = match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
-                Some(path) => match load_equipment_catalog(&path) {
-                    Ok(catalog) => catalog,
-                    // stderr is invisible in the windows-subsystem GUI, so the load
-                    // failure detail must travel over the Warning channel instead.
-                    Err(error) if saved_empty_curtain.is_empty() => {
-                        let _ = sender.send(EngineEvent::Warning(format!(
-                            "Failed to load Console equipment data for JSON replay: {error:#}"
-                        )));
-                        EquipmentCatalog::default()
-                    }
-                    Err(error) => {
-                        let _ = sender.send(EngineEvent::Warning(format!(
-                            "Failed to load Console equipment data for JSON replay: {error:#}"
-                        )));
-                        // humanize_engine_error matches this exact string for the
-                        // localized message; keep the returned error stable.
-                        return Err("Console equipment data is unavailable".to_owned());
-                    }
-                },
-                None if saved_empty_curtain.is_empty() => EquipmentCatalog::default(),
-                None => return Err("Console equipment data is unavailable".to_owned()),
-            };
-            if !validate_empty_curtain_snapshot(&saved_empty_curtain, &equipment_catalog) {
-                return Err("invalid Console equipment snapshot".to_owned());
-            }
-            let mut empty_curtain = EmptyCurtainDecoder::new(equipment_catalog);
-            let hit_count = document.hits.len();
-            let mut packet_count = 0;
-            document
-                .packets
-                .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
-            document
-                .hits
-                .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
-            saved_time_stop_events.sort_by(|left, right| {
-                time_stop_event_timestamp(left).total_cmp(&time_stop_event_timestamp(right))
-            });
-            let mut packets = document.packets.into_iter().peekable();
-            let mut hits = document.hits.into_iter().peekable();
-            let mut time_stop_events = saved_time_stop_events.into_iter().peekable();
-
-            while packets.peek().is_some()
-                || hits.peek().is_some()
-                || time_stop_events.peek().is_some()
-            {
-                if stop.load(Ordering::Relaxed) {
-                    break;
-                }
-                let packet_timestamp = packets
-                    .peek()
-                    .map_or(f64::INFINITY, |packet| packet.timestamp_unix);
-                let hit_timestamp = hits.peek().map_or(f64::INFINITY, |hit| hit.timestamp_unix);
-                let time_stop_timestamp = time_stop_events
-                    .peek()
-                    .map_or(f64::INFINITY, time_stop_event_timestamp);
-                if time_stop_timestamp <= packet_timestamp && time_stop_timestamp <= hit_timestamp {
-                    let event = time_stop_events
-                        .next()
-                        .expect("peeked time-stop event must exist");
-                    sender
-                        .send(EngineEvent::TimeStop(event))
+    thread::Builder::new()
+        .name("nte-json-replay".to_owned())
+        .spawn(move || {
+            let result = (|| -> Result<(usize, usize), String> {
+                let text =
+                    read_capture_json_import_with_limit(&path, MAX_CAPTURE_JSON_IMPORT_BYTES)
                         .map_err(|error| error.to_string())?;
-                    continue;
+                let mut document = parse_capture_export(&text)?;
+                drop(text);
+                validate_capture_export_structure(&document).map_err(|error| error.to_string())?;
+                let saved_empty_curtain = std::mem::take(&mut document.empty_curtain);
+                let mut saved_time_stop_events = std::mem::take(&mut document.time_stop_events);
+                let mut saved_empty_curtain_characters =
+                    std::mem::take(&mut document.empty_curtain_characters);
+                if saved_empty_curtain_characters.is_empty() {
+                    saved_empty_curtain_characters = saved_empty_curtain
+                        .iter()
+                        .filter_map(|item| {
+                            Some(EmptyCurtainCharacter {
+                                net_id: item.character_net_id?,
+                                character_id: item.equipped_character_id?,
+                            })
+                        })
+                        .collect();
+                    saved_empty_curtain_characters.sort_by_key(|character| {
+                        (
+                            character.character_id,
+                            character.net_id.solt,
+                            character.net_id.serial,
+                        )
+                    });
+                    saved_empty_curtain_characters.dedup();
                 }
-                let take_packet = match (packets.peek(), hits.peek()) {
-                    (Some(packet), Some(hit)) => packet.timestamp_unix <= hit.timestamp_unix,
-                    (Some(_), None) => true,
-                    (None, Some(_)) => false,
-                    (None, None) => break,
+                let saved_empty_curtain_characters =
+                    validate_empty_curtain_characters(saved_empty_curtain_characters)
+                        .ok_or_else(|| "invalid Console equipment snapshot".to_owned())?;
+                let equipment_catalog = match find_data_file(Path::new(EQUIPMENT_CATALOG_PATH)) {
+                    Some(path) => match load_equipment_catalog(&path) {
+                        Ok(catalog) => catalog,
+                        // stderr is invisible in the windows-subsystem GUI, so the load
+                        // failure detail must travel over the Warning channel instead.
+                        Err(error) if saved_empty_curtain.is_empty() => {
+                            let _ = sender.send(EngineEvent::Warning(format!(
+                                "Failed to load Console equipment data for JSON replay: {error:#}"
+                            )));
+                            EquipmentCatalog::default()
+                        }
+                        Err(error) => {
+                            let _ = sender.send(EngineEvent::Warning(format!(
+                                "Failed to load Console equipment data for JSON replay: {error:#}"
+                            )));
+                            // humanize_engine_error matches this exact string for the
+                            // localized message; keep the returned error stable.
+                            return Err("Console equipment data is unavailable".to_owned());
+                        }
+                    },
+                    None if saved_empty_curtain.is_empty() => EquipmentCatalog::default(),
+                    None => return Err("Console equipment data is unavailable".to_owned()),
                 };
-                if take_packet {
-                    let packet = packets.next().expect("peeked packet must exist");
-                    if send_export_packet(packet, &sender, &mut empty_curtain)? {
-                        packet_count += 1;
+                if !validate_empty_curtain_snapshot(&saved_empty_curtain, &equipment_catalog) {
+                    return Err("invalid Console equipment snapshot".to_owned());
+                }
+                let mut empty_curtain = EmptyCurtainDecoder::new(equipment_catalog);
+                let hit_count = document.hits.len();
+                let mut packet_count = 0;
+                document
+                    .packets
+                    .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
+                document
+                    .hits
+                    .sort_by(|left, right| left.timestamp_unix.total_cmp(&right.timestamp_unix));
+                saved_time_stop_events.sort_by(|left, right| {
+                    time_stop_event_timestamp(left).total_cmp(&time_stop_event_timestamp(right))
+                });
+                let mut packets = document.packets.into_iter().peekable();
+                let mut hits = document.hits.into_iter().peekable();
+                let mut time_stop_events = saved_time_stop_events.into_iter().peekable();
+
+                while packets.peek().is_some()
+                    || hits.peek().is_some()
+                    || time_stop_events.peek().is_some()
+                {
+                    if stop.load(Ordering::Relaxed) {
+                        break;
                     }
-                } else {
-                    let hit = hits.next().expect("peeked hit must exist");
-                    let event = export_hit_event(hit);
-                    sender.send(event).map_err(|error| error.to_string())?;
+                    let packet_timestamp = packets
+                        .peek()
+                        .map_or(f64::INFINITY, |packet| packet.timestamp_unix);
+                    let hit_timestamp = hits.peek().map_or(f64::INFINITY, |hit| hit.timestamp_unix);
+                    let time_stop_timestamp = time_stop_events
+                        .peek()
+                        .map_or(f64::INFINITY, time_stop_event_timestamp);
+                    if time_stop_timestamp <= packet_timestamp
+                        && time_stop_timestamp <= hit_timestamp
+                    {
+                        let Some(event) = time_stop_events.next() else {
+                            return Err(
+                                "capture replay time-stop ordering became invalid".to_owned()
+                            );
+                        };
+                        sender
+                            .send(EngineEvent::TimeStop(event))
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let take_packet = match (packets.peek(), hits.peek()) {
+                        (Some(packet), Some(hit)) => packet.timestamp_unix <= hit.timestamp_unix,
+                        (Some(_), None) => true,
+                        (None, Some(_)) => false,
+                        (None, None) => break,
+                    };
+                    if take_packet {
+                        let Some(packet) = packets.next() else {
+                            return Err("capture replay packet ordering became invalid".to_owned());
+                        };
+                        if send_export_packet(packet, &sender, &mut empty_curtain)? {
+                            packet_count += 1;
+                        }
+                    } else {
+                        let Some(hit) = hits.next() else {
+                            return Err("capture replay hit ordering became invalid".to_owned());
+                        };
+                        let event = export_hit_event(hit);
+                        sender.send(event).map_err(|error| error.to_string())?;
+                    }
+                }
+                if !stop.load(Ordering::Relaxed) && !saved_empty_curtain_characters.is_empty() {
+                    sender
+                        .send(EngineEvent::EmptyCurtainCharacters(
+                            saved_empty_curtain_characters,
+                        ))
+                        .map_err(|error| error.to_string())?;
+                }
+                if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
+                    sender
+                        .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok((hit_count, packet_count))
+            })();
+
+            match result {
+                Ok((hit_count, packet_count)) => {
+                    let _ = sender.send(EngineEvent::Status(format!(
+                        "JSON import complete: {packet_count} packets, {hit_count} hits"
+                    )));
+                }
+                Err(error) => {
+                    let _ = sender.send(EngineEvent::Error(format!("JSON import failed: {error}")));
                 }
             }
-            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain_characters.is_empty() {
-                sender
-                    .send(EngineEvent::EmptyCurtainCharacters(
-                        saved_empty_curtain_characters,
-                    ))
-                    .map_err(|error| error.to_string())?;
-            }
-            if !stop.load(Ordering::Relaxed) && !saved_empty_curtain.is_empty() {
-                sender
-                    .send(EngineEvent::EmptyCurtain(saved_empty_curtain))
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok((hit_count, packet_count))
-        })();
+            let _ = sender.send(EngineEvent::CaptureStopped);
+        })
+}
 
-        let _ = sender.send(EngineEvent::CaptureStopped);
-        match result {
-            Ok((hit_count, packet_count)) => {
-                let _ = sender.send(EngineEvent::Status(format!(
-                    "JSON import complete: {packet_count} packets, {hit_count} hits"
-                )));
+impl EngineEventDeliveryGate {
+    fn wait_until_ready(&self) -> Result<(), EngineEventSendError> {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(mut error) => {
+                **error.get_mut() = EngineEventDeliveryState::Cancelled;
+                self.state.clear_poison();
+                self.ready.notify_all();
+                return Err(EngineEventSendError);
             }
-            Err(error) => {
-                let _ = sender.send(EngineEvent::Error(format!("JSON import failed: {error}")));
+        };
+        while *state == EngineEventDeliveryState::Pending {
+            state = match self.ready.wait(state) {
+                Ok(state) => state,
+                Err(mut error) => {
+                    **error.get_mut() = EngineEventDeliveryState::Cancelled;
+                    self.state.clear_poison();
+                    self.ready.notify_all();
+                    return Err(EngineEventSendError);
+                }
+            };
+        }
+        match *state {
+            EngineEventDeliveryState::Released => Ok(()),
+            EngineEventDeliveryState::Cancelled | EngineEventDeliveryState::Pending => {
+                Err(EngineEventSendError)
             }
         }
-    })
+    }
+}
+
+impl EngineEventDeliveryPermit {
+    pub fn release(mut self) {
+        self.finish(EngineEventDeliveryState::Released);
+    }
+
+    pub fn cancel(mut self) {
+        self.finish(EngineEventDeliveryState::Cancelled);
+    }
+
+    fn finish(&mut self, next: EngineEventDeliveryState) {
+        let Some(gate) = self.gate.take() else {
+            return;
+        };
+        match gate.state.lock() {
+            Ok(mut state) => *state = next,
+            Err(mut error) => {
+                **error.get_mut() = EngineEventDeliveryState::Cancelled;
+                gate.state.clear_poison();
+            }
+        }
+        gate.ready.notify_all();
+    }
+}
+
+impl Drop for EngineEventDeliveryPermit {
+    fn drop(&mut self) {
+        self.finish(EngineEventDeliveryState::Cancelled);
+    }
 }
 
 fn validate_empty_curtain_characters(
@@ -6283,6 +6789,33 @@ mod tests {
     };
 
     #[test]
+    fn staged_event_sink_releases_delivery_only_after_commit() {
+        let (sender, receiver) = bounded(1);
+        let (sink, permit) = EngineEventSink::reliable(sender).pause_delivery();
+        let producer = thread::spawn(move || sink.send(EngineEvent::CaptureStopped));
+
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+        permit.release();
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_secs(1)),
+            Ok(EngineEvent::CaptureStopped)
+        ));
+        assert!(producer.join().expect("producer should finish").is_ok());
+    }
+
+    #[test]
+    fn cancelled_staged_event_sink_wakes_the_blocked_producer() {
+        let (sender, receiver) = bounded(1);
+        let (sink, permit) = EngineEventSink::reliable(sender).pause_delivery();
+        let producer = thread::spawn(move || sink.send(EngineEvent::CaptureStopped));
+
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+        permit.cancel();
+        assert!(producer.join().expect("producer should finish").is_err());
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
     fn bounded_utf8_reader_rejects_growth_past_checked_size() {
         let limit = 8_u64;
         let reader = std::io::Cursor::new(b"123456789".to_vec());
@@ -6467,26 +7000,12 @@ mod tests {
 
     #[test]
     fn capture_frame_queue_applies_backpressure_without_dropping_frames() {
-        let (sender, receiver) = bounded(1);
-        forward_capture_frame(
-            &sender,
-            CaptureFrame {
-                data: vec![1],
-                timestamp: 1.0,
-            },
-        )
-        .unwrap();
+        let (sender, receiver) = capture_frame_queue(1, 2);
+        forward_capture_frame(&sender, CaptureFrame::new(vec![1], 1.0)).unwrap();
         let (completed_sender, completed_receiver) = bounded(1);
         let blocked_sender = sender.clone();
         let blocked = thread::spawn(move || {
-            forward_capture_frame(
-                &blocked_sender,
-                CaptureFrame {
-                    data: vec![2],
-                    timestamp: 2.0,
-                },
-            )
-            .unwrap();
+            forward_capture_frame(&blocked_sender, CaptureFrame::new(vec![2], 2.0)).unwrap();
             completed_sender.send(()).unwrap();
         });
 
@@ -6501,6 +7020,85 @@ mod tests {
             .unwrap();
         assert_eq!(receiver.recv().unwrap().timestamp, 2.0);
         blocked.join().unwrap();
+    }
+
+    #[test]
+    fn capture_frame_queue_applies_byte_high_water_to_in_flight_frames() {
+        let (sender, receiver) = capture_frame_queue(4, 5);
+        forward_capture_frame(&sender, CaptureFrame::new(vec![1; 3], 1.0)).unwrap();
+        forward_capture_frame(&sender, CaptureFrame::new(vec![2; 2], 2.0)).unwrap();
+        assert_eq!(sender.byte_high_water_mark(), 5);
+
+        let (completed_sender, completed_receiver) = bounded(1);
+        let blocked_sender = sender.clone();
+        let blocked = thread::spawn(move || {
+            let result = forward_capture_frame(&blocked_sender, CaptureFrame::new(vec![3], 3.0));
+            completed_sender.send(result).unwrap();
+        });
+
+        let first = receiver.recv().unwrap();
+        assert_eq!(first.timestamp, 1.0);
+        assert!(
+            completed_receiver
+                .recv_timeout(Duration::from_millis(20))
+                .is_err(),
+            "a frame being parsed must still count against the byte budget"
+        );
+        drop(first);
+        completed_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(receiver.recv().unwrap().timestamp, 2.0);
+        assert_eq!(receiver.recv().unwrap().timestamp, 3.0);
+        assert_eq!(sender.byte_high_water_mark(), 5);
+        blocked.join().unwrap();
+    }
+
+    #[test]
+    fn capture_frame_queue_rejects_oversize_and_wakes_on_disconnect() {
+        let (sender, receiver) = capture_frame_queue(2, 2);
+        let oversize =
+            forward_capture_frame(&sender, CaptureFrame::new(vec![0; 3], 1.0)).unwrap_err();
+        assert!(oversize.contains("exceeds parser queue byte budget"));
+
+        forward_capture_frame(&sender, CaptureFrame::new(vec![1; 2], 2.0)).unwrap();
+        let (completed_sender, completed_receiver) = bounded(1);
+        let blocked_sender = sender.clone();
+        let blocked = thread::spawn(move || {
+            completed_sender
+                .send(forward_capture_frame(
+                    &blocked_sender,
+                    CaptureFrame::new(vec![2], 3.0),
+                ))
+                .unwrap();
+        });
+        drop(receiver);
+        let error = completed_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("capture parser thread stopped unexpectedly"));
+        blocked.join().unwrap();
+    }
+
+    #[test]
+    fn run_capture_keeps_each_ffi_unsafe_boundary_local() {
+        let source = include_str!("capture.rs");
+        let run_capture = source
+            .split_once("fn run_capture(")
+            .and_then(|(_, tail)| tail.split_once("\npub fn import_pcapng("))
+            .map(|(body, _)| body)
+            .expect("run_capture source should remain discoverable");
+
+        assert!(
+            !run_capture.lines().any(|line| line.trim() == "unsafe {"),
+            "run_capture must not wrap control flow and queue lifecycle in one broad unsafe block"
+        );
+        assert!(
+            run_capture.matches("// SAFETY:").count() >= run_capture.matches("unsafe {").count(),
+            "every local FFI unsafe block must carry its own SAFETY rationale"
+        );
     }
 
     #[test]
@@ -6599,7 +7197,8 @@ mod tests {
             true,
             sender,
             Arc::new(AtomicBool::new(false)),
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
         std::fs::remove_file(path).expect("pcapng fixture should be removable");
 
@@ -8772,7 +9371,8 @@ mod tests {
             false,
             EngineEventSink::reliable(sender),
             Arc::new(AtomicBool::new(false)),
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let events = receiver.try_iter().collect::<Vec<_>>();
@@ -9759,6 +10359,43 @@ mod tests {
         }
 
         assert_eq!(dedup.recent.len(), MAX_RECENT_CAPTURE_FRAMES);
+    }
+
+    #[test]
+    fn frame_dedup_hash_collision_never_drops_a_distinct_frame() {
+        let mut dedup = FrameDedup::default();
+        let forced_fingerprint = 7;
+
+        assert!(!dedup.is_duplicate_with_fingerprint(
+            b"first frame",
+            Some(10.0),
+            forced_fingerprint,
+        ));
+        assert!(!dedup.is_duplicate_with_fingerprint(
+            b"other frame",
+            Some(10.000_01),
+            forced_fingerprint,
+        ));
+        assert!(dedup.is_duplicate_with_fingerprint(
+            b"first frame",
+            Some(10.000_02),
+            forced_fingerprint,
+        ));
+    }
+
+    #[test]
+    fn frame_dedup_bounds_collision_verification_bytes() {
+        let mut dedup = FrameDedup::with_verification_byte_budget(8);
+
+        assert!(!dedup.is_duplicate_with_fingerprint(b"123456", Some(10.0), 1));
+        assert!(!dedup.is_duplicate_with_fingerprint(b"abcdef", Some(10.000_01), 2,));
+        assert!(dedup.retained_verification_bytes() <= 8);
+        assert_eq!(dedup.recent.len(), 2);
+        assert!(
+            !dedup.is_duplicate_with_fingerprint(b"123456", Some(10.000_02), 1),
+            "an evicted verification body must cause a safe false negative, not hash-only dedup"
+        );
+        assert!(dedup.retained_verification_bytes() <= 8);
     }
 
     #[test]
@@ -11249,7 +11886,8 @@ mod tests {
             false,
             sink,
             Arc::new(AtomicBool::new(false)),
-        );
+        )
+        .expect("pcapng import thread should spawn");
 
         let mut semantic_events = 0;
         let mut debug_packets = 0;
@@ -11398,7 +12036,8 @@ mod tests {
             true,
             sender,
             stop,
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let mut state = CombatState::default();
@@ -11536,7 +12175,8 @@ mod tests {
             true,
             sender,
             stop,
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let mut latest = Vec::new();
@@ -11607,7 +12247,8 @@ mod tests {
             true,
             sender,
             stop,
-        );
+        )
+        .expect("pcapng import thread should spawn");
         handle.join().expect("pcapng import thread should finish");
 
         let mut shinku_hits = Vec::new();
@@ -11767,7 +12408,8 @@ mod tests {
         let (sender, receiver) = unbounded();
         let sender = EngineEventSink::reliable(sender);
         let stop = Arc::new(AtomicBool::new(false));
-        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop);
+        let handle = import_capture_json(PathBuf::from(path.clone()), sender, stop)
+            .expect("JSON import thread should spawn");
         handle.join().expect("json import thread should finish");
 
         // `import_capture_json` drops packets through `should_keep_debug_packet`,

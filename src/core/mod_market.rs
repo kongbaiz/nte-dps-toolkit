@@ -15,6 +15,7 @@ pub const MOD_MARKET_CATALOG_URL: &str = "https://dps.o-na-ni.com/mods/v1/catalo
 pub const MOD_MARKET_PACKAGE_URL_PREFIX: &str = "https://dps.o-na-ni.com/mods/v1/packages/";
 pub const MAX_MOD_MARKET_CATALOG_BYTES: usize = 128 * 1024;
 pub const MAX_MOD_MARKET_ITEMS: usize = 64;
+pub const MAX_MOD_MARKET_VERSION_BYTES: usize = 128;
 const MOD_MARKET_KEY_ID: &str = "official-2026-07";
 const MOD_MARKET_PUBLIC_KEY: [u8; 32] = [
     0xb6, 0x6d, 0x57, 0xe5, 0x5f, 0x79, 0x1a, 0x3e, 0x5d, 0xbd, 0x20, 0x40, 0x6f, 0x15, 0x0c, 0xd1,
@@ -186,8 +187,7 @@ pub fn parse_mod_market_catalog(bytes: &[u8]) -> Result<ModMarketCatalog, ModMar
                 return Err(invalid_catalog("catalog contains duplicate bindings"));
             }
         }
-        let version = Version::parse(&item.version)
-            .map_err(|_| invalid_catalog("catalog contains an invalid version"))?;
+        let version = parse_catalog_version(&item.version)?;
         let localizations = ModMarketLocalizations {
             english: validate_localized_text(item.localizations.en)?,
             simplified_chinese: validate_localized_text(item.localizations.zh_cn)?,
@@ -360,6 +360,13 @@ fn validate_identifier(value: &str, maximum: usize) -> Result<(), ModMarketError
     Ok(())
 }
 
+fn parse_catalog_version(value: &str) -> Result<Version, ModMarketError> {
+    if value.is_empty() || value.len() > MAX_MOD_MARKET_VERSION_BYTES {
+        return Err(invalid_catalog("catalog contains an invalid version"));
+    }
+    Version::parse(value).map_err(|_| invalid_catalog("catalog contains an invalid version"))
+}
+
 fn invalid_catalog(detail: &'static str) -> ModMarketError {
     ModMarketError::new(ModMarketErrorCode::InvalidCatalog, detail)
 }
@@ -367,6 +374,27 @@ fn invalid_catalog(detail: &'static str) -> ModMarketError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Deserialize)]
+    struct SemverConformanceVector {
+        value: String,
+        valid: bool,
+    }
+
+    #[test]
+    fn catalog_semver_matches_shared_contract_conformance() {
+        let vectors: Vec<SemverConformanceVector> =
+            serde_json::from_str(include_str!("../../res/contract-semver-conformance.json"))
+                .unwrap();
+        for vector in vectors {
+            assert_eq!(
+                parse_catalog_version(&vector.value).is_ok(),
+                vector.valid,
+                "{}",
+                vector.value
+            );
+        }
+    }
 
     #[test]
     fn package_verification_checks_hash_and_local_source_policy() {

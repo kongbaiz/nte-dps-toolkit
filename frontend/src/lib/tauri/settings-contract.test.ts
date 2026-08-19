@@ -44,6 +44,7 @@ function settingsFixture(): Record<string, unknown> {
     },
     capture: {
       bpfFilter: "udp",
+      devicesAvailable: true,
       devices: [{ id: "device", label: "Ethernet · 192.0.2.1" }],
       manualCaptureDevice: null,
       serverDamageCalibration: false,
@@ -88,7 +89,11 @@ function settingsFixture(): Record<string, unknown> {
       ],
     },
     captureFiles: { count: 0, totalBytes: "0", formattedSize: "0 B" },
-    teamData: { upperImported: false, lowerImported: false },
+    teamData: {
+      available: true,
+      upperImported: false,
+      lowerImported: false,
+    },
     alwaysOnTop: true,
     hudWidthMin: 280,
     hudWidthMax: 3840,
@@ -117,7 +122,23 @@ describe("settings contract", () => {
     expect(snapshot.hud.moduleOrder).toEqual(HUD_MODULE_IDS);
     expect(snapshot.hud.showTeamDps).toBe(true);
     expect(snapshot.capture.bpfFilter).toBe("udp");
+    expect(snapshot.capture.devicesAvailable).toBe(true);
+    expect(snapshot.teamData.available).toBe(true);
     expect(snapshot.hotkeys.bindings).toHaveLength(3);
+  });
+
+  it("requires explicit availability instead of treating failures as empty state", () => {
+    const missingDevices = settingsFixture();
+    delete (missingDevices.capture as Record<string, unknown>).devicesAvailable;
+    expect(() => parseSettingsSnapshot(missingDevices)).toThrow(
+      /settings.capture.devicesAvailable must be a boolean/,
+    );
+
+    const missingTeams = settingsFixture();
+    delete (missingTeams.teamData as Record<string, unknown>).available;
+    expect(() => parseSettingsSnapshot(missingTeams)).toThrow(
+      /settings.teamData.available must be a boolean/,
+    );
   });
 
   it("parses native team data import results without a local path", () => {

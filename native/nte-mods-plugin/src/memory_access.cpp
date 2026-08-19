@@ -95,6 +95,20 @@ namespace nte::mods::memory
 			protection == PAGE_EXECUTE_WRITECOPY;
 	}
 
+	bool IsImageRange(const void* address, size_t size)
+	{
+		if (!IsReadableRange(address, size))
+			return false;
+		MEMORY_BASIC_INFORMATION memory{};
+		return VirtualQuery(address, &memory, sizeof(memory)) == sizeof(memory) &&
+			memory.Type == MEM_IMAGE;
+	}
+
+	bool IsImageExecutableAddress(const void* address)
+	{
+		return IsImageRange(address, 1) && IsExecutableAddress(address);
+	}
+
 	bool ReadBytes(
 		const void* base,
 		size_t offset,

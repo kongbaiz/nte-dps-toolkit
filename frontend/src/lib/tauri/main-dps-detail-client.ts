@@ -1,4 +1,4 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import {
@@ -7,6 +7,10 @@ import {
   type MainDpsDetailColumns,
   type MainDpsDetailSnapshot,
 } from "@/lib/tauri/main-dps-detail-contract";
+import {
+  subscribeAckedStream,
+  tauriAckedStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const DETAIL_CHANGED_EVENT = "main-dps-detail-requested";
 
@@ -51,34 +55,18 @@ export const mainDpsDetailClient = {
     onError: (error: unknown) => void,
   ): () => void {
     const subscriptionId = crypto.randomUUID();
-    let closed = false;
-    const channel = new Channel<unknown>();
-    channel.onmessage = (message) => {
-      if (closed) return;
-      try {
-        onSnapshot(parseMainDpsDetailSnapshot(message));
-      } catch (error) {
-        onError(error);
-      }
-    };
-    const receipt = invoke("subscribe_main_dps_detail", {
+    const close = subscribeAckedStream({
+      transport: tauriAckedStreamTransport,
+      streamKind: "mainDpsDetail",
       subscriptionId,
-      onEvent: channel,
-    })
-      .then(() => subscriptionId)
-      .catch((error: unknown) => {
-        if (!closed) onError(error);
-        return undefined;
-      });
+      subscribeCommand: "subscribe_main_dps_detail",
+      unsubscribeCommand: "unsubscribe_main_dps_detail",
+      parseEvent: parseMainDpsDetailSnapshot,
+      onEvent: onSnapshot,
+      onError,
+    });
     return () => {
-      if (closed) return;
-      closed = true;
-      void receipt.then((activeId) => {
-        if (activeId === undefined) return;
-        void invoke("unsubscribe_main_dps_detail", {
-          subscriptionId: activeId,
-        }).catch((error: unknown) => onError(error));
-      });
+      void close().catch(onError);
     };
   },
 };

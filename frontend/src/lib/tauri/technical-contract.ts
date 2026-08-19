@@ -1,3 +1,8 @@
+import {
+  parseStreamSubscriptionReceipt,
+  type StreamSubscriptionReceipt,
+} from "@/lib/tauri/stream-contract";
+
 export { HUD_WINDOW_LABEL } from "@/lib/tauri/window-labels";
 export const TECHNICAL_CONTRACT_VERSION = 5;
 export const HUD_SNAPSHOT_VERSION = 3;
@@ -109,10 +114,7 @@ export interface TechnicalSnapshot {
   hud: HudSnapshot;
 }
 
-export interface SubscriptionReceipt {
-  subscriptionId: string;
-  streamIntervalMs: number;
-}
+export type SubscriptionReceipt = StreamSubscriptionReceipt;
 
 export interface TechnicalCommandError {
   code: string;
@@ -387,12 +389,13 @@ export function parseTechnicalEvent(value: unknown): TechnicalEvent {
 }
 
 export function parseSubscriptionReceipt(value: unknown): SubscriptionReceipt {
-  const receipt = record(value, "subscription receipt");
-
-  return {
-    subscriptionId: string(receipt.subscriptionId, "subscriptionId"),
-    streamIntervalMs: integer(receipt.streamIntervalMs, "streamIntervalMs"),
-  };
+  try {
+    return parseStreamSubscriptionReceipt(value);
+  } catch (error) {
+    throw new TechnicalContractError(
+      error instanceof Error ? error.message : "Invalid subscription receipt",
+    );
+  }
 }
 
 export function parseTechnicalCommandError(

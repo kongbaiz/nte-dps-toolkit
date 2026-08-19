@@ -3,8 +3,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { DesktopTitlebar } from "@/components/nte/desktop-titlebar";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverPopup,
+  PopoverPortal,
+  PopoverPositioner,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
-import { useDismissibleLayer } from "@/hooks/use-dismissible-layer";
 import { cleanupAsyncRegistration } from "@/lib/async-cleanup";
 import {
   currentFrontendLanguage,
@@ -26,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { monsterImageUrl } from "@/features/abyss-values/abyss-values-model";
 
 import { formatDuration, formatMainMetric } from "./main-dps-model";
+import { createDamageImageLookup } from "./damage-image-lookup";
 import {
   DEFAULT_DETAIL_COLUMNS,
   DETAIL_ROW_HEIGHT,
@@ -47,18 +55,18 @@ export function MainDpsDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [columnsOpen, setColumnsOpen] = useState(false);
-  const columnsButtonRef = useRef<HTMLButtonElement>(null);
-  const columnsMenuRef = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState<MainDpsDetailColumns>(
     DEFAULT_DETAIL_COLUMNS,
   );
   const loadingMoreRef = useRef(false);
-  useDismissibleLayer({
-    open: columnsOpen,
-    layerRef: columnsMenuRef,
-    triggerRef: columnsButtonRef,
-    onDismiss: () => setColumnsOpen(false),
-  });
+
+  useEffect(() => {
+    if (!columnsOpen) return;
+    const closeColumnsOnWindowBlur = () => setColumnsOpen(false);
+    window.addEventListener("blur", closeColumnsOnWindowBlur);
+    return () => window.removeEventListener("blur", closeColumnsOnWindowBlur);
+  }, [columnsOpen]);
+
   const acceptSnapshot = useCallback((next: MainDpsDetailSnapshot) => {
     setSnapshot(next);
     setColumns(next.columns);
@@ -291,66 +299,72 @@ export function MainDpsDetailPage() {
           <section className="flex min-h-0 flex-1 flex-col border-t pt-2">
             <div className="relative mb-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>{t("Drag column dividers to resize")}</span>
-              <Button
-                ref={columnsButtonRef}
-                size="sm"
-                variant="outline"
-                aria-expanded={columnsOpen}
-                aria-haspopup="menu"
-                onClick={() => setColumnsOpen((value) => !value)}
-              >
-                <SlidersHorizontal />
-                {t("Column settings")}
-              </Button>
-              {columnsOpen && (
-                <div
-                  ref={columnsMenuRef}
-                  role="menu"
-                  className="absolute right-0 top-9 z-20 grid min-w-44 gap-2 rounded-xl border bg-popover p-3 shadow-lg"
-                >
-                  {(
-                    ["time", "character", "type", "damage", "target"] as const
-                  ).map((column) => (
-                    <label
-                      key={column}
-                      className={cn(
-                        "flex items-center gap-2 text-sm",
-                        snapshot.kind === "character" &&
-                          column === "character" &&
-                          "hidden",
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={detailColumnVisible(columns, column)}
-                        disabled={
-                          detailColumnVisible(columns, column) &&
-                          detailColumnsFor(snapshot, columns).length === 1
+              <Popover open={columnsOpen} onOpenChange={setColumnsOpen}>
+                <PopoverTrigger
+                  render={
+                    <Button size="sm" variant="outline">
+                      <SlidersHorizontal />
+                      {t("Column settings")}
+                    </Button>
+                  }
+                />
+                <PopoverPortal>
+                  <PopoverPositioner align="end" side="bottom">
+                    <PopoverPopup className="grid min-w-44 gap-2 p-3">
+                      <PopoverTitle className="sr-only">
+                        {t("Column settings")}
+                      </PopoverTitle>
+                      {(
+                        [
+                          "time",
+                          "character",
+                          "type",
+                          "damage",
+                          "target",
+                        ] as const
+                      ).map((column) => (
+                        <label
+                          key={column}
+                          className={cn(
+                            "flex items-center gap-2 text-sm",
+                            snapshot.kind === "character" &&
+                              column === "character" &&
+                              "hidden",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={detailColumnVisible(columns, column)}
+                            disabled={
+                              detailColumnVisible(columns, column) &&
+                              detailColumnsFor(snapshot, columns).length === 1
+                            }
+                            onChange={(event) =>
+                              persistColumns(
+                                setDetailColumnVisible(
+                                  columns,
+                                  column,
+                                  event.target.checked,
+                                ),
+                              )
+                            }
+                          />
+                          {columnLabel(column)}
+                        </label>
+                      ))}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          persistColumns(resetDetailColumnWidths(columns))
                         }
-                        onChange={(event) =>
-                          persistColumns(
-                            setDetailColumnVisible(
-                              columns,
-                              column,
-                              event.target.checked,
-                            ),
-                          )
-                        }
-                      />
-                      {columnLabel(column)}
-                    </label>
-                  ))}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      persistColumns(resetDetailColumnWidths(columns))
-                    }
-                  >
-                    {t("Reset column widths")}
-                  </Button>
-                </div>
-              )}
+                      >
+                        {t("Reset column widths")}
+                      </Button>
+                    </PopoverPopup>
+                  </PopoverPositioner>
+                </PopoverPortal>
+              </Popover>
             </div>
             <HitTable
               snapshot={snapshot}
@@ -913,11 +927,15 @@ function HitRow({
 
 const damageDigitImages = import.meta.glob<string>(
   "@res/images/font/tiaozi1/*.png",
-  { eager: true, query: "?url", import: "default" },
+  { eager: true, query: "?url&no-inline", import: "default" },
 );
 const reactionLabelImages = import.meta.glob<string>(
   "@res/images/font/tiaozi1/{zh,en,ja}/fanying*.png",
-  { eager: true, query: "?url", import: "default" },
+  { eager: true, query: "?url&no-inline", import: "default" },
+);
+const damageImageLookup = createDamageImageLookup(
+  damageDigitImages,
+  reactionLabelImages,
 );
 const damageDigitPrefix: Record<string, string> = {
   灵: "ling",
@@ -951,12 +969,7 @@ function DamageDigits({
   const digits = Math.round(Math.max(0, value)).toString();
   const prefix = digitKey ? damageDigitPrefix[digitKey] : undefined;
   const urls = prefix
-    ? [...digits].map(
-        (digit) =>
-          Object.entries(damageDigitImages).find(([path]) =>
-            path.endsWith(`/${prefix}_${digit}.png`),
-          )?.[1],
-      )
+    ? [...digits].map((digit) => damageImageLookup.digit(prefix, digit))
     : [];
   if (urls.length !== digits.length || urls.some((url) => url === undefined)) {
     return (
@@ -997,17 +1010,7 @@ function ReactionLabelImages({
 }) {
   const language = currentFrontendLanguage();
   const folder = language === "zh-CN" ? "zh" : language;
-  const stem = `fanying${String(reaction).padStart(2, "0")}`;
-  const urls = [1, 2]
-    .map(
-      (part) =>
-        Object.entries(reactionLabelImages).find(([path]) =>
-          path.endsWith(
-            `/${folder}/${stem}_${String(part).padStart(2, "0")}.png`,
-          ),
-        )?.[1],
-    )
-    .filter((url): url is string => url !== undefined);
+  const urls = damageImageLookup.reaction(folder, reaction);
   if (urls.length === 0) return fallback;
   return (
     <span className="inline-flex h-5 items-center justify-center gap-0.5">

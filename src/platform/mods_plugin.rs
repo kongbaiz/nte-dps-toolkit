@@ -3,9 +3,11 @@
 //! validated session item IDs and polls completed responses.
 
 use std::io;
-use std::sync::Arc;
+use std::mem::{offset_of, size_of};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 #[cfg(feature = "desktop")]
@@ -20,19 +22,46 @@ use std::io::Write;
 use std::os::windows::ffi::OsStrExt;
 #[cfg(feature = "desktop")]
 use std::path::{Path, PathBuf};
-#[cfg(feature = "desktop")]
 use std::ptr;
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING,
+    ERROR_OPERATION_ABORTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+};
 #[cfg(feature = "desktop")]
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, LocalFree};
+#[cfg(feature = "desktop")]
+use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
+#[cfg(feature = "desktop")]
+use windows_sys::Win32::Security::{
+    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
+    GetAce, GetAclInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+};
+use windows_sys::Win32::Security::{
+    GetLengthSid, GetTokenInformation, IsValidSid, PSID, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES,
+    TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenGroups, TokenSessionId,
+    TokenUser,
+};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_OVERLAPPED, FILE_READ_DATA, FILE_WRITE_DATA, OPEN_EXISTING, ReadFile,
+    SYNCHRONIZE, WriteFile,
+};
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::Storage::FileSystem::{
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, READ_CONTROL,
 };
-use windows_sys::Win32::System::Pipes::CallNamedPipeW;
+use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResultEx, OVERLAPPED};
+use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
     RegCloseKey, RegCreateKeyW, RegGetValueW, RegSetValueExW,
+};
+#[cfg(feature = "desktop")]
+use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+use windows_sys::Win32::System::SystemServices::SE_GROUP_LOGON_ID;
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, GetCurrentProcess, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::System::Threading::{OpenEventW, SYNCHRONIZATION_SYNCHRONIZE};
@@ -47,6 +76,7 @@ const PIPE_NAME: &str = r"\\.\pipe\nte-mods-plugin-v7";
 #[cfg(feature = "desktop")]
 const RUNTIME_PRESENCE_NAME: &str = r"Local\nte-mods-plugin-v1-present";
 const IPC_MAGIC: u32 = 0x5145_544e;
+const IPC_DELIVERY_ACK_MAGIC: u32 = 0x4145_544e;
 const IPC_VERSION: u16 = 7;
 const IPC_EQUIP_MODULE: u16 = 1;
 const IPC_EQUIP_CORE: u16 = 2;
@@ -63,11 +93,15 @@ const IPC_QUERY_MOD_EVENTS: u16 = 12;
 #[cfg(any(feature = "desktop", test))]
 const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
+const IPC_CANCEL_DRAIN_TIMEOUT_MS: u32 = 250;
+const MAX_TOKEN_INFORMATION_BYTES: usize = 64 * 1024;
+const MAX_PROCESS_IMAGE_UTF16: usize = 32_768;
 const MAX_PLACEMENTS: usize = 64;
 const REQUEST_HEADER_SIZE: usize = 56;
 const PLACEMENT_SIZE: usize = 16;
 const REQUEST_SIZE: usize = REQUEST_HEADER_SIZE + MAX_PLACEMENTS * PLACEMENT_SIZE;
 const RESPONSE_HEADER_SIZE: usize = 24;
+const DELIVERY_ACK_SIZE: usize = 16;
 const COMBAT_CLOCK_TRANSITION_SIZE: usize = 32;
 const COMBAT_CLOCK_HISTORY_SIZE: usize = 64;
 const MOD_EVENT_SIZE: usize = 112;
@@ -91,6 +125,8 @@ const PLUGIN_STATUS_DRY_RUN_OK: u32 = 1;
 const PLUGIN_STATUS_MOD_DISABLED: u32 = 13;
 static COMBAT_CLOCK_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static MOD_EVENT_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static IPC_TRANSACTION_LOCK: Mutex<()> = Mutex::new(());
+static IPC_CLIENT_QUARANTINED: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "desktop")]
 static MOD_LOG_QUERY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 #[cfg(feature = "desktop")]
@@ -109,7 +145,6 @@ const GAME_INSTALL_REGISTRY_KEYS: [(ModsPluginGameRegion, &str); 2] = [
 ];
 #[cfg(feature = "desktop")]
 const GAME_BINARY_RELATIVE_PATH: &str = r"Client\WindowsNoEditor\HT\Binaries\Win64";
-#[cfg(feature = "desktop")]
 const GAME_EXECUTABLE_NAME: &str = "HTGame.exe";
 #[cfg(feature = "desktop")]
 const PLUGIN_FILE_NAME: &str = "dwmapi.dll";
@@ -141,136 +176,6 @@ const DEFAULT_MOD_SET: &[u8] = include_bytes!("../../plugins/nte-mods.enabled");
 const EQUIPMENT_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/equipment.nte");
 #[cfg(feature = "desktop")]
 const COMBAT_CLOCK_MOD: &[u8] = include_bytes!("../../plugins/nte-mods/combat-clock.nte");
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V1: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("sdk.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-state.last_target = 0
-state.last_config_id = 0
-state.last_level = 0
-state.last_hp = 0
-state.last_max_hp = 0
-state.last_flags = 0
-
-def on_viewport_tick(event):
-    character = game.player_character
-    target = None
-    if character != None:
-        target = sdk.attack_target(character)
-
-    if target == None:
-        if state.last_target != 0:
-            ipc.emit("post.enemy.cleared", state.last_target)
-        state.last_target = 0
-        state.last_config_id = 0
-        state.last_level = 0
-        state.last_hp = 0
-        state.last_max_hp = 0
-        state.last_flags = 0
-
-    if target != None:
-        config_id = sdk.character_config_id(target)
-        level = sdk.character_level(target)
-        hp = sdk.character_hp_milli(target)
-        max_hp = sdk.character_hp_max_milli(target, False)
-        alive = sdk.character_is_alive(target)
-        dead = sdk.character_is_dead(target)
-        dead_flag = dead << 1
-        state_flags = alive | dead_flag
-        if target != state.last_target:
-            ipc.emit("pre.enemy.identity", target, config_id, level)
-            ipc.emit("post.enemy.vitals", target, hp, max_hp)
-            ipc.emit("post.enemy.state", target, state_flags, level)
-        else:
-            if config_id != state.last_config_id:
-                ipc.emit("pre.enemy.identity", target, config_id, level)
-            if hp != state.last_hp:
-                ipc.emit("post.enemy.vitals", target, hp, max_hp)
-            elif max_hp != state.last_max_hp:
-                ipc.emit("post.enemy.vitals", target, hp, max_hp)
-            if level != state.last_level:
-                ipc.emit("post.enemy.state", target, state_flags, level)
-            elif state_flags != state.last_flags:
-                ipc.emit("post.enemy.state", target, state_flags, level)
-        state.last_target = target
-        state.last_config_id = config_id
-        state.last_level = level
-        state.last_hp = hp
-        state.last_max_hp = max_hp
-        state.last_flags = state_flags
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V2: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("sdk.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-state.next_sample_at = 0
-state.last_target = 0
-state.last_hp = 0
-state.last_max_hp = 0
-
-def on_viewport_tick(event):
-    now = time.now_ms()
-    sample_due = now >= state.next_sample_at
-
-    if sample_due == True:
-        # Target SDK calls execute at 10 Hz instead of on every rendered frame.
-        state.next_sample_at = now + 100
-        character = game.player_character
-        target = None
-        if character != None:
-            target = sdk.attack_target(character)
-
-    if sample_due == True:
-        if target == None:
-            if state.last_target != 0:
-                ipc.emit("post.enemy.cleared", state.last_target)
-            state.last_target = 0
-            state.last_hp = 0
-            state.last_max_hp = 0
-
-    if sample_due == True:
-        if target != None:
-            hp = sdk.character_hp_milli(target)
-            if target != state.last_target:
-                config_id = sdk.character_config_id(target)
-                level = sdk.character_level(target)
-                max_hp = sdk.character_hp_max_milli(target, False)
-                ipc.emit("pre.enemy.identity", target, config_id, level)
-                ipc.emit("post.enemy.vitals", target, hp, max_hp)
-                state.last_max_hp = max_hp
-            else:
-                if hp != state.last_hp:
-                    max_hp = sdk.character_hp_max_milli(target, False)
-                    ipc.emit("post.enemy.vitals", target, hp, max_hp)
-                    state.last_max_hp = max_hp
-            state.last_target = target
-            state.last_hp = hp
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V3: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("sdk.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-route_ipc(13, "enemy.query_identity")
-
-def on_viewport_tick(event):
-    # The desktop requests one identity snapshot after this capture's first hit.
-    # This handler only publishes the current controller as the IPC context.
-    player_controller = game.player_controller
-    if player_controller != None:
-        ipc.bind(None, player_controller)
-"#;
 #[cfg(feature = "desktop")]
 const LEGACY_EQUIPMENT_MOD_V1: &[u8] =
     b"nte_mod 1\nmod equipment\non viewport_tick equipment.prepare\non viewport_tick ipc.pump\n";
@@ -542,724 +447,6 @@ def on_viewport_tick(event):
         state.last_state_flags = state_flags
 "#;
 #[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC: &[u8] = br#"nte_mod(4)
-mod("enemy-telemetry")
-requires("viewport.tick")
-requires("game.session")
-requires("memory.read")
-requires("ipc")
-route_ipc(12, "ipc.query_mod_events")
-state.next_sample_at = 0
-state.next_identity_at = 0
-state.last_target = 0
-state.last_hp = 0
-state.last_max_hp = 0
-
-def on_viewport_tick(event):
-    now = time.now_ms()
-    if now >= state.next_sample_at:
-        state.next_sample_at = now + 50
-        player_state = memory.read_ptr(game.player_controller, 0x2d0)
-        target = memory.read_ptr(player_state, 0x2880)
-        if target == None:
-            if state.last_target != 0:
-                ipc.emit("post.enemy.cleared", state.last_target)
-            state.last_target = 0
-            state.last_hp = 0
-            state.last_max_hp = 0
-        if target != None:
-            ability_system = memory.read_ptr(target, 0x8a0)
-            hp = memory.read_f32_milli(ability_system, 0x1a08)
-            max_hp = memory.read_f32_milli(ability_system, 0x1a0c)
-            if max_hp > 0:
-                if hp <= max_hp:
-                    object_index = memory.read_u32(target, 0x0c)
-                    target_key = target ^ object_index
-                    config_hash = cache.get(target_key)
-                    if config_hash == 0:
-                        config_hash = memory.read_fname_hash(target, 0x1d38)
-                        if config_hash != 0:
-                            config_hash = cache.remember(target_key, config_hash)
-                    target_changed = target_key != state.last_target
-                    if config_hash != 0:
-                        if target_changed == True:
-                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
-                        elif now >= state.next_identity_at:
-                            ipc.emit("pre.enemy.identity", target_key, config_hash, 0)
-                    if target_changed == True:
-                        ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
-                    else:
-                        if hp != state.last_hp:
-                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
-                        elif max_hp != state.last_max_hp:
-                            ipc.emit("post.enemy.vitals", target_key, hp, max_hp)
-                    if now >= state.next_identity_at:
-                        state.next_identity_at = now + 250
-                    state.last_target = target_key
-                    state.last_hp = hp
-                    state.last_max_hp = max_hp
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_sample_at = 0;
-std::uint64_t next_identity_at = 0;
-std::uint64_t last_target = 0;
-std::uint64_t last_hp = 0;
-std::uint64_t last_max_hp = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    if (now >= next_sample_at)
-    {
-        next_sample_at = now + 50;
-        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-        const auto target = nte::memory::read_ptr(player_state, 0x2880);
-        if (target == nullptr)
-        {
-            if (last_target != 0)
-            {
-                nte::ipc::emit("post.enemy.cleared", last_target);
-            }
-            last_target = 0;
-            last_hp = 0;
-            last_max_hp = 0;
-        }
-        if (target != nullptr)
-        {
-            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
-            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
-            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
-            if (max_hp > 0)
-            {
-                if (hp <= max_hp)
-                {
-                    const auto object_index = nte::memory::read_u32(target, 0x0c);
-                    const auto target_key = target ^ object_index;
-                    auto config_hash = nte::cache::get(target_key);
-                    if (config_hash == 0)
-                    {
-                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                        if (config_hash != 0)
-                        {
-                            config_hash = nte::cache::remember(target_key, config_hash);
-                        }
-                    }
-                    const auto target_changed = target_key != last_target;
-                    if (config_hash != 0)
-                    {
-                        if (target_changed == true)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                        else if (now >= next_identity_at)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                    }
-                    if (target_changed == true)
-                    {
-                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                    }
-                    else
-                    {
-                        if (hp != last_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                        else if (max_hp != last_max_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                    }
-                    if (now >= next_identity_at)
-                    {
-                        next_identity_at = now + 250;
-                    }
-                    last_target = target_key;
-                    last_hp = hp;
-                    last_max_hp = max_hp;
-                }
-            }
-        }
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("ipc");
-NTE_REQUIRES("log");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_sample_at = 0;
-std::uint64_t next_identity_at = 0;
-std::uint64_t next_diagnostic_at = 0;
-std::uint64_t last_target = 0;
-std::uint64_t last_hp = 0;
-std::uint64_t last_max_hp = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    if (now >= next_sample_at)
-    {
-        next_sample_at = now + 50;
-        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-        const auto target = nte::memory::read_ptr(player_state, 0x2880);
-        if (target == nullptr)
-        {
-            if (last_target != 0)
-            {
-                nte::ipc::emit("post.enemy.cleared", last_target);
-                nte::log::info("enemy target cleared");
-            }
-            last_target = 0;
-            last_hp = 0;
-            last_max_hp = 0;
-        }
-        if (target != nullptr)
-        {
-            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
-            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
-            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
-            if (max_hp > 0)
-            {
-                if (hp <= max_hp)
-                {
-                    const auto object_index = nte::memory::read_u32(target, 0x0c);
-                    const auto target_key = target ^ object_index;
-                    auto config_hash = nte::cache::get(target_key);
-                    if (config_hash == 0)
-                    {
-                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                        if (config_hash != 0)
-                        {
-                            config_hash = nte::cache::remember(target_key, config_hash);
-                        }
-                    }
-                    if (config_hash == 0)
-                    {
-                        if (now >= next_diagnostic_at)
-                        {
-                            nte::log::info("enemy identity hash missing");
-                            next_diagnostic_at = now + 500;
-                        }
-                    }
-                    const auto target_changed = target_key != last_target;
-                    if (config_hash != 0)
-                    {
-                        if (target_changed == true)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                        else if (now >= next_identity_at)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                    }
-                    if (target_changed == true)
-                    {
-                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                    }
-                    else
-                    {
-                        if (hp != last_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                        else if (max_hp != last_max_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                    }
-                    if (now >= next_identity_at)
-                    {
-                        next_identity_at = now + 250;
-                    }
-                    last_target = target_key;
-                    last_hp = hp;
-                    last_max_hp = max_hp;
-                }
-                else if (now >= next_diagnostic_at)
-                {
-                    nte::log::info("enemy vitals invalid");
-                    next_diagnostic_at = now + 500;
-                }
-            }
-            else if (now >= next_diagnostic_at)
-            {
-                nte::log::info("enemy vitals invalid");
-                next_diagnostic_at = now + 500;
-            }
-        }
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("unreal.reflection");
-NTE_REQUIRES("process.event");
-NTE_REQUIRES("ipc");
-NTE_REQUIRES("log");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_sample_at = 0;
-std::uint64_t next_identity_at = 0;
-std::uint64_t next_diagnostic_at = 0;
-std::uint64_t watched_character = 0;
-std::uint64_t watched_function = 0;
-std::uint64_t last_target = 0;
-std::uint64_t last_hp = 0;
-std::uint64_t last_max_hp = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    if (nte::game::player_character != watched_character)
-    {
-        if (watched_character != 0)
-        {
-            if (watched_function != 0)
-            {
-                nte::unreal::unwatch(watched_character, watched_function);
-            }
-        }
-        watched_character = nte::game::player_character;
-        watched_function = 0;
-    }
-    if (watched_character != 0)
-    {
-        if (watched_function == 0)
-        {
-            watched_function = nte::unreal::find_function(watched_character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
-            if (watched_function == 0)
-            {
-                if (now >= next_diagnostic_at)
-                {
-                    nte::log::info("enemy damage function missing");
-                    next_diagnostic_at = now + 500;
-                }
-            }
-        }
-        if (watched_function != 0)
-        {
-            nte::unreal::watch(watched_character, watched_function);
-        }
-    }
-    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
-    {
-        const auto event_ready = nte::event::next();
-        if (event_ready == true)
-        {
-            const auto damaged = nte::event::read_u64(0x110);
-            if (damaged != nullptr)
-            {
-                auto target_key = nte::memory::read_u32(damaged, 0x0c);
-                target_key = damaged ^ target_key;
-                const auto object_name_hash = nte::memory::read_fname_hash(damaged, 0x18);
-                target_key = target_key ^ object_name_hash;
-                auto config_hash = nte::cache::get(target_key);
-                if (config_hash == 0)
-                {
-                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
-                    if (config_hash != 0)
-                    {
-                        config_hash = nte::cache::remember(target_key, config_hash);
-                    }
-                }
-                if (config_hash != 0)
-                {
-                    nte::ipc::emit("post.enemy.hit_target", target_key, config_hash, 0);
-                }
-            }
-        }
-    }
-    if (now >= next_sample_at)
-    {
-        next_sample_at = now + 50;
-        const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-        const auto target = nte::memory::read_ptr(player_state, 0x2880);
-        if (target == nullptr)
-        {
-            if (last_target != 0)
-            {
-                nte::ipc::emit("post.enemy.cleared", last_target);
-                nte::log::info("enemy target cleared");
-            }
-            last_target = 0;
-            last_hp = 0;
-            last_max_hp = 0;
-        }
-        if (target != nullptr)
-        {
-            const auto ability_system = nte::memory::read_ptr(target, 0x8a0);
-            const auto hp = nte::memory::read_f32_milli(ability_system, 0x1a08);
-            const auto max_hp = nte::memory::read_f32_milli(ability_system, 0x1a0c);
-            if (max_hp > 0)
-            {
-                if (hp <= max_hp)
-                {
-                    auto target_key = nte::memory::read_u32(target, 0x0c);
-                    target_key = target ^ target_key;
-                    const auto object_name_hash = nte::memory::read_fname_hash(target, 0x18);
-                    target_key = target_key ^ object_name_hash;
-                    auto config_hash = nte::cache::get(target_key);
-                    if (config_hash == 0)
-                    {
-                        config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                        if (config_hash != 0)
-                        {
-                            config_hash = nte::cache::remember(target_key, config_hash);
-                        }
-                    }
-                    if (config_hash == 0)
-                    {
-                        if (now >= next_diagnostic_at)
-                        {
-                            nte::log::info("enemy identity hash missing");
-                            next_diagnostic_at = now + 500;
-                        }
-                    }
-                    if (config_hash != 0)
-                    {
-                        if (target_key != last_target)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                        else if (now >= next_identity_at)
-                        {
-                            nte::ipc::emit("pre.enemy.identity", target_key, config_hash, 0);
-                        }
-                    }
-                    if (target_key != last_target)
-                    {
-                        nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                    }
-                    else
-                    {
-                        if (hp != last_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                        else if (max_hp != last_max_hp)
-                        {
-                            nte::ipc::emit("post.enemy.vitals", target_key, hp, max_hp);
-                        }
-                    }
-                    if (now >= next_identity_at)
-                    {
-                        next_identity_at = now + 250;
-                    }
-                    last_target = target_key;
-                    last_hp = hp;
-                    last_max_hp = max_hp;
-                }
-                else if (now >= next_diagnostic_at)
-                {
-                    nte::log::info("enemy vitals invalid");
-                    next_diagnostic_at = now + 500;
-                }
-            }
-            else if (now >= next_diagnostic_at)
-            {
-                nte::log::info("enemy vitals invalid");
-                next_diagnostic_at = now + 500;
-            }
-        }
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_identity_at = 0;
-std::uint64_t last_target = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-    const auto target = nte::memory::read_ptr(player_state, 0x2880);
-    if (target == nullptr)
-    {
-        if (last_target != 0)
-        {
-            nte::ipc::emit("post.enemy.cleared", last_target);
-        }
-        last_target = 0;
-    }
-    if (target != nullptr)
-    {
-        const auto object_index = nte::memory::read_u32(target, 0x0c);
-        const auto shifted_index = object_index << 32;
-        const auto target_instance = target ^ shifted_index;
-        if (target_instance != last_target)
-        {
-            next_identity_at = 0;
-        }
-        if (now >= next_identity_at)
-        {
-            auto config_hash = nte::cache::get(target_instance);
-            if (config_hash == 0)
-            {
-                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                if (config_hash != 0)
-                {
-                    config_hash = nte::cache::remember(target_instance, config_hash);
-                }
-            }
-            if (config_hash != 0)
-            {
-                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
-            }
-            next_identity_at = now + 50;
-        }
-        last_target = target_instance;
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("unreal.reflection");
-NTE_REQUIRES("process.event");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_identity_at = 0;
-std::uint64_t watched_character = 0;
-std::uint64_t damage_function = 0;
-std::uint64_t last_target = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    const auto character = nte::game::player_character;
-    if (character != nullptr)
-    {
-        if (damage_function == 0)
-        {
-            damage_function = nte::unreal::find_function(character, "HTAbilityCharacter", "ClientOnSendHandleDamageInfoToInstigator");
-        }
-        if (damage_function != 0)
-        {
-            if (character != watched_character)
-            {
-                nte::unreal::watch(character, damage_function);
-                watched_character = character;
-            }
-        }
-    }
-    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
-    {
-        const auto event_ready = nte::event::next();
-        if (event_ready == true)
-        {
-            const auto damaged = nte::event::read_u64(0x110);
-            if (damaged != nullptr)
-            {
-                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
-                const auto shifted_index = object_index << 32;
-                const auto target_instance = damaged ^ shifted_index;
-                auto config_hash = nte::cache::get(target_instance);
-                if (config_hash == 0)
-                {
-                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
-                    if (config_hash != 0)
-                    {
-                        config_hash = nte::cache::remember(target_instance, config_hash);
-                    }
-                }
-                if (config_hash != 0)
-                {
-                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
-                }
-            }
-        }
-    }
-    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-    const auto target = nte::memory::read_ptr(player_state, 0x2880);
-    if (target == nullptr)
-    {
-        if (last_target != 0)
-        {
-            nte::ipc::emit("post.enemy.cleared", last_target);
-        }
-        last_target = 0;
-    }
-    if (target != nullptr)
-    {
-        const auto object_index = nte::memory::read_u32(target, 0x0c);
-        const auto shifted_index = object_index << 32;
-        const auto target_instance = target ^ shifted_index;
-        if (target_instance != last_target)
-        {
-            next_identity_at = 0;
-        }
-        if (now >= next_identity_at)
-        {
-            auto config_hash = nte::cache::get(target_instance);
-            if (config_hash == 0)
-            {
-                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                if (config_hash != 0)
-                {
-                    config_hash = nte::cache::remember(target_instance, config_hash);
-                }
-            }
-            if (config_hash != 0)
-            {
-                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
-            }
-            next_identity_at = now + 50;
-        }
-        last_target = target_instance;
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
-const LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY: &[u8] = br#"#include <nte/mod.hpp>
-
-NTE_SCRIPT(5);
-NTE_MOD("enemy-telemetry");
-NTE_REQUIRES("viewport.tick");
-NTE_REQUIRES("game.session");
-NTE_REQUIRES("memory.read");
-NTE_REQUIRES("unreal.reflection");
-NTE_REQUIRES("process.event");
-NTE_REQUIRES("ipc");
-NTE_ROUTE_IPC(12, "ipc.query_mod_events");
-
-std::uint64_t next_identity_at = 0;
-std::uint64_t watched_ability_system = 0;
-std::uint64_t damage_function = 0;
-std::uint64_t last_target = 0;
-
-void on_viewport_tick(const nte::viewport_tick_event& event)
-{
-    const auto now = nte::time::now_ms();
-    const auto character = nte::game::player_character;
-    if (character != nullptr)
-    {
-        const auto ability_system = nte::memory::read_ptr(character, 0x8A0);
-        if (ability_system != nullptr)
-        {
-            if (damage_function == 0)
-            {
-                damage_function = nte::unreal::find_function(ability_system, "HTAbilitySystemComponent", "NetMulticast_OnSendHandleDamageInfos");
-            }
-            if (damage_function != 0)
-            {
-                if (ability_system != watched_ability_system)
-                {
-                    nte::unreal::watch_array_u64(ability_system, damage_function, 0x160, 0x110);
-                    watched_ability_system = ability_system;
-                }
-            }
-        }
-    }
-    for (std::uint64_t event_index = 0; event_index < 32; ++event_index)
-    {
-        const auto event_ready = nte::event::next();
-        if (event_ready == true)
-        {
-            const auto damaged = nte::event::captured_u64();
-            if (damaged != nullptr)
-            {
-                const auto object_index = nte::memory::read_u32(damaged, 0x0c);
-                const auto shifted_index = object_index << 32;
-                const auto target_instance = damaged ^ shifted_index;
-                auto config_hash = nte::cache::get(target_instance);
-                if (config_hash == 0)
-                {
-                    config_hash = nte::memory::read_fname_hash(damaged, 0x1d38);
-                    if (config_hash != 0)
-                    {
-                        config_hash = nte::cache::remember(target_instance, config_hash);
-                    }
-                }
-                if (config_hash != 0)
-                {
-                    nte::ipc::emit("post.enemy.hit_target", target_instance, config_hash, 0);
-                }
-            }
-        }
-    }
-    const auto player_state = nte::memory::read_ptr(nte::game::player_controller, 0x2d0);
-    const auto target = nte::memory::read_ptr(player_state, 0x2880);
-    if (target == nullptr)
-    {
-        if (last_target != 0)
-        {
-            nte::ipc::emit("post.enemy.cleared", last_target);
-        }
-        last_target = 0;
-    }
-    if (target != nullptr)
-    {
-        const auto object_index = nte::memory::read_u32(target, 0x0c);
-        const auto shifted_index = object_index << 32;
-        const auto target_instance = target ^ shifted_index;
-        if (target_instance != last_target)
-        {
-            next_identity_at = 0;
-        }
-        if (now >= next_identity_at)
-        {
-            auto config_hash = nte::cache::get(target_instance);
-            if (config_hash == 0)
-            {
-                config_hash = nte::memory::read_fname_hash(target, 0x1d38);
-                if (config_hash != 0)
-                {
-                    config_hash = nte::cache::remember(target_instance, config_hash);
-                }
-            }
-            if (config_hash != 0)
-            {
-                nte::ipc::emit("pre.enemy.identity", target_instance, config_hash, 0);
-            }
-            next_identity_at = now + 50;
-        }
-        last_target = target_instance;
-    }
-}
-"#;
-#[cfg(feature = "desktop")]
 const LEGACY_DEFAULT_MOD_SETS: &[&[u8]] = &[
     b"nte_mod_set 1\nload equipment\nload combat-clock\n",
     b"nte_mod_set 1\nload combat-clock\nload enemy-telemetry\nload equipment\n",
@@ -1284,21 +471,6 @@ const LEGACY_COMBAT_CLOCK_MOD_PROGRAMS: &[&[u8]] = &[
     LEGACY_COMBAT_CLOCK_MOD_V4_SESSION,
     LEGACY_COMBAT_CLOCK_MOD_V4_ROUTES,
 ];
-#[cfg(feature = "desktop")]
-#[allow(dead_code)]
-const LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS: &[&[u8]] = &[
-    LEGACY_ENEMY_TELEMETRY_MOD_V1,
-    LEGACY_ENEMY_TELEMETRY_MOD_V2,
-    LEGACY_ENEMY_TELEMETRY_MOD_V3,
-    LEGACY_ENEMY_TELEMETRY_MOD_V4_GENERIC,
-    LEGACY_ENEMY_TELEMETRY_MOD_V5_CPP,
-    LEGACY_ENEMY_TELEMETRY_MOD_V6_DIAGNOSTICS,
-    LEGACY_ENEMY_TELEMETRY_MOD_V7_PROCESS_EVENT,
-    LEGACY_ENEMY_TELEMETRY_MOD_V8_CURRENT_TARGET,
-    LEGACY_ENEMY_TELEMETRY_MOD_V9_DIRECT_HIT,
-    LEGACY_ENEMY_TELEMETRY_MOD_V10_INSTANCE_ARRAY,
-];
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModsPluginPlacement {
     pub equipment: HtItemNetId,
@@ -1643,8 +815,21 @@ pub fn probe_runtime_presence() -> Result<bool, String> {
     let mut event_name = RUNTIME_PRESENCE_NAME.encode_utf16().collect::<Vec<_>>();
     event_name.push(0);
 
+    // The transaction lock is deliberately non-blocking. Presence probing is a
+    // fallback read model and must not queue behind a live plugin operation.
+    let _transaction = acquire_ipc_transaction()?;
+    let current_identity = query_current_token_identity()?;
+
+    // READ_CONTROL is read-only and is required to authenticate the exact owner
+    // and DACL before treating the fixed-name event as plugin-owned.
     // SAFETY: event_name is NUL-terminated and remains alive for the call.
-    let handle = unsafe { OpenEventW(SYNCHRONIZATION_SYNCHRONIZE, 0, event_name.as_ptr()) };
+    let handle = unsafe {
+        OpenEventW(
+            SYNCHRONIZATION_SYNCHRONIZE | READ_CONTROL,
+            0,
+            event_name.as_ptr(),
+        )
+    };
     if handle.is_null() {
         let error = io::Error::last_os_error();
         return match error.raw_os_error() {
@@ -1652,40 +837,619 @@ pub fn probe_runtime_presence() -> Result<bool, String> {
             _ => Err(error.to_string()),
         };
     }
+    let event = OwnedHandle(handle);
+    validate_presence_event_security(event.raw(), &current_identity)?;
 
-    // SAFETY: OpenEventW returned an owned, valid event handle.
-    if unsafe { CloseHandle(handle) } == 0 {
-        return Err(io::Error::last_os_error().to_string());
-    }
+    // A fixed-name event alone has no creator-PID query. Require a simultaneous
+    // authenticated pipe whose server is the same-logon HTGame.exe process.
+    // Merely connecting performs no plugin request and therefore has no domain
+    // or revision effect.
+    let deadline = Instant::now() + Duration::from_millis(u64::from(IPC_TIMEOUT_MS));
+    let _pipe = open_authenticated_pipe(deadline, &current_identity)?;
     Ok(true)
 }
 
-fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
-    let mut response = [0_u8; RESPONSE_SIZE];
-    let mut bytes_read = 0;
+struct OwnedHandle(HANDLE);
+
+impl OwnedHandle {
+    fn raw(&self) -> HANDLE {
+        self.0
+    }
+}
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if self.0.is_null() || self.0 == INVALID_HANDLE_VALUE {
+            return;
+        }
+        // SAFETY: every constructor transfers one checked, owned Win32 handle
+        // into this non-cloneable wrapper and never closes it elsewhere.
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TokenIdentity {
+    user_sid: Vec<u8>,
+    logon_sid: Vec<u8>,
+    session_id: u32,
+}
+
+struct TokenInformationBuffer {
+    words: Vec<usize>,
+    byte_len: usize,
+}
+
+impl TokenInformationBuffer {
+    fn as_ptr(&self) -> *const u8 {
+        self.words.as_ptr().cast()
+    }
+}
+
+fn query_token_information(
+    token: HANDLE,
+    information_class: TOKEN_INFORMATION_CLASS,
+) -> Result<TokenInformationBuffer, String> {
+    let mut required = 0_u32;
+    // SAFETY: this is the documented size query; the null buffer has length 0
+    // and required remains writable for the duration of the call.
+    let queried =
+        unsafe { GetTokenInformation(token, information_class, ptr::null_mut(), 0, &mut required) };
+    let size_error = io::Error::last_os_error();
+    if queried != 0
+        || size_error.raw_os_error().map(|code| code as u32) != Some(ERROR_INSUFFICIENT_BUFFER)
+        || required == 0
+        || required as usize > MAX_TOKEN_INFORMATION_BYTES
+    {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+
+    let byte_len = required as usize;
+    let word_count = byte_len.div_ceil(size_of::<usize>());
+    let mut words = vec![0_usize; word_count];
+    let mut returned = required;
+    // SAFETY: the word allocation is suitably aligned, spans at least required
+    // bytes, and remains exclusively writable during GetTokenInformation.
+    if unsafe {
+        GetTokenInformation(
+            token,
+            information_class,
+            words.as_mut_ptr().cast(),
+            required,
+            &mut returned,
+        )
+    } == 0
+        || returned == 0
+        || returned as usize > byte_len
+    {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    Ok(TokenInformationBuffer {
+        words,
+        byte_len: returned as usize,
+    })
+}
+
+fn copy_valid_sid(sid: PSID) -> Result<Vec<u8>, String> {
+    if sid.is_null() {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    // SAFETY: callers obtain SIDs from a validated token or security descriptor
+    // that remains alive for this call. IsValidSid validates the variable tail
+    // before GetLengthSid and from_raw_parts inspect it.
+    if unsafe { IsValidSid(sid) } == 0 {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    // SAFETY: IsValidSid succeeded for sid above.
+    let sid_len = unsafe { GetLengthSid(sid) } as usize;
+    if sid_len == 0 || sid_len > SECURITY_MAX_SID_SIZE as usize {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    // SAFETY: GetLengthSid returned the readable byte length of the valid SID.
+    Ok(unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), sid_len) }.to_vec())
+}
+
+fn query_token_identity(token: HANDLE) -> Result<TokenIdentity, String> {
+    let user_buffer = query_token_information(token, TokenUser)?;
+    if user_buffer.byte_len < size_of::<TOKEN_USER>() {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    // SAFETY: query_token_information returns suitably aligned storage with at
+    // least a TOKEN_USER and keeps the SID target alive through the copy.
+    let token_user = unsafe { &*user_buffer.as_ptr().cast::<TOKEN_USER>() };
+    let user_sid = copy_valid_sid(token_user.User.Sid)?;
+
+    let mut session_id = 0_u32;
+    let mut returned = 0_u32;
+    // SAFETY: session_id is exactly the documented TokenSessionId output type.
+    if unsafe {
+        GetTokenInformation(
+            token,
+            TokenSessionId,
+            (&mut session_id as *mut u32).cast(),
+            size_of::<u32>() as u32,
+            &mut returned,
+        )
+    } == 0
+        || returned != size_of::<u32>() as u32
+    {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+
+    let groups_buffer = query_token_information(token, TokenGroups)?;
+    if groups_buffer.byte_len < size_of::<TOKEN_GROUPS>() {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    // SAFETY: the buffer is aligned and large enough for the fixed prefix.
+    let groups = unsafe { &*groups_buffer.as_ptr().cast::<TOKEN_GROUPS>() };
+    let group_count = groups.GroupCount as usize;
+    let groups_bytes = group_count
+        .checked_mul(size_of::<SID_AND_ATTRIBUTES>())
+        .and_then(|size| offset_of!(TOKEN_GROUPS, Groups).checked_add(size))
+        .ok_or_else(|| "Mod IPC token identity is unavailable".to_owned())?;
+    if group_count == 0 || groups_bytes > groups_buffer.byte_len {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+
+    let first_group = ptr::addr_of!(groups.Groups).cast::<SID_AND_ATTRIBUTES>();
+    let logon_flag = SE_GROUP_LOGON_ID as u32;
+    for index in 0..group_count {
+        // SAFETY: groups_bytes proves every indexed flexible-array element lies
+        // inside the token buffer.
+        let group = unsafe { &*first_group.add(index) };
+        if group.Attributes & logon_flag == logon_flag {
+            return Ok(TokenIdentity {
+                user_sid,
+                logon_sid: copy_valid_sid(group.Sid)?,
+                session_id,
+            });
+        }
+    }
+    Err("Mod IPC token identity is unavailable".to_owned())
+}
+
+fn query_current_token_identity() -> Result<TokenIdentity, String> {
+    let mut token = ptr::null_mut();
+    // SAFETY: GetCurrentProcess returns a valid pseudo-handle and token receives
+    // one owned TOKEN_QUERY handle when OpenProcessToken succeeds.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        return Err("Mod IPC token identity is unavailable".to_owned());
+    }
+    let token = OwnedHandle(token);
+    query_token_identity(token.raw())
+}
+
+fn query_process_token_identity(process: HANDLE) -> Result<TokenIdentity, String> {
+    let mut token = ptr::null_mut();
+    // SAFETY: process is a live PROCESS_QUERY_LIMITED_INFORMATION handle and
+    // token receives one owned TOKEN_QUERY handle on success.
+    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
+        return Err("Mod IPC server identity is unavailable".to_owned());
+    }
+    let token = OwnedHandle(token);
+    query_token_identity(token.raw())
+}
+
+fn authenticate_pipe_server(pipe: HANDLE, expected: &TokenIdentity) -> Result<(), String> {
+    let mut process_id = 0_u32;
+    // SAFETY: pipe is a connected named-pipe client handle and process_id is a
+    // valid output for the duration of the call.
+    if unsafe { GetNamedPipeServerProcessId(pipe, &mut process_id) } == 0 || process_id == 0 {
+        return Err("Mod IPC server authentication failed".to_owned());
+    }
+
+    // SAFETY: process_id came from the connected pipe. No handle inheritance is
+    // requested, and the result is checked before ownership is assumed.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if process.is_null() {
+        return Err("Mod IPC server authentication failed".to_owned());
+    }
+    let process = OwnedHandle(process);
+
+    let mut image = vec![0_u16; MAX_PROCESS_IMAGE_UTF16];
+    let mut image_len = image.len() as u32;
+    // SAFETY: process has query rights and image is a writable UTF-16 buffer of
+    // image_len elements. The API updates image_len to the written element count.
+    if unsafe { QueryFullProcessImageNameW(process.raw(), 0, image.as_mut_ptr(), &mut image_len) }
+        == 0
+        || image_len == 0
+        || image_len as usize > image.len()
+    {
+        return Err("Mod IPC server authentication failed".to_owned());
+    }
+    let image = String::from_utf16(&image[..image_len as usize])
+        .map_err(|_| "Mod IPC server authentication failed".to_owned())?;
+    let executable = image.rsplit(['\\', '/']).next().unwrap_or("");
+    if !executable.eq_ignore_ascii_case(GAME_EXECUTABLE_NAME) {
+        return Err("Mod IPC server authentication failed".to_owned());
+    }
+
+    let actual = query_process_token_identity(process.raw())?;
+    if &actual != expected {
+        return Err("Mod IPC server authentication failed".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(feature = "desktop")]
+struct LocalSecurityDescriptor(PSECURITY_DESCRIPTOR);
+
+#[cfg(feature = "desktop")]
+impl Drop for LocalSecurityDescriptor {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: GetSecurityInfo allocated this descriptor with LocalAlloc
+            // and ownership is released exactly once here.
+            unsafe {
+                LocalFree(self.0.cast());
+            }
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn validate_presence_event_security(event: HANDLE, expected: &TokenIdentity) -> Result<(), String> {
+    let mut owner: PSID = ptr::null_mut();
+    let mut dacl: *mut ACL = ptr::null_mut();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: event was opened with READ_CONTROL. All requested output pointers
+    // remain writable and descriptor is released through LocalFree below.
+    let status = unsafe {
+        GetSecurityInfo(
+            event,
+            SE_KERNEL_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            ptr::null_mut(),
+            &mut dacl,
+            ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS || descriptor.is_null() {
+        if !descriptor.is_null() {
+            drop(LocalSecurityDescriptor(descriptor));
+        }
+        return Err("Mod runtime presence authentication failed".to_owned());
+    }
+    let _descriptor = LocalSecurityDescriptor(descriptor);
+    if owner.is_null() || dacl.is_null() || copy_valid_sid(owner)? != expected.user_sid {
+        return Err("Mod runtime presence authentication failed".to_owned());
+    }
+
+    let mut acl = ACL_SIZE_INFORMATION::default();
+    // SAFETY: dacl points inside the live security descriptor and acl is the
+    // exact output type requested by AclSizeInformation.
+    if unsafe {
+        GetAclInformation(
+            dacl,
+            (&mut acl as *mut ACL_SIZE_INFORMATION).cast(),
+            size_of::<ACL_SIZE_INFORMATION>() as u32,
+            AclSizeInformation,
+        )
+    } == 0
+        || acl.AceCount != 1
+    {
+        return Err("Mod runtime presence authentication failed".to_owned());
+    }
+
+    let mut ace_value = ptr::null_mut();
+    // SAFETY: the validated ACL has exactly one ACE and ace_value remains valid
+    // while the security descriptor guard is alive.
+    if unsafe { GetAce(dacl, 0, &mut ace_value) } == 0 || ace_value.is_null() {
+        return Err("Mod runtime presence authentication failed".to_owned());
+    }
+    // SAFETY: GetAce returned a pointer to the ACL's first ACE. Header type and
+    // fixed fields are checked before the variable SID is copied.
+    let ace = unsafe { &*ace_value.cast::<ACCESS_ALLOWED_ACE>() };
+    let expected_access = SYNCHRONIZATION_SYNCHRONIZE | READ_CONTROL;
+    let ace_sid = ptr::addr_of!(ace.SidStart).cast_mut().cast();
+    if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
+        || ace.Header.AceFlags != 0
+        || ace.Mask != expected_access
+        || copy_valid_sid(ace_sid)? != expected.logon_sid
+    {
+        return Err("Mod runtime presence authentication failed".to_owned());
+    }
+    Ok(())
+}
+
+fn acquire_ipc_transaction() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    if IPC_CLIENT_QUARANTINED.load(Ordering::Acquire) {
+        return Err("Mod IPC client is unavailable".to_owned());
+    }
+    match IPC_TRANSACTION_LOCK.try_lock() {
+        Ok(guard) => {
+            if IPC_CLIENT_QUARANTINED.load(Ordering::Acquire) {
+                Err("Mod IPC client is unavailable".to_owned())
+            } else {
+                Ok(guard)
+            }
+        }
+        Err(TryLockError::WouldBlock) => Err("Mod IPC transaction is busy".to_owned()),
+        Err(TryLockError::Poisoned(_)) => Err("Mod IPC client is unavailable".to_owned()),
+    }
+}
+
+fn remaining_timeout_ms(deadline: Instant) -> Option<u32> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    let millis = remaining.as_millis().max(1).min(u128::from(u32::MAX));
+    Some(millis as u32)
+}
+
+fn open_authenticated_pipe(
+    deadline: Instant,
+    current_identity: &TokenIdentity,
+) -> Result<OwnedHandle, String> {
+    let timeout =
+        remaining_timeout_ms(deadline).ok_or_else(|| "Mod IPC operation timed out".to_owned())?;
     let mut pipe_name = PIPE_NAME.encode_utf16().collect::<Vec<_>>();
     pipe_name.push(0);
 
-    // SAFETY: both buffers live for the duration of the synchronous call, their
-    // exact lengths are passed to Win32, and the pipe name is NUL-terminated.
-    let succeeded = unsafe {
-        CallNamedPipeW(
-            pipe_name.as_ptr(),
-            request.as_ptr().cast(),
-            REQUEST_SIZE as u32,
-            response.as_mut_ptr().cast(),
-            RESPONSE_SIZE as u32,
-            &mut bytes_read,
-            IPC_TIMEOUT_MS,
-        )
-    };
-    if succeeded == 0 {
+    // SAFETY: pipe_name is NUL-terminated and remains alive for the bounded wait.
+    if unsafe { WaitNamedPipeW(pipe_name.as_ptr(), timeout) } == 0 {
         return Err(io::Error::last_os_error().to_string());
     }
-    if bytes_read != RESPONSE_SIZE as u32 {
-        return Err(format!(
-            "Mod loader returned {bytes_read} bytes; expected {RESPONSE_SIZE}"
-        ));
+
+    // SAFETY: pipe_name is NUL-terminated. FILE_FLAG_OVERLAPPED is mandatory so
+    // every protocol phase can be timed out and cancelled independently.
+    let pipe = unsafe {
+        CreateFileW(
+            pipe_name.as_ptr(),
+            FILE_READ_DATA | FILE_WRITE_DATA | SYNCHRONIZE,
+            0,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OVERLAPPED,
+            ptr::null_mut(),
+        )
+    };
+    if pipe == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error().to_string());
+    }
+    let pipe = OwnedHandle(pipe);
+    authenticate_pipe_server(pipe.raw(), current_identity)?;
+    Ok(pipe)
+}
+
+struct OverlappedPipeOperation {
+    _event: OwnedHandle,
+    overlapped: Box<OVERLAPPED>,
+    buffer: Box<[u8]>,
+}
+
+impl OverlappedPipeOperation {
+    fn with_buffer(buffer: Box<[u8]>) -> Result<Self, String> {
+        // SAFETY: this creates one unnamed manual-reset event owned by the
+        // operation. No untrusted security attributes or name are supplied.
+        let event = unsafe { CreateEventW(ptr::null(), 1, 0, ptr::null()) };
+        if event.is_null() {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        let event = OwnedHandle(event);
+        let mut overlapped = Box::<OVERLAPPED>::default();
+        overlapped.hEvent = event.raw();
+        Ok(Self {
+            _event: event,
+            overlapped,
+            buffer,
+        })
+    }
+
+    fn quarantine(self) {
+        // A cancellation that did not reach a terminal state may still access
+        // OVERLAPPED, its event, and the transfer buffer. Retain exactly one
+        // process-lifetime allocation and fail all future calls closed rather
+        // than returning while the kernel may reference freed memory.
+        IPC_CLIENT_QUARANTINED.store(true, Ordering::Release);
+        std::mem::forget(self);
+    }
+}
+
+fn overlapped_status_is_terminal(error: &io::Error) -> bool {
+    let code = error.raw_os_error().map(|value| value as u32);
+    code == Some(ERROR_OPERATION_ABORTED)
+        || !matches!(
+            code,
+            Some(ERROR_IO_PENDING) | Some(ERROR_IO_INCOMPLETE) | Some(WAIT_TIMEOUT)
+        )
+}
+
+enum OverlappedWaitError {
+    Terminal(String),
+    TimedOut,
+    Undrained,
+}
+
+impl OverlappedWaitError {
+    fn requires_quarantine(&self) -> bool {
+        matches!(self, Self::Undrained)
+    }
+
+    fn into_message(self) -> String {
+        match self {
+            Self::Terminal(message) => message,
+            Self::TimedOut => "Mod IPC operation timed out".to_owned(),
+            Self::Undrained => "Mod IPC cancellation did not reach a terminal state".to_owned(),
+        }
+    }
+}
+
+fn await_overlapped(
+    pipe: HANDLE,
+    operation: &mut OverlappedPipeOperation,
+    deadline: Instant,
+) -> Result<u32, OverlappedWaitError> {
+    if let Some(timeout) = remaining_timeout_ms(deadline) {
+        let mut transferred = 0_u32;
+        // SAFETY: pipe, OVERLAPPED, event, and transfer buffer remain alive for
+        // this wait. The operation is serialized by IPC_TRANSACTION_LOCK.
+        if unsafe {
+            GetOverlappedResultEx(
+                pipe,
+                operation.overlapped.as_ref(),
+                &mut transferred,
+                timeout,
+                0,
+            )
+        } != 0
+        {
+            return Ok(transferred);
+        }
+        let error = io::Error::last_os_error();
+        if overlapped_status_is_terminal(&error) {
+            return Err(OverlappedWaitError::Terminal(error.to_string()));
+        }
+    }
+
+    // SAFETY: the OVERLAPPED belongs to this exact pipe operation and both stay
+    // alive through the bounded terminal-drain attempt.
+    unsafe {
+        CancelIoEx(pipe, operation.overlapped.as_ref());
+    }
+    let mut transferred = 0_u32;
+    // SAFETY: same lifetime proof as above; the additional deadline bounds the
+    // cancellation drain independently of a malicious peer.
+    if unsafe {
+        GetOverlappedResultEx(
+            pipe,
+            operation.overlapped.as_ref(),
+            &mut transferred,
+            IPC_CANCEL_DRAIN_TIMEOUT_MS,
+            0,
+        )
+    } != 0
+    {
+        return Err(OverlappedWaitError::TimedOut);
+    }
+    let drain_error = io::Error::last_os_error();
+    if overlapped_status_is_terminal(&drain_error) {
+        return Err(OverlappedWaitError::TimedOut);
+    }
+
+    Err(OverlappedWaitError::Undrained)
+}
+
+fn overlapped_write_exact(pipe: HANDLE, bytes: &[u8], deadline: Instant) -> Result<(), String> {
+    let mut operation = OverlappedPipeOperation::with_buffer(bytes.to_vec().into_boxed_slice())?;
+    // SAFETY: pipe is opened for overlapped writes and the boxed buffer plus
+    // OVERLAPPED remain stable until completion or quarantine.
+    let started = unsafe {
+        WriteFile(
+            pipe,
+            operation.buffer.as_ptr(),
+            operation.buffer.len() as u32,
+            ptr::null_mut(),
+            operation.overlapped.as_mut(),
+        )
+    };
+    if started == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error().map(|code| code as u32) != Some(ERROR_IO_PENDING) {
+            return Err(error.to_string());
+        }
+    }
+    // Even when WriteFile returns TRUE on an overlapped handle, only the
+    // OVERLAPPED completion result is authoritative for the byte count.
+    let transferred = match await_overlapped(pipe, &mut operation, deadline) {
+        Ok(transferred) => transferred,
+        Err(error) => {
+            if error.requires_quarantine() {
+                operation.quarantine();
+            }
+            return Err(error.into_message());
+        }
+    };
+    if transferred != bytes.len() as u32 {
+        return Err("Mod IPC request was only partially written".to_owned());
+    }
+    Ok(())
+}
+
+fn overlapped_read_exact(
+    pipe: HANDLE,
+    byte_len: usize,
+    deadline: Instant,
+) -> Result<Box<[u8]>, String> {
+    let mut operation =
+        OverlappedPipeOperation::with_buffer(vec![0_u8; byte_len].into_boxed_slice())?;
+    // SAFETY: pipe is opened for overlapped reads and the boxed buffer plus
+    // OVERLAPPED remain stable until completion or quarantine.
+    let started = unsafe {
+        ReadFile(
+            pipe,
+            operation.buffer.as_mut_ptr(),
+            operation.buffer.len() as u32,
+            ptr::null_mut(),
+            operation.overlapped.as_mut(),
+        )
+    };
+    if started == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error().map(|code| code as u32) != Some(ERROR_IO_PENDING) {
+            return Err(error.to_string());
+        }
+    }
+    // ReadFile's synchronous return does not make lpNumberOfBytesRead reliable
+    // for an overlapped handle; consume the same bounded completion path.
+    let transferred = match await_overlapped(pipe, &mut operation, deadline) {
+        Ok(transferred) => transferred,
+        Err(error) => {
+            if error.requires_quarantine() {
+                operation.quarantine();
+            }
+            return Err(error.into_message());
+        }
+    };
+    if transferred != byte_len as u32 {
+        return Err("Mod IPC response was only partially read".to_owned());
+    }
+    Ok(operation.buffer)
+}
+
+fn encode_delivery_ack(request_id: u64) -> [u8; DELIVERY_ACK_SIZE] {
+    let mut ack = [0_u8; DELIVERY_ACK_SIZE];
+    ack[0..4].copy_from_slice(&IPC_DELIVERY_ACK_MAGIC.to_le_bytes());
+    ack[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
+    ack[8..16].copy_from_slice(&request_id.to_le_bytes());
+    ack
+}
+
+fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
+    let _transaction = acquire_ipc_transaction()?;
+    let deadline = Instant::now() + Duration::from_millis(u64::from(IPC_TIMEOUT_MS));
+    let current_identity = query_current_token_identity()?;
+    let pipe = open_authenticated_pipe(deadline, &current_identity)?;
+
+    overlapped_write_exact(pipe.raw(), request, deadline)?;
+    let response_bytes = overlapped_read_exact(pipe.raw(), RESPONSE_SIZE, deadline)?;
+    let mut response = [0_u8; RESPONSE_SIZE];
+    response.copy_from_slice(&response_bytes);
+
+    let request_id = u64::from_le_bytes([
+        request[8],
+        request[9],
+        request[10],
+        request[11],
+        request[12],
+        request[13],
+        request[14],
+        request[15],
+    ]);
+    let ack = encode_delivery_ack(request_id);
+    // The ACK is best-effort for compatibility with already-deployed v7 servers
+    // that disconnect immediately after the response. A new server also treats
+    // the client's close after a complete read as delivery, so an ACK failure
+    // must not turn a known response into an ambiguous retryable operation. It
+    // still uses bounded overlapped I/O; when the shared deadline is exhausted,
+    // close-read remains the server's terminal delivery signal.
+    if remaining_timeout_ms(deadline).is_some() {
+        let _ = overlapped_write_exact(pipe.raw(), &ack, deadline);
     }
     Ok(response)
 }
@@ -3024,6 +2788,10 @@ mod tests {
     #[test]
     fn rust_wire_constants_match_the_native_ipc_header() {
         assert_eq!(native_define("NTE_MODS_IPC_MAGIC"), IPC_MAGIC as u64);
+        assert_eq!(
+            native_define("NTE_MODS_IPC_DELIVERY_ACK_MAGIC"),
+            IPC_DELIVERY_ACK_MAGIC as u64
+        );
         assert_eq!(native_define("NTE_MODS_IPC_VERSION"), IPC_VERSION as u64);
         assert!(NATIVE_IPC_HEADER.contains(
             "#define NTE_MODS_RUNTIME_PRESENCE_NAME L\"Local\\\\nte-mods-plugin-v1-present\""
@@ -3039,6 +2807,10 @@ mod tests {
         assert_eq!(
             native_define("NTE_MODS_IPC_RESPONSE_SIZE"),
             RESPONSE_SIZE as u64
+        );
+        assert_eq!(
+            native_define("NTE_MODS_IPC_DELIVERY_ACK_SIZE"),
+            DELIVERY_ACK_SIZE as u64
         );
         assert_eq!(
             native_define("NTE_COMBAT_CLOCK_HISTORY_SIZE"),
@@ -3296,6 +3068,36 @@ mod tests {
         bytes[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
         bytes[8..16].copy_from_slice(&10_u64.to_le_bytes());
         assert!(decode_response(&bytes, 9).is_err());
+    }
+
+    #[test]
+    fn delivery_ack_uses_the_stable_little_endian_wire_layout() {
+        let bytes = encode_delivery_ack(0x0102_0304_0506_0708);
+        assert_eq!(bytes.len(), DELIVERY_ACK_SIZE);
+        assert_eq!(&bytes[0..4], &IPC_DELIVERY_ACK_MAGIC.to_le_bytes());
+        assert_eq!(&bytes[4..6], &IPC_VERSION.to_le_bytes());
+        assert_eq!(&bytes[6..8], &[0, 0]);
+        assert_eq!(&bytes[8..16], &0x0102_0304_0506_0708_u64.to_le_bytes());
+    }
+
+    #[test]
+    fn overlapped_wait_distinguishes_pending_from_terminal_results() {
+        assert!(!overlapped_status_is_terminal(
+            &io::Error::from_raw_os_error(WAIT_TIMEOUT as i32)
+        ));
+        assert!(!overlapped_status_is_terminal(
+            &io::Error::from_raw_os_error(ERROR_IO_INCOMPLETE as i32)
+        ));
+        assert!(overlapped_status_is_terminal(
+            &io::Error::from_raw_os_error(ERROR_OPERATION_ABORTED as i32)
+        ));
+    }
+
+    #[test]
+    fn ipc_deadline_never_becomes_an_unbounded_wait() {
+        assert!(remaining_timeout_ms(Instant::now() - Duration::from_millis(1)).is_none());
+        let timeout = remaining_timeout_ms(Instant::now() + Duration::from_secs(1));
+        assert!(timeout.is_some_and(|value| value > 0 && value <= 1_000));
     }
 
     #[test]

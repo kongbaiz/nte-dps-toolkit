@@ -41,12 +41,12 @@ import type {
   DiagnosticsQualitySnapshot,
   DiagnosticsSnapshot,
 } from "@/lib/tauri/diagnostics-contract";
+import { formatByteCount } from "@/lib/update-presentation";
 import { cn } from "@/lib/utils";
 
 import {
   buildRedactedDiagnosticsReport,
   diagnosticsContentKind,
-  formatByteCount,
   formatDecimalString,
 } from "./diagnostics-model";
 import { useDiagnostics, type DiagnosticsAction } from "./use-diagnostics";

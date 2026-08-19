@@ -1,4 +1,6 @@
+use std::fmt;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -16,6 +18,44 @@ pub const HISTORY_RECORD_VERSION: u32 = 1;
 pub const MAX_HISTORY_RECORDS: usize = 200;
 const MAX_HISTORY_DETAIL_HITS: usize = 100_000;
 pub const MAX_HISTORY_IMPORT_BYTES: u64 = 128 * 1024 * 1024;
+pub const MAX_HISTORY_DIRECTORY_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_HISTORY_DIRECTORY_ENTRIES: usize = 4_096;
+
+#[derive(Clone, Copy)]
+struct HistoryDirectoryLimits {
+    max_entries: usize,
+    max_records: usize,
+    max_total_bytes: u64,
+}
+
+impl HistoryDirectoryLimits {
+    const PRODUCTION: Self = Self {
+        max_entries: MAX_HISTORY_DIRECTORY_ENTRIES,
+        max_records: MAX_HISTORY_RECORDS,
+        max_total_bytes: MAX_HISTORY_DIRECTORY_BYTES,
+    };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HistoryFileReadError {
+    NotFile,
+    Metadata,
+    TooLarge,
+    Read,
+    Utf8,
+}
+
+impl fmt::Display for HistoryFileReadError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NotFile => "History record path is not a file",
+            Self::Metadata => "History record metadata could not be read",
+            Self::TooLarge => "History record exceeds the supported file size",
+            Self::Read => "History record could not be read",
+            Self::Utf8 => "History record must contain UTF-8 JSON",
+        })
+    }
+}
 
 static HISTORY_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -83,6 +123,84 @@ impl HistoryRecord {
             .as_ref()
             .and_then(|half| team_from_characters(half.total_dps, &half.characters))
             .or_else(|| self.to_team_dps())
+    }
+}
+
+/// A failure before the destination record crosses the atomic-write commit
+/// boundary. Retrying an archive after one of these failures cannot duplicate
+/// a committed record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistorySaveError {
+    InvalidDetails,
+    PrepareDirectory,
+    Serialize,
+    Commit,
+}
+
+impl fmt::Display for HistorySaveError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidDetails => "History details failed validation.",
+            Self::PrepareDirectory => "History storage directory could not be prepared.",
+            Self::Serialize => "History record could not be serialized.",
+            Self::Commit => "History record could not be committed.",
+        })
+    }
+}
+
+impl std::error::Error for HistorySaveError {}
+
+/// A post-commit retention task that did not finish. The newly written record
+/// remains committed and must not be submitted to the record retry queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryMaintenanceWarning {
+    RetentionPruneFailed,
+}
+
+impl fmt::Display for HistoryMaintenanceWarning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RetentionPruneFailed => {
+                formatter.write_str("History retention maintenance did not finish.")
+            }
+        }
+    }
+}
+
+/// The result after a History record has crossed the atomic-write commit
+/// boundary. Both variants contain the single committed record identity.
+#[derive(Clone, Debug)]
+#[must_use = "a committed History record may also carry a maintenance warning"]
+pub enum HistorySaveOutcome {
+    Committed(HistoryRecord),
+    CommittedWithMaintenanceWarning {
+        record: HistoryRecord,
+        warning: HistoryMaintenanceWarning,
+    },
+}
+
+impl HistorySaveOutcome {
+    pub fn record(&self) -> &HistoryRecord {
+        match self {
+            Self::Committed(record) | Self::CommittedWithMaintenanceWarning { record, .. } => {
+                record
+            }
+        }
+    }
+
+    pub fn maintenance_warning(&self) -> Option<HistoryMaintenanceWarning> {
+        match self {
+            Self::Committed(_) => None,
+            Self::CommittedWithMaintenanceWarning { warning, .. } => Some(*warning),
+        }
+    }
+
+    pub fn into_record(self) -> HistoryRecord {
+        match self {
+            Self::Committed(record) | Self::CommittedWithMaintenanceWarning { record, .. } => {
+                record
+            }
+        }
     }
 }
 
@@ -440,14 +558,8 @@ pub fn load_history() -> HistoryLoadResult {
 }
 
 pub fn load_history_record_from_path(path: &Path) -> Result<HistoryRecord, String> {
-    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
-    if !metadata.is_file() {
-        return Err("History record path is not a file".to_owned());
-    }
-    if metadata.len() > MAX_HISTORY_IMPORT_BYTES {
-        return Err("History record exceeds the supported file size".to_owned());
-    }
-    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (text, _) = read_history_text_with_limit(path, MAX_HISTORY_IMPORT_BYTES)
+        .map_err(|error| error.to_string())?;
     parse_history_record(&text, path)
 }
 
@@ -456,61 +568,199 @@ pub fn load_history_index() -> HistoryIndexLoadResult {
 }
 
 pub fn load_history_index_from_dir(directory: &Path) -> HistoryIndexLoadResult {
+    load_history_index_from_dir_with_limits(directory, HistoryDirectoryLimits::PRODUCTION)
+}
+
+fn load_history_index_from_dir_with_limits(
+    directory: &Path,
+    limits: HistoryDirectoryLimits,
+) -> HistoryIndexLoadResult {
     let mut result = HistoryIndexLoadResult::default();
     let Ok(entries) = fs::read_dir(directory) else {
         return result;
     };
-    for entry in entries.flatten() {
+    let mut total_bytes = 0u64;
+    for (entry_count, entry) in entries.enumerate() {
+        if entry_count >= limits.max_entries {
+            mark_history_file_skipped(&mut result.skipped_files);
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                mark_history_file_skipped(&mut result.skipped_files);
+                continue;
+            }
+        };
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        let parsed = fs::metadata(&path)
+        let Some(remaining_bytes) = limits.max_total_bytes.checked_sub(total_bytes) else {
+            mark_history_file_skipped(&mut result.skipped_files);
+            continue;
+        };
+        let parsed = history_candidate_size(&path, remaining_bytes)
             .map_err(|error| error.to_string())
-            .and_then(|metadata| {
-                if !metadata.is_file() {
-                    return Err("History record path is not a file".to_owned());
-                }
-                if metadata.len() > MAX_HISTORY_IMPORT_BYTES {
-                    return Err("History record exceeds the supported file size".to_owned());
-                }
-                fs::read_to_string(&path).map_err(|error| error.to_string())
-            })
-            .and_then(|text| parse_history_index(&text, &path));
+            .and_then(|candidate_bytes| {
+                // Charge the declared size before any read/parse attempt. Invalid
+                // UTF-8/JSON therefore cannot bypass the aggregate I/O budget.
+                total_bytes = total_bytes.saturating_add(candidate_bytes);
+                read_history_text_with_limit(&path, candidate_bytes)
+                    .map_err(|error| error.to_string())
+                    .and_then(|(text, _)| parse_history_index(&text, &path))
+            });
         match parsed {
             Ok(mut record) => {
                 record.path = path;
-                result.records.push(record);
+                if insert_bounded_history_index(&mut result.records, record, limits.max_records) {
+                    mark_history_file_skipped(&mut result.skipped_files);
+                }
             }
-            Err(_) => result.skipped_files += 1,
+            Err(_) => mark_history_file_skipped(&mut result.skipped_files),
         }
     }
-    result.records.sort_by(|left, right| {
+    sort_history_index_newest_first(&mut result.records);
+    result
+}
+
+fn sort_history_index_newest_first(records: &mut [HistoryIndexRecord]) {
+    records.sort_by(|left, right| {
         right
             .effective_timestamp
             .cmp(&left.effective_timestamp)
             .then_with(|| right.id.cmp(&left.id))
     });
-    result
 }
 
 pub fn load_history_from_dir(directory: &Path) -> HistoryLoadResult {
+    load_history_from_dir_with_limits(directory, HistoryDirectoryLimits::PRODUCTION)
+}
+
+fn load_history_from_dir_with_limits(
+    directory: &Path,
+    limits: HistoryDirectoryLimits,
+) -> HistoryLoadResult {
     let mut result = HistoryLoadResult::default();
     let Ok(entries) = fs::read_dir(directory) else {
         return result;
     };
-    for entry in entries.flatten() {
+    let mut total_bytes = 0u64;
+    for (entry_count, entry) in entries.enumerate() {
+        if entry_count >= limits.max_entries {
+            mark_history_file_skipped(&mut result.skipped_files);
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                mark_history_file_skipped(&mut result.skipped_files);
+                continue;
+            }
+        };
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        match load_history_record_from_path(&path) {
-            Ok(record) => result.records.push(record),
-            Err(_) => result.skipped_files += 1,
+        let Some(remaining_bytes) = limits.max_total_bytes.checked_sub(total_bytes) else {
+            mark_history_file_skipped(&mut result.skipped_files);
+            continue;
+        };
+        let parsed = history_candidate_size(&path, remaining_bytes)
+            .map_err(|error| error.to_string())
+            .and_then(|candidate_bytes| {
+                total_bytes = total_bytes.saturating_add(candidate_bytes);
+                read_history_text_with_limit(&path, candidate_bytes)
+                    .map_err(|error| error.to_string())
+                    .and_then(|(text, _)| parse_history_record(&text, &path))
+            });
+        match parsed {
+            Ok(record) => {
+                if insert_bounded_history_record(&mut result.records, record, limits.max_records) {
+                    mark_history_file_skipped(&mut result.skipped_files);
+                }
+            }
+            Err(_) => mark_history_file_skipped(&mut result.skipped_files),
         }
     }
     sort_records_newest_first(&mut result.records);
     result
+}
+
+fn read_history_text_with_limit(
+    path: &Path,
+    max_bytes: u64,
+) -> Result<(String, u64), HistoryFileReadError> {
+    let file = fs::File::open(path).map_err(|_| HistoryFileReadError::Read)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| HistoryFileReadError::Metadata)?;
+    if !metadata.is_file() {
+        return Err(HistoryFileReadError::NotFile);
+    }
+    let max_bytes = max_bytes.min(MAX_HISTORY_IMPORT_BYTES);
+    if metadata.len() > max_bytes {
+        return Err(HistoryFileReadError::TooLarge);
+    }
+    let mut bytes = Vec::with_capacity(metadata.len().min(64 * 1024) as usize);
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| HistoryFileReadError::Read)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(HistoryFileReadError::TooLarge);
+    }
+    let bytes_read = bytes.len() as u64;
+    let text = String::from_utf8(bytes).map_err(|_| HistoryFileReadError::Utf8)?;
+    Ok((text, bytes_read))
+}
+
+fn history_candidate_size(path: &Path, remaining_bytes: u64) -> Result<u64, HistoryFileReadError> {
+    let metadata = fs::metadata(path).map_err(|_| HistoryFileReadError::Metadata)?;
+    if !metadata.is_file() {
+        return Err(HistoryFileReadError::NotFile);
+    }
+    if metadata.len() > remaining_bytes.min(MAX_HISTORY_IMPORT_BYTES) {
+        return Err(HistoryFileReadError::TooLarge);
+    }
+    Ok(metadata.len())
+}
+
+fn insert_bounded_history_record(
+    records: &mut Vec<HistoryRecord>,
+    record: HistoryRecord,
+    limit: usize,
+) -> bool {
+    if limit == 0 {
+        return true;
+    }
+    records.push(record);
+    if records.len() <= limit {
+        return false;
+    }
+    sort_records_newest_first(records);
+    records.truncate(limit);
+    true
+}
+
+fn insert_bounded_history_index(
+    records: &mut Vec<HistoryIndexRecord>,
+    record: HistoryIndexRecord,
+    limit: usize,
+) -> bool {
+    if limit == 0 {
+        return true;
+    }
+    records.push(record);
+    if records.len() <= limit {
+        return false;
+    }
+    sort_history_index_newest_first(records);
+    records.truncate(limit);
+    true
+}
+
+fn mark_history_file_skipped(skipped_files: &mut usize) {
+    *skipped_files = skipped_files.saturating_add(1);
 }
 
 pub fn save_summary(summary: CombatSessionSummary) -> Result<HistoryRecord, String> {
@@ -524,6 +774,19 @@ pub fn save_summary_with_details(
     save_summary_with_details_to_dir(&history_dir(), summary, details)
 }
 
+pub fn save_summary_outcome(
+    summary: CombatSessionSummary,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    save_summary_to_dir_outcome(&history_dir(), summary)
+}
+
+pub fn save_summary_with_details_outcome(
+    summary: CombatSessionSummary,
+    details: HistoryCombatDetails,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    save_summary_with_details_to_dir_outcome(&history_dir(), summary, details)
+}
+
 pub fn import_record(path: &Path) -> Result<HistoryRecord, String> {
     import_record_to_dir(&history_dir(), path)
 }
@@ -533,14 +796,8 @@ pub fn import_record_json(json: &str) -> Result<HistoryRecord, String> {
 }
 
 pub fn import_record_to_dir(directory: &Path, source_path: &Path) -> Result<HistoryRecord, String> {
-    let metadata = fs::metadata(source_path).map_err(|error| error.to_string())?;
-    if !metadata.is_file() {
-        return Err("History record path is not a file".to_owned());
-    }
-    if metadata.len() > MAX_HISTORY_IMPORT_BYTES {
-        return Err("History record exceeds the supported file size".to_owned());
-    }
-    let text = fs::read_to_string(source_path).map_err(|error| error.to_string())?;
+    let (text, _) = read_history_text_with_limit(source_path, MAX_HISTORY_IMPORT_BYTES)
+        .map_err(|error| error.to_string())?;
     import_record_text_to_dir(directory, &text, source_path)
 }
 
@@ -559,19 +816,14 @@ fn import_record_text_to_dir(
     let mut record = parse_history_record(text, source_path)?;
     record.version = HISTORY_RECORD_VERSION;
     record.id = generate_record_id(Utc::now());
-
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    let text = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
-    atomic_write_text(&record_path(directory, &record), &format!("{text}\n"))?;
-    prune_history_dir(directory, MAX_HISTORY_RECORDS)?;
-    Ok(record)
+    compatibility_save_result(write_record_to_dir(directory, record))
 }
 
 pub fn save_summary_to_dir(
     directory: &Path,
     summary: CombatSessionSummary,
 ) -> Result<HistoryRecord, String> {
-    save_record_to_dir(directory, summary, None)
+    compatibility_save_result(save_summary_to_dir_outcome(directory, summary))
 }
 
 pub fn save_summary_with_details_to_dir(
@@ -580,15 +832,54 @@ pub fn save_summary_with_details_to_dir(
     details: HistoryCombatDetails,
 ) -> Result<HistoryRecord, String> {
     details.validate()?;
+    compatibility_save_result(save_record_to_dir(directory, summary, Some(details)))
+}
+
+pub fn save_summary_to_dir_outcome(
+    directory: &Path,
+    summary: CombatSessionSummary,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    save_record_to_dir(directory, summary, None)
+}
+
+pub fn save_summary_with_details_to_dir_outcome(
+    directory: &Path,
+    summary: CombatSessionSummary,
+    details: HistoryCombatDetails,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    details
+        .validate()
+        .map_err(|_| HistorySaveError::InvalidDetails)?;
     save_record_to_dir(directory, summary, Some(details))
+}
+
+fn compatibility_save_result(
+    result: Result<HistorySaveOutcome, HistorySaveError>,
+) -> Result<HistoryRecord, String> {
+    // Existing non-retrying command callers return only the record. Treat a
+    // post-commit warning as success so a user action cannot create a second
+    // ID after the first record was already made durable.
+    result
+        .map(HistorySaveOutcome::into_record)
+        .map_err(|error| error.to_string())
 }
 
 fn save_record_to_dir(
     directory: &Path,
     summary: CombatSessionSummary,
     details: Option<HistoryCombatDetails>,
-) -> Result<HistoryRecord, String> {
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    save_record_to_dir_with_maintenance(directory, summary, details, |directory| {
+        prune_history_dir(directory, MAX_HISTORY_RECORDS)
+    })
+}
+
+fn save_record_to_dir_with_maintenance(
+    directory: &Path,
+    summary: CombatSessionSummary,
+    details: Option<HistoryCombatDetails>,
+    maintain: impl FnOnce(&Path) -> Result<(), HistoryMaintenanceWarning>,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
     let saved_at = Utc::now();
     let id = generate_record_id(saved_at);
     let recorded_at = details.as_ref().and_then(HistoryCombatDetails::recorded_at);
@@ -600,10 +891,34 @@ fn save_record_to_dir(
         summary,
         details,
     };
-    let text = serde_json::to_string_pretty(&record).map_err(|error| error.to_string())?;
-    atomic_write_text(&record_path(directory, &record), &format!("{text}\n"))?;
-    prune_history_dir(directory, MAX_HISTORY_RECORDS)?;
-    Ok(record)
+    write_record_to_dir_with_maintenance(directory, record, maintain)
+}
+
+fn write_record_to_dir(
+    directory: &Path,
+    record: HistoryRecord,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    write_record_to_dir_with_maintenance(directory, record, |directory| {
+        prune_history_dir(directory, MAX_HISTORY_RECORDS)
+    })
+}
+
+fn write_record_to_dir_with_maintenance(
+    directory: &Path,
+    record: HistoryRecord,
+    maintain: impl FnOnce(&Path) -> Result<(), HistoryMaintenanceWarning>,
+) -> Result<HistorySaveOutcome, HistorySaveError> {
+    fs::create_dir_all(directory).map_err(|_| HistorySaveError::PrepareDirectory)?;
+    let text = serde_json::to_string_pretty(&record).map_err(|_| HistorySaveError::Serialize)?;
+    atomic_write_text(&record_path(directory, &record), &format!("{text}\n"))
+        .map_err(|_| HistorySaveError::Commit)?;
+    // `atomic_write_text` success is the commit boundary. Maintenance is a
+    // separate effect and therefore cannot turn this operation back into a
+    // precommit error.
+    match maintain(directory) {
+        Ok(()) => Ok(HistorySaveOutcome::Committed(record)),
+        Err(warning) => Ok(HistorySaveOutcome::CommittedWithMaintenanceWarning { record, warning }),
+    }
 }
 
 pub fn delete_record(record_id: &str) -> Result<bool, String> {
@@ -627,25 +942,59 @@ pub fn restore_record_to_dir(directory: &Path, record: &HistoryRecord) -> Result
 }
 
 pub fn delete_record_from_dir(directory: &Path, record_id: &str) -> Result<bool, String> {
+    delete_record_from_dir_with_limits(directory, record_id, HistoryDirectoryLimits::PRODUCTION)
+}
+
+fn delete_record_from_dir_with_limits(
+    directory: &Path,
+    record_id: &str,
+    limits: HistoryDirectoryLimits,
+) -> Result<bool, String> {
     if !valid_record_id(record_id) {
         return Err("Invalid history record ID".to_owned());
     }
-    let mut deleted = false;
-    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
+    let entries =
+        fs::read_dir(directory).map_err(|_| "History directory could not be scanned".to_owned())?;
+    let mut total_bytes = 0u64;
+    let mut matched_path = None;
+    for (entry_count, entry) in entries.enumerate() {
+        if entry_count >= limits.max_entries {
+            return Err("History directory exceeds the supported scan budget".to_owned());
+        }
+        let path = entry
+            .map_err(|_| "History directory could not be scanned".to_owned())?
+            .path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        let matches_id = fs::read_to_string(&path)
-            .map_err(|error| error.to_string())
-            .and_then(|text| parse_history_record(&text, &path))
-            .is_ok_and(|record| record.id == record_id);
-        if matches_id {
-            fs::remove_file(&path).map_err(|error| error.to_string())?;
-            deleted = true;
+        let remaining_bytes = limits
+            .max_total_bytes
+            .checked_sub(total_bytes)
+            .ok_or_else(|| "History directory exceeds the supported scan budget".to_owned())?;
+        let candidate_bytes = history_candidate_size(&path, remaining_bytes).map_err(|error| {
+            if error == HistoryFileReadError::TooLarge {
+                "History directory exceeds the supported scan budget".to_owned()
+            } else {
+                "History directory contains an unreadable record".to_owned()
+            }
+        })?;
+        total_bytes = total_bytes.saturating_add(candidate_bytes);
+        let (text, _) = read_history_text_with_limit(&path, candidate_bytes)
+            .map_err(|_| "History directory contains an unreadable record".to_owned())?;
+        let record = parse_history_index(&text, &path)
+            .map_err(|_| "History directory contains an invalid record".to_owned())?;
+        if record.id == record_id {
+            if matched_path.is_some() {
+                return Err("History directory contains duplicate record IDs".to_owned());
+            }
+            matched_path = Some(path);
         }
     }
-    Ok(deleted)
+    let Some(path) = matched_path else {
+        return Ok(false);
+    };
+    fs::remove_file(path).map_err(|_| "History record could not be deleted".to_owned())?;
+    Ok(true)
 }
 
 pub fn compare_records(left: &HistoryRecord, right: &HistoryRecord) -> HistoryComparison {
@@ -746,22 +1095,40 @@ fn record_path(directory: &Path, record: &HistoryRecord) -> PathBuf {
     directory.join(format!("{}_{}.json", record.file_timestamp(), record.id))
 }
 
-fn prune_history_dir(directory: &Path, max_records: usize) -> Result<(), String> {
-    let mut files = Vec::new();
-    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
-        let path = entry.map_err(|error| error.to_string())?.path();
+fn prune_history_dir(
+    directory: &Path,
+    max_records: usize,
+) -> Result<(), HistoryMaintenanceWarning> {
+    prune_history_dir_with_entry_limit(directory, max_records, MAX_HISTORY_DIRECTORY_ENTRIES)
+}
+
+fn prune_history_dir_with_entry_limit(
+    directory: &Path,
+    max_records: usize,
+    max_entries: usize,
+) -> Result<(), HistoryMaintenanceWarning> {
+    let entries =
+        fs::read_dir(directory).map_err(|_| HistoryMaintenanceWarning::RetentionPruneFailed)?;
+    let mut files = Vec::with_capacity(max_entries.min(max_records.saturating_add(1)));
+    for (entry_count, entry) in entries.enumerate() {
+        if entry_count >= max_entries {
+            return Err(HistoryMaintenanceWarning::RetentionPruneFailed);
+        }
+        let path = entry
+            .map_err(|_| HistoryMaintenanceWarning::RetentionPruneFailed)?
+            .path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
         let modified = fs::metadata(&path)
             .and_then(|metadata| metadata.modified())
-            .map_err(|error| error.to_string())?;
+            .map_err(|_| HistoryMaintenanceWarning::RetentionPruneFailed)?;
         files.push((modified, path));
     }
     files.sort_by_key(|(modified, _)| *modified);
     let remove_count = files.len().saturating_sub(max_records);
     for (_, path) in files.into_iter().take(remove_count) {
-        fs::remove_file(path).map_err(|error| error.to_string())?;
+        fs::remove_file(path).map_err(|_| HistoryMaintenanceWarning::RetentionPruneFailed)?;
     }
     Ok(())
 }
@@ -917,6 +1284,77 @@ mod tests {
         CombatSessionCharacterSummary, CombatSessionSummary, DpsTimeBasis, HitCharacterSource,
         HitDirection,
     };
+
+    #[test]
+    fn directory_loaders_keep_only_the_newest_bounded_records() {
+        let directory = temp_history_dir("bounded_newest");
+        fs::create_dir_all(&directory).expect("create bounded History directory");
+        for index in 0..(MAX_HISTORY_RECORDS + 5) {
+            let timestamp = format!("2026-01-01T00:{:02}:{:02}Z", index / 60, index % 60);
+            fs::write(
+                directory.join(format!("record-{index:03}.json")),
+                format!(
+                    r#"{{"version":1,"id":"record-{index:03}","saved_at":"{timestamp}","summary":{{}}}}"#
+                ),
+            )
+            .expect("write bounded History fixture");
+        }
+
+        let loaded = load_history_from_dir(&directory);
+        let index = load_history_index_from_dir(&directory);
+
+        assert_eq!(loaded.records.len(), MAX_HISTORY_RECORDS);
+        assert_eq!(index.records.len(), MAX_HISTORY_RECORDS);
+        assert_eq!(
+            loaded.records.first().map(|record| record.id.as_str()),
+            Some("record-204")
+        );
+        assert_eq!(
+            loaded.records.last().map(|record| record.id.as_str()),
+            Some("record-005")
+        );
+        assert_eq!(
+            index.records.first().map(|record| record.id.as_str()),
+            Some("record-204")
+        );
+        assert_eq!(
+            index.records.last().map(|record| record.id.as_str()),
+            Some("record-005")
+        );
+        assert_eq!(loaded.skipped_files, 5);
+        assert_eq!(index.skipped_files, 5);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn directory_loader_applies_entry_and_aggregate_byte_budgets_before_parsing() {
+        let directory = temp_history_dir("bounded_budget");
+        fs::create_dir_all(&directory).expect("create budgeted History directory");
+        for index in 0..4 {
+            fs::write(
+                directory.join(format!("record-{index}.json")),
+                format!(
+                    r#"{{"version":1,"id":"record-{index}","saved_at":"2026-01-01T00:00:0{index}Z","summary":{{"padding":"{}"}}}}"#,
+                    "x".repeat(128)
+                ),
+            )
+            .expect("write budgeted History fixture");
+        }
+        let limits = HistoryDirectoryLimits {
+            max_entries: 3,
+            max_records: 2,
+            max_total_bytes: 512,
+        };
+
+        let loaded = load_history_from_dir_with_limits(&directory, limits);
+        let index = load_history_index_from_dir_with_limits(&directory, limits);
+
+        assert!(loaded.records.len() <= 2);
+        assert!(index.records.len() <= 2);
+        assert!(loaded.skipped_files >= 2);
+        assert!(index.skipped_files >= 2);
+        let _ = fs::remove_dir_all(directory);
+    }
 
     #[test]
     fn loads_legacy_version_record() {
@@ -1291,6 +1729,60 @@ mod tests {
     }
 
     #[test]
+    fn delete_fails_closed_before_removal_when_directory_entry_budget_is_exceeded() {
+        let directory = temp_history_dir("delete_entry_budget");
+        fs::create_dir_all(&directory).expect("create delete budget directory");
+        for index in 0..3 {
+            fs::write(
+                directory.join(format!("record-{index}.json")),
+                format!(
+                    r#"{{"version":1,"id":"record-{index}","saved_at":"2026-01-01T00:00:0{index}Z","summary":{{}}}}"#
+                ),
+            )
+            .expect("write delete entry fixture");
+        }
+        let limits = HistoryDirectoryLimits {
+            max_entries: 2,
+            max_records: MAX_HISTORY_RECORDS,
+            max_total_bytes: MAX_HISTORY_DIRECTORY_BYTES,
+        };
+
+        let error = delete_record_from_dir_with_limits(&directory, "record-0", limits)
+            .expect_err("incomplete scan must not remove a candidate");
+
+        assert_eq!(error, "History directory exceeds the supported scan budget");
+        assert_eq!(fs::read_dir(&directory).expect("read fixtures").count(), 3);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn delete_fails_closed_when_any_json_exceeds_the_aggregate_byte_budget() {
+        let directory = temp_history_dir("delete_byte_budget");
+        fs::create_dir_all(&directory).expect("create delete byte directory");
+        fs::write(
+            directory.join("target.json"),
+            r#"{"version":1,"id":"target","saved_at":"2026-01-01T00:00:00Z","summary":{}}"#,
+        )
+        .expect("write delete target");
+        fs::File::create(directory.join("oversized.json"))
+            .expect("create oversized delete candidate")
+            .set_len(2_048)
+            .expect("size oversized delete candidate");
+        let limits = HistoryDirectoryLimits {
+            max_entries: 8,
+            max_records: MAX_HISTORY_RECORDS,
+            max_total_bytes: 1_024,
+        };
+
+        let error = delete_record_from_dir_with_limits(&directory, "target", limits)
+            .expect_err("oversized candidate must abort before deletion");
+
+        assert_eq!(error, "History directory exceeds the supported scan budget");
+        assert!(directory.join("target.json").exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn prunes_oldest_records() {
         let directory = temp_history_dir("prune");
         fs::create_dir_all(&directory).unwrap();
@@ -1314,6 +1806,155 @@ mod tests {
 
         assert_eq!(files, 2);
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn prune_entry_overflow_returns_typed_warning_without_deleting_unreviewed_files() {
+        let directory = temp_history_dir("prune_entry_budget");
+        fs::create_dir_all(&directory).expect("create prune budget directory");
+        for index in 0..3 {
+            fs::write(directory.join(format!("record-{index}.json")), "{}")
+                .expect("write prune entry fixture");
+        }
+
+        let error = prune_history_dir_with_entry_limit(&directory, 1, 2)
+            .expect_err("incomplete prune scan must fail closed");
+
+        assert_eq!(error, HistoryMaintenanceWarning::RetentionPruneFailed);
+        assert_eq!(fs::read_dir(&directory).expect("read fixtures").count(), 3);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn committed_write_reports_maintenance_warning_without_losing_record_identity() {
+        let directory = temp_history_dir("committed_maintenance_warning");
+        let outcome = save_record_to_dir_with_maintenance(
+            &directory,
+            CombatSessionSummary {
+                total_damage: 42.0,
+                ..Default::default()
+            },
+            None,
+            |_| Err(HistoryMaintenanceWarning::RetentionPruneFailed),
+        )
+        .expect("the atomic record write committed before maintenance failed");
+
+        let (record, warning) = match outcome {
+            HistorySaveOutcome::CommittedWithMaintenanceWarning { record, warning } => {
+                (record, warning)
+            }
+            HistorySaveOutcome::Committed(_) => {
+                panic!("maintenance failure must remain visible in the typed outcome")
+            }
+        };
+        assert_eq!(warning, HistoryMaintenanceWarning::RetentionPruneFailed);
+        assert_eq!(
+            warning.to_string(),
+            "History retention maintenance did not finish."
+        );
+        let loaded = load_history_from_dir(&directory);
+        assert_eq!(loaded.skipped_files, 0);
+        assert_eq!(loaded.records.len(), 1);
+        assert_eq!(loaded.records[0].id, record.id);
+        assert_eq!(loaded.records[0].summary.total_damage, 42.0);
+        let compatibility_record =
+            compatibility_save_result(Ok(HistorySaveOutcome::CommittedWithMaintenanceWarning {
+                record: record.clone(),
+                warning,
+            }))
+            .expect("compatibility callers must not receive a false precommit failure");
+        assert_eq!(compatibility_record.id, record.id);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn normal_save_reports_a_clean_committed_outcome() {
+        let directory = temp_history_dir("clean_commit_outcome");
+
+        let outcome = save_summary_to_dir_outcome(
+            &directory,
+            CombatSessionSummary {
+                total_damage: 21.0,
+                ..Default::default()
+            },
+        )
+        .expect("History record commit");
+
+        assert!(matches!(&outcome, HistorySaveOutcome::Committed(_)));
+        assert_eq!(outcome.maintenance_warning(), None);
+        assert_eq!(outcome.record().summary.total_damage, 21.0);
+        assert_eq!(load_history_from_dir(&directory).records.len(), 1);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn precommit_failure_is_typed_and_creates_no_record() {
+        let directory = temp_history_dir("typed_precommit_failure");
+        fs::write(&directory, "not a directory").unwrap();
+
+        let error = save_summary_to_dir_outcome(
+            &directory,
+            CombatSessionSummary {
+                total_damage: 7.0,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, HistorySaveError::PrepareDirectory);
+        assert_eq!(
+            error.to_string(),
+            "History storage directory could not be prepared."
+        );
+        assert!(fs::metadata(&directory).unwrap().is_file());
+        fs::remove_file(directory).unwrap();
+    }
+
+    #[test]
+    fn invalid_details_fail_before_creating_the_history_directory() {
+        let directory = temp_history_dir("invalid_details_precommit");
+        let details = HistoryCombatDetails {
+            global_hits: vec![history_hit(1.0, 1, 10.0)],
+            first_half_hits: vec![history_hit(2.0, 1, 20.0)],
+            ..Default::default()
+        };
+
+        let error = save_summary_with_details_to_dir_outcome(
+            &directory,
+            CombatSessionSummary::default(),
+            details,
+        )
+        .unwrap_err();
+
+        assert_eq!(error, HistorySaveError::InvalidDetails);
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn save_error_messages_are_stable_and_redacted() {
+        let cases = [
+            (
+                HistorySaveError::InvalidDetails,
+                "History details failed validation.",
+            ),
+            (
+                HistorySaveError::PrepareDirectory,
+                "History storage directory could not be prepared.",
+            ),
+            (
+                HistorySaveError::Serialize,
+                "History record could not be serialized.",
+            ),
+            (
+                HistorySaveError::Commit,
+                "History record could not be committed.",
+            ),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected);
+            assert!(!error.to_string().contains("private-history-path"));
+        }
     }
 
     #[test]

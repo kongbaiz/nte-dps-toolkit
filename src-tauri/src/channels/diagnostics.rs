@@ -1,54 +1,69 @@
-use std::{sync::atomic::Ordering, thread, time::Duration};
-
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
+    channels::stream_runtime::{
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
+        validate_subscription_id,
+    },
     commands::diagnostics::snapshot,
-    contract::{CommandError, SubscriptionReceipt, diagnostics::DiagnosticsEvent},
+    contract::{
+        CommandError, SubscriptionReceipt,
+        diagnostics::DiagnosticsEvent,
+        stream::{StreamKind, StreamReadySignal},
+    },
     state::AppState,
     windows::console,
 };
 
 pub(crate) const DIAGNOSTICS_STREAM_INTERVAL_MS: u32 = 500;
-const STREAM_KEY_PREFIX: &str = "diagnostics:";
-
 #[tauri::command]
 pub(crate) fn subscribe_diagnostics(
     subscription_id: String,
-    on_event: Channel<DiagnosticsEvent>,
+    on_event: Channel<StreamReadySignal>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
+    state
+        .diagnostics_revision()
+        .map_err(CommandError::from_core)?;
 
-    let stream_key = format!("{STREAM_KEY_PREFIX}{subscription_id}");
+    let stream_kind = StreamKind::Diagnostics;
+    let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
-    thread::spawn(move || {
-        let mut last_revision = None;
-        while !stop.load(Ordering::Acquire) {
-            let revision = state.diagnostics_revision();
-            if last_revision != Some(revision) {
-                if on_event
-                    .send(DiagnosticsEvent::Snapshot(snapshot(&state)))
-                    .is_err()
-                {
-                    break;
-                }
-                last_revision = Some(revision);
+    let registration = state
+        .reserve_stream(window.label(), &stream_key)
+        .map_err(stream_registry_error)?;
+    let stream_generation = registration.generation();
+    let mut last_revision = None;
+    spawn_polling_stream(
+        "nte-diagnostics-stream",
+        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        state,
+        registration,
+        DIAGNOSTICS_STREAM_INTERVAL_MS,
+        move |state| {
+            let Ok(revision) = state.diagnostics_revision() else {
+                return PollingStreamOutput::Stop;
+            };
+            if last_revision == Some(revision) {
+                return PollingStreamOutput::NoChange;
             }
-            thread::sleep(Duration::from_millis(u64::from(
-                DIAGNOSTICS_STREAM_INTERVAL_MS,
-            )));
-        }
-        state.finish_stream(&stream_key, &stop);
-    });
+            let Ok(next) = snapshot(state) else {
+                return PollingStreamOutput::Stop;
+            };
+            last_revision = Some(revision);
+            PollingStreamOutput::Event(DiagnosticsEvent::Snapshot(next))
+        },
+    )?;
 
-    Ok(SubscriptionReceipt {
+    Ok(SubscriptionReceipt::new(
         subscription_id,
-        stream_interval_ms: DIAGNOSTICS_STREAM_INTERVAL_MS,
-    })
+        stream_kind,
+        stream_generation,
+        DIAGNOSTICS_STREAM_INTERVAL_MS,
+    ))
 }
 
 #[tauri::command]
@@ -59,20 +74,13 @@ pub(crate) fn unsubscribe_diagnostics(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state.stop_stream(&format!("{STREAM_KEY_PREFIX}{subscription_id}"));
+    state
+        .stop_stream(
+            window.label(),
+            &StreamKind::Diagnostics.stream_key(&subscription_id),
+        )
+        .map_err(stream_registry_error)?;
     Ok(())
-}
-
-fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
-    let valid_length = (1..=64).contains(&subscription_id.len());
-    let valid_characters = subscription_id
-        .bytes()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_'));
-    if valid_length && valid_characters {
-        Ok(())
-    } else {
-        Err(CommandError::invalid_subscription_id())
-    }
 }
 
 #[cfg(test)]

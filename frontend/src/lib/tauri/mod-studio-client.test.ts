@@ -1,6 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createModStudioClient } from "./mod-studio-client";
+import { MAX_STREAM_DELIVERY_BYTES } from "./stream-contract";
+
+const encodeDelivery = (events: unknown[]): ArrayBuffer => {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({ streamProtocolVersion: 1, events }),
+  );
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
+};
 
 const workspace = {
   contractVersion: 10,
@@ -88,7 +99,7 @@ describe("Mod Studio client", () => {
 
   it("loads and installs market items through Rust-owned commands", async () => {
     const catalog = {
-      contractVersion: 10,
+      contractVersion: 11,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [
@@ -104,9 +115,7 @@ describe("Mod Studio client", () => {
           author: "NTE",
           capabilities: ["combat-clock", "ipc"],
           packageSize: 1024,
-          installed: false,
-          enabled: false,
-          current: false,
+          localState: { status: "notInstalled" },
         },
         {
           id: "equipment",
@@ -120,9 +129,11 @@ describe("Mod Studio client", () => {
           author: "NTE",
           capabilities: ["equipment", "ipc"],
           packageSize: 2048,
-          installed: true,
-          enabled: true,
-          current: true,
+          localState: {
+            status: "installed",
+            enabled: true,
+            current: true,
+          },
         },
       ],
     };
@@ -331,13 +342,32 @@ describe("Mod Studio client", () => {
 
   it("subscribes through a typed Channel and cleans it up", async () => {
     let deliver: ((message: unknown) => void) | undefined;
-    const invoke = vi
-      .fn()
-      .mockResolvedValueOnce({
-        subscriptionId: "runtime-01",
-        streamIntervalMs: 250,
-      })
-      .mockResolvedValueOnce(undefined);
+    const runtimeEvent = {
+      event: "connection",
+      payload: {
+        contractVersion: 10,
+        generation: "1",
+        status: "connected",
+      },
+    };
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "subscribe_mod_studio_runtime") {
+        return {
+          subscriptionId: "runtime-01",
+          streamKind: "modStudioRuntime",
+          streamIntervalMs: 250,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+          maxInFlightDeliveries: 1,
+          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
+        };
+      }
+      if (command === "read_stream_delivery") {
+        return encodeDelivery([runtimeEvent]);
+      }
+      if (command === "ack_stream_delivery") return { accepted: true };
+      return undefined;
+    });
     const onEvent = vi.fn();
     const onError = vi.fn();
     const client = createModStudioClient(
@@ -353,30 +383,23 @@ describe("Mod Studio client", () => {
 
     const unsubscribe = client.subscribeRuntime(onEvent, onError);
     deliver?.({
-      event: "connection",
-      payload: {
-        contractVersion: 10,
-        generation: "1",
-        status: "connected",
-      },
+      streamProtocolVersion: 1,
+      streamKind: "modStudioRuntime",
+      subscriptionId: "runtime-01",
+      streamGeneration: "1",
+      deliverySequence: "1",
     });
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
-    expect(onEvent).toHaveBeenCalledWith({
-      event: "connection",
-      payload: {
-        contractVersion: 10,
-        generation: "1",
-        status: "connected",
-      },
-    });
+    expect(onEvent).toHaveBeenCalledWith(runtimeEvent);
     expect(onError).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenNthCalledWith(1, "subscribe_mod_studio_runtime", {
       subscriptionId: "runtime-01",
       onEvent: "runtime-channel",
     });
     expect(invoke).toHaveBeenNthCalledWith(
-      2,
+      4,
       "unsubscribe_mod_studio_runtime",
       {
         subscriptionId: "runtime-01",

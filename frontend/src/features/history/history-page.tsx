@@ -32,6 +32,15 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { dismissLayerWhenClosed } from "@/components/ui/layer-behavior";
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuPortal,
+  ContextMenuPositioner,
+  ContextMenuTrigger,
+} from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCharacterAvatar } from "@/hooks/use-character-avatar";
 import { t, tf } from "@/lib/i18n";
@@ -72,11 +81,7 @@ export function HistoryPage() {
   const [rightId, setRightId] = useState("");
   const [capturePending, setCapturePending] = useState(false);
   const [captureError, setCaptureError] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    recordId: string;
-    left: number;
-    top: number;
-  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<string | null>(null);
 
   const records = useMemo(
     () =>
@@ -116,17 +121,10 @@ export function HistoryPage() {
 
   useEffect(() => {
     if (contextMenu === null) return;
-    const close = () => setContextMenu(null);
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("blur", close);
-    window.addEventListener("keydown", closeOnEscape);
+    const closeContextMenuOnWindowBlur = () => setContextMenu(null);
+    window.addEventListener("blur", closeContextMenuOnWindowBlur);
     return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("blur", close);
-      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("blur", closeContextMenuOnWindowBlur);
     };
   }, [contextMenu]);
 
@@ -180,280 +178,285 @@ export function HistoryPage() {
   }
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-      <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2 min-[640px]:px-4">
-        <Button
-          disabled={busy}
-          size="sm"
-          title={t(
-            "Save a de-identified stats summary; no packets, payload, IP, port or local paths",
-          )}
-          onClick={() => void history.saveCurrent()}
-        >
-          <Save className="size-4" /> {t("Save This Summary")}
-        </Button>
-        <Button
-          disabled={busy}
-          size="sm"
-          variant="outline"
-          title={t("Import a previously exported history record")}
-          onClick={() => void history.importFile()}
-        >
-          <Upload className="size-4" /> {t("Import record JSON")}
-        </Button>
-        <Button
-          aria-label={t("Reload")}
-          disabled={busy}
-          size="icon-sm"
-          variant="outline"
-          onClick={() => void history.refresh()}
-        >
-          <RefreshCw
-            className={cn(
-              "size-4",
-              history.pendingAction === "reload" && "animate-spin",
-            )}
-          />
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {tf("{} records", [String(records.length)])}
-        </span>
-        {history.state.snapshot.skippedFiles > 0 && (
-          <span className="text-xs text-amber-600 dark:text-amber-300">
-            {tf("Skipped {} corrupt files", [
-              String(history.state.snapshot.skippedFiles),
-            ])}
-          </span>
-        )}
-        {history.statusMessageKey && (
-          <span className="text-xs text-muted-foreground" aria-live="polite">
-            {t(history.statusMessageKey)}
-          </span>
-        )}
-      </header>
-
-      {records.length > 0 && (
-        <p className="border-b px-4 py-1.5 text-[11px] text-muted-foreground">
-          {t(
-            "Click a record for details; right-click to compare, export or delete",
-          )}
-        </p>
-      )}
-
-      {history.mutationError && (
-        <Alert variant="destructive" className="mx-5 mt-4 w-auto">
-          <AlertTitle>{t("History operation failed")}</AlertTitle>
-          <AlertDescription>
-            {t(history.mutationError.messageKey)}
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {captureError && (
-        <Alert variant="destructive" className="mx-5 mt-4 w-auto">
-          <AlertTitle>{t("Capture start failed")}</AlertTitle>
-          <AlertDescription>{t(captureError)}</AlertDescription>
-        </Alert>
-      )}
-
-      {history.undoDeletion && (
-        <Alert className="mx-5 mt-4 w-auto">
-          <AlertTitle>{t("History record deleted")}</AlertTitle>
-          <AlertDescription className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <span>{t("You can restore it for a few seconds.")}</span>
-            <Button
-              disabled={busy}
-              size="sm"
-              variant="outline"
-              onClick={() => void history.restoreDeleted()}
-            >
-              {t("Undo")}
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {records.length === 0 ? (
-        <Empty className="m-5 min-h-72 border">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <HistoryIcon />
-            </EmptyMedia>
-            <EmptyTitle>{t("No history records yet")}</EmptyTitle>
-            <EmptyDescription>
-              {t(
-                "Save the current combat summary or import a history record JSON file.",
-              )}
-            </EmptyDescription>
-          </EmptyHeader>
-          <div className="flex flex-wrap justify-center gap-2">
-            <Button
-              disabled={capturePending}
-              onClick={() => void startCapture()}
-            >
-              <Radio className="size-4" /> {t("Start Capture")}
-            </Button>
-            <Button disabled={busy} onClick={() => void history.saveCurrent()}>
-              <Save className="size-4" /> {t("Save This Summary")}
-            </Button>
-            <Button
-              disabled={capturePending}
-              variant="outline"
-              onClick={() => void importCaptureJson()}
-            >
-              <Upload className="size-4" /> {t("Import Capture JSON")}
-            </Button>
-            <Button
-              disabled={busy}
-              variant="outline"
-              onClick={() => void history.importFile()}
-            >
-              <Upload className="size-4" /> {t("Import record JSON")}
-            </Button>
-          </div>
-        </Empty>
-      ) : (
-        <div className="grid min-h-0 flex-1 grid-cols-1 items-start gap-3 overflow-y-auto p-3 min-[900px]:grid-cols-[300px_minmax(0,1fr)]">
-          <div
-            className="flex min-w-0 gap-2 overflow-x-auto rounded-lg border bg-background p-2 min-[900px]:sticky min-[900px]:top-0 min-[900px]:block min-[900px]:max-h-[calc(100vh-7rem)] min-[900px]:overflow-y-auto"
-            role="listbox"
-            aria-label={t("History records")}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                document
-                  .querySelector<HTMLElement>("[data-history-detail]")
-                  ?.focus();
-                return;
-              }
-              if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-              const buttons = Array.from(
-                event.currentTarget.querySelectorAll<HTMLButtonElement>(
-                  "[data-history-record]",
-                ),
-              );
-              const current = buttons.indexOf(
-                event.target as HTMLButtonElement,
-              );
-              if (current < 0) return;
-              event.preventDefault();
-              const next = nextHistoryRecordIndex(
-                buttons.length,
-                current,
-                event.key === "ArrowDown" ? 1 : -1,
-              );
-              buttons[next]?.focus();
-              setSelectedId(records[next]?.id ?? null);
-            }}
-          >
-            {records.map((record) => (
-              <button
-                key={record.id}
-                type="button"
-                role="option"
-                data-history-record
-                aria-selected={record.id === selectedId}
-                className={cn(
-                  "flex min-h-16 min-w-64 shrink-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-muted min-[900px]:mb-1 min-[900px]:w-full min-[900px]:min-w-0",
-                  record.id === selectedId &&
-                    "bg-primary text-primary-foreground hover:bg-primary",
+    <ContextMenu
+      open={contextMenu !== null}
+      onOpenChange={(open) =>
+        dismissLayerWhenClosed(open, () => setContextMenu(null))
+      }
+    >
+      <ContextMenuTrigger
+        render={
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+            <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2 min-[640px]:px-4">
+              <Button
+                disabled={busy}
+                size="sm"
+                title={t(
+                  "Save a de-identified stats summary; no packets, payload, IP, port or local paths",
                 )}
-                onClick={() => setSelectedId(record.id)}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setSelectedId(record.id);
-                  setContextMenu({
-                    recordId: record.id,
-                    left: Math.max(
-                      8,
-                      Math.min(
-                        event.clientX,
-                        Math.max(8, window.innerWidth - 220),
-                      ),
-                    ),
-                    top: Math.max(
-                      8,
-                      Math.min(
-                        event.clientY,
-                        Math.max(8, window.innerHeight - 190),
-                      ),
-                    ),
-                  });
-                }}
+                onClick={() => void history.saveCurrent()}
               >
-                <span className="font-medium">{record.displayTime}</span>
-                {record.partyLabel && (
-                  <span
-                    className={cn(
-                      "truncate text-xs text-muted-foreground",
-                      record.id === selectedId && "text-primary-foreground/75",
-                    )}
-                    title={record.partyLabel}
-                  >
-                    {record.partyLabel}
-                  </span>
-                )}
-                <span
+                <Save className="size-4" /> {t("Save This Summary")}
+              </Button>
+              <Button
+                disabled={busy}
+                size="sm"
+                variant="outline"
+                title={t("Import a previously exported history record")}
+                onClick={() => void history.importFile()}
+              >
+                <Upload className="size-4" /> {t("Import record JSON")}
+              </Button>
+              <Button
+                aria-label={t("Reload")}
+                disabled={busy}
+                size="icon-sm"
+                variant="outline"
+                onClick={() => void history.refresh()}
+              >
+                <RefreshCw
                   className={cn(
-                    "text-xs text-muted-foreground",
-                    record.id === selectedId && "text-primary-foreground/75",
+                    "size-4",
+                    history.pendingAction === "reload" && "animate-spin",
                   )}
-                >
-                  {number(record.summary.totalDps)} DPS ·{" "}
-                  {number(record.summary.totalDamage)}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div className="@container/history min-h-0 min-w-0 space-y-4">
-            {selected && (
-              <div
-                data-history-detail
-                tabIndex={-1}
-                className="space-y-4 outline-none"
-              >
-                <RecordDetail
-                  busy={busy}
-                  record={selected}
-                  onDelete={() => {
-                    void history.deleteRecord(selected.id);
-                  }}
-                  onExport={() => void history.exportRecordFile(selected.id)}
-                  onPrediction={(line) =>
-                    void history.setPrediction(selected.id, line)
-                  }
                 />
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {tf("{} records", [String(records.length)])}
+              </span>
+              {history.state.snapshot.skippedFiles > 0 && (
+                <span className="text-xs text-amber-600 dark:text-amber-300">
+                  {tf("Skipped {} corrupt files", [
+                    String(history.state.snapshot.skippedFiles),
+                  ])}
+                </span>
+              )}
+              {history.statusMessageKey && (
+                <span
+                  className="text-xs text-muted-foreground"
+                  aria-live="polite"
+                >
+                  {t(history.statusMessageKey)}
+                </span>
+              )}
+            </header>
+
+            {records.length > 0 && (
+              <p className="border-b px-4 py-1.5 text-[11px] text-muted-foreground">
+                {t(
+                  "Click a record for details; right-click to compare, export or delete",
+                )}
+              </p>
+            )}
+
+            {history.mutationError && (
+              <Alert variant="destructive" className="mx-5 mt-4 w-auto">
+                <AlertTitle>{t("History operation failed")}</AlertTitle>
+                <AlertDescription>
+                  {t(history.mutationError.messageKey)}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {captureError && (
+              <Alert variant="destructive" className="mx-5 mt-4 w-auto">
+                <AlertTitle>{t("Capture start failed")}</AlertTitle>
+                <AlertDescription>{t(captureError)}</AlertDescription>
+              </Alert>
+            )}
+
+            {history.undoDeletion && (
+              <Alert className="mx-5 mt-4 w-auto">
+                <AlertTitle>{t("History record deleted")}</AlertTitle>
+                <AlertDescription className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <span>{t("You can restore it for a few seconds.")}</span>
+                  <Button
+                    disabled={busy}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void history.restoreDeleted()}
+                  >
+                    {t("Undo")}
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {records.length === 0 ? (
+              <Empty className="m-5 min-h-72 border">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <HistoryIcon />
+                  </EmptyMedia>
+                  <EmptyTitle>{t("No history records yet")}</EmptyTitle>
+                  <EmptyDescription>
+                    {t(
+                      "Save the current combat summary or import a history record JSON file.",
+                    )}
+                  </EmptyDescription>
+                </EmptyHeader>
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button
+                    disabled={capturePending}
+                    onClick={() => void startCapture()}
+                  >
+                    <Radio className="size-4" /> {t("Start Capture")}
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    onClick={() => void history.saveCurrent()}
+                  >
+                    <Save className="size-4" /> {t("Save This Summary")}
+                  </Button>
+                  <Button
+                    disabled={capturePending}
+                    variant="outline"
+                    onClick={() => void importCaptureJson()}
+                  >
+                    <Upload className="size-4" /> {t("Import Capture JSON")}
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    variant="outline"
+                    onClick={() => void history.importFile()}
+                  >
+                    <Upload className="size-4" /> {t("Import record JSON")}
+                  </Button>
+                </div>
+              </Empty>
+            ) : (
+              <div className="grid min-h-0 flex-1 grid-cols-1 items-start gap-3 overflow-y-auto p-3 min-[900px]:grid-cols-[300px_minmax(0,1fr)]">
+                <div
+                  className="flex min-w-0 gap-2 overflow-x-auto rounded-lg border bg-background p-2 min-[900px]:sticky min-[900px]:top-0 min-[900px]:block min-[900px]:max-h-[calc(100vh-7rem)] min-[900px]:overflow-y-auto"
+                  role="listbox"
+                  aria-label={t("History records")}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      document
+                        .querySelector<HTMLElement>("[data-history-detail]")
+                        ?.focus();
+                      return;
+                    }
+                    if (event.key !== "ArrowDown" && event.key !== "ArrowUp")
+                      return;
+                    const buttons = Array.from(
+                      event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                        "[data-history-record]",
+                      ),
+                    );
+                    const current = buttons.indexOf(
+                      event.target as HTMLButtonElement,
+                    );
+                    if (current < 0) return;
+                    event.preventDefault();
+                    const next = nextHistoryRecordIndex(
+                      buttons.length,
+                      current,
+                      event.key === "ArrowDown" ? 1 : -1,
+                    );
+                    buttons[next]?.focus();
+                    setSelectedId(records[next]?.id ?? null);
+                  }}
+                >
+                  {records.map((record) => (
+                    <button
+                      key={record.id}
+                      type="button"
+                      role="option"
+                      data-history-record
+                      aria-selected={record.id === selectedId}
+                      className={cn(
+                        "flex min-h-16 min-w-64 shrink-0 flex-col gap-0.5 rounded-md px-3 py-2 text-left text-sm hover:bg-muted min-[900px]:mb-1 min-[900px]:w-full min-[900px]:min-w-0",
+                        record.id === selectedId &&
+                          "bg-primary text-primary-foreground hover:bg-primary",
+                      )}
+                      onClick={() => setSelectedId(record.id)}
+                      onContextMenu={() => {
+                        setSelectedId(record.id);
+                        setContextMenu(record.id);
+                      }}
+                    >
+                      <span className="font-medium">{record.displayTime}</span>
+                      {record.partyLabel && (
+                        <span
+                          className={cn(
+                            "truncate text-xs text-muted-foreground",
+                            record.id === selectedId &&
+                              "text-primary-foreground/75",
+                          )}
+                          title={record.partyLabel}
+                        >
+                          {record.partyLabel}
+                        </span>
+                      )}
+                      <span
+                        className={cn(
+                          "text-xs text-muted-foreground",
+                          record.id === selectedId &&
+                            "text-primary-foreground/75",
+                        )}
+                      >
+                        {number(record.summary.totalDps)} DPS ·{" "}
+                        {number(record.summary.totalDamage)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="@container/history min-h-0 min-w-0 space-y-4">
+                  {selected && (
+                    <div
+                      data-history-detail
+                      tabIndex={-1}
+                      className="space-y-4 outline-none"
+                    >
+                      <RecordDetail
+                        busy={busy}
+                        record={selected}
+                        onDelete={() => {
+                          void history.deleteRecord(selected.id);
+                        }}
+                        onExport={() =>
+                          void history.exportRecordFile(selected.id)
+                        }
+                        onPrediction={(line) =>
+                          void history.setPrediction(selected.id, line)
+                        }
+                      />
+                    </div>
+                  )}
+                  <ComparePanel
+                    busy={busy}
+                    comparison={history.comparison}
+                    leftId={leftId}
+                    records={records}
+                    rightId={rightId}
+                    onLeftChange={setLeftId}
+                    onRightChange={setRightId}
+                    onUseAdjacent={() => {
+                      if (!selected) return;
+                      const adjacent = adjacentHistoryRecordId(
+                        records,
+                        selected.id,
+                      );
+                      if (adjacent) {
+                        setLeftId(selected.id);
+                        setRightId(adjacent);
+                      }
+                    }}
+                  />
+                </div>
               </div>
             )}
-            <ComparePanel
-              busy={busy}
-              comparison={history.comparison}
-              leftId={leftId}
-              records={records}
-              rightId={rightId}
-              onLeftChange={setLeftId}
-              onRightChange={setRightId}
-              onUseAdjacent={() => {
-                if (!selected) return;
-                const adjacent = adjacentHistoryRecordId(records, selected.id);
-                if (adjacent) {
-                  setLeftId(selected.id);
-                  setRightId(adjacent);
-                }
-              }}
-            />
-          </div>
-        </div>
-      )}
-      {contextMenu && (
+          </section>
+        }
+      />
+      {contextMenu !== null && (
         <HistoryContextMenu
           busy={busy}
-          left={contextMenu.left}
-          recordId={contextMenu.recordId}
+          recordId={contextMenu}
           records={records}
-          top={contextMenu.top}
-          onClose={() => setContextMenu(null)}
           onDelete={(recordId) => void history.deleteRecord(recordId)}
           onExport={(recordId) => void history.exportRecordFile(recordId)}
           onSelect={setSelectedId}
@@ -464,73 +467,64 @@ export function HistoryPage() {
           }}
         />
       )}
-    </section>
+    </ContextMenu>
   );
 }
 
 function HistoryContextMenu({
   busy,
-  left,
   recordId,
   records,
-  top,
-  onClose,
   onCompare,
   onDelete,
   onExport,
   onSelect,
 }: {
   busy: boolean;
-  left: number;
   recordId: string;
   records: HistoryRecord[];
-  top: number;
-  onClose: () => void;
   onCompare: (recordId: string, adjacentId: string) => void;
   onDelete: (recordId: string) => void;
   onExport: (recordId: string) => void;
   onSelect: (recordId: string) => void;
 }) {
   const adjacent = adjacentHistoryRecordId(records, recordId);
-  const action = (callback: () => void) => () => {
-    callback();
-    onClose();
-  };
   return (
-    <div
-      aria-label={t("History records")}
-      className="fixed z-50 flex w-52 flex-col gap-0.5 rounded-lg border bg-popover p-1.5 text-sm text-popover-foreground shadow-xl"
-      role="menu"
-      style={{ left, top }}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <HistoryMenuButton
-        icon={<Eye />}
-        label="View details"
-        onClick={action(() => onSelect(recordId))}
-      />
-      <HistoryMenuButton
-        disabled={busy || adjacent === null}
-        icon={<GitCompareArrows />}
-        label="Compare with adjacent record"
-        onClick={action(() => {
-          if (adjacent !== null) onCompare(recordId, adjacent);
-        })}
-      />
-      <HistoryMenuButton
-        disabled={busy}
-        icon={<Download />}
-        label="Export record JSON"
-        onClick={action(() => onExport(recordId))}
-      />
-      <HistoryMenuButton
-        danger
-        disabled={busy}
-        icon={<Trash2 />}
-        label="Delete"
-        onClick={action(() => onDelete(recordId))}
-      />
-    </div>
+    <ContextMenuPortal>
+      <ContextMenuPositioner>
+        <ContextMenuPopup
+          aria-label={t("History records")}
+          className="flex w-52 flex-col gap-0.5 p-1.5"
+        >
+          <HistoryMenuButton
+            icon={<Eye />}
+            label="View details"
+            onClick={() => onSelect(recordId)}
+          />
+          <HistoryMenuButton
+            disabled={busy || adjacent === null}
+            icon={<GitCompareArrows />}
+            label="Compare with adjacent record"
+            onClick={() => {
+              if (adjacent !== null) onCompare(recordId, adjacent);
+            }}
+          />
+          <HistoryMenuButton
+            disabled={busy}
+            icon={<Download />}
+            label="Export record JSON"
+            onClick={() => onExport(recordId)}
+          />
+          <HistoryMenuButton
+            danger
+            disabled={busy}
+            icon={<Trash2 />}
+            label="Delete"
+            onClick={() => onDelete(recordId)}
+          />
+        </ContextMenuPopup>
+      </ContextMenuPositioner>
+    </ContextMenuPortal>
   );
 }
 
@@ -548,21 +542,16 @@ function HistoryMenuButton({
   onClick: () => void;
 }) {
   return (
-    <button
-      className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted disabled:pointer-events-none disabled:opacity-45",
-        danger && "text-destructive",
-      )}
+    <ContextMenuItem
+      className={cn("w-full gap-2", danger && "text-destructive")}
       disabled={disabled}
-      role="menuitem"
-      type="button"
       onClick={onClick}
     >
       <span className="[&>svg]:size-4" aria-hidden="true">
         {icon}
       </span>
       {t(label)}
-    </button>
+    </ContextMenuItem>
   );
 }
 

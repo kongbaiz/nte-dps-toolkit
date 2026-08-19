@@ -1,7 +1,7 @@
 use nte_dps_tool::core::encrypted_ini::{ENCRYPTED_INI_MAX_BYTES, EncryptedIniKey};
 use serde::{Deserialize, Serialize};
 
-use crate::state::EncryptedIniProjection;
+use crate::encrypted_ini_service::EncryptedIniProjection;
 
 pub(crate) const ENCRYPTED_INI_CONTRACT_VERSION: u32 = 1;
 

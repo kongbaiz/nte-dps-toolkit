@@ -3,6 +3,7 @@
 #include "host_api.hpp"
 #include "ipc_transport.hpp"
 #include "memory_access.hpp"
+#include "mod_runtime_schema.generated.hpp"
 #include "obfuscated_string.hpp"
 #include "plugin_runtime.hpp"
 
@@ -287,6 +288,21 @@ namespace nte::mods::runtime
 		constinit uint32_t mod_log_history_count = 0;
 		constinit uint32_t mod_log_history_next = 0;
 		constinit uint64_t next_mod_log_sequence = 1;
+
+		// Caller holds program_lock. A hook integrity failure means the previous
+		// program set can no longer be projected as healthy or transactional.
+		void DisableProgramsFailClosedLocked()
+		{
+			enabled_capabilities = 0;
+			program_count = 0;
+			source_fingerprint = 0;
+			enabled_mod_set = {};
+			ZeroMemory(programs.data(), sizeof(programs));
+			quarantined_programs.fill(false);
+			ZeroMemory(mod_event_history.data(), sizeof(mod_event_history));
+			mod_event_history_count = 0;
+			mod_event_history_next = 0;
+		}
 
 		static_assert(sizeof(Instruction) == 16);
 		static_assert(sizeof(PointerArray) == 16);
@@ -576,30 +592,12 @@ namespace nte::mods::runtime
 
 		uint32_t CapabilityFromName(TextView name)
 		{
-			if (Equals(name, "viewport.tick"))
-				return CAPABILITY_VIEWPORT_TICK;
-			if (Equals(name, "memory.read"))
-				return CAPABILITY_MEMORY_READ;
-			if (Equals(name, "ipc"))
-				return CAPABILITY_IPC;
-			if (Equals(name, "sdk.read"))
-				return CAPABILITY_SDK_READ;
-			if (Equals(name, "equipment"))
-				return CAPABILITY_EQUIPMENT;
-			if (Equals(name, "combat-clock"))
-				return CAPABILITY_COMBAT_CLOCK;
-			if (Equals(name, "log"))
-				return CAPABILITY_LOG;
-			if (Equals(name, "game.session"))
-				return CAPABILITY_GAME_SESSION;
-			if (Equals(name, "memory.write"))
-				return CAPABILITY_MEMORY_WRITE;
-			if (Equals(name, "unreal.reflection"))
-				return CAPABILITY_UNREAL_REFLECTION;
-			if (Equals(name, "process.event"))
-				return CAPABILITY_PROCESS_EVENT;
-			if (Equals(name, "character.effects"))
-				return CAPABILITY_CHARACTER_EFFECTS;
+			for (const schema::CapabilityEntry& capability :
+				schema::CAPABILITIES)
+			{
+				if (Equals(name, capability.name))
+					return capability.mask;
+			}
 			return 0;
 		}
 
@@ -609,81 +607,16 @@ namespace nte::mods::runtime
 			uint16_t& operation,
 			uint32_t& capability)
 		{
-			capability = CAPABILITY_IPC;
-			if (Equals(name, "equipment.equip_module"))
+			for (const schema::ServiceEntry& candidate : schema::SERVICES)
 			{
-				service = IpcKernelService::EquipModule;
-				operation = NTE_MODS_IPC_EQUIP_MODULE;
-			}
-			else if (Equals(name, "equipment.equip_core"))
-			{
-				service = IpcKernelService::EquipCore;
-				operation = NTE_MODS_IPC_EQUIP_CORE;
-			}
-			else if (Equals(name, "equipment.unequip_module"))
-			{
-				service = IpcKernelService::UnequipModule;
-				operation = NTE_MODS_IPC_UNEQUIP_MODULE;
-			}
-			else if (Equals(name, "equipment.unequip_core"))
-			{
-				service = IpcKernelService::UnequipCore;
-				operation = NTE_MODS_IPC_UNEQUIP_CORE;
-			}
-			else if (Equals(name, "equipment.unequip_all"))
-			{
-				service = IpcKernelService::UnequipAll;
-				operation = NTE_MODS_IPC_UNEQUIP_ALL;
-			}
-			else if (Equals(name, "equipment.equip_one_key"))
-			{
-				service = IpcKernelService::EquipOneKey;
-				operation = NTE_MODS_IPC_EQUIP_ONE_KEY;
-			}
-			else if (Equals(name, "equipment.move_module_to_character"))
-			{
-				service = IpcKernelService::MoveModuleToCharacter;
-				operation = NTE_MODS_IPC_MOVE_MODULE_TO_CHARACTER;
-			}
-			else if (Equals(name, "equipment.move_core_to_character"))
-			{
-				service = IpcKernelService::MoveCoreToCharacter;
-				operation = NTE_MODS_IPC_MOVE_CORE_TO_CHARACTER;
-			}
-			else if (Equals(name, "equipment.set_item_discarded"))
-			{
-				service = IpcKernelService::SetItemDiscarded;
-				operation = NTE_MODS_IPC_SET_ITEM_DISCARDED;
-			}
-			else if (Equals(name, "equipment.set_item_locked"))
-			{
-				service = IpcKernelService::SetItemLocked;
-				operation = NTE_MODS_IPC_SET_ITEM_LOCKED;
-			}
-			else if (Equals(name, "combat_clock.query_transitions"))
-			{
-				service = IpcKernelService::QueryCombatClockTransitions;
-				operation = NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS;
-				capability |= CAPABILITY_COMBAT_CLOCK;
+				if (!Equals(name, candidate.name))
+					continue;
+				service = candidate.service;
+				operation = candidate.operation;
+				capability = candidate.capability;
 				return true;
 			}
-			else if (Equals(name, "ipc.query_mod_events"))
-			{
-				service = IpcKernelService::QueryModEvents;
-				operation = NTE_MODS_IPC_QUERY_MOD_EVENTS;
-				return true;
-			}
-			else if (Equals(name, "character.query_effects"))
-			{
-				service = IpcKernelService::QueryCharacterEffects;
-				operation = NTE_MODS_IPC_QUERY_CHARACTER_EFFECTS;
-				capability |= CAPABILITY_CHARACTER_EFFECTS;
-				return true;
-			}
-			else
-				return false;
-			capability |= CAPABILITY_EQUIPMENT;
-			return true;
+			return false;
 		}
 
 		bool ParseCall(
@@ -4461,7 +4394,15 @@ namespace nte::mods::runtime
 		}
 
 		AcquireSRWLockExclusive(&program_lock);
-		ResetProcessEventWatches();
+		if (!ResetProcessEventWatches())
+		{
+			DisableProgramsFailClosedLocked();
+			ReleaseSRWLockExclusive(&program_lock);
+			return RecordReloadError(
+				fingerprint,
+				"runtime",
+				"ProcessEvent teardown failed; runtime disabled.");
+		}
 		programs = candidate_programs;
 		enabled_mod_set = candidate_enabled_mod_set;
 		program_count = candidate_count;
@@ -4596,10 +4537,19 @@ namespace nte::mods::runtime
 		return copy_count;
 	}
 
-	void Reset()
+	bool Reset()
 	{
 		AcquireSRWLockExclusive(&program_lock);
-		ResetProcessEventWatches();
+		if (!ResetProcessEventWatches())
+		{
+			DisableProgramsFailClosedLocked();
+			ReleaseSRWLockExclusive(&program_lock);
+			RecordModLog(
+				"runtime",
+				NTE_MOD_LOG_ERROR,
+				"ProcessEvent teardown failed; runtime disabled.");
+			return false;
+		}
 		enabled_capabilities = 0;
 		program_count = 0;
 		source_fingerprint = 0;
@@ -4618,5 +4568,6 @@ namespace nte::mods::runtime
 		mod_log_history_count = 0;
 		mod_log_history_next = 0;
 		ReleaseSRWLockExclusive(&mod_log_lock);
+		return true;
 	}
 } // namespace nte::mods::runtime

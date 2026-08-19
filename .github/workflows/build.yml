@@ -202,6 +202,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Verify native runtime safety policies
+        shell: pwsh
+        run: |
+          & ./native/nte-mods-plugin/tests/ipc_transport_security_source_tests.ps1
+          & ./native/nte-mods-plugin/tests/native_lifecycle_source_tests.ps1
+          & ./scripts/test_native_signature_policy.ps1
+          & ./scripts/test_mod_runtime_schema.ps1
+
       - name: Check shared desktop build
         run: cargo check
 

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { setFrontendLanguage, t } from "./i18n";
+import placeholderConformance from "@res/languages/placeholder-conformance.json";
+
+import { formatTemplate, setFrontendLanguage, t } from "./i18n";
 
 const MIGRATION_PARITY_KEYS = [
   "Boss",
@@ -16,6 +18,13 @@ const MIGRATION_PARITY_KEYS = [
 afterEach(() => setFrontendLanguage("zh-CN"));
 
 describe("frontend i18n parity", () => {
+  it.each(placeholderConformance)(
+    "formats the shared placeholder grammar: $template",
+    ({ template, arguments: arguments_, expected }) => {
+      expect(formatTemplate(template, arguments_)).toBe(expected);
+    },
+  );
+
   it.each(["zh-CN", "ja"] as const)(
     "localizes the remaining migrated UI keys in %s",
     (language) => {

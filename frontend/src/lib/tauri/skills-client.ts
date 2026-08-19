@@ -1,5 +1,3 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import {
   parseSkillsEvent,
   parseSkillsSnapshot,
@@ -8,10 +6,11 @@ import {
   type SkillsScope,
   type SkillsSnapshot,
 } from "@/lib/tauri/skills-contract";
+import { TechnicalContractError } from "@/lib/tauri/technical-contract";
 import {
-  parseSubscriptionReceipt,
-  TechnicalContractError,
-} from "@/lib/tauri/technical-contract";
+  subscribeAckedStream,
+  tauriAckedStreamTransport,
+} from "@/lib/tauri/stream-client";
 
 const COMMANDS = {
   getSnapshot: "get_skills_snapshot",
@@ -36,14 +35,7 @@ export interface SkillsClient {
   ): () => Promise<void>;
 }
 
-const tauriTransport: SkillsTransport = {
-  invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
-  createChannel: (onMessage) => {
-    const channel = new Channel<unknown>();
-    channel.onmessage = onMessage;
-    return channel;
-  },
-};
+const tauriTransport: SkillsTransport = tauriAckedStreamTransport;
 
 export function createSkillsClient(
   transport: SkillsTransport = tauriTransport,
@@ -62,32 +54,17 @@ export function createSkillsClient(
     },
     subscribe: (scope, onSnapshot, onError) => {
       const subscriptionId = createSubscriptionId();
-      let closed = false;
-      const onEvent = transport.createChannel((message) => {
-        if (closed) return;
-        try {
-          onSnapshot(parseSkillsEvent(message));
-        } catch (error) {
-          onError(skillsError(error));
-        }
+      return subscribeAckedStream({
+        transport,
+        streamKind: "skills",
+        subscriptionId,
+        subscribeCommand: COMMANDS.subscribe,
+        unsubscribeCommand: COMMANDS.unsubscribe,
+        subscribeArguments: { scope },
+        parseEvent: parseSkillsEvent,
+        onEvent: onSnapshot,
+        onError: (error) => onError(skillsError(error)),
       });
-      const receipt = transport
-        .invoke(COMMANDS.subscribe, { subscriptionId, scope, onEvent })
-        .then(parseSubscriptionReceipt)
-        .catch((error: unknown) => {
-          if (!closed) onError(skillsError(error));
-          return undefined;
-        });
-      return async () => {
-        if (closed) return;
-        closed = true;
-        const activeReceipt = await receipt;
-        if (activeReceipt) {
-          await transport.invoke(COMMANDS.unsubscribe, {
-            subscriptionId: activeReceipt.subscriptionId,
-          });
-        }
-      };
     },
   };
 }

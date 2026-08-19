@@ -401,13 +401,15 @@ html[data-window-route="notification-island"] .motion-skeleton {
 }
 
 .ui-motion-overlay,
-.fixed.inset-0:has(> [role="dialog"]) {
+[data-slot="dialog-backdrop"],
+[data-slot="alert-dialog-backdrop"] {
   animation: ui-overlay-in var(--motion-duration-base)
     var(--motion-ease-standard) both;
 }
 
 .ui-motion-dialog,
-[role="dialog"] {
+[data-slot="dialog-popup"],
+[data-slot="alert-dialog-popup"] {
   animation: ui-dialog-in var(--motion-duration-slow)
     var(--motion-ease-emphasized) both;
   transform-origin: center top;

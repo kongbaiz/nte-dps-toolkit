@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 #[cfg(feature = "desktop")]
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "desktop")]
@@ -96,6 +97,60 @@ pub(crate) fn read_resource_text(path: &Path) -> Result<String> {
     let bytes = read_resource_bytes(path)?;
     String::from_utf8(bytes.into_owned())
         .with_context(|| format!("资源不是 UTF-8 文本 {}", path.display()))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BoundedResourceTextError {
+    ReadFailed,
+    TooLarge,
+    InvalidUtf8,
+}
+
+/// Read an embedded or override text resource without allowing an override
+/// file to allocate past the caller's trust-boundary budget.
+pub(crate) fn read_resource_text_bounded(
+    path: &Path,
+    max_bytes: usize,
+) -> Result<String, BoundedResourceTextError> {
+    let bytes = if let Some(disk_path) = resource_file_path(path) {
+        read_file_bounded(&disk_path, max_bytes)?
+    } else if let Some(bytes) = bundled_resource_for_path(path) {
+        if bytes.len() > max_bytes {
+            return Err(BoundedResourceTextError::TooLarge);
+        }
+        bytes.to_vec()
+    } else {
+        return Err(BoundedResourceTextError::ReadFailed);
+    };
+    String::from_utf8(bytes).map_err(|_| BoundedResourceTextError::InvalidUtf8)
+}
+
+fn read_file_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, BoundedResourceTextError> {
+    let file = std::fs::File::open(path).map_err(|_| BoundedResourceTextError::ReadFailed)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| BoundedResourceTextError::ReadFailed)?;
+    if !metadata.is_file() {
+        return Err(BoundedResourceTextError::ReadFailed);
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(BoundedResourceTextError::TooLarge);
+    }
+
+    let read_limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let capacity = usize::try_from(metadata.len())
+        .unwrap_or(max_bytes)
+        .min(max_bytes);
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| BoundedResourceTextError::ReadFailed)?;
+    if bytes.len() > max_bytes {
+        return Err(BoundedResourceTextError::TooLarge);
+    }
+    Ok(bytes)
 }
 
 pub(crate) fn read_resource_bytes(path: &Path) -> Result<Cow<'static, [u8]>> {
@@ -344,6 +399,36 @@ mod tests {
 
         assert_eq!(text, "disk wins");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bounded_text_reader_rejects_growth_before_unbounded_allocation() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "nte-bounded-resource-test-{}-{unique}",
+            std::process::id()
+        ));
+        let path = root.join("locale.json");
+        std::fs::create_dir_all(&root).expect("resource fixture directory");
+        std::fs::write(&path, b"12345").expect("resource fixture");
+
+        assert_eq!(
+            read_resource_text_bounded(&path, 4),
+            Err(BoundedResourceTextError::TooLarge)
+        );
+        assert_eq!(
+            read_resource_text_bounded(&path, 5).expect("bounded resource"),
+            "12345"
+        );
+        std::fs::write(&path, [0xff]).expect("invalid UTF-8 fixture");
+        assert_eq!(
+            read_resource_text_bounded(&path, 1),
+            Err(BoundedResourceTextError::InvalidUtf8)
+        );
+        std::fs::remove_dir_all(root).expect("remove resource fixture");
     }
 
     #[test]

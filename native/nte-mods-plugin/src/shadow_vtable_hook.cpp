@@ -256,9 +256,10 @@ bool ShadowVTableHook::Install(
     return true;
 }
 
-void ShadowVTableHook::Remove() noexcept
+bool ShadowVTableHook::Remove() noexcept
 {
-    InterlockedExchange(&installed_, 0);
+    const bool was_installed = InterlockedExchange(&installed_, 0) != 0;
+    bool restored = !was_installed;
 
     if (object_vtable_slot_ != nullptr && shadow_vtable_ != nullptr &&
         original_vtable_ != nullptr &&
@@ -267,11 +268,14 @@ void ShadowVTableHook::Remove() noexcept
         IsWritableAddress(const_cast<PVOID*>(object_vtable_slot_)))
     {
         void* observed_vtable = nullptr;
-        TryCompareExchangePointer(
+        const bool exchanged = TryCompareExchangePointer(
             object_vtable_slot_,
             original_vtable_,
             shadow_vtable_,
             observed_vtable);
+        restored = exchanged &&
+            (observed_vtable == shadow_vtable_ ||
+                observed_vtable == original_vtable_);
     }
 
     // A CPU may have read the published shadow vptr and be descheduled before
@@ -288,6 +292,7 @@ void ShadowVTableHook::Remove() noexcept
     shadow_vtable_ = nullptr;
     original_function_ = nullptr;
     entry_count_ = 0;
+    return restored;
 }
 
 void* ShadowVTableHook::OriginalFunction() const noexcept

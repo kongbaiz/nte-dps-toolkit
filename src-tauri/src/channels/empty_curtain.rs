@@ -1,52 +1,67 @@
-use std::{sync::atomic::Ordering, thread, time::Duration};
-
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
-    commands::empty_curtain::snapshot,
-    contract::{CommandError, SubscriptionReceipt, empty_curtain::EmptyCurtainEvent},
+    channels::stream_runtime::{
+        PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
+        validate_subscription_id,
+    },
+    commands::empty_curtain::{empty_curtain_runtime_error, snapshot_with_operation},
+    contract::{
+        CommandError, SubscriptionReceipt,
+        empty_curtain::EmptyCurtainEvent,
+        stream::{StreamKind, StreamReadySignal},
+    },
     state::AppState,
     windows::console,
 };
 
 pub(crate) const EMPTY_CURTAIN_STREAM_INTERVAL_MS: u32 = 100;
-const STREAM_KEY_PREFIX: &str = "empty-curtain:";
-
 #[tauri::command]
 pub(crate) fn subscribe_empty_curtain(
     subscription_id: String,
-    on_event: Channel<EmptyCurtainEvent>,
+    on_event: Channel<StreamReadySignal>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    let stream_key = format!("{STREAM_KEY_PREFIX}{subscription_id}");
+    state
+        .empty_curtain_revision_and_operation()
+        .map_err(empty_curtain_runtime_error)?;
+    let stream_kind = StreamKind::EmptyCurtain;
+    let stream_key = stream_kind.stream_key(&subscription_id);
     let state = state.inner().clone();
-    let stop = state.begin_stream(window.label().to_owned(), stream_key.clone());
-    thread::spawn(move || {
-        let mut last_revision = None;
-        while !stop.load(Ordering::Acquire) {
-            let revision = state.empty_curtain_revision();
-            if last_revision != Some(revision) {
-                if on_event
-                    .send(EmptyCurtainEvent::Snapshot(snapshot(&state)))
-                    .is_err()
-                {
-                    break;
-                }
-                last_revision = Some(revision);
+    let registration = state
+        .reserve_stream(window.label(), &stream_key)
+        .map_err(stream_registry_error)?;
+    let stream_generation = registration.generation();
+    let mut last_revision = None;
+    spawn_polling_stream(
+        "nte-empty-curtain-stream",
+        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        state,
+        registration,
+        EMPTY_CURTAIN_STREAM_INTERVAL_MS,
+        move |state| {
+            let Ok((revision, operation)) = state.empty_curtain_revision_and_operation() else {
+                return PollingStreamOutput::Stop;
+            };
+            if last_revision == Some(revision) {
+                return PollingStreamOutput::NoChange;
             }
-            thread::sleep(Duration::from_millis(u64::from(
-                EMPTY_CURTAIN_STREAM_INTERVAL_MS,
-            )));
-        }
-        state.finish_stream(&stream_key, &stop);
-    });
-    Ok(SubscriptionReceipt {
+            let Ok(next) = snapshot_with_operation(state, operation) else {
+                return PollingStreamOutput::Stop;
+            };
+            last_revision = Some(revision);
+            PollingStreamOutput::Event(EmptyCurtainEvent::Snapshot(next))
+        },
+    )?;
+    Ok(SubscriptionReceipt::new(
         subscription_id,
-        stream_interval_ms: EMPTY_CURTAIN_STREAM_INTERVAL_MS,
-    })
+        stream_kind,
+        stream_generation,
+        EMPTY_CURTAIN_STREAM_INTERVAL_MS,
+    ))
 }
 
 #[tauri::command]
@@ -57,20 +72,13 @@ pub(crate) fn unsubscribe_empty_curtain(
 ) -> Result<(), CommandError> {
     validate_subscription_id(&subscription_id)?;
     console::validate_window(&window)?;
-    state.stop_stream(&format!("{STREAM_KEY_PREFIX}{subscription_id}"));
+    state
+        .stop_stream(
+            window.label(),
+            &StreamKind::EmptyCurtain.stream_key(&subscription_id),
+        )
+        .map_err(stream_registry_error)?;
     Ok(())
-}
-
-fn validate_subscription_id(subscription_id: &str) -> Result<(), CommandError> {
-    let valid_length = (1..=64).contains(&subscription_id.len());
-    let valid_characters = subscription_id
-        .bytes()
-        .all(|character| character.is_ascii_alphanumeric() || matches!(character, b'-' | b'_'));
-    if valid_length && valid_characters {
-        Ok(())
-    } else {
-        Err(CommandError::invalid_subscription_id())
-    }
 }
 
 #[cfg(test)]

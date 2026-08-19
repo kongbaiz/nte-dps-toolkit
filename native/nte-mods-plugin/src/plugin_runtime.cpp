@@ -9,6 +9,7 @@
 #include "shadow_vtable_hook.hpp"
 #include "signature_policy.hpp"
 #include "viewport_hook_policy.hpp"
+#include "vtable_patch_policy.hpp"
 
 #include <Windows.h>
 
@@ -37,6 +38,8 @@ namespace nte::mods
 		constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENTS = 32;
 		constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENT_SIZE = 0x1000;
 		constexpr DWORD VIEWPORT_BOOTSTRAP_RETRY_MS = 250;
+		constexpr DWORD RUNTIME_WORKER_STOP_TIMEOUT_MS = 5000;
+		constexpr DWORD RUNTIME_DISPATCH_DRAIN_TIMEOUT_MS = 1000;
 		constexpr wchar_t MOD_WORKSPACE_REGISTRY_KEY[] =
 			L"Software\\NTE DPS Tool\\Mods Plugin";
 		constexpr wchar_t LEGACY_MOD_WORKSPACE_REGISTRY_KEY[] =
@@ -139,6 +142,22 @@ namespace nte::mods
 		volatile LONG active_viewport_hook_index = -1;
 		PVOID volatile hooked_viewport = nullptr;
 		volatile LONG ipc_dispatch_in_progress = 0;
+		volatile LONG runtime_stopping = 1;
+		volatile LONG active_runtime_detours = 0;
+		volatile LONG runtime_detour_ever_published = 0;
+		enum class PluginLifecycleState
+		{
+			NeverStarted,
+			Starting,
+			Running,
+			Stopping,
+			Stopped,
+			FailedClosed,
+		};
+		SRWLOCK runtime_lifecycle_lock = SRWLOCK_INIT;
+		PluginLifecycleState runtime_lifecycle_state =
+			PluginLifecycleState::NeverStarted;
+		PluginStopResult last_stop_result = PluginStopResult::UnloadSafe;
 		HANDLE runtime_stop_event = nullptr;
 		HANDLE runtime_thread = nullptr;
 		HANDLE sdk_cache_thread = nullptr;
@@ -162,12 +181,55 @@ namespace nte::mods
 		constinit std::array<
 			ProcessEventQueue,
 			MAX_PROCESS_EVENT_PROGRAMS> process_event_queues{};
+		constinit bool process_event_vtable_healthy = true;
+
+		class RuntimeDetourScope
+		{
+		public:
+			RuntimeDetourScope() noexcept
+			{
+				InterlockedIncrement(&active_runtime_detours);
+			}
+
+			~RuntimeDetourScope()
+			{
+				InterlockedDecrement(&active_runtime_detours);
+			}
+
+			bool AllowsRuntimeWork() const noexcept
+			{
+				return InterlockedCompareExchange(
+					&runtime_stopping, 0, 0) == 0;
+			}
+		};
+
+		void MarkRuntimeDetourPublished() noexcept
+		{
+			InterlockedExchange(&runtime_detour_ever_published, 1);
+		}
 
 		static_assert(sizeof(LocalPlayerArray) == 16);
 
 		bool InstallViewportHook(void* viewport);
+		void DebugLog(const wchar_t* message);
 
-		bool ReplaceProcessEventVTableEntry(
+		void* TryCompareExchangeProcessEventSlot(
+			PVOID volatile* slot,
+			void* exchange,
+			void* comparand) noexcept
+		{
+			__try
+			{
+				return InterlockedCompareExchangePointer(
+					slot, exchange, comparand);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				return nullptr;
+			}
+		}
+
+		hook::ProtectedPointerPatchResult ReplaceProcessEventVTableEntry(
 			void** vtable,
 			void* expected,
 			void* replacement)
@@ -177,28 +239,102 @@ namespace nte::mods
 				!memory::IsReadableRange(
 					vtable,
 					(resolved->process_event_index + 1) * sizeof(void*)))
-				return false;
+			{
+				return {
+					hook::ProtectedPointerPatchCode::TargetInvalid,
+					hook::ProtectedPointerSlotState::Unknown,
+					true,
+					false,
+				};
+			}
 			auto* slot = reinterpret_cast<PVOID volatile*>(
 				vtable + resolved->process_event_index);
+			if ((reinterpret_cast<uintptr_t>(slot) % alignof(void*)) != 0 ||
+				!memory::IsImageRange(
+					const_cast<PVOID*>(slot), sizeof(void*)))
+			{
+				return {
+					hook::ProtectedPointerPatchCode::TargetInvalid,
+					hook::ProtectedPointerSlotState::Unknown,
+					true,
+					false,
+				};
+			}
 			DWORD old_protection = 0;
-			if (!VirtualProtect(
-					const_cast<PVOID*>(slot),
-					sizeof(void*),
-					PAGE_READWRITE,
-					&old_protection))
-				return false;
-			const bool replaced =
-				InterlockedCompareExchangePointer(
-					slot,
-					replacement,
-					expected) == expected;
-			DWORD restored_protection = 0;
-			VirtualProtect(
-				const_cast<PVOID*>(slot),
-				sizeof(void*),
-				old_protection,
-				&restored_protection);
-			return replaced;
+			return hook::ReplaceProtectedPointer(
+				expected,
+				replacement,
+				[&]
+				{
+					return VirtualProtect(
+						const_cast<PVOID*>(slot),
+						sizeof(void*),
+						PAGE_READWRITE,
+						&old_protection) != FALSE;
+				},
+				[&]
+				{
+					DWORD restored_protection = 0;
+					return VirtualProtect(
+						const_cast<PVOID*>(slot),
+						sizeof(void*),
+						old_protection,
+						&restored_protection) != FALSE;
+				},
+				[&](void* exchange, void* comparand)
+				{
+					return TryCompareExchangeProcessEventSlot(
+						slot, exchange, comparand);
+				});
+		}
+
+		void FailProcessEventVTableIntegrity()
+		{
+			if (!process_event_vtable_healthy)
+				return;
+			process_event_vtable_healthy = false;
+			process_event_subscription_count = 0;
+			for (ProcessEventQueue& queue : process_event_queues)
+			{
+				queue.first = 0;
+				queue.count = 0;
+			}
+			DebugLog(L"ProcessEvent vtable patch integrity failed.\n");
+		}
+
+		hook::ProtectedPointerPatchResult ApplyProcessEventClassPatch(
+			ProcessEventClassHookEntry& entry,
+			void* expected,
+			void* replacement,
+			bool replacement_is_installed)
+		{
+			const hook::ProtectedPointerPatchResult result =
+				ReplaceProcessEventVTableEntry(
+					entry.vtable,
+					expected,
+					replacement);
+			switch (result.slot_state)
+			{
+			case hook::ProtectedPointerSlotState::Expected:
+				entry.installed = !replacement_is_installed;
+				break;
+			case hook::ProtectedPointerSlotState::Replacement:
+				entry.installed = replacement_is_installed;
+				break;
+			case hook::ProtectedPointerSlotState::Other:
+				entry.installed = false;
+				break;
+			case hook::ProtectedPointerSlotState::Unknown:
+				break;
+			}
+			if (result.RequiresFailClosed())
+				FailProcessEventVTableIntegrity();
+			// A failed protection restore can roll the slot back after another
+			// thread already loaded the detour. That transient publication has the
+			// same process-resident unload constraint as a committed installation.
+			if (replacement_is_installed && result.RequiresBindingRetention())
+				MarkRuntimeDetourPublished();
+			return result;
 		}
 
 		bool MatchesProcessEventSubscription(
@@ -352,7 +488,7 @@ namespace nte::mods
 
 		bool IsExpectedViewportTick(const void* address)
 		{
-			if (!memory::IsExecutableAddress(address) ||
+			if (!memory::IsImageExecutableAddress(address) ||
 				!memory::IsReadableRange(address, VIEWPORT_TICK_CODE_WINDOW))
 				return false;
 
@@ -428,10 +564,13 @@ namespace nte::mods
 			void* viewport,
 			float delta_seconds)
 		{
+			RuntimeDetourScope detour_scope;
 			const auto original_tick = OriginalViewportTickFor(viewport);
 			if (original_tick == nullptr)
 				return;
 			original_tick(viewport, delta_seconds);
+			if (!detour_scope.AllowsRuntimeWork())
+				return;
 
 			if (InterlockedCompareExchange(
 					&ipc_dispatch_in_progress, 1, 0) != 0)
@@ -454,6 +593,11 @@ namespace nte::mods
 			void* params)
 		{
 			AcquireSRWLockExclusive(&process_event_lock);
+			if (!process_event_vtable_healthy)
+			{
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return;
+			}
 			for (size_t index = 0;
 				index < process_event_subscription_count;
 				++index)
@@ -533,6 +677,7 @@ namespace nte::mods
 			void* function,
 			void* params)
 		{
+			RuntimeDetourScope detour_scope;
 			ProcessEvent original = nullptr;
 			AcquireSRWLockShared(&process_event_lock);
 			for (const ProcessEventHookEntry& hook : process_event_hooks)
@@ -547,9 +692,12 @@ namespace nte::mods
 			if (original == nullptr)
 				return;
 
-			void** object_vtable = nullptr;
-			memory::ReadValue(object, 0, object_vtable);
-			CaptureProcessEvent(object, object_vtable, function, params);
+			if (detour_scope.AllowsRuntimeWork())
+			{
+				void** object_vtable = nullptr;
+				memory::ReadValue(object, 0, object_vtable);
+				CaptureProcessEvent(object, object_vtable, function, params);
+			}
 			original(object, function, params);
 		}
 
@@ -558,6 +706,7 @@ namespace nte::mods
 			void* function,
 			void* params)
 		{
+			RuntimeDetourScope detour_scope;
 			void** object_vtable = nullptr;
 			if (!memory::ReadValue(object, 0, object_vtable))
 				return;
@@ -576,7 +725,8 @@ namespace nte::mods
 			if (original == nullptr)
 				return;
 
-			CaptureProcessEvent(object, object_vtable, function, params);
+			if (detour_scope.AllowsRuntimeWork())
+				CaptureProcessEvent(object, object_vtable, function, params);
 			original(object, function, params);
 		}
 
@@ -626,8 +776,9 @@ namespace nte::mods
 			if (!FindOrPublishViewportHookRecord(
 					viewport, candidate_tick, target_hook_index))
 				return false;
-			if (viewport_hooks[target_hook_index].IsInstalled())
-				viewport_hooks[target_hook_index].Remove();
+			if (viewport_hooks[target_hook_index].IsInstalled() &&
+				!viewport_hooks[target_hook_index].Remove())
+				return false;
 			if (!viewport_hooks[target_hook_index].Install(
 				viewport,
 				viewport_tick_index,
@@ -635,9 +786,10 @@ namespace nte::mods
 				vtable,
 				reinterpret_cast<void*>(candidate_tick)))
 			{
-				viewport_hooks[target_hook_index].Remove();
+				(void)viewport_hooks[target_hook_index].Remove();
 				return false;
 			}
+			MarkRuntimeDetourPublished();
 
 			InterlockedExchange(
 				&active_viewport_hook_index,
@@ -646,7 +798,10 @@ namespace nte::mods
 			if (current_active_index >= 0 &&
 				static_cast<size_t>(current_active_index) < viewport_hooks.size() &&
 				static_cast<size_t>(current_active_index) != target_hook_index)
-				viewport_hooks[current_active_index].Remove();
+			{
+				if (!viewport_hooks[current_active_index].Remove())
+					return false;
+			}
 
 			DebugLog(NTE_OBFUSCATE_STRING(
 				L"NTE Mods plugin: viewport Tick hook installed.\n")
@@ -654,13 +809,15 @@ namespace nte::mods
 			return true;
 		}
 
-		void RestoreViewportHook()
+		bool RestoreViewportHook()
 		{
 			InterlockedExchangePointer(&hooked_viewport, nullptr);
 			InterlockedExchange(&active_viewport_hook_index, -1);
 			const size_t count = PublishedViewportHookRecordCount();
+			bool all_removed = true;
 			for (size_t index = 0; index < count; ++index)
-				viewport_hooks[index].Remove();
+				all_removed = viewport_hooks[index].Remove() && all_removed;
+			return all_removed;
 		}
 
 		bool IsGameExecutableHost()
@@ -729,8 +886,9 @@ namespace nte::mods
 				LEGACY_MOD_WORKSPACE_REGISTRY_KEY, workspace);
 		}
 
-		DWORD WINAPI WatchModWorkspace(void*)
+		DWORD WINAPI WatchModWorkspace(void* parameter)
 		{
+			const HANDLE stop_event = static_cast<HANDLE>(parameter);
 			for (;;)
 			{
 				std::array<wchar_t, MAX_PATH> workspace{};
@@ -754,9 +912,11 @@ namespace nte::mods
 				else if (runtime::HasViewportTickPrograms() ||
 					CurrentHookedViewport() != nullptr)
 				{
-					runtime::Reset();
-					RestoreViewportHook();
-					CloseIpc();
+					if (runtime::Reset())
+					{
+						RestoreViewportHook();
+						CloseIpc();
+					}
 				}
 
 				if (runtime::HasViewportTickPrograms())
@@ -764,7 +924,7 @@ namespace nte::mods
 					// 偏移在成功解析后只发布一次；未就绪或解析失败时
 					// Initialize 按自身节流策略重试，避免读者持有指针时改写已发布数据。
 					if (offsets::Get() == nullptr)
-						offsets::Initialize(runtime_stop_event);
+						offsets::Initialize(stop_event);
 					if (offsets::Get() != nullptr)
 					{
 						if (auto* viewport = ResolveViewport())
@@ -778,7 +938,7 @@ namespace nte::mods
 				}
 
 				if (WaitForSingleObject(
-						runtime_stop_event,
+						stop_event,
 						VIEWPORT_BOOTSTRAP_RETRY_MS) != WAIT_TIMEOUT)
 					return 0;
 			}
@@ -811,20 +971,6 @@ namespace nte::mods
 						array_element_size - array_value_offset)))
 			return false;
 
-		void** vtable = nullptr;
-		if (!memory::ReadValue(object, 0, vtable))
-			return false;
-		ProcessEvent process_event_original = nullptr;
-		if (!memory::IsReadableRange(
-				vtable,
-				(process_event_index + 1) * sizeof(void*)) ||
-			!memory::ReadValue(
-				vtable,
-				process_event_index * sizeof(void*),
-				process_event_original) ||
-			!memory::IsExecutableAddress(
-				reinterpret_cast<void*>(process_event_original)))
-			return false;
 		uint16_t params_size = 0;
 		if (!ReflectedFunctionParamSize(function, params_size) ||
 			params_size > PROCESS_EVENT_PARAM_CAPACITY ||
@@ -833,6 +979,29 @@ namespace nte::mods
 			return false;
 
 		AcquireSRWLockExclusive(&process_event_lock);
+		if (!process_event_vtable_healthy)
+		{
+			ReleaseSRWLockExclusive(&process_event_lock);
+			return false;
+		}
+		// The object vtable and ProcessEvent slot are sampled while the hook lock
+		// is held so Watch/Unwatch/Reset observe one linearized binding state.
+		void** vtable = nullptr;
+		ProcessEvent process_event_original = nullptr;
+		if (!memory::ReadValue(object, 0, vtable) ||
+			!memory::IsReadableRange(
+				vtable,
+				(process_event_index + 1) * sizeof(void*)) ||
+			!memory::ReadValue(
+				vtable,
+				process_event_index * sizeof(void*),
+				process_event_original) ||
+			!memory::IsImageExecutableAddress(
+				reinterpret_cast<void*>(process_event_original)))
+		{
+			ReleaseSRWLockExclusive(&process_event_lock);
+			return false;
+		}
 		for (size_t index = 0;
 			index < process_event_subscription_count;
 			++index)
@@ -884,6 +1053,9 @@ namespace nte::mods
 						: hook.original;
 					if (expected_slot != process_event_original)
 					{
+						hook.installed =
+							process_event_original == &HookedProcessEventClass;
+						FailProcessEventVTableIntegrity();
 						ReleaseSRWLockExclusive(&process_event_lock);
 						return false;
 					}
@@ -891,11 +1063,13 @@ namespace nte::mods
 					break;
 				}
 			}
+			bool new_binding = false;
 			if (target_hook == nullptr)
 			{
 				if (process_event_original == &HookedProcessEventClass ||
 					process_event_original == &HookedProcessEventInstance)
 				{
+					FailProcessEventVTableIntegrity();
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
@@ -921,19 +1095,26 @@ namespace nte::mods
 				}
 				target_hook->vtable = vtable;
 				target_hook->original = process_event_original;
-				++process_event_class_hook_binding_count;
+				new_binding = true;
 			}
 			if (!target_hook->installed)
 			{
-				if (!ReplaceProcessEventVTableEntry(
-						target_hook->vtable,
+				const hook::ProtectedPointerPatchResult patch_result =
+					ApplyProcessEventClassPatch(
+						*target_hook,
 						reinterpret_cast<void*>(target_hook->original),
-						reinterpret_cast<void*>(&HookedProcessEventClass)))
+						reinterpret_cast<void*>(&HookedProcessEventClass),
+						true);
+				if (new_binding && patch_result.RequiresBindingRetention())
+					++process_event_class_hook_binding_count;
+				if (!patch_result.Applied())
 				{
+					if (new_binding &&
+						!patch_result.RequiresBindingRetention())
+						*target_hook = {};
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
-				target_hook->installed = true;
 			}
 		}
 		else
@@ -1008,7 +1189,7 @@ namespace nte::mods
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
-				target_hook->hook.Remove();
+				(void)target_hook->hook.Remove();
 				target_hook->object = object;
 				target_hook->original_vtable = vtable;
 				target_hook->original = process_event_original;
@@ -1022,10 +1203,12 @@ namespace nte::mods
 					target_hook->original_vtable,
 					reinterpret_cast<void*>(target_hook->original))))
 				{
-					target_hook->hook.Remove();
+					(void)target_hook->hook.Remove();
 					ReleaseSRWLockExclusive(&process_event_lock);
 					return false;
 				}
+			if (target_hook->hook.IsInstalled())
+				MarkRuntimeDetourPublished();
 		}
 
 		process_event_subscriptions[process_event_subscription_count++] = {
@@ -1095,8 +1278,7 @@ namespace nte::mods
 		void* function)
 	{
 		AcquireSRWLockExclusive(&process_event_lock);
-		bool removed = false;
-		ProcessEventSubscription removed_subscription{};
+		size_t removal_index = process_event_subscription_count;
 		for (size_t index = 0;
 			index < process_event_subscription_count;
 			++index)
@@ -1107,62 +1289,90 @@ namespace nte::mods
 				subscription.object != object ||
 				subscription.function != function)
 				continue;
-			removed_subscription = subscription;
-			process_event_subscriptions[index] =
-				process_event_subscriptions[
-					--process_event_subscription_count];
-			removed = true;
+			removal_index = index;
 			break;
 		}
-
-		if (removed)
+		if (removal_index == process_event_subscription_count)
 		{
-			bool hook_subscribed = false;
-			for (size_t index = 0;
-				index < process_event_subscription_count;
-				++index)
+			ReleaseSRWLockExclusive(&process_event_lock);
+			return false;
+		}
+
+		const ProcessEventSubscription removed_subscription =
+			process_event_subscriptions[removal_index];
+		bool hook_subscribed = false;
+		for (size_t index = 0;
+			index < process_event_subscription_count;
+			++index)
+		{
+			if (index == removal_index)
+				continue;
+			const ProcessEventSubscription& subscription =
+				process_event_subscriptions[index];
+			if (removed_subscription.class_wide
+				? subscription.class_wide &&
+					subscription.class_vtable ==
+						removed_subscription.class_vtable
+				: !subscription.class_wide &&
+					subscription.object == object)
 			{
-				const ProcessEventSubscription& subscription =
-					process_event_subscriptions[index];
-				if (removed_subscription.class_wide
-					? subscription.class_wide &&
-						subscription.class_vtable ==
-							removed_subscription.class_vtable
-					: !subscription.class_wide &&
-						subscription.object == object)
+				hook_subscribed = true;
+				break;
+			}
+		}
+		if (!hook_subscribed && removed_subscription.class_wide)
+		{
+			ProcessEventClassHookEntry* target_hook = nullptr;
+			for (ProcessEventClassHookEntry& hook :
+				process_event_class_hooks)
+			{
+				if (hook.vtable == removed_subscription.class_vtable)
 				{
-					hook_subscribed = true;
+					target_hook = &hook;
 					break;
 				}
 			}
-			if (!hook_subscribed && removed_subscription.class_wide)
+			if (target_hook == nullptr)
 			{
-				for (ProcessEventClassHookEntry& hook :
-					process_event_class_hooks)
-				{
-					if (hook.vtable != removed_subscription.class_vtable)
-						continue;
-					ReplaceProcessEventVTableEntry(
-						hook.vtable,
+				FailProcessEventVTableIntegrity();
+				ReleaseSRWLockExclusive(&process_event_lock);
+				return false;
+			}
+			if (target_hook->installed)
+			{
+				const hook::ProtectedPointerPatchResult patch_result =
+					ApplyProcessEventClassPatch(
+						*target_hook,
 						reinterpret_cast<void*>(&HookedProcessEventClass),
-						reinterpret_cast<void*>(hook.original));
-					hook.installed = false;
-					break;
-				}
-			}
-			if (!hook_subscribed && !removed_subscription.class_wide)
-			{
-				for (ProcessEventHookEntry& hook : process_event_hooks)
+						reinterpret_cast<void*>(target_hook->original),
+						false);
+				if (!patch_result.Applied())
 				{
-					if (hook.object != object || !hook.hook.IsInstalled())
-						continue;
-					hook.hook.Remove();
-					break;
+					ReleaseSRWLockExclusive(&process_event_lock);
+					return false;
 				}
 			}
 		}
+		if (!hook_subscribed && !removed_subscription.class_wide)
+		{
+			for (ProcessEventHookEntry& hook : process_event_hooks)
+			{
+				if (hook.object != object || !hook.hook.IsInstalled())
+					continue;
+				if (!hook.hook.Remove())
+				{
+					FailProcessEventVTableIntegrity();
+					ReleaseSRWLockExclusive(&process_event_lock);
+					return false;
+				}
+				break;
+			}
+		}
+
+		process_event_subscriptions[removal_index] =
+			process_event_subscriptions[--process_event_subscription_count];
 		ReleaseSRWLockExclusive(&process_event_lock);
-		return removed;
+		return true;
 	}
 
 	bool PopProcessEvent(
@@ -1186,19 +1396,30 @@ namespace nte::mods
 		return true;
 	}
 
-	void ResetProcessEventWatches()
+	bool ResetProcessEventWatches()
 	{
 		AcquireSRWLockExclusive(&process_event_lock);
+		bool all_removed = process_event_vtable_healthy;
 		for (ProcessEventHookEntry& hook : process_event_hooks)
-			hook.hook.Remove();
+			all_removed = hook.hook.Remove() && all_removed;
 		for (ProcessEventClassHookEntry& hook : process_event_class_hooks)
 		{
-			if (hook.installed && hook.vtable != nullptr && hook.original != nullptr)
-				ReplaceProcessEventVTableEntry(
-					hook.vtable,
+			if (!hook.installed)
+				continue;
+			if (hook.vtable == nullptr || hook.original == nullptr)
+			{
+				FailProcessEventVTableIntegrity();
+				all_removed = false;
+				continue;
+			}
+			const hook::ProtectedPointerPatchResult patch_result =
+				ApplyProcessEventClassPatch(
+					hook,
 					reinterpret_cast<void*>(&HookedProcessEventClass),
-					reinterpret_cast<void*>(hook.original));
-			hook.installed = false;
+					reinterpret_cast<void*>(hook.original),
+					false);
+			if (!patch_result.Applied())
+				all_removed = false;
 		}
 		process_event_subscription_count = 0;
 		for (ProcessEventQueue& queue : process_event_queues)
@@ -1206,82 +1427,220 @@ namespace nte::mods
 			queue.first = 0;
 			queue.count = 0;
 		}
+		if (!all_removed)
+			FailProcessEventVTableIntegrity();
 		ReleaseSRWLockExclusive(&process_event_lock);
+		return all_removed;
 	}
 
-	void StartPluginRuntime(HMODULE module)
+	PluginStartResult StartPluginRuntime(HMODULE module)
 	{
-		if (IsGameExecutableHost())
+		if (!IsGameExecutableHost())
+			return PluginStartResult::NotGameHost;
+
+		AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+		switch (runtime_lifecycle_state)
 		{
-			runtime_stop_event = CreateEventW(
-				nullptr, TRUE, FALSE, nullptr);
-			if (runtime_stop_event == nullptr)
-			{
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE Mods plugin: failed to create runtime stop event.\n")
+		case PluginLifecycleState::Running:
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return PluginStartResult::AlreadyRunning;
+		case PluginLifecycleState::Starting:
+		case PluginLifecycleState::Stopping:
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return PluginStartResult::InProgress;
+		case PluginLifecycleState::FailedClosed:
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return PluginStartResult::Failed;
+		case PluginLifecycleState::NeverStarted:
+		case PluginLifecycleState::Stopped:
+			break;
+		}
+		runtime_lifecycle_state = PluginLifecycleState::Starting;
+		ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+
+		HANDLE stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+		if (stop_event == nullptr)
+		{
+			AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+			runtime_lifecycle_state = PluginLifecycleState::Stopped;
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			DebugLog(NTE_OBFUSCATE_STRING(
+				L"NTE Mods plugin: failed to create runtime stop event.\n")
+				.c_str());
+			return PluginStartResult::Failed;
+		}
+
+		// Presence is a required part of the Running contract. Publish it before
+		// worker creation so a fixed-name collision or an unverifiable descriptor
+		// fails closed without starting any runtime work.
+		if (!OpenRuntimePresence())
+		{
+			const bool stop_event_closed = CloseHandle(stop_event) != FALSE;
+			AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+			if (!stop_event_closed)
+				runtime_stop_event = stop_event;
+			runtime_lifecycle_state = stop_event_closed
+				? PluginLifecycleState::Stopped
+				: PluginLifecycleState::FailedClosed;
+			last_stop_result = stop_event_closed
+				? PluginStopResult::UnloadSafe
+				: PluginStopResult::TeardownIncomplete;
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			DebugLog(NTE_OBFUSCATE_STRING(
+				L"NTE Mods plugin: failed to publish runtime presence.\n")
 					.c_str());
-				return;
-			}
-			runtime_thread = CreateThread(
-				nullptr, 0, WatchModWorkspace, nullptr, 0, nullptr);
-			if (runtime_thread == nullptr)
-			{
-				CloseHandle(runtime_stop_event);
+			return PluginStartResult::Failed;
+		}
+
+		HANDLE watcher = CreateThread(
+			nullptr, 0, WatchModWorkspace, stop_event, 0, nullptr);
+		if (watcher == nullptr)
+		{
+			const bool presence_closed =
+				CloseRuntimePresence() == RuntimePresenceCloseResult::Closed;
+			const bool stop_event_closed = CloseHandle(stop_event) != FALSE;
+			AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+			if (!stop_event_closed)
+				runtime_stop_event = stop_event;
+			const bool resources_drained =
+				presence_closed && stop_event_closed;
+			runtime_lifecycle_state = resources_drained
+				? PluginLifecycleState::Stopped
+				: PluginLifecycleState::FailedClosed;
+			last_stop_result = resources_drained
+				? PluginStopResult::UnloadSafe
+				: PluginStopResult::TeardownIncomplete;
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			DebugLog(NTE_OBFUSCATE_STRING(
+				L"NTE Mods plugin: failed to start runtime watcher.\n")
+				.c_str());
+			return PluginStartResult::Failed;
+		}
+
+		sdk_cache_worker = { module, stop_event };
+		HANDLE sdk_worker = CreateThread(
+			nullptr,
+			0,
+			sdk_cache::RunWorker,
+			&sdk_cache_worker,
+			0,
+			nullptr);
+		if (sdk_worker == nullptr)
+		{
+			DebugLog(NTE_OBFUSCATE_STRING(
+				L"NTE Mods plugin: failed to start SDK cache worker.\n")
+				.c_str());
+		}
+		InterlockedExchange(&runtime_stopping, 0);
+		SetIpcStopping(false);
+		AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+		runtime_stop_event = stop_event;
+		runtime_thread = watcher;
+		sdk_cache_thread = sdk_worker;
+		runtime_lifecycle_state = PluginLifecycleState::Running;
+		last_stop_result = PluginStopResult::UnloadSafe;
+		ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+		return PluginStartResult::Started;
+	}
+
+	PluginStopResult StopPluginRuntime()
+	{
+		AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+		if (runtime_lifecycle_state == PluginLifecycleState::NeverStarted)
+		{
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return PluginStopResult::UnloadSafe;
+		}
+		if (runtime_lifecycle_state == PluginLifecycleState::Stopped)
+		{
+			const PluginStopResult result = last_stop_result;
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return result;
+		}
+		if (runtime_lifecycle_state == PluginLifecycleState::Starting ||
+			runtime_lifecycle_state == PluginLifecycleState::Stopping)
+		{
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return PluginStopResult::InProgress;
+		}
+		// Running and FailedClosed both have exactly one teardown owner. A second
+		// call after a partial failure retries only the still-owned handles.
+		runtime_lifecycle_state = PluginLifecycleState::Stopping;
+		ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+
+		// Publish both gates before signaling or waiting. New detours still call
+		// their immutable original binding but cannot dispatch runtime/IPC work.
+		InterlockedExchange(&runtime_stopping, 1);
+		SetIpcStopping(true);
+		const bool stop_signaled = runtime_stop_event == nullptr ||
+			SetEvent(runtime_stop_event) != FALSE;
+
+		auto stop_worker = [](HANDLE& worker)
+		{
+			if (worker == nullptr)
+				return true;
+			if (WaitForSingleObject(
+					worker, RUNTIME_WORKER_STOP_TIMEOUT_MS) != WAIT_OBJECT_0)
+				return false;
+			if (CloseHandle(worker) == FALSE)
+				return false;
+			worker = nullptr;
+			return true;
+		};
+		const bool watcher_stopped = stop_worker(runtime_thread);
+		const bool sdk_worker_stopped = stop_worker(sdk_cache_thread);
+		bool stop_event_closed = runtime_stop_event == nullptr;
+		if (watcher_stopped && sdk_worker_stopped &&
+			runtime_stop_event != nullptr)
+		{
+			stop_event_closed = CloseHandle(runtime_stop_event) != FALSE;
+			if (stop_event_closed)
 				runtime_stop_event = nullptr;
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE Mods plugin: failed to start runtime watcher.\n")
-					.c_str());
-			}
-			else if (!OpenRuntimePresence())
-			{
-				DebugLog(NTE_OBFUSCATE_STRING(
-					L"NTE Mods plugin: failed to publish runtime presence.\n")
-					.c_str());
-			}
-			if (runtime_thread != nullptr)
-			{
-				sdk_cache_worker = { module, runtime_stop_event };
-				sdk_cache_thread = CreateThread(
-					nullptr,
-					0,
-					sdk_cache::RunWorker,
-					&sdk_cache_worker,
-					0,
-					nullptr);
-				if (sdk_cache_thread == nullptr)
-				{
-					DebugLog(NTE_OBFUSCATE_STRING(
-						L"NTE Mods plugin: failed to start SDK cache worker.\n")
-						.c_str());
-				}
-			}
 		}
-	}
 
-	void StopPluginRuntime()
-	{
-		if (runtime_stop_event != nullptr)
-			SetEvent(runtime_stop_event);
-		if (runtime_thread != nullptr)
+		// These resources are independent: a failure in one never skips teardown
+		// of another. Each result contributes to the unload-safe decision.
+		const bool reset_succeeded = runtime::Reset();
+		const bool viewport_succeeded = RestoreViewportHook();
+		const bool ipc_succeeded = CloseIpc() == IpcCloseResult::Closed;
+		const bool presence_succeeded =
+			CloseRuntimePresence() == RuntimePresenceCloseResult::Closed;
+
+		const ULONGLONG dispatch_deadline =
+			GetTickCount64() + RUNTIME_DISPATCH_DRAIN_TIMEOUT_MS;
+		while (InterlockedCompareExchange(
+				&active_runtime_detours, 0, 0) != 0 &&
+			GetTickCount64() < dispatch_deadline)
 		{
-			WaitForSingleObject(runtime_thread, INFINITE);
-			CloseHandle(runtime_thread);
-			runtime_thread = nullptr;
+			Sleep(1);
 		}
-		if (sdk_cache_thread != nullptr)
+		const bool dispatch_succeeded = InterlockedCompareExchange(
+			&active_runtime_detours, 0, 0) == 0;
+		const bool resources_drained = stop_signaled && watcher_stopped &&
+			sdk_worker_stopped && stop_event_closed && reset_succeeded &&
+			viewport_succeeded && ipc_succeeded && presence_succeeded &&
+			dispatch_succeeded;
+
+		PluginStopResult result = PluginStopResult::TeardownIncomplete;
+		if (resources_drained)
 		{
-			WaitForSingleObject(sdk_cache_thread, INFINITE);
-			CloseHandle(sdk_cache_thread);
-			sdk_cache_thread = nullptr;
+			// A thread may have loaded a published detour pointer immediately before
+			// restoration and been descheduled before entering its counter. Without
+			// suspending foreign game threads, that lineage is process-resident.
+			result = InterlockedCompareExchange(
+				&runtime_detour_ever_published, 0, 0) == 0
+				? PluginStopResult::UnloadSafe
+				: PluginStopResult::Resident;
 		}
-		if (runtime_stop_event != nullptr)
-		{
-			CloseHandle(runtime_stop_event);
-			runtime_stop_event = nullptr;
-		}
-		runtime::Reset();
-		RestoreViewportHook();
-		CloseIpc();
-		CloseRuntimePresence();
+
+		AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+		last_stop_result = result;
+		runtime_lifecycle_state = resources_drained
+			? PluginLifecycleState::Stopped
+			: PluginLifecycleState::FailedClosed;
+		ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+		if (!resources_drained)
+			DebugLog(L"Runtime teardown incomplete; unload blocked.\n");
+		return result;
 	}
 } // namespace nte::mods

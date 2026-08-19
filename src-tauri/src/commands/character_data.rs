@@ -2,6 +2,7 @@ use nte_dps_tool::core::character_data::CharacterDataError;
 use tauri::{State, WebviewWindow};
 
 use crate::{
+    character_data_service::CharacterDataServiceError,
     contract::{
         CommandError,
         character_data::{CharacterDataSnapshot, SaveCharacterDataRecordRequest},
@@ -39,8 +40,23 @@ pub(crate) fn save_character_data_record(
     ))
 }
 
-fn character_data_error(error: CharacterDataError) -> CommandError {
-    let display = error.to_string();
+fn character_data_error(error: CharacterDataServiceError) -> CommandError {
+    match error {
+        CharacterDataServiceError::Busy => CommandError::character_data(
+            "character_data_busy",
+            "Another character data operation is in progress.",
+            Vec::new(),
+        ),
+        CharacterDataServiceError::Unavailable => CommandError::character_data(
+            "character_data_unavailable",
+            "Character data operations are unavailable.",
+            Vec::new(),
+        ),
+        CharacterDataServiceError::Domain(error) => character_data_domain_error(error),
+    }
+}
+
+fn character_data_domain_error(error: CharacterDataError) -> CommandError {
     match error {
         CharacterDataError::InvalidId => CommandError::character_data(
             "character_id_invalid",
@@ -88,7 +104,7 @@ fn character_data_error(error: CharacterDataError) -> CommandError {
             Vec::new(),
         ),
         CharacterDataError::Serialize(_) | CharacterDataError::Write(_) => {
-            log::error!("save Console character data failed: {display}");
+            log::error!("save Console character data failed");
             CommandError::character_data(
                 "character_data_save_failed",
                 "Failed to save character data.",
@@ -99,7 +115,7 @@ fn character_data_error(error: CharacterDataError) -> CommandError {
         | CharacterDataError::Json(_)
         | CharacterDataError::MissingCharacters
         | CharacterDataError::InvalidRecord(_) => {
-            log::error!("load Console character data failed: {display}");
+            log::error!("load Console character data failed");
             CommandError::character_data(
                 "character_data_load_failed",
                 "Character data could not be loaded.",
@@ -115,15 +131,26 @@ mod tests {
 
     #[test]
     fn validation_errors_map_to_stable_contract_codes() {
-        let invalid_id = character_data_error(CharacterDataError::InvalidId);
+        let invalid_id = character_data_domain_error(CharacterDataError::InvalidId);
         assert_eq!(invalid_id.code, "character_id_invalid");
         assert_eq!(
             invalid_id.message_key,
             "Character ID must be a positive integer."
         );
 
-        let duplicate = character_data_error(CharacterDataError::IdAlreadyExists(1080));
+        let duplicate = character_data_domain_error(CharacterDataError::IdAlreadyExists(1080));
         assert_eq!(duplicate.code, "character_id_exists");
         assert_eq!(duplicate.message_arguments, ["1080"]);
+    }
+
+    #[test]
+    fn service_state_errors_are_stable_and_redacted() {
+        let busy = character_data_error(CharacterDataServiceError::Busy);
+        let unavailable = character_data_error(CharacterDataServiceError::Unavailable);
+
+        assert_eq!(busy.code, "character_data_busy");
+        assert_eq!(unavailable.code, "character_data_unavailable");
+        assert!(busy.diagnostic_line.is_none());
+        assert!(unavailable.diagnostic_line.is_none());
     }
 }

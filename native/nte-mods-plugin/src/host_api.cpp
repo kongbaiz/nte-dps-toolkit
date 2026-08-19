@@ -290,7 +290,7 @@ namespace nte::mods
 					object.vtable,
 					PROCESS_EVENT_INDEX * sizeof(void*),
 					process_event) &&
-				memory::IsExecutableAddress(
+				memory::IsImageExecutableAddress(
 					reinterpret_cast<const void*>(process_event));
 		}
 
@@ -441,7 +441,7 @@ namespace nte::mods
 				return false;
 			const auto append_name = reinterpret_cast<AppendName>(
 				resolved->append_name_address);
-			if (!memory::IsExecutableAddress(reinterpret_cast<const void*>(append_name)))
+			if (!memory::IsImageExecutableAddress(reinterpret_cast<const void*>(append_name)))
 				return false;
 
 			append_name(&name, output);

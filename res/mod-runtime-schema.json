@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "capabilities": [
+    { "name": "viewport.tick", "bit": 0, "symbol": "VIEWPORT_TICK" },
+    { "name": "memory.read", "bit": 1, "symbol": "MEMORY_READ" },
+    { "name": "ipc", "bit": 2, "symbol": "IPC" },
+    { "name": "sdk.read", "bit": 3, "symbol": "SDK_READ" },
+    { "name": "equipment", "bit": 4, "symbol": "EQUIPMENT" },
+    { "name": "combat-clock", "bit": 5, "symbol": "COMBAT_CLOCK" },
+    { "name": "log", "bit": 6, "symbol": "LOG" },
+    { "name": "game.session", "bit": 7, "symbol": "GAME_SESSION" },
+    { "name": "memory.write", "bit": 8, "symbol": "MEMORY_WRITE" },
+    {
+      "name": "unreal.reflection",
+      "bit": 9,
+      "symbol": "UNREAL_REFLECTION"
+    },
+    { "name": "process.event", "bit": 10, "symbol": "PROCESS_EVENT" },
+    {
+      "name": "character.effects",
+      "bit": 11,
+      "symbol": "CHARACTER_EFFECTS"
+    }
+  ],
+  "services": [
+    {
+      "name": "equipment.equip_module",
+      "operation": 1,
+      "operationSymbol": "NTE_MODS_IPC_EQUIP_MODULE",
+      "nativeService": "EquipModule",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.equip_core",
+      "operation": 2,
+      "operationSymbol": "NTE_MODS_IPC_EQUIP_CORE",
+      "nativeService": "EquipCore",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.unequip_module",
+      "operation": 3,
+      "operationSymbol": "NTE_MODS_IPC_UNEQUIP_MODULE",
+      "nativeService": "UnequipModule",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.unequip_core",
+      "operation": 4,
+      "operationSymbol": "NTE_MODS_IPC_UNEQUIP_CORE",
+      "nativeService": "UnequipCore",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.unequip_all",
+      "operation": 5,
+      "operationSymbol": "NTE_MODS_IPC_UNEQUIP_ALL",
+      "nativeService": "UnequipAll",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.equip_one_key",
+      "operation": 6,
+      "operationSymbol": "NTE_MODS_IPC_EQUIP_ONE_KEY",
+      "nativeService": "EquipOneKey",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.move_module_to_character",
+      "operation": 7,
+      "operationSymbol": "NTE_MODS_IPC_MOVE_MODULE_TO_CHARACTER",
+      "nativeService": "MoveModuleToCharacter",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.move_core_to_character",
+      "operation": 8,
+      "operationSymbol": "NTE_MODS_IPC_MOVE_CORE_TO_CHARACTER",
+      "nativeService": "MoveCoreToCharacter",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.set_item_discarded",
+      "operation": 9,
+      "operationSymbol": "NTE_MODS_IPC_SET_ITEM_DISCARDED",
+      "nativeService": "SetItemDiscarded",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "equipment.set_item_locked",
+      "operation": 10,
+      "operationSymbol": "NTE_MODS_IPC_SET_ITEM_LOCKED",
+      "nativeService": "SetItemLocked",
+      "capabilities": ["ipc", "equipment"]
+    },
+    {
+      "name": "combat_clock.query_transitions",
+      "operation": 11,
+      "operationSymbol": "NTE_MODS_IPC_QUERY_COMBAT_CLOCK_TRANSITIONS",
+      "nativeService": "QueryCombatClockTransitions",
+      "capabilities": ["ipc", "combat-clock"]
+    },
+    {
+      "name": "ipc.query_mod_events",
+      "operation": 12,
+      "operationSymbol": "NTE_MODS_IPC_QUERY_MOD_EVENTS",
+      "nativeService": "QueryModEvents",
+      "capabilities": ["ipc"]
+    },
+    {
+      "name": "character.query_effects",
+      "operation": 14,
+      "operationSymbol": "NTE_MODS_IPC_QUERY_CHARACTER_EFFECTS",
+      "nativeService": "QueryCharacterEffects",
+      "capabilities": ["ipc", "character.effects"]
+    }
+  ]
+}
