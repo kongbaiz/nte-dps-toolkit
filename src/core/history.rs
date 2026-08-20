@@ -49,8 +49,38 @@ pub struct PreparedHistoryArchive {
 /// provenance for an older round.
 #[derive(Clone, Debug)]
 pub struct PendingHistoryArchive {
+    pub summary: CombatSessionSummary,
     pub details: HistoryCombatDetails,
     pub source: CaptureQualitySource,
+    /// Effective basis frozen at the event-gated round boundary. It already
+    /// accounts for recorded/live provider availability and must not be
+    /// recomputed from a later settings snapshot.
+    pub dps_time_mode: DpsTimeBasis,
+    pub separate_reaction_damage: bool,
+}
+
+/// User projection preferences needed when an automatic round boundary is
+/// observed inside the capture worker. The worker atomically snapshots this
+/// pair and resolves the effective clock basis against the detached state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistoryArchivePolicy {
+    pub requested_dps_time_mode: DpsTimeBasis,
+    pub separate_reaction_damage: bool,
+}
+
+impl Default for HistoryArchivePolicy {
+    fn default() -> Self {
+        Self {
+            requested_dps_time_mode: DpsTimeBasis::SubtractTimeStop,
+            separate_reaction_damage: false,
+        }
+    }
+}
+
+impl HistoryArchivePolicy {
+    pub fn effective_for(self, state: &CombatState) -> DpsTimeBasis {
+        state.effective_dps_time_basis(self.requested_dps_time_mode)
+    }
 }
 
 pub fn prepare_history_archive(
@@ -60,11 +90,22 @@ pub fn prepare_history_archive(
     separate_reaction_damage: bool,
 ) -> Option<PreparedHistoryArchive> {
     let details = HistoryCombatDetails::from_state(state);
-    let summary_state = details.as_ref().map(HistoryCombatDetails::to_combat_state);
-    let state = summary_state.as_ref().unwrap_or(state);
     state
         .session_summary(source, dps_time_mode, separate_reaction_damage)
         .map(|summary| PreparedHistoryArchive { summary, details })
+}
+
+/// Owned counterpart for a round already detached under the capture gate. It
+/// computes the bounded summary before moving every hit into History details.
+pub fn prepare_history_archive_owned(
+    state: CombatState,
+    source: CaptureQualitySource,
+    dps_time_mode: DpsTimeBasis,
+    separate_reaction_damage: bool,
+) -> Option<PreparedHistoryArchive> {
+    let summary = state.session_summary(source, dps_time_mode, separate_reaction_damage)?;
+    let details = HistoryCombatDetails::from_state_owned(state);
+    Some(PreparedHistoryArchive { summary, details })
 }
 
 #[cfg(test)]

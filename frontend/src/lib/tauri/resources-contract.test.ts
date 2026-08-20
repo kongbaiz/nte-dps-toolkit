@@ -6,7 +6,7 @@ import {
 } from "@/lib/tauri/resources-contract";
 
 const SNAPSHOT = {
-  contractVersion: 1,
+  contractVersion: 2,
   errorCount: 1,
   warningCount: 0,
   itemCount: 1,
@@ -16,7 +16,6 @@ const SNAPSHOT = {
     skillDamage: 3,
     mappedEffects: 4,
     semanticEffects: 5,
-    abyssMonsters: 6,
     reactions: 7,
   },
   items: [

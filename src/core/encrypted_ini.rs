@@ -120,16 +120,17 @@ pub fn save_encrypted_ini_document(
         document.final_newline,
     )
     .map_err(|_| EncryptedIniError::InvalidCiphertext)?;
-    atomic_write_text(path, &encrypted).map_err(|_| EncryptedIniError::WriteFailed)?;
     let (saved_key, saved_plaintext, records, line_ending, final_newline) =
         parse_encrypted_ini_text(&encrypted).map_err(|_| EncryptedIniError::InvalidCiphertext)?;
-    *document = EncryptedIniDocument {
+    let saved = EncryptedIniDocument {
         key: saved_key,
         plaintext: saved_plaintext,
         records,
         line_ending,
         final_newline,
     };
+    atomic_write_text(path, &encrypted).map_err(|_| EncryptedIniError::WriteFailed)?;
+    *document = saved;
     Ok(EncryptedIniSaveOutcome::Saved)
 }
 

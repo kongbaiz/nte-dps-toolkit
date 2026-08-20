@@ -7,10 +7,20 @@ use std::{
 
 use windows_sys::Win32::{
     Foundation::{
-        CloseHandle, ERROR_CANCELLED, GetLastError, HANDLE, WAIT_FAILED, WAIT_OBJECT_0,
-        WAIT_TIMEOUT,
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_CANCELLED, ERROR_INVALID_PARAMETER, GetLastError,
+        HANDLE, INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
     },
-    System::Threading::{CreateEventW, GetCurrentProcessId, SetEvent, WaitForSingleObject},
+    System::{
+        Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+            TH32CS_SNAPPROCESS,
+        },
+        Threading::{
+            CreateEventW, GetCurrentProcessId, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_TERMINATE, QueryFullProcessImageNameW, SYNCHRONIZATION_SYNCHRONIZE, SetEvent,
+            TerminateProcess, WaitForSingleObject,
+        },
+    },
     UI::{
         Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW},
         WindowsAndMessaging::SW_HIDE,
@@ -22,6 +32,15 @@ pub const MOD_LOADER_PAYLOAD_RELATIVE_PATH: &str = "plugins/dwmapi.dll";
 // The loader exits only after it has terminated every launcher process that
 // received the session shim, so the owner wait must cover that cleanup.
 const MOD_LOADER_STOP_TIMEOUT_MS: u32 = 15_000;
+const TARGET_PROCESS_STOP_TIMEOUT_MS: u32 = 5_000;
+const TARGET_PROCESS_STOP_PASSES: usize = 3;
+const TARGET_PROCESS_NAMES: [&str; 5] = [
+    "NTEGame.exe",
+    "NTEGlobalGame.exe",
+    "NTELauncher.exe",
+    "NTEGlobalLauncher.exe",
+    "HTGame.exe",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModLoaderRuntimePhase {
@@ -49,6 +68,9 @@ pub enum ModLoaderRuntimeError {
     StopFailed(u32),
     StopTimedOut,
     ProbeFailed(u32),
+    TargetProcessProbeFailed(u32),
+    TargetProcessStopFailed(u32),
+    TargetProcessStopTimedOut,
     StatePoisoned,
 }
 
@@ -110,6 +132,42 @@ impl ModLoaderRuntimeService {
             .map_err(|_| ModLoaderRuntimeError::StatePoisoned)?;
         let running = self.reconcile_running_session()?;
         self.project_snapshot(running)
+    }
+
+    pub fn game_is_running(&self) -> Result<bool, ModLoaderRuntimeError> {
+        let _transaction = self
+            .0
+            .transaction
+            .lock()
+            .map_err(|_| ModLoaderRuntimeError::StatePoisoned)?;
+        Ok(enumerate_target_processes()?
+            .iter()
+            .any(|process| process.name.eq_ignore_ascii_case("HTGame.exe")))
+    }
+
+    /// Ends the known game and launcher processes outside the runtime state
+    /// lock. Launchers are stopped before HTGame.exe, and the bounded retry
+    /// closes targets that appear during the shutdown transition.
+    pub fn terminate_game_and_launchers(&self) -> Result<(), ModLoaderRuntimeError> {
+        let _transaction = self
+            .0
+            .transaction
+            .lock()
+            .map_err(|_| ModLoaderRuntimeError::StatePoisoned)?;
+        for _ in 0..TARGET_PROCESS_STOP_PASSES {
+            let targets = enumerate_target_processes()?;
+            if targets.is_empty() {
+                return Ok(());
+            }
+            for target in targets {
+                terminate_target_process(target)?;
+            }
+        }
+        if enumerate_target_processes()?.is_empty() {
+            Ok(())
+        } else {
+            Err(ModLoaderRuntimeError::TargetProcessStopTimedOut)
+        }
     }
 
     /// Mutation effect: only the Mod loader runtime read model changes. Combat,
@@ -372,6 +430,127 @@ fn as_handle(value: isize) -> HANDLE {
     value as *mut c_void
 }
 
+struct OwnedHandle(HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
+            // SAFETY: the guard owns one valid Win32 handle and closes it once.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+struct TargetProcess {
+    pid: u32,
+    name: String,
+}
+
+fn enumerate_target_processes() -> Result<Vec<TargetProcess>, ModLoaderRuntimeError> {
+    // SAFETY: the call takes no borrowed pointers and returns an owned snapshot.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err(ModLoaderRuntimeError::TargetProcessProbeFailed(unsafe {
+            GetLastError()
+        }));
+    }
+    let _snapshot = OwnedHandle(snapshot);
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..PROCESSENTRY32W::default()
+    };
+    let mut targets = Vec::new();
+    // SAFETY: snapshot is a live process snapshot and entry has the required size.
+    let mut available = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while available {
+        let name = utf16_c_string(&entry.szExeFile);
+        if is_target_process_name(&name) {
+            targets.push(TargetProcess {
+                pid: entry.th32ProcessID,
+                name,
+            });
+        }
+        // SAFETY: snapshot and entry remain valid for the enumeration.
+        available = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    let error = unsafe { GetLastError() };
+    if error != windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES {
+        return Err(ModLoaderRuntimeError::TargetProcessProbeFailed(error));
+    }
+    targets.sort_by_key(|process| process.name.eq_ignore_ascii_case("HTGame.exe"));
+    Ok(targets)
+}
+
+fn terminate_target_process(target: TargetProcess) -> Result<(), ModLoaderRuntimeError> {
+    // SAFETY: the PID came from the current process snapshot and no handle is inherited.
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZATION_SYNCHRONIZE,
+            0,
+            target.pid,
+        )
+    };
+    if process.is_null() {
+        let error = unsafe { GetLastError() };
+        return if error == ERROR_INVALID_PARAMETER {
+            Ok(())
+        } else {
+            Err(ModLoaderRuntimeError::TargetProcessStopFailed(error))
+        };
+    }
+    let process = OwnedHandle(process);
+    let mut image = vec![0_u16; 32_768];
+    let mut image_length = image.len() as u32;
+    // SAFETY: process has query rights and image is a writable UTF-16 buffer.
+    if unsafe { QueryFullProcessImageNameW(process.0, 0, image.as_mut_ptr(), &mut image_length) }
+        == 0
+        || image_length == 0
+        || image_length as usize > image.len()
+    {
+        return Err(ModLoaderRuntimeError::TargetProcessStopFailed(unsafe {
+            GetLastError()
+        }));
+    }
+    let current_name = String::from_utf16_lossy(&image[..image_length as usize])
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    if !current_name.eq_ignore_ascii_case(&target.name) || !is_target_process_name(&current_name) {
+        return Ok(());
+    }
+    // SAFETY: process is a verified target handle opened with terminate rights.
+    if unsafe { TerminateProcess(process.0, ERROR_CANCELLED) } == 0 {
+        let error = unsafe { GetLastError() };
+        if error == ERROR_ACCESS_DENIED
+            && unsafe { WaitForSingleObject(process.0, 0) } == WAIT_OBJECT_0
+        {
+            return Ok(());
+        }
+        return Err(ModLoaderRuntimeError::TargetProcessStopFailed(error));
+    }
+    // SAFETY: process remains live through the bounded wait.
+    if unsafe { WaitForSingleObject(process.0, TARGET_PROCESS_STOP_TIMEOUT_MS) } == WAIT_OBJECT_0 {
+        Ok(())
+    } else {
+        Err(ModLoaderRuntimeError::TargetProcessStopTimedOut)
+    }
+}
+
+fn utf16_c_string(buffer: &[u16]) -> String {
+    let length = buffer
+        .iter()
+        .position(|unit| *unit == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..length])
+}
+
+fn is_target_process_name(name: &str) -> bool {
+    TARGET_PROCESS_NAMES
+        .iter()
+        .any(|target| name.eq_ignore_ascii_case(target))
+}
+
 fn wide(value: impl AsRef<OsStr>) -> Vec<u16> {
     value.as_ref().encode_wide().chain(Some(0)).collect()
 }
@@ -413,5 +592,16 @@ mod tests {
         );
 
         std::fs::remove_dir_all(root).expect("remove test layout");
+    }
+
+    #[test]
+    fn process_shutdown_targets_only_exact_game_and_launcher_names() {
+        for name in TARGET_PROCESS_NAMES {
+            assert!(is_target_process_name(name));
+            assert!(is_target_process_name(&name.to_ascii_lowercase()));
+        }
+        assert!(!is_target_process_name("HTGame.exe.backup"));
+        assert!(!is_target_process_name("NTEBrowser.exe"));
+        assert!(!is_target_process_name("helper.exe"));
     }
 }

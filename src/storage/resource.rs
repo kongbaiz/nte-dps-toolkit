@@ -1,16 +1,21 @@
 use std::borrow::Cow;
 #[cfg(feature = "desktop")]
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 #[cfg(feature = "desktop")]
 use crate::engine::model::CharacterInfo;
 use anyhow::{Context, Result, anyhow};
+use flate2::read::ZlibDecoder;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 
 #[cfg(feature = "desktop")]
 const MODS_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
+const MAX_RESOURCE_FILE_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_MODS_PLUGIN_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(feature = "desktop")]
 const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 21] = [
     b"NTE_DPS_TOOL_MODS_PLUGIN_V1",
@@ -36,8 +41,9 @@ const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 21] = [
     b"event.next",
 ];
 
-pub(crate) fn bundled_resource(path: &str) -> Option<&'static [u8]> {
-    embedded_resource(path)
+#[cfg(all(test, not(feature = "external_resources")))]
+fn bundled_resource(path: &str) -> Option<Cow<'static, [u8]>> {
+    decode_embedded_resource(embedded_resource(path)?, MAX_RESOURCE_FILE_BYTES).ok()
 }
 
 pub(crate) fn resource_file_path(path: &Path) -> Option<PathBuf> {
@@ -60,7 +66,7 @@ pub fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
 fn read_first_compatible_mods_plugin(candidates: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
     let mut incompatible = None;
     for candidate in candidates {
-        match std::fs::read(candidate) {
+        match read_file_bytes_bounded_io(candidate, MAX_MODS_PLUGIN_BYTES) {
             Ok(bytes) if mods_plugin_supports_bundled_mods(&bytes) => return Ok(Some(bytes)),
             Ok(_) => {
                 incompatible.get_or_insert(candidate);
@@ -89,7 +95,7 @@ fn mods_plugin_supports_bundled_mods(plugin: &[u8]) -> bool {
 }
 
 pub(crate) fn resource_exists(path: &Path) -> bool {
-    resource_file_path(path).is_some() || bundled_resource_for_path(path).is_some()
+    resource_file_path(path).is_some() || bundled_resource_entry_for_path(path).is_some()
 }
 
 pub(crate) fn read_resource_text(path: &Path) -> Result<String> {
@@ -98,15 +104,99 @@ pub(crate) fn read_resource_text(path: &Path) -> Result<String> {
         .with_context(|| format!("资源不是 UTF-8 文本 {}", path.display()))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BoundedResourceTextError {
+    ReadFailed,
+    TooLarge,
+    InvalidUtf8,
+}
+
+/// Read an embedded or override text resource without allowing an override
+/// file to allocate past the caller's trust-boundary budget.
+pub(crate) fn read_resource_text_bounded(
+    path: &Path,
+    max_bytes: usize,
+) -> Result<String, BoundedResourceTextError> {
+    let bytes = if let Some(disk_path) = resource_file_path(path) {
+        read_file_bounded(&disk_path, max_bytes)?
+    } else if let Some(entry) = bundled_resource_entry_for_path(path) {
+        decode_embedded_resource(entry, max_bytes)
+            .map_err(|error| match error {
+                EmbeddedResourceDecodeError::TooLarge => BoundedResourceTextError::TooLarge,
+                EmbeddedResourceDecodeError::Corrupt => BoundedResourceTextError::ReadFailed,
+            })?
+            .into_owned()
+    } else {
+        return Err(BoundedResourceTextError::ReadFailed);
+    };
+    String::from_utf8(bytes).map_err(|_| BoundedResourceTextError::InvalidUtf8)
+}
+
+fn read_file_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, BoundedResourceTextError> {
+    let file = std::fs::File::open(path).map_err(|_| BoundedResourceTextError::ReadFailed)?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| BoundedResourceTextError::ReadFailed)?;
+    if !metadata.is_file() {
+        return Err(BoundedResourceTextError::ReadFailed);
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(BoundedResourceTextError::TooLarge);
+    }
+
+    let read_limit = u64::try_from(max_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let capacity = usize::try_from(metadata.len())
+        .unwrap_or(max_bytes)
+        .min(max_bytes);
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|_| BoundedResourceTextError::ReadFailed)?;
+    if bytes.len() > max_bytes {
+        return Err(BoundedResourceTextError::TooLarge);
+    }
+    Ok(bytes)
+}
+
+fn read_file_bytes_bounded_io(path: &Path, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "resource path is not a regular file",
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("resource exceeds {max_bytes} byte limit"),
+        ));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(max_bytes));
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("resource exceeds {max_bytes} byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn read_resource_bytes(path: &Path) -> Result<Cow<'static, [u8]>> {
     if let Some(disk_path) = resource_file_path(path) {
-        let bytes = std::fs::read(&disk_path)
+        let bytes = read_file_bytes_bounded_io(&disk_path, MAX_RESOURCE_FILE_BYTES)
             .with_context(|| format!("无法读取资源 {}", disk_path.display()))?;
         return Ok(Cow::Owned(bytes));
     }
 
-    if let Some(bytes) = bundled_resource_for_path(path) {
-        return Ok(Cow::Borrowed(bytes));
+    if let Some(entry) = bundled_resource_entry_for_path(path) {
+        return decode_embedded_resource(entry, MAX_RESOURCE_FILE_BYTES)
+            .map_err(|_| anyhow!("内置资源解压失败"));
     }
 
     Err(anyhow!("找不到资源 {}", path.display()))
@@ -223,9 +313,46 @@ fn available_character_rgb(
     }
 }
 
-fn bundled_resource_for_path(path: &Path) -> Option<&'static [u8]> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddedResourceDecodeError {
+    TooLarge,
+    Corrupt,
+}
+
+fn decode_embedded_resource(
+    entry: EmbeddedResourceEntry,
+    max_bytes: usize,
+) -> std::result::Result<Cow<'static, [u8]>, EmbeddedResourceDecodeError> {
+    if entry.decoded_len > max_bytes {
+        return Err(EmbeddedResourceDecodeError::TooLarge);
+    }
+    match entry.encoding {
+        EmbeddedResourceEncoding::Original => {
+            if entry.bytes.len() != entry.decoded_len {
+                return Err(EmbeddedResourceDecodeError::Corrupt);
+            }
+            Ok(Cow::Borrowed(entry.bytes))
+        }
+        EmbeddedResourceEncoding::ZlibJson => {
+            let read_limit = u64::try_from(entry.decoded_len)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1);
+            let mut bytes = Vec::with_capacity(entry.decoded_len);
+            ZlibDecoder::new(entry.bytes)
+                .take(read_limit)
+                .read_to_end(&mut bytes)
+                .map_err(|_| EmbeddedResourceDecodeError::Corrupt)?;
+            if bytes.len() != entry.decoded_len {
+                return Err(EmbeddedResourceDecodeError::Corrupt);
+            }
+            Ok(Cow::Owned(bytes))
+        }
+    }
+}
+
+fn bundled_resource_entry_for_path(path: &Path) -> Option<EmbeddedResourceEntry> {
     let key = embedded_resource_key(path)?;
-    bundled_resource(&key)
+    embedded_resource(&key)
 }
 
 fn disk_resource_candidates(path: &Path) -> Vec<PathBuf> {
@@ -313,10 +440,39 @@ mod tests {
     #[test]
     #[cfg(not(feature = "external_resources"))]
     fn bundled_resource_contains_character_data() {
+        let entry = embedded_resource("res/data/characters/characters.json")
+            .expect("characters.json entry should be bundled");
+        assert!(matches!(entry.encoding, EmbeddedResourceEncoding::ZlibJson));
         let bytes = bundled_resource("res/data/characters/characters.json")
             .expect("characters.json should be bundled");
 
-        assert!(std::str::from_utf8(bytes).unwrap().contains("characters"));
+        assert!(
+            std::str::from_utf8(bytes.as_ref())
+                .unwrap()
+                .contains("characters")
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "external_resources"))]
+    fn compressed_json_is_bounded_before_decode_and_rejects_corruption() {
+        let entry = embedded_resource("res/data/characters/characters.json")
+            .expect("characters.json entry should be bundled");
+        assert_eq!(
+            decode_embedded_resource(entry, entry.decoded_len.saturating_sub(1)),
+            Err(EmbeddedResourceDecodeError::TooLarge)
+        );
+        assert_eq!(
+            decode_embedded_resource(
+                EmbeddedResourceEntry {
+                    bytes: b"not-zlib",
+                    decoded_len: 32,
+                    encoding: EmbeddedResourceEncoding::ZlibJson,
+                },
+                32,
+            ),
+            Err(EmbeddedResourceDecodeError::Corrupt)
+        );
     }
 
     #[test]
@@ -344,6 +500,57 @@ mod tests {
 
         assert_eq!(text, "disk wins");
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bounded_text_reader_rejects_growth_before_unbounded_allocation() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "nte-bounded-resource-test-{}-{unique}",
+            std::process::id()
+        ));
+        let path = root.join("locale.json");
+        std::fs::create_dir_all(&root).expect("resource fixture directory");
+        std::fs::write(&path, b"12345").expect("resource fixture");
+
+        assert_eq!(
+            read_resource_text_bounded(&path, 4),
+            Err(BoundedResourceTextError::TooLarge)
+        );
+        assert_eq!(
+            read_resource_text_bounded(&path, 5).expect("bounded resource"),
+            "12345"
+        );
+        std::fs::write(&path, [0xff]).expect("invalid UTF-8 fixture");
+        assert_eq!(
+            read_resource_text_bounded(&path, 1),
+            Err(BoundedResourceTextError::InvalidUtf8)
+        );
+        std::fs::remove_dir_all(root).expect("remove resource fixture");
+    }
+
+    #[test]
+    fn bounded_binary_reader_checks_metadata_and_post_open_growth() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nte-bounded-binary-resource-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"12345").expect("binary resource fixture");
+        assert_eq!(read_file_bytes_bounded_io(&path, 5).unwrap(), b"12345");
+        assert_eq!(
+            read_file_bytes_bounded_io(&path, 4)
+                .expect_err("oversized binary must be rejected")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        std::fs::remove_file(path).expect("remove binary resource fixture");
     }
 
     #[test]
@@ -438,7 +645,6 @@ mod tests {
                 "missing core resource {path}"
             );
         }
-        assert!(bundled_resource("res/data/abyss/abyss_monsters.json").is_none());
         assert!(bundled_resource("res/images/characters/player_003.png").is_none());
         assert!(bundled_resource("res/icons/app-icon.png").is_none());
     }
@@ -450,5 +656,17 @@ mod tests {
         assert!(bundled_resource("res/images/characters/player_canhong.png").is_some());
         assert!(bundled_resource("res/images/characters/player_lingke.png").is_some());
         assert!(bundled_resource("res/icons/app-icon.png").is_some());
+        assert!(bundled_resource("res/data/abyss/monster_stat_names_zh_cn.json").is_some());
+        for remote_table in [
+            "res/data/abyss/DT_MonsterStaticData_Abyss.json",
+            "res/data/abyss/DT_MonsterPackData.json",
+            "res/data/abyss/abyss_floor_monster_summary.json",
+            "res/data/abyss/season_names_zh_cn.json",
+        ] {
+            assert!(
+                bundled_resource(remote_table).is_none(),
+                "remote abyss table must not be embedded: {remote_table}"
+            );
+        }
     }
 }

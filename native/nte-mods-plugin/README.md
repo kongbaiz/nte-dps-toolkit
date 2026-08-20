@@ -26,6 +26,43 @@ msbuild .\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platfor
 `plugins\dwmapi.dll`。随发行包提供的脚本位于 `plugins\nte-mods\`，默认启用集合
 位于 `plugins\nte-mods.enabled`。
 
+## 加载与生命周期 ABI
+
+代理 DLL 的 `DllMain` 只记录已由加载器提供的模块地址，不加载系统 DLL、不启动
+worker、也不执行停止/等待。真实 DWM API 通过
+`api-ms-win-dwmapi-l1-1-0.dll` 静态 anchor 由 Windows loader 预绑定；首次转发只解析
+已加载映像中的 export，不会把本插件永久 pin 到进程。
+
+代理部署由 `DllMain` 创建一个不等待的有限初始化线程。Windows 会在当前 DLL 初始化回调
+返回后才运行该线程，因此运行时初始化发生在 loader lock 之外。manual-map 部署继续由映射器
+拥有的专用 remote thread 直接调用：
+
+```cpp
+uint32_t WINAPI NteModsPluginInitialize(void* reserved);
+```
+
+`reserved` 必须传 `nullptr`。该导出保留给 manual-map 生命周期和显式测试；桌面端不再
+枚举受保护游戏进程的模块、读取远程 PE 映像或创建远程线程。
+
+桌面监控通过 runtime presence event 与本机 named pipe 投影就绪状态。对象使用允许
+中完整性桌面客户端访问的本机 IPC 描述符，pipe 拒绝远程客户端并保留首实例约束；双方不再
+读取 Token、PID、进程路径或精确 owner/DACL。注入标记只能证明 loader 完成映射，pipe
+连接和后续有界协议校验用于确认 IPC 就绪；IPC 缺失时桌面保持等待，不回退到模块快照、
+远程内存读取或远程线程。探测失败继续返回稳定错误码和可用的 Win32 错误码。
+
+稳定返回码定义于 `include/nte_mods_plugin_lifecycle.h`：
+
+- `0 / NTE_MODS_PLUGIN_INIT_STARTED`：本次启动成功；
+- `1 / NTE_MODS_PLUGIN_INIT_ALREADY_RUNNING`：已经运行，可作为幂等成功；
+- `2 / NTE_MODS_PLUGIN_INIT_NOT_GAME_HOST`：目标不是 `HTGame.exe`；
+- `3 / NTE_MODS_PLUGIN_INIT_IN_PROGRESS`：另一生命周期操作进行中，只允许有界重试；
+- `4 / NTE_MODS_PLUGIN_INIT_FAILED`：启动失败。
+
+manual-map loader 使用签名保护的 private attach marker，并在 imports、TLS 与 unwind
+注册完成后的专用 remote thread 上自动执行同一初始化入口。显式卸载前继续调用
+`NteModsPluginShutdown`；只有返回 `TRUE` 才允许释放映像。任一 runtime detour 曾发布后，
+插件会保守返回驻留状态，直到进程退出。
+
 ## 内置 SDK 缓存
 
 插件在 `HTGame.exe` 中加载后会启动一个由插件运行时拥有、共享停止事件可取消的 SDK

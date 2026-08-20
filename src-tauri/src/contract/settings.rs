@@ -5,7 +5,7 @@ use nte_dps_tool::{
         hud::HudConfigSnapshot,
         update::{AvailableComponentUpdate, UpdateComponent},
     },
-    engine::capture::CaptureDevice,
+    engine::{capture::CaptureDevice, model::CombatClockRuntimeHealth},
     storage::{
         capture_logs::{CaptureLogStats, format_bytes},
         config::{
@@ -17,7 +17,9 @@ use nte_dps_tool::{
     },
 };
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 4;
+use crate::contract::dps_time::DpsTimeRuntimeSnapshot;
+
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +111,7 @@ pub(crate) struct PreparedUpdateSnapshot {
 pub(crate) struct CaptureSettingsSnapshot {
     pub bpf_filter: String,
     pub devices: Vec<CaptureDeviceSnapshot>,
+    pub devices_available: bool,
     pub manual_capture_device: Option<String>,
     pub server_damage_calibration: bool,
     pub separate_reaction_damage: bool,
@@ -117,10 +120,11 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub auto_round_idle_seconds_min: u32,
     pub auto_round_idle_seconds_max: u32,
     pub dps_time_mode: &'static str,
+    pub dps_time_runtime: DpsTimeRuntimeSnapshot,
     pub passthrough_hotkey: &'static str,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CaptureDeviceSnapshot {
     pub id: String,
@@ -184,6 +188,7 @@ pub(crate) struct CaptureFilesSnapshot {
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TeamDataSnapshot {
+    pub available: bool,
     pub upper_imported: bool,
     pub lower_imported: bool,
 }
@@ -228,10 +233,13 @@ impl SettingsSnapshot {
         generation: u64,
         always_on_top: bool,
         devices: Vec<CaptureDeviceSnapshot>,
+        devices_available: bool,
         capture_files: CaptureLogStats,
+        team_data_available: bool,
         upper_imported: bool,
         lower_imported: bool,
         updates: UpdateSettingsSnapshot,
+        combat_clock_health: CombatClockRuntimeHealth,
     ) -> Self {
         Self {
             contract_version: SETTINGS_CONTRACT_VERSION,
@@ -251,6 +259,7 @@ impl SettingsSnapshot {
             capture: CaptureSettingsSnapshot {
                 bpf_filter: config.capture_filter.clone(),
                 devices,
+                devices_available,
                 manual_capture_device: config.manual_capture_device.clone(),
                 server_damage_calibration: config.server_damage_calibration,
                 separate_reaction_damage: config.separate_reaction_damage,
@@ -261,6 +270,10 @@ impl SettingsSnapshot {
                 auto_round_idle_seconds_max:
                     nte_dps_tool::storage::config::AUTO_ROUND_IDLE_SECONDS_MAX,
                 dps_time_mode: dps_time_mode_id(config.dps_time_mode),
+                dps_time_runtime: DpsTimeRuntimeSnapshot::new(
+                    config.dps_time_mode,
+                    combat_clock_health,
+                ),
                 passthrough_hotkey: passthrough_hotkey_id(config.passthrough_hotkey),
             },
             hotkeys: hotkeys_snapshot(config.global_hotkeys),
@@ -270,6 +283,7 @@ impl SettingsSnapshot {
                 formatted_size: format_bytes(capture_files.total_bytes),
             },
             team_data: TeamDataSnapshot {
+                available: team_data_available,
                 upper_imported,
                 lower_imported,
             },
@@ -492,7 +506,9 @@ mod tests {
             7,
             false,
             Vec::new(),
+            true,
             CaptureLogStats::default(),
+            true,
             false,
             false,
             UpdateSettingsSnapshot::from_runtime(
@@ -507,6 +523,7 @@ mod tests {
                 None,
                 None,
             ),
+            CombatClockRuntimeHealth::Unknown,
         ))
         .expect("settings snapshot must serialize");
 
@@ -520,6 +537,8 @@ mod tests {
         );
         assert_eq!(value["updates"]["downloadedBytes"], "0");
         assert_eq!(value["capture"]["bpfFilter"], "udp");
+        assert_eq!(value["capture"]["devicesAvailable"], true);
+        assert_eq!(value["teamData"]["available"], true);
         assert_eq!(value["hotkeys"]["bindings"][0]["action"], "capture");
         assert_eq!(value["hud"]["width"], 512);
         assert_eq!(value["hud"]["moduleOrder"][0], "timeline");
@@ -549,7 +568,9 @@ mod tests {
             8,
             false,
             Vec::new(),
+            true,
             CaptureLogStats::default(),
+            true,
             false,
             false,
             UpdateSettingsSnapshot::from_runtime(
@@ -564,6 +585,7 @@ mod tests {
                 None,
                 None,
             ),
+            CombatClockRuntimeHealth::Unknown,
         );
         let value = serde_json::to_value(TeamDataImportFileResult {
             performed: true,

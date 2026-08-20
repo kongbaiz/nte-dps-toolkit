@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
@@ -6,6 +7,26 @@ import {
 
 export const HISTORY_CONTRACT_VERSION = 2;
 export const HISTORY_MAX_RECORDS = 200;
+export const HISTORY_MAX_INLINE_EXPORT_CHARACTERS = 8 * 1024 * 1024;
+
+const {
+  array: list,
+  boundedString,
+  boundedMap,
+  boolean: flag,
+  decimalString: decimal,
+  enumValue,
+  finiteNumber: number,
+  integer,
+  nonNegativeInteger,
+  nullableEnumValue: nullableEnum,
+  nullableNonNegativeInteger: nullableInteger,
+  record: object,
+  string: text,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
+
 export type HistoryCommandError = TechnicalCommandError;
 export type HistoryLine = "upper" | "lower";
 
@@ -301,7 +322,11 @@ export function parseHistoryExport(value: unknown): HistoryExport {
   const item = object(value, "history export");
   return {
     fileName: text(item.fileName, "history export.fileName"),
-    json: text(item.json, "history export.json"),
+    json: boundedString(
+      item.json,
+      "history export.json",
+      HISTORY_MAX_INLINE_EXPORT_CHARACTERS,
+    ),
   };
 }
 
@@ -349,14 +374,16 @@ function parseRecord(value: unknown, field: string): HistoryRecord {
         summary.reactionDamageSeparated,
         `${field}.summary.reactionDamageSeparated`,
       ),
-      characters: boundedList(
+      characters: boundedMap(
         summary.characters,
         `${field}.summary.characters`,
+        8,
         parseCharacter,
       ),
-      skills: boundedList(
+      skills: boundedMap(
         summary.skills,
         `${field}.summary.skills`,
+        8,
         parseSkill,
       ),
       abyss: {
@@ -453,12 +480,13 @@ function parseHalf(value: unknown, field: string): HistoryHalf {
     durationSeconds: number(row.durationSeconds, `${field}.durationSeconds`),
     totalDamage: number(row.totalDamage, `${field}.totalDamage`),
     totalDps: number(row.totalDps, `${field}.totalDps`),
-    characters: boundedList(
+    characters: boundedMap(
       row.characters,
       `${field}.characters`,
+      8,
       parseCharacter,
     ),
-    skills: boundedList(row.skills, `${field}.skills`, parseSkill),
+    skills: boundedMap(row.skills, `${field}.skills`, 8, parseSkill),
     hiddenCharacterCount: nonNegativeInteger(
       row.hiddenCharacterCount,
       `${field}.hiddenCharacterCount`,
@@ -468,78 +496,4 @@ function parseHalf(value: unknown, field: string): HistoryHalf {
       `${field}.hiddenSkillCount`,
     ),
   };
-}
-
-function boundedList<T>(
-  value: unknown,
-  field: string,
-  parse: (value: unknown, field: string) => T,
-): T[] {
-  const values = list(value, field);
-  if (values.length > 8)
-    throw new TechnicalContractError(`${field} exceeds display bounds`);
-  return values.map((item, index) => parse(item, `${field}[${index}]`));
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an object`);
-  return value as Record<string, unknown>;
-}
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an array`);
-  return value;
-}
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string")
-    throw new TechnicalContractError(`${field} must be a string`);
-  return value;
-}
-function flag(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean")
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  return value;
-}
-function number(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value))
-    throw new TechnicalContractError(`${field} must be finite`);
-  return value;
-}
-function integer(value: unknown, field: string): number {
-  const parsed = number(value, field);
-  if (!Number.isInteger(parsed))
-    throw new TechnicalContractError(`${field} must be an integer`);
-  return parsed;
-}
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0)
-    throw new TechnicalContractError(`${field} must not be negative`);
-  return parsed;
-}
-function nullableInteger(value: unknown, field: string): number | null {
-  return value === null ? null : nonNegativeInteger(value, field);
-}
-function decimal(value: unknown, field: string): string {
-  const parsed = text(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed))
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  return parsed;
-}
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  options: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !options.includes(value))
-    throw new TechnicalContractError(`${field} has an unsupported value`);
-  return value as T[number];
-}
-function nullableEnum<const T extends readonly string[]>(
-  value: unknown,
-  options: T,
-  field: string,
-): T[number] | null {
-  return value === null ? null : enumValue(value, options, field);
 }

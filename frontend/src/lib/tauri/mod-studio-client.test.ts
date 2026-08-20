@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createModStudioClient } from "./mod-studio-client";
 
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
+
 const workspace = {
-  contractVersion: 10,
+  contractVersion: 13,
   generation: "0",
   workspaceLabel: "plugins/nte-mods",
   documents: [],
@@ -88,7 +93,7 @@ describe("Mod Studio client", () => {
 
   it("loads and installs market items through Rust-owned commands", async () => {
     const catalog = {
-      contractVersion: 10,
+      contractVersion: 11,
       publishedAt: "2026-08-03T00:00:00Z",
       privacyMode: "anonymous-read-only",
       mods: [
@@ -104,9 +109,7 @@ describe("Mod Studio client", () => {
           author: "NTE",
           capabilities: ["combat-clock", "ipc"],
           packageSize: 1024,
-          installed: false,
-          enabled: false,
-          current: false,
+          localState: { status: "notInstalled" },
         },
         {
           id: "equipment",
@@ -120,9 +123,11 @@ describe("Mod Studio client", () => {
           author: "NTE",
           capabilities: ["equipment", "ipc"],
           packageSize: 2048,
-          installed: true,
-          enabled: true,
-          current: true,
+          localState: {
+            status: "installed",
+            enabled: true,
+            current: true,
+          },
         },
       ],
     };
@@ -130,7 +135,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(catalog)
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 13,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
@@ -153,7 +158,7 @@ describe("Mod Studio client", () => {
 
   it("routes creation, folders, manual game selection, and loader deployment through typed commands", async () => {
     const deployment = {
-      contractVersion: 10,
+      contractVersion: 13,
       installations: 1,
       installed: 0,
       current: 0,
@@ -163,7 +168,7 @@ describe("Mod Studio client", () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 13,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
@@ -226,12 +231,14 @@ describe("Mod Studio client", () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce(runtime)
+      .mockResolvedValueOnce(true)
       .mockResolvedValueOnce({ ...runtime, phase: "running" })
       .mockResolvedValueOnce(true);
     const client = createModStudioClient({ invoke, createChannel: vi.fn() });
 
     await client.getLoaderRuntime();
-    await client.setLoaderRunning(true);
+    await client.getLoaderGameRunning();
+    await client.setLoaderRunning(true, true);
     await client.openLoaderDirectory();
 
     expect(invoke).toHaveBeenNthCalledWith(
@@ -239,11 +246,17 @@ describe("Mod Studio client", () => {
       "get_mod_loader_runtime",
       undefined,
     );
-    expect(invoke).toHaveBeenNthCalledWith(2, "set_mod_loader_running", {
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      "get_mod_loader_game_running",
+      undefined,
+    );
+    expect(invoke).toHaveBeenNthCalledWith(3, "set_mod_loader_running", {
       running: true,
+      terminateProcesses: true,
     });
     expect(invoke).toHaveBeenNthCalledWith(
-      3,
+      4,
       "open_mod_loader_directory",
       undefined,
     );
@@ -254,7 +267,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(workspace)
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 13,
         schemaVersion: 2,
         symbols: [
           {
@@ -267,13 +280,13 @@ describe("Mod Studio client", () => {
         ],
       })
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 13,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
       })
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 13,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);\n// saved",
@@ -331,13 +344,29 @@ describe("Mod Studio client", () => {
 
   it("subscribes through a typed Channel and cleans it up", async () => {
     let deliver: ((message: unknown) => void) | undefined;
-    const invoke = vi
-      .fn()
-      .mockResolvedValueOnce({
-        subscriptionId: "runtime-01",
-        streamIntervalMs: 250,
-      })
-      .mockResolvedValueOnce(undefined);
+    const runtimeEvent = {
+      event: "connection",
+      payload: {
+        contractVersion: 13,
+        generation: "1",
+        status: "connected",
+        bootstrapErrorCode: null,
+        probeErrorCode: null,
+        probeOsErrorCode: null,
+      },
+    };
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "subscribe_mod_studio_runtime") {
+        return {
+          subscriptionId: "runtime-01",
+          streamKind: "modStudioRuntime",
+          streamIntervalMs: 250,
+          streamProtocolVersion: 1,
+          streamGeneration: "1",
+        };
+      }
+      return undefined;
+    });
     const onEvent = vi.fn();
     const onError = vi.fn();
     const client = createModStudioClient(
@@ -352,24 +381,11 @@ describe("Mod Studio client", () => {
     );
 
     const unsubscribe = client.subscribeRuntime(onEvent, onError);
-    deliver?.({
-      event: "connection",
-      payload: {
-        contractVersion: 10,
-        generation: "1",
-        status: "connected",
-      },
-    });
+    deliver?.(encodeDelivery([runtimeEvent]));
+    await vi.waitFor(() => expect(onEvent).toHaveBeenCalledTimes(1));
     await unsubscribe();
 
-    expect(onEvent).toHaveBeenCalledWith({
-      event: "connection",
-      payload: {
-        contractVersion: 10,
-        generation: "1",
-        status: "connected",
-      },
-    });
+    expect(onEvent).toHaveBeenCalledWith(runtimeEvent);
     expect(onError).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenNthCalledWith(1, "subscribe_mod_studio_runtime", {
       subscriptionId: "runtime-01",

@@ -8,7 +8,7 @@ import {
 } from "./mod-source-semantic";
 
 const schema: ModStudioSdkSchemaSnapshot = {
-  contractVersion: 10,
+  contractVersion: 13,
   schemaVersion: 1,
   symbols: [
     {
@@ -68,6 +68,7 @@ describe("Mod source semantic tokens", () => {
       "#include <nte/mod.hpp>",
       "// NTE_SCRIPT player_controller nte::game::player_controller",
       'const char* value = "NTE_SCRIPT player_controller";',
+      'const char* raw = R"tag(NTE_SCRIPT player_controller // comment)tag";',
     ].join("\n");
     const text = Object.values(groupedTokenText(source)).flat();
 

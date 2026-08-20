@@ -1,11 +1,34 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const TIMELINE_CONTRACT_VERSION = 2;
-export const TIMELINE_MAX_BUCKETS = 20_000;
+export const TIMELINE_CONTRACT_VERSION = 3;
+export const TIMELINE_MAX_BUCKETS = 10_000;
+export const TIMELINE_MAX_CHARACTERS = 256;
+export const TIMELINE_MAX_ROLES_PER_BUCKET = 16;
+export const TIMELINE_MAX_CHARACTER_NAME_BYTES = 128;
+export const TIMELINE_MAX_INTERVALS = 10_000;
+export const TIMELINE_MAX_MARKERS = 64;
+
+const {
+  boundedArray: boundedList,
+  boundedUtf8String,
+  boolean: flag,
+  cssHex,
+  decimalString: decimal,
+  enumValue,
+  integer,
+  nonNegativeInteger,
+  nonNegativeNumber: nonNegative,
+  positiveNumber: positive,
+  record: object,
+  string: text,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type TimelineScope = "all" | "upper" | "lower";
 export type TimelineCurveMode = "team" | "characters";
@@ -40,14 +63,18 @@ export interface TimelineSnapshot {
   scope: TimelineScope;
   viewMode: TimelineCurveMode;
   bucketSeconds: number;
+  effectiveBucketSeconds: number;
   bucketSecondsMin: number;
   bucketSecondsMax: number;
   bucketSecondsStep: number;
   hasData: boolean;
   duration: number;
   totalDamage: number;
+  omittedRoleDamage: number;
+  omittedRoleHits: string;
   peakDps: number;
   timeStopDuration: number;
+  compactedTimeStopIntervals: string;
   timeStopIntervals: Array<{ start: number; end: number }>;
   markers: TimelineMarker[];
   characters: TimelineCharacter[];
@@ -66,10 +93,11 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
       `Unsupported timeline contract version: ${contractVersion}`,
     );
   }
-  const buckets = list(item.buckets, "timeline.buckets");
-  if (buckets.length > TIMELINE_MAX_BUCKETS) {
-    throw new TechnicalContractError("timeline.buckets exceeds display bounds");
-  }
+  const buckets = boundedList(
+    item.buckets,
+    "timeline.buckets",
+    TIMELINE_MAX_BUCKETS,
+  );
   const bucketSecondsMin = positive(
     item.bucketSecondsMin,
     "timeline.bucketSecondsMin",
@@ -79,10 +107,15 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
     "timeline.bucketSecondsMax",
   );
   const bucketSeconds = positive(item.bucketSeconds, "timeline.bucketSeconds");
+  const effectiveBucketSeconds = positive(
+    item.effectiveBucketSeconds,
+    "timeline.effectiveBucketSeconds",
+  );
   if (
     bucketSecondsMin > bucketSecondsMax ||
     bucketSeconds < bucketSecondsMin ||
-    bucketSeconds > bucketSecondsMax
+    bucketSeconds > bucketSecondsMax ||
+    effectiveBucketSeconds < bucketSeconds
   ) {
     throw new TechnicalContractError("timeline bucket range is inconsistent");
   }
@@ -100,6 +133,7 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
       "timeline.viewMode",
     ),
     bucketSeconds,
+    effectiveBucketSeconds,
     bucketSecondsMin,
     bucketSecondsMax,
     bucketSecondsStep: positive(
@@ -109,14 +143,24 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
     hasData: flag(item.hasData, "timeline.hasData"),
     duration: nonNegative(item.duration, "timeline.duration"),
     totalDamage: nonNegative(item.totalDamage, "timeline.totalDamage"),
+    omittedRoleDamage: nonNegative(
+      item.omittedRoleDamage,
+      "timeline.omittedRoleDamage",
+    ),
+    omittedRoleHits: decimal(item.omittedRoleHits, "timeline.omittedRoleHits"),
     peakDps: nonNegative(item.peakDps, "timeline.peakDps"),
     timeStopDuration: nonNegative(
       item.timeStopDuration,
       "timeline.timeStopDuration",
     ),
-    timeStopIntervals: list(
+    compactedTimeStopIntervals: decimal(
+      item.compactedTimeStopIntervals,
+      "timeline.compactedTimeStopIntervals",
+    ),
+    timeStopIntervals: boundedList(
       item.timeStopIntervals,
       "timeline.timeStopIntervals",
+      TIMELINE_MAX_INTERVALS,
     ).map((value, index) => {
       const row = object(value, `timeline.timeStopIntervals[${index}]`);
       return {
@@ -127,7 +171,11 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
         end: nonNegative(row.end, `timeline.timeStopIntervals[${index}].end`),
       };
     }),
-    markers: list(item.markers, "timeline.markers").map((value, index) => {
+    markers: boundedList(
+      item.markers,
+      "timeline.markers",
+      TIMELINE_MAX_MARKERS,
+    ).map((value, index) => {
       const row = object(value, `timeline.markers[${index}]`);
       return {
         offset: nonNegative(row.offset, `timeline.markers[${index}].offset`),
@@ -139,20 +187,26 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
         ),
       };
     }),
-    characters: list(item.characters, "timeline.characters").map(
-      (value, index) => {
-        const row = object(value, `timeline.characters[${index}]`);
-        return {
-          id: nonNegativeInteger(row.id, `timeline.characters[${index}].id`),
-          name: text(row.name, `timeline.characters[${index}].name`),
-          color: cssHex(row.color, `timeline.characters[${index}].color`),
-          totalDamage: nonNegative(
-            row.totalDamage,
-            `timeline.characters[${index}].totalDamage`,
-          ),
-        };
-      },
-    ),
+    characters: boundedList(
+      item.characters,
+      "timeline.characters",
+      TIMELINE_MAX_CHARACTERS,
+    ).map((value, index) => {
+      const row = object(value, `timeline.characters[${index}]`);
+      return {
+        id: nonNegativeInteger(row.id, `timeline.characters[${index}].id`),
+        name: boundedUtf8String(
+          row.name,
+          `timeline.characters[${index}].name`,
+          TIMELINE_MAX_CHARACTER_NAME_BYTES,
+        ),
+        color: cssHex(row.color, `timeline.characters[${index}].color`),
+        totalDamage: nonNegative(
+          row.totalDamage,
+          `timeline.characters[${index}].totalDamage`,
+        ),
+      };
+    }),
     buckets: buckets.map((value, index) => {
       const row = object(value, `timeline.buckets[${index}]`);
       return {
@@ -165,27 +219,33 @@ export function parseTimelineSnapshot(value: unknown): TimelineSnapshot {
           row.cumulativeDamage,
           `timeline.buckets[${index}].cumulativeDamage`,
         ),
-        roles: list(row.roles, `timeline.buckets[${index}].roles`).map(
-          (value, roleIndex) => {
-            const role = object(
-              value,
-              `timeline.buckets[${index}].roles[${roleIndex}]`,
-            );
-            return {
-              characterId: nonNegativeInteger(
-                role.characterId,
-                `timeline.buckets[${index}].roles[${roleIndex}].characterId`,
-              ),
-              dps: nonNegative(
-                role.dps,
-                `timeline.buckets[${index}].roles[${roleIndex}].dps`,
-              ),
-            };
-          },
-        ),
+        roles: boundedList(
+          row.roles,
+          `timeline.buckets[${index}].roles`,
+          TIMELINE_MAX_ROLES_PER_BUCKET,
+        ).map((value, roleIndex) => {
+          const role = object(
+            value,
+            `timeline.buckets[${index}].roles[${roleIndex}]`,
+          );
+          return {
+            characterId: nonNegativeInteger(
+              role.characterId,
+              `timeline.buckets[${index}].roles[${roleIndex}].characterId`,
+            ),
+            dps: nonNegative(
+              role.dps,
+              `timeline.buckets[${index}].roles[${roleIndex}].dps`,
+            ),
+          };
+        }),
       };
     }),
-    segments: list(item.segments, "timeline.segments").map((value, index) => {
+    segments: boundedList(
+      item.segments,
+      "timeline.segments",
+      TIMELINE_MAX_BUCKETS,
+    ).map((value, index) => {
       const row = object(value, `timeline.segments[${index}]`);
       return {
         start: nonNegative(row.start, `timeline.segments[${index}].start`),
@@ -206,76 +266,4 @@ export function parseTimelineEvent(value: unknown): TimelineSnapshot {
 
 export function timelineError(error: unknown): TimelineCommandError {
   return parseTechnicalCommandError(error);
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an array`);
-  return value;
-}
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string")
-    throw new TechnicalContractError(`${field} must be a string`);
-  return value;
-}
-function flag(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean")
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  return value;
-}
-function number(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value))
-    throw new TechnicalContractError(`${field} must be finite`);
-  return value;
-}
-function nonNegative(value: unknown, field: string): number {
-  const parsed = number(value, field);
-  if (parsed < 0)
-    throw new TechnicalContractError(`${field} must not be negative`);
-  return parsed;
-}
-function positive(value: unknown, field: string): number {
-  const parsed = number(value, field);
-  if (parsed <= 0)
-    throw new TechnicalContractError(`${field} must be positive`);
-  return parsed;
-}
-function integer(value: unknown, field: string): number {
-  const parsed = number(value, field);
-  if (!Number.isInteger(parsed))
-    throw new TechnicalContractError(`${field} must be an integer`);
-  return parsed;
-}
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0)
-    throw new TechnicalContractError(`${field} must not be negative`);
-  return parsed;
-}
-function decimal(value: unknown, field: string): string {
-  const parsed = text(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed))
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  return parsed;
-}
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  options: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !options.includes(value))
-    throw new TechnicalContractError(`${field} has an unsupported value`);
-  return value as T[number];
-}
-function cssHex(value: unknown, field: string): string {
-  const parsed = text(value, field);
-  if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(parsed))
-    throw new TechnicalContractError(`${field} must be a CSS hex color`);
-  return parsed;
 }

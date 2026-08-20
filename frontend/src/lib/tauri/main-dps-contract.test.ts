@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAIN_DPS_CONTRACT_VERSION,
   MAIN_DPS_MAX_HISTORY_RECORDS,
   MAIN_DPS_MAX_ROUNDS,
+  MAIN_DPS_MAX_TEXT_BYTES,
   parseMainDpsSnapshot,
 } from "./main-dps-contract";
 
 const sample = {
-  contractVersion: 4,
+  contractVersion: MAIN_DPS_CONTRACT_VERSION,
   generation: "7",
   captureGeneration: "3",
   presentationGeneration: "2",
@@ -18,6 +20,14 @@ const sample = {
     messageKey: "Idle",
     messageArguments: [],
     issue: null,
+  },
+  dpsTime: {
+    configuredMode: "time-stop-adjusted",
+    effectiveMode: "real-time",
+    combatClockHealth: "unknown",
+    degraded: true,
+    warningMessageKey:
+      "Time-stop adjustment has not been verified for this session.",
   },
   processingPaused: false,
   pausedPendingEvents: "0",
@@ -72,10 +82,12 @@ const sample = {
   gameDetected: false,
   gameDetectionStatus: "notRunning",
   hasLiveSessionData: false,
+  textTruncated: false,
   onboarding: {
     done: true,
     step: 0,
     captureDeviceCount: 1,
+    captureDevicesAvailable: true,
     gameDetected: false,
     gameDetectionStatus: "notRunning",
     passthroughHotkeyLabel: "F12",
@@ -85,7 +97,82 @@ const sample = {
 
 describe("main DPS contract", () => {
   it("parses the versioned empty projection", () => {
-    expect(parseMainDpsSnapshot(sample).rounds[0]?.live).toBe(true);
+    const parsed = parseMainDpsSnapshot(sample);
+    expect(parsed.rounds[0]?.live).toBe(true);
+    expect(parsed.onboarding.captureDevicesAvailable).toBe(true);
+    expect(parsed.dpsTime.effectiveMode).toBe("real-time");
+    expect(parsed.dpsTime.degraded).toBe(true);
+  });
+
+  it("requires an explicit capture-device availability status", () => {
+    const onboarding = { ...sample.onboarding } as Record<string, unknown>;
+    delete onboarding.captureDevicesAvailable;
+
+    expect(() => parseMainDpsSnapshot({ ...sample, onboarding })).toThrow(
+      /onboarding.captureDevicesAvailable must be a boolean/,
+    );
+  });
+
+  it("validates resource-derived strings by UTF-8 bytes", () => {
+    const character = {
+      characterId: 1,
+      name: "界".repeat(MAIN_DPS_MAX_TEXT_BYTES),
+      hits: "1",
+      damage: 1,
+      dps: 1,
+      damageSharePercent: 100,
+      damageTaken: 0,
+      durationSeconds: 1,
+      color: null,
+      attribute: null,
+    };
+    expect(() =>
+      parseMainDpsSnapshot({
+        ...sample,
+        readout: { ...sample.readout, characters: [character] },
+      }),
+    ).toThrow(/UTF-8 bytes/);
+  });
+
+  it.each([
+    "generation",
+    "captureGeneration",
+    "presentationGeneration",
+    "historyGeneration",
+  ] as const)("rejects non-canonical u64 values for %s", (field) => {
+    for (const invalid of [
+      "",
+      "-1",
+      "+1",
+      "01",
+      "1.0",
+      "not-a-generation",
+      "100000000000000000000",
+      "18446744073709551616",
+    ]) {
+      expect(() =>
+        parseMainDpsSnapshot({ ...sample, [field]: invalid }),
+      ).toThrow(`${field} must be a u64 decimal string`);
+    }
+  });
+
+  it("preserves canonical u64 generations without Number precision loss", () => {
+    const generation = "18446744073709551615";
+    const parsed = parseMainDpsSnapshot({
+      ...sample,
+      generation,
+      captureGeneration: generation,
+      presentationGeneration: generation,
+      historyGeneration: generation,
+    });
+
+    expect(parsed.generation).toBe(generation);
+    expect(parsed.captureGeneration).toBe(generation);
+    expect(parsed.presentationGeneration).toBe(generation);
+    expect(parsed.historyGeneration).toBe(generation);
+    expect(
+      parseMainDpsSnapshot({ ...sample, generation: "0" }).generation,
+    ).toBe("0");
   });
 
   it("preserves probe failure instead of treating it as a normal negative", () => {

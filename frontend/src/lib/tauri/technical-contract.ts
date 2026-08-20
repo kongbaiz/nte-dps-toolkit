@@ -1,3 +1,9 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
+import {
+  parseStreamSubscriptionReceipt,
+  type StreamSubscriptionReceipt,
+} from "@/lib/tauri/stream-contract";
+
 export { HUD_WINDOW_LABEL } from "@/lib/tauri/window-labels";
 export const TECHNICAL_CONTRACT_VERSION = 5;
 export const HUD_SNAPSHOT_VERSION = 3;
@@ -9,6 +15,22 @@ export const HUD_MODULE_IDS = [
   "characters",
   "timeline",
 ] as const;
+
+const {
+  array,
+  boolean,
+  digitString: decimalString,
+  integer,
+  isRecord,
+  nonNegativeNumber: finiteNumber,
+  nullableInteger,
+  nullableString,
+  positiveNumber: positiveFiniteNumber,
+  record,
+  string,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type HudModuleId = (typeof HUD_MODULE_IDS)[number];
 
@@ -109,10 +131,7 @@ export interface TechnicalSnapshot {
   hud: HudSnapshot;
 }
 
-export interface SubscriptionReceipt {
-  subscriptionId: string;
-  streamIntervalMs: number;
-}
+export type SubscriptionReceipt = StreamSubscriptionReceipt;
 
 export interface TechnicalCommandError {
   code: string;
@@ -387,12 +406,13 @@ export function parseTechnicalEvent(value: unknown): TechnicalEvent {
 }
 
 export function parseSubscriptionReceipt(value: unknown): SubscriptionReceipt {
-  const receipt = record(value, "subscription receipt");
-
-  return {
-    subscriptionId: string(receipt.subscriptionId, "subscriptionId"),
-    streamIntervalMs: integer(receipt.streamIntervalMs, "streamIntervalMs"),
-  };
+  try {
+    return parseStreamSubscriptionReceipt(value);
+  } catch (error) {
+    throw new TechnicalContractError(
+      error instanceof Error ? error.message : "Invalid subscription receipt",
+    );
+  }
 }
 
 export function parseTechnicalCommandError(
@@ -430,76 +450,4 @@ export class TechnicalContractError extends Error {
     super(message);
     this.name = "TechnicalContractError";
   }
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value;
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${field} must be a string`);
-  }
-  return value;
-}
-
-function decimalString(value: unknown, field: string): string {
-  const parsed = string(value, field);
-  if (!/^\d+$/.test(parsed)) {
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  }
-  return parsed;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function nullableInteger(value: unknown, field: string): number | null {
-  return value === null ? null : integer(value, field);
-}
-
-function nullableString(value: unknown, field: string): string | null {
-  return value === null ? null : string(value, field);
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    throw new TechnicalContractError(
-      `${field} must be a finite non-negative number`,
-    );
-  }
-  return value;
-}
-
-function positiveFiniteNumber(value: unknown, field: string): number {
-  const parsed = finiteNumber(value, field);
-  if (parsed <= 0) {
-    throw new TechnicalContractError(`${field} must be greater than zero`);
-  }
-  return parsed;
-}
-
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

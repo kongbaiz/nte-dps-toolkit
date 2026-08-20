@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use nte_dps_tool::{
     core::{
+        CoreError,
         combat_details::{
             CombatDetailFilter, damage_digit_key_for_hit, follow_up_damage_digit_key_for_hit,
             reaction_text_key_for_hit,
@@ -12,23 +13,71 @@ use nte_dps_tool::{
     },
     engine::model::{
         CharacterInfo, CharacterStats, CombatState, DamageAttributionSummary, Hit, HitDirection,
-        HitDirectionSummary, PartyCombatState, is_qte_follow_up_damage_type,
-        is_unbalance_damage_hit,
+        HitDirectionSummary, MAX_INDEXED_DETAIL_KEY_BYTES, PartyCombatState,
     },
     storage::{
         ability_names,
-        config::{DpsTimeMode, HitDetailColumnsConfig},
+        config::HitDetailColumnsConfig,
         i18n::{self, Language},
     },
 };
 
-use crate::state::{AppState, MainDpsDetailKind, MainDpsDetailRequest};
+use crate::state::{AppState, MainDpsDetailKind};
 
-pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 4;
+pub(crate) const MAIN_DPS_DETAIL_CONTRACT_VERSION: u32 = 5;
 pub(crate) const MAIN_DPS_DETAIL_DEFAULT_LIMIT: usize = 200;
 pub(crate) const MAIN_DPS_DETAIL_PAGE_LIMIT: usize = 250;
 pub(crate) const MAIN_DPS_DETAIL_QTE_LIMIT: usize = 32;
 pub(crate) const MAIN_DPS_DETAIL_SKILL_LIMIT: usize = 250;
+pub(crate) const MAIN_DPS_DETAIL_MAX_TEXT_BYTES: usize = MAX_INDEXED_DETAIL_KEY_BYTES;
+/// Dynamic strings may expand by up to six bytes per source byte when JSON
+/// escapes control characters. Keeping the complete projected text payload at
+/// 512 KiB leaves ample room below the shared 16 MiB stream envelope for all
+/// bounded rows, numeric metadata, and framing.
+pub(crate) const MAIN_DPS_DETAIL_MAX_PROJECTED_TEXT_BYTES: usize = 512 * 1024;
+
+#[derive(Default)]
+struct MainDpsDetailTextBudget {
+    projected_bytes: usize,
+    truncated: bool,
+}
+
+impl MainDpsDetailTextBudget {
+    fn text(&mut self, value: String, fallback: &str) -> String {
+        let value = if value.len() <= MAIN_DPS_DETAIL_MAX_TEXT_BYTES {
+            value
+        } else {
+            self.truncated = true;
+            fallback.to_owned()
+        };
+        if self
+            .projected_bytes
+            .checked_add(value.len())
+            .is_some_and(|next| next <= MAIN_DPS_DETAIL_MAX_PROJECTED_TEXT_BYTES)
+        {
+            self.projected_bytes += value.len();
+            return value;
+        }
+        self.truncated = true;
+        if self
+            .projected_bytes
+            .checked_add(fallback.len())
+            .is_some_and(|next| next <= MAIN_DPS_DETAIL_MAX_PROJECTED_TEXT_BYTES)
+        {
+            self.projected_bytes += fallback.len();
+            fallback.to_owned()
+        } else {
+            String::new()
+        }
+    }
+
+    fn optional(&mut self, value: Option<String>) -> Option<String> {
+        value.and_then(|value| {
+            let bounded = self.text(value, "");
+            (!bounded.is_empty()).then_some(bounded)
+        })
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,6 +104,9 @@ pub(crate) struct MainDpsDetailSnapshot {
     pub skills: Vec<MainDpsSkillSummary>,
     pub skill_total_count: usize,
     pub skills_truncated: bool,
+    /// True when at least one external/resource-derived string was replaced or
+    /// omitted to preserve the per-field or cumulative stream byte budget.
+    pub text_truncated: bool,
     pub total_hits: usize,
     pub total_damage: f64,
     pub max_row_damage: f64,
@@ -68,74 +120,72 @@ impl MainDpsDetailSnapshot {
         kind: MainDpsDetailKind,
         offset: usize,
         limit: usize,
-    ) -> Self {
+    ) -> Result<Self, CoreError> {
         let request = state.main_dps_detail_request(kind);
-        let cache_revision = state.main_dps_stream_revision();
+        let cache_revision = state.main_dps_stream_revision()?;
         if let Some(snapshot) =
             state.main_dps_detail_cache_get(cache_revision, kind, &request, offset, limit)
         {
-            return (*snapshot).clone();
+            return Ok((*snapshot).clone());
         }
         let resources = state.live_capture_resources();
         let config = state.ui_config_snapshot();
         let language = config.language;
-        let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
+        let subtract_time_stop = matches!(
+            state.main_presented_combat_clock_health()?,
+            nte_dps_tool::engine::model::CombatClockRuntimeHealth::Available
+                | nte_dps_tool::engine::model::CombatClockRuntimeHealth::Recorded
+        ) && matches!(
+            config.dps_time_mode,
+            nte_dps_tool::storage::config::DpsTimeMode::TimeStopAdjusted
+        );
         let generation = state.next_sequence().to_string();
-        let actions = MainDpsDetailActions::from_state(state);
+        let actions = MainDpsDetailActions::from_state(state)?;
         let snapshot = state.with_main_dps_detail_state(|combat, selected_half| {
+            let mut text_budget = MainDpsDetailTextBudget::default();
             let source = selected_half
                 .map(|half| DetailSource::Party(combat.abyss.half(half)))
                 .unwrap_or(DetailSource::Combat(combat));
             let page_limit = limit.clamp(1, MAIN_DPS_DETAIL_PAGE_LIMIT);
-            let mut total_hits = 0_usize;
-            let mut total_damage = 0.0_f64;
-            let mut max_row_damage = 1.0_f64;
-            let mut rows = Vec::with_capacity(page_limit);
-            let mut direction_summary = HitDirectionSummary::default();
-            let mut qte_accumulators = HashMap::<&str, (u64, f64)>::new();
-            let mut skill_accumulators = HashMap::<&str, SkillSummaryAccumulator<'_>>::new();
-
-            // Keep this as the only hit walk in the detail projection. The
-            // filter-independent summaries use the same character-scoped
-            // stream as the rows, while only the final page materializes DTO
-            // strings.
-            for hit in source.hits() {
-                if !request.character_matches(hit) {
-                    continue;
-                }
-                accumulate_hit_direction(&mut direction_summary, hit);
-                accumulate_qte_summary(&mut qte_accumulators, hit);
-                if request.character_id.is_some() && !hit.direction.is_incoming() {
-                    accumulate_skill_summary(&mut skill_accumulators, hit);
-                }
-                if request.matches_filters(hit) {
-                    let row_index = total_hits;
-                    total_hits += 1;
-                    let damage = hit.total_damage();
-                    total_damage += damage;
-                    max_row_damage = max_row_damage.max(damage);
-                    if row_index >= offset && rows.len() < page_limit {
-                        rows.push(MainDpsHitSnapshot::from_hit(
-                            hit,
-                            row_index,
-                            &resources.characters,
-                            language,
-                        ));
-                    }
-                }
-            }
+            let indexed = source.indexed_combat_details(
+                request.character_id,
+                &request.filter.indexed(),
+                request.skill_filter.as_deref(),
+                offset,
+                page_limit,
+            );
+            let total_hits = indexed.total_hits;
+            let total_damage = indexed.total_damage;
+            let max_row_damage = indexed.max_row_damage;
+            let rows = indexed
+                .rows
+                .into_iter()
+                .enumerate()
+                .map(|(page_index, (_, hit))| {
+                    MainDpsHitSnapshot::from_hit(
+                        hit,
+                        offset.saturating_add(page_index),
+                        &resources.characters,
+                        language,
+                        &mut text_budget,
+                    )
+                })
+                .collect::<Vec<_>>();
             let character = request
                 .character_id
                 .and_then(|character_id| resources.characters.get(&character_id));
             let character_name = request.character_id.map(|character_id| {
-                localized_character_name(
-                    character,
-                    language,
-                    source
-                        .stats()
-                        .get(&character_id)
-                        .map(|row| row.name.as_str())
-                        .unwrap_or_else(|| "-"),
+                text_budget.text(
+                    localized_character_name(
+                        character,
+                        language,
+                        source
+                            .stats()
+                            .get(&character_id)
+                            .map(|row| row.name.as_str())
+                            .unwrap_or_else(|| "-"),
+                    ),
+                    "-",
                 )
             });
             let metrics = detail_metrics(
@@ -144,34 +194,66 @@ impl MainDpsDetailSnapshot {
                 config.separate_reaction_damage,
                 subtract_time_stop,
             );
-            let mut direction: MainDpsDirectionSummary = direction_summary.into();
-            direction.confirmed_hits = metrics.output_count;
+            let direction: MainDpsDirectionSummary = indexed.directions.into();
             let hit_types = hit_type_summaries(&metrics);
             let attribution = MainDpsAttributionSummary::new(
                 source.damage_attribution_summary(),
                 config.separate_reaction_damage,
             );
-            let mut qte_summaries =
-                qte_summaries_from_accumulators(qte_accumulators, metrics.total_output);
-            let qte_summary_total_count = qte_summaries.len();
+            let qte_summary_total_count = indexed.qte_summaries.len();
             let qte_summaries_truncated = qte_summary_total_count > MAIN_DPS_DETAIL_QTE_LIMIT;
-            qte_summaries.truncate(MAIN_DPS_DETAIL_QTE_LIMIT);
-            let mut skills = if request.character_id.is_some() {
-                skill_summaries_from_accumulators(
-                    skill_accumulators,
-                    metrics.total_output,
-                    language,
-                )
+            let qte_summaries = indexed
+                .qte_summaries
+                .into_iter()
+                .take(MAIN_DPS_DETAIL_QTE_LIMIT)
+                .map(|summary| MainDpsQteSummary {
+                    attack_type: text_budget.text(summary.attack_type, "-"),
+                    hits: summary.hits,
+                    damage: summary.damage,
+                    share_percent: percent(summary.damage, metrics.total_output),
+                })
+                .collect::<Vec<_>>();
+            let skill_total_count = if request.character_id.is_some() {
+                indexed.skill_summaries.len()
+            } else {
+                0
+            };
+            let skills_truncated = skill_total_count > MAIN_DPS_DETAIL_SKILL_LIMIT;
+            let skills = if request.character_id.is_some() {
+                indexed
+                    .skill_summaries
+                    .into_iter()
+                    .take(MAIN_DPS_DETAIL_SKILL_LIMIT)
+                    .filter_map(|summary| {
+                        let representative = source.hits().get(summary.representative_position)?;
+                        Some(MainDpsSkillSummary {
+                            id: text_budget.text(summary.id, "-"),
+                            name: text_budget
+                                .text(skill_summary_display_name(representative, language), "-"),
+                            category: text_budget.text(
+                                representative
+                                    .attack_type
+                                    .as_deref()
+                                    .map(|value| translate_attack_type(value, language))
+                                    .unwrap_or_else(|| i18n::t_for(language, "Uncategorized")),
+                                "-",
+                            ),
+                            hits: summary.hits,
+                            damage: summary.damage,
+                            share_percent: percent(summary.damage, metrics.total_output),
+                        })
+                    })
+                    .collect::<Vec<_>>()
             } else {
                 Vec::new()
             };
-            let skill_total_count = skills.len();
-            let skills_truncated = skill_total_count > MAIN_DPS_DETAIL_SKILL_LIMIT;
-            skills.truncate(MAIN_DPS_DETAIL_SKILL_LIMIT);
             let qte_type = match &request.filter {
-                CombatDetailFilter::QteType(value) => Some(value.clone()),
+                CombatDetailFilter::QteType(value) => Some(text_budget.text(value.clone(), "-")),
                 _ => None,
             };
+            let skill_filter = text_budget.optional(request.skill_filter.clone());
+            let character_color =
+                text_budget.optional(character.and_then(|value| value.color.clone()));
 
             Self {
                 contract_version: MAIN_DPS_DETAIL_CONTRACT_VERSION,
@@ -187,10 +269,10 @@ impl MainDpsDetailSnapshot {
                 }),
                 character_id: request.character_id,
                 character_name,
-                character_color: character.and_then(|value| value.color.clone()),
+                character_color,
                 filter: filter_id(&request.filter),
                 qte_type,
-                skill_filter: request.skill_filter.clone(),
+                skill_filter,
                 columns: config.hit_detail_columns.into(),
                 actions,
                 metrics,
@@ -203,13 +285,14 @@ impl MainDpsDetailSnapshot {
                 skills,
                 skill_total_count,
                 skills_truncated,
+                text_truncated: text_budget.truncated,
                 total_hits,
                 total_damage,
                 max_row_damage,
                 offset,
                 rows,
             }
-        });
+        })?;
         state.main_dps_detail_cache_store(
             cache_revision,
             kind,
@@ -218,7 +301,7 @@ impl MainDpsDetailSnapshot {
             limit,
             std::sync::Arc::new(snapshot.clone()),
         );
-        snapshot
+        Ok(snapshot)
     }
 }
 
@@ -280,31 +363,16 @@ pub(crate) struct MainDpsDetailActions {
 }
 
 impl MainDpsDetailActions {
-    fn from_state(state: &AppState) -> Self {
+    fn from_state(state: &AppState) -> Result<Self, CoreError> {
         let capture_active = matches!(
             state.capture_phase(),
             LiveCapturePhase::Starting | LiveCapturePhase::Running | LiveCapturePhase::Stopping
         );
-        let replay_running = state.replay_running();
-        Self {
+        let replay_running = state.replay_running()?;
+        Ok(Self {
             can_start_capture: !capture_active && !replay_running,
             can_import_replay: !capture_active && !replay_running,
-        }
-    }
-}
-
-impl MainDpsDetailRequest {
-    fn character_matches(&self, hit: &Hit) -> bool {
-        self.character_id
-            .is_none_or(|character_id| hit.char_id == character_id)
-    }
-
-    fn matches_filters(&self, hit: &Hit) -> bool {
-        self.filter.matches(hit)
-            && self
-                .skill_filter
-                .as_deref()
-                .is_none_or(|filter| hit_skill_name_ref(hit) == filter)
+        })
     }
 }
 
@@ -361,6 +429,24 @@ impl<'a> DetailSource<'a> {
         match self {
             Self::Combat(value) => value.damage_attribution_summary(),
             Self::Party(value) => value.damage_attribution_summary(),
+        }
+    }
+
+    fn indexed_combat_details(
+        self,
+        character_id: Option<u32>,
+        filter: &nte_dps_tool::engine::model::IndexedCombatDetailFilter,
+        skill: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> nte_dps_tool::engine::model::IndexedCombatDetailPage<'a> {
+        match self {
+            Self::Combat(value) => {
+                value.indexed_combat_details(character_id, filter, skill, offset, limit)
+            }
+            Self::Party(value) => {
+                value.indexed_combat_details(character_id, filter, skill, offset, limit)
+            }
         }
     }
 }
@@ -506,62 +592,6 @@ pub(crate) struct MainDpsQteSummary {
     pub share_percent: f64,
 }
 
-fn accumulate_hit_direction(summary: &mut HitDirectionSummary, hit: &Hit) {
-    let damage = hit.total_damage();
-    match hit.direction {
-        HitDirection::Incoming => {
-            summary.incoming_damage += damage;
-            summary.incoming_hits += 1;
-        }
-        HitDirection::Outgoing => {
-            summary.outgoing_damage += damage;
-            summary.outgoing_hits += 1;
-        }
-        HitDirection::Unknown => {
-            summary.unknown_damage += damage;
-            summary.unknown_hits += 1;
-        }
-    }
-}
-
-fn accumulate_qte_summary<'a>(summaries: &mut HashMap<&'a str, (u64, f64)>, hit: &'a Hit) {
-    if hit.direction.is_incoming() {
-        return;
-    }
-    if let Some(attack_type) = hit.attack_type.as_deref()
-        && (is_qte_follow_up_damage_type(attack_type) || is_unbalance_damage_hit(hit))
-    {
-        let row = summaries.entry(attack_type).or_default();
-        row.0 += 1;
-        row.1 += hit.damage;
-    }
-    if hit.follow_up_damage > 0.0
-        && let Some(attack_type) = hit.follow_up_attack_type.as_deref()
-        && is_qte_follow_up_damage_type(attack_type)
-    {
-        let row = summaries.entry(attack_type).or_default();
-        row.0 += 1;
-        row.1 += hit.follow_up_damage;
-    }
-}
-
-fn qte_summaries_from_accumulators(
-    summaries: HashMap<&str, (u64, f64)>,
-    total_damage: f64,
-) -> Vec<MainDpsQteSummary> {
-    let mut rows = summaries
-        .into_iter()
-        .map(|(attack_type, (hits, damage))| MainDpsQteSummary {
-            attack_type: attack_type.to_owned(),
-            hits,
-            damage,
-            share_percent: percent(damage, total_damage),
-        })
-        .collect::<Vec<_>>();
-    rows.sort_by(|left, right| right.damage.total_cmp(&left.damage));
-    rows
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainDpsSkillSummary {
@@ -573,6 +603,7 @@ pub(crate) struct MainDpsSkillSummary {
     pub share_percent: f64,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 struct SkillSummaryAccumulator<'a> {
     representative: &'a Hit,
@@ -580,6 +611,7 @@ struct SkillSummaryAccumulator<'a> {
     damage: f64,
 }
 
+#[cfg(test)]
 fn accumulate_skill_summary<'a>(
     summaries: &mut HashMap<&'a str, SkillSummaryAccumulator<'a>>,
     hit: &'a Hit,
@@ -594,6 +626,7 @@ fn accumulate_skill_summary<'a>(
     row.damage += hit.total_damage();
 }
 
+#[cfg(test)]
 fn skill_summaries_from_accumulators(
     summaries: HashMap<&str, SkillSummaryAccumulator<'_>>,
     total_damage: f64,
@@ -711,16 +744,18 @@ impl MainDpsHitSnapshot {
         index: usize,
         characters: &HashMap<u32, CharacterInfo>,
         language: Language,
+        text_budget: &mut MainDpsDetailTextBudget,
     ) -> Self {
         let skill = hit_skill_name(hit);
+        let skill_id = text_budget.text(skill, "-");
+        let skill = text_budget.text(skill_id.clone(), "-");
         Self {
-            id: format!("{}:{index}", hit.timestamp.to_bits()),
+            id: text_budget.text(format!("{}:{index}", hit.timestamp.to_bits()), "-"),
             timestamp: hit.timestamp,
             character_id: hit.char_id,
-            character_name: localized_character_name(
-                characters.get(&hit.char_id),
-                language,
-                &hit.char_name,
+            character_name: text_budget.text(
+                localized_character_name(characters.get(&hit.char_id), language, &hit.char_name),
+                "-",
             ),
             direction: match hit.direction {
                 HitDirection::Outgoing => "outgoing",
@@ -730,22 +765,29 @@ impl MainDpsHitSnapshot {
             damage: hit.total_damage(),
             primary_damage: hit.damage,
             follow_up_damage: hit.follow_up_damage,
-            skill_id: skill.clone(),
+            skill_id,
             skill,
-            damage_type: hit
-                .attack_type
-                .as_deref()
-                .or(hit.damage_attribute.as_deref())
-                .unwrap_or("-")
-                .to_owned(),
-            type_label: hit_type_display_text(hit, language),
+            damage_type: text_budget.text(
+                hit.attack_type
+                    .as_deref()
+                    .or(hit.damage_attribute.as_deref())
+                    .unwrap_or("-")
+                    .to_owned(),
+                "-",
+            ),
+            type_label: text_budget.text(hit_type_display_text(hit, language), "-"),
             reaction_text_key: reaction_text_key_for_hit(hit),
-            damage_digit_key: damage_digit_key_for_hit(hit, characters).map(str::to_owned),
-            follow_up_damage_digit_key: follow_up_damage_digit_key_for_hit(hit).map(str::to_owned),
-            target: localized_target_name(hit, language)
-                .unwrap_or("-")
-                .to_owned(),
-            target_monster_id: hit.target_monster_id.clone(),
+            damage_digit_key: text_budget
+                .optional(damage_digit_key_for_hit(hit, characters).map(str::to_owned)),
+            follow_up_damage_digit_key: text_budget
+                .optional(follow_up_damage_digit_key_for_hit(hit).map(str::to_owned)),
+            target: text_budget.text(
+                localized_target_name(hit, language)
+                    .unwrap_or("-")
+                    .to_owned(),
+                "-",
+            ),
+            target_monster_id: text_budget.optional(hit.target_monster_id.clone()),
             target_hp_after: hit.target_hp_after,
             target_max_hp: hit.target_max_hp,
             target_hp_percent: hit.target_hp_percent,
@@ -871,6 +913,10 @@ pub(crate) fn filter_id(filter: &CombatDetailFilter) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        channels::stream_runtime::serialize_stream_events,
+        contract::stream::MAX_STREAM_DELIVERY_BYTES, state::MainDpsDetailRequest,
+    };
     use nte_dps_tool::engine::model::{HitCharacterSource, HitDirection};
 
     fn skill_hit(
@@ -942,7 +988,39 @@ mod tests {
             incoming_hits: 1,
         });
         assert_eq!(summary.confirmed_hits, 3);
+        assert_eq!(summary.candidate_hits, 1);
+        assert_eq!(summary.confirmed_hits + summary.candidate_hits, 4);
         assert_eq!(summary.candidate_share_percent, 25.0);
+    }
+
+    #[test]
+    fn live_detail_keeps_confirmed_and_candidate_hit_counts_disjoint() {
+        let mut combat = CombatState::default();
+        combat.push_hit(skill_hit(75.0, Some("GA_Confirmed"), None, "Skill"));
+        let mut candidate = skill_hit(25.0, Some("GA_Candidate"), None, "Skill");
+        candidate.timestamp = 2.0;
+        candidate.direction = HitDirection::Unknown;
+        combat.push_hit(candidate);
+
+        let state = AppState::default();
+        state.restore_live_state_for_test(
+            combat,
+            nte_dps_tool::engine::model::CaptureQualitySource::Live,
+        );
+        let snapshot = MainDpsDetailSnapshot::from_state(
+            &state,
+            MainDpsDetailKind::Team,
+            0,
+            MAIN_DPS_DETAIL_DEFAULT_LIMIT,
+        )
+        .expect("mixed-direction detail snapshot");
+
+        assert_eq!(snapshot.direction.confirmed_hits, 1);
+        assert_eq!(snapshot.direction.candidate_hits, 1);
+        assert_eq!(
+            snapshot.direction.confirmed_hits + snapshot.direction.candidate_hits,
+            snapshot.metrics.output_count
+        );
     }
 
     #[test]
@@ -952,7 +1030,8 @@ mod tests {
             MainDpsDetailKind::Team,
             0,
             200,
-        );
+        )
+        .expect("healthy live-capture detail snapshot");
         let value = serde_json::to_value(snapshot).expect("detail snapshot serializes");
 
         assert_eq!(value["contractVersion"], MAIN_DPS_DETAIL_CONTRACT_VERSION);
@@ -984,12 +1063,113 @@ mod tests {
             MainDpsDetailKind::Team,
             49_990,
             MAIN_DPS_DETAIL_PAGE_LIMIT,
-        );
+        )
+        .expect("healthy live-capture detail snapshot");
 
         assert_eq!(snapshot.total_hits, 50_000);
         assert_eq!(snapshot.total_damage, 50_000.0);
         assert_eq!(snapshot.rows.len(), 10);
         assert_eq!(snapshot.rows[0].timestamp, 49_990.0);
+    }
+
+    #[test]
+    fn oversized_external_hit_text_is_bounded_and_reported() {
+        let oversized = "界".repeat(MAIN_DPS_DETAIL_MAX_TEXT_BYTES);
+        let mut hit = skill_hit(1.0, None, None, "Skill");
+        hit.char_id = 424_242;
+        hit.char_name = oversized.clone();
+        hit.damage_component = Some(oversized.clone());
+        hit.target_name = Some(oversized.clone());
+        hit.target_monster_id = Some(oversized);
+        let mut combat = CombatState::default();
+        combat.push_hit(hit);
+        let state = AppState::default();
+        state.restore_live_state_for_test(
+            combat,
+            nte_dps_tool::engine::model::CaptureQualitySource::Live,
+        );
+
+        let snapshot = MainDpsDetailSnapshot::from_state(
+            &state,
+            MainDpsDetailKind::Team,
+            0,
+            MAIN_DPS_DETAIL_PAGE_LIMIT,
+        )
+        .expect("bounded detail snapshot");
+
+        assert!(snapshot.text_truncated);
+        let row = snapshot.rows.first().expect("bounded hit row");
+        for value in [
+            row.character_name.as_str(),
+            row.skill_id.as_str(),
+            row.skill.as_str(),
+            row.target.as_str(),
+        ] {
+            assert!(value.len() <= MAIN_DPS_DETAIL_MAX_TEXT_BYTES);
+        }
+        assert!(
+            row.target_monster_id
+                .as_ref()
+                .is_none_or(|value| value.len() <= MAIN_DPS_DETAIL_MAX_TEXT_BYTES)
+        );
+    }
+
+    #[test]
+    fn escape_heavy_maximum_snapshot_stays_below_stream_delivery_budget() {
+        let escape_heavy = "\u{0001}".repeat(MAIN_DPS_DETAIL_MAX_TEXT_BYTES);
+        let mut combat = CombatState::default();
+        for index in 0..MAIN_DPS_DETAIL_PAGE_LIMIT {
+            let skill = format!(
+                "{index:03}{}",
+                "\u{0001}".repeat(MAIN_DPS_DETAIL_MAX_TEXT_BYTES - 3)
+            );
+            let mut hit = skill_hit(1.0, None, None, "Skill");
+            hit.timestamp = index as f64;
+            hit.char_id = 424_242;
+            hit.char_name = escape_heavy.clone();
+            hit.damage_component = Some(skill);
+            hit.attack_type = None;
+            hit.damage_attribute = Some(escape_heavy.clone());
+            hit.target_name = Some(escape_heavy.clone());
+            hit.target_monster_id = Some(escape_heavy.clone());
+            combat.push_hit(hit);
+        }
+        let state = AppState::default();
+        state
+            .set_main_dps_detail_request(
+                MainDpsDetailKind::Character,
+                MainDpsDetailRequest {
+                    character_id: Some(424_242),
+                    ..Default::default()
+                },
+            )
+            .expect("set character detail request");
+        state.restore_live_state_for_test(
+            combat,
+            nte_dps_tool::engine::model::CaptureQualitySource::Live,
+        );
+
+        let snapshot = MainDpsDetailSnapshot::from_state(
+            &state,
+            MainDpsDetailKind::Character,
+            0,
+            MAIN_DPS_DETAIL_PAGE_LIMIT,
+        )
+        .expect("maximum detail snapshot");
+        assert_eq!(snapshot.rows.len(), MAIN_DPS_DETAIL_PAGE_LIMIT);
+        assert_eq!(snapshot.skills.len(), MAIN_DPS_DETAIL_SKILL_LIMIT);
+        assert!(
+            snapshot.text_truncated,
+            "the cumulative text budget must report omission"
+        );
+
+        let delivery = serialize_stream_events(vec![snapshot])
+            .expect("bounded escape-heavy snapshot must serialize");
+        assert!(
+            delivery.len() < MAX_STREAM_DELIVERY_BYTES,
+            "MAIN_DPS_DETAIL_MAX_STREAM_BYTES={} limit={MAX_STREAM_DELIVERY_BYTES}",
+            delivery.len()
+        );
     }
 
     #[test]
@@ -1002,13 +1182,15 @@ mod tests {
             combat.push_hit(hit);
         }
         let state = AppState::default();
-        state.set_main_dps_detail_request(
-            MainDpsDetailKind::Character,
-            MainDpsDetailRequest {
-                character_id: Some(1010),
-                ..Default::default()
-            },
-        );
+        state
+            .set_main_dps_detail_request(
+                MainDpsDetailKind::Character,
+                MainDpsDetailRequest {
+                    character_id: Some(1010),
+                    ..Default::default()
+                },
+            )
+            .expect("set character detail request");
         state.restore_live_state_for_test(
             combat,
             nte_dps_tool::engine::model::CaptureQualitySource::Live,
@@ -1019,7 +1201,8 @@ mod tests {
             MainDpsDetailKind::Character,
             0,
             MAIN_DPS_DETAIL_DEFAULT_LIMIT,
-        );
+        )
+        .expect("healthy live-capture detail snapshot");
 
         assert_eq!(snapshot.skill_total_count, MAIN_DPS_DETAIL_SKILL_LIMIT + 1);
         assert_eq!(snapshot.skills.len(), MAIN_DPS_DETAIL_SKILL_LIMIT);

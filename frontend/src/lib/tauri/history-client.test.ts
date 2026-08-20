@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createHistoryClient } from "./history-client";
+
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
 
 describe("History client", () => {
   it("routes comparison through the typed Tauri command", async () => {
@@ -71,12 +76,28 @@ describe("History client", () => {
   it("subscribes through a typed Channel and cleans it up", async () => {
     const calls: string[] = [];
     let onMessage: ((message: unknown) => void) | undefined;
+    const snapshotEvent = {
+      event: "snapshot",
+      payload: {
+        contractVersion: 2,
+        revision: "1",
+        maxImportBytes: "1",
+        skippedFiles: 0,
+        records: [],
+      },
+    };
     const client = createHistoryClient(
       {
         async invoke(command) {
           calls.push(command);
           if (command === "subscribe_history") {
-            return { subscriptionId: "history-test", streamIntervalMs: 250 };
+            return {
+              subscriptionId: "history-test",
+              streamKind: "history",
+              streamIntervalMs: 250,
+              streamProtocolVersion: 1,
+              streamGeneration: "1",
+            };
           }
           return undefined;
         },
@@ -94,18 +115,13 @@ describe("History client", () => {
         throw error;
       },
     );
-    onMessage?.({
-      event: "snapshot",
-      payload: {
-        contractVersion: 2,
-        revision: "1",
-        maxImportBytes: "1",
-        skippedFiles: 0,
-        records: [],
-      },
-    });
+    onMessage?.(encodeDelivery([snapshotEvent]));
+    await vi.waitFor(() => expect(snapshots).toHaveLength(1));
     await unsubscribe();
     expect(snapshots).toHaveLength(1);
-    expect(calls).toEqual(["subscribe_history", "unsubscribe_history"]);
+    expect(calls).toEqual([
+      "subscribe_history",
+      "unsubscribe_history",
+    ]);
   });
 });

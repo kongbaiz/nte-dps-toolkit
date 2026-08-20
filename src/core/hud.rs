@@ -3,21 +3,37 @@
 //! The projection deliberately contains aggregate readouts only. It never
 //! exposes `CombatState`, packets, hits, mutable references, or GUI types.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
 use crate::{
     engine::model::{
-        AbyssHalf, CharacterStats, CombatState, DpsTimeBasis, Hit, PartyCombatState,
-        TEAM_DPS_MAX_MEMBERS, TimelineSeries, is_qte_follow_up_damage_hit,
+        AbyssHalf, CharacterStats, CombatState, CompactTimelineSeries, DpsTimeBasis,
+        PartyCombatState, TEAM_DPS_MAX_MEMBERS,
     },
     storage::config::{HudConfig, HudModule},
 };
 
+#[cfg(test)]
+use crate::engine::model::TimelineSeries;
+
 pub const HUD_SNAPSHOT_VERSION: u32 = 3;
 pub const HUD_TIMELINE_MAX_BUCKETS: usize = 60;
+/// UTF-8 byte budget for a live/read-model character label. Imported hit names
+/// are untrusted and a single label must never be able to overflow a desktop
+/// stream delivery.
+pub const HUD_CHARACTER_NAME_MAX_BYTES: usize = 128;
 const HUD_PREVIEW_ROW_COUNT: usize = 4;
+
+pub fn bounded_character_name(character_id: u32, candidate: &str) -> String {
+    let candidate = candidate.trim();
+    if !candidate.is_empty() && candidate.len() <= HUD_CHARACTER_NAME_MAX_BYTES {
+        candidate.to_owned()
+    } else {
+        format!("#{character_id}")
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -206,7 +222,6 @@ pub fn project_hud(
         || {
             project_readout(
                 &state.stats,
-                &state.hits,
                 state.total_damage,
                 state.total_damage_taken,
                 state.dps_with_time_stop(subtract_time_stop),
@@ -248,21 +263,24 @@ pub fn project_hud(
             HudDataState::Empty => None,
             HudDataState::Preview => Some(preview_timeline()),
             HudDataState::Live => {
-                let series = selected_half.map_or_else(
+                // The authoritative state maintains an exact timestamp index as hits mutate.
+                // Querying its bounded aggregate avoids scanning an unbounded hit history while
+                // the live state lock is held at HUD refresh frequency.
+                let compact = selected_half.map_or_else(
                     || {
-                        state.timeline(
+                        state.compact_timeline(
                             options.timeline_bucket_seconds,
-                            options.dps_time_basis.subtracts_time_stop(),
+                            HUD_TIMELINE_MAX_BUCKETS,
                         )
                     },
                     |half| {
-                        state.abyss.half(half).timeline(
+                        state.abyss.half(half).compact_timeline(
                             options.timeline_bucket_seconds,
-                            options.dps_time_basis.subtracts_time_stop(),
+                            HUD_TIMELINE_MAX_BUCKETS,
                         )
                     },
                 );
-                project_timeline(series)
+                compact.map(project_compact_timeline)
             }
         }
     };
@@ -291,7 +309,6 @@ fn project_party_readout(
 ) -> (Vec<HudCharacterSnapshot>, HudSummarySnapshot) {
     project_readout(
         &party.stats,
-        &party.hits,
         party.total_damage,
         party.total_damage_taken,
         party.dps_with_time_stop(subtract_time_stop),
@@ -305,7 +322,6 @@ fn project_party_readout(
 #[allow(clippy::too_many_arguments)]
 fn project_readout(
     stats: &HashMap<u32, CharacterStats>,
-    hits: &VecDeque<Hit>,
     total_damage: f64,
     total_damage_taken: f64,
     team_dps: f64,
@@ -316,20 +332,14 @@ fn project_readout(
 ) -> (Vec<HudCharacterSnapshot>, HudSummarySnapshot) {
     let mut rows = stats
         .values()
-        .filter(|row| {
-            !hidden_character_ids.contains(&row.char_id)
-                && hits.iter().any(|hit| {
-                    hit.char_id == row.char_id
-                        && (hit.char_known || !is_qte_follow_up_damage_hit(hit))
-                })
-        })
+        .filter(|row| !hidden_character_ids.contains(&row.char_id) && row.has_hud_visible_hit())
         .map(|row| row.for_reaction_damage_policy(separate_reaction_damage))
         .filter(character_has_visible_totals)
         .map(|row| {
             let dps = character_dps(&row);
             HudCharacterSnapshot {
                 character_id: row.char_id,
-                name: row.name,
+                name: bounded_character_name(row.char_id, &row.name),
                 preview_label_suffix: None,
                 hits: row.hits.to_string(),
                 damage: finite_nonnegative(row.damage),
@@ -420,6 +430,38 @@ fn preview_timeline() -> HudTimelineSnapshot {
     }
 }
 
+fn project_compact_timeline(series: CompactTimelineSeries) -> HudTimelineSnapshot {
+    let buckets = series
+        .buckets
+        .into_iter()
+        .map(|bucket| {
+            let start_seconds = finite_nonnegative(bucket.start_offset);
+            let end_seconds = finite_nonnegative(bucket.end_offset).max(start_seconds);
+            let damage = finite_nonnegative(bucket.damage);
+            HudTimelineBucketSnapshot {
+                start_seconds,
+                end_seconds,
+                damage,
+                dps: finite_nonnegative(damage / (end_seconds - start_seconds).max(0.001)),
+                hits: bucket.hits.to_string(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let duration_seconds = buckets
+        .last()
+        .map_or(0.0, |bucket| bucket.end_seconds)
+        .max(0.0);
+    let peak_dps = buckets.iter().map(|bucket| bucket.dps).fold(0.0, f64::max);
+
+    HudTimelineSnapshot {
+        bucket_seconds: finite_nonnegative(series.bucket_seconds),
+        duration_seconds,
+        peak_dps,
+        buckets,
+    }
+}
+
+#[cfg(test)]
 fn project_timeline(series: TimelineSeries) -> Option<HudTimelineSnapshot> {
     if series.buckets.is_empty() {
         return None;
@@ -492,7 +534,10 @@ fn finite_nonnegative(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::model::{HitCharacterSource, HitDirection};
+    use crate::engine::model::{
+        AbyssEvent, Hit, HitCharacterSource, HitDamageCorrection, HitDirection, HitFollowUp,
+        TimeStopEvent,
+    };
 
     fn hit(timestamp: f64, character_id: u32, damage: f64) -> Hit {
         Hit {
@@ -580,6 +625,37 @@ mod tests {
     }
 
     #[test]
+    fn live_projection_bounds_untrusted_character_names_by_utf8_bytes() {
+        let mut state = CombatState::default();
+        let mut exact = hit(1.0, 1, 100.0);
+        exact.char_name = "a".repeat(HUD_CHARACTER_NAME_MAX_BYTES);
+        state.push_hit(exact);
+        let mut oversized = hit(1.0, 2, 200.0);
+        oversized.char_name = "界".repeat(43);
+        state.push_hit(oversized);
+
+        let snapshot = project_hud(
+            &state,
+            &HudConfig::default(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        );
+
+        let exact = snapshot
+            .characters
+            .iter()
+            .find(|row| row.character_id == 1)
+            .expect("exactly bounded name");
+        assert_eq!(exact.name.len(), HUD_CHARACTER_NAME_MAX_BYTES);
+        let oversized = snapshot
+            .characters
+            .iter()
+            .find(|row| row.character_id == 2)
+            .expect("oversized name fallback");
+        assert_eq!(oversized.name, "#2");
+    }
+
+    #[test]
     fn hidden_and_qte_pseudo_characters_do_not_reach_hud_rows() {
         let mut state = CombatState::default();
         state.push_hit(hit(1.0, 1, 100.0));
@@ -618,6 +694,128 @@ mod tests {
         assert_eq!(snapshot.characters.len(), 1);
         assert_eq!(snapshot.characters[0].character_id, 1003);
         assert_eq!(snapshot.characters[0].damage, 125.0);
+    }
+
+    #[test]
+    fn follow_up_updates_incremental_visibility_and_compact_timeline() {
+        let mut state = CombatState::default();
+        let mut source = hit(1.0, 77, 100.0);
+        source.char_known = false;
+        source.direction = HitDirection::Incoming;
+        state.push_hit(source);
+
+        let before = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        );
+        assert_eq!(before.characters.len(), 1);
+
+        assert!(state.apply_follow_up(HitFollowUp {
+            source_timestamp: 1.0,
+            source_char_id: 77,
+            source_damage: 100.0,
+            source_target_hp_before: 0.0,
+            source_target_hp_after: 0.0,
+            source_target_max_hp: 0.0,
+            source_gameplay_effect_index: None,
+            timestamp: 1.1,
+            damage: 25.0,
+            target_hp_after: 0.0,
+            target_hp_percent: 0.0,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
+            damage_attribute: None,
+        }));
+
+        let after = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        );
+        assert!(after.characters.is_empty());
+
+        state.push_hit(hit(2.0, 78, 100.0));
+        assert!(state.apply_follow_up(HitFollowUp {
+            source_timestamp: 2.0,
+            source_char_id: 78,
+            source_damage: 100.0,
+            source_target_hp_before: 0.0,
+            source_target_hp_after: 0.0,
+            source_target_max_hp: 0.0,
+            source_gameplay_effect_index: None,
+            timestamp: 2.1,
+            damage: 25.0,
+            target_hp_after: 0.0,
+            target_hp_percent: 0.0,
+            damage_name: Some("覆纹追加攻击".to_owned()),
+            attack_type: Some("覆纹".to_owned()),
+            damage_attribute: None,
+        }));
+        let timeline = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions::default(),
+        )
+        .timeline
+        .expect("incremental compact timeline");
+        assert_eq!(timeline.buckets.len(), 1);
+        assert_eq!(timeline.buckets[0].damage, 125.0);
+        assert_eq!(timeline.buckets[0].hits, "1");
+
+        assert!(state.apply_damage_correction(HitDamageCorrection {
+            source_timestamp: 2.0,
+            source_char_id: 78,
+            source_damage: 100.0,
+            source_target_hp_before: 0.0,
+            source_target_hp_after: 0.0,
+            source_target_max_hp: 0.0,
+            source_gameplay_effect_index: None,
+            damage: 150.0,
+            target_hp_before: 0.0,
+            target_hp_after: 0.0,
+            target_hp_percent: 0.0,
+        }));
+        let corrected = state
+            .compact_timeline(1.0, HUD_TIMELINE_MAX_BUCKETS)
+            .expect("corrected compact timeline");
+        assert_eq!(corrected.buckets[0].damage, 175.0);
+        assert_eq!(corrected.buckets[0].hits, 1);
+    }
+
+    #[test]
+    fn compact_timeline_adds_one_hit_without_rebuilding_from_history() {
+        let mut state = CombatState::default();
+        for index in 0..5_000 {
+            state.push_hit(hit(index as f64, 1, 1.0));
+        }
+        let before = state
+            .compact_timeline(1.0, HUD_TIMELINE_MAX_BUCKETS)
+            .expect("indexed timeline before append");
+        assert_eq!(
+            before.buckets.iter().map(|bucket| bucket.hits).sum::<u64>(),
+            5_000
+        );
+
+        state.push_hit(hit(5_000.0, 1, 7.0));
+        let after = state
+            .compact_timeline(1.0, HUD_TIMELINE_MAX_BUCKETS)
+            .expect("indexed timeline after append");
+        assert_eq!(
+            after.buckets.iter().map(|bucket| bucket.hits).sum::<u64>(),
+            5_001
+        );
+        assert_eq!(
+            after
+                .buckets
+                .iter()
+                .map(|bucket| bucket.damage)
+                .sum::<f64>(),
+            5_007.0
+        );
     }
 
     #[test]
@@ -674,6 +872,9 @@ mod tests {
             state.push_hit(hit(index as f64, 1, 100.0));
         }
 
+        let legacy_projection =
+            project_timeline(state.timeline(1.0, true)).expect("legacy live timeline projection");
+
         let snapshot = project_hud(
             &state,
             &HudConfig::detailed(),
@@ -682,6 +883,7 @@ mod tests {
         );
         let timeline = snapshot.timeline.expect("live timeline");
 
+        assert_eq!(timeline, legacy_projection);
         assert!(timeline.buckets.len() <= HUD_TIMELINE_MAX_BUCKETS);
         assert_eq!(
             timeline
@@ -701,5 +903,115 @@ mod tests {
         );
         assert_eq!(timeline.duration_seconds, 121.0);
         assert!(timeline.peak_dps > 0.0);
+    }
+
+    #[test]
+    fn long_span_live_timeline_bounds_the_source_layout_before_allocation() {
+        const LONG_SPAN_SECONDS: f64 = 10_000_000.0;
+        const REQUESTED_BUCKET_SECONDS: f64 = 0.001;
+
+        let mut state = CombatState::default();
+        state.push_hit(hit(0.0, 1, 100.0));
+        state.push_hit(hit(LONG_SPAN_SECONDS / 2.0, 1, 250.0));
+        state.push_hit(hit(LONG_SPAN_SECONDS, 1, 400.0));
+
+        let timeline = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                timeline_bucket_seconds: REQUESTED_BUCKET_SECONDS,
+                ..HudProjectionOptions::default()
+            },
+        )
+        .timeline
+        .expect("long-span live timeline");
+
+        assert_eq!(timeline.buckets.len(), HUD_TIMELINE_MAX_BUCKETS);
+        assert!(timeline.bucket_seconds >= LONG_SPAN_SECONDS / HUD_TIMELINE_MAX_BUCKETS as f64);
+        assert_eq!(
+            timeline
+                .buckets
+                .iter()
+                .map(|bucket| bucket.damage)
+                .sum::<f64>(),
+            750.0
+        );
+        assert_eq!(
+            timeline
+                .buckets
+                .iter()
+                .map(|bucket| bucket.hits.parse::<u64>().expect("bucket hits"))
+                .sum::<u64>(),
+            3
+        );
+    }
+
+    #[test]
+    fn bounded_hud_timeline_keeps_wall_clock_and_engine_annotation_semantics() {
+        let mut state = CombatState::default();
+        state.apply_abyss_event(AbyssEvent::Stage {
+            timestamp: 0.0,
+            cycle: Some(1),
+            floor: Some(1),
+            half: AbyssHalf::First,
+            allow_late_backfill: false,
+        });
+        state.push_hit(hit(1.0, 1, 100.0));
+        state.apply_time_stop_event(TimeStopEvent::GamePauseStarted {
+            timestamp: 1.25,
+            pause_type_mask: 1 << 2,
+        });
+        state.apply_time_stop_event(TimeStopEvent::GamePauseEnded {
+            timestamp: 1.75,
+            pause_type_mask: 1 << 2,
+        });
+        state.push_hit(hit(2.0, 1, 200.0));
+        state.apply_abyss_event(AbyssEvent::Success { timestamp: 3.0 });
+        state.apply_abyss_event(AbyssEvent::Exit { timestamp: 4.0 });
+
+        let wall_clock = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                dps_time_basis: DpsTimeBasis::WallClock,
+                ..HudProjectionOptions::default()
+            },
+        )
+        .timeline
+        .expect("wall-clock HUD timeline");
+        let subtract_time_stop = project_hud(
+            &state,
+            &HudConfig::detailed(),
+            &HashSet::new(),
+            HudProjectionOptions {
+                dps_time_basis: DpsTimeBasis::SubtractTimeStop,
+                ..HudProjectionOptions::default()
+            },
+        )
+        .timeline
+        .expect("time-stop-adjusted HUD timeline");
+
+        assert_eq!(wall_clock, subtract_time_stop);
+        assert_eq!(wall_clock.duration_seconds, 2.0);
+        assert_eq!(wall_clock.buckets[0].dps, 100.0);
+
+        let engine_timeline = state.timeline(1.0, true);
+        assert_eq!(engine_timeline.time_stop_intervals.len(), 1);
+        assert!((engine_timeline.time_stop_intervals[0].start_offset - 0.25).abs() < 1e-9);
+        assert!((engine_timeline.time_stop_intervals[0].end_offset - 0.75).abs() < 1e-9);
+        assert!(
+            engine_timeline
+                .markers
+                .iter()
+                .any(|marker| marker.label == "Ascending Line" && marker.offset == 0.0)
+        );
+        assert!(
+            engine_timeline
+                .markers
+                .iter()
+                .any(|marker| marker.label == "Cleared" && (marker.offset - 1.0).abs() < 1e-9)
+        );
     }
 }

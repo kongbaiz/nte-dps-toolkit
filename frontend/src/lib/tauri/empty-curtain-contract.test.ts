@@ -112,4 +112,61 @@ describe("Console equipment contract", () => {
       }),
     ).toThrow(/detail bounds/);
   });
+
+  it("rejects item and character labels above the Rust UTF-8 byte budget", () => {
+    expect(() =>
+      parseEmptyCurtainSnapshot({
+        ...EMPTY_CURTAIN_FIXTURE,
+        characters: [
+          {
+            ...EMPTY_CURTAIN_FIXTURE.characters[0],
+            name: "界".repeat(86),
+          },
+        ],
+      }),
+    ).toThrow(/UTF-8 bytes/);
+    expect(() =>
+      parseEmptyCurtainSnapshot({
+        ...EMPTY_CURTAIN_FIXTURE,
+        items: [
+          {
+            ...EMPTY_CURTAIN_FIXTURE.items[0],
+            itemId: "界".repeat(86),
+          },
+        ],
+      }),
+    ).toThrow(/UTF-8 bytes/);
+  });
+
+  it("rechecks Rust aggregate detail and text budgets", () => {
+    const boundedStats = Array.from(
+      { length: 16 },
+      () => EMPTY_CURTAIN_FIXTURE.items[0].stats[0],
+    );
+    expect(() =>
+      parseEmptyCurtainSnapshot({
+        ...EMPTY_CURTAIN_FIXTURE,
+        items: Array.from({ length: 1251 }, (_, index) => ({
+          ...EMPTY_CURTAIN_FIXTURE.items[0],
+          uid: { slot: index, serial: index },
+          stats: boundedStats,
+        })),
+      }),
+    ).toThrow(/aggregate detail bounds/);
+
+    const boundedText = "x".repeat(256);
+    expect(() =>
+      parseEmptyCurtainSnapshot({
+        ...EMPTY_CURTAIN_FIXTURE,
+        items: Array.from({ length: 4096 }, (_, index) => ({
+          ...EMPTY_CURTAIN_FIXTURE.items[0],
+          uid: { slot: index, serial: index },
+          itemId: boundedText,
+          filterId: boundedText,
+          name: boundedText,
+          stats: [],
+        })),
+      }),
+    ).toThrow(/aggregate text bounds/);
+  });
 });

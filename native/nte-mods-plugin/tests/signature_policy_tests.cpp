@@ -1,6 +1,8 @@
 #include "../src/signature_policy.hpp"
+#include "../src/ipc_transport_policy.hpp"
 #include "../src/offset_signatures.hpp"
 #include "../src/viewport_hook_policy.hpp"
+#include "../src/vtable_patch_policy.hpp"
 
 #include <array>
 #include <cstddef>
@@ -8,6 +10,194 @@
 
 namespace
 {
+	constexpr int VIEWPORT_A = 1;
+	constexpr int VIEWPORT_B = 2;
+	constexpr int ORIGINAL_A = 3;
+	constexpr int ORIGINAL_B = 4;
+
+	constexpr bool OverlappedEpochCannotBeReusedBeforeCompletion()
+	{
+		nte::mods::ipc::OperationEpoch operation;
+		return operation.Begin(7) && !operation.Begin(7) &&
+			!operation.CanReuse() && operation.BelongsTo(7);
+	}
+
+	constexpr bool OverlappedEpochRejectsStaleCompletion()
+	{
+		nte::mods::ipc::OperationEpoch operation;
+		return operation.Begin(7) && !operation.Complete(6) &&
+			operation.BelongsTo(7) && operation.Complete(7) &&
+			operation.CanReuse() && operation.Begin(8);
+	}
+
+	constexpr bool ViewportOriginalIsBoundPerObject()
+	{
+		constexpr std::array<nte::hook::ViewportOriginalBinding, 2> bindings{{
+			{&VIEWPORT_A, &ORIGINAL_A, 1, 7},
+			{&VIEWPORT_B, &ORIGINAL_B, 2, 7},
+		}};
+		return nte::hook::FindViewportOriginal(
+			bindings.data(), bindings.size(), &VIEWPORT_A) == &ORIGINAL_A &&
+			nte::hook::FindViewportOriginal(
+				bindings.data(), bindings.size(), &VIEWPORT_B) == &ORIGINAL_B &&
+			nte::hook::CanReuseViewportBinding(
+				bindings[0], &VIEWPORT_A, &ORIGINAL_A, 1, 7) &&
+			!nte::hook::CanReuseViewportBinding(
+				bindings[0], &VIEWPORT_A, &ORIGINAL_B, 1, 7) &&
+			!nte::hook::CanReuseViewportBinding(
+				bindings[0], &VIEWPORT_A, &ORIGINAL_A, 2, 7);
+	}
+
+	constexpr bool ProtectedPointerPatchAppliesOnlyAfterProtectionRestores()
+	{
+		constexpr int EXPECTED = 1;
+		constexpr int REPLACEMENT = 2;
+		void* slot = const_cast<int*>(&EXPECTED);
+		const auto result = nte::hook::ReplaceProtectedPointer(
+			const_cast<int*>(&EXPECTED),
+			const_cast<int*>(&REPLACEMENT),
+			[] { return true; },
+			[] { return true; },
+			[&](void* exchange, void* comparand)
+			{
+				void* observed = slot;
+				if (slot == comparand)
+					slot = exchange;
+				return observed;
+			});
+		return result.code == nte::hook::ProtectedPointerPatchCode::Applied &&
+			result.slot_state ==
+				nte::hook::ProtectedPointerSlotState::Replacement &&
+			result.protection_restored && result.replacement_was_published &&
+			slot == const_cast<int*>(&REPLACEMENT);
+	}
+
+	constexpr bool ProtectedPointerPatchDoesNotWriteWhenProtectionCannotChange()
+	{
+		constexpr int EXPECTED = 1;
+		constexpr int REPLACEMENT = 2;
+		bool exchanged = false;
+		const auto result = nte::hook::ReplaceProtectedPointer(
+			const_cast<int*>(&EXPECTED),
+			const_cast<int*>(&REPLACEMENT),
+			[] { return false; },
+			[] { return true; },
+			[&](void*, void*)
+			{
+				exchanged = true;
+				return static_cast<void*>(nullptr);
+			});
+		return result.code ==
+				nte::hook::ProtectedPointerPatchCode::MakeWritableFailed &&
+			result.slot_state == nte::hook::ProtectedPointerSlotState::Unknown &&
+			result.protection_restored && !result.RequiresFailClosed() &&
+			!result.RequiresBindingRetention() && !exchanged;
+	}
+
+	constexpr bool UnexpectedSlotValueRestoresProtectionAndFailsClosed()
+	{
+		constexpr int EXPECTED = 1;
+		constexpr int REPLACEMENT = 2;
+		constexpr int OTHER = 3;
+		size_t restore_attempts = 0;
+		const auto result = nte::hook::ReplaceProtectedPointer(
+			const_cast<int*>(&EXPECTED),
+			const_cast<int*>(&REPLACEMENT),
+			[] { return true; },
+			[&] { return ++restore_attempts == 2; },
+			[&](void*, void*) { return const_cast<int*>(&OTHER); });
+		return result.code ==
+				nte::hook::ProtectedPointerPatchCode::ExpectedValueChanged &&
+			result.slot_state == nte::hook::ProtectedPointerSlotState::Other &&
+			result.protection_restored && result.RequiresFailClosed() &&
+			!result.RequiresBindingRetention() && restore_attempts == 2;
+	}
+
+	constexpr bool ProtectionRestoreFailureRollsBackBeforeReportingFailure()
+	{
+		constexpr int EXPECTED = 1;
+		constexpr int REPLACEMENT = 2;
+		void* slot = const_cast<int*>(&EXPECTED);
+		size_t restore_attempt = 0;
+		const auto result = nte::hook::ReplaceProtectedPointer(
+			const_cast<int*>(&EXPECTED),
+			const_cast<int*>(&REPLACEMENT),
+			[] { return true; },
+			[&] { return ++restore_attempt == 2; },
+			[&](void* exchange, void* comparand)
+			{
+				void* observed = slot;
+				if (slot == comparand)
+					slot = exchange;
+				return observed;
+			});
+		return result.code == nte::hook::ProtectedPointerPatchCode::RolledBack &&
+			result.slot_state == nte::hook::ProtectedPointerSlotState::Expected &&
+			result.protection_restored && result.replacement_was_published &&
+			result.RequiresBindingRetention() && restore_attempt == 2 &&
+			slot == const_cast<int*>(&EXPECTED);
+	}
+
+	constexpr bool RepeatedProtectionRestoreFailureIsTypedAndFailClosed()
+	{
+		constexpr int EXPECTED = 1;
+		constexpr int REPLACEMENT = 2;
+		void* slot = const_cast<int*>(&EXPECTED);
+		const auto result = nte::hook::ReplaceProtectedPointer(
+			const_cast<int*>(&EXPECTED),
+			const_cast<int*>(&REPLACEMENT),
+			[] { return true; },
+			[] { return false; },
+			[&](void* exchange, void* comparand)
+			{
+				void* observed = slot;
+				if (slot == comparand)
+					slot = exchange;
+				return observed;
+			});
+		return result.code ==
+				nte::hook::ProtectedPointerPatchCode::ProtectionRestoreFailed &&
+			result.slot_state == nte::hook::ProtectedPointerSlotState::Expected &&
+			!result.protection_restored && result.replacement_was_published &&
+			result.RequiresFailClosed() && result.RequiresBindingRetention() &&
+			slot == const_cast<int*>(&EXPECTED);
+	}
+
+	constexpr bool ConcurrentRollbackInterferenceIsTypedAndFailClosed()
+	{
+		constexpr int EXPECTED = 1;
+		constexpr int REPLACEMENT = 2;
+		constexpr int OTHER = 3;
+		void* slot = const_cast<int*>(&EXPECTED);
+		size_t restore_attempt = 0;
+		const auto result = nte::hook::ReplaceProtectedPointer(
+			const_cast<int*>(&EXPECTED),
+			const_cast<int*>(&REPLACEMENT),
+			[] { return true; },
+			[&]
+			{
+				if (++restore_attempt == 1)
+				{
+					slot = const_cast<int*>(&OTHER);
+					return false;
+				}
+				return true;
+			},
+			[&](void* exchange, void* comparand)
+			{
+				void* observed = slot;
+				if (slot == comparand)
+					slot = exchange;
+				return observed;
+			});
+		return result.code ==
+				nte::hook::ProtectedPointerPatchCode::RollbackFailed &&
+			result.slot_state == nte::hook::ProtectedPointerSlotState::Other &&
+			result.protection_restored && result.replacement_was_published &&
+			result.RequiresFailClosed() && result.RequiresBindingRetention() &&
+			slot == const_cast<int*>(&OTHER);
+	}
+
 	constexpr std::array<uint8_t, 6> PATTERN_BYTES{
 		0x48, 0x81, 0xEC, 0x00, 0x00, 0x00,
 	};
@@ -179,6 +369,15 @@ namespace
 	}
 
 	static_assert(MaskedBytesIgnoreVersionSpecificOperands());
+	static_assert(OverlappedEpochCannotBeReusedBeforeCompletion());
+	static_assert(OverlappedEpochRejectsStaleCompletion());
+	static_assert(ViewportOriginalIsBoundPerObject());
+	static_assert(ProtectedPointerPatchAppliesOnlyAfterProtectionRestores());
+	static_assert(ProtectedPointerPatchDoesNotWriteWhenProtectionCannotChange());
+	static_assert(UnexpectedSlotValueRestoresProtectionAndFailsClosed());
+	static_assert(ProtectionRestoreFailureRollsBackBeforeReportingFailure());
+	static_assert(RepeatedProtectionRestoreFailureIsTypedAndFailClosed());
+	static_assert(ConcurrentRollbackInterferenceIsTypedAndFailClosed());
 	static_assert(FixedOpcodeChangesAreRejected());
 	static_assert(UniqueCandidateIsSelected());
 	static_assert(AmbiguousCandidatesFailClosed());

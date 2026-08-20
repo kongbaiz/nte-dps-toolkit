@@ -5,6 +5,7 @@ use nte_dps_tool::{
         SkillsDiagnosticsProjection, SkillsProjection, SkillsRowProjection, SkillsScope,
         skill_label_translation_key,
     },
+    engine::model::MAX_INDEXED_SKILL_TEXT_BYTES,
     storage::{ability_names, i18n},
 };
 
@@ -82,24 +83,35 @@ pub(crate) struct SkillsRowSnapshot {
 }
 
 fn localized_row(row: SkillsRowProjection) -> SkillsRowSnapshot {
-    let name = if row.follow_up {
+    let name = bounded_snapshot_text(&if row.follow_up {
         localized_label(&row.name)
     } else {
         localized_skill_name(&row)
-    };
+    });
     SkillsRowSnapshot {
         id: row.id,
         character_id: row.character_id,
-        character_name: row.character_name,
+        character_name: bounded_snapshot_text(&row.character_name),
         name,
-        category: localized_label(&row.category),
-        ability_name: row.ability_name,
-        damage_name: row.damage_name,
+        category: bounded_snapshot_text(&localized_label(&row.category)),
+        ability_name: row.ability_name.as_deref().map(bounded_snapshot_text),
+        damage_name: row.damage_name.as_deref().map(bounded_snapshot_text),
         gameplay_effect_index: row.gameplay_effect_index,
-        gameplay_effect_name: row.gameplay_effect_name,
+        gameplay_effect_name: row
+            .gameplay_effect_name
+            .as_deref()
+            .map(bounded_snapshot_text),
         follow_up: row.follow_up,
         hits: row.hits.to_string(),
         damage: row.damage,
+    }
+}
+
+fn bounded_snapshot_text(value: &str) -> String {
+    if value.len() <= MAX_INDEXED_SKILL_TEXT_BYTES {
+        value.to_owned()
+    } else {
+        "Aggregated Overflow".to_owned()
     }
 }
 
@@ -192,7 +204,10 @@ pub(crate) const fn scope_code(scope: SkillsScope) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nte_dps_tool::core::skills::{SkillsCharacterProjection, SkillsUnknownEffectProjection};
+    use nte_dps_tool::core::skills::{
+        MAX_PROJECTED_SKILL_CHARACTERS, MAX_PROJECTED_SKILL_ROWS, MAX_PROJECTED_UNMAPPED_EFFECTS,
+        SkillsCharacterProjection, SkillsUnknownEffectProjection,
+    };
 
     #[test]
     fn snapshot_serializes_unsafe_counters_as_decimal_strings() {
@@ -241,5 +256,58 @@ mod tests {
             format!("{} · {}", i18n::t("Esper Cycle"), i18n::t("Blossom"))
         );
         assert_eq!(localized_label("Custom"), "Custom");
+    }
+
+    #[test]
+    fn worst_case_escaped_snapshot_stays_below_channel_budget() {
+        const CHANNEL_MESSAGE_BUDGET: usize = 16 * 1024 * 1024;
+        let text = "\u{1}".repeat(MAX_INDEXED_SKILL_TEXT_BYTES);
+        let projection = SkillsProjection {
+            total_damage: MAX_PROJECTED_SKILL_ROWS as f64,
+            total_hits: MAX_PROJECTED_SKILL_ROWS as u64,
+            characters: (0..MAX_PROJECTED_SKILL_CHARACTERS)
+                .map(|id| SkillsCharacterProjection {
+                    id: id as u32,
+                    name: text.clone(),
+                    color: "#123abc".to_owned(),
+                    damage: 1.0,
+                    entries: MAX_PROJECTED_SKILL_ROWS / MAX_PROJECTED_SKILL_CHARACTERS,
+                })
+                .collect(),
+            rows: (0..MAX_PROJECTED_SKILL_ROWS)
+                .map(|index| SkillsRowProjection {
+                    id: format!("skill-{index:016x}"),
+                    character_id: (index % MAX_PROJECTED_SKILL_CHARACTERS) as u32,
+                    character_name: text.clone(),
+                    name: text.clone(),
+                    category: text.clone(),
+                    ability_name: Some(text.clone()),
+                    damage_name: Some(text.clone()),
+                    gameplay_effect_index: Some(index as u32),
+                    gameplay_effect_name: Some(text.clone()),
+                    follow_up: false,
+                    hits: 1,
+                    damage: 1.0,
+                })
+                .collect(),
+            diagnostics: SkillsDiagnosticsProjection {
+                unmapped_gameplay_effects: (0..MAX_PROJECTED_UNMAPPED_EFFECTS)
+                    .map(|index| SkillsUnknownEffectProjection {
+                        index: index as u32,
+                        hits: 1,
+                        damage: 1.0,
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+        };
+        let snapshot = SkillsSnapshot::from_projection(projection, u64::MAX, SkillsScope::Whole);
+        let json = serde_json::to_vec(&snapshot).expect("worst-case skills snapshot serializes");
+
+        assert!(
+            json.len() < CHANNEL_MESSAGE_BUDGET,
+            "worst-case escaped snapshot is {} bytes",
+            json.len()
+        );
     }
 }

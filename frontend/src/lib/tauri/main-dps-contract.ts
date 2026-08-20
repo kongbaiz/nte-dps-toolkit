@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseCaptureSnapshot,
   parseTechnicalCommandError,
@@ -5,11 +6,33 @@ import {
   type CaptureSnapshot,
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
+import {
+  parseDpsTimeRuntime,
+  type DpsTimeRuntime,
+} from "@/lib/tauri/dps-time-contract";
 
-export const MAIN_DPS_CONTRACT_VERSION = 4;
+export const MAIN_DPS_CONTRACT_VERSION = 6;
 export const MAIN_DPS_MAX_HISTORY_RECORDS = 200;
 export const MAIN_DPS_MAX_ROUNDS = MAIN_DPS_MAX_HISTORY_RECORDS + 1;
 export const MAIN_DPS_MAX_CHARACTERS = 4;
+export const MAIN_DPS_MAX_TEXT_BYTES = 256;
+export const MAIN_DPS_MAX_PROJECTED_TEXT_BYTES = 128 * 1024;
+
+const {
+  array: list,
+  boolean,
+  boundedArray: boundedList,
+  boundedUtf8StringAllowEmpty: boundedText,
+  enumValue: oneOf,
+  finiteNumber: finite,
+  integer,
+  nullableInteger,
+  nullableBoundedUtf8StringAllowEmpty: nullableBoundedText,
+  record: object,
+  u64DecimalString: u64DecimalText,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export interface MainDpsSnapshot {
   contractVersion: number;
@@ -19,6 +42,7 @@ export interface MainDpsSnapshot {
   historyGeneration: string;
   adapterVersion: string;
   capture: CaptureSnapshot;
+  dpsTime: DpsTimeRuntime;
   processingPaused: boolean;
   pausedPendingEvents: string;
   pausedDebugPackets: string;
@@ -34,6 +58,7 @@ export interface MainDpsSnapshot {
   gameDetectionStatus: GameDetectionStatus;
   hasLiveSessionData: boolean;
   onboarding: MainDpsOnboarding;
+  textTruncated: boolean;
 }
 
 export type GameDetectionStatus = "running" | "notRunning" | "probeFailed";
@@ -52,6 +77,7 @@ export interface MainDpsOnboarding {
   done: boolean;
   step: number;
   captureDeviceCount: number;
+  captureDevicesAvailable: boolean;
   gameDetected: boolean;
   gameDetectionStatus: GameDetectionStatus;
   passthroughHotkeyLabel: string;
@@ -154,23 +180,30 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
   );
   const rounds = parseRounds(source.rounds);
 
-  return {
+  const snapshot: MainDpsSnapshot = {
     contractVersion: version,
-    generation: text(source.generation, "generation"),
-    captureGeneration: text(source.captureGeneration, "captureGeneration"),
-    presentationGeneration: text(
+    generation: u64DecimalText(source.generation, "generation"),
+    captureGeneration: u64DecimalText(
+      source.captureGeneration,
+      "captureGeneration",
+    ),
+    presentationGeneration: u64DecimalText(
       source.presentationGeneration,
       "presentationGeneration",
     ),
-    historyGeneration: text(source.historyGeneration, "historyGeneration"),
-    adapterVersion: text(source.adapterVersion, "adapterVersion"),
+    historyGeneration: u64DecimalText(
+      source.historyGeneration,
+      "historyGeneration",
+    ),
+    adapterVersion: boundedText(source.adapterVersion, "adapterVersion", 128),
     capture: parseCaptureSnapshot(source.capture),
+    dpsTime: parseDpsTimeRuntime(source.dpsTime),
     processingPaused: boolean(source.processingPaused, "processingPaused"),
-    pausedPendingEvents: unsignedIntegerText(
+    pausedPendingEvents: u64DecimalText(
       source.pausedPendingEvents,
       "pausedPendingEvents",
     ),
-    pausedDebugPackets: unsignedIntegerText(
+    pausedDebugPackets: u64DecimalText(
       source.pausedDebugPackets,
       "pausedDebugPackets",
     ),
@@ -203,7 +236,11 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
       opacity: finite(appearance.opacity, "appearance.opacity"),
     },
     rounds,
-    selectedRoundId: nullableText(source.selectedRoundId, "selectedRoundId"),
+    selectedRoundId: nullableBoundedText(
+      source.selectedRoundId,
+      "selectedRoundId",
+      MAIN_DPS_MAX_TEXT_BYTES,
+    ),
     readout: {
       dataState,
       summary: {
@@ -314,29 +351,37 @@ export function parseMainDpsSnapshot(value: unknown): MainDpsSnapshot {
         onboarding.captureDeviceCount,
         "onboarding.captureDeviceCount",
       ),
+      captureDevicesAvailable: boolean(
+        onboarding.captureDevicesAvailable,
+        "onboarding.captureDevicesAvailable",
+      ),
       gameDetected: boolean(onboarding.gameDetected, "onboarding.gameDetected"),
       gameDetectionStatus: oneOf(
         onboarding.gameDetectionStatus,
         ["running", "notRunning", "probeFailed"] as const,
         "onboarding.gameDetectionStatus",
       ),
-      passthroughHotkeyLabel: text(
+      passthroughHotkeyLabel: boundedText(
         onboarding.passthroughHotkeyLabel,
         "onboarding.passthroughHotkeyLabel",
+        MAIN_DPS_MAX_TEXT_BYTES,
       ),
       passthroughHotkeyReady: boolean(
         onboarding.passthroughHotkeyReady,
         "onboarding.passthroughHotkeyReady",
       ),
     },
+    textTruncated: boolean(source.textTruncated, "textTruncated"),
   };
+  validateProjectedTextBudget(snapshot);
+  return snapshot;
 }
 
 export function parseMainDpsResetResult(value: unknown): MainDpsResetResult {
   const source = object(value, "main DPS reset result");
   return {
     snapshot: parseMainDpsSnapshot(source.snapshot),
-    undoToken: nullableText(source.undoToken, "undoToken"),
+    undoToken: nullableBoundedText(source.undoToken, "undoToken", 256),
   };
 }
 
@@ -354,9 +399,17 @@ export function parseMainDpsCommandError(value: unknown): MainDpsCommandError {
 function parseRound(value: unknown, index: number): MainDpsRound {
   const row = object(value, `rounds[${index}]`);
   return {
-    id: nullableText(row.id, `rounds[${index}].id`),
+    id: nullableBoundedText(
+      row.id,
+      `rounds[${index}].id`,
+      MAIN_DPS_MAX_TEXT_BYTES,
+    ),
     live: boolean(row.live, `rounds[${index}].live`),
-    displayTime: nullableText(row.displayTime, `rounds[${index}].displayTime`),
+    displayTime: nullableBoundedText(
+      row.displayTime,
+      `rounds[${index}].displayTime`,
+      MAIN_DPS_MAX_TEXT_BYTES,
+    ),
     abyssFloor: nullableInteger(row.abyssFloor, `rounds[${index}].abyssFloor`),
   };
 }
@@ -392,76 +445,41 @@ function parseCharacter(value: unknown, index: number): MainDpsCharacter {
   const row = object(value, `characters[${index}]`);
   return {
     characterId: integer(row.characterId, "characterId"),
-    name: text(row.name, "name"),
-    hits: text(row.hits, "hits"),
+    name: boundedText(row.name, "name", MAIN_DPS_MAX_TEXT_BYTES),
+    hits: boundedText(row.hits, "hits", 32),
     damage: finite(row.damage, "damage"),
     dps: finite(row.dps, "dps"),
     damageSharePercent: finite(row.damageSharePercent, "damageSharePercent"),
     damageTaken: finite(row.damageTaken, "damageTaken"),
     durationSeconds: finite(row.durationSeconds, "durationSeconds"),
-    color: nullableText(row.color, "color"),
-    attribute: nullableText(row.attribute, "attribute"),
+    color: nullableBoundedText(row.color, "color", MAIN_DPS_MAX_TEXT_BYTES),
+    attribute: nullableBoundedText(
+      row.attribute,
+      "attribute",
+      MAIN_DPS_MAX_TEXT_BYTES,
+    ),
   };
 }
 
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an object`);
-  return value as Record<string, unknown>;
-}
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an array`);
-  return value;
-}
-function boundedList(value: unknown, field: string, limit: number): unknown[] {
-  const rows = list(value, field);
-  if (rows.length > limit)
-    throw new TechnicalContractError(`${field} exceeds the contract limit`);
-  return rows;
-}
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string")
-    throw new TechnicalContractError(`${field} must be a string`);
-  return value;
-}
-function nullableText(value: unknown, field: string): string | null {
-  return value === null ? null : text(value, field);
-}
-function finite(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value))
-    throw new TechnicalContractError(`${field} must be finite`);
-  return value;
-}
-function integer(value: unknown, field: string): number {
-  const number = finite(value, field);
-  if (!Number.isInteger(number))
-    throw new TechnicalContractError(`${field} must be an integer`);
-  return number;
-}
-function nullableInteger(value: unknown, field: string): number | null {
-  return value === null ? null : integer(value, field);
-}
-function unsignedIntegerText(value: unknown, field: string): string {
-  const candidate = text(value, field);
-  if (!/^\d+$/.test(candidate))
+function validateProjectedTextBudget(snapshot: MainDpsSnapshot): void {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  const add = (value: string | null): void => {
+    if (value !== null) bytes += encoder.encode(value).byteLength;
+  };
+  add(snapshot.selectedRoundId);
+  for (const round of snapshot.rounds) {
+    add(round.id);
+    add(round.displayTime);
+  }
+  for (const character of snapshot.readout.characters) {
+    add(character.name);
+    add(character.hits);
+    add(character.color);
+    add(character.attribute);
+  }
+  if (bytes > MAIN_DPS_MAX_PROJECTED_TEXT_BYTES)
     throw new TechnicalContractError(
-      `${field} must be an unsigned integer string`,
+      `main DPS text exceeds ${MAIN_DPS_MAX_PROJECTED_TEXT_BYTES} UTF-8 bytes`,
     );
-  return candidate;
-}
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean")
-    throw new TechnicalContractError(`${field} must be boolean`);
-  return value;
-}
-function oneOf<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] {
-  const candidate = text(value, field);
-  if (!values.includes(candidate))
-    throw new TechnicalContractError(`${field} is unsupported`);
-  return candidate as T[number];
 }
