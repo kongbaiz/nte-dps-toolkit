@@ -117,8 +117,8 @@
       "ability": "GA_Lacrimosa_Melee",
       "attack_type": "Special Damage",
       "show_parent_ability": false,
-      "damage_name_zh": "噩梦",
       "owner_character_id": 1004,
+      "damage_name_zh": "噩梦",
       "damage_name_en": "噩梦",
       "damage_name_ja": "噩梦"
     },
@@ -126,10 +126,10 @@
       "ability": "GA_Lacrimosa_Melee",
       "attack_type": "Special Damage",
       "show_parent_ability": false,
+      "owner_character_id": 1004,
       "damage_name_zh": "「噩梦」",
-      "damage_name_en": "Nightmare",
-      "damage_name_ja": "「悪夢」",
-      "owner_character_id": 1004
+      "damage_name_en": "「噩梦」",
+      "damage_name_ja": "「噩梦」"
     },
     "GE_Player_Shinku_ReactionAOE_Damage": {
       "owner_character_id": 1076,
@@ -192,14 +192,14 @@
     "Buff_Reaction_5_new": {
       "show_parent_ability": false,
       "damage_name_zh": "浊燃",
-      "damage_name_en": "Scorch",
-      "damage_name_ja": "濁燃"
+      "damage_name_en": "浊燃",
+      "damage_name_ja": "浊燃"
     },
     "Buff_Reaction_4_new": {
       "show_parent_ability": false,
       "damage_name_zh": "黯星",
-      "damage_name_en": "Nova",
-      "damage_name_ja": "暗星"
+      "damage_name_en": "黯星",
+      "damage_name_ja": "黯星"
     },
     "Buff_Reaction_5_new_1036": {
       "show_parent_ability": false,
@@ -209,50 +209,50 @@
     },
     "GE_Player_Mitsuki_Skill_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "华彩",
       "owner_character_id": 1070,
+      "damage_name_zh": "华彩",
       "damage_name_en": "华彩",
       "damage_name_ja": "华彩"
     },
     "GE_Player_Lacrimosa_Skill1_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "起床气加载中",
       "owner_character_id": 1004,
+      "damage_name_zh": "起床气加载中",
       "damage_name_en": "起床气加载中",
       "damage_name_ja": "起床气加载中"
     },
     "GE_Player_Lacrimosa_UltraSkillModB_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "货车",
       "owner_character_id": 1004,
+      "damage_name_zh": "货车",
       "damage_name_en": "货车",
       "damage_name_ja": "货车"
     },
     "GE_Player_Lacrimosa_UltraSkillModB2_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "货车",
       "owner_character_id": 1004,
+      "damage_name_zh": "货车",
       "damage_name_en": "货车",
       "damage_name_ja": "货车"
     },
     "GE_Player_Lacrimosa_UltraSkillModB3_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "货车",
       "owner_character_id": 1004,
+      "damage_name_zh": "货车",
       "damage_name_en": "货车",
       "damage_name_ja": "货车"
     },
     "GE_Player_Lacrimosa_UltraSkill1_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "汽车",
       "owner_character_id": 1004,
+      "damage_name_zh": "汽车",
       "damage_name_en": "汽车",
       "damage_name_ja": "汽车"
     },
     "GE_Player_Lacrimosa_UltraSkill2_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "汽车",
       "owner_character_id": 1004,
+      "damage_name_zh": "汽车",
       "damage_name_en": "汽车",
       "damage_name_ja": "汽车"
     },
@@ -270,36 +270,36 @@
     },
     "GE_Player_Chiichan073_Skill1_1Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "空仓",
       "owner_character_id": 1073,
+      "damage_name_zh": "空仓",
       "damage_name_en": "空仓",
       "damage_name_ja": "空仓"
     },
     "GE_Player_Chiichan073_Skill1_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "空仓",
       "owner_character_id": 1073,
+      "damage_name_zh": "空仓",
       "damage_name_en": "空仓",
       "damage_name_ja": "空仓"
     },
     "GE_Player_Chiichan073_Skill3_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "满仓",
       "owner_character_id": 1073,
+      "damage_name_zh": "满仓",
       "damage_name_en": "满仓",
       "damage_name_ja": "满仓"
     },
     "GE_Player_Chiichan073_Skill4_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "满仓",
       "owner_character_id": 1073,
+      "damage_name_zh": "满仓",
       "damage_name_en": "满仓",
       "damage_name_ja": "满仓"
     },
     "GE_Player_Oneiroi_Branch5_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "清明梦",
       "owner_character_id": 1075,
+      "damage_name_zh": "清明梦",
       "damage_name_en": "清明梦",
       "damage_name_ja": "清明梦"
     },
@@ -485,15 +485,15 @@
     },
     "GE_Player_Radio072_Branch_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "普通攻击：恶灵大巴掌",
       "owner_character_id": 1091,
+      "damage_name_zh": "普通攻击：恶灵大巴掌",
       "damage_name_en": "普通攻击：恶灵大巴掌",
       "damage_name_ja": "普通攻击：恶灵大巴掌"
     },
     "GE_Player_Radio072_QTE_Damage": {
       "show_parent_ability": false,
-      "damage_name_zh": "恶灵左直拳！",
       "owner_character_id": 1091,
+      "damage_name_zh": "恶灵左直拳！",
       "damage_name_en": "恶灵左直拳！",
       "damage_name_ja": "恶灵左直拳！"
     }
