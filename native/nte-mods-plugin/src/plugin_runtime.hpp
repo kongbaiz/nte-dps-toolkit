@@ -38,6 +38,8 @@ namespace nte::mods
 	};
 
 	PluginStartResult StartPluginRuntime(HMODULE module);
+	void RecordPluginModule(HMODULE module) noexcept;
+	PluginStartResult InitializeRecordedPluginRuntime();
 	PluginStopResult StopPluginRuntime();
 	constexpr bool PluginStopAllowsUnload(PluginStopResult result) noexcept
 	{

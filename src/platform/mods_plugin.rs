@@ -17,7 +17,7 @@ use std::fmt;
 #[cfg(feature = "desktop")]
 use std::fs;
 #[cfg(feature = "desktop")]
-use std::io::Write;
+use std::io::{Read, Write};
 #[cfg(feature = "desktop")]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(feature = "desktop")]
@@ -162,6 +162,14 @@ const MOD_WORKSPACE_REGISTRY_KEY: &str = r"Software\NTE DPS Tool\Mods Plugin";
 const MOD_WORKSPACE_REGISTRY_VALUE: &str = "Workspace";
 #[cfg(feature = "desktop")]
 const MAX_LEGACY_MOD_FILE_BYTES: usize = 16 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_PLUGIN_BINARY_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_PLUGIN_MARKER_BYTES: usize = 4 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_LEGACY_MOD_FILES: usize = 64;
+#[cfg(feature = "desktop")]
+const MAX_LEGACY_MOD_TOTAL_BYTES: usize = 512 * 1024;
 #[cfg(feature = "desktop")]
 const MOD_SET_FILE_NAME: &str = "nte-mods.enabled";
 #[cfg(feature = "desktop")]
@@ -769,8 +777,25 @@ pub(crate) fn call_plugin(request: &ModsPluginRequest) -> Result<u32, String> {
     decode_response(&response, request.request_id)
 }
 
-pub(crate) fn query_combat_clock_transitions() -> Result<Vec<CombatClockTransitionSnapshot>, String>
-{
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CombatClockQueryError {
+    ProviderUnavailable,
+    ModDisabled,
+    InvalidResponse,
+}
+
+impl std::fmt::Display for CombatClockQueryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ProviderUnavailable => "combat clock provider is unavailable",
+            Self::ModDisabled => "combat clock mod is disabled",
+            Self::InvalidResponse => "combat clock provider returned an invalid response",
+        })
+    }
+}
+
+pub(crate) fn query_combat_clock_transitions()
+-> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
     let request_id = COMBAT_CLOCK_QUERY_SEQUENCE
         .fetch_add(1, Ordering::Relaxed)
         .max(1);
@@ -779,7 +804,8 @@ pub(crate) fn query_combat_clock_transitions() -> Result<Vec<CombatClockTransiti
     request[4..6].copy_from_slice(&IPC_VERSION.to_le_bytes());
     request[6..8].copy_from_slice(&IPC_QUERY_COMBAT_CLOCK_TRANSITIONS.to_le_bytes());
     request[8..16].copy_from_slice(&request_id.to_le_bytes());
-    let response = call_plugin_request(&request)?;
+    let response =
+        call_plugin_request(&request).map_err(|_| CombatClockQueryError::ProviderUnavailable)?;
     decode_combat_clock_transitions(&response, request_id)
 }
 
@@ -1624,13 +1650,14 @@ fn decode_response_header(
 fn decode_combat_clock_transitions(
     bytes: &[u8; RESPONSE_SIZE],
     request_id: u64,
-) -> Result<Vec<CombatClockTransitionSnapshot>, String> {
-    let (status, transition_count) = decode_response_header(bytes, request_id)?;
+) -> Result<Vec<CombatClockTransitionSnapshot>, CombatClockQueryError> {
+    let (status, transition_count) = decode_response_header(bytes, request_id)
+        .map_err(|_| CombatClockQueryError::InvalidResponse)?;
     if status == PLUGIN_STATUS_MOD_DISABLED {
-        return Err("combat clock mod is disabled".to_owned());
+        return Err(CombatClockQueryError::ModDisabled);
     }
     if status != PLUGIN_STATUS_DRY_RUN_OK || transition_count as usize > COMBAT_CLOCK_HISTORY_SIZE {
-        return Err("Mod loader returned invalid combat clock history".to_owned());
+        return Err(CombatClockQueryError::InvalidResponse);
     }
 
     let mut transitions = Vec::with_capacity(transition_count as usize);
@@ -1662,7 +1689,7 @@ fn decode_combat_clock_transitions(
             || pause_type_mask & !0x1c != 0
             || state_flags & COMBAT_CLOCK_PAUSE_VALID == 0 && pause_type_mask != 0
         {
-            return Err("Mod loader returned invalid combat clock history".to_owned());
+            return Err(CombatClockQueryError::InvalidResponse);
         }
         transitions.push(CombatClockTransitionSnapshot {
             sequence: u64::from_le_bytes(
@@ -2233,7 +2260,8 @@ fn plugin_directory_is_managed(directory: &Path) -> Result<bool, ModsPluginDeplo
             Ok(false)
         };
     }
-    let plugin = fs::read(&plugin_path).map_err(file_system_error)?;
+    let plugin = read_deployment_file_bounded(&plugin_path, MAX_PLUGIN_BINARY_BYTES)
+        .map_err(file_system_error)?;
     if marker_path.exists() {
         let marker = read_marker(&marker_path)?;
         if plugin_marker(&plugin) != marker {
@@ -2281,7 +2309,11 @@ fn inspect_plugin_directories(
         if !plugin_directory_is_managed(directory)? {
             continue;
         }
-        let plugin = fs::read(directory.join(PLUGIN_FILE_NAME)).map_err(file_system_error)?;
+        let plugin = read_deployment_file_bounded(
+            &directory.join(PLUGIN_FILE_NAME),
+            MAX_PLUGIN_BINARY_BYTES,
+        )
+        .map_err(file_system_error)?;
         status.installed += 1;
         if current_plugin.is_some_and(|current| current == plugin) {
             status.current += 1;
@@ -2295,6 +2327,11 @@ fn install_plugin_to_directories(
     directories: &[PathBuf],
     plugin: &[u8],
 ) -> Result<(), ModsPluginDeploymentError> {
+    if plugin.len() > MAX_PLUGIN_BINARY_BYTES {
+        return Err(ModsPluginDeploymentError::FileSystem(
+            "Mod loader binary exceeds its byte budget".to_owned(),
+        ));
+    }
     if !plugin_binary_is_managed(plugin) {
         return Err(ModsPluginDeploymentError::FileSystem(
             "Mod loader binary signature is missing".to_owned(),
@@ -2322,6 +2359,11 @@ fn replace_managed_plugin_directories(
     directories: &[PathBuf],
     plugin: &[u8],
 ) -> Result<(), ModsPluginDeploymentError> {
+    if plugin.len() > MAX_PLUGIN_BINARY_BYTES {
+        return Err(ModsPluginDeploymentError::FileSystem(
+            "Mod loader binary exceeds its byte budget".to_owned(),
+        ));
+    }
     if !plugin_binary_is_managed(plugin) {
         return Err(ModsPluginDeploymentError::FileSystem(
             "Mod loader binary signature is missing".to_owned(),
@@ -2333,7 +2375,7 @@ fn replace_managed_plugin_directories(
             return Err(ModsPluginDeploymentError::InstalledPluginChanged);
         }
         let plugin_path = directory.join(PLUGIN_FILE_NAME);
-        let existing = fs::read(&plugin_path)
+        let existing = read_deployment_file_bounded(&plugin_path, MAX_PLUGIN_BINARY_BYTES)
             .map_err(|_| ModsPluginDeploymentError::InstalledPluginChanged)?;
         backups.push((plugin_path, existing));
     }
@@ -2445,6 +2487,8 @@ fn migrate_legacy_mod_workspace(
 ) -> Result<(), ModsPluginDeploymentError> {
     let mut enabled_set = None;
     let mut scripts = BTreeMap::<String, Vec<u8>>::new();
+    let mut examined_entries = 0_usize;
+    let mut total_source_bytes = 0_usize;
     for game_directory in game_directories {
         let enabled_path = game_directory.join(MOD_SET_FILE_NAME);
         if enabled_path.is_file() {
@@ -2479,6 +2523,12 @@ fn migrate_legacy_mod_workspace(
             Err(error) => return Err(file_system_error(error)),
         };
         for entry in entries {
+            examined_entries = examined_entries.saturating_add(1);
+            if examined_entries > MAX_LEGACY_MOD_FILES {
+                return Err(ModsPluginDeploymentError::FileSystem(
+                    "legacy Mod workspace contains too many entries".to_owned(),
+                ));
+            }
             let entry = entry.map_err(file_system_error)?;
             let file_type = entry.file_type().map_err(file_system_error)?;
             let path = entry.path();
@@ -2508,6 +2558,12 @@ fn migrate_legacy_mod_workspace(
                     ))
                 })?;
             let mut bytes = read_legacy_mod_file(&path)?;
+            total_source_bytes = total_source_bytes.saturating_add(bytes.len());
+            if total_source_bytes > MAX_LEGACY_MOD_TOTAL_BYTES {
+                return Err(ModsPluginDeploymentError::FileSystem(
+                    "legacy Mod workspace exceeds its total byte budget".to_owned(),
+                ));
+            }
             if file_name.eq_ignore_ascii_case(EQUIPMENT_MOD_FILE_NAME)
                 && LEGACY_EQUIPMENT_MOD_PROGRAMS
                     .iter()
@@ -2556,12 +2612,46 @@ fn migrate_legacy_mod_workspace(
 
 #[cfg(feature = "desktop")]
 fn read_legacy_mod_file(path: &Path) -> Result<Vec<u8>, ModsPluginDeploymentError> {
-    let bytes = fs::read(path).map_err(file_system_error)?;
-    if bytes.len() > MAX_LEGACY_MOD_FILE_BYTES {
-        return Err(ModsPluginDeploymentError::FileSystem(format!(
-            "{} exceeds 16 KiB",
-            path.display()
-        )));
+    read_deployment_file_bounded(path, MAX_LEGACY_MOD_FILE_BYTES).map_err(file_system_error)
+}
+
+#[cfg(feature = "desktop")]
+fn read_deployment_file_bounded(path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
+    let path_metadata = fs::metadata(path)?;
+    if !path_metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "deployment path is not a regular file",
+        ));
+    }
+    if path_metadata.len() > max_bytes as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment file exceeds {max_bytes} byte limit"),
+        ));
+    }
+    let file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "deployment path is not a regular file",
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment file exceeds {max_bytes} byte limit"),
+        ));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(max_bytes));
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("deployment file exceeds {max_bytes} byte limit"),
+        ));
     }
     Ok(bytes)
 }
@@ -2572,7 +2662,15 @@ fn remove_legacy_game_mod_files(directory: &Path) -> io::Result<()> {
     let mut mod_files = Vec::new();
     match fs::read_dir(&mod_directory) {
         Ok(entries) => {
+            let mut examined_entries = 0_usize;
             for entry in entries {
+                examined_entries = examined_entries.saturating_add(1);
+                if examined_entries > MAX_LEGACY_MOD_FILES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "legacy Mod directory contains too many entries",
+                    ));
+                }
                 let entry = entry?;
                 let file_type = entry.file_type()?;
                 let path = entry.path();
@@ -2657,7 +2755,7 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
             }
             created.push(path);
         } else {
-            let existing = match fs::read(&path) {
+            let existing = match read_deployment_file_bounded(&path, MAX_LEGACY_MOD_FILE_BYTES) {
                 Ok(existing) => existing,
                 Err(error) => {
                     rollback_default_mod_files(&created, &migrated);
@@ -2679,8 +2777,11 @@ fn install_default_mod_files(workspace_directory: &Path) -> io::Result<()> {
 
 #[cfg(feature = "desktop")]
 fn read_marker(path: &Path) -> Result<PluginMarker, ModsPluginDeploymentError> {
-    let text = fs::read_to_string(path).map_err(file_system_error)?;
-    parse_plugin_marker(&text).ok_or(ModsPluginDeploymentError::InstalledPluginChanged)
+    let bytes =
+        read_deployment_file_bounded(path, MAX_PLUGIN_MARKER_BYTES).map_err(file_system_error)?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| ModsPluginDeploymentError::InstalledPluginChanged)?;
+    parse_plugin_marker(text).ok_or(ModsPluginDeploymentError::InstalledPluginChanged)
 }
 
 #[cfg(feature = "desktop")]
@@ -3130,7 +3231,7 @@ mod tests {
 
         assert_eq!(
             decode_combat_clock_transitions(&bytes, 19),
-            Err("combat clock mod is disabled".to_owned())
+            Err(CombatClockQueryError::ModDisabled)
         );
     }
 
@@ -3395,6 +3496,36 @@ mod tests {
             std::str::from_utf8(PLUGIN_BINARY_SIGNATURE).unwrap()
         )
         .into_bytes()
+    }
+
+    #[test]
+    #[cfg(feature = "desktop")]
+    fn deployment_file_reader_and_legacy_batch_are_bounded() {
+        let directory = deployment_test_directory("bounded-inputs");
+        let file = directory.join("bounded.bin");
+        fs::write(&file, b"12345").unwrap();
+        assert_eq!(read_deployment_file_bounded(&file, 5).unwrap(), b"12345");
+        assert_eq!(
+            read_deployment_file_bounded(&file, 4).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            read_deployment_file_bounded(&directory, 5)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+
+        let mod_directory = directory.join(MOD_DIRECTORY_NAME);
+        fs::create_dir_all(&mod_directory).unwrap();
+        for index in 0..=MAX_LEGACY_MOD_FILES {
+            fs::write(mod_directory.join(format!("mod-{index}.nte")), b"x").unwrap();
+        }
+        assert_eq!(
+            remove_legacy_game_mod_files(&directory).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

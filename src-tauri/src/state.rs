@@ -21,12 +21,13 @@ use nte_dps_tool::{
         diagnostics::{DiagnosticRun, DiagnosticSnapshot},
         encrypted_ini::{EncryptedIniKey, EncryptedIniSaveOutcome},
         history::{
-            PendingHistoryArchive, PreparedHistoryArchive, auto_round_due, prepare_history_archive,
+            HistoryArchivePolicy, PendingHistoryArchive, PreparedHistoryArchive, auto_round_due,
+            prepare_history_archive_owned,
         },
         hud::{HudProjectionOptions, HudSnapshot, project_hud},
         live_capture::{
             CaptureReplayKind, LiveCapturePhase, LiveCaptureResources, LiveCaptureService,
-            LiveCaptureStatus,
+            LiveCaptureStatus, ReplayStartError,
         },
         mod_studio::{
             ModStudioError, ModStudioRuntimeSnapshot, ModStudioWorkspaceService,
@@ -44,12 +45,13 @@ use nte_dps_tool::{
     },
     engine::{
         capture::{
-            CaptureExportDocument, CaptureExportNetwork, CaptureExportOptions, PacketEmissionMode,
+            CaptureExportNetwork, CaptureExportOptions, CaptureExportPlan, CaptureImportError,
+            PacketEmissionMode, PreparedCaptureJsonReplay, prepare_capture_json_replay,
         },
         model::{
-            AbyssHalf, CaptureQualitySource, CaptureQualitySummary, CombatState,
-            DamageAttributionSummary, DpsTimeBasis, EmptyCurtainCharacter, EmptyCurtainItem,
-            TeamDps, TeamDpsExport,
+            AbyssHalf, CaptureQualitySource, CaptureQualitySummary, CombatClockRuntimeHealth,
+            CombatState, DamageAttributionSummary, DpsTimeBasis, EmptyCurtainCharacter,
+            EmptyCurtainItem, Hit, TeamDps, TeamDpsExport,
         },
         parser::{
             CHARACTER_DATA_PATH, EQUIPMENT_CATALOG_PATH, EquipmentCatalog, load_equipment_catalog,
@@ -67,14 +69,25 @@ use nte_dps_tool::{
             UiDensity, sanitize_timeline_bucket_seconds,
         },
         history::{
-            HistoryCombatDetails, HistoryIndexRecord, HistoryRecord, HistorySaveOutcome,
-            load_history_index, load_history_record_from_path, save_summary_outcome,
-            save_summary_with_details_outcome,
+            BorrowedHistorySaveOutcome, HistoryCombatDetails, HistoryDeleteTombstone,
+            HistoryIndexRecord, discard_tombstoned_record, load_history_index,
+            load_history_record_by_id_for_interactive_selection, save_borrowed_archive_outcome,
         },
         i18n::Language,
         paths::{capture_log_dir, software_dir},
         update::PreparedUpdate,
     },
+};
+
+#[cfg(not(test))]
+use nte_dps_tool::storage::history::cleanup_orphaned_history_tombstones_at_startup;
+#[cfg(not(test))]
+use std::sync::Once;
+
+#[cfg(test)]
+use nte_dps_tool::{
+    core::history::prepare_history_archive,
+    storage::history::{HistoryRecord, HistorySaveOutcome},
 };
 
 use crate::{
@@ -84,7 +97,9 @@ use crate::{
         main_dps_detail::MainDpsDetailSnapshot,
         settings::{CaptureDeviceSnapshot, SettingsSnapshot, UpdateSettingsSnapshot},
         stream::{MAX_STREAM_DELIVERY_BYTES, MAX_TOTAL_STREAM_DELIVERY_BYTES},
+        timeline::{MAX_TIMELINE_BUCKETS, MAX_TIMELINE_CHARACTERS, MAX_TIMELINE_ROLES_PER_BUCKET},
     },
+    desktop_runtime::DesktopRuntime,
     diagnostics_runtime::DiagnosticsRuntime,
     encrypted_ini_service::{
         EncryptedIniProjection, EncryptedIniService, EncryptedIniServiceError,
@@ -218,6 +233,7 @@ pub(crate) struct ReplayImportReservation {
 pub(crate) enum ReplayImportError {
     RuntimeUnavailable,
     Capture(CoreError),
+    JsonImport(CaptureImportError),
 }
 
 #[derive(Clone, Debug)]
@@ -225,6 +241,7 @@ pub(crate) enum PresentationError {
     StateUnavailable,
     Capture(CoreError),
     RoundUnavailable,
+    RoundTooLarge,
 }
 
 impl From<CoreError> for PresentationError {
@@ -247,6 +264,9 @@ impl ReplayImportError {
                 "replay import runtime unavailable",
             ),
             Self::Capture(error) => error,
+            Self::JsonImport(error) => {
+                CoreError::new(CoreErrorCode::SystemProbeFailed, error.to_string())
+            }
         }
     }
 }
@@ -1125,7 +1145,6 @@ pub(crate) enum DesktopWindowKind {
 
 #[derive(Clone, Debug)]
 pub(crate) struct HistoryRoundIndex {
-    path: PathBuf,
     pub(crate) id: String,
     pub(crate) display_time: String,
     pub(crate) abyss_floor: Option<u32>,
@@ -1146,10 +1165,33 @@ struct MainDpsDetailCache {
     snapshot: Arc<MainDpsDetailSnapshot>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TimelineProjectionCacheKey {
+    revision: MainDpsStreamRevision,
+    scope: TimelineScope,
+    bucket_seconds_bits: u32,
+    subtract_time_stop: bool,
+    language: &'static str,
+}
+
+struct TimelineProjectionCache {
+    key: TimelineProjectionCacheKey,
+    projection: Arc<TimelineProjection>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MainReadoutCacheKey {
+    revision: MainDpsStreamRevision,
+}
+
+struct MainReadoutCache {
+    key: MainReadoutCacheKey,
+    readout: Arc<MainDpsReadout>,
+}
+
 impl HistoryRoundIndex {
     fn from_storage(record: &HistoryIndexRecord) -> Self {
         Self {
-            path: record.path.clone(),
             id: record.id.clone(),
             display_time: record.display_time.clone(),
             abyss_floor: record.abyss_floor,
@@ -1160,7 +1202,6 @@ impl HistoryRoundIndex {
     #[cfg(test)]
     pub(crate) fn for_test(id: &str, has_details: bool) -> Self {
         Self {
-            path: PathBuf::new(),
             id: id.to_owned(),
             display_time: id.to_owned(),
             abyss_floor: None,
@@ -1190,10 +1231,20 @@ impl Default for MainRoundCache {
 struct PresentationState {
     revision: AtomicU64,
     main_revision: AtomicU64,
+    /// Every History selection intent reserves a monotonically increasing
+    /// generation before blocking I/O. Only the latest generation may commit.
+    selection_generation: AtomicU64,
     mode: Mutex<PresentationModeState>,
     abyss: Mutex<AbyssPresentationState>,
     details: Mutex<MainDpsDetailsState>,
     cache: Mutex<Vec<MainDpsDetailCache>>,
+    /// Bounded, exact-revision cache shared by every main-readout consumer.
+    /// A miss is never served stale; racing projections are stored only when
+    /// the revision is unchanged before and after projection.
+    main_readout_cache: Mutex<Vec<MainReadoutCache>>,
+    timeline_cache: Mutex<Vec<TimelineProjectionCache>>,
+    #[cfg(test)]
+    main_readout_projection_count: AtomicU64,
 }
 
 impl PresentationState {
@@ -1245,6 +1296,30 @@ impl PresentationState {
         }
     }
 
+    fn lock_timeline_cache(&self) -> (MutexGuard<'_, Vec<TimelineProjectionCache>>, bool) {
+        match self.timeline_cache.lock() {
+            Ok(cache) => (cache, false),
+            Err(mut poison) => {
+                poison.get_mut().clear();
+                self.timeline_cache.clear_poison();
+                log::warn!("Timeline projection cache was discarded after an interrupted update");
+                (poison.into_inner(), true)
+            }
+        }
+    }
+
+    fn lock_main_readout_cache(&self) -> (MutexGuard<'_, Vec<MainReadoutCache>>, bool) {
+        match self.main_readout_cache.lock() {
+            Ok(cache) => (cache, false),
+            Err(mut poison) => {
+                poison.get_mut().clear();
+                self.main_readout_cache.clear_poison();
+                log::warn!("Main readout cache was discarded after an interrupted update");
+                (poison.into_inner(), true)
+            }
+        }
+    }
+
     fn publish_technical_and_main(&self) {
         self.revision.fetch_add(1, Ordering::AcqRel);
         self.main_revision.fetch_add(1, Ordering::AcqRel);
@@ -1257,15 +1332,35 @@ impl PresentationState {
 
 /// Serializes history persistence and owns revision/cache/retry/undo state.
 /// Capture only cuts rounds; disk I/O and retry lifecycle stay here.
-#[derive(Default)]
 struct HistoryService {
     revision: AtomicU64,
-    undo_sequence: AtomicU64,
     round_cache: Mutex<MainRoundCache>,
     transaction: Mutex<()>,
     archive_transaction: Mutex<()>,
     pending_archives: Mutex<VecDeque<PreparedHistoryArchive>>,
     undo: Mutex<Option<HistoryUndoEntry>>,
+}
+
+#[cfg(not(test))]
+static HISTORY_TOMBSTONE_STARTUP_CLEANUP: Once = Once::new();
+
+impl Default for HistoryService {
+    fn default() -> Self {
+        #[cfg(not(test))]
+        HISTORY_TOMBSTONE_STARTUP_CLEANUP.call_once(|| {
+            if let Err(error) = cleanup_orphaned_history_tombstones_at_startup() {
+                log::warn!("orphaned History undo cleanup did not finish: {error}");
+            }
+        });
+        Self {
+            revision: AtomicU64::new(0),
+            round_cache: Mutex::new(MainRoundCache::default()),
+            transaction: Mutex::new(()),
+            archive_transaction: Mutex::new(()),
+            pending_archives: Mutex::new(VecDeque::new()),
+            undo: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1274,6 +1369,7 @@ pub(crate) enum HistoryRuntimeError {
     ReplayActive,
     RetryQueueFull,
     Persistence,
+    PermanentPersistence,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1293,6 +1389,9 @@ impl fmt::Display for HistoryRuntimeError {
                 formatter.write_str("History retry queue is full; the current round was kept live")
             }
             Self::Persistence => formatter.write_str("History persistence did not finish."),
+            Self::PermanentPersistence => {
+                formatter.write_str("History archive failed permanent validation.")
+            }
         }
     }
 }
@@ -1308,6 +1407,24 @@ fn next_live_abyss_selection(
         (selected, observed)
     } else {
         (active, active)
+    }
+}
+
+fn subtract_time_stop_for_state(mode: DpsTimeMode, state: &CombatState) -> bool {
+    matches!(mode, DpsTimeMode::TimeStopAdjusted)
+        && matches!(
+            state.combat_clock_health,
+            CombatClockRuntimeHealth::Available | CombatClockRuntimeHealth::Recorded
+        )
+}
+
+fn history_archive_policy(config: &UiConfig) -> HistoryArchivePolicy {
+    HistoryArchivePolicy {
+        requested_dps_time_mode: match config.dps_time_mode {
+            DpsTimeMode::TimeStopAdjusted => DpsTimeBasis::SubtractTimeStop,
+            DpsTimeMode::RealTime => DpsTimeBasis::WallClock,
+        },
+        separate_reaction_damage: config.separate_reaction_damage,
     }
 }
 
@@ -1345,13 +1462,7 @@ pub(crate) enum HudPreset {
 }
 
 struct AppStateInner {
-    started_at: Instant,
-    sequence: AtomicU64,
-    passthrough: AtomicBool,
-    passthrough_hotkey_ready: AtomicBool,
-    always_on_top: AtomicBool,
-    settings_revision: AtomicU64,
-    onboarding_step: AtomicU64,
+    desktop: DesktopRuntime,
     replay_import: ReplayImportRuntime,
     streams: StreamRegistry,
     live_capture: LiveCaptureService,
@@ -1373,7 +1484,7 @@ struct AppStateInner {
 
 struct HistoryUndoEntry {
     token: String,
-    record: HistoryRecord,
+    tombstone: HistoryDeleteTombstone,
     expires_at: Instant,
 }
 
@@ -1571,11 +1682,23 @@ impl ReplayImportReservation {
         replace_current: bool,
     ) -> Result<(), ReplayImportError> {
         self.finish_with(move |state| {
-            if replace_current {
-                state
-                    .stop_active_capture_and_wait(Duration::from_secs(5))
-                    .and_then(|()| state.request_diagnostics_replay(kind, path))
+            if kind == CaptureReplayKind::Json {
+                // Parse and validate the bounded document before stopping a
+                // live owner or changing any authoritative session revision.
+                let prepared =
+                    prepare_capture_json_replay(&path).map_err(ReplayImportError::JsonImport)?;
+                if replace_current {
+                    state
+                        .stop_active_capture_and_wait(Duration::from_secs(5))
+                        .map_err(ReplayImportError::Capture)?;
+                }
+                state.request_diagnostics_prepared_json_replay(prepared)
             } else {
+                if replace_current {
+                    state
+                        .stop_active_capture_and_wait(Duration::from_secs(5))
+                        .map_err(ReplayImportError::Capture)?;
+                }
                 state.request_diagnostics_replay(kind, path)
             }
         })
@@ -1583,13 +1706,13 @@ impl ReplayImportReservation {
 
     fn finish_with(
         mut self,
-        operation: impl FnOnce(&AppState) -> Result<(), CoreError>,
+        operation: impl FnOnce(&AppState) -> Result<(), ReplayImportError>,
     ) -> Result<(), ReplayImportError> {
         self.state
             .0
             .replay_import
             .ensure_owned(ReplayImportReservationState::ReplayImport)?;
-        let result = operation(&self.state).map_err(ReplayImportError::Capture);
+        let result = operation(&self.state);
         self.release()?;
         result
     }
@@ -1624,6 +1747,7 @@ impl AppState {
         config_path: PathBuf,
     ) -> Self {
         config = config.sanitized();
+        live_capture.set_history_archive_policy(history_archive_policy(&config));
         let capture_devices = enumerate_devices()
             .map(|devices| devices.iter().map(CaptureDeviceSnapshot::from).collect());
         if capture_devices.is_err() {
@@ -1637,17 +1761,11 @@ impl AppState {
             EquipmentCatalog::default()
         });
         Self(Arc::new(AppStateInner {
-            started_at: Instant::now(),
-            sequence: AtomicU64::new(0),
-            passthrough: AtomicBool::new(false),
-            passthrough_hotkey_ready: AtomicBool::new(false),
-            always_on_top: AtomicBool::new(
+            desktop: DesktopRuntime::new(
                 config
                     .hud_always_on_top
                     .expect("sanitized HUD always-on-top state"),
             ),
-            settings_revision: AtomicU64::new(0),
-            onboarding_step: AtomicU64::new(0),
             replay_import: ReplayImportRuntime::default(),
             streams: StreamRegistry::default(),
             live_capture,
@@ -1698,10 +1816,9 @@ impl AppState {
                     &hud_config,
                     &HashSet::new(),
                     HudProjectionOptions {
-                        dps_time_basis: DpsTimeBasis::from_subtract_time_stop(matches!(
-                            config.dps_time_mode,
-                            DpsTimeMode::TimeStopAdjusted
-                        )),
+                        dps_time_basis: DpsTimeBasis::from_subtract_time_stop(
+                            subtract_time_stop_for_state(config.dps_time_mode, state),
+                        ),
                         separate_reaction_damage: config.separate_reaction_damage,
                         selected_abyss_half,
                         preview_when_empty: !self.passthrough(),
@@ -1723,7 +1840,7 @@ impl AppState {
     }
 
     pub(crate) fn next_sequence(&self) -> u64 {
-        self.0.sequence.fetch_add(1, Ordering::Relaxed) + 1
+        self.0.desktop.next_sequence()
     }
 
     pub(crate) fn publish_island_notice(
@@ -1762,9 +1879,7 @@ impl AppState {
         step: usize,
         done: bool,
     ) -> Result<bool, SettingsServiceError> {
-        self.0
-            .onboarding_step
-            .store(step.min(3) as u64, Ordering::Release);
+        self.0.desktop.set_onboarding_step(step);
         self.bump_main_dps_revision();
         self.update_ui_config_with_effects(SettingsMutationEffects::NONE, |config| {
             config.onboarding_done = done;
@@ -1788,13 +1903,13 @@ impl AppState {
             config.hud = hud;
             config.onboarding_done = true;
         })?;
-        self.0.onboarding_step.store(3, Ordering::Release);
+        self.0.desktop.set_onboarding_step(3);
         self.bump_main_dps_revision();
         Ok(changed)
     }
 
     pub(crate) fn onboarding_step(&self) -> usize {
-        self.0.onboarding_step.load(Ordering::Acquire).min(3) as usize
+        self.0.desktop.onboarding_step()
     }
 
     pub(crate) fn console_window_geometry(&self) -> (Option<[f32; 2]>, Option<[f32; 2]>) {
@@ -1875,6 +1990,18 @@ impl AppState {
 
     pub(crate) fn live_capture_status(&self) -> LiveCaptureStatus {
         self.0.live_capture.status()
+    }
+
+    pub(crate) fn combat_clock_health(
+        &self,
+    ) -> Result<nte_dps_tool::engine::model::CombatClockRuntimeHealth, CoreError> {
+        self.0.live_capture.combat_clock_health()
+    }
+
+    pub(crate) fn main_presented_combat_clock_health(
+        &self,
+    ) -> Result<CombatClockRuntimeHealth, CoreError> {
+        self.with_main_presented_state(|state| state.combat_clock_health)
     }
 
     pub(crate) fn replay_running(&self) -> Result<bool, CoreError> {
@@ -1983,6 +2110,61 @@ impl AppState {
         &self,
         record_id: Option<String>,
     ) -> Result<bool, PresentationError> {
+        let operation = self.reserve_main_round_selection();
+        self.set_main_selected_round_id_for_operation(record_id, operation)
+    }
+
+    pub(crate) fn reserve_main_round_selection(&self) -> u64 {
+        self.0
+            .presentation
+            .selection_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    }
+
+    pub(crate) fn set_main_selected_round_id_for_operation(
+        &self,
+        record_id: Option<String>,
+        operation: u64,
+    ) -> Result<bool, PresentationError> {
+        self.set_main_selected_round_id_with(record_id, operation, |record_id| {
+            let mut record = load_history_record_by_id_for_interactive_selection(record_id)
+                .map_err(|error| {
+                    match error {
+                    nte_dps_tool::storage::history::HistoryRecordLoadError::DetailsTooLarge {
+                        ..
+                    }
+                    | nte_dps_tool::storage::history::HistoryRecordLoadError::DetailHitsTooLarge {
+                        ..
+                    } => PresentationError::RoundTooLarge,
+                    _ => PresentationError::RoundUnavailable,
+                }
+                })?
+                .filter(|record| record.details.is_some())
+                .ok_or(PresentationError::RoundUnavailable)?;
+            record
+                .details
+                .take()
+                .map(HistoryCombatDetails::into_combat_state)
+                .ok_or(PresentationError::RoundUnavailable)
+        })
+    }
+
+    fn set_main_selected_round_id_with(
+        &self,
+        record_id: Option<String>,
+        operation: u64,
+        load: impl FnOnce(&str) -> Result<CombatState, PresentationError>,
+    ) -> Result<bool, PresentationError> {
+        if self
+            .0
+            .presentation
+            .selection_generation
+            .load(Ordering::Acquire)
+            != operation
+        {
+            return Ok(false);
+        }
         let (mode, recovered) = self.0.presentation.lock_mode();
         if recovered {
             drop(mode);
@@ -1999,21 +2181,25 @@ impl AppState {
         }
         drop(mode);
 
-        // History loading is blocking I/O and must remain outside every
-        // Presentation lock.
+        // History loading and reconstruction are blocking/O(N) and remain
+        // outside every Presentation lock. Superseded failures are ignored:
+        // their newer intent owns both the visible state and command snapshot.
         let selection = match record_id {
             Some(record_id) => {
-                let index = self.main_round_index();
-                let record = index
-                    .iter()
-                    .find(|record| record.id == record_id && record.has_details)
-                    .and_then(|record| load_history_record_from_path(&record.path).ok())
-                    .ok_or(PresentationError::RoundUnavailable)?;
-                let state = record
-                    .details
-                    .as_ref()
-                    .map(HistoryCombatDetails::to_combat_state)
-                    .ok_or(PresentationError::RoundUnavailable)?;
+                let state = match load(&record_id) {
+                    Ok(state) => state,
+                    Err(_error)
+                        if self
+                            .0
+                            .presentation
+                            .selection_generation
+                            .load(Ordering::Acquire)
+                            != operation =>
+                    {
+                        return Ok(false);
+                    }
+                    Err(error) => return Err(error),
+                };
                 Some(SelectedRoundPresentation {
                     record_id,
                     state: Arc::new(state),
@@ -2026,6 +2212,15 @@ impl AppState {
             drop(mode);
             self.0.presentation.publish_technical_and_main();
             return Err(PresentationError::StateUnavailable);
+        }
+        if self
+            .0
+            .presentation
+            .selection_generation
+            .load(Ordering::Acquire)
+            != operation
+        {
+            return Ok(false);
         }
         if mode
             .selected_round
@@ -2043,28 +2238,7 @@ impl AppState {
     }
 
     pub(crate) fn main_round_index(&self) -> Arc<Vec<HistoryRoundIndex>> {
-        let revision = self.history_revision();
-        let mut cache = match self.0.history.round_cache.lock() {
-            Ok(cache) => cache,
-            Err(mut poison) => {
-                **poison.get_mut() = MainRoundCache::default();
-                self.0.history.round_cache.clear_poison();
-                log::warn!("History round index cache was discarded after an interrupted update");
-                poison.into_inner()
-            }
-        };
-        if cache.revision != Some(revision) {
-            let records = load_history_index().records;
-            cache.index = Arc::new(
-                records
-                    .iter()
-                    .map(HistoryRoundIndex::from_storage)
-                    .collect(),
-            );
-            cache.revision = Some(revision);
-        }
-        let index = Arc::clone(&cache.index);
-        drop(cache);
+        let index = self.load_main_round_index();
         let stale_selection = self
             .main_selected_round_id()
             .is_some_and(|id| !index.iter().any(|record| record.id == id));
@@ -2074,29 +2248,106 @@ impl AppState {
         index
     }
 
+    fn load_main_round_index(&self) -> Arc<Vec<HistoryRoundIndex>> {
+        let revision = self.history_revision();
+        let cache = match self.0.history.round_cache.lock() {
+            Ok(cache) => cache,
+            Err(mut poison) => {
+                **poison.get_mut() = MainRoundCache::default();
+                self.0.history.round_cache.clear_poison();
+                log::warn!("History round index cache was discarded after an interrupted update");
+                poison.into_inner()
+            }
+        };
+        if cache.revision == Some(revision) {
+            return Arc::clone(&cache.index);
+        }
+        drop(cache);
+
+        // Directory scan and JSON parsing stay outside the cache mutex. A
+        // concurrent history mutation makes this projection non-cacheable but
+        // does not justify holding a UI lock across disk I/O.
+        let loaded = Arc::new(
+            load_history_index()
+                .records
+                .iter()
+                .map(HistoryRoundIndex::from_storage)
+                .collect(),
+        );
+        let mut cache = match self.0.history.round_cache.lock() {
+            Ok(cache) => cache,
+            Err(mut poison) => {
+                **poison.get_mut() = MainRoundCache::default();
+                self.0.history.round_cache.clear_poison();
+                log::warn!("History round index cache was discarded after an interrupted update");
+                poison.into_inner()
+            }
+        };
+        if self.history_revision() == revision {
+            cache.index = Arc::clone(&loaded);
+            cache.revision = Some(revision);
+        }
+        loaded
+    }
+
     pub(crate) fn main_dps_readout(&self) -> Result<MainDpsReadout, CoreError> {
+        const MAIN_READOUT_CACHE_CAPACITY: usize = 6;
         let mode = self.presentation_mode_snapshot();
         let follow_live_half = mode.selected_round.is_none() && !mode.processing_paused();
         let abyss_before = self.abyss_presentation_snapshot();
-        let (readout, abyss_after) = self.with_presentation_mode_state(&mode, |state| {
-            let abyss_after = if follow_live_half {
-                let (selected, observed) = next_live_abyss_selection(
-                    abyss_before.selected,
-                    abyss_before.observed,
-                    state.abyss.active_half,
-                );
-                AbyssPresentationState { selected, observed }
-            } else {
-                abyss_before
-            };
-            (
-                self.project_main_readout(state, abyss_after.selected),
-                abyss_after,
-            )
+        let abyss_after = self.with_presentation_mode_state(&mode, |state| {
+            if !follow_live_half {
+                return abyss_before;
+            }
+            let (selected, observed) = next_live_abyss_selection(
+                abyss_before.selected,
+                abyss_before.observed,
+                state.abyss.active_half,
+            );
+            AbyssPresentationState { selected, observed }
         })?;
         if follow_live_half {
             self.commit_follow_live_abyss(abyss_before, abyss_after);
         }
+
+        let revision = self.main_dps_stream_revision()?;
+        let key = MainReadoutCacheKey { revision };
+        let (cache, recovered) = self.0.presentation.lock_main_readout_cache();
+        if !recovered && let Some(cached) = cache.iter().find(|cached| cached.key == key) {
+            return Ok(cached.readout.as_ref().clone());
+        }
+        drop(cache);
+
+        #[cfg(test)]
+        self.0
+            .presentation
+            .main_readout_projection_count
+            .fetch_add(1, Ordering::AcqRel);
+        let readout = self.with_presentation_mode_state(&mode, |state| {
+            self.project_main_readout(state, abyss_after.selected)
+        })?;
+
+        // A concurrent hit/settings/presentation mutation makes this result a
+        // valid one-shot snapshot, but it must not be published under an older
+        // key. The next consumer projects the newer exact revision instead.
+        if self.main_dps_stream_revision()? != revision {
+            return Ok(readout);
+        }
+        let readout = Arc::new(readout);
+        let (mut cache, _) = self.0.presentation.lock_main_readout_cache();
+        if let Some(cached) = cache.iter().find(|cached| cached.key == key) {
+            return Ok(cached.readout.as_ref().clone());
+        }
+        cache.push(MainReadoutCache {
+            key,
+            readout: Arc::clone(&readout),
+        });
+        if cache.len() > MAIN_READOUT_CACHE_CAPACITY {
+            let remove_count = cache.len() - MAIN_READOUT_CACHE_CAPACITY;
+            cache.drain(..remove_count);
+        }
+        drop(cache);
+        let readout = readout.as_ref().clone();
         Ok(readout)
     }
 
@@ -2289,7 +2540,7 @@ impl AppState {
         selected_abyss_half: Option<AbyssHalf>,
     ) -> MainDpsReadout {
         let config = self.ui_config();
-        let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted);
+        let subtract_time_stop = subtract_time_stop_for_state(config.dps_time_mode, state);
         let projection_half = state.abyss.is_active().then(|| {
             selected_abyss_half
                 .or(state.abyss.active_half)
@@ -2421,6 +2672,10 @@ impl AppState {
             teams.upper_imported,
             teams.lower_imported,
             updates,
+            self.combat_clock_health().unwrap_or_else(|error| {
+                log::warn!("project combat-clock health for Settings failed: {error:?}");
+                nte_dps_tool::engine::model::CombatClockRuntimeHealth::Unknown
+            }),
         )
     }
 
@@ -2532,11 +2787,11 @@ impl AppState {
     }
 
     pub(crate) fn passthrough(&self) -> bool {
-        self.0.passthrough.load(Ordering::Acquire)
+        self.0.desktop.passthrough()
     }
 
     pub(crate) fn set_passthrough(&self, enabled: bool) {
-        if self.0.passthrough.swap(enabled, Ordering::AcqRel) != enabled {
+        if self.0.desktop.set_passthrough(enabled) {
             self.0.presentation.revision.fetch_add(1, Ordering::AcqRel);
         }
     }
@@ -2550,13 +2805,11 @@ impl AppState {
     }
 
     pub(crate) fn passthrough_hotkey_ready(&self) -> bool {
-        self.0.passthrough_hotkey_ready.load(Ordering::Acquire)
+        self.0.desktop.passthrough_hotkey_ready()
     }
 
     pub(crate) fn set_passthrough_hotkey_ready(&self, ready: bool) {
-        self.0
-            .passthrough_hotkey_ready
-            .store(ready, Ordering::Release);
+        self.0.desktop.set_passthrough_hotkey_ready(ready);
     }
 
     pub(crate) fn lock_passthrough_transaction(
@@ -2566,7 +2819,7 @@ impl AppState {
     }
 
     pub(crate) fn always_on_top(&self) -> bool {
-        self.0.always_on_top.load(Ordering::Acquire)
+        self.0.desktop.hud_always_on_top()
     }
 
     pub(crate) fn window_always_on_top(&self, window: DesktopWindowKind) -> bool {
@@ -2833,7 +3086,7 @@ impl AppState {
     }
 
     fn bump_settings_revision(&self) {
-        self.0.settings_revision.fetch_add(1, Ordering::AcqRel);
+        self.0.desktop.bump_settings_revision();
     }
 
     pub(crate) fn set_density(&self, density: UiDensity) -> Result<bool, SettingsServiceError> {
@@ -2854,7 +3107,7 @@ impl AppState {
         dps_time_mode: DpsTimeMode,
         passthrough_hotkey: PassthroughHotkey,
     ) -> Result<bool, SettingsServiceError> {
-        self.update_ui_config(|config| {
+        let changed = self.update_ui_config(|config| {
             config.capture_filter = filter;
             config.manual_capture_device = manual_capture_device;
             config.server_damage_calibration = server_damage_calibration;
@@ -2863,7 +3116,15 @@ impl AppState {
             config.auto_round_idle_seconds = auto_round_idle_seconds;
             config.dps_time_mode = dps_time_mode;
             config.passthrough_hotkey = passthrough_hotkey;
-        })
+        })?;
+        // Keep the capture-side automatic round-boundary policy synchronized
+        // only after the durable settings transaction succeeds. A boundary
+        // then freezes this effective basis and reaction mode together with
+        // its detached state instead of consulting mutable settings later.
+        self.0
+            .live_capture
+            .set_history_archive_policy(history_archive_policy(&self.ui_config()));
+        Ok(changed)
     }
 
     pub(crate) fn update_global_hotkeys(
@@ -3076,7 +3337,7 @@ impl AppState {
         self.with_main_presented_state(|state| {
             let export = nte_dps_tool::core::team_data::export_team_data(
                 state,
-                matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+                subtract_time_stop_for_state(config.dps_time_mode, state),
                 config.separate_reaction_damage,
                 None,
                 None,
@@ -3115,7 +3376,7 @@ impl AppState {
         Ok(self.with_main_presented_state(|state| {
             nte_dps_tool::core::team_data::export_team_data(
                 state,
-                matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted),
+                subtract_time_stop_for_state(config.dps_time_mode, state),
                 config.separate_reaction_damage,
                 imported.upper,
                 imported.lower,
@@ -3209,7 +3470,7 @@ impl AppState {
             DesktopWindowKind::TeamDetails => config.team_details_always_on_top = Some(enabled),
         })?;
         if window == DesktopWindowKind::Hud {
-            self.0.always_on_top.store(enabled, Ordering::Release);
+            self.0.desktop.set_hud_always_on_top(enabled);
         }
         Ok(changed)
     }
@@ -3218,61 +3479,74 @@ impl AppState {
         &self,
     ) -> Result<Option<PreparedHistoryArchive>, CoreError> {
         let config = self.ui_config();
-        let (state, source) = self.0.live_capture.state_and_source_snapshot()?;
-        Ok(prepare_history_archive(
+        let (state, source) = self.0.live_capture.history_state_and_source_snapshot()?;
+        let dps_time_mode = DpsTimeBasis::from_subtract_time_stop(subtract_time_stop_for_state(
+            config.dps_time_mode,
             &state,
+        ));
+        Ok(prepare_history_archive_owned(
+            state,
             source,
-            DpsTimeBasis::from_subtract_time_stop(matches!(
-                config.dps_time_mode,
-                DpsTimeMode::TimeStopAdjusted
-            )),
+            dps_time_mode,
             config.separate_reaction_damage,
         ))
     }
 
-    fn prepare_history_details(
-        &self,
-        pending: PendingHistoryArchive,
-    ) -> Option<PreparedHistoryArchive> {
-        let config = self.ui_config();
-        let state = pending.details.to_combat_state();
-        state
-            .session_summary(
-                pending.source,
-                DpsTimeBasis::from_subtract_time_stop(matches!(
-                    config.dps_time_mode,
-                    DpsTimeMode::TimeStopAdjusted
-                )),
-                config.separate_reaction_damage,
-            )
-            .map(|summary| PreparedHistoryArchive {
-                summary,
-                details: Some(pending.details),
-            })
-    }
-
     fn persist_history_archive(
         &self,
-        archive: PreparedHistoryArchive,
+        archive: &PreparedHistoryArchive,
     ) -> Result<HistoryPersistenceOutcome, HistoryRuntimeError> {
         self.with_history_transaction(|| self.persist_history_archive_locked(archive))?
     }
 
     fn persist_history_archive_locked(
         &self,
-        archive: PreparedHistoryArchive,
+        archive: &PreparedHistoryArchive,
     ) -> Result<HistoryPersistenceOutcome, HistoryRuntimeError> {
-        let outcome = match archive.details {
-            Some(details) => save_summary_with_details_outcome(archive.summary, details),
-            None => save_summary_outcome(archive.summary),
-        }
-        .map_err(|_| {
-            log::warn!("History archive storage operation did not finish");
-            HistoryRuntimeError::Persistence
-        })?;
-        Ok(self.finish_history_save(outcome))
+        self.persist_history_parts_locked(&archive.summary, archive.details.as_ref())
     }
 
+    fn persist_pending_history_archive(
+        &self,
+        archive: &PendingHistoryArchive,
+    ) -> Result<HistoryPersistenceOutcome, HistoryRuntimeError> {
+        self.with_history_transaction(|| {
+            self.persist_history_parts_locked(&archive.summary, Some(&archive.details))
+        })?
+    }
+
+    fn persist_history_parts_locked(
+        &self,
+        summary: &nte_dps_tool::engine::model::CombatSessionSummary,
+        details: Option<&HistoryCombatDetails>,
+    ) -> Result<HistoryPersistenceOutcome, HistoryRuntimeError> {
+        let outcome = save_borrowed_archive_outcome(summary, details).map_err(|error| {
+            log::warn!("History archive storage operation did not finish: {error}");
+            if error.is_retryable() {
+                HistoryRuntimeError::Persistence
+            } else {
+                HistoryRuntimeError::PermanentPersistence
+            }
+        })?;
+        Ok(self.finish_borrowed_history_save(outcome))
+    }
+
+    fn finish_borrowed_history_save(
+        &self,
+        outcome: BorrowedHistorySaveOutcome,
+    ) -> HistoryPersistenceOutcome {
+        let persistence_outcome = match outcome {
+            BorrowedHistorySaveOutcome::Committed => HistoryPersistenceOutcome::Committed,
+            BorrowedHistorySaveOutcome::CommittedWithMaintenanceWarning(warning) => {
+                log::warn!("{warning}");
+                HistoryPersistenceOutcome::CommittedWithMaintenanceWarning
+            }
+        };
+        self.bump_history_revision();
+        persistence_outcome
+    }
+
+    #[cfg(test)]
     fn finish_history_save(&self, outcome: HistorySaveOutcome) -> HistoryPersistenceOutcome {
         let persistence_outcome = match outcome {
             HistorySaveOutcome::Committed(_) => HistoryPersistenceOutcome::Committed,
@@ -3305,7 +3579,7 @@ impl AppState {
         &self,
         persist: impl FnOnce(
             &Self,
-            PreparedHistoryArchive,
+            &PreparedHistoryArchive,
         ) -> Result<HistoryPersistenceOutcome, HistoryRuntimeError>,
     ) -> Result<bool, HistoryRuntimeError> {
         let _archive_transaction = self
@@ -3331,34 +3605,39 @@ impl AppState {
             return Err(HistoryRuntimeError::RetryQueueFull);
         }
         let config = self.ui_config();
+        let policy = history_archive_policy(&config);
         let Some(cut) = self
             .0
             .live_capture
-            .cut_round()
+            .cut_round_with_history_policy(policy)
             .map_err(|_| HistoryRuntimeError::Unavailable)?
         else {
             return Ok(false);
         };
-        let Some(archive) = prepare_history_archive(
-            &cut.state,
+        let Some(archive) = prepare_history_archive_owned(
+            cut.state,
             cut.source,
-            DpsTimeBasis::from_subtract_time_stop(matches!(
-                config.dps_time_mode,
-                DpsTimeMode::TimeStopAdjusted
-            )),
-            config.separate_reaction_damage,
+            cut.dps_time_mode,
+            cut.separate_reaction_damage,
         ) else {
             log::warn!("cut History round had no archivable summary");
             return Ok(true);
         };
-        if let Err(error) = persist(self, archive.clone()) {
+        if let Err(error) = persist(self, &archive) {
             log::warn!("History persistence failed after the live round was cut: {error}");
-            self.0
-                .history
-                .pending_archives
-                .lock()
-                .map_err(|_| HistoryRuntimeError::Unavailable)?
-                .push_back(archive);
+            if matches!(
+                error,
+                HistoryRuntimeError::Unavailable | HistoryRuntimeError::Persistence
+            ) {
+                self.0
+                    .history
+                    .pending_archives
+                    .lock()
+                    .map_err(|_| HistoryRuntimeError::Unavailable)?
+                    .push_back(archive);
+            } else {
+                return Err(error);
+            }
         }
         Ok(true)
     }
@@ -3373,10 +3652,7 @@ impl AppState {
             .into_iter();
         let mut retry = Vec::new();
         while let Some(current) = pending.next() {
-            let Some(archive) = self.prepare_history_details(current.clone()) else {
-                continue;
-            };
-            match self.persist_history_archive(archive) {
+            match self.persist_pending_history_archive(&current) {
                 Ok(_) => {}
                 Err(HistoryRuntimeError::Unavailable) => {
                     retry.push(current);
@@ -3387,9 +3663,11 @@ impl AppState {
                         .map_err(|_| HistoryRuntimeError::Unavailable)?;
                     return Err(HistoryRuntimeError::Unavailable);
                 }
+                Err(HistoryRuntimeError::Persistence) => {
+                    retry.push(current);
+                }
                 Err(error) => {
                     log::warn!("automatic Abyss History archive failed: {error}");
-                    retry.push(current);
                 }
             }
         }
@@ -3453,7 +3731,7 @@ impl AppState {
         &self,
         mut persist: impl FnMut(
             &Self,
-            PreparedHistoryArchive,
+            &PreparedHistoryArchive,
         ) -> Result<HistoryPersistenceOutcome, HistoryRuntimeError>,
     ) -> Result<(), HistoryRuntimeError> {
         let _archive_transaction = self
@@ -3482,7 +3760,7 @@ impl AppState {
         let mut pending = pending.into_iter();
         let mut retry = VecDeque::new();
         while let Some(archive) = pending.next() {
-            match persist(self, archive.clone()) {
+            match persist(self, &archive) {
                 Ok(_) => {}
                 Err(HistoryRuntimeError::Unavailable) => {
                     retry.push_back(archive);
@@ -3490,9 +3768,12 @@ impl AppState {
                     self.restore_history_retry_queue(retry)?;
                     return Err(HistoryRuntimeError::Unavailable);
                 }
+                Err(HistoryRuntimeError::Persistence) => {
+                    log::warn!("retrying a pending History archive failed");
+                    retry.push_back(archive);
+                }
                 Err(error) => {
                     log::warn!("retrying a pending History archive failed: {error}");
-                    retry.push_back(archive);
                 }
             }
         }
@@ -3767,26 +4048,50 @@ impl AppState {
         &self,
         kind: CaptureReplayKind,
         path: PathBuf,
-    ) -> Result<(), CoreError> {
+    ) -> Result<(), ReplayImportError> {
         let config = self.ui_config();
         let local_ip_hint = self
             .diagnostics_report()
             .and_then(|run| run.environment.local_ip)
             .and_then(|local_ip| local_ip.parse().ok());
-        let result = self.0.live_capture.request_replay(
-            kind,
-            path,
-            local_ip_hint,
-            true,
-            config.server_damage_calibration,
-        );
+        let result = self
+            .0
+            .live_capture
+            .request_replay(
+                kind,
+                path,
+                local_ip_hint,
+                true,
+                config.server_damage_calibration,
+            )
+            .map_err(|error| match error {
+                ReplayStartError::Capture(error) => ReplayImportError::Capture(error),
+                ReplayStartError::JsonImport(error) => ReplayImportError::JsonImport(error),
+            });
         if result.is_ok() {
             self.return_main_presentation_to_live();
         }
         result
     }
 
-    pub(crate) fn diagnostics_capture_export(&self) -> Result<CaptureExportDocument, CoreError> {
+    fn request_diagnostics_prepared_json_replay(
+        &self,
+        prepared: PreparedCaptureJsonReplay,
+    ) -> Result<(), ReplayImportError> {
+        let result = self
+            .0
+            .live_capture
+            .request_prepared_json_replay(prepared)
+            .map_err(ReplayImportError::Capture);
+        if result.is_ok() {
+            self.return_main_presentation_to_live();
+        }
+        result
+    }
+
+    pub(crate) fn diagnostics_capture_export_plan(
+        &self,
+    ) -> Result<(CaptureExportPlan, u64), CoreError> {
         let config = self.ui_config();
         let game_network = self
             .diagnostics_report()
@@ -3797,20 +4102,55 @@ impl AppState {
                 remote_ip: network.remote_ip,
                 remote_port: network.remote_port,
             });
-        self.0.live_capture.with_state(|state| {
-            CaptureExportDocument::snapshot(
-                state,
-                CaptureExportOptions {
-                    filter: config.capture_filter,
-                    include_incoming: true,
-                    game_network,
-                    dps_time_mode: DpsTimeBasis::from_subtract_time_stop(matches!(
-                        config.dps_time_mode,
-                        DpsTimeMode::TimeStopAdjusted
-                    )),
-                },
+        self.0.live_capture.with_packet_state(|revision, _, state| {
+            (
+                nte_dps_tool::engine::capture::CaptureExportDocument::prepare(
+                    state,
+                    CaptureExportOptions {
+                        filter: config.capture_filter,
+                        include_incoming: true,
+                        game_network,
+                        dps_time_mode: DpsTimeBasis::from_subtract_time_stop(
+                            subtract_time_stop_for_state(config.dps_time_mode, state),
+                        ),
+                    },
+                ),
+                revision.session_generation,
             )
         })
+    }
+
+    /// Copies one bounded hit page while proving it still belongs to the
+    /// immutable export plan. Disk serialization happens after this closure
+    /// releases the authoritative state lock.
+    pub(crate) fn diagnostics_capture_export_hit_page(
+        &self,
+        session_generation: u64,
+        hits_generation: u64,
+        hit_count: usize,
+        start: usize,
+        limit: usize,
+    ) -> Result<Vec<Hit>, CoreError> {
+        self.0
+            .live_capture
+            .with_packet_state(|revision, _, state| {
+                let Some(end) = start.checked_add(limit).filter(|end| *end <= hit_count) else {
+                    return Err(CoreError::new(
+                        CoreErrorCode::CaptureStateUnavailable,
+                        "capture export requested an invalid hit page",
+                    ));
+                };
+                if revision.session_generation != session_generation
+                    || state.hits_generation != hits_generation
+                    || state.hits.len() != hit_count
+                {
+                    return Err(CoreError::new(
+                        CoreErrorCode::CaptureStateUnavailable,
+                        "capture export source changed during streaming",
+                    ));
+                }
+                Ok(state.hits.range(start..end).cloned().collect())
+            })?
     }
 
     pub(crate) fn diagnostics_has_exportable_state(&self) -> Result<bool, CoreError> {
@@ -3830,24 +4170,58 @@ impl AppState {
     pub(crate) fn timeline_projection(
         &self,
         scope: TimelineScope,
-    ) -> Result<TimelineProjection, CoreError> {
+    ) -> Result<Arc<TimelineProjection>, CoreError> {
+        const TIMELINE_CACHE_CAPACITY: usize = 6;
         let config = self.ui_config();
+        let revision = self.main_dps_stream_revision()?;
+        let subtract_time_stop = matches!(config.dps_time_mode, DpsTimeMode::TimeStopAdjusted)
+            && matches!(
+                self.main_presented_combat_clock_health()?,
+                CombatClockRuntimeHealth::Available | CombatClockRuntimeHealth::Recorded
+            );
+        let key = TimelineProjectionCacheKey {
+            revision,
+            scope,
+            bucket_seconds_bits: config.timeline_bucket_seconds.to_bits(),
+            subtract_time_stop,
+            language: config.language.code(),
+        };
+        let (cache, recovered) = self.0.presentation.lock_timeline_cache();
+        if !recovered && let Some(cached) = cache.iter().find(|cached| cached.key == key) {
+            return Ok(Arc::clone(&cached.projection));
+        }
+        drop(cache);
+
         let resources = self.0.live_capture.resources();
-        self.with_main_presented_state(|state| {
+        let projection = Arc::new(self.with_main_presented_state(|state| {
             project_timeline(
                 state,
                 &resources.characters,
                 TimelineProjectionOptions {
                     scope,
                     bucket_seconds: config.timeline_bucket_seconds,
-                    subtract_time_stop: matches!(
-                        config.dps_time_mode,
-                        DpsTimeMode::TimeStopAdjusted
-                    ),
+                    max_buckets: MAX_TIMELINE_BUCKETS,
+                    max_roles_per_bucket: MAX_TIMELINE_ROLES_PER_BUCKET,
+                    max_characters: MAX_TIMELINE_CHARACTERS,
+                    subtract_time_stop,
                     language: config.language,
                 },
             )
-        })
+        })?);
+
+        let (mut cache, _) = self.0.presentation.lock_timeline_cache();
+        if let Some(cached) = cache.iter().find(|cached| cached.key == key) {
+            return Ok(Arc::clone(&cached.projection));
+        }
+        cache.push(TimelineProjectionCache {
+            key,
+            projection: Arc::clone(&projection),
+        });
+        if cache.len() > TIMELINE_CACHE_CAPACITY {
+            let remove_count = cache.len() - TIMELINE_CACHE_CAPACITY;
+            cache.drain(..remove_count);
+        }
+        Ok(projection)
     }
 
     pub(crate) fn packet_stream_revision(&self) -> Result<PacketStreamRevision, CoreError> {
@@ -3961,40 +4335,69 @@ impl AppState {
         Ok(())
     }
 
-    pub(crate) fn remember_deleted_history(
+    pub(crate) fn remember_deleted_history_tombstone(
         &self,
-        record: HistoryRecord,
+        tombstone: HistoryDeleteTombstone,
     ) -> Result<String, HistoryRuntimeError> {
-        let mut undo = self
-            .0
-            .history
-            .undo
-            .lock()
-            .map_err(|_| HistoryRuntimeError::Unavailable)?;
-        let sequence = self.0.history.undo_sequence.fetch_add(1, Ordering::AcqRel) + 1;
-        let token = format!("history-undo-{sequence}");
-        *undo = Some(HistoryUndoEntry {
-            token: token.clone(),
-            record,
-            expires_at: Instant::now() + HISTORY_UNDO_WINDOW,
-        });
+        let token = tombstone.token().to_owned();
+        let replaced = {
+            let mut undo = self
+                .0
+                .history
+                .undo
+                .lock()
+                .map_err(|_| HistoryRuntimeError::Unavailable)?;
+            undo.replace(HistoryUndoEntry {
+                token: token.clone(),
+                tombstone,
+                expires_at: Instant::now() + HISTORY_UNDO_WINDOW,
+            })
+        };
+        // Disk cleanup is deliberately outside the undo mutex. History command
+        // callers hold the broader transaction guard, so replacement remains
+        // serialized while slow filesystem work cannot block token reads.
+        if let Some(replaced) = replaced
+            && let Err(error) = discard_tombstoned_record(&replaced.tombstone)
+        {
+            log::warn!("replaced History undo tombstone cleanup did not finish: {error}");
+        }
         Ok(token)
     }
 
-    pub(crate) fn peek_deleted_history(
+    pub(crate) fn peek_deleted_history_tombstone(
         &self,
         token: &str,
-    ) -> Result<Option<HistoryRecord>, HistoryRuntimeError> {
-        let undo = self
-            .0
-            .history
-            .undo
-            .lock()
-            .map_err(|_| HistoryRuntimeError::Unavailable)?;
-        Ok(undo
-            .as_ref()
-            .filter(|entry| entry.token == token && Instant::now() <= entry.expires_at)
-            .map(|entry| entry.record.clone()))
+    ) -> Result<Option<HistoryDeleteTombstone>, HistoryRuntimeError> {
+        let (active, expired) = {
+            let mut undo = self
+                .0
+                .history
+                .undo
+                .lock()
+                .map_err(|_| HistoryRuntimeError::Unavailable)?;
+            if undo
+                .as_ref()
+                .is_some_and(|entry| Instant::now() > entry.expires_at)
+            {
+                (None, undo.take())
+            } else {
+                (
+                    undo.as_ref()
+                        .filter(|entry| entry.token == token)
+                        .map(|entry| entry.tombstone.clone()),
+                    None,
+                )
+            }
+        };
+        // Expiry cleanup is also outside the mutex. A failed cleanup becomes a
+        // bounded orphan for startup/maintenance cleanup; it is never restored
+        // as a valid undo entry after its deadline.
+        if let Some(expired) = expired
+            && let Err(error) = discard_tombstoned_record(&expired.tombstone)
+        {
+            log::warn!("expired History undo tombstone cleanup did not finish: {error}");
+        }
+        Ok(active)
     }
 
     pub(crate) fn consume_deleted_history(&self, token: &str) -> Result<bool, HistoryRuntimeError> {
@@ -4085,7 +4488,7 @@ impl AppState {
     }
 
     pub(crate) fn settings_revision(&self) -> u64 {
-        self.0.settings_revision.load(Ordering::Acquire)
+        self.0.desktop.settings_revision()
     }
 
     fn with_main_presented_state<T>(
@@ -4177,7 +4580,7 @@ impl AppState {
     }
 
     pub(crate) fn uptime_ms(&self) -> u128 {
-        self.0.started_at.elapsed().as_millis()
+        self.0.desktop.uptime_ms()
     }
 
     fn hud_config(&self) -> HudConfig {
@@ -4295,6 +4698,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn capture_export_rejects_same_length_hits_from_a_replacement_session() {
+        let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut original = CombatState::default();
+        original.push_hit(test_hit(100.0));
+        live_capture
+            .restore_session(original, CaptureQualitySource::JsonReplay)
+            .expect("original capture session should install");
+        let state = AppState::new(UiConfig::default(), live_capture.clone());
+        let (plan, session_generation) = state
+            .diagnostics_capture_export_plan()
+            .expect("original export plan should be available");
+
+        let mut replacement = CombatState::default();
+        replacement.push_hit(test_hit(999.0));
+        assert_eq!(
+            replacement.hits_generation,
+            plan.hits_generation(),
+            "fixture proves per-state hit generations can collide"
+        );
+        live_capture
+            .restore_session(replacement, CaptureQualitySource::JsonReplay)
+            .expect("replacement capture session should install");
+
+        let error = state
+            .diagnostics_capture_export_hit_page(
+                session_generation,
+                plan.hits_generation(),
+                plan.hit_count(),
+                0,
+                1,
+            )
+            .expect_err("a replacement session must invalidate the export plan");
+        assert_eq!(error.code, CoreErrorCode::CaptureStateUnavailable);
+        assert!(error.detail.contains("source changed"));
+    }
+
     fn test_hit(damage: f64) -> nte_dps_tool::engine::model::Hit {
         use nte_dps_tool::engine::model::{Hit, HitCharacterSource, HitDirection};
 
@@ -4344,6 +4784,33 @@ mod tests {
         ));
         fs::create_dir_all(&directory).expect("temporary config directory");
         directory.join("config.json")
+    }
+
+    fn temporary_history_tombstone(
+        tag: &str,
+    ) -> (
+        PathBuf,
+        nte_dps_tool::storage::history::HistoryDeleteTombstone,
+    ) {
+        use nte_dps_tool::storage::history::{save_summary_to_dir, tombstone_record_from_dir};
+
+        let directory = std::env::temp_dir().join(format!(
+            "nte-tauri-history-undo-{tag}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_nanos()
+        ));
+        let record = save_summary_to_dir(
+            &directory,
+            nte_dps_tool::engine::model::CombatSessionSummary::default(),
+        )
+        .expect("save History tombstone fixture");
+        let tombstone = tombstone_record_from_dir(&directory, &record.id)
+            .expect("create History tombstone fixture")
+            .expect("History fixture exists");
+        (directory, tombstone)
     }
 
     #[test]
@@ -4577,6 +5044,9 @@ mod tests {
             TimelineProjectionOptions {
                 scope: TimelineScope::Whole,
                 bucket_seconds: 1.0,
+                max_buckets: MAX_TIMELINE_BUCKETS,
+                max_roles_per_bucket: MAX_TIMELINE_ROLES_PER_BUCKET,
+                max_characters: MAX_TIMELINE_CHARACTERS,
                 subtract_time_stop: true,
                 language: Language::English,
             },
@@ -4593,6 +5063,172 @@ mod tests {
         assert_eq!(timeline.total_damage, 125.0);
         assert_eq!(skills.total_damage, 125.0);
         assert!(selected_round_combat_state(&records, Some("other-round")).is_none());
+    }
+
+    #[test]
+    fn late_starting_history_worker_cannot_overwrite_a_newer_intent() {
+        let state = AppState::default();
+        let slow_operation = state.reserve_main_round_selection();
+        let newest_operation = state.reserve_main_round_selection();
+
+        assert!(
+            state
+                .set_main_selected_round_id_with(
+                    Some("newest".to_owned()),
+                    newest_operation,
+                    |_| {
+                        let mut selected = CombatState::default();
+                        selected.push_hit(test_hit(200.0));
+                        Ok(selected)
+                    },
+                )
+                .expect("commit newer History selection")
+        );
+        let stale_loader_ran = AtomicBool::new(false);
+        assert!(
+            !state
+                .set_main_selected_round_id_with(Some("slow".to_owned()), slow_operation, |_| {
+                    stale_loader_ran.store(true, Ordering::Release);
+                    let mut selected = CombatState::default();
+                    selected.push_hit(test_hit(100.0));
+                    Ok(selected)
+                },)
+                .expect("superseded History selection")
+        );
+        assert!(!stale_loader_ran.load(Ordering::Acquire));
+
+        assert_eq!(state.main_selected_round_id().as_deref(), Some("newest"));
+        assert_eq!(
+            state
+                .with_main_presented_state(|selected| selected.total_damage)
+                .expect("project latest History selection"),
+            200.0
+        );
+    }
+
+    #[test]
+    fn already_loading_history_selection_cannot_overwrite_a_newer_intent() {
+        let state = AppState::default();
+        let slow_operation = state.reserve_main_round_selection();
+        let slow_state = state.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let slow = std::thread::spawn(move || {
+            slow_state.set_main_selected_round_id_with(
+                Some("slow".to_owned()),
+                slow_operation,
+                |_| {
+                    entered_tx.send(()).expect("signal slow History load");
+                    release_rx.recv().expect("release slow History load");
+                    let mut selected = CombatState::default();
+                    selected.push_hit(test_hit(100.0));
+                    Ok(selected)
+                },
+            )
+        });
+        entered_rx.recv().expect("slow History load started");
+        let newest_operation = state.reserve_main_round_selection();
+        assert!(
+            state
+                .set_main_selected_round_id_with(
+                    Some("newest".to_owned()),
+                    newest_operation,
+                    |_| {
+                        let mut selected = CombatState::default();
+                        selected.push_hit(test_hit(200.0));
+                        Ok(selected)
+                    },
+                )
+                .expect("commit newer History selection")
+        );
+        release_tx.send(()).expect("finish slow History load");
+        assert!(
+            !slow
+                .join()
+                .expect("join slow History selection")
+                .expect("superseded History selection")
+        );
+        assert_eq!(state.main_selected_round_id().as_deref(), Some("newest"));
+    }
+
+    #[test]
+    fn timeline_projection_cache_reuses_one_revision_across_consumers() {
+        let state = AppState::default();
+        let first = state
+            .timeline_projection(TimelineScope::Whole)
+            .expect("first projection");
+        let second = state
+            .timeline_projection(TimelineScope::Whole)
+            .expect("same-revision projection");
+        let other_scope = state
+            .timeline_projection(TimelineScope::First)
+            .expect("other-scope projection");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other_scope));
+        assert!(first.buckets.len() <= MAX_TIMELINE_BUCKETS);
+    }
+
+    #[test]
+    fn main_readout_cache_reuses_exact_revision_and_invalidates_on_hit() {
+        let state = AppState::default();
+
+        let first = state.main_dps_readout().expect("first main readout");
+        let second = state
+            .main_dps_readout()
+            .expect("same-revision main readout");
+        assert_eq!(first.hud, second.hud);
+        assert_eq!(
+            state
+                .0
+                .presentation
+                .main_readout_projection_count
+                .load(Ordering::Acquire),
+            1,
+            "same-revision consumers must share one projection"
+        );
+
+        let mut combat = CombatState::default();
+        combat.push_hit(test_hit(250.0));
+        state.restore_live_state_for_test(combat, CaptureQualitySource::Live);
+        let changed = state
+            .main_dps_readout()
+            .expect("new-hit main readout projection");
+        assert_eq!(
+            changed.hud.summary.expect("live summary").total_damage,
+            250.0
+        );
+        assert_eq!(
+            state
+                .0
+                .presentation
+                .main_readout_projection_count
+                .load(Ordering::Acquire),
+            2,
+            "a new capture revision must invalidate the cached readout"
+        );
+
+        // Drive more exact revisions than the cache can retain. Each snapshot
+        // remains independently usable, while old revisions are evicted.
+        for damage in 1..=8 {
+            let mut combat = CombatState::default();
+            combat.push_hit(test_hit(f64::from(damage)));
+            state.restore_live_state_for_test(combat, CaptureQualitySource::Live);
+            let readout = state
+                .main_dps_readout()
+                .expect("bounded-cache main readout projection");
+            assert_eq!(
+                readout
+                    .hud
+                    .summary
+                    .expect("bounded-cache summary")
+                    .total_damage,
+                f64::from(damage)
+            );
+        }
+        let (cache, recovered) = state.0.presentation.lock_main_readout_cache();
+        assert!(!recovered);
+        assert_eq!(cache.len(), 6, "readout cache memory must remain bounded");
     }
 
     #[test]
@@ -4824,6 +5460,37 @@ mod tests {
     }
 
     #[test]
+    fn permanent_history_failure_is_reported_once_and_never_enters_the_retry_queue() {
+        let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut current = CombatState::default();
+        current.push_hit(test_hit(700.0));
+        live_capture
+            .restore_session(current, CaptureQualitySource::Live)
+            .expect("healthy live-capture state");
+        let state = AppState::new(UiConfig::default(), live_capture);
+        let attempts = AtomicU64::new(0);
+
+        assert_eq!(
+            state.archive_current_history_round_with(|_, _| {
+                attempts.fetch_add(1, Ordering::AcqRel);
+                Err(HistoryRuntimeError::PermanentPersistence)
+            }),
+            Err(HistoryRuntimeError::PermanentPersistence)
+        );
+        assert_eq!(attempts.load(Ordering::Acquire), 1);
+        assert!(
+            state
+                .0
+                .history
+                .pending_archives
+                .lock()
+                .expect("pending History archives lock")
+                .is_empty(),
+            "permanent validation failures must not create an infinite retry loop"
+        );
+    }
+
+    #[test]
     fn poisoned_history_transaction_does_not_run_the_action() {
         let state = AppState::default();
         let initial_revision = state.history_revision();
@@ -5033,6 +5700,56 @@ mod tests {
     }
 
     #[test]
+    fn history_retry_drops_permanent_failure_and_continues_with_the_remaining_queue() {
+        fn archive(damage: f64) -> PreparedHistoryArchive {
+            let mut state = CombatState::default();
+            state.push_hit(test_hit(damage));
+            prepare_history_archive(
+                &state,
+                CaptureQualitySource::Live,
+                DpsTimeBasis::SubtractTimeStop,
+                false,
+            )
+            .expect("test History archive")
+        }
+
+        let state = AppState::default();
+        {
+            let mut pending = state
+                .0
+                .history
+                .pending_archives
+                .lock()
+                .expect("pending History archives lock");
+            pending.push_back(archive(1.0));
+            pending.push_back(archive(2.0));
+        }
+        let mut attempted = Vec::new();
+
+        assert_eq!(
+            state.retry_pending_history_archives_with(|_, archive| {
+                attempted.push(archive.summary.total_damage);
+                if archive.summary.total_damage == 1.0 {
+                    Err(HistoryRuntimeError::PermanentPersistence)
+                } else {
+                    Ok(HistoryPersistenceOutcome::Committed)
+                }
+            }),
+            Ok(())
+        );
+        assert_eq!(attempted, vec![1.0, 2.0]);
+        assert!(
+            state
+                .0
+                .history
+                .pending_archives
+                .lock()
+                .expect("pending History archives lock")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn poisoned_history_channel_worker_cleans_its_registry_entry() {
         let state = AppState::default();
         let stream_key = "history:poison-cleanup";
@@ -5203,8 +5920,8 @@ mod tests {
     #[test]
     fn poisoned_history_undo_slot_rejects_mutation() {
         let state = AppState::default();
-        let initial_sequence = state.0.history.undo_sequence.load(Ordering::Acquire);
         let initial_revision = state.history_revision();
+        let (directory, tombstone) = temporary_history_tombstone("poisoned-slot");
         let poison_state = state.clone();
         let _ = std::thread::spawn(move || {
             let _guard = poison_state
@@ -5217,17 +5934,12 @@ mod tests {
         })
         .join();
 
-        let result = state.remember_deleted_history(HistoryRecord {
-            id: "must-not-be-stored".to_owned(),
-            ..Default::default()
-        });
+        let result = state.remember_deleted_history_tombstone(tombstone.clone());
 
         assert!(result.is_err());
-        assert_eq!(
-            state.0.history.undo_sequence.load(Ordering::Acquire),
-            initial_sequence
-        );
         assert_eq!(state.history_revision(), initial_revision);
+        discard_tombstoned_record(&tombstone).expect("discard unused tombstone fixture");
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -5370,6 +6082,76 @@ mod tests {
 
         drop(reservation);
         assert!(state.begin_replay_import(false).is_ok());
+    }
+
+    #[test]
+    fn invalid_json_replay_releases_reservation_without_replacing_session() {
+        let live_capture = LiveCaptureService::new(LiveCaptureResources::default());
+        let mut previous = CombatState::default();
+        previous.push_hit(test_hit(432.0));
+        live_capture
+            .restore_session(previous, CaptureQualitySource::PcapngReplay)
+            .expect("install existing session");
+        let state = AppState::new(UiConfig::default(), live_capture);
+        let initial_revision = state.0.live_capture.revision();
+        let initial_packet_revision = state
+            .0
+            .live_capture
+            .with_packet_state(|revision, _, _| revision)
+            .expect("healthy packet projection");
+        let initial_source = state
+            .0
+            .live_capture
+            .quality_source()
+            .expect("healthy capture source");
+        let path = temporary_config_path("invalid_json_replay_preflight").with_extension("json");
+        fs::write(&path, b"{").expect("write malformed JSON replay");
+
+        let error = state
+            .begin_replay_import(true)
+            .expect("reserve replacing replay")
+            .start(CaptureReplayKind::Json, path.clone(), true)
+            .expect_err("malformed replay must fail synchronously");
+
+        fs::remove_file(path).expect("remove malformed replay fixture");
+        assert!(matches!(
+            error,
+            ReplayImportError::JsonImport(CaptureImportError::InvalidFormat)
+        ));
+        assert_eq!(state.0.live_capture.revision(), initial_revision);
+        assert_eq!(
+            state
+                .0
+                .live_capture
+                .with_packet_state(|revision, _, _| revision)
+                .expect("healthy packet projection"),
+            initial_packet_revision
+        );
+        assert_eq!(
+            state
+                .0
+                .live_capture
+                .quality_source()
+                .expect("healthy capture source"),
+            initial_source
+        );
+        assert_eq!(
+            state
+                .0
+                .live_capture
+                .with_state(|combat| (combat.hits.len(), combat.total_damage))
+                .expect("healthy capture state"),
+            (1, 432.0)
+        );
+        assert_eq!(
+            *state
+                .0
+                .replay_import
+                .reservation
+                .lock()
+                .expect("healthy reservation runtime"),
+            ReplayImportReservationState::Idle
+        );
     }
 
     #[test]
@@ -6055,6 +6837,94 @@ mod tests {
     }
 
     #[test]
+    fn history_selection_ignores_incoming_hits_then_returns_live_on_outgoing_hit() {
+        fn replay_path(tag: &str, direction: &str) -> PathBuf {
+            let path = temporary_config_path(tag).with_extension("json");
+            let document = serde_json::json!({
+                "version": 1,
+                "hits": [{
+                    "timestamp_unix": 1.0,
+                    "char_id": 7,
+                    "char_name": "Fixture",
+                    "damage": 25.0,
+                    "direction": direction
+                }],
+                "packets": []
+            });
+            fs::write(
+                &path,
+                serde_json::to_vec(&document).expect("serialize replay fixture"),
+            )
+            .expect("write replay fixture");
+            path
+        }
+
+        fn run_replay(state: &AppState, path: PathBuf) {
+            state
+                .0
+                .live_capture
+                .request_replay(CaptureReplayKind::Json, path, None, true, false)
+                .expect("start JSON replay");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while state.live_capture_status().phase != LiveCapturePhase::Stopped {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "JSON replay did not reach its stopped barrier"
+                );
+                std::thread::yield_now();
+            }
+        }
+
+        let state = AppState::default();
+        state
+            .set_main_selected_abyss_half(Some(AbyssHalf::Second))
+            .expect("select second half");
+        let selected_outgoing_revision = state.0.live_capture.outgoing_hit_revision();
+        {
+            let (mut mode, recovered) = state.0.presentation.lock_mode();
+            assert!(!recovered);
+            mode.selected_outgoing_revision = selected_outgoing_revision;
+            mode.selected_round = Some(SelectedRoundPresentation {
+                record_id: "history-round".to_owned(),
+                state: Arc::new(CombatState::default()),
+            });
+        }
+
+        let incoming_path = replay_path("history_incoming_stays_selected", "incoming");
+        run_replay(&state, incoming_path.clone());
+        assert_eq!(
+            state.0.live_capture.outgoing_hit_revision(),
+            selected_outgoing_revision
+        );
+        assert_eq!(
+            state.main_selected_round_id().as_deref(),
+            Some("history-round")
+        );
+        assert_eq!(
+            state.abyss_presentation_snapshot().selected,
+            Some(AbyssHalf::Second)
+        );
+
+        let outgoing_path = replay_path("history_outgoing_returns_live", "outgoing");
+        run_replay(&state, outgoing_path.clone());
+        assert_eq!(
+            state.0.live_capture.outgoing_hit_revision(),
+            selected_outgoing_revision + 1
+        );
+        assert!(state.main_selected_round_id().is_none());
+        assert_eq!(
+            state.abyss_presentation_snapshot().selected,
+            Some(AbyssHalf::Second),
+            "switching back to live must not erase the user's half selection"
+        );
+
+        fs::remove_dir_all(incoming_path.parent().expect("incoming fixture parent"))
+            .expect("remove incoming fixture");
+        fs::remove_dir_all(outgoing_path.parent().expect("outgoing fixture parent"))
+            .expect("remove outgoing fixture");
+    }
+
+    #[test]
     fn detail_request_effect_is_exact_and_noop_aware() {
         let state = AppState::default();
         let initial_stream_revision = state.stream_revision();
@@ -6736,6 +7606,14 @@ mod tests {
         assert!(snapshot.capture.separate_reaction_damage);
         assert_eq!(snapshot.capture.auto_round_idle_seconds, 45);
         assert_eq!(
+            state.0.live_capture.history_archive_policy(),
+            HistoryArchivePolicy {
+                requested_dps_time_mode: DpsTimeBasis::WallClock,
+                separate_reaction_damage: true,
+            },
+            "successful settings persistence must update the capture-side round policy",
+        );
+        assert_eq!(
             snapshot.hotkeys.bindings[0]
                 .binding
                 .as_ref()
@@ -6765,6 +7643,14 @@ mod tests {
         assert_eq!(
             restored.settings_snapshot().capture.bpf_filter,
             "udp port 30196"
+        );
+        assert_eq!(
+            restored.0.live_capture.history_archive_policy(),
+            HistoryArchivePolicy {
+                requested_dps_time_mode: DpsTimeBasis::WallClock,
+                separate_reaction_damage: true,
+            },
+            "startup must seed the capture-side round policy from sanitized config",
         );
 
         fs::remove_dir_all(config_path.parent().expect("config parent"))
@@ -7223,23 +8109,22 @@ mod tests {
     #[test]
     fn deleted_history_undo_token_is_opaque_and_single_use() {
         let state = AppState::default();
-        let record = HistoryRecord {
-            id: "history-record".to_owned(),
-            ..Default::default()
-        };
+        let (directory, tombstone) = temporary_history_tombstone("opaque-single-use");
+        let record_id = tombstone.record_id().to_owned();
 
         let token = state
-            .remember_deleted_history(record)
+            .remember_deleted_history_tombstone(tombstone)
             .expect("remember deleted History record");
 
-        assert!(!token.contains("history-record"));
+        assert!(!token.contains(&record_id));
+        assert_eq!(token.len(), 37);
         assert_eq!(
             state
-                .peek_deleted_history(&token)
+                .peek_deleted_history_tombstone(&token)
                 .expect("read deleted History record")
                 .expect("active undo record")
-                .id,
-            "history-record"
+                .record_id(),
+            record_id
         );
         assert!(
             state
@@ -7248,10 +8133,70 @@ mod tests {
         );
         assert!(
             state
-                .peek_deleted_history(&token)
+                .peek_deleted_history_tombstone(&token)
                 .expect("read consumed History undo")
                 .is_none()
         );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn replacing_and_expiring_history_undo_discards_old_tombstones_outside_the_slot() {
+        let state = AppState::default();
+        let (first_directory, first) = temporary_history_tombstone("replace-first");
+        let (second_directory, second) = temporary_history_tombstone("replace-second");
+        state
+            .remember_deleted_history_tombstone(first)
+            .expect("remember first History tombstone");
+        let second_token = state
+            .remember_deleted_history_tombstone(second)
+            .expect("replace History tombstone");
+        assert!(
+            !first_directory.join(".nte-history-undo").exists(),
+            "replacement must discard the previous on-disk tombstone"
+        );
+        {
+            let mut undo = state.0.history.undo.lock().expect("History undo slot");
+            undo.as_mut().expect("active second tombstone").expires_at =
+                Instant::now() - Duration::from_millis(1);
+        }
+        assert!(
+            state
+                .peek_deleted_history_tombstone(&second_token)
+                .expect("expire History tombstone")
+                .is_none()
+        );
+        assert!(
+            !second_directory.join(".nte-history-undo").exists(),
+            "expiry must discard the on-disk tombstone"
+        );
+        let _ = fs::remove_dir_all(first_directory);
+        let _ = fs::remove_dir_all(second_directory);
+    }
+
+    #[test]
+    fn history_owner_runs_bounded_orphan_cleanup_before_owning_undo() {
+        let source = include_str!("state.rs");
+        let default_body = source
+            .split_once("impl Default for HistoryService")
+            .and_then(|(_, tail)| tail.split_once("\n#[derive"))
+            .map(|(body, _)| body)
+            .expect("HistoryService default source");
+        assert!(default_body.contains("HISTORY_TOMBSTONE_STARTUP_CLEANUP.call_once"));
+        assert!(default_body.contains("cleanup_orphaned_history_tombstones_at_startup"));
+    }
+
+    #[test]
+    fn history_persistence_and_retry_paths_borrow_unbounded_archives() {
+        let source = include_str!("state.rs");
+        let body = source
+            .split_once("fn persist_history_archive(")
+            .and_then(|(_, tail)| tail.split_once("\n    fn restore_history_retry_queue"))
+            .map(|(body, _)| body)
+            .expect("History persistence source");
+        assert!(body.contains("save_borrowed_archive_outcome"));
+        assert!(!body.contains("archive.clone()"));
+        assert!(!body.contains("current.clone()"));
     }
 
     #[test]

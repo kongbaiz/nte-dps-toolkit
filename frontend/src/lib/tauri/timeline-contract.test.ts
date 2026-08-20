@@ -6,19 +6,23 @@ import {
 } from "@/lib/tauri/timeline-contract";
 
 const SNAPSHOT = {
-  contractVersion: 2,
+  contractVersion: 3,
   generation: "9007199254740992",
   scope: "all",
   viewMode: "characters",
   bucketSeconds: 1,
+  effectiveBucketSeconds: 1,
   bucketSecondsMin: 0.2,
   bucketSecondsMax: 10,
   bucketSecondsStep: 0.1,
   hasData: true,
   duration: 1,
   totalDamage: 100,
+  omittedRoleDamage: 0,
+  omittedRoleHits: "0",
   peakDps: 100,
   timeStopDuration: 0,
+  compactedTimeStopIntervals: "0",
   timeStopIntervals: [],
   markers: [],
   characters: [
@@ -44,6 +48,7 @@ describe("Timeline contract", () => {
     expect(snapshot.generation).toBe("9007199254740992");
     expect(snapshot.buckets[0].hits).toBe("2");
     expect(snapshot.timeStopDuration).toBe(0);
+    expect(snapshot.effectiveBucketSeconds).toBe(1);
   });
 
   it("parses tagged snapshot events and rejects inconsistent ranges", () => {
@@ -53,5 +58,21 @@ describe("Timeline contract", () => {
     expect(() =>
       parseTimelineSnapshot({ ...SNAPSHOT, bucketSeconds: 20 }),
     ).toThrow(/range is inconsistent/);
+  });
+
+  it("bounds character names by UTF-8 bytes", () => {
+    const exact = `${"界".repeat(42)}ab`;
+    expect(
+      parseTimelineSnapshot({
+        ...SNAPSHOT,
+        characters: [{ ...SNAPSHOT.characters[0], name: exact }],
+      }).characters[0].name,
+    ).toBe(exact);
+    expect(() =>
+      parseTimelineSnapshot({
+        ...SNAPSHOT,
+        characters: [{ ...SNAPSHOT.characters[0], name: "界".repeat(43) }],
+      }),
+    ).toThrow(/UTF-8 bytes/);
   });
 });

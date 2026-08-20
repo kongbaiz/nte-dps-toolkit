@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::state::AppState;
 
-pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 2;
+pub(crate) const DIAGNOSTICS_CONTRACT_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +115,8 @@ pub(crate) struct DiagnosticsQualitySnapshot {
     pub time_stop_interval_count: usize,
     pub abyss_event_count: String,
     pub server_damage_corrections: String,
+    pub unattributed_server_damage_events: String,
+    pub unattributed_server_damage: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -275,6 +277,10 @@ impl From<CaptureQualitySummary> for DiagnosticsQualitySnapshot {
             time_stop_interval_count: quality.time_stop_interval_count,
             abyss_event_count: quality.abyss_event_count.to_string(),
             server_damage_corrections: quality.server_damage_corrections.to_string(),
+            unattributed_server_damage_events: quality
+                .unattributed_server_damage_events
+                .to_string(),
+            unattributed_server_damage: quality.unattributed_server_damage,
         }
     }
 }
@@ -345,5 +351,21 @@ mod tests {
             DIAGNOSTICS_CONTRACT_VERSION
         );
         assert!(value["snapshot"]["qualityGeneration"].is_string());
+    }
+
+    #[test]
+    fn quality_contract_exposes_unattributed_server_damage_without_rounding_event_count() {
+        let snapshot = DiagnosticsQualitySnapshot::from(CaptureQualitySummary {
+            unattributed_server_damage_events: u64::MAX,
+            unattributed_server_damage: 26_955.5,
+            ..CaptureQualitySummary::default()
+        });
+        let value = serde_json::to_value(snapshot).expect("diagnostics quality serializes");
+
+        assert_eq!(
+            value["unattributedServerDamageEvents"],
+            u64::MAX.to_string()
+        );
+        assert_eq!(value["unattributedServerDamage"], 26_955.5);
     }
 }

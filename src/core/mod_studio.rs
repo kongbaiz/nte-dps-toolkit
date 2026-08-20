@@ -510,6 +510,10 @@ fn map_storage_error(error: ModScriptError) -> ModStudioError {
         ModScriptError::InvalidModSet
         | ModScriptError::DuplicateModId(_)
         | ModScriptError::TooManyEnabledMods
+        | ModScriptError::TooManyScripts
+        | ModScriptError::TooManyWorkspaceEntries
+        | ModScriptError::WorkspaceTooLarge
+        | ModScriptError::ModSetTooLarge
         | ModScriptError::SourceTooLarge
         | ModScriptError::SourceContainsNul
         | ModScriptError::SourceNotUtf8(_)
@@ -564,6 +568,10 @@ fn map_save_error(error: ModScriptError) -> ModStudioError {
         ModScriptError::InvalidModSet
         | ModScriptError::DuplicateModId(_)
         | ModScriptError::TooManyEnabledMods
+        | ModScriptError::TooManyScripts
+        | ModScriptError::TooManyWorkspaceEntries
+        | ModScriptError::WorkspaceTooLarge
+        | ModScriptError::ModSetTooLarge
         | ModScriptError::SourceNotUtf8(_)
         | ModScriptError::ModSourceMissing(_) => {
             ModStudioError::new(ModStudioErrorCode::InvalidWorkspace, detail)
@@ -588,6 +596,10 @@ fn map_enabled_set_error(error: ModScriptError) -> ModStudioError {
         }
         ModScriptError::InvalidModSet
         | ModScriptError::DuplicateModId(_)
+        | ModScriptError::TooManyScripts
+        | ModScriptError::TooManyWorkspaceEntries
+        | ModScriptError::WorkspaceTooLarge
+        | ModScriptError::ModSetTooLarge
         | ModScriptError::SourceTooLarge
         | ModScriptError::SourceContainsNul
         | ModScriptError::SourceNotUtf8(_)

@@ -627,8 +627,12 @@ function runtimeConnectionMessage(
       return "Hot reload connected";
     case "loaderPresent":
       return "Mod loader is loaded; waiting for the game hook";
+    case "acknowledgementRequired":
+      return "Confirm the Mod risk warning before starting the game runtime.";
     case "probeFailed":
       return "Unable to check the game Mod loader state";
+    case "bootstrapFailed":
+      return "Failed to initialize the game Mod runtime";
     case "connecting":
     case "waiting":
       return "Waiting for the game Mod loader";
@@ -1287,7 +1291,12 @@ function RuntimeConsole({
   const connectionText =
     runtimeState.error !== null
       ? tf(runtimeState.error.messageKey, runtimeState.error.messageArguments)
-      : t(runtimeConnectionMessage(runtimeState.connection));
+      : runtimeState.connection === "bootstrapFailed" &&
+          runtimeState.bootstrapErrorCode !== null
+        ? tf("Failed to initialize the game Mod runtime ({0}).", [
+            runtimeState.bootstrapErrorCode,
+          ])
+        : t(runtimeConnectionMessage(runtimeState.connection));
   const entries = useMemo(
     () =>
       visibleRuntimeEntries(

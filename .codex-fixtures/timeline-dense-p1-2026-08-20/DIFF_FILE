@@ -1,0 +1,410 @@
+diff --git "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\timeline-dense-p1-2026-08-20\\model.baseline.rs" b/src/engine/model.rs
+index 461eab3..a35e3b2 100644
+--- "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\timeline-dense-p1-2026-08-20\\model.baseline.rs"
++++ b/src/engine/model.rs
+@@ -38,6 +38,9 @@ std::thread_local! {
+     static COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS: std::cell::Cell<usize> = const {
+         std::cell::Cell::new(0)
+     };
++    static COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS: std::cell::Cell<usize> = const {
++        std::cell::Cell::new(0)
++    };
+ }
+ 
+ /// Compact, exportable team DPS snapshot used to predict abyss clear time.
+@@ -777,6 +780,13 @@ impl CompactTimelineTreeNode {
+ }
+ 
+ impl CompactTimelineTree {
++    fn aggregate(&self) -> CompactTimelineAggregate {
++        self.root
++            .and_then(|root| self.nodes.get(root))
++            .map(|node| node.summary().0)
++            .unwrap_or_default()
++    }
++
+     fn adjust(&mut self, timestamp: f64, damage_delta: f64, hits_delta: i8, sequence: u64) {
+         let adjustment = CompactTimelineAdjustment {
+             key: compact_timeline_ordered_key(timestamp),
+@@ -1060,11 +1070,58 @@ struct CompactTimelineRoleIndex {
+ struct CompactTimelineRoleEvent {
+     first_sequence: u64,
+     char_id: u32,
+-    bucket_index: usize,
+     role_index: usize,
+     aggregate: CompactTimelineAggregate,
+ }
+ 
++impl CompactTimelineRoleEvent {
++    fn admission_key(self) -> (u64, u32) {
++        (self.first_sequence, self.char_id)
++    }
++}
++
++/// Fixed logical slots for one output bucket. Buckets allocate this structure
++/// lazily, and each structure has exactly the caller's per-bucket role budget,
++/// so all candidate storage is hard-bounded by bucket_count * role_budget.
++#[derive(Debug)]
++struct CompactTimelineRoleCandidates {
++    slots: Box<[Option<CompactTimelineRoleEvent>]>,
++    len: usize,
++}
++
++impl CompactTimelineRoleCandidates {
++    fn new(capacity: usize) -> Self {
++        Self {
++            slots: vec![None; capacity].into_boxed_slice(),
++            len: 0,
++        }
++    }
++
++    fn consider(&mut self, event: CompactTimelineRoleEvent) {
++        if self.len < self.slots.len() {
++            self.slots[self.len] = Some(event);
++            self.len += 1;
++            return;
++        }
++
++        let mut worst = None::<(usize, (u64, u32))>;
++        for (index, slot) in self.slots.iter().enumerate() {
++            let Some(retained) = slot else {
++                continue;
++            };
++            let key = retained.admission_key();
++            if worst.is_none_or(|(_, worst_key)| key > worst_key) {
++                worst = Some((index, key));
++            }
++        }
++        if let Some((index, worst_key)) = worst
++            && event.admission_key() < worst_key
++        {
++            self.slots[index] = Some(event);
++        }
++    }
++}
++
+ /// Exact, incrementally maintained team/per-role timestamp index. The team
+ /// tree and all role trees together contain fewer than four arena nodes per
+ /// retained hit; role identity count is capped at the source contract maximum.
+@@ -1191,6 +1248,22 @@ impl CompactTimelineIndex {
+ 
+         let character_budget = max_characters.min(COMPACT_TIMELINE_MAX_CHARACTERS);
+         if character_budget > 0 && !self.roles.is_empty() {
++            // Character admission is deterministic and independent of HashMap
++            // order: retain the globally earliest roles first, then keep each
++            // bucket's earliest role aggregates within its own output budget.
++            // This deliberately gives a small max_characters budget a simple
++            // stable meaning instead of replaying every role/bucket event.
++            let mut roles = self
++                .roles
++                .iter()
++                .filter_map(|(&char_id, role)| {
++                    let aggregate = role.tree.aggregate();
++                    (aggregate.hits > 0).then_some((aggregate.first_sequence, char_id, role))
++                })
++                .collect::<Vec<_>>();
++            roles.sort_by_key(|(first_sequence, char_id, _)| (*first_sequence, *char_id));
++            roles.truncate(character_budget);
++
+             // One scratch buffer is reused for every role. Only touched slots
+             // are read/reset, so 256 sparse roles over a 10k bucket chart do
+             // not allocate and clear 2.56 million aggregates every refresh.
+@@ -1200,10 +1273,11 @@ impl CompactTimelineIndex {
+                 slots.set(slots.get().saturating_add(role_scratch.len()));
+             });
+             let mut touched_buckets = Vec::<usize>::new();
+-            let roles = self.roles.iter().collect::<Vec<_>>();
+-            let mut events = Vec::<CompactTimelineRoleEvent>::new();
+-            for (role_index, (char_id, role)) in roles.iter().copied().enumerate() {
+-                let char_id = *char_id;
++            let role_budget = max_roles_per_bucket.max(1).min(roles.len());
++            let mut candidates = std::iter::repeat_with(|| None)
++                .take(layout.bucket_count)
++                .collect::<Vec<Option<CompactTimelineRoleCandidates>>>();
++            for (role_index, (_, char_id, role)) in roles.iter().copied().enumerate() {
+                 role.tree.distribute(
+                     layout,
+                     start,
+@@ -1213,42 +1287,45 @@ impl CompactTimelineIndex {
+                 );
+                 for bucket_index in touched_buckets.drain(..) {
+                     let aggregate = std::mem::take(&mut role_scratch[bucket_index]);
+-                    events.push(CompactTimelineRoleEvent {
++                    let bucket_candidates = candidates[bucket_index].get_or_insert_with(|| {
++                        #[cfg(test)]
++                        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(|slots| {
++                            slots.set(slots.get().saturating_add(role_budget));
++                        });
++                        CompactTimelineRoleCandidates::new(role_budget)
++                    });
++                    bucket_candidates.consider(CompactTimelineRoleEvent {
+                         first_sequence: aggregate.first_sequence,
+                         char_id,
+-                        bucket_index,
+                         role_index,
+                         aggregate,
+                     });
+                 }
+             }
+ 
+-            // Replay the first role occurrence in each output bucket in source
+-            // order. This exactly retains the legacy interaction between the
+-            // global character budget and each bucket's role budget without
+-            // revisiting authoritative hits.
+-            events.sort_by_key(|event| (event.first_sequence, event.char_id, event.bucket_index));
+-            let max_roles_per_bucket = max_roles_per_bucket.max(1);
+-            let mut retained_characters = HashSet::<u32>::with_capacity(character_budget);
+-            let mut bucket_role_counts = vec![0_usize; layout.bucket_count];
+-            for event in events {
+-                if bucket_role_counts[event.bucket_index] >= max_roles_per_bucket
+-                    || (!retained_characters.contains(&event.char_id)
+-                        && retained_characters.len() >= character_budget)
+-                {
++            // Candidate sets are already independently bounded; only their
++            // retained slots are materialized into the output. There is no
++            // role_count * bucket_count event vector and no global event sort.
++            for (bucket_index, candidates) in candidates.into_iter().enumerate() {
++                let Some(candidates) = candidates else {
+                     continue;
+-                }
+-                retained_characters.insert(event.char_id);
+-                bucket_role_counts[event.bucket_index] += 1;
+-                let role = roles[event.role_index].1;
+-                buckets[event.bucket_index]
+-                    .roles
+-                    .push(CompactTimelineRoleBucket {
++                };
++                let candidate_len = candidates.len;
++                for event in candidates
++                    .slots
++                    .into_vec()
++                    .into_iter()
++                    .take(candidate_len)
++                    .flatten()
++                {
++                    let role = roles[event.role_index].2;
++                    buckets[bucket_index].roles.push(CompactTimelineRoleBucket {
+                         char_id: event.char_id,
+                         char_name: role.name.clone(),
+                         damage: event.aggregate.damage,
+                         hits: event.aggregate.hits,
+                     });
++                }
+             }
+         }
+ 
+@@ -5211,6 +5288,35 @@ mod tests {
+         COMPACT_TIMELINE_ROLE_SCRATCH_SLOTS.with(std::cell::Cell::get)
+     }
+ 
++    fn reset_compact_timeline_role_candidate_slots() {
++        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(|slots| slots.set(0));
++    }
++
++    fn compact_timeline_role_candidate_slots() -> usize {
++        COMPACT_TIMELINE_ROLE_CANDIDATE_SLOTS.with(std::cell::Cell::get)
++    }
++
++    fn scale_dense_timeline_tree(
++        tree: &mut CompactTimelineTree,
++        damage_factor: f64,
++        hits_factor: u64,
++        sequence_stride: u64,
++        sequence_offset: u64,
++    ) {
++        for node in &mut tree.nodes {
++            let aggregate = match node {
++                CompactTimelineTreeNode::Leaf { aggregate, .. }
++                | CompactTimelineTreeNode::Branch { aggregate, .. } => aggregate,
++            };
++            aggregate.damage *= damage_factor;
++            aggregate.hits = aggregate.hits.saturating_mul(hits_factor);
++            aggregate.first_sequence = aggregate
++                .first_sequence
++                .saturating_mul(sequence_stride)
++                .saturating_add(sequence_offset);
++        }
++    }
++
+     #[test]
+     fn only_full_debug_packets_are_droppable_under_backpressure() {
+         let packet = PacketDebug {
+@@ -5544,41 +5650,112 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn compact_timeline_reuses_one_role_scratch_across_256_roles_and_10k_buckets() {
++    fn compact_timeline_dense_projection_bounds_candidates_to_bucket_role_budget() {
+         const ROLE_COUNT: u32 = 256;
+         const BUCKET_COUNT: usize = 10_000;
+-        let mut state = CombatState::default();
++        const ROLES_PER_BUCKET: usize = 16;
++        const CANDIDATE_LIMIT: usize = BUCKET_COUNT * ROLES_PER_BUCKET;
++
++        // Build one real 10k-leaf timestamp tree, then clone its arena for each
++        // role. This creates the same dense 256 x 10k projection surface as
++        // 2.56 million pushes without spending the fixture setup on Hit DTOs,
++        // aggregate maps, mutation records, and repeated crit-bit insertion.
++        let mut template = CompactTimelineTree::default();
++        for bucket in 0..BUCKET_COUNT {
++            template.adjust(bucket as f64, 1.0, 1, bucket as u64);
++        }
++
++        let mut roles = HashMap::with_capacity(ROLE_COUNT as usize);
+         for char_id in 0..ROLE_COUNT {
+-            let timestamp = if char_id + 1 == ROLE_COUNT {
+-                (BUCKET_COUNT - 1) as f64
+-            } else {
+-                f64::from(char_id)
+-            };
+-            state.push_hit(test_hit(timestamp, char_id, "outgoing", 1.0));
++            let mut tree = template.clone();
++            scale_dense_timeline_tree(&mut tree, 1.0, 1, u64::from(ROLE_COUNT), u64::from(char_id));
++            roles.insert(
++                char_id,
++                CompactTimelineRoleIndex {
++                    name: format!("role-{char_id:03}"),
++                    tree,
++                },
++            );
+         }
++        let mut team = template;
++        scale_dense_timeline_tree(
++            &mut team,
++            f64::from(ROLE_COUNT),
++            u64::from(ROLE_COUNT),
++            u64::from(ROLE_COUNT),
++            0,
++        );
++        let index = CompactTimelineIndex {
++            team,
++            roles,
++            start: Some(0.0),
++            end: Some((BUCKET_COUNT - 1) as f64),
++            next_sequence: (BUCKET_COUNT as u64).saturating_mul(u64::from(ROLE_COUNT)),
++        };
+ 
+         reset_compact_timeline_role_scratch_slots();
+-        let timeline = state.timeline_bounded(1.0, false, BUCKET_COUNT, 256, 256);
++        reset_compact_timeline_role_candidate_slots();
++        let timeline = index
++            .project(1.0, BUCKET_COUNT, ROLES_PER_BUCKET, ROLE_COUNT as usize)
++            .expect("dense timeline projection");
++        let output_roles = timeline
++            .buckets
++            .iter()
++            .flat_map(|bucket| &bucket.roles)
++            .count();
++        let total_damage = timeline
++            .buckets
++            .iter()
++            .map(|bucket| bucket.damage)
++            .sum::<f64>();
++        let total_hits = timeline
++            .buckets
++            .iter()
++            .map(|bucket| bucket.hits)
++            .sum::<u64>();
++        let dense_event_count = BUCKET_COUNT as u64 * u64::from(ROLE_COUNT);
+ 
+         assert_eq!(timeline.buckets.len(), BUCKET_COUNT);
+-        assert_eq!(timeline.total_damage, f64::from(ROLE_COUNT));
++        assert_eq!(total_damage, dense_event_count as f64);
++        assert_eq!(total_hits, dense_event_count);
+         assert_eq!(
+-            timeline
+-                .buckets
+-                .iter()
+-                .flat_map(|bucket| &bucket.role_damage)
+-                .count(),
+-            ROLE_COUNT as usize
++            timeline.omitted_role_damage,
++            (dense_event_count as usize - CANDIDATE_LIMIT) as f64
++        );
++        assert_eq!(
++            timeline.omitted_role_hits,
++            dense_event_count - CANDIDATE_LIMIT as u64
+         );
+         assert_eq!(
+             compact_timeline_role_scratch_slots(),
+             BUCKET_COUNT,
+             "role projection must initialize one reusable bucket scratch, not one per role"
+         );
++        let candidate_slots = compact_timeline_role_candidate_slots();
++        assert!(
++            candidate_slots <= CANDIDATE_LIMIT,
++            "candidate slots must stay within bucket_count * max_roles_per_bucket"
++        );
++        assert_eq!(
++            candidate_slots, CANDIDATE_LIMIT,
++            "the dense fixture must fill every bounded candidate slot"
++        );
++        assert!(
++            output_roles <= CANDIDATE_LIMIT,
++            "output roles must stay within bucket_count * max_roles_per_bucket"
++        );
++        assert_eq!(output_roles, CANDIDATE_LIMIT);
++        assert!(
++            timeline.buckets.iter().all(|bucket| {
++                bucket.roles.len() == ROLES_PER_BUCKET
++                    && bucket.roles.iter().all(|role| role.char_id < 16)
++            }),
++            "each dense bucket retains the deterministic earliest 16 roles"
++        );
+     }
+ 
+     #[test]
+-    fn indexed_timeline_preserves_legacy_role_admission_order_under_small_budgets() {
++    fn indexed_timeline_selects_global_earliest_characters_then_bucket_earliest_roles() {
+         let mut state = CombatState::default();
+         for (timestamp, char_id, damage) in [
+             (0.0, 1, 1.0),
+@@ -5591,28 +5768,20 @@ mod tests {
+             hit.char_name = format!("role-{char_id}");
+             state.push_hit(hit);
+         }
+-        let options = TimelineAggregationOptions {
+-            bucket_seconds: 1.0,
+-            subtract_time_stop: false,
+-            max_buckets: 2,
+-            max_roles_per_bucket: 1,
+-            max_characters: 2,
+-        };
+-
+-        let legacy = summarize_timeline_with_time_stop(
+-            state.hits.iter(),
+-            &state.time_stop,
+-            state.started_at,
+-            state.ended_at,
+-            Vec::new(),
+-            options,
+-        );
+         let indexed = state.timeline_bounded(1.0, false, 2, 1, 2);
+ 
+-        assert_eq!(indexed, legacy);
+         assert_eq!(indexed.buckets[0].role_damage[0].char_id, 1);
+-        assert_eq!(indexed.buckets[1].role_damage[0].char_id, 3);
+-        assert_eq!(indexed.omitted_role_damage, 10.0);
++        assert_eq!(indexed.buckets[1].role_damage[0].char_id, 2);
++        assert_eq!(indexed.total_damage, 15.0);
++        assert_eq!(
++            indexed
++                .buckets
++                .iter()
++                .map(|bucket| bucket.hits)
++                .sum::<u64>(),
++            5
++        );
++        assert_eq!(indexed.omitted_role_damage, 9.0);
+         assert_eq!(indexed.omitted_role_hits, 3);
+     }
+ 
+@@ -5676,7 +5845,7 @@ mod tests {
+             subtract_time_stop: true,
+             max_buckets: 7,
+             max_roles_per_bucket: 2,
+-            max_characters: 3,
++            max_characters: 5,
+         };
+         let legacy = summarize_timeline_with_time_stop(
+             state.hits.iter(),

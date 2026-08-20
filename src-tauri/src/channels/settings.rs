@@ -1,5 +1,7 @@
 use tauri::{State, WebviewWindow, ipc::Channel};
 
+use nte_dps_tool::engine::model::CombatClockRuntimeHealth;
+
 use crate::{
     channels::stream_runtime::{
         PollingStreamOutput, StreamDeliveryEndpoint, spawn_polling_stream, stream_registry_error,
@@ -34,6 +36,7 @@ pub(crate) fn subscribe_settings(
     let stream_generation = registration.generation();
     let mut last_revision = None;
     let mut last_install_blocker = None;
+    let mut last_combat_clock_health = None;
     spawn_polling_stream(
         "nte-settings-stream",
         StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
@@ -48,8 +51,15 @@ pub(crate) fn subscribe_settings(
                 state.notify_update_install_blocker_changed();
             }
             last_install_blocker = Some(install_blocker);
+            let combat_clock_health = state.combat_clock_health().ok();
+            let combat_clock_changed =
+                combat_clock_projection_changed(last_combat_clock_health, combat_clock_health);
+            last_combat_clock_health = Some(combat_clock_health);
             let revision = state.settings_revision();
-            if !should_emit_snapshot(last_revision, revision) && !runtime_projection_changed {
+            if !should_emit_snapshot(last_revision, revision)
+                && !runtime_projection_changed
+                && !combat_clock_changed
+            {
                 return PollingStreamOutput::NoChange;
             }
             last_revision = Some(revision);
@@ -84,6 +94,13 @@ pub(crate) fn unsubscribe_settings(
 
 fn should_emit_snapshot(last_revision: Option<u64>, current_revision: u64) -> bool {
     last_revision != Some(current_revision)
+}
+
+fn combat_clock_projection_changed(
+    previous: Option<Option<CombatClockRuntimeHealth>>,
+    current: Option<CombatClockRuntimeHealth>,
+) -> bool {
+    previous != Some(current)
 }
 
 fn install_blocker_changed(
@@ -134,6 +151,26 @@ mod tests {
         assert!(install_blocker_changed(
             Some(&Ok(Some("capture"))),
             &Ok(None)
+        ));
+    }
+
+    #[test]
+    fn settings_stream_reprojects_combat_clock_health_transitions() {
+        assert!(combat_clock_projection_changed(
+            None,
+            Some(CombatClockRuntimeHealth::Unknown),
+        ));
+        assert!(!combat_clock_projection_changed(
+            Some(Some(CombatClockRuntimeHealth::Available)),
+            Some(CombatClockRuntimeHealth::Available),
+        ));
+        assert!(combat_clock_projection_changed(
+            Some(Some(CombatClockRuntimeHealth::Available)),
+            Some(CombatClockRuntimeHealth::ProviderUnavailable),
+        ));
+        assert!(combat_clock_projection_changed(
+            Some(Some(CombatClockRuntimeHealth::Available)),
+            None,
         ));
     }
 

@@ -54,6 +54,14 @@ function settingsFixture(): Record<string, unknown> {
       autoRoundIdleSecondsMin: 5,
       autoRoundIdleSecondsMax: 600,
       dpsTimeMode: "time-stop-adjusted",
+      dpsTimeRuntime: {
+        configuredMode: "time-stop-adjusted",
+        effectiveMode: "real-time",
+        combatClockHealth: "unknown",
+        degraded: true,
+        warningMessageKey:
+          "Time-stop adjustment has not been verified for this session.",
+      },
       passthroughHotkey: "home",
     },
     hotkeys: {

@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use nte_dps_tool::storage::history::load_history;
+use nte_dps_tool::storage::history::load_history_summaries;
 use nte_dps_tool::storage::i18n::{self, Language};
 use tauri::ipc::Channel;
 
@@ -141,6 +141,7 @@ impl HistoryProjectionCache {
         Ok(projection)
     }
 
+    #[cfg(test)]
     fn get_or_build(
         &self,
         key: HistoryProjectionKey,
@@ -450,7 +451,8 @@ fn poll_history_stream(
         Err(_) => return false,
     };
     let projection = match cached_history_stream_projection(state, projection_cache) {
-        Ok(projection) => projection,
+        Ok(Some(projection)) => projection,
+        Ok(None) => return true,
         Err(_) => {
             log::warn!("History stream projection cache reset after an interrupted update");
             return true;
@@ -502,60 +504,58 @@ fn history_projection_key(state: &AppState) -> HistoryProjectionKey {
 fn cached_history_stream_projection(
     state: &AppState,
     cache: &HistoryProjectionCache,
-) -> Result<Arc<CachedHistoryProjection>, HistoryRuntimeError> {
-    cached_history_stream_projection_with(state, cache, load_history)
+) -> Result<Option<Arc<CachedHistoryProjection>>, HistoryRuntimeError> {
+    cached_history_stream_projection_with(state, cache, load_history_summaries)
 }
 
 fn cached_history_stream_projection_with(
     state: &AppState,
     cache: &HistoryProjectionCache,
     load: impl FnOnce() -> nte_dps_tool::storage::history::HistoryLoadResult,
-) -> Result<Arc<CachedHistoryProjection>, HistoryRuntimeError> {
-    let observed_key = history_projection_key(state);
-    cache.get_or_build(observed_key, || {
-        let (key, loaded, characters) = state.with_history_transaction(|| {
-            let resources = state.live_capture_resources();
-            (
-                HistoryProjectionKey {
-                    revision: state.history_revision(),
-                    language: i18n::current_language(),
-                    character_catalog_identity: Arc::as_ptr(&resources.characters) as usize,
-                },
-                load(),
-                resources.characters,
-            )
-        })?;
-        let snapshot = HistorySnapshot::from_localized_load_for_language(
-            loaded,
-            key.revision,
-            &characters,
-            key.language,
-        );
-        let delivery = serialize_stream_events(vec![HistoryEvent::Snapshot(snapshot)])
-            .map_err(|_| HistoryRuntimeError::Unavailable)?;
-        Ok(CachedHistoryProjection {
+) -> Result<Option<Arc<CachedHistoryProjection>>, HistoryRuntimeError> {
+    let key = state.with_history_transaction(|| history_projection_key(state))?;
+    if let Some(projection) = cache.lookup(key)? {
+        return Ok(Some(projection));
+    }
+
+    // Directory enumeration and JSON parsing are intentionally outside the
+    // mutation transaction. A revision/context change at either boundary makes
+    // the projection stale; it is discarded rather than cached or delivered.
+    let resources = state.live_capture_resources();
+    let characters = resources.characters;
+    let loaded = load();
+    if state.with_history_transaction(|| history_projection_key(state))? != key {
+        return Ok(None);
+    }
+    let snapshot = HistorySnapshot::from_localized_load_for_language(
+        loaded,
+        key.revision,
+        &characters,
+        key.language,
+    );
+    let delivery = serialize_stream_events(vec![HistoryEvent::Snapshot(snapshot)])
+        .map_err(|_| HistoryRuntimeError::Unavailable)?;
+    if state.with_history_transaction(|| history_projection_key(state))? != key {
+        return Ok(None);
+    }
+    cache
+        .publish(CachedHistoryProjection {
             key,
             delivery: Arc::new(delivery),
         })
-    })
+        .map(Some)
 }
 
 #[cfg(test)]
 pub(crate) fn project_history_stream_snapshot(
     state: &AppState,
 ) -> Result<(u64, HistorySnapshot), HistoryRuntimeError> {
-    let (key, loaded, characters) = state.with_history_transaction(|| {
-        let resources = state.live_capture_resources();
-        (
-            HistoryProjectionKey {
-                revision: state.history_revision(),
-                language: i18n::current_language(),
-                character_catalog_identity: Arc::as_ptr(&resources.characters) as usize,
-            },
-            load_history(),
-            resources.characters,
-        )
-    })?;
+    let key = state.with_history_transaction(|| history_projection_key(state))?;
+    let characters = state.live_capture_resources().characters;
+    let loaded = load_history_summaries();
+    if state.with_history_transaction(|| history_projection_key(state))? != key {
+        return Err(HistoryRuntimeError::Unavailable);
+    }
     Ok((
         key.revision,
         HistorySnapshot::from_localized_load_for_language(
@@ -582,12 +582,14 @@ mod tests {
             load_count.fetch_add(1, Ordering::SeqCst);
             Default::default()
         })
-        .expect("build first History projection");
+        .expect("build first History projection")
+        .expect("stable first History projection");
         let second = cached_history_stream_projection_with(&state, &cache, || {
             load_count.fetch_add(1, Ordering::SeqCst);
             Default::default()
         })
-        .expect("reuse History projection");
+        .expect("reuse History projection")
+        .expect("stable cached History projection");
 
         assert!(Arc::ptr_eq(&first.delivery, &second.delivery));
         assert_eq!(load_count.load(Ordering::SeqCst), 1);
@@ -663,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_snapshot_carries_the_revision_read_under_the_same_transaction() {
+    fn projected_snapshot_carries_the_stable_revision_read_around_the_scan() {
         let state = AppState::default();
         state.bump_history_revision();
 
@@ -671,6 +673,68 @@ mod tests {
             project_history_stream_snapshot(&state).expect("project History stream snapshot");
 
         assert_eq!(snapshot.revision, revision.to_string());
+    }
+
+    #[test]
+    fn revision_change_during_summary_scan_discards_projection_before_cache_publish() {
+        let state = AppState::default();
+        let cache = HistoryProjectionCache::default();
+
+        let projection = cached_history_stream_projection_with(&state, &cache, || {
+            state
+                .with_history_transaction(|| state.bump_history_revision())
+                .expect("mutate History during summary scan");
+            Default::default()
+        })
+        .expect("stale scan is not a runtime failure");
+
+        assert!(projection.is_none());
+        assert_eq!(cache.entry_count_for_test(), 0);
+    }
+
+    #[test]
+    fn slow_summary_scan_does_not_hold_history_mutation_transaction() {
+        use std::sync::mpsc;
+
+        let state = AppState::default();
+        let cache = Arc::new(HistoryProjectionCache::default());
+        let (load_started_tx, load_started_rx) = mpsc::channel();
+        let (release_load_tx, release_load_rx) = mpsc::channel();
+        let worker_state = state.clone();
+        let worker_cache = Arc::clone(&cache);
+        let worker = thread::spawn(move || {
+            cached_history_stream_projection_with(&worker_state, &worker_cache, || {
+                load_started_tx.send(()).expect("signal summary scan start");
+                release_load_rx.recv().expect("release summary scan");
+                Default::default()
+            })
+        });
+        load_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("summary scan started");
+
+        let (transaction_done_tx, transaction_done_rx) = mpsc::channel();
+        let transaction_state = state.clone();
+        let transaction = thread::spawn(move || {
+            transaction_state
+                .with_history_transaction(|| ())
+                .expect("short History mutation transaction");
+            transaction_done_tx.send(()).expect("signal transaction");
+        });
+        let transaction_completed = transaction_done_rx
+            .recv_timeout(Duration::from_millis(250))
+            .is_ok();
+        release_load_tx.send(()).expect("finish summary scan");
+        transaction.join().expect("join transaction probe");
+        worker
+            .join()
+            .expect("join summary scan probe")
+            .expect("summary scan runtime")
+            .expect(
+                "summary projection remains valid when an empty transaction does not bump revision",
+            );
+
+        assert!(transaction_completed);
     }
 
     #[test]

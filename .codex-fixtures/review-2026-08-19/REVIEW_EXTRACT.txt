@@ -1,0 +1,332 @@
+P0000 [Kicker] STATIC + VALIDATION CODE REVIEW
+P0001 [Title] NTE DPS TOOL
+代码审查报告
+P0002 [Subtitle] Unsafe · 代码膨胀 · 性能 · 过度防御 · 重复实现
+P0003 [Finding Body] 对象：D:\NTE_DPS_TOOL
+P0004 [Finding Body] 分支：codex/fix-tun-raw-capture
+P0005 [Finding Body] 基线：5b1a70a8e2c3dea11de76cb8a87da5f29ee60d30
+P0006 [Finding Body] 基线提交：Support IPv4 TUN captures and dynamic release artifacts
+P0007 [Finding Body] 日期：2026-08-19（Asia/Shanghai）
+P0008 [Finding Body] 方式：源码静态审查 + 构建/测试/策略脚本；仅标记，不修改代码
+P0010 [Small Note] 只读声明：审查过程中未修改源码、配置、依赖、vendor 或协议；构建产生的 target/dist/native x64 产物均为忽略项。本 DOCX 是唯一新增交付文件。
+P0012 [Heading 1] 1. 执行摘要
+P0013 [Section Lead] 本报告按“可复现证据、运行时影响、维护成本、迁移风险”给出标记。高风险表示应在扩大分发或继续叠加功能前进入独立修复与压力验证。
+P0014 [Table Citation] 表 1｜风险分布
+P0015 [Heading 2] 最优先处理顺序
+P0016 [List Body] 先固定 native 生命周期：IPC 单一 owner、OVERLAPPED 完成后复用、hook 表延迟回收、viewport original 按对象绑定、DllMain 移出重活。
+P0017 [List Body] 再处理实时热点：timeline 源头 bounded、常规抓包不留 full hex、SummaryOnly 专用 scanner、follow-up/correction 差量聚合。
+P0018 [List Body] 建立防御策略：权威 Mutex poison fail-closed/重建；probe、Mod catalog、HTTP retry 使用 typed outcome。
+P0019 [List Body] 统一 Mod/contract 真相源；随后清理 dead telemetry、Channel runner 和重复资源/helper。
+P0021 [Heading 1] 2. 范围、方法与严重度
+P0022 [Section Lead] 所有源码路径均相对仓库根 D:\NTE_DPS_TOOL。行号以基线 commit 为准。
+P0023 [Table Citation] 表 2｜审查覆盖
+P0024 [Heading 2] 审查方法
+P0025 [List Body] 全仓静态检索：unsafe、裸句柄、OVERLAPPED、VirtualQuery/VirtualProtect、锁、thread::spawn/sleep、poison recovery、dead_code、contract helper、资源hash。
+P0026 [List Body] 调用链核对：确认生产消费者、线程归属、lock 覆盖、迁移消费者与 Tauri/React 边界，不以单纯行数定罪。
+P0027 [List Body] 可量化验证：tracked 源码物理行、dead block 字节、重复资源 SHA-256、bundle chunk/data URL、理论容量上界与轮询频率。
+P0028 [List Body] 构建与测试：按 AGENTS.md Hardened 矩阵执行 root/CLI/Tauri/frontend/native 与策略脚本；只报告观察到的 literal result。
+P0029 [List Body] 外部语义核对：Win32 官方文档用于 DllMain、CancelIoEx、OVERLAPPED；Base UI/Tauri 官方文档用于替代能力判断。
+P0031 [Heading 1] 3. Unsafe 与 native 生命周期
+P0032 [Section Lead] Rust unsafe 整体较克制；确认的高风险主要来自 native 全局状态、异步 I/O、hook 回收和 loader lock。
+P0033 [Finding Title] U-01｜高｜Native IPC 全局状态跨线程无同步
+P0034 [Evidence Path] 位置：native/nte-mods-plugin/src/ipc_transport.cpp:36-43,139-156,549-566；native/nte-mods-plugin/src/plugin_runtime.cpp:617-675；native/nte-mods-plugin/src/mod_runtime.cpp:4481-4500
+P0035 [Finding Body] 证据：ipc_pipe、ipc_event、OVERLAPPED、transport state、request/response 都是普通全局对象。游戏 viewport 线程在 program_lock 的 shared 区间执行 PumpLiveIpc；workspace worker 在 reload/reset 已释放 exclusive lock后调用 CloseIpc。ipc_dispatch_in_progress 只约束 viewport 回调，worker 不参与。因此 pump 与 close 可并发读写和关闭同一批对象。
+P0036 [Finding Body] 影响：普通 C++ 对象的并发读写是语言级数据竞争；同时存在 use-after-close、HANDLE 复用、请求/响应破坏和宿主游戏崩溃风险。当前代码没有可证明的 IPC owner。
+P0037 [Finding Body] 标记建议：将 transport 收敛为单一 owner 线程；worker 只投递 close/reload 意图。若保留跨线程访问，必须用覆盖完整状态机的同一锁或消息队列，并以 generation 绑定 HANDLE、event、OVERLAPPED、request/response。
+P0038 [Finding Body] 后续验证：慢客户端持续请求并反复启停 IPC Mod；WinDbg 强制 PumpLiveIpc/CloseIpcPipe 交错，Application Verifier 开启 Handles/Locks。
+P0040 [Finding Title] U-02｜高｜CancelIoEx 后立即清零并复用 OVERLAPPED
+P0041 [Evidence Path] 位置：native/nte-mods-plugin/src/ipc_transport.cpp:139-164,187-218,266-271,290-315
+P0042 [Finding Body] 证据：CloseIpcPipe 调用 CancelIoEx 后立即 DisconnectNamedPipe、CloseHandle、关闭 event，并把 ipc_overlapped 清零；下一 generation 又在 ResetIpcOverlapped 中复用同一静态结构。取消路径没有等待该 I/O 完成。Microsoft 文档明确说明 CancelIoEx 不等待取消完成，旧操作完成前不得复用关联 OVERLAPPED。
+P0043 [Finding Body] 影响：即使没有 U-01 的双线程交错，单线程“客户端发送不足完整请求→1 秒超时→重连”也能进入违规路径。旧完成通知可能落入新 generation，造成状态错配、句柄竞态或崩溃。
+P0044 [Finding Body] 标记建议：每个异步操作使用独立 RAII operation；CancelIoEx 后等待 GetOverlappedResult 对该具体操作完成/返回 ERROR_OPERATION_ABORTED，再释放 event、清零结构并启动下一 generation。
+P0045 [Finding Body] 后续验证：客户端循环只写 1–1079 字节并保持超过 1 秒；检查取消后完成状态，不允许旧 completion 进入新 generation。
+P0047 [Finding Title] U-03｜高｜Shadow vtable 未等待 dispatch quiescence 就释放
+P0048 [Evidence Path] 位置：native/nte-mods-plugin/src/shadow_vtable_hook.cpp:125-218；native/nte-mods-plugin/src/plugin_runtime.cpp:511-545,911-983,1008-1035
+P0049 [Finding Body] 证据：Remove 先尝试把对象 vptr 换回 original，随后无条件 VirtualFree shadow allocation。它没有 active-dispatch counter、epoch、hazard pointer、grace period 或宿主线程停顿证明；installed_ 也不参与 CPU 的虚调用分派。若可写性检查失败或 CAS 未恢复对象 vptr，allocation 仍会被释放。
+P0050 [Finding Body] 影响：调用线程可能先读取 shadow vptr 后被抢占，管理线程恢复并释放表，调用线程再读取表项即访问已释放页。热重载、viewport 替换和 unwatch 都会触发，不只发生在 DLL 卸载。
+P0051 [Finding Body] 标记建议：恢复对象 vptr 后把表放入 retired list，仅在所有潜在调用者跨过 grace period 后回收；若无法证明 quiescence，宁可在进程生命周期内保留小表。恢复失败时绝不能回收仍可能被对象引用的表。
+P0052 [Finding Body] 后续验证：fake vtable 两线程压力测试 + PageHeap；另覆盖对象页暂时不可写时 Remove 不得留下悬空 vptr。
+P0054 [Finding Title] U-04｜高｜Viewport hook 切换共用一个 original 指针
+P0055 [Evidence Path] 位置：native/nte-mods-plugin/src/plugin_runtime.cpp:128-132,204-215,348-369,480-549
+P0056 [Finding Body] 证据：两个 shadow hook 共用 original_viewport_tick。切换时先把全局 original 改为 candidate_tick，再安装新 hook，最后才移除旧 hook；回调又在校验 viewport 之前先调用全局 original。因此旧 viewport 可在窗口期执行 candidate_tick(old_viewport)。
+P0057 [Finding Body] 影响：当新旧 tick 地址/对象布局不同，旧对象会进入错误实现，可能破坏状态或崩溃；地址相同则不触发，所以这是静态确认、条件触发的竞态。
+P0058 [Finding Body] 标记建议：original 必须按 hook/object 绑定；detour 根据 viewport 查不可变 hook record。切换应先发布完整映射，旧记录只在 in-flight 归零后退休。
+P0059 [Finding Body] 后续验证：使用两个 tick 地址和 magic 不同的 fake viewport 并发 handoff，断言旧对象从不进入新 tick。
+P0061 [Finding Title] U-05｜高｜DllMain 在 loader lock 内加载、起线程、无限等待和卸载
+P0062 [Evidence Path] 位置：native/nte-mods-plugin/src/nte_mods_plugin.cpp:9-21；native/nte-mods-plugin/src/dwmapi_proxy.cpp:27-59；native/nte-mods-plugin/src/plugin_runtime.cpp:1038-1111；native/nte-mods-plugin/nte-mods-plugin.vcxproj:53
+P0063 [Finding Body] 证据：DLL_PROCESS_ATTACH 内经 InitializeDwmapiProxy 调 LoadLibraryW，并启动两个 CreateThread；DLL_PROCESS_DETACH 内 StopPluginRuntime 对 worker 执行 WaitForSingleObject(INFINITE)，随后 FreeLibrary。工程 RuntimeLibrary=MultiThreaded（静态 CRT），却调用 DisableThreadLibraryCalls，且忽略其结果。Microsoft 要求 DllMain 只做极简工作、禁止 LoadLibrary/FreeLibrary 与跨线程同步，并明确静态 CRT DLL 不得调用 DisableThreadLibraryCalls。
+P0064 [Finding Body] 影响：显式卸载时 loader-lock 线程等待 worker，worker 的退出或依赖 DLL detach 又可能等待 loader lock，形成死锁；另有部分初始化、CRT/TLS 清理异常和加载卡死风险。
+P0065 [Finding Body] 标记建议：DllMain 只记录 module handle；把真实 dwmapi 加载、runtime start/stop 放到 loader lock 外的一次性惰性或显式初始化协议；detach 不得无限等待，worker 自己拥有停止与卸载握手。
+P0066 [Finding Body] 后续验证：在可终止的 HTGame.exe 测试宿主中 LoadLibrary→启动 worker→另一线程 FreeLibrary；用 Wait Chain Traversal/WinDbg 检查 loader lock。
+P0068 [Finding Title] U-06｜高｜VirtualQuery 后解引用游戏对象存在 check/use 竞态
+P0069 [Evidence Path] 位置：native/nte-mods-plugin/src/memory_access.cpp:50-68,85-123；native/nte-mods-plugin/src/plugin_runtime.cpp:244-274,617-675；native/nte-mods-plugin/src/mod_runtime.cpp:4496-4499
+P0070 [Finding Body] 证据：ReadBytes 先 IsReadableRange(VirtualQuery)，再由 CopyBytes 逐字节解引用；后台 WatchModWorkspace 还会 ResolveViewport 并直接读取 local_players.data[0]。VirtualQuery 不会 pin 页面或对象，游戏线程可以在检查与读取之间释放、换页或复用对象。现有 per-program SEH 不覆盖后台 ResolveViewport 和 SamplePartyEffects。
+P0071 [Finding Body] 影响：地图/角色/viewport 重建时可抛出未捕获 access violation；即便页面仍 committed，也可能读取跨 generation 的混合指针并把 hook 安装到已复用对象。
+P0072 [Finding Body] 标记建议：尽量把 UObject 链解析放到宿主游戏线程稳定阶段；跨线程读取用最小 SEH copy 或 ReadProcessMemory 封装，并在整条链末做 generation/一致性复核。不要把 VirtualQuery 视为安全读取证明。
+P0073 [Finding Body] 后续验证：Full Page Heap/Application Verifier 下高频地图与 viewport 重建；对 CopyBytes 设 first-chance AV。
+P0075 [Finding Title] U-07｜中｜Class vtable 页保护恢复失败被忽略
+P0076 [Evidence Path] 位置：native/nte-mods-plugin/src/plugin_runtime.cpp:158-190
+P0077 [Finding Body] 证据：替换 class vtable entry 后，第二次 VirtualProtect 恢复 old protection 的返回值没有检查；只要 CAS 成功，函数就返回成功。
+P0078 [Finding Body] 影响：vtable 所在整页可能长期保持 writable，调用方又认为事务完成；诊断看不到降级，扩大后续内存破坏面。
+P0079 [Finding Body] 标记建议：用作用域 guard 管理 protection；恢复失败必须成为独立 typed result，并进入 rollback/fail-closed 状态。
+P0080 [Finding Body] 后续验证：对第二次 VirtualProtect 故障注入，断言函数不能返回普通成功。
+P0082 [Finding Title] U-08｜中｜Native 插件显式关闭 /GS 与 SDL 检查
+P0083 [Evidence Path] 位置：native/nte-mods-plugin/nte-mods-plugin.vcxproj:38-55
+P0084 [Finding Body] 证据：工程设置 BufferSecurityCheck=false、SDLCheck=false。该 DLL 含约 13,396 行一方 native 源码及 51 个 Dumper-7 tracked 文件，广泛使用裸指针、固定数组、函数指针和 Win32 hook。现有 dwmapi.dll 仍有 ASLR、NX、CFG 与 security cookie，不能表述为所有缓解均缺失。
+P0085 [Finding Body] 影响：这不是一个已定位的越界，但会削弱发生栈覆盖后的检测与阻断，也减少编译器对危险模式的诊断。
+P0086 [Finding Body] 标记建议：在独立 native hardening 变更中启用 /GS 与 SDL，逐项处理新增诊断并做 Release x64 与游戏内 hook 回归，不与功能修改混合。
+P0087 [Finding Body] 后续验证：比较开关前后 PE load config、Release 构建和 hook smoke test。
+P0089 [Finding Title] U-09｜低｜Rust Npcap FFI 的 unsafe 边界过宽
+P0090 [Evidence Path] 位置：src/engine/capture.rs:138-255,1030-1094,4601-4747
+P0091 [Finding Body] 证据：私有 safe helper c_string 接收裸指针并内部 CStr::from_ptr；PcapHandle/BpfProgramGuard 的 safe constructor 保存裸资源与析构函数；run_capture 用一个约 145 行的巨大 unsafe block；两个 Drop/释放点缺少局部 SAFETY 注释。当前调用点来自 Npcap，未证实现时 UB，且全仓未发现 unsafe impl Send/Sync、transmute、get_unchecked、Vec::set_len 或 static mut。
+P0092 [Finding Body] 影响：safe abstraction 无法在类型层表达前置条件，未来复用/重构时容易在不显眼的调用点引入 UB；大 unsafe 区域也削弱审查精度。
+P0093 [Finding Body] 标记建议：建立持有 Library、NonNull<pcap_t> 与 typed symbols 的 NpcapApi；每次 FFI 用最小 unsafe block；c_string 改为 unsafe fn 或接收已验证 &CStr；系统目录用 GetSystemDirectoryW。
+P0094 [Finding Body] 后续验证：Miri 不覆盖外部 DLL；用编译期 API 封装测试、失败路径资源测试和 Npcap smoke test。
+P0096 [Heading 1] 4. 垃圾代码与仓库膨胀
+P0097 [Section Lead] 只标记有消费者证据或字节级重复证据的项目；大文件、vendor 和迁移代码不会因体积自动定罪。
+P0098 [Finding Title] G-01｜中｜十版 enemy telemetry 源码只由 dead array 引用
+P0099 [Evidence Path] 位置：src/platform/mods_plugin.rs:145-273,545-1261,1288-1300
+P0100 [Finding Body] 证据：LEGACY_ENEMY_TELEMETRY_MOD_V1–V10 共 838 个物理行、约 30.8KB UTF-8 源文本；唯一引用是同文件带 #[allow(dead_code)] 的 LEGACY_ENEMY_TELEMETRY_MOD_PROGRAMS，而该数组全仓没有 runtime、migration 或 test 消费者。
+P0101 [Finding Body] 影响：它主要增加源码审查噪声、编译前端解析量与误维护概率；优化器大概率不会把这些未使用常量带入最终二进制，因此不把 30.8KB 直接等同运行时体积。
+P0102 [Finding Body] 标记建议：确认仓库外升级策略已结束后移出生产模块；需要考古时依赖 Git 历史或独立 fixture，并用 digest/migration test 显式表达生命周期。
+P0103 [Finding Body] 后续验证：删除前对已发布旧安装做迁移矩阵。Equipment/Combat Clock legacy 仍在 2746-2758、2868-2910 被消费，必须排除。
+P0105 [Finding Title] G-02｜中｜11 个 Channel 复制 OS 线程轮询模板
+P0106 [Evidence Path] 位置：src-tauri/src/channels/*.rs（目录 12 个文件、1,430 个物理行；11 处 thread::spawn、11 处 thread::sleep、11 个 validate_subscription_id）
+P0107 [Finding Body] 证据：每类订阅各自复制 begin_stream→thread::spawn→revision check→send→sleep→finish_stream 模板，并重复同一 subscription id 校验。state.rs 已有 owner/replacement/window cleanup，所以本次未判定为确定泄漏。
+P0108 [Finding Body] 影响：每个活动订阅占用独立 OS thread 并周期唤醒；stop、disconnect、revision 与验证逻辑多点维护，后续很容易漂移。
+P0109 [Finding Body] 标记建议：提取共享 validate_subscription_id 与 revision-aware stream runner；优先用 Tauri async interval/cancellation 或共享调度器，并参数化 interval、snapshot、event sender 与 stream key。
+P0110 [Finding Body] 后续验证：覆盖 normal stop、duplicate stop、owner destroyed、replacement、disconnect 与 registry 清理。
+P0112 [Finding Title] G-03｜低｜站点与文档资源存在 13 组完全重复文件
+P0113 [Evidence Path] 位置：images/CN|EN/*.png ↔ site/assets/img/CN|EN/*.png；res/icons/app-icon.png ↔ site/assets/img/app-icon.png
+P0114 [Finding Body] 证据：对 tracked files 按 SHA-256 分组，确认 13 组字节完全相同，重复量 4,902,977 bytes。最大组包括 app icon 577,931 bytes、中文角色详情 531,404 bytes、英文深渊图 530,770 bytes。
+P0115 [Finding Body] 影响：增加 Git clone、仓库压缩包和发布资源维护成本；这是 docs source 与 static-site deploy 布局重复，不是桌面运行时内存问题。
+P0116 [Finding Body] 标记建议：保留一个 canonical source，在站点构建/发布阶段复制或生成 site/assets/img；若部署平台必须提交静态副本，至少由脚本和 hash check 保证一致。
+P0117 [Finding Body] 后续验证：站点构建与发布流水线回归。
+P0119 [Heading 1] 5. 为便利/复用牺牲性能的路径
+P0120 [Section Lead] 重点检查 ≥4Hz、per-packet、per-hit、锁内 projection 与 UI 热渲染；下列问题均有明确频率、复杂度或容量证据。
+P0121 [Finding Title] P-01｜高｜主窗口最高 10Hz 先构造完整时间线再压成 60 桶
+P0122 [Evidence Path] 位置：src-tauri/src/channels/main_dps.rs:13,29-39,71-73；src-tauri/src/state.rs:1214-1245,3136-3159；src/core/hud.rs:19,243-268,423-457；src/engine/model.rs:2620-2660
+P0123 [Finding Body] 证据：主 DPS stream 每 100ms 在 revision 变化时 snapshot；project_main_readout 为复用 HUD 固定使用 HudConfig::detailed()，启用 timeline。state.timeline 先收集全部 hit、求完整跨度、按 bucket_seconds 分配 bucket_count 个 TimelineBucket 和同数量 HashMap，之后 project_timeline 才把结果压到最多 60 桶。整个投影通过 live_capture.with_state 在权威 CombatState mutex 内执行。
+P0124 [Finding Body] 影响：hit 上限 50,000；bucket 最小 0.2 秒。24 小时会先分配约 432,001 个 bucket + 432,001 个 HashMap，最终只输出≤60项。持续命中时最高 10 次/秒，且锁内耗时会阻塞实时 reducer 与其它 read model。
+P0125 [Finding Body] 标记建议：从源头接受 max_buckets 并一次扫描聚合到≤60个显示桶；消除 stats×hits 的嵌套 any；以 hits_generation、bucket、scope/time mode 为 key 缓存，同一 revision 不重复计算；锁内只取 bounded DTO/标量。
+P0126 [Finding Body] 后续验证：结构测试：任意时间跨度的临时 bucket 数≤60；benchmark 1k/10k/50k hit 与稀疏长跨度；验证锁持有时间。
+P0128 [Finding Title] P-02｜高｜常规桌面抓包固定 FullDebug，保留 10,000 份完整 hex
+P0129 [Evidence Path] 位置：src-tauri/src/state.rs:1388-1403；src/engine/capture.rs:66,4443-4460；src/engine/model.rs:213-225,2177-2182；src/core/packets.rs:1-9；src-tauri/src/contract/packets.rs:44-58
+P0130 [Finding Body] 证据：桌面启动抓包无条件 raw_capture=Enabled 且 packet_emission=FullDebug。每个保留 packet 同时生成 96-byte preview hex、整个 payload 的 hex 与 decoded text；ring 仅按 10,000 条限制，没有字节预算。前端 projection 只显示 500 条，且 contract 明确不传 payloadHex/payloadPreview。
+P0131 [Finding Body] 影响：按 snaplen 65,535 的理论上界，10,000 份 payload_hex 单字段约 1.31GB 十进制（约1.22GiB），未计 decoded text 与元数据。普通 MTU 较低但仍会达到数十 MB；同时 raw capture 又保留原始数据。
+P0132 [Finding Body] 标记建议：常规抓包用 SummaryOnly，用户显式诊断/export 才启用 FullDebug；packet ring 同时限制 items 与 bytes；UI 仅保留 500 条 bounded DTO；需要导出时优先从 raw PCAP 按需重建。
+P0133 [Finding Body] 后续验证：内存基准覆盖普通 MTU、raw IPv4 与大 frame；断言常规运行不创建 full payload_hex。
+P0135 [Finding Title] P-03｜高｜每个 UDP payload 做 8 次复制和约 16 次全文扫描
+P0136 [Evidence Path] 位置：src/engine/capture.rs:1229-1235,1333-1358,1370-1418,4005-4039
+P0137 [Finding Body] 证据：decode_payload_text_filtered 对 bit_shift 0..8 均构造新的 shifted Vec（shift 0 也 data.to_vec），随后每份数据先扫描全部 offset 提取 length-prefixed identifier，再按非 ASCII split 做第二遍扫描。SummaryOnly 只关心 Abyss、ConditionState_Success、UltraSkill，但过滤发生在字符串已构造并插入 HashSet 后。
+P0138 [Finding Body] 影响：高包速率/大 payload 时，每包至少 8 次线性分配、约16次线性扫描，再叠加字符串 hash、复制、排序和 join；该路径位于 parser 热线程，落后会推高 frame queue 占用。
+P0139 [Finding Body] 标记建议：为 SummaryOnly 写专用 marker scanner；复用 scratch buffer 或无复制 bit-view；命中前不构造 String/HashSet；FullDebug 文本抽取必须成为显式诊断开关。
+P0140 [Finding Body] 后续验证：按 payload 大小与模式做 allocations/byte scanned benchmark，并测 parser queue 高水位。
+P0142 [Finding Title] P-04｜高｜单条 follow-up/校正会重扫并重建完整战斗聚合
+P0143 [Evidence Path] 位置：src/engine/model.rs:1216-1238,1461-1492,2140-2174,2842-2875；src/core/reducer.rs:44-56；src/core/live_capture.rs:865-899
+P0144 [Finding Body] 证据：follow-up/correction 先从 VecDeque 末尾线性查找匹配 hit，命中后清空 stats 并遍历全部 hits 重建全局聚合；随后 first_half 与 second_half 也分别查找，命中的 half 再完整重建。路径运行在 event_gate + authoritative state 热锁内。
+P0145 [Finding Body] 影响：hit 最多50,000；校正随命中频繁发生时会形成多次 O(N) 搜索和重建，总成本接近 O(N²)，并直接阻塞后续抓包事件。全量 rebuild 易于推理，但被放在实时单事件路径。
+P0146 [Finding Body] 标记建议：为最近 hit 建稳定/短窗口索引；记录旧值，对 stats、total 与方向计数差量更新；显式记录所属 half，只更新目标 half；全量 rebuild 仅留给 trim/import/恢复/一致性校验。
+P0147 [Finding Body] 后续验证：结构回归：连续 correction/follow-up 不调用 full rebuild；随机 differential test 对比 delta 与全量重算结果。
+P0149 [Finding Title] P-05｜中｜诊断页每 500ms 构造完整 skill breakdown
+P0150 [Evidence Path] 位置：src-tauri/src/channels/diagnostics.rs:12,25-45；src-tauri/src/contract/diagnostics.rs:140-180；src/core/live_capture.rs:273-295；src/engine/model.rs:772-839,2389-2422
+P0151 [Finding Body] 证据：诊断 stream 每 500ms 在 revision 变化时 snapshot；capture_quality_summary 扫描 hits 后调用完整 skill_breakdown(None)，它构造字符串丰富的 HashMap key/row、排序，再只取 unknown character/skill/effect 等少量计数。调用通过 event_gate→state→quality_source 锁序执行。
+P0152 [Finding Body] 影响：打开诊断页且战斗/packet 活跃时反复 O(N) 扫描与临时分配，并在 event_gate 内阻塞 reducer。
+P0153 [Finding Body] 标记建议：增量维护 quality counters，或提供无字符串 clone 的专用 summarize_quality_unknowns；按 hits generation 缓存；锁内只取轻量快照，锁外排序。
+P0154 [Finding Body] 后续验证：诊断页活跃时测 reducer 延迟、allocation 与 50k hits snapshot。
+P0156 [Finding Title] P-06｜中｜抓包队列和去重只按条数限制并复制完整 frame
+P0157 [Evidence Path] 位置：src/engine/capture.rs:66,83-88,2758-2816,4582-4585,4676-4735
+P0158 [Finding Body] 证据：parser queue 容量16,384，每项有独立 Vec<u8>；Npcap 读取后 packet.to_vec 再 blocking send。按 snaplen 理论上界队列可承载约1.0GiB payload。FrameDedup 最多保留512份完整 bytes，每个新 frame 顺序比较并在非重复时再次 frame.to_vec。
+P0159 [Finding Body] 影响：普通1500-byte帧下队列约24.6MB，理论上界不等于常态；但 PERF-03 使 parser 变慢时会积压，raw IPv4、大帧或 replay burst 会放大。去重窗口1ms使 live 常态 recent 较小，风险主要在 burst。
+P0160 [Finding Body] 标记建议：队列同时设置帧数和累计字节预算并记录高水位；按真实吞吐重估16,384；dedup 保存 timestamp+len+128-bit fingerprint，仅 hash 候选匹配时比 bytes；减少 acquire→queue→dedup 重复复制。
+P0161 [Finding Body] 后续验证：队列 overload、backpressure、disconnect 和 replay burst benchmark。
+P0163 [Finding Title] P-07｜中｜Damage digit 图集在渲染期线性查找且大量内联
+P0164 [Evidence Path] 位置：frontend/src/features/main-dps/main-dps-detail-page.tsx:690-698,858-868,914-921,951-1009；res/images/font/tiaozi1/**/*.png；frontend/dist/assets/combat-details-*.js
+P0165 [Finding Body] 证据：页面 eager glob 241 张 PNG（773,348 bytes）；其中171张≤4KB（372,626 bytes）被 Vite 内联，构建后的 combat-details chunk 为542.84KB/gzip 368.03KB，实测含171个 data:image。每个伤害数字都 Object.entries(damageDigitImages).find(path.endsWith)，反应标签也重复线性扫描；可见虚拟化行内会多次执行。
+P0166 [Finding Body] 影响：造成 chunk 解析/内联解码成本和 O(assets×digits×visible rows) 查找。代码直观，但资源列表每次转 entries/find 是为了便利牺牲热渲染性能。
+P0167 [Finding Body] 标记建议：模块初始化时一次性构建 key→URL Map；按 row/digit memoize；用 ?no-inline 或调整 assetsInlineLimit 让小 PNG 独立缓存；评估 sprite/atlas 但先消除线性查找。
+P0168 [Finding Body] 后续验证：React profiler、chunk 体积快照、滚动1000行时 scripting/GC 对比。
+P0170 [Heading 1] 6. 过度防御与维护扩展风险
+P0171 [Section Lead] 问题集中在“吞错后继续”“所有状态同一恢复策略”和 façade 堆积，而不是必要边界验证本身。
+P0172 [Finding Title] D-01｜高｜175 处 poisoned Mutex 无差别继续恢复
+P0173 [Evidence Path] 位置：src/core/live_capture.rs（62处，代表：150-184,373-458,865-899）；src-tauri/src/state.rs（103处，代表：497-525,3234-3303）；其余10处位于 i18n、ability cache、CLI mailbox
+P0174 [Finding Body] 证据：全仓精确命中 175 处 unwrap_or_else(|poison| poison.into_inner())。CombatState、event_gate、replay reservation、provenance、archive、stream registry 等权威状态在持锁代码 panic 后没有不变量校验、reset/rebuild、degradation diagnostic 或 fail-closed，仍继续 mutation/revision。
+P0175 [Finding Body] 影响：poison 表示受保护对象可能只完成部分 mutation；统一“保活”会把原始 panic 变成更晚、更难复现的状态漂移，并鼓励后续开发机械复制同一模式。简单可覆盖 mailbox 与权威聚合不应采用同一策略。
+P0176 [Finding Body] 标记建议：按类型建立 lock_infallible、lock_checked、authoritative fail-closed 三类策略；权威 capture/history/replay 返回 typed invariant error并停止当前 session；允许恢复的类型要有类型级说明与 poison regression test。
+P0177 [Finding Body] 后续验证：先做175点分类表，不做全局机械替换；对 round cut/reset/event reducer 注入 panic 后验证状态。
+P0179 [Finding Title] D-02｜中｜网络探测失败被折叠为正常“无连接”
+P0180 [Evidence Path] 位置：src/core/capture.rs:44-68,221-230；src/core/diagnostics.rs:160-203
+P0181 [Finding Body] 证据：detect_game_network().ok() 和 manual 分支的 network.ok() 丢失错误；注释也承认 OS lookup failure 与 no active connection 被合并。diagnostics 最终统一显示 No active HTGame.exe connection detected。
+P0182 [Finding Body] 影响：用户与维护者无法区分确实无连接、权限不足、Windows IP helper 失败或枚举异常；新增 backend 会继续依赖字符串或更多 .ok()。
+P0183 [Finding Body] 标记建议：使用 Connected(GameNetwork) / NotConnected / ProbeFailed{stable_code,detail}。手工 NIC 可在 ProbeFailed 时继续，但 capture status 和 diagnostics 必须保留 degradation。
+P0184 [Finding Body] 后续验证：覆盖 no connection、access denied、OS API failure 与 manual fallback。
+P0186 [Finding Title] D-03｜中｜Updater 把所有 HTTP 状态当作 route error
+P0187 [Evidence Path] 位置：src/platform/update_http.rs:27-52,110-146,560-567
+P0188 [Finding Body] 证据：Automatic→WinHTTP default→Direct 的 fallback 由 is_route_error 控制，但它匹配 HttpError::Status(_)；所以401/403/404等确定性应用状态也会最多发三次请求，并可能从代理路径转为 direct。现有测试只表达407/502。
+P0189 [Finding Body] 影响：增加更新延迟与服务端负载；受管网络中可能绕过预期代理；以后新增 status handling 容易被外层 fallback 抵消。
+P0190 [Finding Body] 标记建议：typed retry classifier：transport/proxy discovery 可换 route；407按产品策略；明确白名单 gateway status；应用4xx终止；可重试5xx应是同一路由的有界 retry。
+P0191 [Finding Body] 后续验证：route×status table tests，特别覆盖401/403/404 terminal 与企业代理行为。
+P0193 [Finding Title] D-04｜中｜Mod Market 将任意本地文档错误伪装为 disabled
+P0194 [Evidence Path] 位置：src-tauri/src/commands/mod_studio.rs:33-55
+P0195 [Finding Body] 证据：DocumentNotFound 正确映射未安装，但任何其它 load_document error 都映射为 (installed=true, enabled=false, current=false)，catalog command 仍成功。权限、损坏、非法格式、I/O 与 workspace 不一致都被吞掉。
+P0196 [Finding Body] 影响：UI 无法提示本地 Mod 已损坏，也不能区分正常 disabled 与 unreadable；新增错误码会被 catch-all 自动吞没。
+P0197 [Finding Body] 标记建议：contract 增加 notInstalled / installed / unreadable{code}，或提供 bounded warning 列表；至少记录 stable code 和 diagnostic。
+P0198 [Finding Body] 后续验证：对 NotFound、permission、parse corruption、I/O 与正常 disabled 做 contract/UI 测试。
+P0200 [Finding Title] D-05｜中｜AppStateInner 已演化为跨领域 God object
+P0201 [Evidence Path] 位置：src-tauri/src/state.rs:326-361,530-3305,1578-1600,1900-1922
+P0202 [Finding Body] 证据：AppStateInner 平铺约34个字段，混合 capture、window、replay、diagnostics、streams、update、encrypted INI、undo、config、history 等；单个 impl AppState 约2,800行，并出现两处 #[allow(clippy::too_many_arguments)]。已有 PresentationState/HistoryService 证明可按领域收拢。
+P0203 [Finding Body] 影响：新功能倾向继续塞 Mutex/Atomic/revision/transaction lock；lock order、mutation effect、undo 与生命周期难以局部证明，command 测试也需构造整个 root state。
+P0204 [Finding Body] 标记建议：保留 AppState façade，按领域渐进抽 UpdateRuntime、DiagnosticsService、EncryptedIniService、StreamRegistry、TeamImportService、SettingsService；一次只迁移一个领域，不做大爆炸。
+P0205 [Finding Body] 后续验证：每次迁移验证 lock order、owner/cancel、revision effect、command API 兼容。
+P0207 [Finding Title] D-06｜低｜Generation 比较异常 fallback 会接受非法状态
+P0208 [Evidence Path] 位置：frontend/src/features/main-dps/main-dps-model.ts:33-42；frontend/src/lib/decimal-string.ts:1-15
+P0209 [Finding Body] 证据：isGenerationNewer 用 BigInt 比较，异常时返回 candidate !== current。Contract 已要求 decimal string；因此 catch 对合法数据不可达，而非法且不同的字符串反而被视为 newer。仓库已有无异常 decimal-string compare。
+P0210 [Finding Body] 影响：掩盖 contract breach，并可能接受 stale/corrupt stream update；比较策略也与其它 revision helper 不一致。
+P0211 [Finding Body] 标记建议：复用 compareDecimalStrings/shouldAcceptDecimalVersion；非法 generation 必须在 contract parser fail loudly。
+P0212 [Finding Body] 后续验证：加入非法 generation 必须拒绝、长 decimal 不抛异常的测试。
+P0214 [Heading 1] 7. 造轮子与重复真相源
+P0215 [Section Lead] 自定义 DSL、runtime validation、WinHTTP 等有领域合理性；本节只标记已有能力未复用或多套实现已发生漂移的部分。
+P0216 [Finding Title] W-01｜高｜Mod 语法、词法与 capability 表存在三套手写真相源
+P0217 [Evidence Path] 位置：src/storage/mod_scripts.rs:289-650,659-669,1505-1537；frontend/src/features/mod-studio/mod-source-semantic.ts:146-233；frontend/src/features/mod-studio/mod-source-intelligence.ts:95-143,314-498；native/nte-mods-plugin/src/mod_runtime.hpp:12-23；native/nte-mods-plugin/src/mod_runtime.cpp:577-686
+P0218 [Finding Body] 证据：Rust 逐行把受限 C++ 转为 DSL，前端又有两套 scanner；mod-source-intelligence.ts:319 用 originalLine.split("//")，会把字符串中的 // 当注释。更严重的是 native 已支持 character.effects(bit11) 与 character.query_effects，而 Rust validator 的 capability/service 表停在 bit10/operation12，Studio 会拒绝 native runtime 已支持的脚本。
+P0219 [Finding Body] 影响：新增语法、转义、capability 或 IPC service 要同步至少三处，已经出现编辑器/validator/runtime 的现时协议不一致；这不是“自定义 DSL 本身错误”，而是多套手写 grammar 与常量表。
+P0220 [Finding Body] 标记建议：定义正式受限语法、token/AST、capability/service schema 和 golden corpus；由一个源生成 Rust/native/TS 表，或让 Rust semantic service返回编辑器 DTO。若需 parser generator，先评估 Logos/pest；完整 C++ parser 不应默认引入注入 DLL。
+P0221 [Finding Body] 后续验证：现有 Mod corpus 做 old/new differential；新增 character.effects/query_effects 端到端 conformance；字符串含 //、raw string、escape 回归。
+P0223 [Finding Title] W-02｜高｜Rust/TypeScript Contract 重复实现并已发生 SemVer 漂移
+P0224 [Evidence Path] 位置：src-tauri/src/contract/*.rs（16文件、5,837行）；frontend/src/lib/tauri/*-contract.ts（17文件、6,171行）；src/core/mod_market.rs:189-190；src-tauri/src/contract/mod_studio.rs:244-269；frontend/src/lib/tauri/mod-studio-contract.ts:685-695
+P0225 [Finding Body] 证据：TS 17个 contract 顶层共283个函数；29个函数名重复，形成145个重复定义出现（integer 16、object 12、nonNegativeInteger 10、list 10、text 9等）。Rust 用 semver::Version 解析并输出 canonical string；TS 正则拒绝合法 1.2.3+build.1，却接受 Rust 会拒绝的 1.2.3-01。
+P0226 [Finding Body] 影响：跨边界 runtime validation 必须保留，但原语与标准格式手写重复会使上限、枚举、可空性和错误语义漂移；SemVer 已证明是实际兼容 bug。
+P0227 [Finding Body] 标记建议：先抽 contract-primitives.ts 和 Rust/TS 共用 conformance vectors；SemVer 使用标准实现或只验证后端 canonical bounded string；选一个 contract 试点生成类型/基础 schema，领域 invariant 仍留在 domain parser。
+P0228 [Finding Body] 后续验证：共享向量至少覆盖 build metadata、numeric prerelease leading zero、边界长度、未知字段和错误码。
+P0230 [Finding Title] W-03｜中｜已有 Base UI 仍自写 dismiss/dialog/menu 行为
+P0231 [Evidence Path] 位置：frontend/package.json:19-33；frontend/src/hooks/use-dismissible-layer.ts:1-62；frontend/src/components/ui/tooltip.tsx:1-66；frontend/src/features/main-dps/update-prompt-dialog.tsx:43-123；frontend/src/features/console/console-command-palette.tsx:64-73；frontend/src/features/mod-studio/mod-studio-page.tsx:494-496,848-850
+P0232 [Finding Body] 证据：项目已安装 @base-ui/react 并用其实现 Tooltip，但 useDismissibleLayer 仍手工注册 pointerdown、Escape、blur、scroll；多个界面使用 raw role=dialog。现有 hook 不处理 focus trap/restore、nested layer、background inert、menu roving focus/typeahead 与 portal stacking。
+P0233 [Finding Body] 影响：相同交互状态机将在每个 popup/dialog 继续补丁式增长，并形成可访问性与焦点回归。
+P0234 [Finding Body] 标记建议：建立项目级 Dialog/AlertDialog/Popover/Menu wrapper，先迁移新组件和单一 popup，再处理 command palette/update prompt；保留 Tauri drag region、window blur、portal/z-index 专项适配。
+P0235 [Finding Body] 后续验证：键盘Tab/Shift+Tab/Escape、focus restore、nested dialog、window blur、drag-region 与多窗口验证。
+P0237 [Finding Title] W-04｜中｜Tauri 场景仍手写 232 行 Win32 文件对话框
+P0238 [Evidence Path] 位置：src/platform/file_dialog.rs:1-232；调用方位于 src-tauri/src/commands/*
+P0239 [Finding Body] 证据：模块手写 SHBrowseForFolderW + 固定260 UTF-16路径、GetOpenFileNameW/GetSaveFileNameW + 32,768缓冲、CommDlgExtendedError、filter双NUL和资源释放。它只服务 Tauri command，却放在共享 desktop platform。
+P0240 [Finding Body] 影响：项目自行承担 Win32 unsafe、MAX_PATH/fixed buffer、parent modality、cancel/error、filter编码和未来event-loop行为。自实现可能源于依赖/owner语义要求，因此本条是“评估替换”而非直接删除结论。
+P0241 [Finding Body] 标记建议：把选择器归入 Tauri adapter，评估官方 tauri-plugin-dialog；保留 typed cancel outcome。新增依赖须先确认维护状态、许可证、体积和现有 owner/长路径语义。
+P0242 [Finding Body] 后续验证：owner modality、长路径、filter/default extension、async/blocking线程、cancel/error mapping、capabilities。
+P0244 [Finding Title] W-05｜低｜Rust/TypeScript i18n placeholder 语法已漂移
+P0245 [Evidence Path] 位置：src/storage/i18n.rs:116-139,183-209；frontend/src/lib/i18n.ts:1-61；res/languages/zh-CN.json:323,370,401,409,1016-1019
+P0246 [Finding Body] 证据：Rust 资源读取/JSON失败静默得到 empty map，formatter 只依次替换 {}；TS 同时支持 {0}/{1} 与 {}。共享 locale 已存在 indexed placeholder。当前 Rust 调用大多仍用 {}，未证实现时用户可见错误，但跨端复用 key 会暴露 token。
+P0247 [Finding Body] 影响：同一翻译源却有两套格式语法；资源损坏又只表现为静默回退，diagnostics 无法解释。
+P0248 [Finding Body] 标记建议：统一并文档化 placeholder grammar；建立 Rust/TS conformance corpus和CI占位符一致性检查；bundle load failure记录bounded diagnostic。不要为此立即大爆炸迁移 ICU/Fluent。
+P0249 [Finding Body] 后续验证：三个locale的placeholder索引/数量一致性，资源损坏降级可见性。
+P0251 [Finding Title] W-06｜低｜Update 展示 helper 被逐字复制且单位语义不同
+P0252 [Evidence Path] 位置：frontend/src/features/settings/settings-catalog.tsx:518-539；frontend/src/features/main-dps/update-prompt-dialog.tsx:158-179；frontend/src/features/diagnostics/diagnostics-model.ts:34-43
+P0253 [Finding Body] 证据：updateComponentLabelKey、updateProgressPercent、formatByteCount 在前两处逐字重复；第三套 formatter 使用 KiB/MiB/GiB，而前两处按1024计算却显示 KB/MB/GB。
+P0254 [Finding Body] 影响：低风险重复已经产生用户可见单位语义漂移；后续精度/BigInt/非法输入修正需多点同步。
+P0255 [Finding Body] 标记建议：抽 update-presentation.ts 或通用 byte formatter，明确二进制/十进制单位、suffix、精度与非法输入行为。
+P0256 [Finding Body] 后续验证：共享向量覆盖0、1023、1024、MiB、GiB与进度边界。
+P0259 [Heading 1] 8. 已运行验证与基线结果
+P0260 [Section Lead] 构建/测试成功不能反证静态并发竞态或长时性能问题；它只证明当前自动化覆盖范围内的基线可通过。
+P0261 [Table Citation] 表 4｜Hardened 验证矩阵（命令、literal result、exit status）
+P0262 [Small Note] 基线格式说明：Tauri rustfmt 仅报告 src-tauri/src/windows/main_dps.rs:253 的换行差异；frontend Prettier 报告242个文件。按照“仅审查、禁止修改代码”，未运行任何 --write 或 cargo fmt。
+P0263 [Heading 2] 未执行的动态验证
+P0265 [Heading 1] 9. Hardened Review 清单结论
+P0266 [Section Lead] 状态为“不满足”表示本轮已定位反例；“部分验证”表示自动化通过但没有完整动态覆盖。
+P0268 [Heading 1] 10. 建议的分批处理顺序
+P0269 [Section Lead] 以下只定义审查后的优先顺序和验证门禁；本次没有实施任何代码变更。
+P0270 [Heading 2] 实施原则
+P0271 [List Body] Native 生命周期、reducer/hot lock、contract version 走 Hardened；先补回归/压力测试。
+P0272 [List Body] God object、contract、i18n 按波次迁移并保留 façade/API；新增依赖单独确认维护、许可证、体积与替代方案。
+P0273 [List Body] 性能门禁看结构：bounded output、无完整 span 分配、无 FullDebug 默认、无热锁全量 rebuild。
+P0275 [Heading 1] 11. 误报排除、限制与参考依据
+P0276 [Section Lead] 以下内容经过消费者或产品语义核对，不应为了减少行数被机械删除。
+P0277 [List Body] native/nte-mods-plugin/third_party/dumper7：51个tracked文件、875,750 bytes；sdk_cache 实际调用 SDK 生成入口，属于功能依赖，不是垃圾。
+P0278 [List Body] LEGACY_EQUIPMENT_MOD_PROGRAMS / LEGACY_COMBAT_CLOCK_MOD_PROGRAMS：在 mods_plugin.rs:2746-2758、2868-2910 有迁移消费者。
+P0279 [List Body] src/storage/config.rs:875-1085 的 persisted config sanitize 与 legacy migration：属于外部边界和兼容性必要防御。
+P0280 [List Body] TypeScript contract runtime validation：WebView边界仍需要；应去重/生成原语，而不是删除验证。
+P0281 [List Body] WinHTTP updater、自定义 Mod DSL、global passthrough hotkey：都有产品/平台依据；本报告只标记具体retry、语法漂移和生命周期问题。
+P0282 [List Body] mod-source-editor 3.35MB chunk 已通过 lazy import 隔离；本次不把它直接判为首屏垃圾。
+P0283 [List Body] pause/reset/export 中的完整 CombatState clone 属低频动作；未发现明确的≥4Hz直接完整clone，因此不列为性能缺陷。
+P0284 [Heading 2] 外部技术依据
+P0285 [List Body] Microsoft｜DllMain entry point
+P0286 [List Body] Microsoft｜DisableThreadLibraryCalls
+P0287 [List Body] Microsoft｜Canceling pending I/O operations
+P0288 [List Body] Microsoft｜OVERLAPPED structure
+P0289 [List Body] Microsoft｜IsBadReadPtr remarks（check/use竞态说明）
+P0290 [List Body] Base UI｜Dialog
+P0291 [List Body] Base UI｜Popover
+P0292 [List Body] Tauri v2｜Dialog plugin
+P0293 [List Body] Semantic Versioning 2.0.0
+P0294 [Heading 2] 报告限制
+P0295 [List Body] 静态竞态的可达性通过调用链确认，但未在真实游戏中强制复现；因此影响判定强调不变量破坏，而不声称已观察到崩溃。
+P0296 [List Body] 理论容量上界（1.22GiB packet hex、约1.0GiB frame queue、432,001 timeline buckets）用于显示缺少byte/span bound，不代表普通运行的常态占用。
+P0297 [List Body] 行号与bundle hash对应 2026-08-19 基线 commit；后续变更后应重新定位。
+P0298 [Small Note] 工作树结论：报告生成前 git status --short 与 git diff --stat 均为空；本次没有 commit、push 或 PR。
+
+TABLE 0 rows=1 cols=1
+T0R0: 结论：确认 31 项可行动发现（高 13 / 中 13 / 低 5）。最高优先级集中在 native IPC 与 hook 生命周期、DllMain loader-lock 违规，以及实时路径的无界分配/全量重算。
+
+TABLE 1 rows=1 cols=4
+T1R0: 950 tracked files | 445 source files | 156,258 physical source lines | 31 review findings
+
+TABLE 2 rows=4 cols=3
+T2R0: 级别 | 数量 | 判定口径
+T2R1: 高 | 13 | 可造成宿主崩溃、未定义行为、无界热点或已证实跨层协议不一致；优先建立回归门禁。
+T2R2: 中 | 13 | 明显的资源/维护成本、错误吞没或安全加固缺口；应进入近期分批重构。
+T2R3: 低 | 5 | 现时影响有限但已形成漂移/冗余；可随邻近领域变更收敛。
+
+TABLE 3 rows=6 cols=3
+T3R0: 层 | 规模 | 覆盖重点
+T3R1: Rust Core / Storage / Platform | 60 files / 53,107 lines | FFI、reducer热锁、capture、timeline、packet、probe、update、Mod script
+T3R2: Tauri Adapter | 60 files / 19,762 lines | AppState、contract、Channel、命令错误模型、window生命周期
+T3R3: React/TypeScript | 233 files / 42,298 lines | contract parser、渲染热点、dialog/layer、i18n与重复helper
+T3R4: Native Mods Plugin | 83 files / 38,970 lines | DllMain、hook、IPC、OVERLAPPED、内存访问、Release配置
+T3R5: 策略/构建 | scripts + Cargo/pnpm/MSBuild | 格式、check、test、clippy、架构门禁、runtime safety、Release x64
+
+TABLE 4 rows=20 cols=4
+T4R0: 命令 | Exit | 观察结果 | 范围/备注
+T4R1: cargo fmt --check | 0 | 无输出；格式检查通过 | Root Rust
+T4R2: cargo check --locked | 0 | Finished dev profile | Root desktop/default
+T4R3: cargo test --locked | 0 | 543 passed; 0 failed; 8 ignored | Root desktop/default
+T4R4: cargo clippy --locked --all-targets --features desktop -- -D warnings | 0 | Finished；0 warning | Root desktop
+T4R5: cargo check --locked --bin nte-core --no-default-features --features cli | 0 | Finished dev profile | CLI-only
+T4R6: cargo test --locked --no-default-features --features cli | 0 | 483 passed; 0 failed; 7 ignored | CLI-only
+T4R7: cargo clippy --locked --all-targets --no-default-features --features cli -- -D warnings | 0 | Finished；0 warning | CLI-only
+T4R8: cargo fmt --check --manifest-path src-tauri/Cargo.toml | 1 | Diff in src-tauri/src/windows/main_dps.rs:253 | 基线格式差异，未自动修复
+T4R9: cargo check --locked --manifest-path src-tauri/Cargo.toml | 0 | Finished dev profile | Tauri
+T4R10: cargo test --locked --manifest-path src-tauri/Cargo.toml | 0 | 150 passed; 0 failed; 0 ignored | Tauri
+T4R11: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings | 0 | Finished；0 warning | Tauri
+T4R12: pnpm --dir frontend format:check | 1 | Code style issues found in 242 files | 基线 Prettier 差异，未 --write
+T4R13: pnpm --dir frontend lint | 0 | oxlint 完成 | Frontend
+T4R14: pnpm --dir frontend typecheck | 0 | tsc -b 完成 | Frontend
+T4R15: pnpm --dir frontend test | 0 | 76 files / 261 tests passed | Frontend Vitest
+T4R16: pnpm --dir frontend build | 0 | built；chunk >500KB warning | combat-details 542.84KB；window-bootstrap 611.17KB；mod-source-editor 3,353.30KB
+T4R17: pwsh -NoProfile -File scripts/verify_architecture.ps1 | 0 | Architecture policy passed: Tauri is the sole desktop UI and CLI remains UI-free. | 架构门禁
+T4R18: pwsh -NoProfile -File scripts/verify_runtime_safety.ps1 | 0 | Runtime safety policy passed (standard mode): 0 warning(s), 0 informational diagnostic(s). | 运行时模式扫描
+T4R19: "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" native\nte-mods-plugin\nte-mods-plugin.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal | 0 | nte-mods-plugin.vcxproj -> native\nte-mods-plugin\x64\Release\dwmapi.dll | Release x64 native
+
+TABLE 5 rows=5 cols=2
+T5R0: 项目 | 未运行原因/所需环境
+T5R1: Native 并发/卸载压力 | 需要 HTGame.exe 宿主、WinDbg/Application Verifier、强制线程交错；本轮未注入/修改代码。
+T5R2: 游戏内 hook/HUD 人工验收 | 需要真实游戏与多窗口/Tauri 交互；自动化构建不能覆盖。
+T5R3: 24h timeline / 50k hits / 大帧内存 benchmark | 本轮以复杂度、容量和调用频率做静态量化，未执行长时压测。
+T5R4: 旧安装迁移矩阵 | 删除 dead telemetry 前仍需对历史发行版本做外部升级验证。
+
+TABLE 6 rows=11 cols=4
+T6R0: 域 | 检查项 | 状态 | 证据摘要
+T6R1: Correctness | mutation revision/effect | 部分验证 | 未发现本轮重点路径的确定性漏 bump；但 AppState/poison 策略使全局证明成本高。
+T6R2: Correctness | no-op / replay-live 一致性 | 部分验证 | 现有 root/CLI/Tauri tests 通过；未做全量 differential replay/live 审计。
+T6R3: Boundary | 外部输入不 panic / 文件预算 | 部分满足 | runtime safety standard mode 通过；Rust unsafe 无明显危险原语，但 Npcap FFI边界仍过宽。
+T6R4: Boundary | probe error 与 normal negative 分离 | 不满足 | D-02 将 OS probe failure 折叠为无连接。
+T6R5: Concurrency | 锁、owner、overlapped、hook lifetime | 不满足 | U-01～U-06 提供 IPC、I/O、hook 与 memory lifetime 反例。
+T6R6: Concurrency | Channel owner/cancel/backpressure | 部分满足 | stream registry 存在；11线程模板重复；capture queue只有item bound无byte bound。
+T6R7: Performance | 高频路径 bounded / 无全量重算 | 不满足 | P-01～P-06 涵盖锁内时间线、FullDebug、8倍扫描、全量聚合与queue。
+T6R8: Contract | Rust/TS schema与标准格式同步 | 不满足 | W-01 capability/service drift；W-02 SemVer drift。
+T6R9: Maintainability | AppState façade / typed error / 单一真相源 | 不满足 | D-01～D-05、W-01～W-04。
+T6R10: Architecture | Tauri sole UI / CLI UI-free | 满足 | verify_architecture.ps1 exit 0，literal policy passed。
+
+TABLE 7 rows=7 cols=4
+T7R0: 波次 | 主题 | 覆盖发现 | 退出门禁
+T7R1: A | Native 安全门禁 | U-01/U-02/U-03/U-04/U-05/U-06 | 单一IPC owner；取消完成后复用；hook quiescence；DllMain极简；AppVerifier/WinDbg压力
+T7R2: B | 实时性能 | P-01/P-02/P-03/P-04 | bounded timeline；SummaryOnly默认；专用marker scanner；delta aggregation；50k hits benchmark
+T7R3: C | 错误与状态策略 | D-01/D-02/D-03/D-04 | poison分类；typed probe；retry classifier；unreadable Mod状态；degradation contract
+T7R4: D | 单一真相源 | W-01/W-02 | grammar/schema；capability/service生成；Rust/TS conformance vectors；SemVer标准化
+T7R5: E | 结构收敛 | D-05/G-02/W-03/W-04 | 逐域service；shared stream runner；Base UI wrapper；评估Tauri dialog plugin
+T7R6: F | 低风险清理 | G-01/G-03/D-06/W-05/W-06/U-09 | 迁移矩阵后删dead block；资源canonical source；helper/i18n/FFI边界收敛

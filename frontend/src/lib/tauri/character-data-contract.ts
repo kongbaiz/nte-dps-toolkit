@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
@@ -6,6 +7,19 @@ import {
 
 export const CHARACTER_DATA_CONTRACT_VERSION = 1;
 export const CHARACTER_DATA_MAX_RECORDS = 2_048;
+
+const {
+  array: list,
+  boolean: flag,
+  boundedString: boundedText,
+  cssHex6OrEmpty: color,
+  decimalString: decimal,
+  integer,
+  positiveInteger,
+  record: object,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type CharacterDataCommandError = TechnicalCommandError;
 
@@ -73,25 +87,25 @@ export function parseCharacterDataSnapshot(
           row.nameZh,
           `characterData.records[${index}].nameZh`,
           128,
-          true,
+          { allowEmpty: true },
         ),
         nameEn: boundedText(
           row.nameEn,
           `characterData.records[${index}].nameEn`,
           128,
-          true,
+          { allowEmpty: true },
         ),
         codename: boundedText(
           row.codename,
           `characterData.records[${index}].codename`,
           128,
-          true,
+          { allowEmpty: true },
         ),
         attribute: boundedText(
           row.attribute,
           `characterData.records[${index}].attribute`,
           16,
-          true,
+          { allowEmpty: true },
         ),
         verified: flag(
           row.verified,
@@ -102,7 +116,7 @@ export function parseCharacterDataSnapshot(
           row.avatar,
           `characterData.records[${index}].avatar`,
           512,
-          true,
+          { allowEmpty: true },
         ),
       };
     }),
@@ -111,70 +125,4 @@ export function parseCharacterDataSnapshot(
 
 export function characterDataError(error: unknown): CharacterDataCommandError {
   return parseTechnicalCommandError(error);
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function boundedText(
-  value: unknown,
-  field: string,
-  maxLength: number,
-  allowEmpty = false,
-): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${field} must be a string`);
-  }
-  if ((!allowEmpty && value.length === 0) || value.length > maxLength) {
-    throw new TechnicalContractError(`${field} has an invalid length`);
-  }
-  return value;
-}
-
-function flag(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  }
-  return value;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed <= 0) {
-    throw new TechnicalContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function decimal(value: unknown, field: string): string {
-  if (typeof value !== "string" || !/^(0|[1-9]\d*)$/.test(value)) {
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  }
-  return value;
-}
-
-function color(value: unknown, field: string): string {
-  const parsed = boundedText(value, field, 7, true);
-  if (parsed !== "" && !/^#[0-9a-fA-F]{6}$/.test(parsed)) {
-    throw new TechnicalContractError(`${field} must be #RRGGBB or empty`);
-  }
-  return parsed;
 }

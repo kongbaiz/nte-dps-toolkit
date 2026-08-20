@@ -25,7 +25,7 @@ use nte_dps_tool::storage::config::ModStudioLoadingMethod;
 
 use super::CommandError;
 
-pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 10;
+pub(crate) const MOD_STUDIO_CONTRACT_VERSION: u32 = 11;
 pub(crate) const MOD_MARKET_CONTRACT_VERSION: u32 = 11;
 pub(crate) const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION: u32 = 1;
 pub(crate) const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION: u32 = 1;
@@ -115,6 +115,7 @@ pub(crate) struct ModStudioRuntimeConnectionSnapshot {
     pub contract_version: u32,
     pub generation: String,
     pub status: ModStudioRuntimeConnectionStatusSnapshot,
+    pub bootstrap_error_code: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -123,7 +124,9 @@ pub(crate) enum ModStudioRuntimeConnectionStatusSnapshot {
     Connected,
     LoaderPresent,
     Waiting,
+    AcknowledgementRequired,
     ProbeFailed,
+    BootstrapFailed,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -489,6 +492,15 @@ impl ModStudioRuntimeEntrySnapshot {
 }
 
 impl CommandError {
+    pub(crate) fn mod_studio_risk_acknowledgement_required() -> Self {
+        Self {
+            code: "mod_studio_risk_acknowledgement_required",
+            message_key: "Confirm the Mod risk warning before starting the game runtime.",
+            message_arguments: Vec::new(),
+            diagnostic_line: None,
+        }
+    }
+
     pub(crate) fn from_mod_market(error: ModMarketError) -> Self {
         let (code, message_key) = match error.code {
             ModMarketErrorCode::InvalidCatalog => (
@@ -851,10 +863,12 @@ mod tests {
             contract_version: MOD_STUDIO_CONTRACT_VERSION,
             generation: "4".to_owned(),
             status: ModStudioRuntimeConnectionStatusSnapshot::LoaderPresent,
+            bootstrap_error_code: None,
         };
         let value = serde_json::to_value(snapshot).expect("serialize runtime connection");
 
         assert_eq!(value["status"], "loaderPresent");
+        assert!(value["bootstrapErrorCode"].is_null());
         assert!(value.get("connected").is_none());
     }
 

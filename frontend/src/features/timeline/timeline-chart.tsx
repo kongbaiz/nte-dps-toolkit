@@ -291,10 +291,11 @@ export function TimelineChart({
                   key={`${marker.kind}-${marker.offset}`}
                   className={cn(
                     "timeline-marker-label pointer-events-none absolute top-11 z-[3] rounded-full border px-1.5 py-0.5 font-mono text-[9px] tracking-wide",
-                    marker.offset <= snapshot.bucketSeconds * 0.5
+                    marker.offset <= snapshot.effectiveBucketSeconds * 0.5
                       ? "translate-x-0"
                       : marker.offset >=
-                          model.viewRange[1] - snapshot.bucketSeconds * 0.5
+                          model.viewRange[1] -
+                            snapshot.effectiveBucketSeconds * 0.5
                         ? "-translate-x-full"
                         : "-translate-x-1/2",
                     marker.kind === "clear"

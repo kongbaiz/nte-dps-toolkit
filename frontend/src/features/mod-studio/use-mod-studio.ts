@@ -336,6 +336,7 @@ export function useModStudio(client: ModStudioClient = modStudioClient) {
         setRuntimeState((current) => ({
           ...current,
           connection: "probeFailed",
+          bootstrapErrorCode: null,
           error,
         }));
       },

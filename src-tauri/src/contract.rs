@@ -9,6 +9,7 @@ use nte_dps_tool::core::{
 pub(crate) mod abyss_values;
 pub(crate) mod character_data;
 pub(crate) mod diagnostics;
+pub(crate) mod dps_time;
 pub(crate) mod empty_curtain;
 pub(crate) mod encrypted_ini;
 pub(crate) mod history;

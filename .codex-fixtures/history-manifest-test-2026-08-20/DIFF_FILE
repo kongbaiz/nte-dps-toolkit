@@ -1,0 +1,39 @@
+diff --git "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\history-manifest-test-2026-08-20\\baseline\\history.rs" "b/D:\\NTE_DPS_TOOL\\src\\storage\\history.rs"
+index 3fe7a00..ef50193 100644
+--- "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\history-manifest-test-2026-08-20\\baseline\\history.rs"
++++ "b/D:\\NTE_DPS_TOOL\\src\\storage\\history.rs"
+@@ -3849,17 +3849,24 @@ mod tests {
+ 
+         assert_eq!(record.recorded_at, Some(expected));
+         assert_eq!(record.effective_timestamp(), &expected);
+-        let file_name = fs::read_dir(&directory)
++        let expected_file_name = format!("{}_{}.json", record.file_timestamp(), record.id);
++        let main_files = fs::read_dir(&directory)
+             .unwrap()
+-            .next()
+-            .unwrap()
+-            .unwrap()
+-            .file_name()
+-            .to_string_lossy()
+-            .into_owned();
+-        assert_eq!(
+-            file_name,
+-            format!("{}_{}.json", record.file_timestamp(), record.id)
++            .filter_map(Result::ok)
++            .filter(|entry| {
++                entry.path().extension().and_then(|value| value.to_str()) == Some("json")
++            })
++            .map(|entry| entry.file_name().to_string_lossy().into_owned())
++            .collect::<Vec<_>>();
++        assert_eq!(main_files, vec![expected_file_name]);
++        assert!(
++            fs::read_dir(&directory)
++                .unwrap()
++                .filter_map(Result::ok)
++                .any(|entry| {
++                    entry.path().extension().and_then(|value| value.to_str())
++                        == Some("nte-history-chunk")
++                })
+         );
+ 
+         let newer_saved_at = DateTime::<Utc>::from_timestamp_millis(1_800_000_000_000).unwrap();

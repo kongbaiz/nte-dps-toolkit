@@ -1,0 +1,83 @@
+BRANCH / FIELD
+branch: codex/review-priority-optimizations
+changed field: `CompactTimelineIndex::project_layout` role admission and per-bucket candidate storage in `src/engine/model.rs`.
+behavior: choose globally earliest characters by `(first_sequence, char_id)`, then retain each bucket's earliest `(first_sequence, char_id)` top-k in fixed logical slots. Team damage/hits remain authoritative; omitted role damage/hits equal team aggregates minus retained role aggregates.
+bound: candidate logical slots <= `bucket_count * max_roles_per_bucket`; the production path no longer builds or globally sorts a role_count * bucket_count `CompactTimelineRoleEvent` vector.
+
+FOUR ARTIFACTS
+MODIFIED_FILE: D:\NTE_DPS_TOOL\.codex-fixtures\timeline-dense-p1-2026-08-20\MODIFIED_FILE
+DIFF_FILE: D:\NTE_DPS_TOOL\.codex-fixtures\timeline-dense-p1-2026-08-20\DIFF_FILE
+VERIFICATION.txt: D:\NTE_DPS_TOOL\.codex-fixtures\timeline-dense-p1-2026-08-20\VERIFICATION.txt
+ROLLBACK.sh: D:\NTE_DPS_TOOL\.codex-fixtures\timeline-dense-p1-2026-08-20\ROLLBACK.sh
+
+HASHES
+original `src/engine/model.rs` SHA-256: 729564586c03fd938f19e4db67cc75adb3845c2cf14d3e9956ffaebefaea6af5
+modified `src/engine/model.rs` SHA-256: a7e86e41b50c7e458cc61f717749ee8bb94b6c4bd91e76398def0c414e8480da
+MODIFIED_FILE SHA-256: a7e86e41b50c7e458cc61f717749ee8bb94b6c4bd91e76398def0c414e8480da
+
+BASELINE
+command: read `.codex-fixtures/timeline-dense-p1-2026-08-20/model.baseline.rs`; reject when `events.sort_by_key` exists or `CompactTimelineRoleCandidates` does not exist
+input: preserved pre-change `src/engine/model.rs`, SHA-256 729564586c03fd938f19e4db67cc75adb3845c2cf14d3e9956ffaebefaea6af5
+literal output: DENSE_CANDIDATE_GATE_REJECTED path=.codex-fixtures/timeline-dense-p1-2026-08-20/model.baseline.rs full_event_sort=True bounded_candidates=False
+exit status: 1
+
+MODIFIED STRUCTURE
+command: read `src/engine/model.rs`; reject when `events.sort_by_key` exists or `CompactTimelineRoleCandidates` does not exist
+input: modified source, SHA-256 a7e86e41b50c7e458cc61f717749ee8bb94b6c4bd91e76398def0c414e8480da
+literal output: DENSE_CANDIDATE_GATE_PASSED path=src/engine/model.rs full_event_sort=false bounded_candidates=true
+exit status: 0
+
+MODIFIED TESTS
+command: cargo test --locked compact_timeline_dense_projection_bounds_candidates_to_bucket_role_budget -- --nocapture
+input: direct dense index fixture with 256 role trees x 10,000 timestamp buckets; max_roles_per_bucket=16
+literal result: test engine::model::tests::compact_timeline_dense_projection_bounds_candidates_to_bucket_role_budget ... ok; 1 passed; 0 failed; 688 filtered out; finished in 1.08s
+asserted result: candidate slots <= 160,000 and equal 160,000 for the fully dense fixture; output role rows <= 160,000 and equal 160,000; team damage/hits=2,560,000; omitted damage/hits=2,400,000.
+exit status: 0
+
+command: cargo test --locked engine::model::tests::indexed_timeline -- --nocapture
+input: indexed projection admission, mutation/clock-extension, and structural-visit tests
+literal result: 3 passed; 0 failed; 686 filtered out; finished in 0.13s
+exit status: 0
+
+command: cargo test --locked compact_timeline_ -- --nocapture
+input: compact timeline engine and HUD focused tests
+literal result: 3 passed; 0 failed; 686 filtered out; finished in 1.03s
+exit status: 0
+
+command: cargo test --locked engine::model::tests::timeline_ -- --nocapture
+input: timeline source bounds, bucketing, marker and extreme-span focused tests
+literal result: 7 passed; 0 failed; 682 filtered out
+exit status: 0
+
+command: rustfmt --edition 2024 --check src/engine/model.rs
+input: modified source
+literal result: no output
+exit status: 0
+
+command: cargo check --locked
+input: modified shared root crate
+literal output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.13s
+exit status: 0
+
+command: cargo clippy --locked --all-targets --features desktop -- -D warnings
+input: complete current shared working tree
+literal result: `src/storage/history.rs:2026:14 .cast_unsigned()` is incompatible with declared MSRV 1.85 because the item stabilized in 1.87.
+exit status: 1
+scope result: failure is outside the allowed file and was not edited.
+
+command: cargo clippy --locked --all-targets --features desktop -- -D warnings -A clippy::incompatible-msrv
+input: complete current shared working tree with only the unrelated existing MSRV lint allowed
+literal output: Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.02s
+exit status: 0
+
+command: git diff --check -- src/engine/model.rs
+input: modified source
+literal result: no whitespace errors; Git emitted only its LF-to-CRLF working-copy warning
+exit status: 0
+
+ROLLBACK
+command: "C:\Program Files\Git\bin\bash.exe" D:\NTE_DPS_TOOL\.codex-fixtures\timeline-dense-p1-2026-08-20\ROLLBACK.sh D:\NTE_DPS_TOOL\.codex-fixtures\timeline-dense-p1-2026-08-20\rollback-copy-verified
+input: separate copy containing modified model SHA-256 a7e86e41b50c7e458cc61f717749ee8bb94b6c4bd91e76398def0c414e8480da
+literal output: ROLLBACK_OK target=/d/NTE_DPS_TOOL/.codex-fixtures/timeline-dense-p1-2026-08-20/rollback-copy-verified model_sha256=729564586c03fd938f19e4db67cc75adb3845c2cf14d3e9956ffaebefaea6af5 dense_candidate_gate=restored-baseline
+exit status: 0
+restored behavior/status: rollback copy contains the original full `events.sort_by_key` branch, has no `CompactTimelineRoleCandidates`, and exactly matches the preserved original hash. The live `src/engine/model.rs` remains modified.

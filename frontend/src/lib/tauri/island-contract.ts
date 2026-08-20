@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   TechnicalContractError,
   parseTechnicalCommandError,
@@ -5,6 +6,17 @@ import {
 } from "@/lib/tauri/technical-contract";
 
 export const ISLAND_CONTRACT_VERSION = 1;
+
+const {
+  array: list,
+  boolean,
+  enumValue: oneOf,
+  nonNegativeInteger: integer,
+  record: object,
+  string: text,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export interface IslandSnapshot {
   contractVersion: number;
@@ -56,40 +68,4 @@ function parseNotice(source: Record<string, unknown>): IslandNotice {
     undoAvailable: boolean(source.undoAvailable, "notice.undoAvailable"),
     remainingMs: integer(source.remainingMs, "notice.remainingMs"),
   };
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an object`);
-  return value as Record<string, unknown>;
-}
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value))
-    throw new TechnicalContractError(`${field} must be an array`);
-  return value;
-}
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string")
-    throw new TechnicalContractError(`${field} must be a string`);
-  return value;
-}
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean")
-    throw new TechnicalContractError(`${field} must be boolean`);
-  return value;
-}
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0)
-    throw new TechnicalContractError(`${field} must be a non-negative integer`);
-  return value;
-}
-function oneOf<const T extends readonly string[]>(
-  value: unknown,
-  values: T,
-  field: string,
-): T[number] {
-  const candidate = text(value, field);
-  if (!values.includes(candidate))
-    throw new TechnicalContractError(`${field} is unsupported`);
-  return candidate as T[number];
 }

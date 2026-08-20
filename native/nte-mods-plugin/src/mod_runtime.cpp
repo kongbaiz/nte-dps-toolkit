@@ -36,9 +36,6 @@ namespace nte::mods::runtime
 		constexpr uint8_t NULL_REGISTER = 0xFF;
 		constexpr uint64_t MAX_MEMORY_OFFSET = 0x4000;
 		constexpr DWORD MAX_SCRIPT_BYTES = 16 * 1024;
-		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
-		constexpr size_t GAME_INSTANCE_LOCAL_PLAYERS_OFFSET = 0x38;
-		constexpr size_t LOCAL_PLAYER_CONTROLLER_OFFSET = 0x30;
 
 		struct TextView
 		{
@@ -240,6 +237,8 @@ namespace nte::mods::runtime
 			bool player_state_resolved;
 			bool player_character_resolved;
 			bool combat_clock_sample_resolved;
+			uint64_t generation;
+			uint32_t host_thread_id;
 		};
 
 		struct ProgramExecution
@@ -3195,15 +3194,10 @@ namespace nte::mods::runtime
 
 		void ResolveGameSession(TickExecution& execution)
 		{
-			if (execution.session_resolved)
-				return;
+			// The plugin owner supplies one already-confirmed host-thread snapshot.
+			// Never walk the viewport chain again while programs execute: doing so
+			// could combine objects from different UE world generations.
 			execution.session_resolved = true;
-			execution.game_instance = memory::ReadPointer<void>(
-				execution.viewport, VIEWPORT_GAME_INSTANCE_OFFSET);
-			execution.local_player = ReadPointerArrayFirst(
-				execution.game_instance, GAME_INSTANCE_LOCAL_PLAYERS_OFFSET);
-			execution.player_controller = memory::ReadPointer<void>(
-				execution.local_player, LOCAL_PLAYER_CONTROLLER_OFFSET);
 		}
 
 		uint64_t ResolveGameValue(
@@ -4437,18 +4431,24 @@ namespace nte::mods::runtime
 		return result;
 	}
 
-	void ExecuteViewportTickPrograms(void* viewport)
+	void ExecuteViewportTickPrograms(const ViewportTickContext& context)
 	{
 		AcquireSRWLockShared(&program_lock);
 		TickExecution execution{};
-		execution.viewport = viewport;
+		execution.viewport = context.viewport;
+		execution.game_instance = context.game_instance;
+		execution.local_player = context.local_player;
+		execution.player_controller = context.player_controller;
+		execution.session_resolved = true;
+		execution.generation = context.generation;
+		execution.host_thread_id = context.host_thread_id;
 		for (size_t index = 0; index < program_count; ++index)
 		{
 			if (!quarantined_programs[index] &&
 				!ExecuteProgramGuarded(
 					programs[index],
 					static_cast<uint32_t>(index),
-					viewport,
+					context.viewport,
 					execution))
 				quarantined_programs[index] = true;
 		}

@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
@@ -6,6 +7,18 @@ import {
 
 export const RESOURCES_CONTRACT_VERSION = 1;
 export const RESOURCES_MAX_ITEMS = 20_000;
+
+const {
+  array: list,
+  boundedStringAllowEmpty: boundedText,
+  enumValue,
+  integer,
+  nonNegativeInteger,
+  positiveInteger,
+  record: object,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type ResourcesCommandError = TechnicalCommandError;
 export type ResourceSeverity = "error" | "warning";
@@ -179,59 +192,4 @@ function parseItem(value: unknown, index: number): ResourceItemSnapshot {
       16_384,
     ),
   };
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function boundedText(value: unknown, field: string, maxLength: number): string {
-  if (typeof value !== "string" || value.length > maxLength) {
-    throw new TechnicalContractError(`${field} must be bounded text`);
-  }
-  return value;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must be non-negative`);
-  }
-  return parsed;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed <= 0) {
-    throw new TechnicalContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  allowed: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !allowed.includes(value)) {
-    throw new TechnicalContractError(`${field} is invalid`);
-  }
-  return value as T[number];
 }

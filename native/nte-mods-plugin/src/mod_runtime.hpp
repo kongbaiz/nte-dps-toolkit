@@ -29,10 +29,24 @@ namespace nte::mods::runtime
 		Error,
 	};
 
+	// Captured and fully revalidated on the stable host window thread. Every
+	// game-session builtin consumed during one Tick originates from this one
+	// identity/generation rather than rewalking a mutable UObject chain.
+	struct ViewportTickContext
+	{
+		uint64_t generation;
+		uint32_t host_thread_id;
+		void* world;
+		void* game_instance;
+		void* local_player;
+		void* player_controller;
+		void* viewport;
+	};
+
 	ReloadResult ReloadEnabledPrograms(const wchar_t* workspace);
 	bool HasViewportTickPrograms();
 	uint32_t EnabledCapabilities();
-	void ExecuteViewportTickPrograms(void* viewport);
+	void ExecuteViewportTickPrograms(const ViewportTickContext& context);
 	NteModsStatus DispatchIpcRequestPrograms(
 		const PluginContext* context,
 		const NteModsIpcRequest& request,

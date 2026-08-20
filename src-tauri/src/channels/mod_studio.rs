@@ -2,6 +2,7 @@ use nte_dps_tool::core::mod_studio::{
     ModStudioRuntimeEvent as CoreModStudioRuntimeEvent, ModStudioRuntimeLog,
     ModStudioRuntimeSnapshot,
 };
+use nte_dps_tool::platform::mods_plugin_bootstrap::ModsPluginBootstrapErrorCode;
 use tauri::{State, WebviewWindow, ipc::Channel};
 
 use crate::{
@@ -71,8 +72,14 @@ pub(crate) fn subscribe_mod_studio_runtime(
                 ModStudioPollState::Waiting => {
                     cursor.ingest_unavailable(RuntimeConnectionStatus::Waiting)
                 }
+                ModStudioPollState::AcknowledgementRequired => {
+                    cursor.ingest_unavailable(RuntimeConnectionStatus::AcknowledgementRequired)
+                }
                 ModStudioPollState::ProbeFailed => {
                     cursor.ingest_unavailable(RuntimeConnectionStatus::ProbeFailed)
+                }
+                ModStudioPollState::BootstrapFailed(code) => {
+                    cursor.ingest_unavailable(RuntimeConnectionStatus::BootstrapFailed(code))
                 }
             };
             if events.is_empty() {
@@ -130,7 +137,9 @@ enum RuntimeConnectionStatus {
     Connected,
     LoaderPresent,
     Waiting,
+    AcknowledgementRequired,
     ProbeFailed,
+    BootstrapFailed(ModsPluginBootstrapErrorCode),
 }
 
 impl RuntimeStreamCursor {
@@ -230,6 +239,10 @@ impl RuntimeStreamCursor {
     }
 
     fn connection_event(&self, status: RuntimeConnectionStatus) -> ModStudioRuntimeEvent {
+        let bootstrap_error_code = match status {
+            RuntimeConnectionStatus::BootstrapFailed(code) => Some(code.as_str()),
+            _ => None,
+        };
         ModStudioRuntimeEvent::Connection(ModStudioRuntimeConnectionSnapshot {
             contract_version: MOD_STUDIO_CONTRACT_VERSION,
             generation: self.generation.to_string(),
@@ -243,10 +256,17 @@ impl RuntimeStreamCursor {
                 RuntimeConnectionStatus::Waiting => {
                     ModStudioRuntimeConnectionStatusSnapshot::Waiting
                 }
+                RuntimeConnectionStatus::AcknowledgementRequired => {
+                    ModStudioRuntimeConnectionStatusSnapshot::AcknowledgementRequired
+                }
                 RuntimeConnectionStatus::ProbeFailed => {
                     ModStudioRuntimeConnectionStatusSnapshot::ProbeFailed
                 }
+                RuntimeConnectionStatus::BootstrapFailed(_) => {
+                    ModStudioRuntimeConnectionStatusSnapshot::BootstrapFailed
+                }
             },
+            bootstrap_error_code,
         })
     }
 }
@@ -378,5 +398,40 @@ mod tests {
             waiting.status,
             ModStudioRuntimeConnectionStatusSnapshot::Waiting
         );
+    }
+
+    #[test]
+    fn bootstrap_failure_preserves_its_stable_error_code() {
+        let mut cursor = RuntimeStreamCursor::default();
+        let events = cursor.ingest_unavailable(RuntimeConnectionStatus::BootstrapFailed(
+            ModsPluginBootstrapErrorCode::ModuleImageMismatch,
+        ));
+
+        let ModStudioRuntimeEvent::Connection(connection) = &events[0] else {
+            panic!("bootstrap failure is emitted as a connection snapshot");
+        };
+        assert_eq!(
+            connection.status,
+            ModStudioRuntimeConnectionStatusSnapshot::BootstrapFailed
+        );
+        assert_eq!(
+            connection.bootstrap_error_code,
+            Some("MODULE_IMAGE_MISMATCH")
+        );
+    }
+
+    #[test]
+    fn missing_risk_acknowledgement_is_distinct_from_probe_failure() {
+        let mut cursor = RuntimeStreamCursor::default();
+        let events = cursor.ingest_unavailable(RuntimeConnectionStatus::AcknowledgementRequired);
+
+        let ModStudioRuntimeEvent::Connection(connection) = &events[0] else {
+            panic!("risk acknowledgement is emitted as a connection snapshot");
+        };
+        assert_eq!(
+            connection.status,
+            ModStudioRuntimeConnectionStatusSnapshot::AcknowledgementRequired
+        );
+        assert_eq!(connection.bootstrap_error_code, None);
     }
 }

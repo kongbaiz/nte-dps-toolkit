@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   TechnicalContractError,
   parseTechnicalCommandError,
@@ -5,6 +6,23 @@ import {
 } from "./technical-contract";
 
 export const ABYSS_VALUES_CONTRACT_VERSION = 2;
+
+const {
+  array,
+  boolean,
+  finiteNumber,
+  nonNegativeInteger: integer,
+  nullable,
+  nullableNonNegativeInteger: nullableInteger,
+  nullableNumber,
+  nullableString,
+  positiveNumber,
+  record,
+  string,
+  stringArray,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type AbyssHalfId = "upper" | "lower";
 
@@ -214,77 +232,4 @@ function parseTeam(value: unknown): AbyssTeam {
       };
     }),
   };
-}
-
-function record(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${label} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function array(value: unknown, label: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${label} must be an array`);
-  }
-  return value;
-}
-
-function string(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${label} must be a string`);
-  }
-  return value;
-}
-
-function stringArray(value: unknown, label: string): string[] {
-  return array(value, label).map((item) => string(item, label));
-}
-
-function boolean(value: unknown, label: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${label} must be a boolean`);
-  }
-  return value;
-}
-
-function finiteNumber(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TechnicalContractError(`${label} must be a finite number`);
-  }
-  return value;
-}
-
-function positiveNumber(value: unknown, label: string): number {
-  const result = finiteNumber(value, label);
-  if (result <= 0) {
-    throw new TechnicalContractError(`${label} must be positive`);
-  }
-  return result;
-}
-
-function integer(value: unknown, label: string): number {
-  const result = finiteNumber(value, label);
-  if (!Number.isSafeInteger(result) || result < 0) {
-    throw new TechnicalContractError(
-      `${label} must be a non-negative safe integer`,
-    );
-  }
-  return result;
-}
-
-function nullableInteger(value: unknown, label: string): number | null {
-  return value === null ? null : integer(value, label);
-}
-
-function nullableNumber(value: unknown, label: string): number | null {
-  return value === null ? null : finiteNumber(value, label);
-}
-
-function nullableString(value: unknown, label: string): string | null {
-  return value === null ? null : string(value, label);
-}
-
-function nullable<T>(value: unknown, parser: (value: unknown) => T): T | null {
-  return value === null ? null : parser(value);
 }

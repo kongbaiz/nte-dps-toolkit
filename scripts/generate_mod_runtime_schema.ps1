@@ -137,11 +137,19 @@ $outputs = @{
     "native\nte-mods-plugin\src\mod_runtime_schema.generated.hpp" = $nativeText
 }
 $utf8 = [System.Text.UTF8Encoding]::new($false)
+function Normalize-GeneratedLineEndings([string]$Text) {
+    return $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+}
+
 foreach ($relative in $outputs.Keys) {
     $path = Join-Path $OutputRoot $relative
     if ($Check) {
-        if (-not (Test-Path -LiteralPath $path) -or
-            [System.IO.File]::ReadAllText($path) -cne $outputs[$relative]) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "Generated Mod runtime schema is stale: $relative"
+        }
+        $actual = Normalize-GeneratedLineEndings ([System.IO.File]::ReadAllText($path))
+        $expected = Normalize-GeneratedLineEndings $outputs[$relative]
+        if ($actual -cne $expected) {
             throw "Generated Mod runtime schema is stale: $relative"
         }
         continue

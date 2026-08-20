@@ -53,6 +53,7 @@ describe("main DPS view model", () => {
     expect(
       isGenerationNewer("18446744073709551615", "18446744073709551615"),
     ).toBe(false);
+    expect(() => isGenerationNewer("corrupt", "1")).toThrow(TypeError);
   });
 
   it("distinguishes capture and empty ranking presentation states", () => {

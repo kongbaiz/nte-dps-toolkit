@@ -8,6 +8,7 @@
 #include "sdk_cache.hpp"
 #include "shadow_vtable_hook.hpp"
 #include "signature_policy.hpp"
+#include "viewport_generation_policy.hpp"
 #include "viewport_hook_policy.hpp"
 #include "vtable_patch_policy.hpp"
 
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 namespace nte::mods
 {
@@ -25,6 +27,7 @@ namespace nte::mods
 		constexpr size_t WORLD_GAME_INSTANCE_OFFSET = 0x230;
 		constexpr size_t GAME_INSTANCE_LOCAL_PLAYERS_OFFSET = 0x38;
 		constexpr size_t LOCAL_PLAYER_VIEWPORT_OFFSET = 0x78;
+		constexpr size_t LOCAL_PLAYER_CONTROLLER_OFFSET = 0x30;
 		constexpr size_t VIEWPORT_WORLD_OFFSET = 0x78;
 		constexpr size_t VIEWPORT_GAME_INSTANCE_OFFSET = 0x80;
 		constexpr size_t VIEWPORT_TICK_SCAN_RADIUS = 8;
@@ -38,6 +41,7 @@ namespace nte::mods
 		constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENTS = 32;
 		constexpr size_t MAX_PROCESS_EVENT_ARRAY_ELEMENT_SIZE = 0x1000;
 		constexpr DWORD VIEWPORT_BOOTSTRAP_RETRY_MS = 250;
+		constexpr DWORD VIEWPORT_HOST_STOP_TIMEOUT_MS = 1000;
 		constexpr DWORD RUNTIME_WORKER_STOP_TIMEOUT_MS = 5000;
 		constexpr DWORD RUNTIME_DISPATCH_DRAIN_TIMEOUT_MS = 1000;
 		constexpr wchar_t MOD_WORKSPACE_REGISTRY_KEY[] =
@@ -85,6 +89,13 @@ namespace nte::mods
 			void** data;
 			int32_t count;
 			int32_t capacity;
+		};
+
+		struct ViewportSessionSnapshot
+		{
+			hook::ViewportSessionIdentity identity;
+			void* player_controller;
+			uint64_t dispatch_epoch;
 		};
 
 		using ViewportTick = void(__fastcall*)(void*, float);
@@ -141,6 +152,17 @@ namespace nte::mods
 		volatile LONG viewport_hook_record_count = 0;
 		volatile LONG active_viewport_hook_index = -1;
 		PVOID volatile hooked_viewport = nullptr;
+		alignas(8) volatile LONG64 active_viewport_generation = 0;
+		alignas(8) volatile LONG64 next_viewport_generation = 0;
+		alignas(8) volatile LONG64 viewport_dispatch_epoch = 1;
+		PVOID volatile viewport_host_window = nullptr;
+		volatile LONG viewport_host_thread_id = 0;
+		volatile LONG viewport_host_enabled = 0;
+		volatile LONG viewport_host_callback_in_progress = 0;
+		volatile LONG viewport_host_stop_requested = 0;
+		HANDLE viewport_host_stopped_event = nullptr;
+		constinit hook::ViewportSessionIdentity active_viewport_identity{};
+		PVOID volatile recorded_plugin_module = nullptr;
 		volatile LONG ipc_dispatch_in_progress = 0;
 		volatile LONG runtime_stopping = 1;
 		volatile LONG active_runtime_detours = 0;
@@ -210,7 +232,20 @@ namespace nte::mods
 
 		static_assert(sizeof(LocalPlayerArray) == 16);
 
-		bool InstallViewportHook(void* viewport);
+		template <size_t Index>
+		void __fastcall HookedViewportTick(void* viewport, float delta_seconds);
+
+		template <size_t... Indices>
+		constexpr std::array<ViewportTick, sizeof...(Indices)>
+		MakeViewportTickDetours(std::index_sequence<Indices...>) noexcept
+		{
+			return {&HookedViewportTick<Indices>...};
+		}
+
+		constexpr auto viewport_tick_detours = MakeViewportTickDetours(
+			std::make_index_sequence<MAX_VIEWPORT_HOOK_RECORDS>{});
+
+		bool InstallViewportHook(const ViewportSessionSnapshot& snapshot);
 		void DebugLog(const wchar_t* message);
 
 		void* TryCompareExchangeProcessEventSlot(
@@ -365,34 +400,38 @@ namespace nte::mods
 				: 0;
 		}
 
-		ViewportTick OriginalViewportTickFor(const void* viewport)
+		const hook::ViewportOriginalBinding* PublishedViewportBinding(
+			size_t index)
 		{
-			return reinterpret_cast<ViewportTick>(const_cast<void*>(
-				nte::hook::FindViewportOriginal(
-					viewport_original_bindings.data(),
-					PublishedViewportHookRecordCount(),
-					viewport)));
+			return index < PublishedViewportHookRecordCount()
+				? &viewport_original_bindings[index]
+				: nullptr;
 		}
 
 		bool FindOrPublishViewportHookRecord(
 			void* viewport,
 			ViewportTick original,
+			uint64_t generation,
+			uint32_t host_thread_id,
 			size_t& result)
 		{
 			const size_t count = PublishedViewportHookRecordCount();
 			const nte::hook::ViewportOriginalBinding candidate{
 				viewport,
 				reinterpret_cast<void*>(original),
+				generation,
+				host_thread_id,
 			};
 			for (size_t index = 0; index < count; ++index)
 			{
 				const auto& binding = viewport_original_bindings[index];
-				if (binding.viewport != viewport)
-					continue;
-				if (!nte::hook::CanReuseViewportBinding(
-						binding, candidate.viewport, candidate.original))
-					return false;
-				if (viewport_hooks[index].CanInstall())
+				if (nte::hook::CanReuseViewportBinding(
+						binding,
+						candidate.viewport,
+						candidate.original,
+						candidate.generation,
+						candidate.host_thread_id) &&
+					viewport_hooks[index].CanInstall())
 				{
 					result = index;
 					return true;
@@ -454,11 +493,19 @@ namespace nte::mods
 			return memory::ReadPointer<void>(local_players.data, 0);
 		}
 
-		void* ResolveViewport()
+		uint64_t CurrentViewportDispatchEpoch() noexcept
+		{
+			return static_cast<uint64_t>(InterlockedCompareExchange64(
+				&viewport_dispatch_epoch, 0, 0));
+		}
+
+		bool CaptureViewportSessionIdentity(
+			hook::ViewportSessionIdentity& identity,
+			void*& player_controller)
 		{
 			const auto* resolved = offsets::Get();
 			if (resolved == nullptr)
-				return nullptr;
+				return false;
 			auto* world = memory::ReadPointer<void>(
 				reinterpret_cast<const void*>(resolved->gworld_address), 0);
 			auto* game_instance = memory::ReadPointer<void>(
@@ -470,20 +517,65 @@ namespace nte::mods
 				viewport, VIEWPORT_WORLD_OFFSET);
 			auto* viewport_game_instance = memory::ReadPointer<void>(
 				viewport, VIEWPORT_GAME_INSTANCE_OFFSET);
-			auto* confirmed_world = memory::ReadPointer<void>(
-				reinterpret_cast<const void*>(resolved->gworld_address), 0);
-			auto* confirmed_game_instance = memory::ReadPointer<void>(
-				confirmed_world, WORLD_GAME_INSTANCE_OFFSET);
-			return world == confirmed_world &&
-				game_instance == confirmed_game_instance &&
-				nte::hook::IsConsistentViewportChain(
+			player_controller = memory::ReadPointer<void>(
+				local_player, LOCAL_PLAYER_CONTROLLER_OFFSET);
+			identity = {
 				world,
 				game_instance,
+				local_player,
 				viewport,
-				viewport_world,
-				viewport_game_instance)
-				? viewport
-				: nullptr;
+				GetCurrentThreadId(),
+			};
+			return player_controller != nullptr &&
+				hook::IsConsistentViewportChain(
+					world,
+					game_instance,
+					viewport,
+					viewport_world,
+					viewport_game_instance);
+		}
+
+		bool CaptureViewportSessionSnapshot(
+			uint64_t requested_epoch,
+			ViewportSessionSnapshot& snapshot)
+		{
+			hook::ViewportSessionIdentity first{};
+			hook::ViewportSessionIdentity confirmed{};
+			void* first_controller = nullptr;
+			void* confirmed_controller = nullptr;
+			if (!CaptureViewportSessionIdentity(first, first_controller) ||
+				!CaptureViewportSessionIdentity(confirmed, confirmed_controller))
+				return false;
+			const uint64_t current_epoch = CurrentViewportDispatchEpoch();
+			if (!hook::CanPublishViewportSnapshot(
+					requested_epoch,
+					current_epoch,
+					first,
+					confirmed) ||
+				first_controller != confirmed_controller)
+				return false;
+			snapshot = {confirmed, confirmed_controller, current_epoch};
+			return true;
+		}
+
+		bool CaptureViewportSessionSnapshotGuarded(
+			uint64_t requested_epoch,
+			ViewportSessionSnapshot& snapshot) noexcept
+		{
+		#if defined(_MSC_VER)
+			__try
+			{
+				return CaptureViewportSessionSnapshot(
+					requested_epoch, snapshot);
+			}
+			__except (EXCEPTION_EXECUTE_HANDLER)
+			{
+				snapshot = {};
+				return false;
+			}
+		#else
+			return CaptureViewportSessionSnapshot(requested_epoch, snapshot);
+		#endif
 		}
 
 		bool IsExpectedViewportTick(const void* address)
@@ -560,29 +652,69 @@ namespace nte::mods
 				result);
 		}
 
+		template <size_t Index>
 		void __fastcall HookedViewportTick(
 			void* viewport,
 			float delta_seconds)
 		{
 			RuntimeDetourScope detour_scope;
-			const auto original_tick = OriginalViewportTickFor(viewport);
-			if (original_tick == nullptr)
+			const hook::ViewportOriginalBinding* binding =
+				PublishedViewportBinding(Index);
+			if (binding == nullptr || binding->original == nullptr)
 				return;
+			const auto original_tick = reinterpret_cast<ViewportTick>(
+				const_cast<void*>(binding->original));
 			original_tick(viewport, delta_seconds);
 			if (!detour_scope.AllowsRuntimeWork())
 				return;
+			const uint64_t generation = static_cast<uint64_t>(
+				InterlockedCompareExchange64(
+					&active_viewport_generation, 0, 0));
+			if (!hook::CanDispatchViewportGeneration(
+					binding->generation,
+					generation,
+					binding->host_thread_id,
+					GetCurrentThreadId(),
+					binding->viewport,
+					viewport))
+				return;
+
+			const uint64_t requested_epoch = CurrentViewportDispatchEpoch();
+			ViewportSessionSnapshot snapshot{};
+			if (!CaptureViewportSessionSnapshotGuarded(
+					requested_epoch, snapshot) ||
+				!hook::IsSameViewportSession(
+					snapshot.identity, active_viewport_identity))
+			{
+				// Invalidate any concurrently queued host snapshot. The next host
+				// timer callback will bind one complete new generation.
+				InterlockedIncrement64(&viewport_dispatch_epoch);
+				return;
+			}
 
 			if (InterlockedCompareExchange(
 					&ipc_dispatch_in_progress, 1, 0) != 0)
 				return;
 
-			if (viewport != CurrentHookedViewport())
+			if (viewport != CurrentHookedViewport() ||
+				generation != static_cast<uint64_t>(
+					InterlockedCompareExchange64(
+						&active_viewport_generation, 0, 0)))
 			{
 				InterlockedExchange(&ipc_dispatch_in_progress, 0);
 				return;
 			}
 
-			runtime::ExecuteViewportTickPrograms(viewport);
+			const runtime::ViewportTickContext context{
+				generation,
+				binding->host_thread_id,
+				const_cast<void*>(snapshot.identity.world),
+				const_cast<void*>(snapshot.identity.game_instance),
+				const_cast<void*>(snapshot.identity.local_player),
+				snapshot.player_controller,
+				viewport,
+			};
+			runtime::ExecuteViewportTickPrograms(context);
 			InterlockedExchange(&ipc_dispatch_in_progress, 0);
 		}
 
@@ -730,15 +862,58 @@ namespace nte::mods
 			original(object, function, params);
 		}
 
-		bool InstallViewportHook(void* viewport)
+		uint64_t AllocateViewportGeneration() noexcept
 		{
+			for (;;)
+			{
+				const LONG64 current = InterlockedCompareExchange64(
+					&next_viewport_generation, 0, 0);
+				const uint64_t next = hook::NextViewportGeneration(
+					{static_cast<uint64_t>(current)}).value;
+				if (InterlockedCompareExchange64(
+						&next_viewport_generation,
+						static_cast<LONG64>(next),
+						current) == current)
+					return next;
+			}
+		}
+
+		bool InstallViewportHook(const ViewportSessionSnapshot& snapshot)
+		{
+			void* viewport = const_cast<void*>(snapshot.identity.viewport);
 			const LONG current_active_index = InterlockedCompareExchange(
 				&active_viewport_hook_index, -1, -1);
 			if (viewport == CurrentHookedViewport() &&
+				hook::IsSameViewportSession(
+					snapshot.identity, active_viewport_identity) &&
 				current_active_index >= 0 &&
 				static_cast<size_t>(current_active_index) < viewport_hooks.size() &&
 				viewport_hooks[current_active_index].IsInstalled())
 				return true;
+			if (!hook::IsCompleteViewportSession(snapshot.identity) ||
+				snapshot.identity.host_thread_id != GetCurrentThreadId() ||
+				snapshot.dispatch_epoch != CurrentViewportDispatchEpoch())
+				return false;
+
+			// The host window thread is also the sole hook-publication owner. It
+			// retires the previous generation before reading the next object's vptr,
+			// so no background thread observes or mutates a rebuilding UObject.
+			InterlockedExchange64(&active_viewport_generation, 0);
+			InterlockedExchangePointer(&hooked_viewport, nullptr);
+			InterlockedExchange(&active_viewport_hook_index, -1);
+			if (current_active_index >= 0 &&
+				static_cast<size_t>(current_active_index) < viewport_hooks.size() &&
+				!viewport_hooks[current_active_index].Remove())
+				return false;
+			active_viewport_identity = {};
+
+			ViewportSessionSnapshot confirmed{};
+			if (!CaptureViewportSessionSnapshotGuarded(
+					snapshot.dispatch_epoch, confirmed) ||
+				!hook::IsSameViewportSession(
+					snapshot.identity, confirmed.identity) ||
+				snapshot.player_controller != confirmed.player_controller)
+				return false;
 
 			if (!memory::IsReadableRange(viewport, sizeof(void*)))
 				return false;
@@ -766,15 +941,14 @@ namespace nte::mods
 					viewport_tick_index * sizeof(void*),
 					candidate_tick))
 				return false;
-			// The workspace watcher does not own Unreal object lifetime. Re-resolve
-			// the complete GWorld -> game instance -> local player -> viewport chain
-			// immediately before publication; ShadowVTableHook then CASes the exact
-			// captured vptr, so a stale or different object fails closed.
-			if (ResolveViewport() != viewport)
-				return false;
+			const uint64_t generation = AllocateViewportGeneration();
 			size_t target_hook_index = 0;
 			if (!FindOrPublishViewportHookRecord(
-					viewport, candidate_tick, target_hook_index))
+					viewport,
+					candidate_tick,
+					generation,
+					snapshot.identity.host_thread_id,
+					target_hook_index))
 				return false;
 			if (viewport_hooks[target_hook_index].IsInstalled() &&
 				!viewport_hooks[target_hook_index].Remove())
@@ -782,7 +956,7 @@ namespace nte::mods
 			if (!viewport_hooks[target_hook_index].Install(
 				viewport,
 				viewport_tick_index,
-				reinterpret_cast<void*>(&HookedViewportTick),
+				reinterpret_cast<void*>(viewport_tick_detours[target_hook_index]),
 				vtable,
 				reinterpret_cast<void*>(candidate_tick)))
 			{
@@ -791,17 +965,14 @@ namespace nte::mods
 			}
 			MarkRuntimeDetourPublished();
 
+			active_viewport_identity = snapshot.identity;
 			InterlockedExchange(
 				&active_viewport_hook_index,
 				static_cast<LONG>(target_hook_index));
 			InterlockedExchangePointer(&hooked_viewport, viewport);
-			if (current_active_index >= 0 &&
-				static_cast<size_t>(current_active_index) < viewport_hooks.size() &&
-				static_cast<size_t>(current_active_index) != target_hook_index)
-			{
-				if (!viewport_hooks[current_active_index].Remove())
-					return false;
-			}
+			InterlockedExchange64(
+				&active_viewport_generation,
+				static_cast<LONG64>(generation));
 
 			DebugLog(NTE_OBFUSCATE_STRING(
 				L"NTE Mods plugin: viewport Tick hook installed.\n")
@@ -811,13 +982,190 @@ namespace nte::mods
 
 		bool RestoreViewportHook()
 		{
+			InterlockedExchange64(&active_viewport_generation, 0);
 			InterlockedExchangePointer(&hooked_viewport, nullptr);
 			InterlockedExchange(&active_viewport_hook_index, -1);
+			active_viewport_identity = {};
 			const size_t count = PublishedViewportHookRecordCount();
 			bool all_removed = true;
 			for (size_t index = 0; index < count; ++index)
 				all_removed = viewport_hooks[index].Remove() && all_removed;
 			return all_removed;
+		}
+
+		UINT_PTR ViewportHostTimerId() noexcept
+		{
+			return reinterpret_cast<UINT_PTR>(&viewport_dispatch_epoch);
+		}
+
+		uint64_t AdvanceViewportDispatchEpoch() noexcept
+		{
+			for (;;)
+			{
+				const LONG64 current = InterlockedCompareExchange64(
+					&viewport_dispatch_epoch, 0, 0);
+				const uint64_t next = hook::NextViewportGeneration(
+					{static_cast<uint64_t>(current)}).value;
+				if (InterlockedCompareExchange64(
+						&viewport_dispatch_epoch,
+						static_cast<LONG64>(next),
+						current) == current)
+					return next;
+			}
+		}
+
+		struct HostWindowCandidate
+		{
+			HWND visible;
+			HWND fallback;
+		};
+
+		BOOL CALLBACK FindHostWindowCallback(HWND window, LPARAM parameter)
+		{
+			DWORD process_id = 0;
+			GetWindowThreadProcessId(window, &process_id);
+			if (process_id != GetCurrentProcessId() ||
+				GetWindow(window, GW_OWNER) != nullptr)
+				return TRUE;
+
+			auto& candidate = *reinterpret_cast<HostWindowCandidate*>(parameter);
+			if (candidate.fallback == nullptr)
+				candidate.fallback = window;
+			if (IsWindowVisible(window))
+			{
+				candidate.visible = window;
+				return FALSE;
+			}
+			return TRUE;
+		}
+
+		HWND FindHostWindow()
+		{
+			HostWindowCandidate candidate{};
+			EnumWindows(
+				FindHostWindowCallback,
+				reinterpret_cast<LPARAM>(&candidate));
+			return candidate.visible != nullptr
+				? candidate.visible
+				: candidate.fallback;
+		}
+
+		void CALLBACK HostViewportTimerProc(
+			HWND window,
+			UINT,
+			UINT_PTR timer_id,
+			DWORD) noexcept
+		{
+			if (timer_id != ViewportHostTimerId() ||
+				InterlockedCompareExchange(
+					&viewport_host_callback_in_progress, 1, 0) != 0)
+				return;
+
+			auto release_callback = []
+			{
+				InterlockedExchange(&viewport_host_callback_in_progress, 0);
+			};
+			DWORD process_id = 0;
+			const DWORD owner_thread = GetWindowThreadProcessId(
+				window, &process_id);
+			const auto current_window = static_cast<HWND>(
+				InterlockedCompareExchangePointer(
+					&viewport_host_window, nullptr, nullptr));
+			if (window != current_window || process_id != GetCurrentProcessId() ||
+				owner_thread == 0 || owner_thread != GetCurrentThreadId() ||
+				owner_thread != static_cast<DWORD>(InterlockedCompareExchange(
+					&viewport_host_thread_id, 0, 0)))
+			{
+				KillTimer(window, timer_id);
+				release_callback();
+				return;
+			}
+
+			if (InterlockedCompareExchange(
+					&viewport_host_stop_requested, 0, 0) != 0)
+			{
+				const bool restored = RestoreViewportHook();
+				KillTimer(window, timer_id);
+				InterlockedExchangePointer(&viewport_host_window, nullptr);
+				InterlockedExchange(&viewport_host_thread_id, 0);
+				AdvanceViewportDispatchEpoch();
+				if (restored && viewport_host_stopped_event != nullptr)
+					SetEvent(viewport_host_stopped_event);
+				release_callback();
+				return;
+			}
+
+			if (InterlockedCompareExchange(
+					&viewport_host_enabled, 0, 0) == 0)
+			{
+				if (CurrentHookedViewport() != nullptr)
+					(void)RestoreViewportHook();
+				release_callback();
+				return;
+			}
+
+			const uint64_t requested_epoch = CurrentViewportDispatchEpoch();
+			ViewportSessionSnapshot snapshot{};
+			if (CaptureViewportSessionSnapshotGuarded(
+					requested_epoch, snapshot) &&
+				hook::CanPublishViewportSnapshot(
+					requested_epoch,
+					CurrentViewportDispatchEpoch(),
+					snapshot.identity,
+					snapshot.identity))
+			{
+				(void)InstallViewportHook(snapshot);
+			}
+			release_callback();
+		}
+
+		bool EnsureViewportHostTimer(DWORD interval_ms)
+		{
+			HWND window = FindHostWindow();
+			if (window == nullptr)
+				return false;
+			DWORD process_id = 0;
+			const DWORD owner_thread = GetWindowThreadProcessId(
+				window, &process_id);
+			if (owner_thread == 0 || process_id != GetCurrentProcessId())
+				return false;
+
+			const auto previous = static_cast<HWND>(
+				InterlockedExchangePointer(&viewport_host_window, window));
+			if (previous != window)
+			{
+				if (previous != nullptr)
+					KillTimer(previous, ViewportHostTimerId());
+				InterlockedExchange(
+					&viewport_host_thread_id,
+					static_cast<LONG>(owner_thread));
+				AdvanceViewportDispatchEpoch();
+			}
+			return SetTimer(
+				window,
+				ViewportHostTimerId(),
+				interval_ms,
+				HostViewportTimerProc) != 0;
+		}
+
+		bool StopViewportHostDispatch()
+		{
+			InterlockedExchange(&viewport_host_enabled, 0);
+			InterlockedExchange(&viewport_host_stop_requested, 1);
+			AdvanceViewportDispatchEpoch();
+			if (viewport_host_stopped_event == nullptr)
+				return CurrentHookedViewport() == nullptr;
+			ResetEvent(viewport_host_stopped_event);
+
+			HWND window = static_cast<HWND>(InterlockedCompareExchangePointer(
+				&viewport_host_window, nullptr, nullptr));
+			if (window == nullptr)
+				return CurrentHookedViewport() == nullptr;
+			if (!EnsureViewportHostTimer(1))
+				return false;
+			return WaitForSingleObject(
+				viewport_host_stopped_event,
+				VIEWPORT_HOST_STOP_TIMEOUT_MS) == WAIT_OBJECT_0;
 		}
 
 		bool IsGameExecutableHost()
@@ -913,27 +1261,30 @@ namespace nte::mods
 					CurrentHookedViewport() != nullptr)
 				{
 					if (runtime::Reset())
-					{
-						RestoreViewportHook();
 						CloseIpc();
-					}
 				}
 
-				if (runtime::HasViewportTickPrograms())
+				const bool viewport_enabled =
+					runtime::HasViewportTickPrograms();
+				InterlockedExchange(
+					&viewport_host_enabled,
+					viewport_enabled ? 1 : 0);
+				if (viewport_enabled)
 				{
 					// 偏移在成功解析后只发布一次；未就绪或解析失败时
 					// Initialize 按自身节流策略重试，避免读者持有指针时改写已发布数据。
 					if (offsets::Get() == nullptr)
 						offsets::Initialize(stop_event);
 					if (offsets::Get() != nullptr)
-					{
-						if (auto* viewport = ResolveViewport())
-							InstallViewportHook(viewport);
-					}
+						(void)EnsureViewportHostTimer(
+							VIEWPORT_BOOTSTRAP_RETRY_MS);
 				}
 				else if (CurrentHookedViewport() != nullptr)
 				{
-					RestoreViewportHook();
+					// Only request the transition here. The timer callback executes
+					// hook teardown on the same stable host window thread that owns
+					// UObject resolution and publication.
+					(void)EnsureViewportHostTimer(1);
 					CloseIpc();
 				}
 
@@ -1433,6 +1784,23 @@ namespace nte::mods
 		return all_removed;
 	}
 
+	void RecordPluginModule(HMODULE module) noexcept
+	{
+		if (module != nullptr)
+			InterlockedCompareExchangePointer(
+				&recorded_plugin_module, module, nullptr);
+	}
+
+	PluginStartResult InitializeRecordedPluginRuntime()
+	{
+		const auto module = static_cast<HMODULE>(
+			InterlockedCompareExchangePointer(
+				&recorded_plugin_module, nullptr, nullptr));
+		return module != nullptr
+			? StartPluginRuntime(module)
+			: PluginStartResult::Failed;
+	}
+
 	PluginStartResult StartPluginRuntime(HMODULE module)
 	{
 		if (!IsGameExecutableHost())
@@ -1469,11 +1837,8 @@ namespace nte::mods
 				.c_str());
 			return PluginStartResult::Failed;
 		}
-
-		// Presence is a required part of the Running contract. Publish it before
-		// worker creation so a fixed-name collision or an unverifiable descriptor
-		// fails closed without starting any runtime work.
-		if (!OpenRuntimePresence())
+		HANDLE host_stopped_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+		if (host_stopped_event == nullptr)
 		{
 			const bool stop_event_closed = CloseHandle(stop_event) != FALSE;
 			AcquireSRWLockExclusive(&runtime_lifecycle_lock);
@@ -1483,6 +1848,34 @@ namespace nte::mods
 				? PluginLifecycleState::Stopped
 				: PluginLifecycleState::FailedClosed;
 			last_stop_result = stop_event_closed
+				? PluginStopResult::UnloadSafe
+				: PluginStopResult::TeardownIncomplete;
+			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
+			return PluginStartResult::Failed;
+		}
+		viewport_host_stopped_event = host_stopped_event;
+		InterlockedExchange(&viewport_host_stop_requested, 0);
+		InterlockedExchange(&viewport_host_enabled, 0);
+
+		// Presence is a required part of the Running contract. Publish it before
+		// worker creation so a fixed-name collision or an unverifiable descriptor
+		// fails closed without starting any runtime work.
+		if (!OpenRuntimePresence())
+		{
+			const bool host_event_closed =
+				CloseHandle(host_stopped_event) != FALSE;
+			if (host_event_closed)
+				viewport_host_stopped_event = nullptr;
+			const bool stop_event_closed = CloseHandle(stop_event) != FALSE;
+			AcquireSRWLockExclusive(&runtime_lifecycle_lock);
+			if (!stop_event_closed)
+				runtime_stop_event = stop_event;
+			const bool resources_drained =
+				host_event_closed && stop_event_closed;
+			runtime_lifecycle_state = resources_drained
+				? PluginLifecycleState::Stopped
+				: PluginLifecycleState::FailedClosed;
+			last_stop_result = resources_drained
 				? PluginStopResult::UnloadSafe
 				: PluginStopResult::TeardownIncomplete;
 			ReleaseSRWLockExclusive(&runtime_lifecycle_lock);
@@ -1502,8 +1895,12 @@ namespace nte::mods
 			AcquireSRWLockExclusive(&runtime_lifecycle_lock);
 			if (!stop_event_closed)
 				runtime_stop_event = stop_event;
-			const bool resources_drained =
-				presence_closed && stop_event_closed;
+			const bool host_event_closed =
+				CloseHandle(host_stopped_event) != FALSE;
+			if (host_event_closed)
+				viewport_host_stopped_event = nullptr;
+			const bool resources_drained = presence_closed &&
+				stop_event_closed && host_event_closed;
 			runtime_lifecycle_state = resources_drained
 				? PluginLifecycleState::Stopped
 				: PluginLifecycleState::FailedClosed;
@@ -1589,6 +1986,8 @@ namespace nte::mods
 		};
 		const bool watcher_stopped = stop_worker(runtime_thread);
 		const bool sdk_worker_stopped = stop_worker(sdk_cache_thread);
+		const bool viewport_succeeded = watcher_stopped &&
+			StopViewportHostDispatch();
 		bool stop_event_closed = runtime_stop_event == nullptr;
 		if (watcher_stopped && sdk_worker_stopped &&
 			runtime_stop_event != nullptr)
@@ -1601,10 +2000,17 @@ namespace nte::mods
 		// These resources are independent: a failure in one never skips teardown
 		// of another. Each result contributes to the unload-safe decision.
 		const bool reset_succeeded = runtime::Reset();
-		const bool viewport_succeeded = RestoreViewportHook();
 		const bool ipc_succeeded = CloseIpc() == IpcCloseResult::Closed;
 		const bool presence_succeeded =
 			CloseRuntimePresence() == RuntimePresenceCloseResult::Closed;
+		bool viewport_event_closed = viewport_host_stopped_event == nullptr;
+		if (viewport_succeeded && viewport_host_stopped_event != nullptr)
+		{
+			viewport_event_closed =
+				CloseHandle(viewport_host_stopped_event) != FALSE;
+			if (viewport_event_closed)
+				viewport_host_stopped_event = nullptr;
+		}
 
 		const ULONGLONG dispatch_deadline =
 			GetTickCount64() + RUNTIME_DISPATCH_DRAIN_TIMEOUT_MS;
@@ -1619,7 +2025,7 @@ namespace nte::mods
 		const bool resources_drained = stop_signaled && watcher_stopped &&
 			sdk_worker_stopped && stop_event_closed && reset_succeeded &&
 			viewport_succeeded && ipc_succeeded && presence_succeeded &&
-			dispatch_succeeded;
+			viewport_event_closed && dispatch_succeeded;
 
 		PluginStopResult result = PluginStopResult::TeardownIncomplete;
 		if (resources_drained)

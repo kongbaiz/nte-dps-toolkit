@@ -8,7 +8,7 @@ import {
 } from "@/lib/tauri/stream-contract";
 
 export { CONSOLE_WINDOW_LABEL } from "@/lib/tauri/window-labels";
-export const MOD_STUDIO_CONTRACT_VERSION = 10;
+export const MOD_STUDIO_CONTRACT_VERSION = 11;
 export const MOD_MARKET_CONTRACT_VERSION = 11;
 export const MOD_STUDIO_DIRECTORY_CONTRACT_VERSION = 1;
 export const MOD_STUDIO_LOADING_METHOD_CONTRACT_VERSION = 1;
@@ -20,7 +20,6 @@ export const MOD_STUDIO_MAX_SDK_SYMBOLS = 128;
 export const MOD_STUDIO_MAX_RUNTIME_BATCH_ENTRIES = 36;
 export const MOD_STUDIO_MAX_RUNTIME_ENTRIES = 256;
 const MOD_ID_PATTERN = /^[a-z0-9._-]{1,31}$/;
-const U64_MAX_DECIMAL = "18446744073709551615";
 
 export class ModStudioContractError extends Error {
   constructor(message: string) {
@@ -34,11 +33,14 @@ const {
   boolean,
   boundedString,
   exactFields,
+  enumValue,
   isRecord,
   nonNegativeInteger,
+  nullableEnumValue,
   positiveInteger,
   record,
   string,
+  u64DecimalString,
 } = createContractPrimitives((message) => {
   throw new ModStudioContractError(message);
 });
@@ -216,11 +218,46 @@ export interface ModStudioRuntimeConnectionEvent {
     contractVersion: number;
     generation: string;
     status: ModStudioRuntimeConnectionStatus;
+    bootstrapErrorCode: ModStudioBootstrapErrorCode | null;
   };
 }
 
 export type ModStudioRuntimeConnectionStatus =
-  "connected" | "loaderPresent" | "waiting" | "probeFailed";
+  | "connected"
+  | "loaderPresent"
+  | "waiting"
+  | "acknowledgementRequired"
+  | "probeFailed"
+  | "bootstrapFailed";
+
+const MOD_STUDIO_BOOTSTRAP_ERROR_CODES = [
+  "INVALID_REQUEST",
+  "FILE_SYSTEM",
+  "INVALID_PLUGIN_IMAGE",
+  "PROCESS_OPEN_FAILED",
+  "PROCESS_IDENTITY_FAILED",
+  "PROCESS_SNAPSHOT_FAILED",
+  "PROCESS_ENUMERATION_FAILED",
+  "PROCESS_AMBIGUOUS",
+  "TARGET_MISMATCH",
+  "MODULE_SNAPSHOT_FAILED",
+  "MODULE_ENUMERATION_FAILED",
+  "MODULE_NOT_LOADED",
+  "MODULE_PATH_MISMATCH",
+  "MODULE_AMBIGUOUS",
+  "MODULE_IMAGE_MISMATCH",
+  "REMOTE_THREAD_FAILED",
+  "REMOTE_THREAD_TIMED_OUT",
+  "REMOTE_THREAD_WAIT_FAILED",
+  "REMOTE_THREAD_EXIT_FAILED",
+  "NOT_GAME_HOST",
+  "INITIALIZATION_IN_PROGRESS",
+  "INITIALIZATION_FAILED",
+  "UNEXPECTED_STATUS",
+] as const;
+
+export type ModStudioBootstrapErrorCode =
+  (typeof MOD_STUDIO_BOOTSTRAP_ERROR_CODES)[number];
 
 export interface ModStudioRuntimeBatchEvent {
   event: "batch";
@@ -663,14 +700,27 @@ export function parseModStudioRuntimeEvent(
     true,
   );
   if (event.event === "connection") {
-    const status = payload.status;
-    if (
-      status !== "connected" &&
-      status !== "loaderPresent" &&
-      status !== "waiting" &&
-      status !== "probeFailed"
-    ) {
-      throw new ModStudioContractError("payload.status is invalid");
+    const status = enumValue(
+      payload.status,
+      [
+        "connected",
+        "loaderPresent",
+        "waiting",
+        "acknowledgementRequired",
+        "probeFailed",
+        "bootstrapFailed",
+      ] as const,
+      "payload.status",
+    );
+    const bootstrapErrorCode = nullableEnumValue(
+      payload.bootstrapErrorCode,
+      MOD_STUDIO_BOOTSTRAP_ERROR_CODES,
+      "payload.bootstrapErrorCode",
+    );
+    if ((status === "bootstrapFailed") !== (bootstrapErrorCode !== null)) {
+      throw new ModStudioContractError(
+        "payload.bootstrapErrorCode must be present only for bootstrapFailed",
+      );
     }
     return {
       event: "connection",
@@ -678,6 +728,7 @@ export function parseModStudioRuntimeEvent(
         contractVersion,
         generation,
         status,
+        bootstrapErrorCode,
       },
     };
   }
@@ -897,27 +948,6 @@ function gameRegion(value: unknown, field: string): ModStudioGameRegion {
   const parsed = string(value, field);
   if (parsed !== "china" && parsed !== "global") {
     throw new ModStudioContractError(`${field} is invalid`);
-  }
-  return parsed;
-}
-
-function u64DecimalString(
-  value: unknown,
-  field: string,
-  positive: boolean,
-): string {
-  const parsed = string(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed)) {
-    throw new ModStudioContractError(`${field} must be a decimal string`);
-  }
-  if (
-    parsed.length > U64_MAX_DECIMAL.length ||
-    (parsed.length === U64_MAX_DECIMAL.length && parsed > U64_MAX_DECIMAL)
-  ) {
-    throw new ModStudioContractError(`${field} exceeds u64`);
-  }
-  if (positive && parsed === "0") {
-    throw new ModStudioContractError(`${field} must be positive`);
   }
   return parsed;
 }

@@ -153,7 +153,7 @@ function Test-RustTestRegion {
     $testModuleDepth = $null
     $testModuleStart = $null
     for ($cursor = 0; $cursor -le $Index -and $cursor -lt $Lines.Count; $cursor++) {
-        if ($Lines[$cursor] -match "#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]") {
+        if ($Lines[$cursor] -match "#\s*\[\s*cfg\s*\(\s*(?:test\b|all\s*\([^)]*\btest\b[^)]*\))\s*\)\s*\]") {
             $testModuleDepth = $braceDepth
             $testModuleStart = $cursor
         }
@@ -661,6 +661,15 @@ function Test-PolicyHelpers {
         "Added occurrence helper must detect an exact replacement line"
     Assert-Policy (-not (Test-AddedOccurrence -Path "frontend/src/lib/tauri/example-contract.ts" -Line 10 -AddedLines $addedOccurrences)) `
         "Added occurrence helper must not match an unrelated line"
+
+    $cfgAllTestLines = @(
+        '#[cfg(all(test, feature = "cli"))]',
+        'fn install_test_capture() {',
+        '    assert!(true);',
+        '}'
+    )
+    Assert-Policy (Test-RustTestRegion -Lines $cfgAllTestLines -Index 2) `
+        "Rust test-region helper must recognize cfg(all(test, ...)) functions"
 
     $added = @(
         "diff --git a/src/core/live_capture.rs b/src/core/live_capture.rs",

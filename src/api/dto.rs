@@ -359,6 +359,8 @@ pub struct BattleQualityDto {
     pub time_stop_interval_count: usize,
     pub abyss_event_count: u64,
     pub server_damage_corrections: u64,
+    pub unattributed_server_damage_events: u64,
+    pub unattributed_server_damage: f64,
 }
 
 impl From<&CaptureQualitySummary> for BattleQualityDto {
@@ -388,6 +390,8 @@ impl From<&CaptureQualitySummary> for BattleQualityDto {
             time_stop_interval_count: summary.time_stop_interval_count,
             abyss_event_count: summary.abyss_event_count,
             server_damage_corrections: summary.server_damage_corrections,
+            unattributed_server_damage_events: summary.unattributed_server_damage_events,
+            unattributed_server_damage: summary.unattributed_server_damage,
         }
     }
 }

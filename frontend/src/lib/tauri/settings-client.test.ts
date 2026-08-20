@@ -18,7 +18,7 @@ const encodeDelivery = (events: unknown[]): ArrayBuffer => {
 
 function settingsFixture(): SettingsSnapshot {
   return {
-    contractVersion: 5,
+    contractVersion: 6,
     generation: "0",
     adapterVersion: "0.3.6",
     interface: {
@@ -58,6 +58,14 @@ function settingsFixture(): SettingsSnapshot {
       autoRoundIdleSecondsMin: 5,
       autoRoundIdleSecondsMax: 600,
       dpsTimeMode: "time-stop-adjusted",
+      dpsTimeRuntime: {
+        configuredMode: "time-stop-adjusted",
+        effectiveMode: "real-time",
+        combatClockHealth: "unknown",
+        degraded: true,
+        warningMessageKey:
+          "Time-stop adjustment has not been verified for this session.",
+      },
       passthroughHotkey: "home",
     },
     hotkeys: {

@@ -9,6 +9,10 @@
 #include <cstdint>
 
 extern "C" uintptr_t mProcs[];
+// This import is bound by the Windows loader through the DWM API-set before
+// this proxy's DllMain runs. Taking its address identifies the real system
+// dwmapi image even when this local proxy has the same base filename.
+extern "C" __declspec(dllimport) HRESULT WINAPI DwmFlush();
 
 namespace
 {
@@ -36,28 +40,12 @@ BOOL CALLBACK InitializeDwmapiProxyOnce(
 	PVOID,
 	PVOID*)
 {
-	HMODULE pinned_module = nullptr;
+	HMODULE system_dwmapi = nullptr;
 	if (!GetModuleHandleExW(
 			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-				GET_MODULE_HANDLE_EX_FLAG_PIN,
-			reinterpret_cast<LPCWSTR>(&mProcs[0]),
-			&pinned_module))
-		return FALSE;
-
-	wchar_t system_directory[MAX_PATH]{};
-	const UINT length = GetSystemDirectoryW(system_directory, MAX_PATH);
-	if (length == 0 || length >= MAX_PATH)
-		return FALSE;
-
-	const auto suffix = NTE_OBFUSCATE_STRING(L"\\dwmapi.dll");
-	const size_t suffix_length = suffix.size() - 1;
-	if (length + suffix_length >= MAX_PATH)
-		return FALSE;
-	for (size_t index = 0; index <= suffix_length; ++index)
-		system_directory[length + index] = suffix.c_str()[index];
-
-	HMODULE library = LoadLibraryW(system_directory);
-	if (library == nullptr)
+				GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			reinterpret_cast<LPCWSTR>(&DwmFlush),
+			&system_dwmapi))
 		return FALSE;
 
 	std::array<uintptr_t, EXPORT_COUNT> resolved{};
@@ -65,7 +53,7 @@ BOOL CALLBACK InitializeDwmapiProxyOnce(
 	{
 		const auto& entry = exports[index];
 		resolved[index] = reinterpret_cast<uintptr_t>(GetProcAddress(
-			library,
+			system_dwmapi,
 			entry.name != nullptr
 				? entry.name
 				: MAKEINTRESOURCEA(entry.ordinal)));
@@ -74,9 +62,6 @@ BOOL CALLBACK InitializeDwmapiProxyOnce(
 	for (size_t index = 0; index < EXPORT_COUNT; ++index)
 		mProcs[index] = resolved[index];
 
-	// The module is pinned before workers start, so an explicit FreeLibrary
-	// cannot unmap their code. Process termination owns final teardown.
-	nte::mods::StartPluginRuntime(pinned_module);
 	return TRUE;
 }
 } // namespace

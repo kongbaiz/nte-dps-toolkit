@@ -5,7 +5,7 @@ use nte_dps_tool::{
         hud::HudConfigSnapshot,
         update::{AvailableComponentUpdate, UpdateComponent},
     },
-    engine::capture::CaptureDevice,
+    engine::{capture::CaptureDevice, model::CombatClockRuntimeHealth},
     storage::{
         capture_logs::{CaptureLogStats, format_bytes},
         config::{
@@ -17,7 +17,9 @@ use nte_dps_tool::{
     },
 };
 
-pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 5;
+use crate::contract::dps_time::DpsTimeRuntimeSnapshot;
+
+pub(crate) const SETTINGS_CONTRACT_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +120,7 @@ pub(crate) struct CaptureSettingsSnapshot {
     pub auto_round_idle_seconds_min: u32,
     pub auto_round_idle_seconds_max: u32,
     pub dps_time_mode: &'static str,
+    pub dps_time_runtime: DpsTimeRuntimeSnapshot,
     pub passthrough_hotkey: &'static str,
 }
 
@@ -236,6 +239,7 @@ impl SettingsSnapshot {
         upper_imported: bool,
         lower_imported: bool,
         updates: UpdateSettingsSnapshot,
+        combat_clock_health: CombatClockRuntimeHealth,
     ) -> Self {
         Self {
             contract_version: SETTINGS_CONTRACT_VERSION,
@@ -266,6 +270,10 @@ impl SettingsSnapshot {
                 auto_round_idle_seconds_max:
                     nte_dps_tool::storage::config::AUTO_ROUND_IDLE_SECONDS_MAX,
                 dps_time_mode: dps_time_mode_id(config.dps_time_mode),
+                dps_time_runtime: DpsTimeRuntimeSnapshot::new(
+                    config.dps_time_mode,
+                    combat_clock_health,
+                ),
                 passthrough_hotkey: passthrough_hotkey_id(config.passthrough_hotkey),
             },
             hotkeys: hotkeys_snapshot(config.global_hotkeys),
@@ -515,6 +523,7 @@ mod tests {
                 None,
                 None,
             ),
+            CombatClockRuntimeHealth::Unknown,
         ))
         .expect("settings snapshot must serialize");
 
@@ -576,6 +585,7 @@ mod tests {
                 None,
                 None,
             ),
+            CombatClockRuntimeHealth::Unknown,
         );
         let value = serde_json::to_value(TeamDataImportFileResult {
             performed: true,

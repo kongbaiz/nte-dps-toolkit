@@ -1,0 +1,57 @@
+    Checking windows-sys v0.60.2
+   Compiling nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+error[E0425]: cannot find value `project_compact_timeline` in this scope
+   --> src\core\hud.rs:270:29
+    |
+270 |                   compact.map(project_compact_timeline)
+    |                               ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+489 | / fn project_live_timeline(
+490 | |     hits: &VecDeque<Hit>,
+491 | |     requested_bucket_seconds: f64,
+492 | | ) -> Option<HudTimelineSnapshot> {
+...   |
+559 | |     })
+560 | | }
+    | |_- similarly named function `project_live_timeline` defined here
+    |
+help: a function with a similar name exists
+    |
+270 -                 compact.map(project_compact_timeline)
+270 +                 compact.map(project_live_timeline)
+    |
+
+error[E0425]: cannot find type `VecDeque` in this scope
+   --> src\core\hud.rs:490:12
+    |
+490 |     hits: &VecDeque<Hit>,
+    |            ^^^^^^^^ not found in this scope
+    |
+help: consider importing this struct
+    |
+  6 + use std::collections::VecDeque;
+    |
+
+error[E0425]: cannot find type `Hit` in this scope
+   --> src\core\hud.rs:490:21
+    |
+490 |     hits: &VecDeque<Hit>,
+    |                     ^^^ not found in this scope
+    |
+help: consider importing this struct
+    |
+  6 + use crate::engine::model::Hit;
+    |
+
+error[E0277]: the `?` operator can only be used in a closure that returns `Result` or `Option` (or another type that implements `FromResidual`)
+   --> src\platform\mods_plugin_bootstrap.rs:632:92
+    |
+626 |         .map(|initialize_export_rva| ParsedPluginImage {
+    |              ----------------------- this function should return `Result` or `Option` to accept `?`
+...
+632 |             header_identity: normalized_header_identity(&bytes[..size_of_headers as usize])?,
+    |                                                                                            ^ cannot use the `?` operator in a closure that returns `ParsedPluginImage`
+
+Some errors have detailed explanations: E0277, E0425.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `nte-dps-tool` (lib) due to 4 previous errors

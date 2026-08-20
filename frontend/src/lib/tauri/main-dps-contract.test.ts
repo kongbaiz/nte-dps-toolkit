@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAIN_DPS_CONTRACT_VERSION,
   MAIN_DPS_MAX_HISTORY_RECORDS,
   MAIN_DPS_MAX_ROUNDS,
+  MAIN_DPS_MAX_TEXT_BYTES,
   parseMainDpsSnapshot,
 } from "./main-dps-contract";
 
 const sample = {
-  contractVersion: 4,
+  contractVersion: MAIN_DPS_CONTRACT_VERSION,
   generation: "7",
   captureGeneration: "3",
   presentationGeneration: "2",
@@ -18,6 +20,14 @@ const sample = {
     messageKey: "Idle",
     messageArguments: [],
     issue: null,
+  },
+  dpsTime: {
+    configuredMode: "time-stop-adjusted",
+    effectiveMode: "real-time",
+    combatClockHealth: "unknown",
+    degraded: true,
+    warningMessageKey:
+      "Time-stop adjustment has not been verified for this session.",
   },
   processingPaused: false,
   pausedPendingEvents: "0",
@@ -72,6 +82,7 @@ const sample = {
   gameDetected: false,
   gameDetectionStatus: "notRunning",
   hasLiveSessionData: false,
+  textTruncated: false,
   onboarding: {
     done: true,
     step: 0,
@@ -89,6 +100,8 @@ describe("main DPS contract", () => {
     const parsed = parseMainDpsSnapshot(sample);
     expect(parsed.rounds[0]?.live).toBe(true);
     expect(parsed.onboarding.captureDevicesAvailable).toBe(true);
+    expect(parsed.dpsTime.effectiveMode).toBe("real-time");
+    expect(parsed.dpsTime.degraded).toBe(true);
   });
 
   it("requires an explicit capture-device availability status", () => {
@@ -98,6 +111,27 @@ describe("main DPS contract", () => {
     expect(() => parseMainDpsSnapshot({ ...sample, onboarding })).toThrow(
       /onboarding.captureDevicesAvailable must be boolean/,
     );
+  });
+
+  it("validates resource-derived strings by UTF-8 bytes", () => {
+    const character = {
+      characterId: 1,
+      name: "界".repeat(MAIN_DPS_MAX_TEXT_BYTES),
+      hits: "1",
+      damage: 1,
+      dps: 1,
+      damageSharePercent: 100,
+      damageTaken: 0,
+      durationSeconds: 1,
+      color: null,
+      attribute: null,
+    };
+    expect(() =>
+      parseMainDpsSnapshot({
+        ...sample,
+        readout: { ...sample.readout, characters: [character] },
+      }),
+    ).toThrow(/UTF-8 bytes/);
   });
 
   it.each([

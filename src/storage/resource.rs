@@ -12,6 +12,9 @@ include!(concat!(env!("OUT_DIR"), "/embedded_resources.rs"));
 
 #[cfg(feature = "desktop")]
 const MODS_PLUGIN_PATH: &str = "plugins/dwmapi.dll";
+const MAX_RESOURCE_FILE_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(feature = "desktop")]
+const MAX_MODS_PLUGIN_BYTES: usize = 64 * 1024 * 1024;
 #[cfg(feature = "desktop")]
 const MODS_PLUGIN_REQUIRED_MOD_RUNTIME_SYMBOLS: [&[u8]; 21] = [
     b"NTE_DPS_TOOL_MODS_PLUGIN_V1",
@@ -61,7 +64,7 @@ pub fn read_mods_plugin() -> std::io::Result<Option<Vec<u8>>> {
 fn read_first_compatible_mods_plugin(candidates: &[PathBuf]) -> std::io::Result<Option<Vec<u8>>> {
     let mut incompatible = None;
     for candidate in candidates {
-        match std::fs::read(candidate) {
+        match read_file_bytes_bounded_io(candidate, MAX_MODS_PLUGIN_BYTES) {
             Ok(bytes) if mods_plugin_supports_bundled_mods(&bytes) => return Ok(Some(bytes)),
             Ok(_) => {
                 incompatible.get_or_insert(candidate);
@@ -153,9 +156,36 @@ fn read_file_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, BoundedRe
     Ok(bytes)
 }
 
+fn read_file_bytes_bounded_io(path: &Path, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "resource path is not a regular file",
+        ));
+    }
+    if metadata.len() > max_bytes as u64 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("resource exceeds {max_bytes} byte limit"),
+        ));
+    }
+    let mut bytes = Vec::with_capacity((metadata.len() as usize).min(max_bytes));
+    file.take(max_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > max_bytes {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("resource exceeds {max_bytes} byte limit"),
+        ));
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn read_resource_bytes(path: &Path) -> Result<Cow<'static, [u8]>> {
     if let Some(disk_path) = resource_file_path(path) {
-        let bytes = std::fs::read(&disk_path)
+        let bytes = read_file_bytes_bounded_io(&disk_path, MAX_RESOURCE_FILE_BYTES)
             .with_context(|| format!("无法读取资源 {}", disk_path.display()))?;
         return Ok(Cow::Owned(bytes));
     }
@@ -429,6 +459,27 @@ mod tests {
             Err(BoundedResourceTextError::InvalidUtf8)
         );
         std::fs::remove_dir_all(root).expect("remove resource fixture");
+    }
+
+    #[test]
+    fn bounded_binary_reader_checks_metadata_and_post_open_growth() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nte-bounded-binary-resource-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"12345").expect("binary resource fixture");
+        assert_eq!(read_file_bytes_bounded_io(&path, 5).unwrap(), b"12345");
+        assert_eq!(
+            read_file_bytes_bounded_io(&path, 4)
+                .expect_err("oversized binary must be rejected")
+                .kind(),
+            std::io::ErrorKind::InvalidData
+        );
+        std::fs::remove_file(path).expect("remove binary resource fixture");
     }
 
     #[test]

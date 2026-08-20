@@ -2,6 +2,7 @@ mod channels;
 mod character_data_service;
 mod commands;
 mod contract;
+mod desktop_runtime;
 mod diagnostics_runtime;
 mod encrypted_ini_service;
 mod equipment_operation_service;
@@ -28,6 +29,7 @@ pub fn run() {
     let live_capture = nte_dps_tool::core::live_capture::LiveCaptureService::new(capture_resources);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new(ui_config, live_capture))
         .on_page_load(|webview, payload| {
             if windows::main_dps::should_reveal_after_page_load(webview.label(), payload.event()) {
@@ -157,6 +159,19 @@ pub fn run() {
                 };
             let managed = app.manage(history_runtime);
             debug_assert!(managed, "History runtime is managed once");
+
+            let mod_studio_monitor =
+                match channels::mod_studio_runtime::ModStudioMonitorRuntime::start(
+                    state.inner().clone(),
+                ) {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        eprintln!("Tauri Mod runtime monitor unavailable: {error}");
+                        channels::mod_studio_runtime::ModStudioMonitorRuntime::unavailable()
+                    }
+                };
+            let managed = app.manage(mod_studio_monitor);
+            debug_assert!(managed, "Mod runtime monitor is managed once");
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -333,6 +348,11 @@ pub fn run() {
                     log::warn!("Stream registry reset during application shutdown");
                 }
                 if let Some(runtime) = app.try_state::<history_runtime::HistoryRuntime>() {
+                    runtime.shutdown();
+                }
+                if let Some(runtime) =
+                    app.try_state::<channels::mod_studio_runtime::ModStudioMonitorRuntime>()
+                {
                     runtime.shutdown();
                 }
                 channels::mod_studio_runtime::shutdown_mod_studio_poll_runtime();

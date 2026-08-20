@@ -1,11 +1,29 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const DIAGNOSTICS_CONTRACT_VERSION = 2;
+export const DIAGNOSTICS_CONTRACT_VERSION = 3;
 export const DIAGNOSTICS_MAX_CHECKS = 64;
+
+const {
+  array,
+  boolean,
+  boundedInteger,
+  boundedStringAllowEmpty: text,
+  canonicalDecimalString128: decimalString,
+  enumValue,
+  finiteNumber,
+  integer,
+  nonNegativeNumber,
+  nonNegativeInteger,
+  nullableBoundedStringAllowEmpty: nullableText,
+  record: object,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type DiagnosticsCommandError = TechnicalCommandError;
 export type DiagnosticsStatus = "passed" | "warning" | "failed";
@@ -82,6 +100,8 @@ export interface DiagnosticsQualitySnapshot {
   timeStopIntervalCount: number;
   abyssEventCount: string;
   serverDamageCorrections: string;
+  unattributedServerDamageEvents: string;
+  unattributedServerDamage: number;
 }
 
 export interface DiagnosticsActionsSnapshot {
@@ -378,6 +398,14 @@ function parseQuality(value: unknown): DiagnosticsQualitySnapshot {
       item.serverDamageCorrections,
       "diagnostics.quality.serverDamageCorrections",
     ),
+    unattributedServerDamageEvents: decimalString(
+      item.unattributedServerDamageEvents,
+      "diagnostics.quality.unattributedServerDamageEvents",
+    ),
+    unattributedServerDamage: nonNegativeNumber(
+      item.unattributedServerDamage,
+      "diagnostics.quality.unattributedServerDamage",
+    ),
   };
 }
 
@@ -394,94 +422,4 @@ function parseActions(value: unknown): DiagnosticsActionsSnapshot {
       "diagnostics.actions.canExportRaw",
     ),
   };
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function text(value: unknown, field: string, maxLength: number): string {
-  if (typeof value !== "string" || value.length > maxLength) {
-    throw new TechnicalContractError(`${field} must be bounded text`);
-  }
-  return value;
-}
-
-function nullableText(
-  value: unknown,
-  field: string,
-  maxLength: number,
-): string | null {
-  return value === null ? null : text(value, field, maxLength);
-}
-
-function decimalString(value: unknown, field: string): string {
-  const parsed = text(value, field, 128);
-  if (!/^(0|[1-9]\d*)$/.test(parsed)) {
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  }
-  return parsed;
-}
-
-function integer(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
-    throw new TechnicalContractError(`${field} must be a safe integer`);
-  }
-  return value;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must be non-negative`);
-  }
-  return parsed;
-}
-
-function boundedInteger(
-  value: unknown,
-  field: string,
-  minimum: number,
-  maximum: number,
-): number {
-  const parsed = integer(value, field);
-  if (parsed < minimum || parsed > maximum) {
-    throw new TechnicalContractError(`${field} is outside bounds`);
-  }
-  return parsed;
-}
-
-function finiteNumber(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TechnicalContractError(`${field} must be finite`);
-  }
-  return value;
-}
-
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${field} must be boolean`);
-  }
-  return value;
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  allowed: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !allowed.includes(value)) {
-    throw new TechnicalContractError(`${field} is invalid`);
-  }
-  return value as T[number];
 }

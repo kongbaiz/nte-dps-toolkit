@@ -19,6 +19,10 @@ __pycache__/
 /plugins/*.dll
 /plugins/mods-plugin.state.json
 /plugins/equipment-plugin.state.json
+/site/assets/
+
+# Office creates transient lock files beside documents.
+~$*.docx
 
 # Local environment and secrets
 .env

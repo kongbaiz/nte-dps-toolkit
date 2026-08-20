@@ -1,10 +1,21 @@
 #include <Windows.h>
 
 #include "nte_mods_plugin_manual_map.hpp"
+#include "nte_mods_plugin_lifecycle.h"
 #include "plugin_runtime.hpp"
 
 extern "C" __declspec(dllexport) const char NteModsPluginSignature[] =
 	NTE_MODS_PLUGIN_IMAGE_SIGNATURE;
+
+extern "C" __declspec(dllexport) uint32_t WINAPI
+NteModsPluginInitialize(void* reserved) noexcept
+{
+	if (reserved != nullptr)
+		return static_cast<uint32_t>(
+			nte::mods::PluginStartResult::Failed);
+	return static_cast<uint32_t>(
+		nte::mods::InitializeRecordedPluginRuntime());
+}
 
 // Manual-map owners may call this export from a normal thread before unmapping.
 // TRUE is deliberately strict: any published detour lineage keeps the image
@@ -18,12 +29,17 @@ extern "C" __declspec(dllexport) BOOL WINAPI NteModsPluginShutdown() noexcept
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID reserved)
 {
-	// The OS loader always reaches this entry without the private marker, so its
-	// loader-lock path performs no worker or library operation. The vendored
-	// manual-map shellcode invokes this same entry on its dedicated remote thread
-	// and supplies the marker only after imports, TLS, and unwind registration.
-	if (reason == DLL_PROCESS_ATTACH &&
-		nte::mods::manual_map::IsExplicitAttach(reserved))
-		nte::mods::StartPluginRuntime(module);
+	if (reason == DLL_PROCESS_ATTACH)
+	{
+		// Recording one already-supplied image address is the complete OS-loader
+		// attach path. Normal proxy deployments call NteModsPluginInitialize from
+		// a target-process thread after module/startup initialization returns.
+		nte::mods::RecordPluginModule(module);
+		// The vendored manual mapper invokes this entry on its dedicated remote
+		// thread after imports, TLS, and unwind registration, outside the OS loader
+		// lock. Its private marker preserves that explicit initialization contract.
+		if (nte::mods::manual_map::IsExplicitAttach(reserved))
+			nte::mods::InitializeRecordedPluginRuntime();
+	}
 	return TRUE;
 }

@@ -544,6 +544,19 @@ export function MainDpsPage() {
         }
       />
 
+      {snapshot.selectedRoundId === null &&
+      (captureRunning ||
+        snapshot.replayRunning ||
+        snapshot.hasLiveSessionData) &&
+      snapshot.dpsTime.warningMessageKey ? (
+        <div
+          className="border-b border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300"
+          role="status"
+        >
+          {t(snapshot.dpsTime.warningMessageKey)}
+        </div>
+      ) : null}
+
       <main className="main-dps-content">
         {!abyssCollapsed && (
           <section className="main-dps-toolbar flex flex-wrap items-center justify-between gap-1.5">

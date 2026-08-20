@@ -1,0 +1,6 @@
+
+cargo fmt --check	EXIT=0	SECONDS=0.52
+cargo test --locked	EXIT=0	SECONDS=38.53
+cargo test CLI	EXIT=0	SECONDS=28.09
+cargo test Tauri	EXIT=0	SECONDS=157.93
+verify architecture	EXIT=0	SECONDS=0.84

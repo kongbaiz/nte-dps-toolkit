@@ -1,7 +1,18 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 export const STREAM_PROTOCOL_VERSION = 1;
 export const MAX_IN_FLIGHT_STREAM_DELIVERIES = 1;
 export const MAX_STREAM_DELIVERY_BYTES = 16 * 1024 * 1024;
 export const MAX_EVENTS_PER_STREAM_DELIVERY = 2;
+
+const {
+  nonEmptyString,
+  positiveU64DecimalString: positiveDecimalString,
+  positiveInteger,
+  record,
+  string,
+} = createContractPrimitives((message) => {
+  throw new StreamContractError(message);
+});
 
 export const STREAM_KINDS = [
   "technical",
@@ -170,28 +181,6 @@ function protocolVersion(value: unknown): number {
   return version;
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new StreamContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new StreamContractError(`${field} must be a string`);
-  }
-  return value;
-}
-
-function nonEmptyString(value: unknown, field: string): string {
-  const parsed = string(value, field);
-  if (parsed.length === 0) {
-    throw new StreamContractError(`${field} must not be empty`);
-  }
-  return parsed;
-}
-
 function subscriptionId(value: unknown): string {
   const parsed = nonEmptyString(value, "subscriptionId");
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(parsed)) {
@@ -206,31 +195,4 @@ function parseStreamKind(value: unknown): StreamKind {
     throw new StreamContractError("streamKind is not supported");
   }
   return parsed as StreamKind;
-}
-
-function decimalString(value: unknown, field: string): string {
-  const parsed = string(value, field);
-  if (
-    parsed.length > 20 ||
-    !/^(?:0|[1-9][0-9]*)$/.test(parsed) ||
-    BigInt(parsed) > 18_446_744_073_709_551_615n
-  ) {
-    throw new StreamContractError(`${field} must be a canonical decimal`);
-  }
-  return parsed;
-}
-
-function positiveDecimalString(value: unknown, field: string): string {
-  const parsed = decimalString(value, field);
-  if (parsed === "0") {
-    throw new StreamContractError(`${field} must be positive`);
-  }
-  return parsed;
-}
-
-function positiveInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
-    throw new StreamContractError(`${field} must be a positive integer`);
-  }
-  return value;
 }

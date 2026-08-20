@@ -1,0 +1,11 @@
+   Compiling nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL\.codex-fixtures\followup-2026-08-20\rollback-copy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 38.13s
+     Running unittests src\lib.rs (D:\NTE_DPS_TOOL\target\debug\deps\nte_dps_tool-64a067f0f7cd2024.exe)
+
+running 2 tests
+test engine::model::tests::party_combat_retains_every_hit_and_lifetime_total ... ok
+test engine::model::tests::combat_retains_every_hit_and_lifetime_total ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 717 filtered out; finished in 0.92s
+
+EXIT: 0

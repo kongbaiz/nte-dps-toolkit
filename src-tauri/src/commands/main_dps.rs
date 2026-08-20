@@ -1,6 +1,8 @@
 use nte_dps_tool::{
-    core::combat_details::CombatDetailFilter, core::live_capture::CaptureReplayKind,
-    engine::model::AbyssHalf, storage::i18n,
+    core::combat_details::CombatDetailFilter,
+    core::live_capture::CaptureReplayKind,
+    engine::model::{AbyssHalf, MAX_INDEXED_DETAIL_KEY_BYTES},
+    storage::i18n,
 };
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
@@ -255,16 +257,29 @@ pub(crate) fn set_main_dps_paused(
 }
 
 #[tauri::command]
-pub(crate) fn select_main_dps_round(
+pub(crate) async fn select_main_dps_round(
     record_id: Option<String>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<MainDpsSnapshot, CommandError> {
     main_dps::validate_window(&window)?;
-    state
-        .set_main_selected_round_id(record_id)
-        .map_err(presentation_selection_error)?;
-    snapshot(state.inner())
+    let state = state.inner().clone();
+    // Reserve latest intent before worker scheduling. A previously submitted
+    // slow worker that starts later therefore cannot obtain a newer token.
+    let operation = state.reserve_main_round_selection();
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .set_main_selected_round_id_for_operation(record_id, operation)
+            .map_err(presentation_selection_error)?;
+        snapshot(&state)
+    })
+    .await
+    .map_err(|_| {
+        CommandError::main_dps(
+            "history_selection_failed",
+            "History selection did not finish.",
+        )
+    })?
 }
 
 #[tauri::command]
@@ -683,10 +698,10 @@ pub(crate) fn set_main_dps_detail_view(
     combat_details::validate_window(&window)?;
     let kind = combat_details::window_kind(&window)?;
     let current = state.main_dps_detail_request(kind);
+    let qte_type = validate_optional_detail_key(qte_type)?;
+    let skill_filter = validate_optional_detail_key(skill_filter)?;
     let filter = if filter == "qteType" {
-        let attack_type = qte_type
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(action_unavailable)?;
+        let attack_type = qte_type.ok_or_else(action_unavailable)?;
         CombatDetailFilter::QteType(attack_type)
     } else {
         parse_detail_filter(&filter)?
@@ -697,7 +712,7 @@ pub(crate) fn set_main_dps_detail_view(
             MainDpsDetailRequest {
                 character_id: current.character_id,
                 filter,
-                skill_filter: skill_filter.filter(|value| !value.trim().is_empty()),
+                skill_filter,
             },
         )
         .map_err(presentation_error)?;
@@ -849,6 +864,23 @@ fn parse_detail_filter(value: &str) -> Result<CombatDetailFilter, CommandError> 
     }
 }
 
+fn validate_optional_detail_key(value: Option<String>) -> Result<Option<String>, CommandError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(None);
+    }
+    if value.len() > MAX_INDEXED_DETAIL_KEY_BYTES {
+        return Err(CommandError::main_dps(
+            "detail_filter_too_large",
+            "The combat detail filter is too large",
+        ));
+    }
+    Ok(Some(value.to_owned()))
+}
+
 fn action_unavailable() -> CommandError {
     CommandError::main_dps(
         "action_unavailable",
@@ -866,6 +898,10 @@ pub(crate) fn presentation_error(error: PresentationError) -> CommandError {
         PresentationError::RoundUnavailable => {
             CommandError::main_dps("history_round_missing", "Combat round no longer exists")
         }
+        PresentationError::RoundTooLarge => CommandError::main_dps(
+            "history_round_too_large",
+            "Combat round exceeds the interactive History budget",
+        ),
     }
 }
 
@@ -877,6 +913,9 @@ fn replay_import_error(error: ReplayImportError) -> CommandError {
     match error {
         ReplayImportError::RuntimeUnavailable => CommandError::replay_import_runtime_unavailable(),
         ReplayImportError::Capture(error) => CommandError::from_core(error),
+        ReplayImportError::JsonImport(error) => {
+            CommandError::main_dps(error.stable_code(), "Failed to start capture replay")
+        }
     }
 }
 
@@ -936,6 +975,32 @@ mod tests {
     }
 
     #[test]
+    fn detail_string_filters_enforce_utf8_byte_budget() {
+        let exact = "x".repeat(MAX_INDEXED_DETAIL_KEY_BYTES);
+        assert_eq!(
+            validate_optional_detail_key(Some(format!(" {exact} ")))
+                .expect("exact byte budget is valid")
+                .as_deref(),
+            Some(exact.as_str())
+        );
+
+        let oversized =
+            validate_optional_detail_key(Some("x".repeat(MAX_INDEXED_DETAIL_KEY_BYTES + 1)))
+                .expect_err("oversized detail key must fail");
+        assert_eq!(oversized.code, "detail_filter_too_large");
+
+        let multibyte = "界".repeat(MAX_INDEXED_DETAIL_KEY_BYTES / "界".len() + 1);
+        assert!(multibyte.chars().count() < MAX_INDEXED_DETAIL_KEY_BYTES);
+        let error = validate_optional_detail_key(Some(multibyte))
+            .expect_err("UTF-8 byte length, not character count, is authoritative");
+        assert_eq!(error.code, "detail_filter_too_large");
+        assert_eq!(
+            validate_optional_detail_key(Some("  ".to_owned())).unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn poisoned_replay_and_session_runtimes_use_stable_command_errors() {
         let replay = replay_import_error(ReplayImportError::RuntimeUnavailable);
         assert_eq!(replay.code, "replay_import_runtime_unavailable");
@@ -954,6 +1019,20 @@ mod tests {
     }
 
     #[test]
+    fn json_replay_boundary_error_keeps_its_stable_code() {
+        let error = replay_import_error(ReplayImportError::JsonImport(
+            nte_dps_tool::engine::capture::CaptureImportError::UnsupportedVersion {
+                found: 2,
+                expected: 1,
+            },
+        ));
+
+        assert_eq!(error.code, "replay_version_unsupported");
+        assert_eq!(error.message_key, "Failed to start capture replay");
+        assert!(error.message_arguments.is_empty());
+    }
+
+    #[test]
     fn presentation_unavailable_uses_a_stable_redacted_command_error() {
         let error = presentation_error(PresentationError::StateUnavailable);
 
@@ -963,5 +1042,29 @@ mod tests {
         let serialized = serde_json::to_string(&error).expect("presentation error serializes");
         assert!(!serialized.contains("poison"));
         assert!(!serialized.contains("private"));
+    }
+
+    #[test]
+    fn oversized_interactive_history_round_has_a_stable_typed_error() {
+        let error = presentation_error(PresentationError::RoundTooLarge);
+
+        assert_eq!(error.code, "history_round_too_large");
+        assert_eq!(
+            error.message_key,
+            "Combat round exceeds the interactive History budget"
+        );
+        assert!(error.message_arguments.is_empty());
+    }
+
+    #[test]
+    fn history_selection_command_offloads_blocking_rehydration() {
+        let source = include_str!("main_dps.rs");
+        let body = source
+            .split_once("pub(crate) async fn select_main_dps_round")
+            .and_then(|(_, tail)| tail.split_once("\n#[tauri::command]"))
+            .map(|(body, _)| body)
+            .expect("History selection command source");
+        assert!(body.contains("spawn_blocking"));
+        assert!(body.contains("set_main_selected_round_id"));
     }
 }

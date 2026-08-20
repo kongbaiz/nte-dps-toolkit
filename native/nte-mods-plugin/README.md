@@ -26,6 +26,43 @@ msbuild .\nte-mods-plugin.sln /t:Clean,Build /p:Configuration=Release /p:Platfor
 `plugins\dwmapi.dll`。随发行包提供的脚本位于 `plugins\nte-mods\`，默认启用集合
 位于 `plugins\nte-mods.enabled`。
 
+## 加载与生命周期 ABI
+
+代理 DLL 的 `DllMain` 只记录已由加载器提供的模块地址，不加载系统 DLL、不启动
+worker、也不执行停止/等待。真实 DWM API 通过
+`api-ms-win-dwmapi-l1-1-0.dll` 静态 anchor 由 Windows loader 预绑定；首次转发只解析
+已加载映像中的 export，不会把本插件永久 pin 到进程。
+
+代理部署方必须在目标进程完成模块/启动初始化后，从一个不持有 loader lock 的普通线程
+调用：
+
+```cpp
+uint32_t WINAPI NteModsPluginInitialize(void* reserved);
+```
+
+`reserved` 必须传 `nullptr`。该签名与 `LPTHREAD_START_ROUTINE` ABI 一致，因此桌面端在
+校验本地映像、目标模块路径和导出 RVA 后，可直接以该导出地址调用
+`CreateRemoteThread`，无需远程分配或适配 thunk。
+
+桌面 proxy 监控由 Rust `platform::mods_plugin_bootstrap` 执行：监控 worker 在 IPC
+presence 缺失且加载方式为 proxy 时，有界枚举 `HTGame.exe`，使用同一文件句柄限量
+读取部署 DLL，并以 `ReadProcessMemory` 重新解析已加载映像的 PE header/export。
+只有本地/远端映像 identity、非 forwarded 可执行 RVA 与精确模块路径均一致后才创建
+远程线程；只有返回 `STARTED`/`ALREADY_RUNNING` 才投影为 loader ready。
+
+稳定返回码定义于 `include/nte_mods_plugin_lifecycle.h`：
+
+- `0 / NTE_MODS_PLUGIN_INIT_STARTED`：本次启动成功；
+- `1 / NTE_MODS_PLUGIN_INIT_ALREADY_RUNNING`：已经运行，可作为幂等成功；
+- `2 / NTE_MODS_PLUGIN_INIT_NOT_GAME_HOST`：目标不是 `HTGame.exe`；
+- `3 / NTE_MODS_PLUGIN_INIT_IN_PROGRESS`：另一生命周期操作进行中，只允许有界重试；
+- `4 / NTE_MODS_PLUGIN_INIT_FAILED`：启动失败。
+
+manual-map loader 使用签名保护的 private attach marker，并在 imports、TLS 与 unwind
+注册完成后的专用 remote thread 上自动执行同一初始化入口。显式卸载前继续调用
+`NteModsPluginShutdown`；只有返回 `TRUE` 才允许释放映像。任一 runtime detour 曾发布后，
+插件会保守返回驻留状态，直到进程退出。
+
 ## 内置 SDK 缓存
 
 插件在 `HTGame.exe` 中加载后会启动一个由插件运行时拥有、共享停止事件可取消的 SDK

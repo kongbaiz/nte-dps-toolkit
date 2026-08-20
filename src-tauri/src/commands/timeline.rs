@@ -45,10 +45,11 @@ pub(crate) fn snapshot(
     scope: TimelineScope,
 ) -> Result<TimelineSnapshot, CommandError> {
     let (_, view_mode) = state.timeline_preferences();
+    let projection = state
+        .timeline_projection(scope)
+        .map_err(CommandError::from_core)?;
     Ok(TimelineSnapshot::from_projection(
-        state
-            .timeline_projection(scope)
-            .map_err(CommandError::from_core)?,
+        projection.as_ref(),
         state.next_sequence(),
         scope,
         view_mode,

@@ -260,6 +260,7 @@ pub(crate) async fn set_mod_loader_running(
     window: WebviewWindow,
 ) -> Result<ModLoaderRuntimeStateSnapshot, CommandError> {
     console::validate_window(&window)?;
+    require_mod_studio_risk(state.inner(), running)?;
     let loader = state.mod_loader();
     let workspace = state.mod_studio();
     tauri::async_runtime::spawn_blocking(move || {
@@ -506,6 +507,7 @@ pub(crate) async fn set_mod_studio_loader_enabled(
     window: WebviewWindow,
 ) -> Result<ModStudioDeploymentSnapshot, CommandError> {
     console::validate_window(&window)?;
+    require_mod_studio_risk(state.inner(), enabled)?;
     let region = parse_region(&region)?;
     let directory = resolve_manual_game_directory(
         state.inner(),
@@ -529,6 +531,14 @@ pub(crate) async fn set_mod_studio_loader_enabled(
     })?
     .map(Into::into)
     .map_err(deployment_error)
+}
+
+fn require_mod_studio_risk(state: &AppState, starting: bool) -> Result<(), CommandError> {
+    if starting && !state.mod_studio_risk_acknowledged() {
+        Err(CommandError::mod_studio_risk_acknowledgement_required())
+    } else {
+        Ok(())
+    }
 }
 
 fn inspect_deployment(
@@ -787,5 +797,24 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn native_start_commands_require_risk_acknowledgement_but_stop_is_always_allowed() {
+        let blocked = AppState::default();
+        let error = require_mod_studio_risk(&blocked, true).expect_err("start must be blocked");
+        assert_eq!(error.code, "mod_studio_risk_acknowledgement_required");
+        assert!(require_mod_studio_risk(&blocked, false).is_ok());
+
+        let acknowledged = AppState::new(
+            nte_dps_tool::storage::config::UiConfig {
+                mod_studio_risk_acknowledged: true,
+                ..nte_dps_tool::storage::config::UiConfig::default()
+            },
+            nte_dps_tool::core::live_capture::LiveCaptureService::new(
+                nte_dps_tool::core::live_capture::LiveCaptureResources::default(),
+            ),
+        );
+        assert!(require_mod_studio_risk(&acknowledged, true).is_ok());
     }
 }

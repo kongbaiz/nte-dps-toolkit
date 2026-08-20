@@ -14,7 +14,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex, MutexGuard, Weak,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -27,18 +27,19 @@ use super::diagnostics::DiagnosticQualityCache;
 use super::{
     CoreError, CoreErrorCode,
     capture::{CaptureController, CaptureControllerOptions},
-    history::{PendingHistoryArchive, abyss_event_starts_new_round},
+    history::{HistoryArchivePolicy, PendingHistoryArchive, abyss_event_starts_new_round},
     reducer::{CoreSignal, apply_engine_event},
 };
 use crate::{
     engine::{
         capture::{
-            CaptureResources, EngineEventSink, RawCaptureSnapshot, import_capture_json,
-            import_pcapng,
+            CaptureImportError, CaptureResources, EngineEventSink, PreparedCaptureJsonReplay,
+            RawCaptureSnapshot, import_pcapng, import_prepared_capture_json,
+            prepare_capture_json_replay,
         },
         model::{
-            AbyssEvent, CaptureQualitySource, CaptureQualitySummary, CharacterInfo, CombatState,
-            EngineEvent,
+            AbyssEvent, CaptureQualitySource, CaptureQualitySummary, CharacterInfo,
+            CombatClockRuntimeHealth, CombatState, DpsTimeBasis, EngineEvent,
         },
         parser::{AbilityCatalog, CHARACTER_DATA_PATH, load_characters},
     },
@@ -52,6 +53,8 @@ const MAX_PENDING_ABYSS_ARCHIVES: usize = 64;
 
 #[cfg(all(test, feature = "desktop"))]
 std::thread_local! {
+    /// Guardrail counter: the incremental quality path must never fall back to
+    /// scanning the authoritative hit deque, including after cache poison.
     static DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT: std::cell::Cell<usize> = const {
         std::cell::Cell::new(0)
     };
@@ -147,12 +150,26 @@ pub enum CaptureReplayKind {
     Json,
 }
 
+#[derive(Debug)]
+pub enum ReplayStartError {
+    Capture(CoreError),
+    JsonImport(CaptureImportError),
+}
+
+impl From<CoreError> for ReplayStartError {
+    fn from(error: CoreError) -> Self {
+        Self::Capture(error)
+    }
+}
+
 /// An authoritative round detached from live capture under `event_gate`.
 /// Callers may prepare and persist it after the gate is released; new engine
 /// events are already routed into the replacement state.
 pub struct CutRound {
     pub state: CombatState,
     pub source: CaptureQualitySource,
+    pub dps_time_mode: DpsTimeBasis,
+    pub separate_reaction_damage: bool,
 }
 
 #[derive(Debug)]
@@ -164,6 +181,31 @@ pub struct PendingArchiveRestoreError {
 struct DetachedAbyssRound {
     state: CombatState,
     source: CaptureQualitySource,
+    dps_time_mode: DpsTimeBasis,
+    separate_reaction_damage: bool,
+}
+
+const HISTORY_POLICY_SUBTRACT_TIME_STOP: u8 = 1 << 0;
+const HISTORY_POLICY_SEPARATE_REACTION_DAMAGE: u8 = 1 << 1;
+
+const fn encode_history_archive_policy(policy: HistoryArchivePolicy) -> u8 {
+    let mut encoded = 0;
+    if policy.requested_dps_time_mode.subtracts_time_stop() {
+        encoded |= HISTORY_POLICY_SUBTRACT_TIME_STOP;
+    }
+    if policy.separate_reaction_damage {
+        encoded |= HISTORY_POLICY_SEPARATE_REACTION_DAMAGE;
+    }
+    encoded
+}
+
+const fn decode_history_archive_policy(encoded: u8) -> HistoryArchivePolicy {
+    HistoryArchivePolicy {
+        requested_dps_time_mode: DpsTimeBasis::from_subtract_time_stop(
+            encoded & HISTORY_POLICY_SUBTRACT_TIME_STOP != 0,
+        ),
+        separate_reaction_damage: encoded & HISTORY_POLICY_SEPARATE_REACTION_DAMAGE != 0,
+    }
 }
 
 struct ReplayTask {
@@ -231,6 +273,9 @@ struct LiveCaptureInner {
     replay: Mutex<Option<ReplayTask>>,
     status: Mutex<LiveCaptureStatus>,
     quality_source: Mutex<CaptureQualitySource>,
+    /// Atomically packed future-archive projection policy. Capture event
+    /// boundaries load one coherent value without adding another hot lock.
+    history_archive_policy: AtomicU8,
     /// Derived, bounded diagnostics read model. This cache is the only lock
     /// acquired before `event_gate`; no capture mutation ever acquires it, so
     /// it cannot participate in a reverse lock-order cycle.
@@ -260,8 +305,11 @@ impl LiveCaptureService {
             replay: Mutex::new(None),
             status: Mutex::new(LiveCaptureStatus::default()),
             quality_source: Mutex::new(CaptureQualitySource::Unknown),
+            history_archive_policy: AtomicU8::new(encode_history_archive_policy(
+                HistoryArchivePolicy::default(),
+            )),
             #[cfg(feature = "desktop")]
-            diagnostic_quality: Mutex::new(DiagnosticQualityCache::default()),
+            diagnostic_quality: Mutex::new(DiagnosticQualityCache),
             revision: AtomicU64::new(0),
             packet_revision: AtomicU64::new(0),
             packet_session_generation: AtomicU64::new(0),
@@ -347,6 +395,25 @@ impl LiveCaptureService {
         self.checked(|inner| Ok(*checked_lock(&inner.quality_source)?))
     }
 
+    /// O(1) typed provider health for settings/status contracts. This reads one
+    /// Copy field and never clones combat hits or takes the event gate.
+    pub fn combat_clock_health(&self) -> Result<CombatClockRuntimeHealth, CoreError> {
+        self.with_state(|state| state.combat_clock_health)
+    }
+
+    /// Updates the projection policy that future automatic round boundaries
+    /// freeze into their pending archive. The two values share one atomic byte,
+    /// so a boundary cannot observe a torn settings update.
+    pub fn set_history_archive_policy(&self, policy: HistoryArchivePolicy) {
+        self.0
+            .history_archive_policy
+            .store(encode_history_archive_policy(policy), Ordering::Release);
+    }
+
+    pub fn history_archive_policy(&self) -> HistoryArchivePolicy {
+        decode_history_archive_policy(self.0.history_archive_policy.load(Ordering::Acquire))
+    }
+
     pub fn quality_summary(&self) -> Result<CaptureQualitySummary, CoreError> {
         #[cfg(feature = "desktop")]
         {
@@ -367,7 +434,7 @@ impl LiveCaptureService {
                 // state. Resetting it fully restores its only invariant; the
                 // next projection rebuilds from the retained hit ring.
                 let mut cache = error.into_inner();
-                *cache = DiagnosticQualityCache::default();
+                *cache = DiagnosticQualityCache;
                 self.0.diagnostic_quality.clear_poison();
                 cache
             }
@@ -379,11 +446,6 @@ impl LiveCaptureService {
                 self.0.packet_session_generation.load(Ordering::Acquire),
             )
         })?;
-        #[cfg(test)]
-        if input.rebuilds_hits() {
-            DIAGNOSTIC_QUALITY_FULL_REBUILD_COUNT
-                .with(|count| count.set(count.get().saturating_add(1)));
-        }
         Ok(cache.finish(input))
     }
 
@@ -421,7 +483,7 @@ impl LiveCaptureService {
 
     /// Reads the authoritative state and its provenance from the same capture
     /// session. Lock order is `event_gate -> state -> quality_source`.
-    fn with_state_and_source<T>(
+    pub fn with_state_and_source<T>(
         &self,
         read: impl FnOnce(&CombatState, CaptureQualitySource) -> T,
     ) -> Result<T, CoreError> {
@@ -439,6 +501,15 @@ impl LiveCaptureService {
         &self,
     ) -> Result<(CombatState, CaptureQualitySource), CoreError> {
         self.with_state_and_source(|state, source| (state.clone(), source))
+    }
+
+    /// Freezes only the authoritative fields consumed by History. The clone is
+    /// made while provenance is protected by the same event gate, then all
+    /// summary projection and disk work happens after the hot locks are gone.
+    pub fn history_state_and_source_snapshot(
+        &self,
+    ) -> Result<(CombatState, CaptureQualitySource), CoreError> {
+        self.with_state_and_source(|state, source| (state.clone_for_history_archive(), source))
     }
 
     pub fn with_packet_state<T>(
@@ -551,6 +622,16 @@ impl LiveCaptureService {
     /// Lock order is `event_gate -> state -> quality_source -> round runtime`.
     /// No serialization or persistence is allowed in this critical section.
     pub fn cut_round(&self) -> Result<Option<CutRound>, CoreError> {
+        self.cut_round_with_history_policy(self.history_archive_policy())
+    }
+
+    /// Variant for adapters that already hold the current settings snapshot.
+    /// Passing the policy into the cut transaction removes any interval in
+    /// which a later config read could rewrite the detached round's meaning.
+    pub fn cut_round_with_history_policy(
+        &self,
+        policy: HistoryArchivePolicy,
+    ) -> Result<Option<CutRound>, CoreError> {
         self.checked(|inner| {
             let _gate = checked_lock(&inner.event_gate)?;
             let mut state = checked_lock(&inner.state)?;
@@ -560,12 +641,15 @@ impl LiveCaptureService {
                 return Ok(None);
             }
             let detached = state.take_battle_preserving_inventory();
+            let dps_time_mode = policy.effective_for(&detached);
             *idle_timer = None;
             inner.bump_packet_session();
             inner.bump_revision();
             Ok(Some(CutRound {
                 state: detached,
                 source,
+                dps_time_mode,
+                separate_reaction_damage: policy.separate_reaction_damage,
             }))
         })
     }
@@ -577,7 +661,13 @@ impl LiveCaptureService {
             let _gate = checked_lock(&inner.event_gate)?;
             let mut state = checked_lock(&inner.state)?;
             let mut idle_timer = checked_lock(&inner.last_outgoing_hit_at)?;
+            let combat_clock_health = state.combat_clock_health;
             *state = CombatState::default();
+            // The monitor publishes health only on transitions. Resetting a
+            // combat round must therefore preserve the capture-session
+            // provider state or an unchanged Available provider would never
+            // repopulate it.
+            state.combat_clock_health = combat_clock_health;
             *idle_timer = None;
             inner.bump_packet_session();
             inner.bump_revision();
@@ -648,26 +738,68 @@ impl LiveCaptureService {
         local_ip_hint: Option<Ipv4Addr>,
         include_incoming: bool,
         server_damage_calibration: bool,
+    ) -> Result<(), ReplayStartError> {
+        match kind {
+            CaptureReplayKind::Pcapng => self
+                .request_pcapng_replay(
+                    path,
+                    local_ip_hint,
+                    include_incoming,
+                    server_damage_calibration,
+                )
+                .map_err(ReplayStartError::Capture),
+            CaptureReplayKind::Json => {
+                let prepared =
+                    prepare_capture_json_replay(&path).map_err(ReplayStartError::JsonImport)?;
+                self.request_prepared_json_replay(prepared)
+                    .map_err(ReplayStartError::Capture)
+            }
+        }
+    }
+
+    fn request_pcapng_replay(
+        &self,
+        path: PathBuf,
+        local_ip_hint: Option<Ipv4Addr>,
+        include_incoming: bool,
+        server_damage_calibration: bool,
     ) -> Result<(), CoreError> {
-        self.ensure_event_worker()?;
-        let stop = Arc::new(AtomicBool::new(false));
-        let (sender, delivery_permit) = self.0.sender.clone().pause_delivery();
-        let thread = match kind {
-            CaptureReplayKind::Pcapng => import_pcapng(
+        let resources = CaptureResources {
+            characters: Arc::clone(&self.0.resources.characters),
+            ability_catalog: Arc::clone(&self.0.resources.ability_catalog),
+        };
+        self.start_replay(CaptureQualitySource::PcapngReplay, move |sender, stop| {
+            import_pcapng(
                 path,
-                CaptureResources {
-                    characters: Arc::clone(&self.0.resources.characters),
-                    ability_catalog: Arc::clone(&self.0.resources.ability_catalog),
-                },
+                resources,
                 local_ip_hint,
                 include_incoming,
                 server_damage_calibration,
                 sender,
-                Arc::clone(&stop),
-            ),
-            CaptureReplayKind::Json => import_capture_json(path, sender, Arc::clone(&stop)),
-        }
-        .map_err(|error| CoreError::new(CoreErrorCode::SystemProbeFailed, error.to_string()))?;
+                stop,
+            )
+        })
+    }
+
+    pub fn request_prepared_json_replay(
+        &self,
+        prepared: PreparedCaptureJsonReplay,
+    ) -> Result<(), CoreError> {
+        self.start_replay(CaptureQualitySource::JsonReplay, move |sender, stop| {
+            import_prepared_capture_json(prepared, sender, stop)
+        })
+    }
+
+    fn start_replay(
+        &self,
+        source_kind: CaptureQualitySource,
+        spawn: impl FnOnce(EngineEventSink, Arc<AtomicBool>) -> std::io::Result<thread::JoinHandle<()>>,
+    ) -> Result<(), CoreError> {
+        self.ensure_event_worker()?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let (sender, delivery_permit) = self.0.sender.clone().pause_delivery();
+        let thread = spawn(sender, Arc::clone(&stop))
+            .map_err(|error| CoreError::new(CoreErrorCode::SystemProbeFailed, error.to_string()))?;
         let mut staged = Some(ReplayTask { stop, thread });
         let committed = self.checked(|inner| {
             // Spawn/file setup occurs before this critical section. The event
@@ -695,10 +827,7 @@ impl LiveCaptureService {
             *state = CombatState::default();
             *idle_timer = None;
             *replay = Some(task);
-            *source = match kind {
-                CaptureReplayKind::Pcapng => CaptureQualitySource::PcapngReplay,
-                CaptureReplayKind::Json => CaptureQualitySource::JsonReplay,
-            };
+            *source = source_kind;
             *status = LiveCaptureStatus {
                 phase: LiveCapturePhase::Running,
                 issue: None,
@@ -1102,6 +1231,7 @@ impl LiveCaptureInner {
         &self,
         state: &mut CombatState,
         source: CaptureQualitySource,
+        policy: HistoryArchivePolicy,
         idle_timer: &mut Option<Instant>,
     ) -> Option<DetachedAbyssRound> {
         let has_abyss_hits =
@@ -1110,15 +1240,25 @@ impl LiveCaptureInner {
             return None;
         }
         let detached = state.take_battle_preserving_inventory();
+        let dps_time_mode = policy.effective_for(&detached);
         *idle_timer = None;
         Some(DetachedAbyssRound {
             state: detached,
             source,
+            dps_time_mode,
+            separate_reaction_damage: policy.separate_reaction_damage,
         })
     }
 
     fn queue_detached_abyss_round(&self, detached: DetachedAbyssRound) -> IntegrityResult<()> {
-        let Some(details) = HistoryCombatDetails::from_state(&detached.state) else {
+        let Some(summary) = detached.state.session_summary(
+            detached.source,
+            detached.dps_time_mode,
+            detached.separate_reaction_damage,
+        ) else {
+            return Ok(());
+        };
+        let Some(details) = HistoryCombatDetails::from_state_owned(detached.state) else {
             return Ok(());
         };
         let mut pending = checked_lock(&self.pending_abyss_archives)?;
@@ -1131,8 +1271,11 @@ impl LiveCaptureInner {
             return Ok(());
         }
         pending.push_back(PendingHistoryArchive {
+            summary,
             details,
             source: detached.source,
+            dps_time_mode: detached.dps_time_mode,
+            separate_reaction_damage: detached.separate_reaction_damage,
         });
         Ok(())
     }
@@ -1156,6 +1299,9 @@ impl LiveCaptureInner {
                 EngineEvent::Hit(hit) if hit.direction.is_outgoing()
             );
             let boundary_context = pre_event_abyss_boundary || post_event_abyss_archive;
+            let history_policy = boundary_context.then(|| {
+                decode_history_archive_policy(self.history_archive_policy.load(Ordering::Acquire))
+            });
             let source = if boundary_context {
                 Some(*checked_lock(&self.quality_source)?)
             } else {
@@ -1170,7 +1316,10 @@ impl LiveCaptureInner {
                 let (Some(source), Some(idle_timer)) = (source, idle_timer.as_deref_mut()) else {
                     return Err(());
                 };
-                self.detach_abyss_round_if_changed(&mut state, source, idle_timer)
+                let Some(policy) = history_policy else {
+                    return Err(());
+                };
+                self.detach_abyss_round_if_changed(&mut state, source, policy, idle_timer)
             } else {
                 None
             };
@@ -1179,8 +1328,11 @@ impl LiveCaptureInner {
                 let (Some(source), Some(idle_timer)) = (source, idle_timer.as_deref_mut()) else {
                     return Err(());
                 };
+                let Some(policy) = history_policy else {
+                    return Err(());
+                };
                 detached_abyss_round =
-                    self.detach_abyss_round_if_changed(&mut state, source, idle_timer);
+                    self.detach_abyss_round_if_changed(&mut state, source, policy, idle_timer);
             }
             if outgoing_hit {
                 let Some(idle_timer) = idle_timer.as_mut() else {
@@ -1202,13 +1354,13 @@ impl LiveCaptureInner {
             &signal,
             CoreSignal::DebugPacket
                 | CoreSignal::PacketObserved
-                | CoreSignal::Status(_)
                 | CoreSignal::Error(_)
                 | CoreSignal::CaptureStopped
         );
         let affects_frontend_projection = match signal {
             CoreSignal::Unchanged => false,
             CoreSignal::StateChanged => true,
+            CoreSignal::CombatClockHealthChanged => true,
             CoreSignal::InventoryReplaced
             | CoreSignal::InventoryCharactersReplaced
             | CoreSignal::DebugPacket
@@ -1218,8 +1370,10 @@ impl LiveCaptureInner {
                 let mut status = checked_lock(&self.status)?;
                 if status.phase == LiveCapturePhase::Starting {
                     status.phase = LiveCapturePhase::Running;
+                    true
+                } else {
+                    false
                 }
-                true
             }
             CoreSignal::Warning(_) => {
                 let mut status = checked_lock(&self.status)?;
@@ -1583,6 +1737,31 @@ mod tests {
             .expect("healthy live-capture state")
     }
 
+    #[test]
+    fn status_heartbeat_only_advances_revision_for_starting_to_running_transition() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        let initial_revision = service.revision();
+
+        process(&service, EngineEvent::Status("idle heartbeat".to_owned()));
+        assert_eq!(service.revision(), initial_revision);
+        assert_eq!(service.status().phase, LiveCapturePhase::Idle);
+
+        *service.0.status.lock().expect("status lock") = LiveCaptureStatus {
+            phase: LiveCapturePhase::Starting,
+            issue: None,
+        };
+        process(&service, EngineEvent::Status("capture ready".to_owned()));
+        let running_revision = service.revision();
+        assert_eq!(running_revision, initial_revision.wrapping_add(1));
+        assert_eq!(service.status().phase, LiveCapturePhase::Running);
+
+        process(
+            &service,
+            EngineEvent::Status("running heartbeat".to_owned()),
+        );
+        assert_eq!(service.revision(), running_revision);
+    }
+
     fn packet_projection<T>(
         service: &LiveCaptureService,
         projection: impl FnOnce(PacketStreamRevision, usize, &CombatState) -> T,
@@ -1615,8 +1794,8 @@ mod tests {
         assert_eq!(packet_updated.packet_count, initial.packet_count + 1);
         assert_eq!(
             diagnostic_quality_full_rebuild_count(),
-            1,
-            "packet-only generations must not rebuild the hit quality projection"
+            0,
+            "packet-only generations must never scan the authoritative hit log"
         );
     }
 
@@ -1642,8 +1821,8 @@ mod tests {
         assert_eq!(incremental.hit_count, 2);
         assert_eq!(
             diagnostic_quality_full_rebuild_count(),
-            1,
-            "append-only hits must extend the cached aggregate"
+            0,
+            "append-only hits are already reflected by the reducer-maintained aggregate"
         );
     }
 
@@ -1677,7 +1856,7 @@ mod tests {
         assert_eq!(initial.hit_count, 50_000);
         assert_eq!(packet_updated.hit_count, 50_000);
         assert_eq!(packet_updated.packet_count, 1);
-        assert_eq!(diagnostic_quality_full_rebuild_count(), 1);
+        assert_eq!(diagnostic_quality_full_rebuild_count(), 0);
     }
 
     #[test]
@@ -1706,7 +1885,7 @@ mod tests {
         assert_eq!(rebuilt.hit_count, 1);
         assert_eq!(service.status().phase, LiveCapturePhase::Idle);
         assert!(!service.0.integrity_failed.load(Ordering::Acquire));
-        assert_eq!(diagnostic_quality_full_rebuild_count(), 2);
+        assert_eq!(diagnostic_quality_full_rebuild_count(), 0);
     }
 
     fn take_archives(service: &LiveCaptureService) -> Vec<PendingHistoryArchive> {
@@ -1779,6 +1958,75 @@ mod tests {
 
         assert_eq!(project(&service, |state| state.hits.len()), 1);
         assert!(service.revision() > initial_revision);
+    }
+
+    #[test]
+    fn rejected_json_replay_preserves_authoritative_session_and_revisions() {
+        let directory = std::env::temp_dir().join(format!(
+            "nte-live-json-preflight-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).expect("create JSON replay fixture directory");
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(directory.clone());
+
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        process(&service, hit(321.0));
+        let initial_revision = service.revision();
+        let initial_packet_revision = service.0.packet_revision.load(Ordering::Acquire);
+        let initial_packet_session = service.0.packet_session_generation.load(Ordering::Acquire);
+        let initial_outgoing_revision = service.outgoing_hit_revision();
+        let initial_source = service.quality_source().expect("healthy capture source");
+        let initial_status = service.status();
+
+        let malformed = directory.join("malformed.json");
+        std::fs::write(&malformed, b"{").expect("write malformed replay");
+        assert!(matches!(
+            service.request_replay(CaptureReplayKind::Json, malformed, None, true, false),
+            Err(ReplayStartError::JsonImport(
+                CaptureImportError::InvalidFormat
+            ))
+        ));
+
+        let unsupported = directory.join("unsupported.json");
+        std::fs::write(&unsupported, br#"{"version":2}"#).expect("write unsupported replay");
+        assert!(matches!(
+            service.request_replay(CaptureReplayKind::Json, unsupported, None, true, false),
+            Err(ReplayStartError::JsonImport(
+                CaptureImportError::UnsupportedVersion {
+                    found: 2,
+                    expected: crate::engine::capture::CAPTURE_EXPORT_VERSION
+                }
+            ))
+        ));
+
+        assert_eq!(service.revision(), initial_revision);
+        assert_eq!(
+            service.0.packet_revision.load(Ordering::Acquire),
+            initial_packet_revision
+        );
+        assert_eq!(
+            service.0.packet_session_generation.load(Ordering::Acquire),
+            initial_packet_session
+        );
+        assert_eq!(service.outgoing_hit_revision(), initial_outgoing_revision);
+        assert_eq!(
+            service.quality_source().expect("healthy capture source"),
+            initial_source
+        );
+        assert_eq!(service.status(), initial_status);
+        assert_eq!(project(&service, |state| state.total_damage), 321.0);
+        assert_eq!(project(&service, |state| state.hits.len()), 1);
+        assert!(!service.replay_running().expect("healthy replay owner"));
     }
 
     #[test]
@@ -1986,20 +2234,73 @@ mod tests {
             .inventory_revision()
             .expect("healthy inventory revision");
 
+        // A repeated empty snapshot is a true no-op, not an event counter.
         process(&service, EngineEvent::EmptyCurtain(Vec::new()));
-        let inventory_revision = service
-            .inventory_revision()
-            .expect("healthy inventory revision");
-        assert!(inventory_revision.0 > initial_inventory_revision.0);
-        assert_eq!(service.revision(), initial_revision);
-
-        process(&service, EngineEvent::EmptyCurtainCharacters(Vec::new()));
-        assert!(
+        assert_eq!(
             service
                 .inventory_revision()
-                .expect("healthy inventory revision")
-                .1
-                > inventory_revision.1
+                .expect("healthy inventory revision"),
+            initial_inventory_revision
+        );
+
+        process(
+            &service,
+            EngineEvent::EmptyCurtain(vec![EmptyCurtainItem {
+                id: HtItemNetId { solt: 1, serial: 2 },
+                item_id: "test-item".to_owned(),
+                level: 1,
+                main_stats: Vec::new(),
+                sub_stats: Vec::new(),
+                locked: false,
+                discarded: false,
+                character_net_id: None,
+                equipped_character_id: None,
+                equipped_placement: None,
+            }]),
+        );
+        let item_revision = service
+            .inventory_revision()
+            .expect("healthy inventory revision");
+        assert!(item_revision.0 > initial_inventory_revision.0);
+        assert_eq!(service.revision(), initial_revision);
+        let duplicate_items = project(&service, |state| state.empty_curtain.clone());
+        process(&service, EngineEvent::EmptyCurtain(duplicate_items));
+        assert_eq!(
+            service
+                .inventory_revision()
+                .expect("healthy inventory revision"),
+            item_revision
+        );
+
+        process(&service, EngineEvent::EmptyCurtainCharacters(Vec::new()));
+        assert_eq!(
+            service
+                .inventory_revision()
+                .expect("healthy inventory revision"),
+            item_revision
+        );
+        process(
+            &service,
+            EngineEvent::EmptyCurtainCharacters(vec![EmptyCurtainCharacter {
+                net_id: HtItemNetId { solt: 3, serial: 4 },
+                character_id: 1020,
+            }]),
+        );
+        let character_revision = service
+            .inventory_revision()
+            .expect("healthy inventory revision");
+        assert!(character_revision.1 > item_revision.1);
+        let duplicate_characters =
+            project(&service, |state| state.empty_curtain_characters.clone());
+        process(
+            &service,
+            EngineEvent::EmptyCurtainCharacters(duplicate_characters),
+        );
+        assert_eq!(
+            service
+                .inventory_revision()
+                .expect("healthy inventory revision"),
+            character_revision
         );
         assert_eq!(service.revision(), initial_revision);
     }
@@ -2150,6 +2451,56 @@ mod tests {
         assert_eq!(archives[0].details.exited_at, Some(10.0));
         assert_test_inventory(&service, inventory_generations);
         assert!(project(&service, |state| state.hits.is_empty()));
+    }
+
+    #[test]
+    fn automatic_archive_freezes_effective_clock_policy_and_preserves_provider_health() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        service.set_history_archive_policy(HistoryArchivePolicy {
+            requested_dps_time_mode: DpsTimeBasis::SubtractTimeStop,
+            separate_reaction_damage: true,
+        });
+        process(
+            &service,
+            EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::Available),
+        );
+        process(
+            &service,
+            EngineEvent::Abyss(AbyssEvent::Stage {
+                timestamp: 0.0,
+                cycle: None,
+                floor: Some(12),
+                half: crate::engine::model::AbyssHalf::First,
+                allow_late_backfill: false,
+            }),
+        );
+        process(&service, hit(321.0));
+        process(
+            &service,
+            EngineEvent::Abyss(AbyssEvent::Exit { timestamp: 10.0 }),
+        );
+
+        // A later setting must not reinterpret the already detached round.
+        service.set_history_archive_policy(HistoryArchivePolicy {
+            requested_dps_time_mode: DpsTimeBasis::WallClock,
+            separate_reaction_damage: false,
+        });
+        let archive = take_archives(&service).pop().expect("pending archive");
+        assert_eq!(archive.dps_time_mode, DpsTimeBasis::SubtractTimeStop);
+        assert!(archive.separate_reaction_damage);
+        assert_eq!(
+            archive.details.combat_clock_health,
+            CombatClockRuntimeHealth::Recorded
+        );
+        assert_eq!(
+            archive.details.to_combat_state().combat_clock_health,
+            CombatClockRuntimeHealth::Recorded
+        );
+        assert_eq!(
+            service.combat_clock_health().unwrap(),
+            CombatClockRuntimeHealth::Available,
+            "round cut must preserve capture-session provider health"
+        );
     }
 
     #[test]
@@ -2551,6 +2902,34 @@ mod tests {
         assert_eq!(
             service.quality_source().expect("healthy capture source"),
             CaptureQualitySource::PcapngReplay
+        );
+    }
+
+    #[test]
+    fn reset_session_preserves_available_combat_clock_health_without_a_new_transition() {
+        let service = LiveCaptureService::new(LiveCaptureResources::default());
+        process(
+            &service,
+            EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::Available),
+        );
+
+        service.reset_session().expect("healthy capture reset");
+
+        assert_eq!(
+            service
+                .combat_clock_health()
+                .expect("healthy combat-clock projection"),
+            CombatClockRuntimeHealth::Available
+        );
+        let revision = service.revision();
+        process(
+            &service,
+            EngineEvent::CombatClockHealth(CombatClockRuntimeHealth::Available),
+        );
+        assert_eq!(
+            service.revision(),
+            revision,
+            "the unchanged provider heartbeat remains a no-op after reset"
         );
     }
 

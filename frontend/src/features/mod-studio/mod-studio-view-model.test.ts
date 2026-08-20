@@ -22,7 +22,7 @@ import {
 } from "./mod-studio-view-model";
 
 const workspace: ModStudioWorkspaceSnapshot = {
-  contractVersion: 10,
+  contractVersion: 11,
   generation: "0",
   workspaceLabel: "plugins/nte-mods",
   documents: [
@@ -79,7 +79,7 @@ describe("Mod Studio view model", () => {
       "telemetry",
     );
     const stale = acceptDocument(telemetry, {
-      contractVersion: 10,
+      contractVersion: 11,
       id: "combat-clock",
       enabled: true,
       source: "old",
@@ -88,7 +88,7 @@ describe("Mod Studio view model", () => {
     expect(stale).toBe(telemetry);
     expect(
       acceptDocument(telemetry, {
-        contractVersion: 10,
+        contractVersion: 11,
         id: "telemetry",
         enabled: false,
         source: "current",
@@ -147,7 +147,7 @@ describe("Mod Studio view model", () => {
   it("updates the selected document summary after a save", () => {
     const ready = acceptWorkspace(workspace, null);
     const saved = acceptSavedDocument(ready, {
-      contractVersion: 10,
+      contractVersion: 11,
       id: "combat-clock",
       enabled: true,
       source: "one\ntwo\nthree",
@@ -170,7 +170,7 @@ describe("Mod Studio view model", () => {
 
   it("updates enabled state without discarding the selected document", () => {
     const ready = acceptDocument(acceptWorkspace(workspace, null), {
-      contractVersion: 10,
+      contractVersion: 11,
       id: "combat-clock",
       enabled: true,
       source: "saved source",
@@ -203,7 +203,7 @@ describe("Mod Studio view model", () => {
   it("selects the next document after the selected Mod is deleted", () => {
     const ready = acceptWorkspace(workspace, "combat-clock");
     const afterDelete = acceptEnabledWorkspace(ready, {
-      contractVersion: 10,
+      contractVersion: 11,
       generation: "9",
       workspaceLabel: "plugins/nte-mods",
       documents: [workspace.documents[1]],
@@ -220,9 +220,10 @@ describe("Mod Studio view model", () => {
     const connected = acceptRuntimeEvent(INITIAL_MOD_STUDIO_RUNTIME_STATE, {
       event: "connection",
       payload: {
-        contractVersion: 10,
+        contractVersion: 11,
         generation: "1",
         status: "connected",
+        bootstrapErrorCode: null,
       },
     });
     const message = {
@@ -239,7 +240,7 @@ describe("Mod Studio view model", () => {
     const received = acceptRuntimeEvent(connected, {
       event: "batch",
       payload: {
-        contractVersion: 10,
+        contractVersion: 11,
         generation: "1",
         entries: [message],
       },
@@ -247,7 +248,7 @@ describe("Mod Studio view model", () => {
     const repeated = acceptRuntimeEvent(received, {
       event: "batch",
       payload: {
-        contractVersion: 10,
+        contractVersion: 11,
         generation: "1",
         entries: [message],
       },
@@ -255,9 +256,10 @@ describe("Mod Studio view model", () => {
     const reset = acceptRuntimeEvent(repeated, {
       event: "connection",
       payload: {
-        contractVersion: 10,
+        contractVersion: 11,
         generation: "2",
         status: "connected",
+        bootstrapErrorCode: null,
       },
     });
 
@@ -274,9 +276,10 @@ describe("Mod Studio view model", () => {
     const loaded = acceptRuntimeEvent(INITIAL_MOD_STUDIO_RUNTIME_STATE, {
       event: "connection",
       payload: {
-        contractVersion: 10,
+        contractVersion: 11,
         generation: "1",
         status: "loaderPresent",
+        bootstrapErrorCode: null,
       },
     });
 

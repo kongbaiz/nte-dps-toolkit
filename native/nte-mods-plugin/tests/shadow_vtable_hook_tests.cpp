@@ -1,4 +1,6 @@
 #include "../src/shadow_vtable_hook.hpp"
+#include "../src/viewport_generation_policy.hpp"
+#include "../src/viewport_hook_policy.hpp"
 
 #include <Windows.h>
 
@@ -29,10 +31,69 @@ int __fastcall AlternateTick(void* object, int value)
 {
 	return static_cast<FakeViewport*>(object)->marker + value + 2000;
 }
+
+int first_world;
+int first_game_instance;
+int first_local_player;
+int first_viewport;
+int next_local_player;
+int first_original;
 } // namespace
 
 int main()
 {
+	using nte::hook::ViewportGenerationToken;
+	using nte::hook::ViewportSessionIdentity;
+	constexpr ViewportSessionIdentity first_session{
+		&first_world,
+		&first_game_instance,
+		&first_local_player,
+		&first_viewport,
+		17,
+	};
+	constexpr ViewportSessionIdentity next_session{
+		&first_world,
+		&first_game_instance,
+		&next_local_player,
+		&first_viewport,
+		17,
+	};
+	static_assert(nte::hook::CanPublishViewportSnapshot(
+		7, 7, first_session, first_session));
+	static_assert(!nte::hook::CanPublishViewportSnapshot(
+		7, 8, first_session, first_session));
+	static_assert(!nte::hook::CanPublishViewportSnapshot(
+		7, 7, first_session, next_session));
+	static_assert(nte::hook::NextViewportGeneration(
+		ViewportGenerationToken{UINT64_MAX}).value == 1);
+	static_assert(nte::hook::CanDispatchViewportGeneration(
+		9, 9, 17, 17, first_session.viewport, first_session.viewport));
+	static_assert(!nte::hook::CanDispatchViewportGeneration(
+		8, 9, 17, 17, first_session.viewport, first_session.viewport));
+	static_assert(!nte::hook::CanDispatchViewportGeneration(
+		9, 9, 16, 17, first_session.viewport, first_session.viewport));
+
+	constexpr nte::hook::ViewportOriginalBinding generation_one{
+		first_session.viewport,
+		&first_original,
+		1,
+		17,
+	};
+	static_assert(nte::hook::CanReuseViewportBinding(
+		generation_one,
+		first_session.viewport,
+		&first_original,
+		1,
+		17));
+	// An address-reused UObject belongs to a new generation even when its vtable
+	// happens to contain the same original Tick address.
+	static_assert(!nte::hook::CanReuseViewportBinding(
+		generation_one,
+		first_session.viewport,
+		&first_original,
+		2,
+		17));
+
 	void* original_vtable[]{
 		reinterpret_cast<void*>(&OriginalTick),
 		nullptr,

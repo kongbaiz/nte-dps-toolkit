@@ -33,17 +33,19 @@ namespace
 	constexpr bool ViewportOriginalIsBoundPerObject()
 	{
 		constexpr std::array<nte::hook::ViewportOriginalBinding, 2> bindings{{
-			{&VIEWPORT_A, &ORIGINAL_A},
-			{&VIEWPORT_B, &ORIGINAL_B},
+			{&VIEWPORT_A, &ORIGINAL_A, 1, 7},
+			{&VIEWPORT_B, &ORIGINAL_B, 2, 7},
 		}};
 		return nte::hook::FindViewportOriginal(
 			bindings.data(), bindings.size(), &VIEWPORT_A) == &ORIGINAL_A &&
 			nte::hook::FindViewportOriginal(
 				bindings.data(), bindings.size(), &VIEWPORT_B) == &ORIGINAL_B &&
 			nte::hook::CanReuseViewportBinding(
-				bindings[0], &VIEWPORT_A, &ORIGINAL_A) &&
+				bindings[0], &VIEWPORT_A, &ORIGINAL_A, 1, 7) &&
 			!nte::hook::CanReuseViewportBinding(
-				bindings[0], &VIEWPORT_A, &ORIGINAL_B);
+				bindings[0], &VIEWPORT_A, &ORIGINAL_B, 1, 7) &&
+			!nte::hook::CanReuseViewportBinding(
+				bindings[0], &VIEWPORT_A, &ORIGINAL_A, 2, 7);
 	}
 
 	constexpr bool ProtectedPointerPatchAppliesOnlyAfterProtectionRestores()

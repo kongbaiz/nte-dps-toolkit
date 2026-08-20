@@ -14,10 +14,11 @@ const encodeDelivery = (events: unknown[]): ArrayBuffer => {
 };
 
 const PACKETS_FIXTURE = {
-  contractVersion: 1,
+  contractVersion: 2,
   generation: "7",
   sessionGeneration: "2",
   packetGeneration: "5",
+  firstDisplaySequence: "1",
   capturePhase: "running",
   eventCount: 3,
   observedPacketCount: "5",
@@ -25,6 +26,9 @@ const PACKETS_FIXTURE = {
   retainedPacketCount: 1,
   queuedEventCount: 0,
   displayLimit: 500,
+  truncatedPacketCount: 0,
+  omittedTextBytes: "0",
+  omittedDeclaredIdCount: "0",
   packets: [
     {
       sequence: "5",
@@ -37,6 +41,8 @@ const PACKETS_FIXTURE = {
       parsedHits: 1,
       note: "",
       decodedText: "decoded",
+      omittedTextBytes: "0",
+      omittedDeclaredIdCount: "0",
     },
   ],
 };

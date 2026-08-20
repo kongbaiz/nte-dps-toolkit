@@ -3,16 +3,11 @@
 //! Checks expose stable English message keys plus arguments. The Tauri
 //! frontend translates those messages at its contract boundary.
 
-use std::collections::HashSet;
-
 use super::capture::{
     AutoDeviceResolution, enumerate_devices, probe_auto_device, resolve_manual_device,
 };
 use crate::engine::capture::CaptureDevice;
-use crate::engine::model::{
-    CaptureQualityScalars, CaptureQualitySource, CaptureQualitySummary, CombatState, Hit,
-    HitDirection,
-};
+use crate::engine::model::{CaptureQualitySource, CaptureQualitySummary, CombatState};
 use crate::platform::network::{
     GameNetwork, GameNetworkProbe, GameNetworkUnavailable, NetworkProbeFailure,
 };
@@ -137,237 +132,35 @@ pub struct DiagnosticSnapshot {
     pub manual_capture_device: Option<String>,
 }
 
-/// Generation-aware, bounded read model for the expensive hit portion of the
-/// diagnostics quality report. Packet-only revisions reuse the aggregate;
-/// append-only hit generations extend it; corrections, backfills, trims, and
-/// session changes rebuild from the retained hit ring.
-///
-/// The cache stores at most one key per retained unknown character, unmapped
-/// skill row, or unmapped gameplay effect. `CombatState` already bounds that
-/// source ring, so this read model inherits the same memory bound.
+/// Lightweight hand-off for the diagnostics service. Hit attribution is now
+/// maintained incrementally inside `CombatState`; preparing this value never
+/// walks or clones the authoritative, unbounded hit log.
 #[derive(Debug, Default)]
-pub(crate) struct DiagnosticQualityCache {
-    initialized: bool,
-    session_generation: u64,
-    hits_generation: u64,
-    hit_count: usize,
-    hits: DiagnosticHitQuality,
-}
+pub(crate) struct DiagnosticQualityCache;
 
 #[derive(Debug)]
 pub(crate) struct DiagnosticQualityInput {
-    source: CaptureQualitySource,
-    session_generation: u64,
-    scalars: CaptureQualityScalars,
-    update: DiagnosticQualityUpdate,
-}
-
-#[derive(Debug)]
-enum DiagnosticQualityUpdate {
-    Reuse,
-    Extend(Vec<DiagnosticHitSample>),
-    Rebuild(Vec<DiagnosticHitSample>),
-}
-
-impl DiagnosticQualityInput {
-    #[cfg(test)]
-    pub(crate) fn rebuilds_hits(&self) -> bool {
-        matches!(self.update, DiagnosticQualityUpdate::Rebuild(_))
-    }
+    summary: CaptureQualitySummary,
 }
 
 impl DiagnosticQualityCache {
-    /// Copies only compact hit-quality fields while the authoritative state is
-    /// borrowed. Hashing, uniqueness maintenance, and aggregate mutation occur
-    /// later, after the capture locks have been released.
+    /// Reads only scalar and bounded-index fields while the authoritative state
+    /// is borrowed. `session_generation` remains part of the call contract so
+    /// callers cannot accidentally reintroduce cross-session cache reuse.
     pub(crate) fn prepare(
         &self,
         state: &CombatState,
         source: CaptureQualitySource,
-        session_generation: u64,
+        _session_generation: u64,
     ) -> DiagnosticQualityInput {
-        let scalars = state.capture_quality_scalars();
-        let same_session = self.initialized && self.session_generation == session_generation;
-        let update = if same_session
-            && self.hits_generation == scalars.hits_generation
-            && self.hit_count == scalars.hit_count
-        {
-            DiagnosticQualityUpdate::Reuse
-        } else {
-            let appended = scalars.hit_count.checked_sub(self.hit_count);
-            let generation_delta = scalars.hits_generation.checked_sub(self.hits_generation);
-            if same_session
-                && appended.is_some_and(|count| count > 0)
-                && generation_delta == appended.map(|count| count as u64)
-            {
-                DiagnosticQualityUpdate::Extend(sample_hits(
-                    state.hits.iter().skip(self.hit_count),
-                    appended.unwrap_or_default(),
-                ))
-            } else {
-                DiagnosticQualityUpdate::Rebuild(sample_hits(state.hits.iter(), scalars.hit_count))
-            }
-        };
         DiagnosticQualityInput {
-            source,
-            session_generation,
-            scalars,
-            update,
+            summary: state.capture_quality_summary(source),
         }
     }
 
     pub(crate) fn finish(&mut self, input: DiagnosticQualityInput) -> CaptureQualitySummary {
-        match input.update {
-            DiagnosticQualityUpdate::Reuse => {}
-            DiagnosticQualityUpdate::Extend(samples) => self.hits.extend(samples),
-            DiagnosticQualityUpdate::Rebuild(samples) => {
-                self.hits = DiagnosticHitQuality::from_samples(samples);
-            }
-        }
-        self.initialized = true;
-        self.session_generation = input.session_generation;
-        self.hits_generation = input.scalars.hits_generation;
-        self.hit_count = input.scalars.hit_count;
-        self.hits.summary(input.source, input.scalars)
+        input.summary
     }
-}
-
-#[derive(Debug, Default)]
-struct DiagnosticHitQuality {
-    outgoing_hits: u64,
-    outgoing_damage: f64,
-    unknown_direction_hits: u64,
-    unknown_direction_damage: f64,
-    incoming_hits: u64,
-    incoming_damage: f64,
-    unknown_characters: HashSet<u32>,
-    unknown_character_hits: u64,
-    unmapped_skill_rows: HashSet<UnmappedSkillKey>,
-    unmapped_skill_hits: u64,
-    unmapped_gameplay_effects: HashSet<u32>,
-}
-
-impl DiagnosticHitQuality {
-    fn from_samples(samples: Vec<DiagnosticHitSample>) -> Self {
-        let mut quality = Self::default();
-        quality.extend(samples);
-        quality
-    }
-
-    fn extend(&mut self, samples: Vec<DiagnosticHitSample>) {
-        for sample in samples {
-            match sample.direction {
-                HitDirection::Outgoing => {
-                    self.outgoing_hits = self.outgoing_hits.saturating_add(1);
-                    self.outgoing_damage += sample.damage;
-                }
-                HitDirection::Unknown => {
-                    self.unknown_direction_hits = self.unknown_direction_hits.saturating_add(1);
-                    self.unknown_direction_damage += sample.damage;
-                }
-                HitDirection::Incoming => {
-                    self.incoming_hits = self.incoming_hits.saturating_add(1);
-                    self.incoming_damage += sample.damage;
-                }
-            }
-            if let Some(character) = sample.unknown_character {
-                self.unknown_characters.insert(character);
-                self.unknown_character_hits = self.unknown_character_hits.saturating_add(1);
-            }
-            if let Some(row) = sample.unmapped_skill_row {
-                self.unmapped_skill_rows.insert(row);
-            }
-            if sample.unmapped_skill_hit {
-                self.unmapped_skill_hits = self.unmapped_skill_hits.saturating_add(1);
-            }
-            if let Some(effect) = sample.unmapped_gameplay_effect {
-                self.unmapped_gameplay_effects.insert(effect);
-            }
-        }
-    }
-
-    fn summary(
-        &self,
-        source: CaptureQualitySource,
-        scalars: CaptureQualityScalars,
-    ) -> CaptureQualitySummary {
-        CaptureQualitySummary {
-            source,
-            packet_count: scalars.packet_count,
-            packets_with_hits: scalars.packets_with_hits,
-            hit_count: scalars.hit_count,
-            outgoing_hits: self.outgoing_hits,
-            outgoing_damage: self.outgoing_damage,
-            unknown_direction_hits: self.unknown_direction_hits,
-            unknown_direction_damage: self.unknown_direction_damage,
-            incoming_hits: self.incoming_hits,
-            incoming_damage: self.incoming_damage,
-            unknown_character_count: self.unknown_characters.len(),
-            unknown_character_hits: self.unknown_character_hits,
-            unmapped_skill_rows: self.unmapped_skill_rows.len(),
-            unmapped_skill_hits: self.unmapped_skill_hits,
-            unmapped_gameplay_effect_count: self.unmapped_gameplay_effects.len(),
-            time_stop_event_count: scalars.time_stop_event_count,
-            time_stop_interval_count: scalars.time_stop_interval_count,
-            abyss_event_count: scalars.abyss_event_count,
-            server_damage_corrections: scalars.server_damage_corrections,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct DiagnosticHitSample {
-    direction: HitDirection,
-    damage: f64,
-    unknown_character: Option<u32>,
-    unmapped_skill_row: Option<UnmappedSkillKey>,
-    unmapped_skill_hit: bool,
-    unmapped_gameplay_effect: Option<u32>,
-}
-
-impl From<&Hit> for DiagnosticHitSample {
-    fn from(hit: &Hit) -> Self {
-        let contributes_to_attribution = !hit.direction.is_incoming();
-        let positive_primary = contributes_to_attribution && hit.damage > 0.0;
-        let skill_unmapped = positive_primary
-            && hit.damage_name.is_none()
-            && hit.damage_component.is_none()
-            && hit.ability_name.is_none()
-            && hit.gameplay_effect_name.is_none();
-        let unmapped_skill_row =
-            (skill_unmapped && hit.damage.is_finite()).then(|| UnmappedSkillKey {
-                char_id: hit.char_id,
-                attack_type: hit.attack_type.clone(),
-                gameplay_effect_index: hit.gameplay_effect_index,
-            });
-        Self {
-            direction: hit.direction,
-            damage: hit.total_damage(),
-            unknown_character: (contributes_to_attribution && !hit.char_known)
-                .then_some(hit.char_id),
-            unmapped_skill_row,
-            unmapped_skill_hit: skill_unmapped,
-            unmapped_gameplay_effect: (positive_primary && hit.gameplay_effect_name.is_none())
-                .then_some(hit.gameplay_effect_index)
-                .flatten(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct UnmappedSkillKey {
-    char_id: u32,
-    attack_type: Option<String>,
-    gameplay_effect_index: Option<u32>,
-}
-
-fn sample_hits<'a>(
-    hits: impl Iterator<Item = &'a Hit>,
-    expected: usize,
-) -> Vec<DiagnosticHitSample> {
-    let mut samples = Vec::with_capacity(expected);
-    samples.extend(hits.map(DiagnosticHitSample::from));
-    samples
 }
 
 pub fn run_capture_diagnostics(snapshot: DiagnosticSnapshot) -> DiagnosticRun {
@@ -711,9 +504,9 @@ fn append_runtime_checks(checks: &mut Vec<DiagnosticCheck>, snapshot: &Diagnosti
             "Server-side HP delta calibration is disabled"
         }),
         message(if snapshot.server_damage_calibration {
-            "Damage values use server-side HP deltas when they can be unambiguously paired"
+            "Enabled calibration may replace the only recent candidate hit with the observed server HP delta"
         } else {
-            "To investigate damage-value deviation, enable calibration and re-capture or re-import"
+            "Disabled calibration reports unexplained server HP residuals without changing DPS totals"
         }),
     ));
 
@@ -774,7 +567,7 @@ fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::model::{HitCharacterSource, PacketObservation};
+    use crate::engine::model::{Hit, HitCharacterSource, HitDirection, PacketObservation};
     use crate::platform::network::NetworkProbeErrorCode;
 
     fn quality_hit(
@@ -922,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn cached_quality_projection_matches_legacy_summary_and_extends_append_only_hits() {
+    fn diagnostics_quality_handoff_matches_incremental_engine_summary() {
         let source = CaptureQualitySource::PcapngReplay;
         let mut state = CombatState::default();
         let mut first = quality_hit(1.0, 7, HitDirection::Unknown, false, 100.0);
@@ -931,9 +724,8 @@ mod tests {
         state.push_hit(first);
         state.observe_packet(PacketObservation { parsed_hits: 1 });
 
-        let mut cache = DiagnosticQualityCache::default();
+        let mut cache = DiagnosticQualityCache;
         let initial_input = cache.prepare(&state, source, 1);
-        assert!(initial_input.rebuilds_hits());
         assert_eq!(
             cache.finish(initial_input),
             state.capture_quality_summary(source)
@@ -941,7 +733,6 @@ mod tests {
 
         state.observe_packet(PacketObservation { parsed_hits: 0 });
         let packet_input = cache.prepare(&state, source, 1);
-        assert!(!packet_input.rebuilds_hits());
         assert_eq!(
             cache.finish(packet_input),
             state.capture_quality_summary(source),
@@ -959,26 +750,14 @@ mod tests {
         state.push_hit(mapped);
 
         let append_input = cache.prepare(&state, source, 1);
-        assert!(!append_input.rebuilds_hits());
         assert_eq!(
             cache.finish(append_input),
             state.capture_quality_summary(source),
             "incremental unknown counters must preserve the established quality contract"
         );
 
-        state.hits[0].direction = HitDirection::Outgoing;
-        state.hits_generation = state.hits_generation.wrapping_add(1);
-        let correction_input = cache.prepare(&state, source, 1);
-        assert!(correction_input.rebuilds_hits());
-        assert_eq!(
-            cache.finish(correction_input),
-            state.capture_quality_summary(source),
-            "non-append hit mutations must invalidate and rebuild the bounded cache"
-        );
-
         let replacement = CombatState::default();
         let replacement_input = cache.prepare(&replacement, source, 2);
-        assert!(replacement_input.rebuilds_hits());
         assert_eq!(
             cache.finish(replacement_input),
             replacement.capture_quality_summary(source),

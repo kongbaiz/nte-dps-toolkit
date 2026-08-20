@@ -1,3 +1,4 @@
+import { createContractPrimitives } from "@/lib/tauri/contract-primitives";
 import {
   parseTechnicalCommandError,
   TechnicalContractError,
@@ -8,6 +9,24 @@ export const SKILLS_CONTRACT_VERSION = 1;
 export const SKILLS_MAX_CHARACTERS = 64;
 export const SKILLS_MAX_ROWS = 4096;
 export const SKILLS_MAX_UNMAPPED_EFFECTS = 512;
+
+const {
+  array: list,
+  boolean: flag,
+  boundedString: boundedText,
+  cssHex,
+  decimalString: decimal,
+  enumValue,
+  integer,
+  nonNegativeInteger,
+  nonNegativeNumber: nonNegative,
+  optionalNonNegativeInteger,
+  optionalString: optionalText,
+  record: object,
+  string: text,
+} = createContractPrimitives((message) => {
+  throw new TechnicalContractError(message);
+});
 
 export type SkillsScope = "all" | "upper" | "lower";
 export type SkillsCommandError = TechnicalCommandError;
@@ -219,111 +238,4 @@ function parseDiagnostics(value: unknown): SkillsDiagnostics {
       };
     }),
   };
-}
-
-function object(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an object`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new TechnicalContractError(`${field} must be an array`);
-  }
-  return value;
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string") {
-    throw new TechnicalContractError(`${field} must be a string`);
-  }
-  return value;
-}
-
-function boundedText(value: unknown, field: string, maxLength: number): string {
-  const parsed = text(value, field);
-  if (parsed.length === 0 || parsed.length > maxLength) {
-    throw new TechnicalContractError(`${field} has an invalid length`);
-  }
-  return parsed;
-}
-
-function optionalText(value: unknown, field: string): string | null {
-  return value === null || value === undefined ? null : text(value, field);
-}
-
-function flag(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TechnicalContractError(`${field} must be a boolean`);
-  }
-  return value;
-}
-
-function number(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new TechnicalContractError(`${field} must be finite`);
-  }
-  return value;
-}
-
-function nonNegative(value: unknown, field: string): number {
-  const parsed = number(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must not be negative`);
-  }
-  return parsed;
-}
-
-function integer(value: unknown, field: string): number {
-  const parsed = number(value, field);
-  if (!Number.isInteger(parsed)) {
-    throw new TechnicalContractError(`${field} must be an integer`);
-  }
-  return parsed;
-}
-
-function nonNegativeInteger(value: unknown, field: string): number {
-  const parsed = integer(value, field);
-  if (parsed < 0) {
-    throw new TechnicalContractError(`${field} must not be negative`);
-  }
-  return parsed;
-}
-
-function optionalNonNegativeInteger(
-  value: unknown,
-  field: string,
-): number | null {
-  return value === null || value === undefined
-    ? null
-    : nonNegativeInteger(value, field);
-}
-
-function decimal(value: unknown, field: string): string {
-  const parsed = text(value, field);
-  if (!/^(0|[1-9]\d*)$/.test(parsed)) {
-    throw new TechnicalContractError(`${field} must be a decimal string`);
-  }
-  return parsed;
-}
-
-function enumValue<const T extends readonly string[]>(
-  value: unknown,
-  options: T,
-  field: string,
-): T[number] {
-  if (typeof value !== "string" || !options.includes(value)) {
-    throw new TechnicalContractError(`${field} has an unsupported value`);
-  }
-  return value as T[number];
-}
-
-function cssHex(value: unknown, field: string): string {
-  const parsed = text(value, field);
-  if (!/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(parsed)) {
-    throw new TechnicalContractError(`${field} must be a CSS hex color`);
-  }
-  return parsed;
 }

@@ -1,0 +1,1796 @@
+MODIFIED BRANCH: codex/review-priority-optimizations
+MODIFIED HEAD: 12ef5e865bbfb843f1814fd9c9d4b470034c5841
+
+=== COMMAND: git diff --check ===
+warning: in the working copy of 'native/nte-mod-loader/shim/shim.vcxproj', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mod-loader/shim/src/ManualMapLoader.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mod-loader/tests/tests.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mod-loader/tests/tests.vcxproj', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/nte-mods-plugin.vcxproj', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/dwmapi_proxy.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/dwmapi_proxy.hpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/dwmapi_stubs.asm', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/host_api.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/ipc_transport.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/memory_access.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/mod_runtime.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/nte_mods_plugin.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/plugin_runtime.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/shadow_vtable_hook.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/shadow_vtable_hook.hpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/src/viewport_hook_policy.hpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'native/nte-mods-plugin/tests/signature_policy_tests.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/state.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/cli/stdio.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/core/hud.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/core/live_capture.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/core/reducer.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/engine/capture.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/engine/model.rs', LF will be replaced by CRLF the next time Git touches it
+=== EXIT: 0 ===
+
+=== COMMAND: cargo fmt --check ===
+=== EXIT: 0 ===
+
+=== COMMAND: cargo check --locked ===
+    Checking nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.08s
+=== EXIT: 0 ===
+
+=== COMMAND: cargo test --locked ===
+   Compiling nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.89s
+     Running unittests src\lib.rs (target\debug\deps\nte_dps_tool-d1736fa9acf7ce06.exe)
+
+running 566 tests
+test core::capture::tests::compose_bpf_widens_to_detected_host ... ok
+test core::capture::tests::manual_resolution_reports_missing_nic ... ok
+test core::diagnostics::tests::dropped_history_archives_are_exposed_as_a_runtime_warning ... ok
+test core::combat_details::tests::attribution_filters_share_the_existing_engine_classification ... ok
+test core::capture::tests::raw_capture_mode_preserves_enabled_default_and_disables_explicitly ... ok
+test core::diagnostics::tests::runtime_checks_use_stable_keys_and_order_failures_before_warnings ... ok
+test core::empty_curtain::tests::four_secondary_stats_unlock_at_each_quarter_of_the_level_range ... ok
+test core::history::tests::abyss_exit_is_not_a_pre_event_archive_boundary ... ok
+test core::history::tests::idle_round_requires_running_unpaused_non_abyss_combat ... ok
+test core::combat_details::tests::shared_detail_assets_match_the_established_frontend_rules ... ok
+test core::history::tests::empty_state_has_no_archive ... ok
+test core::hud::tests::config_projection_uses_sanitized_stable_module_order ... ok
+test core::hud::tests::hidden_and_qte_pseudo_characters_do_not_reach_hud_rows ... ok
+test core::hud::tests::empty_state_projects_preview_only_when_requested ... ok
+test core::hud::tests::known_character_with_reaction_follow_up_remains_in_hud_rows ... ok
+test core::history::tests::archive_keeps_summary_and_bounded_details_from_one_state ... ok
+test core::hud::tests::preview_timeline_is_projected_only_when_the_module_is_visible ... ok
+test core::hud::tests::live_projection_sorts_limits_and_keeps_u64_hits_as_strings ... ok
+test core::hud::tests::bounded_hud_timeline_keeps_wall_clock_and_engine_annotation_semantics ... ok
+test core::hud::tests::long_span_live_timeline_bounds_the_source_layout_before_allocation ... ok
+test core::hud::tests::live_timeline_is_bounded_and_preserves_aggregate_damage_and_hits ... ok
+test core::encrypted_ini::tests::oversized_ciphertext_is_rejected_before_reading ... ok
+test core::encrypted_ini::tests::unchanged_document_keeps_original_ciphertext ... ok
+test core::live_capture::tests::event_worker_prioritizes_reliable_replay_events ... ok
+test core::live_capture::tests::abyss_exit_archive_contains_the_real_exit_timestamp ... ok
+test core::live_capture::tests::abyss_restart_dedupe_does_not_collide_across_rounds ... ok
+test core::live_capture::tests::capture_stopped_archives_after_prior_semantic_events ... ok
+test core::live_capture::tests::abyss_restart_queues_the_previous_round_before_reducer_changes_state ... ok
+test core::encrypted_ini::tests::document_save_round_trips_and_preserves_line_endings ... ok
+test core::live_capture::tests::cut_round_installs_replacement_before_persistence_work ... ok
+test core::live_capture::tests::final_abyss_round_stays_pending_when_the_session_is_reset ... ok
+test core::character_data::tests::projection_sorts_numeric_ids_and_preserves_optional_fields ... ok
+test core::live_capture::tests::event_worker_routes_hits_through_the_shared_reducer ... ok
+test core::live_capture::tests::abyss_floor_transition_archives_previous_round_and_preserves_inventory ... ok
+test core::character_data::tests::validation_rejects_duplicate_id_and_invalid_fields ... ok
+test core::live_capture::tests::inventory_events_advance_only_the_inventory_projection ... ok
+test core::live_capture::tests::mod_script_backfill_advances_only_when_projection_changes ... ok
+test core::live_capture::tests::stress_replay_finishes_before_optional_debug_drain ... ignored, set NTE_TEST_CAPTURE to a local pcapng path
+test core::live_capture::tests::cut_round_freezes_replay_source_and_empty_round_is_a_no_op ... ok
+test core::mod_market::tests::official_catalog_and_every_package_pass_local_verification ... ignored, requires the public Mod Market endpoint
+test core::live_capture::tests::packet_quality_observations_do_not_invalidate_hud_projection ... ok
+test core::mod_market::tests::application_bindings_are_generic_identifiers ... ok
+test core::live_capture::tests::reset_session_can_restore_the_exact_previous_projection ... ok
+test core::live_capture::tests::outgoing_revision_advances_only_for_outgoing_hits ... ok
+test core::mod_market::tests::package_urls_are_derived_from_id_and_semver ... ok
+test core::live_capture::tests::runtime_failures_keep_private_details_out_of_status ... ok
+test core::live_capture::tests::state_and_source_snapshot_uses_one_session_gate ... ok
+test core::live_capture::tests::idle_policy_tracks_only_confirmed_outgoing_hits ... ok
+test core::live_capture::tests::pending_abyss_archive_queue_is_bounded ... ok
+test core::mod_studio::tests::document_id_is_validated_before_workspace_lookup ... ok
+test core::character_data::tests::atomic_update_preserves_unknown_fields_and_reloads_projection ... ok
+test core::mod_sdk::tests::schema_is_bounded_unique_and_keeps_stable_host_entries ... ok
+test core::mod_studio::tests::empty_workspace_is_a_valid_read_model ... ok
+test core::mod_studio::tests::default_workspace_label_does_not_expose_an_absolute_user_path ... ok
+test core::mod_market::tests::package_verification_checks_hash_and_local_source_policy ... ok
+test core::empty_curtain::tests::drive_calculator_export_keeps_uid_and_scales_percent_stats ... ok
+test core::mod_studio::tests::runtime_status_projection_localizes_lifecycle_and_keeps_raw_script_logs ... ok
+test core::mod_studio::tests::enabled_set_changes_require_an_existing_document ... ok
+test core::mod_studio::tests::missing_document_has_a_stable_error_category ... ok
+test core::packets::tests::incremental_projection_returns_only_new_packets ... ok
+test core::live_capture::tests::restoring_abyss_archive_retries_keeps_queue_bounded ... ok
+test core::live_capture::tests::stopping_an_idle_service_reports_the_stable_core_error ... ok
+test core::reducer::tests::abyss_event_reaches_abyss_state ... ok
+test core::packets::tests::incremental_projection_requests_replacement_after_a_large_gap ... ok
+test core::reducer::tests::current_target_samples_do_not_claim_damage_without_an_exact_instance ... ok
+test core::reducer::tests::abyss_restart_after_exit_resets_previous_party_ownership ... ok
+test core::live_capture::tests::stopping_after_completed_runtime_failure_does_not_stick ... ok
+test core::reducer::tests::damage_correction_applies_to_matching_hit ... ok
+test core::reducer::tests::empty_curtain_character_mapping_reaches_state ... ok
+test core::reducer::tests::duplicate_mod_script_backfill_is_reported_as_unchanged ... ok
+test core::packets::tests::recent_projection_keeps_only_the_latest_display_window ... ok
+test core::reducer::tests::exact_hit_target_backfill_promotes_candidate_output_and_rebuilds_totals ... ok
+test core::reducer::tests::empty_curtain_replaces_inventory ... ok
+test core::reducer::tests::exact_hit_target_does_not_claim_a_hit_outside_its_time_window ... ok
+test core::reducer::tests::exact_hit_targets_do_not_project_incoming_damage ... ok
+test core::reducer::tests::exact_hit_targets_queue_until_the_matching_hits_arrive ... ok
+test core::reducer::tests::follow_up_applies_to_matching_hit ... ok
+test core::reducer::tests::exact_hit_targets_split_simultaneous_group_damage_by_instance ... ok
+test core::reducer::tests::hit_pushes_into_state ... ok
+test core::reducer::tests::lifecycle_events_pass_through_without_state_change ... ok
+test core::reducer::tests::mod_script_event_without_backfill_does_not_change_combat_state ... ok
+test core::reducer::tests::mod_script_backfill_reports_projection_change_for_revision_bump ... ok
+test core::reducer::tests::oversized_debug_packet_is_a_noop_instead_of_breaking_the_byte_budget ... ok
+test core::reducer::tests::packet_lands_in_debug_ring ... ok
+test core::reducer::tests::packet_observation_and_debug_payload_count_once ... ok
+test core::reducer::tests::packet_observation_updates_quality_without_debug_payload ... ok
+test core::reducer::tests::time_stop_event_reaches_tracker ... ok
+test core::reducer::tests::unmatched_or_identical_hit_mutations_do_not_advance_combat_state ... ok
+test core::resource_audit::tests::redacted_report_omits_runtime_file_error_details ... ok
+test core::skills::tests::stable_row_identity_ignores_changing_damage_and_hits ... ok
+test core::skills::tests::translation_keys_cover_skill_categories ... ok
+test core::skills::tests::projection_aggregates_rows_and_localizes_characters ... ok
+test core::live_capture::tests::replay_bursts_defer_optional_debug_packets ... ok
+test core::snapshot::tests::character_loadout_export_requires_complete_equipment_state ... ok
+test core::mod_studio::tests::creating_a_document_uses_the_shared_template_and_preserves_existing_files ... ok
+test core::snapshot::tests::character_loadout_json_boundary_is_strict_and_versioned ... ok
+test core::snapshot::tests::character_loadout_import_rejects_invalid_or_overlapping_layout ... ok
+test core::mod_studio::tests::enabled_binding_provider_is_discovered_from_mod_source ... ok
+test core::team_data::tests::imported_team_data_is_bounded_and_versioned ... ok
+test core::timeline::tests::projection_keeps_aggregated_rows_and_stable_character_order ... ok
+test core::timeline::tests::projection_sanitizes_bucket_interval_and_empty_state ... ok
+test core::timeline::tests::time_stop_duration_sums_projected_intervals ... ok
+test core::snapshot::tests::maps_internal_solt_and_enriches_catalog_fields ... ok
+test core::snapshot::tests::character_loadout_import_rejects_missing_mismatched_and_in_use_items ... ok
+test core::snapshot::tests::character_loadout_round_trips_and_rebinds_current_character_session ... ok
+test core::update::tests::configured_official_endpoint_is_valid ... ok
+test core::snapshot::tests::unknown_definition_preserves_ids_without_fabricating_metadata ... ok
+test core::mod_studio::tests::rejected_source_preserves_the_previous_saved_file_and_original_line ... ok
+test core::update::tests::managed_release_paths_exclude_user_data_and_traversal ... ok
+test core::mod_studio::tests::market_install_enables_the_bound_mod_in_the_same_workspace_transaction ... ok
+test core::mod_studio::tests::saving_valid_source_updates_the_existing_document ... ok
+test engine::abyss_data::tests::builds_summary_dataset_with_counts_and_stats ... ok
+test engine::abyss_data::tests::loads_compact_abyss_dataset_shape ... ok
+test core::mod_studio::tests::enabled_set_changes_reuse_the_existing_workspace_transaction ... ok
+test core::update::tests::accepts_retired_plugin_component_id_during_channel_migration ... ok
+test core::update::tests::accepts_plugin_release_without_newer_app ... ok
+test engine::abyss_data::tests::parses_half_and_wave_abyss_pack_id ... ok
+test core::update::tests::accepts_newer_signed_app_release ... ok
+test core::mod_studio::tests::workspace_summary_and_document_share_the_storage_fact_source ... ok
+test engine::abyss_data::tests::parses_plain_abyss_season_names_resource ... ok
+test engine::abyss_data::tests::parses_localized_abyss_season_names ... ok
+test engine::abyss_data::tests::parses_simple_abyss_pack_id ... ok
+test engine::abyss_data::tests::supports_released_abyss_season_ten_only ... ok
+test engine::abyss_data::tests::predicts_wave_clear_times_from_static_hp ... ok
+test engine::abyss_data::tests::parses_summary_abyss_identifiers ... ok
+test engine::abyss_data::tests::static_lookup_matches_tags_and_numeric_padding ... ok
+test engine::abyss_data::tests::static_lookup_matches_bp_and_bf_suffix_variants ... ok
+test engine::capture::tests::abyss_restart_packet_also_identifies_new_first_half_stage ... ok
+test engine::capture::tests::abyss_success_packet_can_also_identify_second_half_stage ... ok
+test engine::capture::tests::bool_enum_active_gameplay_effect_is_not_matched_as_damage_record_effect ... ok
+test core::mod_studio::tests::workspace_service_deletes_enabled_documents_and_advances_generation ... ok
+test core::update::tests::ignores_current_or_older_release ... ok
+test engine::capture::tests::bool_enum_damage_record_uses_updated_owner_anchors ... ok
+test engine::capture::tests::bool_enum_damage_record_reads_trailing_gameplay_effect_at_both_layouts ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_gap_releases_pending_hit ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_timeout_releases_pending_hit ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_reassembles_pending_hit ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_replacement_releases_pending_hit ... ok
+test core::update::tests::ignores_plugin_incompatible_with_installed_app ... ok
+test engine::capture::tests::bounded_utf8_reader_rejects_growth_past_checked_size ... ok
+test engine::capture::tests::boss_damage_effect_overrides_outgoing_direction_to_incoming ... ok
+test engine::capture::tests::active_connection_publishes_a_character_without_equipped_items ... ok
+test engine::capture::tests::capture_export_defaults_and_preserves_empty_curtain_snapshot ... ok
+test engine::capture::tests::capture_export_rejects_unknown_versions ... ok
+test engine::capture::tests::capture_export_rejects_invalid_saved_pause_state ... ok
+test engine::capture::tests::capture_export_migrates_only_legacy_authoritative_pause_intervals ... ok
+test engine::capture::tests::capture_link_type_maps_supported_npcap_and_pcapng_values ... ok
+test engine::capture::tests::combat_clock_block_round_trips_authoritative_pause_state ... ok
+test core::mod_studio::tests::workspace_service_serializes_distinct_enabled_set_mutations ... ok
+test core::update::tests::rejects_payload_changed_after_signing ... ok
+test engine::capture::tests::compact_gameplay_effect_records_classify_the_preceding_damage ... ok
+test core::resource_audit::tests::audits_legacy_skill_resource_tables ... ok
+test engine::capture::tests::capture_export_writer_persists_a_replayable_document ... ok
+test core::resource_audit::tests::redacted_report_does_not_copy_missing_avatar_paths ... ok
+test engine::capture::tests::creation_flower_does_not_trigger_fuwen_follow_up ... ok
+test engine::capture::tests::capture_json_import_validates_size_and_structure_before_use ... ok
+test engine::capture::tests::creation_flower_keeps_record_owner_across_different_reaction_partners ... ok
+test engine::capture::tests::damage_record_owner_overrides_unrelated_same_shift_packet_id ... ok
+test core::update::tests::rejects_insecure_artifact_url ... ok
+test engine::capture::tests::current_capture_hit_schema_replays_every_supported_field ... ok
+test engine::capture::tests::creation_flower_passive_keeps_reaction_settlement_owner ... ok
+test engine::capture::tests::damage_record_owner_requires_matching_anchors_and_outgoing_hit ... ok
+test engine::capture::tests::diagnose_capture_enemy_instance_resolution ... ignored, set NTE_TEST_CAPTURE to a local pcapng path for target-instance diagnostics
+test engine::capture::tests::diagnose_capture_time_stop_events ... ignored, set NTE_TEST_CAPTURE to a local pcapng path for capture diagnostics
+test engine::capture::tests::diagnose_empty_curtain_inventory ... ignored, set NTE_TEST_CAPTURE to a local pcapng path for capture diagnostics
+test engine::capture::tests::diagnose_monster_spawn_identity_evidence ... ignored, set NTE_TEST_CAPTURE_JSON to a local nte_capture_*.json export for spawn-identity diagnostics
+test engine::capture::tests::damage_record_owner_separates_mixed_oneiroi_and_nanally_hits ... ok
+test engine::capture::tests::diagnose_target_handle_stability_across_encounters ... ignored, set NTE_TEST_CAPTURE_JSON to a local nte_capture_*.json export for target-handle diagnostics
+test engine::capture::tests::damage_record_without_own_effect_does_not_reuse_previous_record_effect ... ok
+test engine::capture::tests::disabled_raw_capture_has_no_path_or_writer ... ok
+test engine::capture::tests::core_snapshot_replaces_and_clears_only_the_character_core ... ok
+test engine::capture::tests::final_tower_ids_merge_with_declared_ids ... ok
+test engine::capture::tests::exact_gameplay_effect_owner_overrides_regular_packet_id ... ok
+test engine::capture::tests::follow_up_requires_visible_fuwen_trigger ... ok
+test engine::capture::tests::follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve ... ok
+test engine::capture::tests::frame_dedup_skips_unknown_timestamps_and_resets_on_regression ... ok
+test engine::capture::tests::frame_dedup_bounds_same_timestamp_cache ... ok
+test engine::capture::tests::frame_dedup_suppresses_only_identical_frames_within_window ... ok
+test engine::capture::tests::full_debug_emits_observation_when_debug_payload_is_dropped ... ok
+test engine::capture::tests::fuwen_start_pair_uses_shifted_signature_and_fixed_role_positions ... ok
+test engine::capture::tests::fuwen_stays_active_across_long_gaps_until_battle_reset ... ok
+test core::resource_audit::tests::audits_missing_runtime_resources_without_external_paths ... ok
+test engine::capture::tests::game_pause_tracker_unions_nested_authoritative_pause_types ... ok
+test engine::capture::tests::different_account_connection_switch_replaces_existing_inventory ... ok
+test engine::capture::tests::gameplay_effect_fragment_context_rejects_ambiguous_start ... ok
+test engine::capture::tests::gameplay_effect_fragment_context_reaches_contiguous_tail ... ok
+test engine::capture::tests::gameplay_effect_enrichment_keeps_localized_name_out_of_hit ... ok
+test engine::capture::tests::gameplay_effect_fragment_context_rejects_sequence_gap ... ok
+test engine::capture::tests::hidden_fuwen_candidate_does_not_record_without_visible_trigger ... ok
+test engine::capture::tests::inventory_reassembly_accepts_a_late_retransmitted_start_fragment ... ok
+test engine::capture::tests::inventory_reassembly_does_not_join_a_new_start_to_stale_future_fragments ... ok
+test engine::capture::tests::inventory_reassembly_accepts_transport_packet_id_wrap ... ok
+test engine::capture::tests::completed_remove_stream_wins_over_raw_tail_item_update ... ok
+test engine::capture::tests::inventory_reassembly_finishes_a_stream_before_the_next_start_in_the_same_packet ... ok
+test engine::capture::tests::inventory_reassembly_keeps_logically_newer_fragments_that_arrive_before_their_start ... ok
+test engine::capture::tests::inventory_reassembly_retries_after_a_fragment_is_retransmitted_in_a_newer_packet ... ok
+test engine::capture::tests::inventory_reassembly_uses_channel_index_across_prefix_flag_changes ... ok
+test engine::capture::tests::inventory_reassembly_replaces_stale_fragments_after_sequence_wrap ... ok
+test engine::capture::tests::local_ip_hint_controls_import_direction_inference ... ok
+test engine::capture::tests::first_item_add_notification_activates_the_initial_inventory_connection ... ok
+test engine::capture::tests::mod_script_block_round_trips_bounded_event_data ... ok
+test engine::capture::tests::monster_damage_effect_overrides_outgoing_direction_to_incoming ... ok
+test engine::capture::tests::monster_hitout_effect_overrides_outgoing_direction_to_incoming ... ok
+test engine::capture::tests::monster_hitout_effect_keeps_outgoing_direction_for_target_snapshot ... ok
+test engine::capture::tests::monster_steal_damage_effect_does_not_force_incoming_direction ... ok
+test engine::capture::tests::non_ling_zhou_hit_does_not_end_active_fuwen ... ok
+test engine::capture::tests::compact_login_placement_is_applied_when_item_details_arrive_later ... ok
+test engine::capture::tests::multi_effect_packet_matches_each_damage_record_by_position ... ok
+test engine::capture::tests::non_damage_buff_effect_does_not_become_hit_type ... ok
+test engine::capture::tests::non_prefixed_player_skill_damage_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::numeric_ability_owner_overrides_final_tower_packet_id ... ok
+test engine::capture::tests::numeric_ability_owner_keeps_regular_packet_id ... ok
+test engine::capture::tests::numeric_ability_owner_overrides_session_id ... ok
+test engine::capture::tests::orphan_dark_star_reaction_is_rehomed_to_dark_or_soul_owner ... ok
+test engine::capture::tests::full_grid_placement_is_applied_when_item_details_arrive_later ... ok
+test engine::capture::tests::parses_export_ids_from_array_and_legacy_string ... ok
+test engine::capture::tests::owner_only_active_connection_enriches_existing_inventory ... ok
+test engine::capture::tests::module_snapshot_assigns_present_items_and_clears_removed_items ... ok
+test engine::capture::tests::player_damage_effect_is_outgoing_even_when_record_looks_incoming ... ok
+test engine::capture::tests::owner_only_connection_does_not_replace_active_inventory ... ok
+test engine::capture::tests::raw_ipv4_packet_uses_the_same_udp_decoder_as_ethernet ... ok
+test engine::capture::tests::raw_capture_writer_records_the_actual_raw_linktype ... ok
+test engine::capture::tests::raw_owner_record_is_cached_without_a_completed_inventory_stream ... ok
+test engine::capture::tests::raw_remove_notification_deletes_matching_items_without_a_completed_stream ... ok
+test engine::capture::tests::reaction_buff_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::reaction_damage_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::raw_item_records_apply_complete_updates_and_insert_new_items ... ok
+test engine::capture::tests::capture_frame_queue_applies_backpressure_without_dropping_frames ... ok
+test core::mod_studio::tests::oversized_workspace_is_rejected_before_projection ... ok
+test engine::capture::tests::reliable_only_event_sink_preserves_debug_events_for_cli_consumers ... ok
+test engine::capture::tests::repeated_watch_packets_match_each_trailing_compact_effect ... ok
+test engine::capture::tests::replay_character_mappings_validate_ids_and_deduplicate ... ok
+test engine::capture::tests::replay_ignores_a_live_local_ip_hint_from_another_machine ... ok
+test engine::capture::tests::ambiguous_session_candidate_expires_when_unconfirmed ... ok
+test engine::capture::tests::same_account_connection_switch_preserves_existing_inventory ... ok
+test engine::capture::tests::send_export_packet_accepts_empty_payload_hex ... ok
+test engine::capture::tests::send_export_packet_adds_final_tower_ids_from_payload ... ok
+test engine::capture::tests::send_export_packet_rejects_invalid_hex_payload ... ok
+test engine::capture::tests::send_export_packet_preserves_exported_decoded_text ... ok
+test engine::capture::tests::server_damage_calibration_corrects_single_pending_hit ... ok
+test engine::capture::tests::server_damage_calibration_does_not_split_multiple_pending_hits ... ok
+test engine::capture::tests::split_event_sink_bounds_debug_without_dropping_reliable_events ... ok
+test engine::capture::tests::stress_large_pcapng_import_with_bounded_event_lanes ... ignored, set NTE_TEST_CAPTURE to a local large or concatenated pcapng path
+test engine::capture::tests::stop_with_drain_releases_a_blocked_reliable_sender ... ok
+test engine::capture::tests::summary_payload_explicit_stage_matches_full_debug ... ok
+test engine::capture::tests::summary_payload_length_prefixed_stage_matches_full_debug ... ok
+test engine::capture::tests::summary_payload_markers_match_full_debug_for_every_bit_shift ... ok
+test engine::capture::tests::summary_payload_scanner_handles_stream_boundaries_and_no_match ... ok
+test engine::capture::tests::boss_hp_sync_damage_merges_into_recent_confirmed_hit ... ok
+test engine::abyss_data::tests::loads_current_abyss_summary_resource_shape ... ok
+test engine::capture::tests::pcapng_import_restores_mod_script_enemy_identity ... ok
+test engine::capture::tests::summary_payload_text_retains_only_runtime_markers ... ok
+test engine::capture::tests::tenacity_damage_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::pcapng_import_accepts_foreign_tun_linktype_ipv4 ... ok
+test engine::capture::tests::vehicle_hitout_is_outgoing_physical_damage ... ok
+test engine::capture::tests::versioned_capture_export_snapshot_round_trips_replay_fields ... ok
+test engine::capture::tests::visible_fuwen_trigger_activates_follow_up_window ... ok
+test engine::capture::tests::visible_fuwen_trigger_without_start_packet_records_follow_up ... ok
+test engine::capture::tests::zero_residual_does_not_end_active_fuwen_after_recorded_residual ... ok
+test engine::capture::tests::reconcile_boss_hp_updates_keeps_calibration_baseline_fresh_after_a_claimed_update ... ok
+test engine::model::tests::abyss_active_half_duration_subtracts_time_stop ... ok
+test engine::capture::tests::unscoped_raw_item_does_not_activate_an_inventory_connection ... ok
+test engine::model::tests::abyss_duration_uses_authoritative_pause_state_edges ... ok
+test engine::capture::tests::confirmed_packet_hit_suppresses_ambiguous_session_candidate ... ok
+test engine::model::tests::abyss_half_clips_pause_to_the_damage_window ... ok
+test engine::model::tests::abyss_half_json_is_stable_and_accepts_legacy_labels ... ok
+test engine::model::tests::abyss_half_json_rejects_invalid_value ... ok
+test engine::model::tests::abyss_half_labels_are_utf8_chinese ... ok
+test engine::model::tests::abyss_half_timeline_can_include_run_markers ... ok
+test engine::model::tests::authoritative_stage_assigns_half_without_starting_damage_clock ... ok
+test engine::model::tests::battle_reset_preserves_inventory_and_its_generation ... ok
+test engine::model::tests::capture_quality_summary_is_redacted ... ok
+test engine::model::tests::combat_duration_only_subtracts_the_part_after_the_first_hit ... ok
+test engine::model::tests::character_duration_subtracts_time_stop ... ok
+test engine::model::tests::combat_duration_uses_observed_game_pause_boundaries ... ok
+test engine::model::tests::combat_segments_empty_series_has_no_segments ... ok
+test engine::model::tests::combat_duration_subtracts_authoritative_pause_interval ... ok
+test engine::model::tests::combat_segments_keep_short_gaps_together ... ok
+test engine::model::tests::combat_segments_split_on_long_idle_gap ... ok
+test engine::model::tests::combat_session_summary_contains_redacted_aggregates ... ok
+test engine::model::tests::combat_session_summary_keeps_abyss_halves_separate ... ok
+test engine::model::tests::damage_correction_replaces_source_hit_totals ... ok
+test engine::model::tests::damage_correction_requires_hp_identity_even_when_gameplay_effect_index_matches ... ok
+test engine::model::tests::damage_attribution_closes_team_total_and_projects_character_policy ... ok
+test engine::model::tests::dps_time_basis_json_is_stable_and_accepts_legacy_labels ... ok
+test engine::model::tests::delayed_hit_after_half_switch_keeps_original_character_half ... ok
+test engine::model::tests::dps_time_basis_json_rejects_invalid_value ... ok
+test engine::model::tests::early_support_pause_without_damage_does_not_deduct_precombat_time ... ok
+test engine::model::tests::first_normal_stage_does_not_backfill_previous_global_hits ... ok
+test engine::model::tests::follow_up_damage_merges_into_source_hit_totals ... ok
+test engine::model::tests::hit_character_source_json_rejects_invalid_value ... ok
+test engine::model::tests::hit_character_source_json_values_roundtrip ... ok
+test engine::model::tests::hit_direction_json_rejects_invalid_value ... ok
+test engine::model::tests::hit_direction_json_values_roundtrip ... ok
+test engine::model::tests::late_backfilled_half_accepts_delayed_pause_before_stage_timestamp ... ok
+test engine::model::tests::mod_script_bridge_classifies_preprocess_and_postprocess_names ... ok
+test engine::model::tests::late_detected_second_half_backfills_existing_global_hits ... ok
+test engine::model::tests::next_floor_start_clears_previous_floor_after_long_transition ... ok
+test engine::model::tests::observed_game_pause_end_advances_the_combat_clock_without_inflating_active_time ... ok
+test engine::model::tests::only_full_debug_packets_are_droppable_under_backpressure ... ok
+test engine::model::tests::pause_start_and_end_edges_control_the_clock_immediately ... ok
+test engine::model::tests::reaction_damage_types_only_include_confirmed_follow_up_damage ... ok
+test engine::capture::tests::nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit ... ok
+test engine::model::tests::restart_from_second_to_first_clears_both_halves ... ok
+test engine::model::tests::restart_releases_cleared_character_half ... ok
+test engine::model::tests::session_summary_records_reaction_damage_policy_without_changing_team_total ... ok
+test engine::capture::tests::packet_decoder_loads_attack_resources_outside_project_cwd ... ok
+test engine::model::tests::session_summary_time_basis_controls_duration_and_dps ... ok
+test engine::model::tests::settlement_stage_never_becomes_the_duration ... ok
+test engine::model::tests::skill_breakdown_merges_same_ability_across_effects ... ok
+test engine::model::tests::skill_breakdown_preserves_shared_effect_identity ... ok
+test engine::model::tests::skill_breakdown_splits_exact_semantic_components_under_one_ability ... ok
+test engine::capture::tests::boss_hp_sync_damage_does_not_guess_between_multiple_recent_hits ... ok
+test engine::model::tests::debug_packet_ring_is_bounded_by_items_and_retained_bytes ... ok
+test engine::model::tests::team_dps_export_version_defaults_when_missing ... ok
+test engine::model::tests::team_dps_export_is_compact_and_roundtrips ... ok
+test engine::model::tests::skill_breakdown_splits_follow_up_and_unknown_attribution ... ok
+test engine::model::tests::timeline_buckets_damage_by_second_and_role ... ok
+test engine::model::tests::timeline_handles_empty_hits ... ok
+test engine::model::tests::timeline_marks_time_stop_without_inflating_bucket_dps ... ok
+test engine::model::tests::unbalance_damage_counts_toward_team_total_but_not_personal_ranking ... ok
+test engine::model::tests::unknown_character_hits_follow_the_active_half ... ok
+test engine::model::tests::unknown_hits_remain_output_and_directions_are_summarized_separately ... ok
+test engine::model::tests::timeline_clamps_abyss_markers_to_chart_edges ... ok
+test engine::model::tests::recent_corrections_and_follow_ups_update_only_deltas_and_the_recorded_half ... ok
+test engine::parser::character_tests::ability_tip_names_pick_field_by_active_language ... ok
+test engine::parser::character_tests::ability_tip_names_alias_jin_ultra_melee_to_its_named_parent ... ok
+test engine::parser::character_tests::classifies_qte_as_utf8_huanhe ... ok
+test engine::parser::character_tests::character_attribute_is_optional_and_loaded_when_present ... ok
+test engine::parser::character_tests::classifies_qte_reaction_from_participant_attributes ... ok
+test engine::capture::tests::unrelated_flows_do_not_evict_the_active_inventory_connection ... ok
+test engine::parser::character_tests::classifies_tenacity_and_parry_damage ... ok
+test engine::parser::character_tests::final_tower_character_evidence_ignores_longer_numeric_suffix ... ok
+test engine::parser::character_tests::enemy_config_hash_is_stable_and_case_insensitive ... ok
+test engine::parser::character_tests::final_tower_character_evidence_requires_character_for_net_anchor ... ok
+test engine::parser::character_tests::finds_final_tower_character_evidence ... ok
+test engine::parser::character_tests::exact_gameplay_effect_semantics_override_parent_and_component ... ok
+test engine::parser::character_tests::finds_shifted_final_tower_character_evidence ... ok
+test engine::parser::character_tests::ignores_compact_gameplay_effect_without_structural_tail ... ok
+test engine::parser::character_tests::gameplay_effect_semantics_reject_unknown_effect ... ok
+test engine::parser::character_tests::ignores_incomplete_equipment_slot_tags ... ok
+test engine::parser::character_tests::ignores_invalid_gameplay_effect_sentinel ... ok
+test engine::parser::character_tests::incoming_state_flags_do_not_mark_enemy_hp_as_incoming ... ok
+test engine::parser::character_tests::incoming_damage_keeps_legacy_target_fields_empty ... ok
+test engine::parser::character_tests::incoming_state_flags_alone_do_not_mark_damage_as_incoming ... ok
+test engine::parser::character_tests::keeps_large_damage_sanity_boundary ... ok
+test engine::parser::character_tests::load_characters_falls_back_to_bundled_resource ... ok
+test engine::parser::character_tests::loads_compact_gameplay_effect_names ... ok
+test engine::parser::character_tests::loads_compact_skill_damage_index ... ok
+test engine::capture::tests::summary_payload_text_is_bounded_to_canonical_markers ... ok
+test engine::capture::tests::reconcile_boss_hp_updates_lets_follow_up_claim_before_calibration ... ok
+test engine::parser::character_tests::core_snapshot_requires_one_character_and_at_most_one_known_core ... ok
+test engine::parser::character_tests::normalizes_damage_names_for_grouping ... ok
+test engine::capture::tests::confirmed_packet_hit_suppresses_recent_duplicate_records ... ok
+test engine::parser::character_tests::outgoing_state_flags_do_not_mark_damage_as_incoming_without_target_anchor ... ok
+test engine::parser::character_tests::low_target_max_hp_without_matching_character_alignment_stays_outgoing ... ok
+test engine::parser::character_tests::bundled_enemy_catalog_resolves_official_names_and_portrait ... ok
+test engine::parser::character_tests::parses_bool_enum_sdk_compact_gameplay_effect_record ... ok
+test engine::parser::character_tests::parses_bool_enum_damage_state_encoding ... ok
+test engine::parser::character_tests::parses_compact_gameplay_effect_at_payload_boundary ... ok
+test engine::parser::character_tests::parses_boss_hp_in_tens_of_billions ... ok
+test engine::parser::character_tests::parses_damage_in_tens_of_billions ... ok
+test engine::parser::character_tests::parses_gameplay_effect_unique_index_after_active_ge_anchor ... ok
+test engine::parser::character_tests::parses_shifted_compact_gameplay_effect_record ... ok
+test engine::parser::character_tests::parses_target_handle_from_boss_hp_update ... ok
+test engine::parser::character_tests::parses_bool_enum_damage_state_encoding_at_every_bit_shift ... ok
+test engine::capture::tests::duplicate_capture_frame_is_not_decoded_twice ... ok
+test engine::parser::character_tests::parses_shifted_equipment_slot_info ... ok
+test engine::parser::character_tests::resolves_character_from_matching_bit_alignment ... ok
+test engine::parser::character_tests::rejects_bool_enum_damage_record_with_invalid_bool_state ... ok
+test engine::parser::character_tests::same_shift_character_anchor_before_damage_record_stays_outgoing ... ok
+test engine::parser::empty_curtain_tests::character_owner_parser_rejects_truncated_prefix ... ok
+test engine::parser::empty_curtain_tests::character_owner_parser_ignores_non_character_item_shapes ... ok
+test engine::parser::character_tests::bundled_ability_tips_include_lingke_release_skills ... ok
+test engine::parser::character_tests::rejects_partial_or_inconsistent_character_module_grid ... ok
+test engine::parser::empty_curtain_tests::compact_login_module_parser_rejects_incomplete_geometry ... ok
+test engine::parser::empty_curtain_tests::compact_login_module_parser_rejects_uid_item_mismatch ... ok
+test engine::parser::empty_curtain_tests::ignores_equipped_tail_and_keeps_distinct_instance_ids ... ok
+test engine::parser::empty_curtain_tests::parses_character_instance_to_template_mapping ... ok
+test engine::parser::character_tests::parses_equipped_and_empty_character_core_snapshots ... ok
+test engine::capture::tests::gameplay_effect_name_confirms_session_hit_in_multi_character_packet ... ok
+test engine::parser::empty_curtain_tests::module_positions_apply_character_template_and_shape_in_business_layer ... ok
+test engine::parser::empty_curtain_tests::loads_equipment_catalog_and_interpolates_main_stats ... ok
+test engine::protocol::tests::accepts_connection_specific_sequenced_prefix_bits ... ok
+test engine::protocol::tests::exact_tail_channel_discovers_earlier_bunches_in_the_same_packet ... ok
+test engine::protocol::tests::finds_non_byte_aligned_inventory_bunch_after_packet_info ... ok
+test engine::protocol::tests::known_channel_finds_embedded_bunch_without_an_exact_tail ... ok
+test engine::parser::empty_curtain_tests::parses_complete_prefix_of_a_truncated_add_notification ... ok
+test engine::protocol::tests::parses_channel_sequence_and_partial_flags_separately ... ok
+test engine::parser::empty_curtain_tests::equipment_catalog_rejects_card_overflow_and_non_numeric_suit_ids ... ok
+test engine::parser::empty_curtain_tests::parses_compact_login_module_placement ... ok
+test engine::protocol::tests::preserves_explicit_handshake_marker ... ok
+test engine::parser::empty_curtain_tests::parses_locked_discarded_and_equipped_item_from_character_net_id ... ok
+test engine::protocol::tests::rejects_declared_length_that_crosses_the_packet_boundary ... ok
+test engine::protocol::tests::rejects_invalid_inventory_flags_and_descriptor ... ok
+test engine::protocol::tests::rejects_inventory_bunch_length_past_payload_boundary ... ok
+test engine::protocol::tests::rejects_nonzero_transport_mode ... ok
+test engine::rich_text::tests::passes_through_clean_names_untouched ... ok
+test engine::rich_text::tests::empty_wrapper_reduces_to_empty ... ok
+test engine::rich_text::tests::strips_inline_and_attributed_tags_within_text ... ok
+test engine::rich_text::tests::strips_title_wrapper_from_names ... ok
+test engine::rich_text::tests::keeps_non_tag_angle_brackets ... ok
+test engine::rich_text::tests::tokenizes_open_text_and_close ... ok
+test platform::file_dialog::tests::native_dialog_strings_are_terminated ... ok
+test platform::mods_plugin::tests::combat_clock_mod_disabled_status_is_reported_explicitly ... ok
+test platform::mods_plugin::tests::combat_clock_response_rejects_legacy_timer_payloads ... ok
+test platform::mods_plugin::tests::combat_clock_response_rejects_non_authoritative_pause_types ... ok
+test platform::mods_plugin::tests::combat_clock_response_uses_the_v7_transition_layout ... ok
+test platform::mods_plugin::tests::bundled_mods_keep_distinct_control_flow_in_external_sources ... ok
+test platform::mod_loader::tests::layout_contract_uses_release_sibling_paths ... ok
+test platform::mods_plugin::tests::client_bounds_requests_behind_the_active_pipe_call ... ok
+test platform::mods_plugin::tests::deployment_inspection_without_game_installations_keeps_source_available ... ok
+test engine::capture::tests::reconcile_boss_hp_updates_still_calibrates_when_no_follow_up_applies ... ok
+test engine::parser::empty_curtain_tests::rejects_truncated_or_wrong_array_shape ... ok
+test platform::mods_plugin::tests::disconnected_worker_is_reported_without_panicking ... ok
+test platform::mods_plugin::tests::deployment_marks_installs_and_removes_only_the_managed_plugin ... ok
+test platform::mods_plugin::tests::deployment_preserves_an_unmanaged_dwmapi_proxy ... ok
+test platform::mods_plugin::tests::deployment_preserves_a_managed_plugin_replaced_outside_the_tool ... ok
+test platform::mods_plugin::tests::default_workspace_upgrades_the_previous_exact_enabled_set ... ok
+test platform::mods_plugin::tests::default_workspace_installs_only_stable_mods ... ok
+test platform::mods_plugin::tests::mod_event_response_rejects_nonzero_unused_values ... ok
+test platform::mods_plugin::tests::mod_event_response_uses_the_v7_union_layout ... ok
+test platform::mods_plugin::tests::mod_log_response_decodes_runtime_output ... ok
+test platform::mods_plugin::tests::mod_log_response_rejects_invalid_levels_and_trailing_bytes ... ok
+test platform::mods_plugin::tests::module_request_uses_the_stable_little_endian_wire_layout ... ok
+test platform::mods_plugin::tests::initialized_workspace_does_not_restore_a_deleted_default_mod ... ok
+test engine::parser::empty_curtain_tests::parses_remove_notification_items_without_treating_other_notifications_as_removals ... ok
+test platform::mods_plugin::tests::native_host_exposes_generic_name_hash_reading_without_enemy_services ... ok
+test platform::mods_plugin::tests::native_runtime_presence_and_offset_scanner_are_bounded ... ok
+test platform::mods_plugin::tests::native_hot_reload_keeps_the_last_working_program_and_quarantines_faults ... ok
+test platform::mods_plugin::tests::one_key_request_encodes_native_rpc_placements ... ok
+test platform::mods_plugin::tests::process_event_buffer_covers_the_damage_callback_payload ... ok
+test platform::mods_plugin::tests::response_accepts_the_mod_disabled_status ... ok
+test platform::mods_plugin::tests::response_accepts_the_new_boolean_validation_status ... ok
+test platform::mods_plugin::tests::response_rejects_a_mismatched_request_id ... ok
+test platform::mods_plugin::tests::retired_loader_signature_remains_managed_for_upgrade ... ok
+test platform::mods_plugin::tests::rust_wire_constants_match_the_native_ipc_header ... ok
+test platform::mods_plugin::tests::v7_operations_encode_state_and_move_fields ... ok
+test platform::mods_plugin::tests::managed_plugin_refresh_updates_only_enabled_directories ... ok
+test platform::passthrough_hotkey::tests::global_hotkey_keys_map_to_the_windows_function_key_range ... ok
+test platform::passthrough_hotkey::tests::passthrough_config_maps_to_the_original_windows_keys ... ok
+test platform::passthrough_hotkey::tests::passthrough_toggle_requires_the_configured_unmodified_key ... ok
+test platform::mods_plugin::tests::legacy_game_mods_migrate_to_the_software_workspace_before_removal ... ok
+test platform::mods_plugin::tests::native_runtime_exposes_generic_mod_extension_abi ... ok
+test platform::update_http::tests::http_status_uses_the_next_proxy_route ... ok
+test platform::update_http::tests::oversized_package_error_identifies_manifest_mismatch ... ok
+test platform::update_http::tests::parses_https_url_with_query ... ok
+test platform::update_http::tests::rejects_non_https_url ... ok
+test platform::mods_plugin::tests::manual_game_directory_accepts_install_root_or_binary_directory ... ok
+test platform::update_http::tests::short_package_error_identifies_manifest_mismatch ... ok
+test platform::update_install::tests::transaction_id_validation_accepts_release_ids_and_rejects_paths ... ok
+test platform::window_style::tests::opacity_alpha_uses_the_established_desktop_bounds ... ok
+test platform::window_style::tests::persistent_acrylic_uses_nonzero_alpha_without_adding_a_native_tint ... ok
+test storage::ability_names::tests::load_map_preserves_missing_resource_error ... ok
+test storage::ability_names::tests::localized_names_share_the_same_structural_ability_identity ... ok
+test storage::ability_names::tests::repairs_stale_zankou_names_without_overwriting_future_translations ... ok
+test storage::ability_names::tests::resolves_through_effect_then_ability_name ... ok
+test storage::ability_names::tests::semantic_component_can_hide_parent_ability_name ... ok
+test platform::window_style::tests::disabling_acrylic_clears_the_accent_policy ... ok
+test storage::ability_names::tests::semantic_component_joins_parent_ability_name ... ok
+test storage::capture_logs::tests::format_bytes_scales_units ... ok
+test storage::capture_logs::tests::missing_directory_scans_as_empty ... ok
+test storage::config::tests::auto_round_idle_seconds_are_bounded ... ok
+test engine::parser::character_tests::loads_bundled_gameplay_effect_semantics ... ok
+test storage::config::tests::capture_filter_is_backward_compatible_trimmed_and_bounded ... ok
+test storage::config::tests::global_hotkeys_round_trip_with_stable_codes ... ok
+test storage::config::tests::hit_detail_columns_are_persisted_and_sanitized ... ok
+test storage::config::tests::hud_editor_configuration_is_sanitized ... ok
+test storage::config::tests::hud_presets_are_distinct ... ok
+test platform::mods_plugin::tests::selected_client_install_ignores_another_clients_unmanaged_proxy ... ok
+test storage::config::tests::legacy_always_on_top_migrates_without_coupling_desktop_windows ... ok
+test storage::config::tests::legacy_config_defaults_the_tauri_hud_position ... ok
+test storage::config::tests::interaction_preferences_use_stable_serialized_codes ... ok
+test storage::config::tests::mod_studio_preferences_default_and_round_trip ... ok
+test storage::config::tests::older_config_defaults_interaction_preferences ... ok
+test engine::parser::character_tests::parses_complete_character_module_grid_snapshot ... ok
+test storage::config::tests::sanitizes_blank_manual_capture_device ... ok
+test storage::config::tests::onboarding_only_opens_for_a_new_install ... ok
+test storage::config::tests::sanitizes_invalid_opacity ... ok
+test storage::config::tests::sanitizes_duplicate_and_passthrough_conflicting_hotkeys ... ok
+test storage::config::tests::sanitizes_invalid_timeline_bucket_seconds ... ok
+test storage::config::tests::sanitizes_invalid_window_size ... ok
+test storage::capture_logs::tests::clear_removes_only_capture_logs_and_reports_freed ... ok
+test storage::config::tests::sanitizes_mod_studio_game_directories ... ok
+test storage::config::tests::sanitizes_unmodified_global_hotkeys ... ok
+test storage::config::tests::sanitizes_window_positions_without_discarding_secondary_monitor_coordinates ... ok
+test storage::config::tests::sanitizes_windows_reserved_global_hotkeys ... ok
+test platform::update_install::tests::atomic_replacement_overwrites_the_managed_file ... ok
+test storage::history::tests::abyss_record_labels_and_prediction_teams_use_each_half ... ok
+test storage::config::tests::tauri_hud_position_roundtrips_physical_secondary_monitor_coordinates ... ok
+test storage::history::tests::compare_records_aggregates_duplicate_skill_rows ... ok
+test storage::history::tests::compare_records_matches_aggregated_and_single_effect_ability_rows ... ok
+test storage::history::tests::compare_records_keeps_semantic_effects_under_one_ability_distinct ... ok
+test storage::history::tests::compare_records_keeps_distinct_stable_skills_with_shared_display_name ... ok
+test storage::capture_logs::tests::scan_counts_only_capture_logs ... ok
+test storage::history::tests::compare_records_matches_legacy_display_name_to_stable_skill_identity ... ok
+test storage::history::tests::compare_records_preserves_gameplay_effect_identity_without_damage_name ... ok
+test storage::history::tests::compare_records_matches_one_ability_across_effect_variants ... ok
+test storage::history::tests::detailed_global_record_roundtrips_without_creating_an_abyss_run ... ok
+test storage::history::tests::detailed_record_clips_a_pause_that_starts_before_the_first_hit ... ok
+test engine::parser::character_tests::loads_attack_types_from_skill_damage_assets ... ok
+test storage::config::tests::load_without_any_config_creates_default_at_new_path ... ok
+test storage::config::tests::load_prefers_existing_config_over_legacy ... ok
+test storage::config::tests::load_adopts_legacy_config_when_new_path_missing ... ok
+test storage::history::tests::detailed_abyss_record_roundtrips_and_rebuilds_both_halves ... ok
+test storage::history::tests::history_index_reads_round_metadata_without_materializing_details ... ok
+test storage::history::tests::history_import_rejects_future_versions_and_oversized_files ... ok
+test storage::history::tests::detailed_record_uses_earliest_hit_time_for_display_file_and_sorting ... ok
+test storage::i18n::tests::config_serializes_to_stable_codes ... ok
+test storage::i18n::tests::english_returns_key_unchanged ... ok
+test storage::history::tests::deleted_record_can_be_restored_exactly ... ok
+test storage::i18n::tests::language_codes_and_names_are_stable ... ok
+test storage::i18n::tests::system_default_matches_locale_by_primary_subtag ... ok
+test storage::history::tests::json_text_import_uses_the_same_validation_and_fresh_id_rules ... ok
+test storage::history::tests::deleting_record_does_not_match_an_id_suffix ... ok
+test storage::i18n::tests::tf_leaves_extra_placeholders_literal ... ok
+test platform::mods_plugin::tests::managed_plugin_refresh_preserves_custom_mod_programs ... ok
+test storage::mod_scripts::tests::enabled_set_rejects_duplicates_and_path_characters ... ok
+test storage::history::tests::loads_legacy_version_record ... ok
+test storage::history::tests::skips_corrupt_json ... ok
+test storage::mod_scripts::tests::source_bindings_are_declared_by_the_mod_and_reject_duplicates ... ok
+test storage::mod_scripts::tests::source_validation_accepts_cpp_namespaces_state_and_control_flow ... ok
+test storage::history::tests::skips_history_with_unsafe_record_id ... ok
+test storage::mod_scripts::tests::save_rejects_invalid_native_grammar_before_writing_files ... ok
+test storage::mod_scripts::tests::source_validation_accepts_generic_unreal_runtime_capabilities ... ok
+test storage::mod_scripts::tests::source_validation_accepts_generic_typed_reads_and_cache ... ok
+test storage::mod_scripts::tests::source_validation_accepts_bundled_programs_with_crlf ... ok
+test storage::mod_scripts::tests::source_validation_rejects_native_grammar_errors ... ok
+test storage::mod_scripts::tests::source_validation_rejects_invalid_generic_cache_arguments ... ok
+test storage::mod_scripts::tests::source_validation_reports_the_original_cpp_line ... ok
+test storage::mod_scripts::tests::source_validation_requires_generic_runtime_capabilities ... ok
+test storage::mod_scripts::tests::source_validation_requires_matching_v4_declaration_and_handler ... ok
+test storage::resource::tests::bundled_resource_contains_character_data ... ok
+test storage::resource::tests::desktop_bundle_keeps_full_visual_resources ... ok
+test storage::resource::tests::character_colors_are_unique_and_independent_of_hashmap_order ... ok
+test storage::mod_scripts::tests::source_validation_rejects_capability_and_instruction_budget_mismatches ... ok
+test storage::resource::tests::missing_res_path_falls_back_to_bundled_resource ... ok
+test storage::i18n::tests::translating_for_search_does_not_change_the_active_language ... ok
+test storage::update::tests::archive_path_keys_follow_windows_case_insensitive_semantics ... ok
+test storage::resource::tests::mods_plugin_loader_reports_an_incompatible_runtime_package ... ok
+test storage::history::tests::prunes_oldest_records ... ok
+test storage::resource::tests::mods_plugin_loader_reads_the_first_compatible_candidate ... ok
+test storage::update::tests::bundled_plugin_baseline_version_is_read_from_the_release_sidecar ... ok
+test storage::update::tests::health_marker_transaction_id_rejects_unsafe_names ... ok
+test storage::resource::tests::disk_file_wins_over_matching_bundled_resource_key ... ok
+test storage::mod_scripts::tests::workspace_round_trip_preserves_source_and_enabled_state ... ok
+test storage::update::tests::relative_path_validation_rejects_parent_traversal ... ok
+test storage::update::tests::release_path_policy_accepts_signed_package_files_without_filename_allowlist ... ok
+test storage::resource::tests::mods_plugin_loader_skips_an_incompatible_runtime_package ... ok
+test storage::update::tests::release_path_policy_rejects_protected_user_and_update_state ... ok
+test storage::history::tests::imported_record_preserves_details_with_a_fresh_local_id ... ok
+test storage::mod_scripts::tests::deletion_disables_then_removes_the_mod_source ... ok
+test storage::update::tests::completed_update_cleanup_preserves_a_pending_transaction ... ok
+test storage::i18n::tests::japanese_locale_covers_every_simplified_chinese_key ... ok
+test storage::update::tests::completed_update_cleanup_migrates_plugin_state_out_of_update_root ... ok
+test engine::parser::character_tests::loads_gameplay_effect_names_from_assets ... ok
+test storage::update::tests::recorded_plugin_version_requires_the_matching_plugin_hash ... ok
+test storage::update::tests::completed_update_cleanup_removes_the_managed_root ... ok
+test storage::update::tests::retired_plugin_metadata_names_migrate_to_mods_plugin_names ... ok
+test storage::update::tests::transaction_cleanup_does_not_touch_another_active_update ... ok
+test storage::update::tests::verified_app_archive_extracts_new_root_sidecar_without_client_filename_change ... ok
+test engine::capture::tests::summary_payload_scanner_never_panics_on_untrusted_payloads ... ok
+test engine::model::tests::party_combat_totals_follow_trimmed_hits ... ok
+test engine::model::tests::combat_totals_follow_trimmed_hits ... ok
+test platform::mods_plugin::tests::managed_plugin_refresh_migrates_legacy_mod_programs ... ok
+test engine::capture::tests::summary_only_emits_observation_without_debug_payload ... ok
+
+test result: ok. 558 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running unittests src\bin\nte-updater.rs (target\debug\deps\nte_updater-b180cea3e204a857.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\gameplay_effect_semantics.rs (target\debug\deps\gameplay_effect_semantics-144e1f1e2d32e60a.exe)
+
+running 2 tests
+test semantic_components_do_not_repeat_the_parent_ability_name ... ok
+test zankou_dot_semantics_follow_current_cn_assets ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests nte_dps_tool
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== EXIT: 0 ===
+
+=== COMMAND: cargo clippy --locked --all-targets --features desktop -- -D warnings ===
+    Checking nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.49s
+=== EXIT: 0 ===
+
+=== COMMAND: cargo check --locked --bin nte-core --no-default-features --features cli ===
+    Checking nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.04s
+=== EXIT: 0 ===
+
+=== COMMAND: cargo test --locked --no-default-features --features cli ===
+   Compiling nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.44s
+     Running unittests src\lib.rs (target\debug\deps\nte_dps_tool-2f2cc6386f4e4030.exe)
+
+running 504 tests
+test api::dto::tests::inventory_uid_serializes_slot_without_internal_typo ... ok
+test api::jsonrpc::tests::preserves_string_and_numeric_ids ... ok
+test api::battle::tests::battle_read_timeline_rejects_a_role_upper_bound_before_projection ... ok
+test api::battle::tests::battle_read_axis_is_cursor_paginated_and_reports_trimmed_history ... ok
+test api::dto::tests::battle_summary_mapping_is_independent_and_uses_stable_source_codes ... ok
+test api::jsonrpc::tests::invalid_params_preserve_a_valid_request_id ... ok
+test api::jsonrpc::tests::rejects_batch_and_invalid_ids ... ok
+test api::battle::tests::battle_read_timeline_rejects_a_response_that_exceeds_the_bucket_budget ... ok
+test api::request::tests::battle_summary_requires_a_boolean_time_stop_mode ... ok
+test api::request::tests::capture_start_accepts_explicitly_disabled_raw_capture ... ok
+test api::request::tests::capture_start_rejects_unknown_profiles_and_blank_manual_devices ... ok
+test api::request::tests::battle_read_methods_use_typed_bounded_parameters ... ok
+test api::request::tests::equipment_methods_validate_uids_positions_and_boolean_state ... ok
+test api::request::tests::one_key_equipment_requires_a_bounded_nonempty_plan ... ok
+test api::dto::tests::battle_abyss_mapping_preserves_protocol_labels ... ok
+test api::request::tests::no_param_methods_reject_arrays ... ok
+test api::request::tests::validates_hello_protocol_range ... ok
+test api::response::tests::hello_preserves_existing_capability_order_and_appends_battle_reads ... ok
+test cli::args::tests::accepts_legacy_log_level_for_backward_compatibility ... ok
+test cli::args::tests::serve_requires_stdio_and_option_values ... ok
+test cli::args::tests::rejects_unknown_and_duplicate_options ... ok
+test cli::args::tests::parses_all_commands ... ok
+test cli::stdio::tests::equipment_requests_map_external_uids_and_boolean_state ... ok
+test cli::stdio::tests::stdout_writer_keeps_only_the_latest_coalesced_summary ... ok
+test core::capture::tests::compose_bpf_widens_to_detected_host ... ok
+test core::capture::tests::manual_resolution_reports_missing_nic ... ok
+test core::capture::tests::raw_capture_mode_preserves_enabled_default_and_disables_explicitly ... ok
+test core::combat_details::tests::shared_detail_assets_match_the_established_frontend_rules ... ok
+test core::combat_details::tests::attribution_filters_share_the_existing_engine_classification ... ok
+test core::empty_curtain::tests::four_secondary_stats_unlock_at_each_quarter_of_the_level_range ... ok
+test core::character_data::tests::projection_sorts_numeric_ids_and_preserves_optional_fields ... ok
+test core::empty_curtain::tests::drive_calculator_export_keeps_uid_and_scales_percent_stats ... ok
+test core::character_data::tests::validation_rejects_duplicate_id_and_invalid_fields ... ok
+test core::encrypted_ini::tests::document_save_round_trips_and_preserves_line_endings ... ok
+test core::history::tests::abyss_exit_is_not_a_pre_event_archive_boundary ... ok
+test core::history::tests::empty_state_has_no_archive ... ok
+test core::encrypted_ini::tests::unchanged_document_keeps_original_ciphertext ... ok
+test core::history::tests::idle_round_requires_running_unpaused_non_abyss_combat ... ok
+test core::history::tests::archive_keeps_summary_and_bounded_details_from_one_state ... ok
+test core::encrypted_ini::tests::oversized_ciphertext_is_rejected_before_reading ... ok
+test core::hud::tests::config_projection_uses_sanitized_stable_module_order ... ok
+test core::hud::tests::empty_state_projects_preview_only_when_requested ... ok
+test core::hud::tests::bounded_hud_timeline_keeps_wall_clock_and_engine_annotation_semantics ... ok
+test core::character_data::tests::atomic_update_preserves_unknown_fields_and_reloads_projection ... ok
+test core::hud::tests::hidden_and_qte_pseudo_characters_do_not_reach_hud_rows ... ok
+test core::hud::tests::known_character_with_reaction_follow_up_remains_in_hud_rows ... ok
+test core::hud::tests::live_projection_sorts_limits_and_keeps_u64_hits_as_strings ... ok
+test core::hud::tests::preview_timeline_is_projected_only_when_the_module_is_visible ... ok
+test core::hud::tests::long_span_live_timeline_bounds_the_source_layout_before_allocation ... ok
+test core::hud::tests::live_timeline_is_bounded_and_preserves_aggregate_damage_and_hits ... ok
+test core::live_capture::tests::abyss_exit_archive_contains_the_real_exit_timestamp ... ok
+test core::live_capture::tests::abyss_floor_transition_archives_previous_round_and_preserves_inventory ... ok
+test core::live_capture::tests::abyss_restart_dedupe_does_not_collide_across_rounds ... ok
+test cli::stdio::tests::bounded_reader_accepts_limit_and_rejects_larger_lines ... ok
+test core::live_capture::tests::capture_stopped_archives_after_prior_semantic_events ... ok
+test core::live_capture::tests::cut_round_freezes_replay_source_and_empty_round_is_a_no_op ... ok
+test core::live_capture::tests::event_worker_prioritizes_reliable_replay_events ... ok
+test core::live_capture::tests::abyss_restart_queues_the_previous_round_before_reducer_changes_state ... ok
+test core::live_capture::tests::cut_round_installs_replacement_before_persistence_work ... ok
+test core::live_capture::tests::idle_policy_tracks_only_confirmed_outgoing_hits ... ok
+test core::live_capture::tests::event_worker_routes_hits_through_the_shared_reducer ... ok
+test core::live_capture::tests::inventory_events_advance_only_the_inventory_projection ... ok
+test core::live_capture::tests::final_abyss_round_stays_pending_when_the_session_is_reset ... ok
+test core::live_capture::tests::mod_script_backfill_advances_only_when_projection_changes ... ok
+test core::live_capture::tests::outgoing_revision_advances_only_for_outgoing_hits ... ok
+test core::live_capture::tests::packet_quality_observations_do_not_invalidate_hud_projection ... ok
+test core::live_capture::tests::pending_abyss_archive_queue_is_bounded ... ok
+test core::live_capture::tests::reset_session_can_restore_the_exact_previous_projection ... ok
+test core::live_capture::tests::restoring_abyss_archive_retries_keeps_queue_bounded ... ok
+test core::live_capture::tests::stress_replay_finishes_before_optional_debug_drain ... ignored, set NTE_TEST_CAPTURE to a local pcapng path
+test core::live_capture::tests::runtime_failures_keep_private_details_out_of_status ... ok
+test core::packets::tests::incremental_projection_returns_only_new_packets ... ok
+test core::packets::tests::incremental_projection_requests_replacement_after_a_large_gap ... ok
+test core::live_capture::tests::stopping_after_completed_runtime_failure_does_not_stick ... ok
+test core::reducer::tests::abyss_event_reaches_abyss_state ... ok
+test core::reducer::tests::abyss_restart_after_exit_resets_previous_party_ownership ... ok
+test core::reducer::tests::current_target_samples_do_not_claim_damage_without_an_exact_instance ... ok
+test core::reducer::tests::damage_correction_applies_to_matching_hit ... ok
+test core::packets::tests::recent_projection_keeps_only_the_latest_display_window ... ok
+test core::reducer::tests::empty_curtain_character_mapping_reaches_state ... ok
+test core::live_capture::tests::stopping_an_idle_service_reports_the_stable_core_error ... ok
+test core::live_capture::tests::state_and_source_snapshot_uses_one_session_gate ... ok
+test core::reducer::tests::empty_curtain_replaces_inventory ... ok
+test core::reducer::tests::duplicate_mod_script_backfill_is_reported_as_unchanged ... ok
+test core::reducer::tests::exact_hit_target_does_not_claim_a_hit_outside_its_time_window ... ok
+test core::reducer::tests::exact_hit_target_backfill_promotes_candidate_output_and_rebuilds_totals ... ok
+test core::reducer::tests::exact_hit_targets_do_not_project_incoming_damage ... ok
+test core::reducer::tests::exact_hit_targets_queue_until_the_matching_hits_arrive ... ok
+test core::reducer::tests::exact_hit_targets_split_simultaneous_group_damage_by_instance ... ok
+test core::reducer::tests::follow_up_applies_to_matching_hit ... ok
+test core::reducer::tests::lifecycle_events_pass_through_without_state_change ... ok
+test core::reducer::tests::hit_pushes_into_state ... ok
+test core::reducer::tests::oversized_debug_packet_is_a_noop_instead_of_breaking_the_byte_budget ... ok
+test core::reducer::tests::packet_lands_in_debug_ring ... ok
+test core::reducer::tests::mod_script_backfill_reports_projection_change_for_revision_bump ... ok
+test core::reducer::tests::packet_observation_and_debug_payload_count_once ... ok
+test core::reducer::tests::mod_script_event_without_backfill_does_not_change_combat_state ... ok
+test core::reducer::tests::packet_observation_updates_quality_without_debug_payload ... ok
+test core::reducer::tests::time_stop_event_reaches_tracker ... ok
+test core::reducer::tests::unmatched_or_identical_hit_mutations_do_not_advance_combat_state ... ok
+test core::skills::tests::projection_aggregates_rows_and_localizes_characters ... ok
+test core::skills::tests::stable_row_identity_ignores_changing_damage_and_hits ... ok
+test core::skills::tests::translation_keys_cover_skill_categories ... ok
+test cli::stdio::tests::invalid_json_does_not_stop_following_requests ... ok
+test cli::stdio::tests::disconnected_mod_loader_fails_pending_equipment_requests ... ok
+test core::live_capture::tests::replay_bursts_defer_optional_debug_packets ... ok
+test core::snapshot::tests::character_loadout_json_boundary_is_strict_and_versioned ... ok
+test core::timeline::tests::projection_sanitizes_bucket_interval_and_empty_state ... ok
+test core::timeline::tests::projection_keeps_aggregated_rows_and_stable_character_order ... ok
+test engine::abyss_data::tests::builds_summary_dataset_with_counts_and_stats ... ok
+test core::timeline::tests::time_stop_duration_sums_projected_intervals ... ok
+test core::snapshot::tests::character_loadout_round_trips_and_rebinds_current_character_session ... ok
+test engine::abyss_data::tests::loads_compact_abyss_dataset_shape ... ok
+test cli::stdio::tests::inventory_event_is_enriched_and_packet_debug_is_not_forwarded ... ok
+test engine::abyss_data::tests::parses_half_and_wave_abyss_pack_id ... ok
+test engine::abyss_data::tests::parses_localized_abyss_season_names ... ok
+test engine::abyss_data::tests::parses_plain_abyss_season_names_resource ... ok
+test engine::abyss_data::tests::parses_summary_abyss_identifiers ... ok
+test engine::abyss_data::tests::parses_simple_abyss_pack_id ... ok
+test engine::abyss_data::tests::static_lookup_matches_bp_and_bf_suffix_variants ... ok
+test core::snapshot::tests::unknown_definition_preserves_ids_without_fabricating_metadata ... ok
+test core::snapshot::tests::character_loadout_export_requires_complete_equipment_state ... ok
+test core::snapshot::tests::maps_internal_solt_and_enriches_catalog_fields ... ok
+test engine::abyss_data::tests::predicts_wave_clear_times_from_static_hp ... ok
+test core::snapshot::tests::character_loadout_import_rejects_invalid_or_overlapping_layout ... ok
+test engine::abyss_data::tests::static_lookup_matches_tags_and_numeric_padding ... ok
+test engine::abyss_data::tests::supports_released_abyss_season_ten_only ... ok
+test engine::capture::tests::abyss_restart_packet_also_identifies_new_first_half_stage ... ok
+test engine::capture::tests::abyss_success_packet_can_also_identify_second_half_stage ... ok
+test core::snapshot::tests::character_loadout_import_rejects_missing_mismatched_and_in_use_items ... ok
+test engine::capture::tests::bool_enum_active_gameplay_effect_is_not_matched_as_damage_record_effect ... ok
+test cli::stdio::tests::equipment_pipe_call_does_not_block_core_loop ... ok
+test engine::capture::tests::bool_enum_damage_record_uses_updated_owner_anchors ... ok
+test engine::capture::tests::bool_enum_damage_record_reads_trailing_gameplay_effect_at_both_layouts ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_reassembles_pending_hit ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_gap_releases_pending_hit ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_timeout_releases_pending_hit ... ok
+test engine::capture::tests::boss_damage_effect_overrides_outgoing_direction_to_incoming ... ok
+test engine::capture::tests::bool_enum_gameplay_effect_fragment_replacement_releases_pending_hit ... ok
+test engine::capture::tests::bounded_utf8_reader_rejects_growth_past_checked_size ... ok
+test engine::capture::tests::active_connection_publishes_a_character_without_equipped_items ... ok
+test engine::capture::tests::capture_export_rejects_invalid_saved_pause_state ... ok
+test engine::capture::tests::capture_export_defaults_and_preserves_empty_curtain_snapshot ... ok
+test engine::capture::tests::capture_export_migrates_only_legacy_authoritative_pause_intervals ... ok
+test engine::capture::tests::capture_export_rejects_unknown_versions ... ok
+test engine::capture::tests::capture_link_type_maps_supported_npcap_and_pcapng_values ... ok
+test engine::capture::tests::combat_clock_block_round_trips_authoritative_pause_state ... ok
+test engine::capture::tests::compact_gameplay_effect_records_classify_the_preceding_damage ... ok
+test cli::stdio::tests::battle_rpc_drains_queued_events_before_query_and_reset ... ok
+test cli::stdio::tests::battle_summary_tick_coalesces_latest_and_final_is_reliable ... ok
+test cli::stdio::tests::battle_read_methods_are_registered_before_data_exists ... ok
+test engine::capture::tests::creation_flower_does_not_trigger_fuwen_follow_up ... ok
+test engine::capture::tests::creation_flower_keeps_record_owner_across_different_reaction_partners ... ok
+test engine::capture::tests::creation_flower_passive_keeps_reaction_settlement_owner ... ok
+test engine::capture::tests::core_snapshot_replaces_and_clears_only_the_character_core ... ok
+test engine::capture::tests::damage_record_owner_overrides_unrelated_same_shift_packet_id ... ok
+test engine::capture::tests::current_capture_hit_schema_replays_every_supported_field ... ok
+test engine::capture::tests::capture_json_import_validates_size_and_structure_before_use ... ok
+test engine::capture::tests::damage_record_owner_separates_mixed_oneiroi_and_nanally_hits ... ok
+test engine::capture::tests::damage_record_owner_requires_matching_anchors_and_outgoing_hit ... ok
+test engine::capture::tests::damage_record_without_own_effect_does_not_reuse_previous_record_effect ... ok
+test engine::capture::tests::diagnose_capture_enemy_instance_resolution ... ignored, set NTE_TEST_CAPTURE to a local pcapng path for target-instance diagnostics
+test engine::capture::tests::diagnose_capture_time_stop_events ... ignored, set NTE_TEST_CAPTURE to a local pcapng path for capture diagnostics
+test engine::capture::tests::diagnose_empty_curtain_inventory ... ignored, set NTE_TEST_CAPTURE to a local pcapng path for capture diagnostics
+test engine::capture::tests::diagnose_monster_spawn_identity_evidence ... ignored, set NTE_TEST_CAPTURE_JSON to a local nte_capture_*.json export for spawn-identity diagnostics
+test engine::capture::tests::diagnose_target_handle_stability_across_encounters ... ignored, set NTE_TEST_CAPTURE_JSON to a local nte_capture_*.json export for target-handle diagnostics
+test engine::capture::tests::disabled_raw_capture_has_no_path_or_writer ... ok
+test engine::capture::tests::capture_export_writer_persists_a_replayable_document ... ok
+test engine::capture::tests::exact_gameplay_effect_owner_overrides_regular_packet_id ... ok
+test cli::stdio::tests::battle_read_models_share_a_stable_record_lifecycle_and_revision ... ok
+test engine::capture::tests::final_tower_ids_merge_with_declared_ids ... ok
+test engine::capture::tests::completed_remove_stream_wins_over_raw_tail_item_update ... ok
+test cli::stdio::tests::battle_reset_keeps_latest_inventory_and_clears_pending_summary ... ok
+test engine::capture::tests::follow_up_pending_hits_are_bounded_and_recent_hits_still_resolve ... ok
+test engine::capture::tests::follow_up_requires_visible_fuwen_trigger ... ok
+test engine::capture::tests::frame_dedup_skips_unknown_timestamps_and_resets_on_regression ... ok
+test engine::capture::tests::frame_dedup_suppresses_only_identical_frames_within_window ... ok
+test engine::capture::tests::full_debug_emits_observation_when_debug_payload_is_dropped ... ok
+test engine::capture::tests::compact_login_placement_is_applied_when_item_details_arrive_later ... ok
+test engine::capture::tests::fuwen_start_pair_uses_shifted_signature_and_fixed_role_positions ... ok
+test engine::capture::tests::fuwen_stays_active_across_long_gaps_until_battle_reset ... ok
+test engine::capture::tests::game_pause_tracker_unions_nested_authoritative_pause_types ... ok
+test engine::capture::tests::gameplay_effect_enrichment_keeps_localized_name_out_of_hit ... ok
+test engine::capture::tests::gameplay_effect_fragment_context_reaches_contiguous_tail ... ok
+test engine::capture::tests::gameplay_effect_fragment_context_rejects_ambiguous_start ... ok
+test engine::capture::tests::frame_dedup_bounds_same_timestamp_cache ... ok
+test engine::capture::tests::gameplay_effect_fragment_context_rejects_sequence_gap ... ok
+test engine::capture::tests::hidden_fuwen_candidate_does_not_record_without_visible_trigger ... ok
+test engine::capture::tests::inventory_reassembly_accepts_a_late_retransmitted_start_fragment ... ok
+test cli::stdio::tests::unknown_and_duplicate_mod_responses_do_not_consume_pending_requests_or_stop_runtime ... ok
+test engine::capture::tests::inventory_reassembly_keeps_logically_newer_fragments_that_arrive_before_their_start ... ok
+test engine::capture::tests::different_account_connection_switch_replaces_existing_inventory ... ok
+test engine::capture::tests::inventory_reassembly_accepts_transport_packet_id_wrap ... ok
+test engine::capture::tests::inventory_reassembly_does_not_join_a_new_start_to_stale_future_fragments ... ok
+test engine::capture::tests::inventory_reassembly_finishes_a_stream_before_the_next_start_in_the_same_packet ... ok
+test engine::capture::tests::inventory_reassembly_retries_after_a_fragment_is_retransmitted_in_a_newer_packet ... ok
+test engine::capture::tests::inventory_reassembly_uses_channel_index_across_prefix_flag_changes ... ok
+test engine::capture::tests::local_ip_hint_controls_import_direction_inference ... ok
+test engine::capture::tests::mod_script_block_round_trips_bounded_event_data ... ok
+test engine::capture::tests::inventory_reassembly_replaces_stale_fragments_after_sequence_wrap ... ok
+test engine::capture::tests::monster_damage_effect_overrides_outgoing_direction_to_incoming ... ok
+test engine::capture::tests::monster_hitout_effect_keeps_outgoing_direction_for_target_snapshot ... ok
+test engine::capture::tests::monster_hitout_effect_overrides_outgoing_direction_to_incoming ... ok
+test engine::capture::tests::monster_steal_damage_effect_does_not_force_incoming_direction ... ok
+test engine::capture::tests::multi_effect_packet_matches_each_damage_record_by_position ... ok
+test engine::capture::tests::non_damage_buff_effect_does_not_become_hit_type ... ok
+test engine::capture::tests::non_ling_zhou_hit_does_not_end_active_fuwen ... ok
+test engine::capture::tests::non_prefixed_player_skill_damage_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::numeric_ability_owner_keeps_regular_packet_id ... ok
+test engine::capture::tests::numeric_ability_owner_overrides_final_tower_packet_id ... ok
+test engine::capture::tests::numeric_ability_owner_overrides_session_id ... ok
+test engine::capture::tests::orphan_dark_star_reaction_is_rehomed_to_dark_or_soul_owner ... ok
+test engine::capture::tests::first_item_add_notification_activates_the_initial_inventory_connection ... ok
+test engine::capture::tests::parses_export_ids_from_array_and_legacy_string ... ok
+test engine::capture::tests::full_grid_placement_is_applied_when_item_details_arrive_later ... ok
+test engine::capture::tests::owner_only_connection_does_not_replace_active_inventory ... ok
+test engine::capture::tests::player_damage_effect_is_outgoing_even_when_record_looks_incoming ... ok
+test engine::capture::tests::owner_only_active_connection_enriches_existing_inventory ... ok
+test engine::capture::tests::raw_ipv4_packet_uses_the_same_udp_decoder_as_ethernet ... ok
+test engine::capture::tests::module_snapshot_assigns_present_items_and_clears_removed_items ... ok
+test engine::capture::tests::raw_owner_record_is_cached_without_a_completed_inventory_stream ... ok
+test engine::capture::tests::raw_capture_writer_records_the_actual_raw_linktype ... ok
+test engine::capture::tests::capture_frame_queue_applies_backpressure_without_dropping_frames ... ok
+test engine::capture::tests::reaction_buff_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::reaction_damage_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::raw_remove_notification_deletes_matching_items_without_a_completed_stream ... ok
+test engine::capture::tests::raw_item_records_apply_complete_updates_and_insert_new_items ... ok
+test engine::capture::tests::reliable_only_event_sink_preserves_debug_events_for_cli_consumers ... ok
+test engine::capture::tests::repeated_watch_packets_match_each_trailing_compact_effect ... ok
+test engine::capture::tests::replay_character_mappings_validate_ids_and_deduplicate ... ok
+test engine::capture::tests::replay_ignores_a_live_local_ip_hint_from_another_machine ... ok
+test engine::capture::tests::same_account_connection_switch_preserves_existing_inventory ... ok
+test engine::capture::tests::send_export_packet_accepts_empty_payload_hex ... ok
+test engine::capture::tests::send_export_packet_adds_final_tower_ids_from_payload ... ok
+test engine::capture::tests::send_export_packet_preserves_exported_decoded_text ... ok
+test engine::capture::tests::send_export_packet_rejects_invalid_hex_payload ... ok
+test engine::capture::tests::server_damage_calibration_corrects_single_pending_hit ... ok
+test engine::capture::tests::server_damage_calibration_does_not_split_multiple_pending_hits ... ok
+test engine::capture::tests::split_event_sink_bounds_debug_without_dropping_reliable_events ... ok
+test engine::capture::tests::stop_with_drain_releases_a_blocked_reliable_sender ... ok
+test engine::capture::tests::stress_large_pcapng_import_with_bounded_event_lanes ... ignored, set NTE_TEST_CAPTURE to a local large or concatenated pcapng path
+test engine::capture::tests::boss_hp_sync_damage_does_not_guess_between_multiple_recent_hits ... ok
+test engine::capture::tests::confirmed_packet_hit_suppresses_ambiguous_session_candidate ... ok
+test engine::capture::tests::summary_payload_explicit_stage_matches_full_debug ... ok
+test engine::capture::tests::summary_payload_length_prefixed_stage_matches_full_debug ... ok
+test engine::capture::tests::summary_payload_scanner_handles_stream_boundaries_and_no_match ... ok
+test engine::capture::tests::boss_hp_sync_damage_merges_into_recent_confirmed_hit ... ok
+test engine::capture::tests::summary_payload_markers_match_full_debug_for_every_bit_shift ... ok
+test engine::capture::tests::summary_payload_text_retains_only_runtime_markers ... ok
+test engine::capture::tests::tenacity_damage_effect_overrides_incoming_direction ... ok
+test engine::capture::tests::packet_decoder_loads_attack_resources_outside_project_cwd ... ok
+test engine::capture::tests::duplicate_capture_frame_is_not_decoded_twice ... ok
+test engine::capture::tests::vehicle_hitout_is_outgoing_physical_damage ... ok
+test engine::capture::tests::versioned_capture_export_snapshot_round_trips_replay_fields ... ok
+test engine::capture::tests::visible_fuwen_trigger_activates_follow_up_window ... ok
+test engine::capture::tests::visible_fuwen_trigger_without_start_packet_records_follow_up ... ok
+test engine::capture::tests::zero_residual_does_not_end_active_fuwen_after_recorded_residual ... ok
+test engine::model::tests::abyss_active_half_duration_subtracts_time_stop ... ok
+test engine::capture::tests::unscoped_raw_item_does_not_activate_an_inventory_connection ... ok
+test engine::capture::tests::confirmed_packet_hit_suppresses_recent_duplicate_records ... ok
+test engine::model::tests::abyss_duration_uses_authoritative_pause_state_edges ... ok
+test engine::model::tests::abyss_half_clips_pause_to_the_damage_window ... ok
+test engine::model::tests::abyss_half_json_rejects_invalid_value ... ok
+test engine::model::tests::abyss_half_json_is_stable_and_accepts_legacy_labels ... ok
+test engine::model::tests::abyss_half_labels_are_utf8_chinese ... ok
+test engine::model::tests::abyss_half_timeline_can_include_run_markers ... ok
+test engine::model::tests::authoritative_stage_assigns_half_without_starting_damage_clock ... ok
+test engine::model::tests::battle_reset_preserves_inventory_and_its_generation ... ok
+test engine::model::tests::character_duration_subtracts_time_stop ... ok
+test engine::model::tests::combat_duration_only_subtracts_the_part_after_the_first_hit ... ok
+test engine::model::tests::capture_quality_summary_is_redacted ... ok
+test engine::model::tests::combat_duration_uses_observed_game_pause_boundaries ... ok
+test engine::model::tests::combat_duration_subtracts_authoritative_pause_interval ... ok
+test engine::model::tests::combat_segments_empty_series_has_no_segments ... ok
+test engine::model::tests::combat_segments_keep_short_gaps_together ... ok
+test engine::model::tests::combat_segments_split_on_long_idle_gap ... ok
+test engine::model::tests::combat_session_summary_contains_redacted_aggregates ... ok
+test engine::model::tests::combat_session_summary_keeps_abyss_halves_separate ... ok
+test engine::model::tests::damage_attribution_closes_team_total_and_projects_character_policy ... ok
+test engine::capture::tests::pcapng_import_accepts_foreign_tun_linktype_ipv4 ... ok
+test engine::model::tests::damage_correction_replaces_source_hit_totals ... ok
+test engine::model::tests::damage_correction_requires_hp_identity_even_when_gameplay_effect_index_matches ... ok
+test engine::model::tests::dps_time_basis_json_is_stable_and_accepts_legacy_labels ... ok
+test engine::model::tests::delayed_hit_after_half_switch_keeps_original_character_half ... ok
+test engine::model::tests::dps_time_basis_json_rejects_invalid_value ... ok
+test engine::model::tests::early_support_pause_without_damage_does_not_deduct_precombat_time ... ok
+test engine::capture::tests::ambiguous_session_candidate_expires_when_unconfirmed ... ok
+test engine::capture::tests::reconcile_boss_hp_updates_still_calibrates_when_no_follow_up_applies ... ok
+test engine::model::tests::first_normal_stage_does_not_backfill_previous_global_hits ... ok
+test engine::model::tests::follow_up_damage_merges_into_source_hit_totals ... ok
+test engine::model::tests::hit_character_source_json_values_roundtrip ... ok
+test engine::model::tests::hit_character_source_json_rejects_invalid_value ... ok
+test engine::model::tests::hit_direction_json_rejects_invalid_value ... ok
+test engine::model::tests::hit_direction_json_values_roundtrip ... ok
+test engine::model::tests::late_backfilled_half_accepts_delayed_pause_before_stage_timestamp ... ok
+test engine::model::tests::late_detected_second_half_backfills_existing_global_hits ... ok
+test engine::model::tests::mod_script_bridge_classifies_preprocess_and_postprocess_names ... ok
+test engine::model::tests::observed_game_pause_end_advances_the_combat_clock_without_inflating_active_time ... ok
+test engine::model::tests::next_floor_start_clears_previous_floor_after_long_transition ... ok
+test engine::model::tests::only_full_debug_packets_are_droppable_under_backpressure ... ok
+test engine::model::tests::pause_start_and_end_edges_control_the_clock_immediately ... ok
+test engine::capture::tests::reconcile_boss_hp_updates_lets_follow_up_claim_before_calibration ... ok
+test engine::model::tests::reaction_damage_types_only_include_confirmed_follow_up_damage ... ok
+test engine::model::tests::restart_from_second_to_first_clears_both_halves ... ok
+test engine::model::tests::restart_releases_cleared_character_half ... ok
+test engine::model::tests::session_summary_records_reaction_damage_policy_without_changing_team_total ... ok
+test engine::model::tests::settlement_stage_never_becomes_the_duration ... ok
+test engine::model::tests::skill_breakdown_merges_same_ability_across_effects ... ok
+test engine::model::tests::session_summary_time_basis_controls_duration_and_dps ... ok
+test engine::model::tests::skill_breakdown_preserves_shared_effect_identity ... ok
+test engine::model::tests::skill_breakdown_splits_exact_semantic_components_under_one_ability ... ok
+test engine::model::tests::skill_breakdown_splits_follow_up_and_unknown_attribution ... ok
+test engine::model::tests::team_dps_export_is_compact_and_roundtrips ... ok
+test engine::model::tests::team_dps_export_version_defaults_when_missing ... ok
+test engine::model::tests::timeline_buckets_damage_by_second_and_role ... ok
+test engine::model::tests::timeline_clamps_abyss_markers_to_chart_edges ... ok
+test engine::model::tests::timeline_handles_empty_hits ... ok
+test engine::model::tests::timeline_marks_time_stop_without_inflating_bucket_dps ... ok
+test engine::model::tests::unbalance_damage_counts_toward_team_total_but_not_personal_ranking ... ok
+test engine::model::tests::unknown_character_hits_follow_the_active_half ... ok
+test engine::model::tests::unknown_hits_remain_output_and_directions_are_summarized_separately ... ok
+test engine::parser::character_tests::ability_tip_names_alias_jin_ultra_melee_to_its_named_parent ... ok
+test engine::parser::character_tests::ability_tip_names_pick_field_by_active_language ... ok
+test engine::capture::tests::unrelated_flows_do_not_evict_the_active_inventory_connection ... ok
+test engine::parser::character_tests::character_attribute_is_optional_and_loaded_when_present ... ok
+test engine::parser::character_tests::classifies_qte_as_utf8_huanhe ... ok
+test engine::parser::character_tests::classifies_qte_reaction_from_participant_attributes ... ok
+test engine::parser::character_tests::classifies_tenacity_and_parry_damage ... ok
+test engine::parser::character_tests::enemy_config_hash_is_stable_and_case_insensitive ... ok
+test engine::model::tests::recent_corrections_and_follow_ups_update_only_deltas_and_the_recorded_half ... ok
+test engine::model::tests::debug_packet_ring_is_bounded_by_items_and_retained_bytes ... ok
+test engine::capture::tests::pcapng_import_restores_mod_script_enemy_identity ... ok
+test engine::parser::character_tests::exact_gameplay_effect_semantics_override_parent_and_component ... ok
+test engine::parser::character_tests::final_tower_character_evidence_ignores_longer_numeric_suffix ... ok
+test engine::parser::character_tests::final_tower_character_evidence_requires_character_for_net_anchor ... ok
+test engine::parser::character_tests::finds_final_tower_character_evidence ... ok
+test engine::parser::character_tests::finds_shifted_final_tower_character_evidence ... ok
+test engine::parser::character_tests::ignores_incomplete_equipment_slot_tags ... ok
+test engine::parser::character_tests::ignores_compact_gameplay_effect_without_structural_tail ... ok
+test engine::parser::character_tests::gameplay_effect_semantics_reject_unknown_effect ... ok
+test engine::parser::character_tests::ignores_invalid_gameplay_effect_sentinel ... ok
+test engine::parser::character_tests::bundled_enemy_catalog_resolves_official_names_and_portrait ... ok
+test engine::parser::character_tests::incoming_state_flags_alone_do_not_mark_damage_as_incoming ... ok
+test engine::parser::character_tests::incoming_damage_keeps_legacy_target_fields_empty ... ok
+test engine::capture::tests::summary_payload_text_is_bounded_to_canonical_markers ... ok
+test engine::parser::character_tests::keeps_large_damage_sanity_boundary ... ok
+test engine::parser::character_tests::incoming_state_flags_do_not_mark_enemy_hp_as_incoming ... ok
+test engine::parser::character_tests::load_characters_falls_back_to_bundled_resource ... ok
+test engine::capture::tests::nonlethal_boss_hp_sync_does_not_merge_into_recent_confirmed_hit ... ok
+test engine::parser::character_tests::loads_compact_skill_damage_index ... ok
+test engine::parser::character_tests::loads_compact_gameplay_effect_names ... ok
+test engine::parser::character_tests::low_target_max_hp_without_matching_character_alignment_stays_outgoing ... ok
+test engine::parser::character_tests::normalizes_damage_names_for_grouping ... ok
+test engine::parser::character_tests::outgoing_state_flags_do_not_mark_damage_as_incoming_without_target_anchor ... ok
+test engine::parser::character_tests::parses_bool_enum_damage_state_encoding ... ok
+test engine::parser::character_tests::parses_bool_enum_sdk_compact_gameplay_effect_record ... ok
+test engine::parser::character_tests::parses_compact_gameplay_effect_at_payload_boundary ... ok
+test engine::parser::character_tests::parses_boss_hp_in_tens_of_billions ... ok
+test engine::parser::character_tests::parses_bool_enum_damage_state_encoding_at_every_bit_shift ... ok
+test engine::parser::character_tests::bundled_ability_tips_include_lingke_release_skills ... ok
+test engine::parser::character_tests::parses_damage_in_tens_of_billions ... ok
+test engine::parser::character_tests::parses_gameplay_effect_unique_index_after_active_ge_anchor ... ok
+test engine::parser::character_tests::parses_shifted_compact_gameplay_effect_record ... ok
+test engine::parser::character_tests::parses_target_handle_from_boss_hp_update ... ok
+test engine::parser::character_tests::parses_shifted_equipment_slot_info ... ok
+test engine::parser::character_tests::rejects_bool_enum_damage_record_with_invalid_bool_state ... ok
+test engine::parser::character_tests::resolves_character_from_matching_bit_alignment ... ok
+test engine::abyss_data::tests::loads_current_abyss_summary_resource_shape ... ok
+test engine::parser::empty_curtain_tests::character_owner_parser_rejects_truncated_prefix ... ok
+test engine::parser::empty_curtain_tests::character_owner_parser_ignores_non_character_item_shapes ... ok
+test engine::parser::character_tests::same_shift_character_anchor_before_damage_record_stays_outgoing ... ok
+test engine::parser::character_tests::rejects_partial_or_inconsistent_character_module_grid ... ok
+test engine::parser::character_tests::core_snapshot_requires_one_character_and_at_most_one_known_core ... ok
+test engine::parser::empty_curtain_tests::compact_login_module_parser_rejects_uid_item_mismatch ... ok
+test engine::parser::empty_curtain_tests::compact_login_module_parser_rejects_incomplete_geometry ... ok
+test engine::capture::tests::reconcile_boss_hp_updates_keeps_calibration_baseline_fresh_after_a_claimed_update ... ok
+test engine::parser::empty_curtain_tests::parses_character_instance_to_template_mapping ... ok
+test engine::parser::character_tests::parses_equipped_and_empty_character_core_snapshots ... ok
+test engine::parser::empty_curtain_tests::loads_equipment_catalog_and_interpolates_main_stats ... ok
+test engine::parser::empty_curtain_tests::equipment_catalog_rejects_card_overflow_and_non_numeric_suit_ids ... ok
+test engine::capture::tests::gameplay_effect_name_confirms_session_hit_in_multi_character_packet ... ok
+test engine::parser::empty_curtain_tests::ignores_equipped_tail_and_keeps_distinct_instance_ids ... ok
+test engine::protocol::tests::accepts_connection_specific_sequenced_prefix_bits ... ok
+test engine::protocol::tests::exact_tail_channel_discovers_earlier_bunches_in_the_same_packet ... ok
+test engine::protocol::tests::finds_non_byte_aligned_inventory_bunch_after_packet_info ... ok
+test engine::parser::empty_curtain_tests::parses_compact_login_module_placement ... ok
+test engine::protocol::tests::known_channel_finds_embedded_bunch_without_an_exact_tail ... ok
+test engine::protocol::tests::parses_channel_sequence_and_partial_flags_separately ... ok
+test engine::parser::empty_curtain_tests::module_positions_apply_character_template_and_shape_in_business_layer ... ok
+test engine::protocol::tests::rejects_invalid_inventory_flags_and_descriptor ... ok
+test engine::protocol::tests::rejects_inventory_bunch_length_past_payload_boundary ... ok
+test engine::parser::empty_curtain_tests::parses_complete_prefix_of_a_truncated_add_notification ... ok
+test engine::protocol::tests::preserves_explicit_handshake_marker ... ok
+test engine::protocol::tests::rejects_declared_length_that_crosses_the_packet_boundary ... ok
+test engine::protocol::tests::rejects_nonzero_transport_mode ... ok
+test engine::rich_text::tests::empty_wrapper_reduces_to_empty ... ok
+test engine::rich_text::tests::keeps_non_tag_angle_brackets ... ok
+test engine::rich_text::tests::passes_through_clean_names_untouched ... ok
+test engine::rich_text::tests::strips_inline_and_attributed_tags_within_text ... ok
+test engine::rich_text::tests::strips_title_wrapper_from_names ... ok
+test engine::rich_text::tests::tokenizes_open_text_and_close ... ok
+test platform::mods_plugin::tests::combat_clock_response_rejects_legacy_timer_payloads ... ok
+test platform::mods_plugin::tests::combat_clock_mod_disabled_status_is_reported_explicitly ... ok
+test platform::mods_plugin::tests::combat_clock_response_rejects_non_authoritative_pause_types ... ok
+test platform::mods_plugin::tests::combat_clock_response_uses_the_v7_transition_layout ... ok
+test platform::mods_plugin::tests::client_bounds_requests_behind_the_active_pipe_call ... ok
+test platform::mods_plugin::tests::mod_event_response_rejects_nonzero_unused_values ... ok
+test platform::mods_plugin::tests::mod_event_response_uses_the_v7_union_layout ... ok
+test platform::mods_plugin::tests::mod_log_response_decodes_runtime_output ... ok
+test platform::mods_plugin::tests::disconnected_worker_is_reported_without_panicking ... ok
+test platform::mods_plugin::tests::mod_log_response_rejects_invalid_levels_and_trailing_bytes ... ok
+test platform::mods_plugin::tests::module_request_uses_the_stable_little_endian_wire_layout ... ok
+test engine::parser::empty_curtain_tests::parses_locked_discarded_and_equipped_item_from_character_net_id ... ok
+test platform::mods_plugin::tests::one_key_request_encodes_native_rpc_placements ... ok
+test platform::mods_plugin::tests::response_accepts_the_mod_disabled_status ... ok
+test platform::mods_plugin::tests::response_rejects_a_mismatched_request_id ... ok
+test engine::parser::empty_curtain_tests::rejects_truncated_or_wrong_array_shape ... ok
+test platform::mods_plugin::tests::v7_operations_encode_state_and_move_fields ... ok
+test platform::mods_plugin::tests::response_accepts_the_new_boolean_validation_status ... ok
+test platform::mods_plugin::tests::native_host_exposes_generic_name_hash_reading_without_enemy_services ... ok
+test platform::passthrough_hotkey::tests::global_hotkey_keys_map_to_the_windows_function_key_range ... ok
+test platform::mods_plugin::tests::rust_wire_constants_match_the_native_ipc_header ... ok
+test platform::passthrough_hotkey::tests::passthrough_config_maps_to_the_original_windows_keys ... ok
+test platform::window_style::tests::disabling_acrylic_clears_the_accent_policy ... ok
+test platform::window_style::tests::opacity_alpha_uses_the_established_desktop_bounds ... ok
+test platform::window_style::tests::persistent_acrylic_uses_nonzero_alpha_without_adding_a_native_tint ... ok
+test storage::ability_names::tests::localized_names_share_the_same_structural_ability_identity ... ok
+test platform::passthrough_hotkey::tests::passthrough_toggle_requires_the_configured_unmodified_key ... ok
+test storage::ability_names::tests::load_map_preserves_missing_resource_error ... ok
+test storage::ability_names::tests::repairs_stale_zankou_names_without_overwriting_future_translations ... ok
+test storage::ability_names::tests::semantic_component_joins_parent_ability_name ... ok
+test storage::capture_logs::tests::format_bytes_scales_units ... ok
+test storage::capture_logs::tests::missing_directory_scans_as_empty ... ok
+test storage::ability_names::tests::semantic_component_can_hide_parent_ability_name ... ok
+test storage::ability_names::tests::resolves_through_effect_then_ability_name ... ok
+test storage::config::tests::auto_round_idle_seconds_are_bounded ... ok
+test storage::config::tests::capture_filter_is_backward_compatible_trimmed_and_bounded ... ok
+test storage::config::tests::hud_editor_configuration_is_sanitized ... ok
+test storage::config::tests::hit_detail_columns_are_persisted_and_sanitized ... ok
+test storage::config::tests::hud_presets_are_distinct ... ok
+test storage::config::tests::global_hotkeys_round_trip_with_stable_codes ... ok
+test storage::config::tests::interaction_preferences_use_stable_serialized_codes ... ok
+test storage::config::tests::legacy_always_on_top_migrates_without_coupling_desktop_windows ... ok
+test storage::config::tests::legacy_config_defaults_the_tauri_hud_position ... ok
+test storage::capture_logs::tests::clear_removes_only_capture_logs_and_reports_freed ... ok
+test storage::config::tests::mod_studio_preferences_default_and_round_trip ... ok
+test storage::config::tests::onboarding_only_opens_for_a_new_install ... ok
+test storage::config::tests::older_config_defaults_interaction_preferences ... ok
+test storage::config::tests::sanitizes_blank_manual_capture_device ... ok
+test storage::config::tests::sanitizes_duplicate_and_passthrough_conflicting_hotkeys ... ok
+test storage::config::tests::sanitizes_invalid_opacity ... ok
+test storage::config::tests::sanitizes_invalid_window_size ... ok
+test storage::config::tests::sanitizes_mod_studio_game_directories ... ok
+test storage::config::tests::sanitizes_invalid_timeline_bucket_seconds ... ok
+test storage::capture_logs::tests::scan_counts_only_capture_logs ... ok
+test storage::config::tests::sanitizes_window_positions_without_discarding_secondary_monitor_coordinates ... ok
+test storage::config::tests::sanitizes_windows_reserved_global_hotkeys ... ok
+test storage::config::tests::sanitizes_unmodified_global_hotkeys ... ok
+test storage::config::tests::tauri_hud_position_roundtrips_physical_secondary_monitor_coordinates ... ok
+test storage::config::tests::load_without_any_config_creates_default_at_new_path ... ok
+test storage::history::tests::compare_records_keeps_distinct_stable_skills_with_shared_display_name ... ok
+test storage::history::tests::abyss_record_labels_and_prediction_teams_use_each_half ... ok
+test storage::history::tests::compare_records_keeps_semantic_effects_under_one_ability_distinct ... ok
+test storage::history::tests::compare_records_aggregates_duplicate_skill_rows ... ok
+test storage::history::tests::compare_records_matches_aggregated_and_single_effect_ability_rows ... ok
+test engine::parser::character_tests::loads_bundled_gameplay_effect_semantics ... ok
+test storage::history::tests::compare_records_matches_legacy_display_name_to_stable_skill_identity ... ok
+test storage::history::tests::compare_records_matches_one_ability_across_effect_variants ... ok
+test storage::history::tests::compare_records_preserves_gameplay_effect_identity_without_damage_name ... ok
+test storage::config::tests::load_prefers_existing_config_over_legacy ... ok
+test storage::config::tests::load_adopts_legacy_config_when_new_path_missing ... ok
+test storage::history::tests::detailed_global_record_roundtrips_without_creating_an_abyss_run ... ok
+test storage::history::tests::detailed_record_clips_a_pause_that_starts_before_the_first_hit ... ok
+test engine::parser::empty_curtain_tests::parses_remove_notification_items_without_treating_other_notifications_as_removals ... ok
+test storage::history::tests::loads_legacy_version_record ... ok
+test storage::history::tests::history_index_reads_round_metadata_without_materializing_details ... ok
+test storage::history::tests::history_import_rejects_future_versions_and_oversized_files ... ok
+test storage::history::tests::deleted_record_can_be_restored_exactly ... ok
+test storage::history::tests::detailed_abyss_record_roundtrips_and_rebuilds_both_halves ... ok
+test storage::i18n::tests::config_serializes_to_stable_codes ... ok
+test storage::i18n::tests::english_returns_key_unchanged ... ok
+test storage::history::tests::deleting_record_does_not_match_an_id_suffix ... ok
+test storage::history::tests::detailed_record_uses_earliest_hit_time_for_display_file_and_sorting ... ok
+test storage::history::tests::json_text_import_uses_the_same_validation_and_fresh_id_rules ... ok
+test storage::i18n::tests::language_codes_and_names_are_stable ... ok
+test storage::i18n::tests::system_default_matches_locale_by_primary_subtag ... ok
+test engine::parser::character_tests::loads_attack_types_from_skill_damage_assets ... ok
+test storage::history::tests::skips_corrupt_json ... ok
+test storage::history::tests::skips_history_with_unsafe_record_id ... ok
+test storage::i18n::tests::tf_leaves_extra_placeholders_literal ... ok
+test storage::resource::tests::bundled_resource_contains_character_data ... ok
+test storage::resource::tests::cli_bundle_contains_only_core_data_resources ... ok
+test storage::resource::tests::missing_res_path_falls_back_to_bundled_resource ... ok
+test storage::history::tests::prunes_oldest_records ... ok
+test storage::resource::tests::disk_file_wins_over_matching_bundled_resource_key ... ok
+test storage::i18n::tests::translating_for_search_does_not_change_the_active_language ... ok
+test engine::parser::character_tests::parses_complete_character_module_grid_snapshot ... ok
+test storage::history::tests::imported_record_preserves_details_with_a_fresh_local_id ... ok
+test storage::i18n::tests::japanese_locale_covers_every_simplified_chinese_key ... ok
+test engine::parser::character_tests::loads_gameplay_effect_names_from_assets ... ok
+test engine::model::tests::party_combat_totals_follow_trimmed_hits ... ok
+test engine::capture::tests::summary_payload_scanner_never_panics_on_untrusted_payloads ... ok
+test engine::model::tests::combat_totals_follow_trimmed_hits ... ok
+test engine::capture::tests::summary_only_emits_observation_without_debug_payload ... ok
+
+test result: ok. 497 passed; 0 failed; 7 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running unittests src\bin\nte-core.rs (target\debug\deps\nte_core-3f008721249ca6d7.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\gameplay_effect_semantics.rs (target\debug\deps\gameplay_effect_semantics-f660df37b5932151.exe)
+
+running 2 tests
+test semantic_components_do_not_repeat_the_parent_ability_name ... ok
+test zankou_dot_semantics_follow_current_cn_assets ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests nte_dps_tool
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== EXIT: 0 ===
+
+=== COMMAND: cargo clippy --locked --all-targets --no-default-features --features cli -- -D warnings ===
+    Checking nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.26s
+=== EXIT: 0 ===
+
+=== COMMAND: cargo fmt --check --manifest-path src-tauri/Cargo.toml ===
+=== EXIT: 0 ===
+
+=== COMMAND: cargo check --locked --manifest-path src-tauri/Cargo.toml ===
+    Checking nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Checking nte-dps-tool-tauri v0.4.1 (D:\NTE_DPS_TOOL\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.87s
+=== EXIT: 0 ===
+
+=== COMMAND: cargo test --locked --manifest-path src-tauri/Cargo.toml ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running unittests src\lib.rs (src-tauri\target\debug\deps\nte_dps_tool_tauri_lib-412a00a0ab2a8738.exe)
+
+running 154 tests
+test channels::main_dps::tests::capture_lifecycle_notices_cover_replay_and_live_completion ... ok
+test channels::history::tests::history_subscription_ids_are_bounded_ascii ... ok
+test channels::diagnostics::tests::diagnostics_subscription_ids_are_bounded_ascii ... ok
+test channels::empty_curtain::tests::subscription_ids_are_bounded_ascii ... ok
+test channels::main_dps_detail::tests::detail_subscription_ids_are_bounded_ascii ... ok
+test channels::mod_studio::tests::loaded_runtime_without_a_game_hook_is_distinct_from_waiting ... ok
+test channels::technical::tests::subscription_id_accepts_stable_ascii_identifier ... ok
+test channels::mod_studio::tests::subscription_id_is_bounded_and_uses_only_stable_ascii ... ok
+test channels::settings::tests::settings_stream_advances_when_the_runtime_install_blocker_changes ... ok
+test channels::settings::tests::settings_stream_emits_initial_and_changed_revisions_only ... ok
+test channels::settings::tests::settings_subscription_ids_are_bounded_ascii ... ok
+test channels::mod_studio::tests::reconnect_and_sequence_reset_start_new_generations ... ok
+test channels::skills::tests::skills_subscription_ids_are_bounded_ascii ... ok
+test channels::mod_studio::tests::stream_announces_connection_and_deduplicates_native_history ... ok
+test channels::technical::tests::subscription_id_rejects_empty_oversized_and_reserved_characters ... ok
+test channels::main_dps::tests::main_dps_subscription_ids_are_bounded_ascii ... ok
+test channels::packets::tests::packet_subscription_ids_are_bounded_ascii ... ok
+test channels::timeline::tests::timeline_subscription_ids_are_bounded_ascii ... ok
+test commands::abyss_values::tests::parses_stable_half_identifiers ... ok
+test commands::console_control::tests::console_control_actions_are_bounded_to_stable_ids ... ok
+test commands::character_data::tests::validation_errors_map_to_stable_contract_codes ... ok
+test commands::desktop_window::tests::always_on_top_targets_only_stable_desktop_window_labels ... ok
+test commands::diagnostics::tests::core_error_mapping_keeps_private_details_out_of_the_contract ... ok
+test commands::encrypted_ini::tests::core_errors_map_to_stable_contract_codes ... ok
+test commands::empty_curtain::tests::uid_input_preserves_both_network_fields ... ok
+test commands::empty_curtain::tests::loadout_errors_keep_stable_codes ... ok
+test commands::encrypted_ini::tests::runtime_generation_error_does_not_expose_internal_state ... ok
+test commands::history::tests::native_import_keeps_size_and_parse_errors_stable ... ok
+test commands::main_dps::tests::detail_filter_ids_are_bounded_to_the_shared_contract ... ok
+test commands::settings::tests::general_settings_inputs_are_strictly_bounded ... ok
+test commands::mod_studio::tests::manual_game_directory_requires_a_known_region_and_nonempty_path ... ok
+test commands::settings::tests::hud_option_input_accepts_only_stable_contract_values ... ok
+test commands::settings::tests::hud_preset_input_accepts_only_stable_contract_values ... ok
+test commands::settings::tests::update_component_input_accepts_only_stable_contract_values ... ok
+test commands::skills::tests::scope_values_are_explicit ... ok
+test commands::tests::hud_width_input_uses_existing_config_bounds ... ok
+test commands::timeline::tests::contract_values_are_explicit_and_bounded ... ok
+test commands::tests::hud_module_input_accepts_only_stable_contract_values ... ok
+test contract::character_data::tests::save_request_rejects_unknown_fields ... ok
+test contract::character_data::tests::snapshot_uses_camel_case_and_string_generation ... ok
+test contract::empty_curtain::tests::item_uids_remain_bounded_numbers ... ok
+test contract::empty_curtain::tests::secondary_stat_unlock_state_uses_explicit_contract_fields ... ok
+test contract::encrypted_ini::tests::generation_and_key_parsers_are_strict ... ok
+test contract::encrypted_ini::tests::snapshot_uses_string_generation_and_camel_case_fields ... ok
+test contract::history::tests::native_file_action_projection_does_not_expose_local_paths ... ok
+test contract::history::tests::record_projection_uses_stable_codes_and_string_counters ... ok
+test contract::main_dps::tests::character_name_tracks_the_snapshot_language ... ok
+test contract::main_dps::tests::replay_is_read_only_for_manual_new_round_actions ... ok
+test contract::encrypted_ini::tests::save_request_rejects_unknown_fields ... ok
+test contract::diagnostics::tests::report_contract_keeps_stable_message_keys_and_omits_private_detail_fields ... ok
+test contract::main_dps::tests::game_detection_distinguishes_normal_negative_from_probe_failure ... ok
+test contract::main_dps::tests::round_snapshots_follow_previous_next_chronology ... ok
+test contract::main_dps::tests::round_snapshots_cap_history_and_always_append_one_live_row ... ok
+test contract::main_dps_detail::tests::detail_filters_have_stable_frontend_ids ... ok
+test contract::main_dps::tests::round_snapshots_skip_history_without_details_before_reversing ... ok
+test contract::main_dps_detail::tests::candidate_direction_summary_keeps_unknown_share ... ok
+test contract::main_dps_detail::tests::filter_counts_use_the_authoritative_metric_counts ... ok
+test contract::main_dps::tests::round_snapshots_keep_the_selected_overflow_record_visible ... ok
+test contract::mod_studio::tests::core_error_categories_map_to_stable_command_errors ... ok
+test contract::mod_studio::tests::delete_errors_hide_file_system_details ... ok
+test contract::mod_studio::tests::deployment_snapshot_uses_stable_regions_and_omits_game_paths ... ok
+test contract::mod_studio::tests::document_snapshot_keeps_source_on_the_detail_command_only ... ok
+test contract::mod_studio::tests::enabled_set_errors_use_stable_messages_without_storage_detail ... ok
+test contract::mod_studio::tests::game_directory_snapshot_uses_a_separate_bounded_contract ... ok
+test contract::mod_studio::tests::loader_runtime_snapshot_freezes_the_release_layout_without_absolute_paths ... ok
+test contract::mod_studio::tests::loading_method_preference_uses_a_versioned_stable_contract ... ok
+test contract::mod_studio::tests::runtime_connection_distinguishes_loader_presence_from_hook_connectivity ... ok
+test contract::mod_studio::tests::market_snapshot_exposes_no_download_url_hash_or_client_identifier ... ok
+test contract::mod_studio::tests::runtime_entries_keep_stream_and_native_u64_values_as_decimal_strings ... ok
+test contract::mod_studio::tests::runtime_events_keep_values_as_decimal_strings ... ok
+test contract::mod_studio::tests::source_line_diagnostic_keeps_the_original_line_number ... ok
+test contract::mod_studio::tests::workspace_snapshot_uses_a_relative_label_and_bounded_numbers ... ok
+test contract::resources::tests::resources_contract_separates_dynamic_file_error_arguments ... ok
+test contract::packets::tests::packet_contract_uses_decimal_strings_and_omits_raw_payload_fields ... ok
+test contract::resources::tests::resources_contract_serializes_stable_codes_and_camel_case_counts ... ok
+test contract::settings::tests::settings_snapshot_projects_all_stable_settings_sections ... ok
+test contract::settings::tests::team_data_export_result_distinguishes_save_from_cancel ... ok
+test contract::mod_studio::tests::sdk_schema_projects_the_single_rust_symbol_source ... ok
+test contract::settings::tests::team_data_file_import_result_keeps_local_paths_out_of_the_contract ... ok
+test contract::settings::tests::update_notes_keep_legacy_unsectioned_text_and_use_english_fallback ... ok
+test contract::settings::tests::update_notes_select_only_the_active_language_section ... ok
+test contract::skills::tests::category_localization_uses_stable_keys_and_preserves_unknown_labels ... ok
+test contract::tests::capture_status_maps_private_runtime_failures_to_stable_display_contract ... ok
+test contract::skills::tests::snapshot_serializes_unsafe_counters_as_decimal_strings ... ok
+test contract::timeline::tests::snapshot_serializes_js_unsafe_fields_as_decimal_strings ... ok
+test contract::tests::technical_snapshot_uses_camel_case_and_string_sequence ... ok
+test contract::tests::technical_event_has_stable_discriminant ... ok
+test state::tests::desktop_capture_uses_summary_only_by_default ... ok
+test contract::main_dps_detail::tests::skill_summaries_keep_stable_filter_ids_but_never_display_technical_names ... ok
+test channels::technical::tests::unchanged_revision_skips_idle_snapshot_work ... ok
+test state::tests::capture_file_refresh_advances_settings_generation ... ok
+test contract::main_dps_detail::tests::empty_state_serializes_the_complete_detail_contract ... ok
+test state::tests::console_geometry_is_saved_without_publishing_combat_or_settings_state ... ok
+test contract::main_dps_detail::tests::skill_summary_output_is_server_bounded_with_explicit_truncation ... ok
+test state::tests::abyss_team_mutations_keep_each_prediction_line_explicit ... ok
+test state::tests::combat_detail_columns_and_positions_persist_in_the_existing_ui_config ... ok
+test contract::diagnostics::tests::action_result_serializes_snapshot_under_stable_field ... ok
+test state::tests::always_on_top_is_saved_before_projection_changes ... ok
+test state::tests::destroying_owner_window_stops_only_its_streams_and_clears_registry_entries ... ok
+test state::tests::deleted_history_undo_token_is_opaque_and_single_use ... ok
+test state::tests::cut_round_freezes_replay_source_and_queues_failed_persistence ... ok
+test state::tests::live_abyss_selection_follows_only_real_half_transitions ... ok
+test state::tests::desktop_window_always_on_top_preferences_are_independent ... ok
+test contract::main_dps::tests::empty_snapshot_is_bounded_and_uses_string_generations ... ok
+test state::tests::detailed_hud_initial_height_reserves_optional_modules ... ok
+test contract::main_dps_detail::tests::fifty_thousand_hits_keep_totals_correct_and_return_only_the_requested_page ... ok
+test state::tests::editor_snapshot_uses_rust_preview_and_passthrough_snapshot_is_empty ... ok
+test state::tests::empty_curtain_data_snapshot_is_detached_from_live_state ... ok
+test state::tests::encrypted_ini_session_orders_save_and_clear_generations ... ok
+test state::tests::failed_always_on_top_save_keeps_the_previous_projection ... ok
+test state::tests::failed_hud_window_position_save_keeps_the_previous_position ... ok
+test state::tests::failed_module_visibility_save_keeps_the_previous_projection ... ok
+test state::tests::hud_width_is_sanitized_and_saved_before_projection_changes ... ok
+test state::tests::selected_round_drives_timeline_and_skills_projection_input ... ok
+test state::tests::finishing_replaced_stream_keeps_current_registration ... ok
+test state::tests::hidden_core_modules_keep_the_full_editor_height ... ok
+test state::tests::initial_window_and_hud_projection_follow_loaded_config ... ok
+test state::tests::hud_window_position_is_saved_without_changing_projection_revision ... ok
+test state::tests::module_order_is_saved_before_the_projection_changes ... ok
+test state::tests::module_visibility_is_saved_before_the_projection_changes ... ok
+test windows::console::tests::normal_secondary_monitor_positions_remain_restorable ... ok
+test windows::hud::tests::a_partly_visible_title_strip_remains_reachable ... ok
+test windows::hud::tests::height_constraint_updates_expand_the_max_before_the_minimum ... ok
+test windows::hud::tests::hud_constraints_keep_width_resizable_and_lock_content_height ... ok
+test windows::hud::tests::missing_monitor_position_falls_back_to_the_primary_work_area_center ... ok
+test windows::hud::tests::native_resize_persistence_coalesces_to_the_latest_width ... ok
+test windows::hud::tests::native_resize_persistence_flushes_after_the_quiet_period ... ok
+test windows::hud::tests::physical_resize_width_is_rounded_in_logical_pixels_and_clamped ... ok
+test windows::hud::tests::saved_secondary_monitor_position_is_kept_when_the_title_strip_is_reachable ... ok
+test windows::island::tests::centers_island_against_the_monitor_not_an_app_window ... ok
+test windows::island::tests::clamps_large_offsets_inside_screen_edges ... ok
+test windows::island::tests::keeps_secondary_monitor_origin_and_dpi_scale ... ok
+test windows::island::tests::preserves_logical_island_size_across_monitor_dpi ... ok
+test windows::main_dps::tests::minimized_windows_sentinel_is_not_restored ... ok
+test windows::main_dps::tests::native_reveal_fallback_only_targets_finished_main_page ... ok
+test windows::main_dps::tests::opacity_is_reasserted_for_native_window_changes ... ok
+test windows::main_dps::tests::previous_tauri_default_height_moves_to_the_compact_baseline ... ok
+test windows::main_dps::tests::transient_minimized_or_maximized_geometry_is_not_persisted ... ok
+test windows::tests::avatar_catalog_is_available_only_to_avatar_consuming_windows ... ok
+test state::tests::onboarding_progress_and_completion_persist ... ok
+test state::tests::passthrough_hotkey_readiness_is_runtime_only ... ok
+test state::tests::pause_freezes_the_presented_state_until_resume ... ok
+test state::tests::replacing_subscription_stops_previous_stream ... ok
+test state::tests::replay_import_reservation_blocks_live_capture_until_released ... ok
+test state::tests::reset_undo_restores_session_and_rejects_a_wrong_token_without_consuming_it ... ok
+test state::tests::settings_revision_tracks_async_update_status_changes ... ok
+test state::tests::settings_hud_option_is_persisted_and_projected ... ok
+test state::tests::settings_hud_preset_preserves_width_and_canonical_order ... ok
+test state::tests::stale_island_dismiss_keeps_the_newer_notice ... ok
+test state::tests::stream_revision_changes_only_when_presentation_state_changes ... ok
+test state::tests::update_runtime_projects_available_download_and_prepared_states ... ok
+test state::tests::mod_studio_loading_method_survives_state_reload ... ok
+test state::tests::non_hud_settings_are_saved_and_projected_from_rust_state ... ok
+test state::tests::mod_studio_game_directory_survives_state_reload ... ok
+
+test result: ok. 154 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+     Running unittests src\main.rs (src-tauri\target\debug\deps\nte_dps_tool-2193b6272f28d9f2.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests nte_dps_tool_tauri_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+=== EXIT: 0 ===
+
+=== COMMAND: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings ===
+    Checking nte-dps-tool-tauri v0.4.1 (D:\NTE_DPS_TOOL\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.58s
+=== EXIT: 0 ===
+
+=== COMMAND: CI=true pnpm --dir frontend lint ===
+Active code page: 65001
+$ oxlint
+=== EXIT: 0 ===
+
+=== COMMAND: CI=true pnpm --dir frontend typecheck ===
+Active code page: 65001
+$ tsc -b
+=== EXIT: 0 ===
+
+=== COMMAND: CI=true pnpm --dir frontend test ===
+Active code page: 65001
+$ vitest run
+
+ RUN  v4.1.10 D:/NTE_DPS_TOOL/frontend
+
+
+ Test Files  76 passed (76)
+      Tests  265 passed (265)
+   Start at  17:28:29
+   Duration  1.39s (transform 2.63s, setup 0ms, import 4.29s, tests 439ms, environment 8ms)
+
+=== EXIT: 0 ===
+
+=== COMMAND: CI=true pnpm --dir frontend build ===
+Active code page: 65001
+$ tsc -b && vite build
+vite v8.1.5 building client environment for production...
+[2K
+transforming...✓ 3404 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/notification.html                                               0.74 kB │ gzip:   0.37 kB
+dist/hud.html                                                        1.10 kB │ gzip:   0.45 kB
+dist/abyss-values.html                                               1.16 kB │ gzip:   0.46 kB
+dist/combat-details.html                                             1.20 kB │ gzip:   0.48 kB
+dist/main-dps.html                                                   1.32 kB │ gzip:   0.49 kB
+dist/console.html                                                    1.41 kB │ gzip:   0.50 kB
+dist/assets/Guangxiang_X_7-h2Ifdt-c.png                              4.11 kB
+dist/assets/Guangxiang_G_7-D1Fe3Xqr.png                              4.12 kB
+dist/assets/fanying02_02-BHsu6pkx.png                                4.12 kB
+dist/assets/Hunxiang_H_7-Cn9XsLX3.png                                4.23 kB
+dist/assets/Guangxiang_G_4-_C0n2pEY.png                              4.23 kB
+dist/assets/Guangxiang_X_4-rVFMBkI8.png                              4.30 kB
+dist/assets/fanying05_01-C7BLDC83.png                                4.31 kB
+dist/assets/Hunxiang_H_4-BMdWloe4.png                                4.51 kB
+dist/assets/Hunxiang_H_3-KTR9reob.png                                4.73 kB
+dist/assets/fanying04_01-B1GODycQ.png                                4.74 kB
+dist/assets/fanying08_01-D-5-66sy.png                                4.75 kB
+dist/assets/Guangxiang_X_3-Dc4bJXRU.png                              4.78 kB
+dist/assets/Guangxiang_G_3-CCWWlxA6.png                              4.78 kB
+dist/assets/fanying08_01-eEXSfAKf.png                                4.83 kB
+dist/assets/fanying06_01-CVMO5ojy.png                                4.86 kB
+dist/assets/fanying04_01-BZURB51Q.png                                4.90 kB
+dist/assets/fanying02_01-BkzzH2q7.png                                4.91 kB
+dist/assets/Hunxiang_X_7-DUDKryOZ.png                                4.92 kB
+dist/assets/Guangxiang_X_5-gyYTmdz-.png                              4.94 kB
+dist/assets/Guangxiang_G_5-DgtrZ7Rh.png                              4.96 kB
+dist/assets/Guangxiang_G_2-2e0vsS52.png                              5.01 kB
+dist/assets/fanying07_01-B6fI_Qj6.png                                5.01 kB
+dist/assets/Guangxiang_X_2-ByVCcvJc.png                              5.03 kB
+dist/assets/crit_ling-BfHbfpmw.png                                   5.04 kB
+dist/assets/Guangxiang_G_0-C1PskBoD.png                              5.07 kB
+dist/assets/Guangxiang_X_0-BVNLVhVV.png                              5.08 kB
+dist/assets/crit_an-CLMdoBjP.png                                     5.11 kB
+dist/assets/crit_zhou-BgWA2PLD.png                                   5.11 kB
+dist/assets/crit_xin_ling-20740TM9.png                               5.12 kB
+dist/assets/crit_hun-Dnwi3Mja.png                                    5.13 kB
+dist/assets/crit_zhou_an-BBNfV2oj.png                                5.13 kB
+dist/assets/Hunxiang_H_5-Ca93hOwo.png                                5.13 kB
+dist/assets/crit_xiang-BE9m-Vbe.png                                  5.15 kB
+dist/assets/fanying07_02-DZuwZBUa.png                                5.17 kB
+dist/assets/Hunxiang_H_0-cOUafjK5.png                                5.20 kB
+dist/assets/Hunxiang_X_4-DgSNTIQC.png                                5.21 kB
+dist/assets/crit_guang-DRrs-QJ1.png                                  5.27 kB
+dist/assets/Hunxiang_H_2-bDqZyY2q.png                                5.30 kB
+dist/assets/Hunxiang_X_3-pT12fwR3.png                                5.34 kB
+dist/assets/Guangxiang_X_6-C7E_bLGz.png                              5.43 kB
+dist/assets/Guangxiang_G_6-pfCXux2p.png                              5.45 kB
+dist/assets/fanying08_02-BdgR0czb.png                                5.51 kB
+dist/assets/Guangxiang_G_9-Cb45Km-D.png                              5.56 kB
+dist/assets/Guangxiang_X_9-RkFObK9x.png                              5.64 kB
+dist/assets/Guangxiang_G_8-hYjd49aF.png                              5.64 kB
+dist/assets/Guangxiang_X_8-BKiKHrNF.png                              5.67 kB
+dist/assets/Hunxiang_X_5-DVhihArn.png                                5.73 kB
+dist/assets/Hunxiang_X_0-BNrDuRUm.png                                5.73 kB
+dist/assets/fanying05_01-CMZ_zagK.png                                5.82 kB
+dist/assets/Hunxiang_H_6-N6D96wFq.png                                5.85 kB
+dist/assets/Hunxiang_H_8-C_20_fyo.png                                5.86 kB
+dist/assets/Hunxiang_H_9-BMKjtcBe.png                                5.93 kB
+dist/assets/Hunxiang_X_2-Bny2m4y5.png                                6.07 kB
+dist/assets/fanying01_02-BsBPalhZ.png                                6.16 kB
+dist/assets/fanying02_01-rYt3c9Ua.png                                6.28 kB
+dist/assets/Hunxiang_X_6-NvxTDAxK.png                                6.38 kB
+dist/assets/Hunxiang_X_8-U0SMhc6X.png                                6.45 kB
+dist/assets/Hunxiang_X_9-63ytszoe.png                                6.58 kB
+dist/assets/fanying04_02-DOk8tdZG.png                                6.78 kB
+dist/assets/fanying01_01-DE8-eg5N.png                                6.98 kB
+dist/assets/fanying01_01-BqNbtTPM.png                                7.02 kB
+dist/assets/fanying07_01-BIOCgnPp.png                                7.05 kB
+dist/assets/UI_avatarbg_Icon_01-CaAzqnka.png                         7.32 kB
+dist/assets/geist-cyrillic-ext-wght-normal-DjL33-gN.woff2            7.42 kB
+dist/assets/fanying05_02-OJz6pb7C.png                                7.56 kB
+dist/assets/UI_avatarbg_Icon_05-DoDCSKfO.png                         7.86 kB
+dist/assets/geist-vietnamese-wght-normal-6IgcOCM7.woff2              8.00 kB
+dist/assets/fanying06_01-Cu3aujDE.png                                8.01 kB
+dist/assets/fanying06_02-ByRJX8qo.png                                8.20 kB
+dist/assets/UI_avatarbg_Icon_02-WpeTeavy.png                         8.72 kB
+dist/assets/fanying02_02-BYg7e_2_.png                                8.89 kB
+dist/assets/fanying03_02-CUKV5hUv.png                                9.01 kB
+dist/assets/Equip01-BEKC42b_.png                                     9.31 kB
+dist/assets/Equip13--HcTtEBk.png                                     9.31 kB
+dist/assets/Equip15-BtQyuWGp.png                                     9.31 kB
+dist/assets/lingzhou_icon_1-ZBazFGZq.png                             9.46 kB
+dist/assets/Equip27-abzXDnJK.png                                     9.51 kB
+dist/assets/Equip28-DaKqUy0H.png                                     9.59 kB
+dist/assets/Equip29-BB_EL5Bs.png                                     9.60 kB
+dist/assets/Equip14-BMce-t8c.png                                     9.60 kB
+dist/assets/Equip42-CIKPfek9.png                                     9.67 kB
+dist/assets/lingzhou_icon_2-AQJ7W6Wl.png                             9.73 kB
+dist/assets/Equip41-B3ElnRbp.png                                     9.79 kB
+dist/assets/fanying03_01-D01lIAk6.png                               10.31 kB
+dist/assets/UI_avatarbg_Icon_03-aAEV7HSm.png                        10.40 kB
+dist/assets/Equip39-3M_iuJO3.png                                    10.61 kB
+dist/assets/Equip11-553ik1Gx.png                                    11.03 kB
+dist/assets/UI_avatarbg_Icon_06-X87ivfz_.png                        11.07 kB
+dist/assets/Equip25-CNyTj8SE.png                                    11.11 kB
+dist/assets/Equip12-BzJnooAU.png                                    11.73 kB
+dist/assets/Equip02-WnOLMrtp.png                                    11.93 kB
+dist/assets/Equip30-CGA0Q7ye.png                                    12.03 kB
+dist/assets/Equip40-BbpbXwqu.png                                    12.05 kB
+dist/assets/Equip26-C73mmwdO.png                                    12.12 kB
+dist/assets/Equip16-Dx01OKvw.png                                    12.20 kB
+dist/assets/Equip04-CVzKVVgk.png                                    12.68 kB
+dist/assets/Equip06-B4B6tTTB.png                                    12.83 kB
+dist/assets/Equip03-CXVH04_R.png                                    12.85 kB
+dist/assets/UI_avatarbg_Icon_04-zoRI0o1x.png                        12.92 kB
+dist/assets/Equip18-B9quBhaT.png                                    13.01 kB
+dist/assets/Equip32-CQVGnvS9.png                                    13.11 kB
+dist/assets/Equip05-CFNoHZkn.png                                    13.39 kB
+dist/assets/Equip31-D-DYpbNH.png                                    13.40 kB
+dist/assets/Equip17-BZnx4UPY.png                                    13.47 kB
+dist/assets/Equip20-C8nYqdCe.png                                    13.59 kB
+dist/assets/Equip34-CicmTuHm.png                                    13.88 kB
+dist/assets/Equip33-IY528uP_.png                                    13.94 kB
+dist/assets/Equip19-B5v22Yx5.png                                    14.10 kB
+dist/assets/Equip08-DS_GO8-h.png                                    14.10 kB
+dist/assets/Equip09-BVQJj20L.png                                    14.32 kB
+dist/assets/Equip36-C01CjSA5.png                                    14.38 kB
+dist/assets/Equip23-CuLzNVC9.png                                    14.52 kB
+dist/assets/Equip22-CoV1jHfu.png                                    14.54 kB
+dist/assets/Equip37-CGOJpPTZ.png                                    14.77 kB
+dist/assets/geist-cyrillic-wght-normal-BEAKL7Jp.woff2               15.08 kB
+dist/assets/mon_37--yGTHtpZ.png                                     15.76 kB
+dist/assets/geist-latin-ext-wght-normal-DC-KSUi6.woff2              16.51 kB
+dist/assets/mon_13_2-BJYoNHMG.png                                   18.93 kB
+dist/assets/mon_21-DzmR4Di1.png                                     21.74 kB
+dist/assets/mon_08-DyuggJSA.png                                     25.43 kB
+dist/assets/mon_33-Bqlve_o6.png                                     28.87 kB
+dist/assets/geist-latin-wght-normal-BgDaEnEv.woff2                  29.40 kB
+dist/assets/mon_18_2-CV6M0vwI.png                                   30.23 kB
+dist/assets/mon_27-CEs6bNNN.png                                     30.93 kB
+dist/assets/mon_25-F0hfNiRd.png                                     30.96 kB
+dist/assets/mon_17-DIxoi1L7.png                                     31.26 kB
+dist/assets/mon_25_blue-vLGyP-sV.png                                31.27 kB
+dist/assets/UI_YH_kongmuicon__83-DkIBENxL.png                       32.06 kB
+dist/assets/Boss_16-4twGo1Ny.png                                    32.36 kB
+dist/assets/mon_24-B0_RChW5.png                                     32.76 kB
+dist/assets/mon_02_Ghost_BP-C5P2hqbC.png                            32.90 kB
+dist/assets/Boss_07-B0rvcD9y.png                                    32.91 kB
+dist/assets/Boss_08-CX74-hZl.png                                    33.39 kB
+dist/assets/mon_23-Cr25RrdA.png                                     33.47 kB
+dist/assets/mon_20-BFFmSDkF.png                                     33.52 kB
+dist/assets/UI_YH_kongmuicon__73-Zcij9gg4.png                       33.76 kB
+dist/assets/Boss_15-U0KEUWUt.png                                    34.06 kB
+dist/assets/mon_35-CgobGfUw.png                                     34.16 kB
+dist/assets/UI_YH_kongmuicon__63-BC7WJjzE.png                       34.39 kB
+dist/assets/UI_YH_kongmuicon__29-BnmENzj8.png                       34.44 kB
+dist/assets/mon_05-0AKvkIMV.png                                     34.45 kB
+dist/assets/UI_YH_kongmuicon__55-DXe9ZCWQ.png                       34.51 kB
+dist/assets/UI_YH_kongmuicon__21-DcbSVNN3.png                       34.56 kB
+dist/assets/UI_YH_kongmuicon__57-DcsL808N.png                       34.58 kB
+dist/assets/UI_YH_kongmuicon__51-CzGJ8Lo0.png                       34.63 kB
+dist/assets/mon_35_red-ClNbx7TV.png                                 34.63 kB
+dist/assets/UI_YH_kongmuicon__59-BK5MHE5N.png                       34.83 kB
+dist/assets/mon_04-D29kAR7B.png                                     34.89 kB
+dist/assets/UI_YH_kongmuicon__81-DfYKYTN5.png                       35.00 kB
+dist/assets/UI_YH_kongmuicon__25-DX9nO22Z.png                       35.03 kB
+dist/assets/boss_33-ChWJ5gjG.png                                    35.08 kB
+dist/assets/UI_YH_kongmuicon__23-CuZ2tW3j.png                       35.09 kB
+dist/assets/UI_YH_kongmuicon__27-BMjIQiHf.png                       35.18 kB
+dist/assets/UI_YH_kongmuicon__11-DaJNEjdi.png                       35.19 kB
+dist/assets/mon_03-Cut_0FfA.png                                     35.35 kB
+dist/assets/UI_YH_kongmuicon__49-DtUSAaKo.png                       35.42 kB
+dist/assets/UI_YH_kongmuicon__41-BqQvjnop.png                       35.59 kB
+dist/assets/UI_YH_kongmuicon__01-D0AdyYvD.png                       35.74 kB
+dist/assets/UI_YH_kongmuicon__35-D_VEnn2X.png                       35.88 kB
+dist/assets/UI_YH_kongmuicon__37-dYxxG12l.png                       36.11 kB
+dist/assets/UI_YH_kongmuicon__31-CpqCKZFb.png                       36.16 kB
+dist/assets/UI_YH_kongmuicon__47-CsUUaGxd.png                       36.17 kB
+dist/assets/UI_YH_kongmuicon__09-By5hvBel.png                       36.18 kB
+dist/assets/UI_YH_kongmuicon__05-BtR9O5AK.png                       36.29 kB
+dist/assets/UI_YH_kongmuicon__13-DbMtH3tv.png                       36.35 kB
+dist/assets/UI_YH_kongmuicon__03-BmFVUKkr.png                       36.37 kB
+dist/assets/UI_YH_kongmuicon__15-CjIX4GsN.png                       36.40 kB
+dist/assets/UI_YH_kongmuicon__19-DxnvreQY.png                       36.47 kB
+dist/assets/UI_YH_kongmuicon__53-C1dHsxXi.png                       36.51 kB
+dist/assets/UI_YH_kongmuicon__17-D2YW88b9.png                       36.56 kB
+dist/assets/UI_YH_kongmuicon__43-DF998mti.png                       36.63 kB
+dist/assets/UI_YH_kongmuicon__61-DxE0DOW4.png                       36.66 kB
+dist/assets/UI_YH_kongmuicon__07-G5gwSsyC.png                       36.67 kB
+dist/assets/UI_YH_kongmuicon__71-7ep1ales.png                       36.68 kB
+dist/assets/UI_YH_kongmuicon__39-BvxrlPYx.png                       36.73 kB
+dist/assets/YH_UI_guaiwuzhuizhong_touxiangkuang_07-qPHRfTYP.png     36.79 kB
+dist/assets/mon_51-52R1u6Ar.png                                     37.21 kB
+dist/assets/mon_38_2-DiqnOwrb.png                                   37.29 kB
+dist/assets/UI_YH_kongmuicon__33-r-bKiOaH.png                       38.21 kB
+dist/assets/mon_02-DgQmcohx.png                                     38.21 kB
+dist/assets/UI_YH_kongmuicon__45-CpTPR9F9.png                       38.22 kB
+dist/assets/mon_38-Ck8PEowr.png                                     38.31 kB
+dist/assets/Boss_13-BTrixvE6.png                                    38.95 kB
+dist/assets/Boss_09-Csz2odVC.png                                    39.26 kB
+dist/assets/mon_11-GKAFFCNU.png                                     39.32 kB
+dist/assets/mon_18-D9ecYz0u.png                                     40.11 kB
+dist/assets/mon_39_2-CsuVnAEA.png                                   40.40 kB
+dist/assets/Boss_10-CXff3M_i.png                                    40.50 kB
+dist/assets/mon_26-BAScSHzY.png                                     40.83 kB
+dist/assets/mon_19-CSTxaudn.png                                     40.91 kB
+dist/assets/Boss_18-3ou4Mjhn.png                                    41.63 kB
+dist/assets/mon_29-D_pgEr0y.png                                     42.50 kB
+dist/assets/mon_22-CVKTTnQp.png                                     42.54 kB
+dist/assets/mon_39-CrdXNgIQ.png                                     42.56 kB
+dist/assets/mon_12-CU-jL9Rj.png                                     42.66 kB
+dist/assets/mon_01-C-S9n7mx.png                                     42.88 kB
+dist/assets/mon_30-CD5to38p.png                                     43.07 kB
+dist/assets/boss_19-B3G8pncr.png                                    43.41 kB
+dist/assets/mon_48-BWDK_qwO.png                                     43.77 kB
+dist/assets/mon_030_BP_Rain-CgGPkWta.png                            46.73 kB
+dist/assets/Boss_26-Dk4ivvqZ.png                                    47.38 kB
+dist/assets/Boss_17-CjNa-VUP.png                                    47.68 kB
+dist/assets/mon_nanally-akL-jy_x.png                                47.71 kB
+dist/assets/Boss_05-CxuBZcV7.png                                    48.10 kB
+dist/assets/mon_15-hnQur-oz.png                                     48.33 kB
+dist/assets/mon_030_BP_Snow-dBefyXuq.png                            50.56 kB
+dist/assets/mon_16-DVKmPds5.png                                     51.45 kB
+dist/assets/mon_14-tv6TUVqI.png                                     56.78 kB
+dist/assets/player_046-DlHzoD3i.png                                 57.73 kB
+dist/assets/mon_41-Bgf1Z81-.png                                     59.78 kB
+dist/assets/player_015-aIYZzvwB.png                                 60.03 kB
+dist/assets/Boss_06-DPYyQCrH.png                                    60.93 kB
+dist/assets/player_003-D-13NI9M.png                                 63.90 kB
+dist/assets/player_012-D_e_Zjtz.png                                 70.70 kB
+dist/assets/player_008-B_aOT_tB.png                                 71.13 kB
+dist/assets/player_009-C9_yYObj.png                                 78.70 kB
+dist/assets/player_028-QdCiBk_0.png                                 78.84 kB
+dist/assets/player_005-BkSAqKpS.png                                 78.97 kB
+dist/assets/player_021-pDjODueg.png                                 79.26 kB
+dist/assets/player_010-BGwjAsiF.png                                 79.36 kB
+dist/assets/player_019-BJHHOshd.png                                 79.59 kB
+dist/assets/player_073-DEY0HzbR.png                                 81.55 kB
+dist/assets/player_020-CTvCMpXK.png                                 83.08 kB
+dist/assets/player_kaesi1-DtilaIlt.png                              83.61 kB
+dist/assets/player_004-Dd7MgPNi.png                                 84.03 kB
+dist/assets/player_haiyue-C2S09cjX.png                              84.81 kB
+dist/assets/player_027-DywUKWeo.png                                 86.30 kB
+dist/assets/player_zhenhong-D8i7mK8Y.png                            87.98 kB
+dist/assets/player_yiluoyi-B9-oPTl4.png                             88.22 kB
+dist/assets/player_canhong-CWAei5QJ.png                             93.08 kB
+dist/assets/player_lingke-DstLp7Vk.png                              93.39 kB
+dist/assets/player_104-Ds3AP3MX.png                                 97.02 kB
+dist/assets/player_013-lqs4TEB8.png                                105.92 kB
+dist/assets/codicon-Brq4_Ui5.ttf                                   140.95 kB
+dist/assets/editor.worker-Bbk1whK-.js                              300.45 kB
+dist/assets/window-bootstrap-CxOKE1G6.css                          123.67 kB │ gzip:  20.96 kB
+dist/assets/mod-source-editor-hvuj3vCU.css                         139.23 kB │ gzip:  20.63 kB
+dist/assets/check-DiTYjwom.js                                        0.12 kB │ gzip:   0.14 kB
+dist/assets/chevron-down-D0i6Or-u.js                                 0.12 kB │ gzip:   0.14 kB
+dist/assets/triangle-alert-C70JB_z3.js                               0.26 kB │ gzip:   0.21 kB
+dist/assets/sliders-horizontal-D41v128R.js                           0.42 kB │ gzip:   0.24 kB
+dist/assets/use-dismissible-layer-CqalIU_E.js                        0.74 kB │ gzip:   0.38 kB
+dist/assets/use-character-avatar-Bg5rlKP7.js                         0.77 kB │ gzip:   0.44 kB
+dist/assets/main-dps-model-BEyxp9IL.js                               1.10 kB │ gzip:   0.62 kB
+dist/assets/badge-5FL5zh8N.js                                        1.50 kB │ gzip:   0.71 kB
+dist/assets/skeleton-CKMGxrSK.js                                     1.67 kB │ gzip:   0.72 kB
+dist/assets/desktop-titlebar-DQw3QtL8.js                             2.54 kB │ gzip:   1.22 kB
+dist/assets/character-color-CZAKPibK.js                              2.75 kB │ gzip:   1.42 kB
+dist/assets/notification-gxzr-2Kv.js                                 4.56 kB │ gzip:   1.90 kB
+dist/assets/cpp-C7h46wYY.js                                          4.74 kB │ gzip:   2.02 kB
+dist/assets/abyss-values-model-BKoUG690.js                           6.23 kB │ gzip:   2.17 kB
+dist/assets/use-hud-module-pointer-reorder-Dasonk8-.js              11.32 kB │ gzip:   4.82 kB
+dist/assets/window-events-DJBcCjL2.js                               17.94 kB │ gzip:   5.50 kB
+dist/assets/abyss-values-5-Sm_LSW.js                                23.25 kB │ gzip:   7.03 kB
+dist/assets/hud-CNi_icLp.js                                         29.36 kB │ gzip:   8.94 kB
+dist/assets/main-dps-CmNHezch.js                                    33.49 kB │ gzip:   9.88 kB
+dist/assets/console-DCFPB0Du.js                                    344.51 kB │ gzip:  96.26 kB
+dist/assets/combat-details-CQktsmgn.js                             542.84 kB │ gzip: 368.03 kB
+dist/assets/window-bootstrap-BHOmy6Ld.js                           615.96 kB │ gzip: 198.88 kB
+dist/assets/mod-source-editor-DWNbZ78s.js                        3,353.30 kB │ gzip: 853.03 kB
+
+✓ built in 969ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+=== EXIT: 0 ===
+
+=== COMMAND: pwsh -NoProfile -File scripts/verify_architecture.ps1 ===
+Architecture policy passed: Tauri is the sole desktop UI and CLI remains UI-free.
+=== EXIT: 0 ===
+
+=== COMMAND: pwsh -NoProfile -File scripts/verify_runtime_safety.ps1 ===
+RUNTIME-SAFETY [WARNING] [RUNTIME-BOUNDARY-PANIC] src/engine/model.rs:1374 - New external-boundary expect; review that untrusted input cannot reach a panic.
+RUNTIME-SAFETY [WARNING] [RUNTIME-BOUNDARY-PANIC] src/engine/model.rs:1407 - New external-boundary expect; review that untrusted input cannot reach a panic.
+Runtime safety policy passed (standard mode): 2 warning(s), 0 informational diagnostic(s).
+=== EXIT: 0 ===
+
+=== COMMAND: pwsh -NoProfile -File native/nte-mods-plugin/tests/native_lifecycle_source_tests.ps1 ===
+native_lifecycle_source_tests: PASS
+=== EXIT: 0 ===
+
+=== COMMAND: pwsh -NoProfile -File native/nte-mod-loader/tests/manual_map_protocol_source_tests.ps1 ===
+manual_map_protocol_source_tests: PASS
+=== EXIT: 0 ===
+
+=== COMMAND: "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" native\nte-mods-plugin\nte-mods-plugin.vcxproj /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m /nologo /v:minimal ===
+
+  Assembling src\dwmapi_stubs.asm...
+  dwmapi_proxy.cpp
+  find_offsets_scanner.cpp
+  host_api.cpp
+  ipc_transport.cpp
+  memory_access.cpp
+  mod_runtime.cpp
+  obfuscated_string.cpp
+  offset_resolver.cpp
+  shadow_vtable_hook.cpp
+  nte_mods_plugin.cpp
+  plugin_runtime.cpp
+  sdk_cache.cpp
+  dumper7_sdk.cpp
+  Settings.cpp
+  OffsetFinder.cpp
+  Offsets.cpp
+  NameArray.cpp
+  ObjectArray.cpp
+  UnrealObjects.cpp
+  UnrealTypes.cpp
+  CppGenerator.cpp
+  Generator.cpp
+  HashStringTable.cpp
+  CollisionManager.cpp
+  DependencyManager.cpp
+  EnumManager.cpp
+  MemberManager.cpp
+  PackageManager.cpp
+  StructManager.cpp
+  EnumWrapper.cpp
+  MemberWrappers.cpp
+  StructWrapper.cpp
+  Arch_x86.cpp
+  PlatformWindows.cpp
+    正在创建库 D:\NTE_DPS_TOOL\native\nte-mods-plugin\x64\Release\nte_mods_plugin.lib 和对象 D:\NTE_DPS_TOOL\native\nte-mods-plugin\x64\Release\nte_mods_plugin.exp
+  正在生成代码
+  Previous IPDB not found, fall back to full compilation.
+  All 10127 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  nte-mods-plugin.vcxproj -> D:\NTE_DPS_TOOL\native\nte-mods-plugin\x64\Release\dwmapi.dll
+=== EXIT: 0 ===
+
+=== COMMAND: "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" native\nte-mod-loader\nte-mod-loader.sln /t:Clean,Build /p:Configuration=Release /p:Platform=x64 /m /nologo /v:minimal ===
+
+  LoaderApp.cpp
+  CreateProcessHook.cpp
+  DllMain.cpp
+  LoaderConfig.cpp
+  ManualMapLoader.cpp
+  Logger.cpp
+  ShimInjectionStrategy.cpp
+  injector.cpp
+  buffer.c
+  hook.c
+  ShimPayload.cpp
+  trampoline.c
+  hde64.c
+  正在生成代码
+  Previous IPDB not found, fall back to full compilation.
+  All 301 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  shim.vcxproj -> D:\NTE_DPS_TOOL\native\nte-mod-loader\bin\Release\nte_shim.dll
+  ProcessLocator.cpp
+  LauncherLocator.cpp
+  SecurityContext.cpp
+  injector.cpp
+  core.vcxproj -> D:\NTE_DPS_TOOL\native\nte-mod-loader\bin\Release\core.lib
+  main.cpp
+  tests.cpp
+  正在生成代码
+  Previous IPDB not found, fall back to full compilation.
+  正在生成代码
+  Previous IPDB not found, fall back to full compilation.
+  All 1515 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  All 1365 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  app.vcxproj -> D:\NTE_DPS_TOOL\native\nte-mod-loader\bin\Release\nte-mod-loader.exe
+  tests.vcxproj -> D:\NTE_DPS_TOOL\native\nte-mod-loader\bin\Release\nte-mod-loader-tests.exe
+=== EXIT: 0 ===
+
+=== COMMAND: native\nte-mod-loader\bin\Release\nte-mod-loader-tests.exe ===
+done: ReadFileBytes
+SKIP validate packaged payload DLL (not present)
+done: ValidateInternalDll
+done: manual-map plugin attach protocol
+done: exact process target matching
+done: injected launcher cleanup selection
+done: shim ready handshake
+done: resource 101 vs built shim
+ALL_TESTS_PASSED
+=== EXIT: 0 ===

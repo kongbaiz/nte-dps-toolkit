@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 
 namespace nte::hook
 {
@@ -8,6 +9,8 @@ struct ViewportOriginalBinding
 {
     const void* viewport;
     const void* original;
+    std::uint64_t generation;
+    std::uint32_t host_thread_id;
 };
 
 constexpr const void* FindViewportOriginal(
@@ -29,10 +32,15 @@ constexpr const void* FindViewportOriginal(
 constexpr bool CanReuseViewportBinding(
     const ViewportOriginalBinding& binding,
     const void* viewport,
-    const void* original) noexcept
+    const void* original,
+    std::uint64_t generation,
+    std::uint32_t host_thread_id) noexcept
 {
     return viewport != nullptr && original != nullptr &&
-           binding.viewport == viewport && binding.original == original;
+           generation != 0 && host_thread_id != 0 &&
+           binding.viewport == viewport && binding.original == original &&
+           binding.generation == generation &&
+           binding.host_thread_id == host_thread_id;
 }
 
 constexpr bool IsConsistentViewportChain(

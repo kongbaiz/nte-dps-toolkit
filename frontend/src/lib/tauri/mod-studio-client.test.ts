@@ -14,7 +14,7 @@ const encodeDelivery = (events: unknown[]): ArrayBuffer => {
 };
 
 const workspace = {
-  contractVersion: 10,
+  contractVersion: 11,
   generation: "0",
   workspaceLabel: "plugins/nte-mods",
   documents: [],
@@ -141,7 +141,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(catalog)
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 11,
         id: "combat-clock",
         enabled: true,
         source: "NTE_SCRIPT(5);",
@@ -164,7 +164,7 @@ describe("Mod Studio client", () => {
 
   it("routes creation, folders, manual game selection, and loader deployment through typed commands", async () => {
     const deployment = {
-      contractVersion: 10,
+      contractVersion: 11,
       installations: 1,
       installed: 0,
       current: 0,
@@ -174,7 +174,7 @@ describe("Mod Studio client", () => {
     const invoke = vi
       .fn()
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 11,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
@@ -265,7 +265,7 @@ describe("Mod Studio client", () => {
       .fn()
       .mockResolvedValueOnce(workspace)
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 11,
         schemaVersion: 2,
         symbols: [
           {
@@ -278,13 +278,13 @@ describe("Mod Studio client", () => {
         ],
       })
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 11,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);",
       })
       .mockResolvedValueOnce({
-        contractVersion: 10,
+        contractVersion: 11,
         id: "telemetry",
         enabled: false,
         source: "NTE_SCRIPT(5);\n// saved",
@@ -345,9 +345,10 @@ describe("Mod Studio client", () => {
     const runtimeEvent = {
       event: "connection",
       payload: {
-        contractVersion: 10,
+        contractVersion: 11,
         generation: "1",
         status: "connected",
+        bootstrapErrorCode: null,
       },
     };
     const invoke = vi.fn(async (command: string) => {

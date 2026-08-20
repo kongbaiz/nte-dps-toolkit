@@ -1,0 +1,99 @@
+diff --git "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\history-export-buffer-2026-08-20\\baseline\\history.rs" "b/D:\\NTE_DPS_TOOL\\src\\storage\\history.rs"
+index f31500a..3fe7a00 100644
+--- "a/D:\\NTE_DPS_TOOL\\.codex-fixtures\\history-export-buffer-2026-08-20\\baseline\\history.rs"
++++ "b/D:\\NTE_DPS_TOOL\\src\\storage\\history.rs"
+@@ -1,6 +1,6 @@
+ use std::fmt;
+ use std::fs;
+-use std::io::{Read, Write};
++use std::io::{BufReader, Read, Write};
+ use std::path::{Path, PathBuf};
+ use std::sync::atomic::{AtomicU64, Ordering};
+ 
+@@ -1633,10 +1633,14 @@ fn read_history_export_chunk(
+ ) -> Result<(HistoryHitChunkRead, u64), HistoryRecordExportError> {
+     let path = history_chunk_path(directory, record_id, reference.lane, reference.index);
+     let file = source_file_for_history_export(&path, reference.bytes)?;
+-    let mut reader = HistoryChecksumReader::new(file.take(reference.bytes.saturating_add(1)));
++    let checksum_reader = HistoryChecksumReader::new(file.take(reference.bytes.saturating_add(1)));
++    let mut reader = BufReader::with_capacity(64 * 1024, checksum_reader);
+     let chunk: HistoryHitChunkRead = serde_json::from_reader(&mut reader)
+         .map_err(|_| HistoryRecordExportError::CorruptRecord)?;
+-    if reader.bytes_read != reference.bytes || reader.checksum != reference.checksum {
++    let checksum_reader = reader.into_inner();
++    if checksum_reader.bytes_read != reference.bytes
++        || checksum_reader.checksum != reference.checksum
++    {
+         return Err(HistoryRecordExportError::CorruptRecord);
+     }
+     if chunk.version != HISTORY_DETAILS_CHUNK_VERSION
+@@ -4482,9 +4486,9 @@ mod tests {
+ 
+         export_history_record_by_id_from_dir_to_path(&directory, &saved.id, &export_path)
+             .expect("streamed History export");
+-        let exported: HistoryRecord = serde_json::from_reader(
++        let exported: HistoryRecord = serde_json::from_reader(BufReader::new(
+             fs::File::open(&export_path).expect("open streamed History export"),
+-        )
++        ))
+         .expect("parse streamed History export");
+         assert_eq!(
+             exported
+@@ -4503,6 +4507,21 @@ mod tests {
+             .expect("export helper source should remain discoverable");
+         assert!(export_body.contains("read_history_export_chunk"));
+         assert!(export_body.contains("source_file_for_history_export"));
++        let lane_export_body = export_body
++            .split_once("fn write_history_hit_lane_export(")
++            .and_then(|(_, tail)| tail.split_once("\nfn read_history_export_chunk"))
++            .map(|(body, _)| body)
++            .expect("lane export helper should remain discoverable");
++        assert!(lane_export_body.contains("for reference in manifest.chunks.iter()"));
++        assert!(lane_export_body.contains("let (chunk, bytes_read) = read_history_export_chunk"));
++        assert!(!lane_export_body.contains("collect::<Vec"));
++        let chunk_reader_body = export_body
++            .split_once("fn read_history_export_chunk(")
++            .and_then(|(_, tail)| tail.split_once("\nfn write_history_export_value"))
++            .map(|(body, _)| body)
++            .expect("chunk reader helper should remain discoverable");
++        assert!(chunk_reader_body.contains("BufReader::with_capacity"));
++        assert!(chunk_reader_body.contains("reader.into_inner()"));
+         assert!(
+             !export_body.contains("load_history_record_from_path")
+                 && !export_body.contains("load_history_details_chunks"),
+@@ -4542,9 +4561,9 @@ mod tests {
+         );
+         export_history_record_by_id_from_dir_to_path(&directory, &saved.id, &export_path)
+             .expect("stream every hit beyond external import budget");
+-        let exported: HistoryRecord = serde_json::from_reader(
++        let exported: HistoryRecord = serde_json::from_reader(BufReader::new(
+             fs::File::open(&export_path).expect("open large streamed History export"),
+-        )
++        ))
+         .expect("reload large self-contained History export");
+         assert_eq!(
+             exported
+@@ -4666,9 +4685,9 @@ mod tests {
+         restore_tombstoned_record_from_dir(&tombstone).expect("restore delete race fixture");
+         export_prepared_history_record_to_path(&prepared, &export_path)
+             .expect("the same descriptor remains valid after exact restore");
+-        let restored_export: HistoryRecord = serde_json::from_reader(
++        let restored_export: HistoryRecord = serde_json::from_reader(BufReader::new(
+             fs::File::open(&export_path).expect("open restored delete race export"),
+-        )
++        ))
+         .expect("parse restored delete race export");
+         assert_eq!(
+             restored_export
+@@ -4718,9 +4737,9 @@ mod tests {
+ 
+         match export {
+             Ok(()) => {
+-                let exported: HistoryRecord = serde_json::from_reader(
++                let exported: HistoryRecord = serde_json::from_reader(BufReader::new(
+                     fs::File::open(&export_path).expect("open concurrent complete export"),
+-                )
++                ))
+                 .expect("parse concurrent complete export");
+                 assert_eq!(
+                     exported

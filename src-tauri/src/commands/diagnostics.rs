@@ -6,7 +6,7 @@ use nte_dps_tool::{
         diagnostics::run_capture_diagnostics,
         live_capture::{CaptureReplayKind, LiveCapturePhase},
     },
-    engine::capture::write_capture_export,
+    engine::capture::write_capture_export_streaming,
     storage::i18n,
 };
 use tauri::{State, WebviewWindow};
@@ -93,10 +93,23 @@ pub(crate) async fn export_diagnostics_json(
             })? {
             DialogOutcome::Selected(path) => tauri::async_runtime::spawn_blocking(move || {
                 ensure_inactive(&state)?;
-                let document = state
-                    .diagnostics_capture_export()
+                let (plan, session_generation) = state
+                    .diagnostics_capture_export_plan()
                     .map_err(CommandError::from_core)?;
-                write_capture_export(&path, &document).map_err(|error| {
+                let hits_generation = plan.hits_generation();
+                let hit_count = plan.hit_count();
+                write_capture_export_streaming(&path, &plan, |start, limit| {
+                    state
+                        .diagnostics_capture_export_hit_page(
+                            session_generation,
+                            hits_generation,
+                            hit_count,
+                            start,
+                            limit,
+                        )
+                        .map_err(|error| error.detail)
+                })
+                .map_err(|error| {
                     log::error!("write diagnostics capture export failed: {error}");
                     CommandError::diagnostics(
                         "capture_export_failed",
@@ -270,6 +283,9 @@ fn replay_import_error(error: ReplayImportError) -> CommandError {
     match error {
         ReplayImportError::RuntimeUnavailable => CommandError::replay_import_runtime_unavailable(),
         ReplayImportError::Capture(error) => capture_error(error),
+        ReplayImportError::JsonImport(error) => {
+            CommandError::diagnostics(error.stable_code(), "Failed to start capture replay")
+        }
     }
 }
 
@@ -315,6 +331,17 @@ mod tests {
 
         assert_eq!(error.code, "replay_import_runtime_unavailable");
         assert_eq!(error.message_key, "Replay import did not complete");
+        assert!(error.message_arguments.is_empty());
+    }
+
+    #[test]
+    fn json_replay_boundary_error_keeps_its_stable_code() {
+        let error = replay_import_error(ReplayImportError::JsonImport(
+            nte_dps_tool::engine::capture::CaptureImportError::TooLarge { size: 9, limit: 8 },
+        ));
+
+        assert_eq!(error.code, "replay_file_too_large");
+        assert_eq!(error.message_key, "Failed to start capture replay");
         assert!(error.message_arguments.is_empty());
     }
 }

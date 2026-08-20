@@ -251,6 +251,12 @@ pub struct CaptureController {
 }
 
 impl CaptureController {
+    #[cfg(all(test, feature = "cli"))]
+    pub(crate) fn install_test_capture(&mut self, capture: CaptureHandle, profile: CaptureProfile) {
+        assert!(self.capture.replace(capture).is_none());
+        self.profile = Some(profile);
+    }
+
     pub fn is_running(&self) -> bool {
         self.capture.is_some()
     }
@@ -348,6 +354,13 @@ impl CaptureController {
     }
 
     pub fn stop(&mut self) -> Result<(), CoreError> {
+        self.stop_with_drain(|| {})
+    }
+
+    /// Requests producer cancellation, drains its bounded reliable event lane
+    /// through `drain` while the producer exits, then joins it. The callback
+    /// must be non-blocking and must not wait on presentation/output queues.
+    pub fn stop_with_drain(&mut self, mut drain: impl FnMut()) -> Result<(), CoreError> {
         let Some(mut capture) = self.capture.take() else {
             return Err(CoreError::new(
                 CoreErrorCode::CaptureNotRunning,
@@ -355,7 +368,7 @@ impl CaptureController {
             ));
         };
         let raw_capture = capture.raw_capture();
-        capture.stop();
+        capture.stop_with_drain(&mut drain);
         self.last_raw_capture = Some(raw_capture);
         self.profile = None;
         self.expose_raw_capture_path = false;
@@ -365,9 +378,14 @@ impl CaptureController {
     }
 
     pub fn stop_if_running(&mut self) {
+        self.stop_if_running_with_drain(|| {});
+    }
+
+    /// Idempotent shutdown counterpart to [`Self::stop_with_drain`].
+    pub fn stop_if_running_with_drain(&mut self, mut drain: impl FnMut()) {
         if let Some(mut capture) = self.capture.take() {
             let raw_capture = capture.raw_capture();
-            capture.stop();
+            capture.stop_with_drain(&mut drain);
             self.last_raw_capture = Some(raw_capture);
         }
         self.profile = None;
@@ -421,7 +439,7 @@ pub fn start(
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cli"))]
 mod tests {
     use super::*;
     use crate::platform::network::NetworkProbeErrorCode;

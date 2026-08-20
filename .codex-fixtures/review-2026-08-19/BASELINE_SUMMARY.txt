@@ -1,0 +1,19 @@
+command|exit
+cargo fmt --check|0
+cargo check --locked|0
+cargo test --locked|0
+cargo clippy --locked --all-targets --features desktop -- -D warnings|0
+cargo check --locked --bin nte-core --no-default-features --features cli|0
+cargo test --locked --no-default-features --features cli|0
+cargo clippy --locked --all-targets --no-default-features --features cli -- -D warnings|0
+cargo fmt --check --manifest-path src-tauri/Cargo.toml|0
+cargo check --locked --manifest-path src-tauri/Cargo.toml|0
+cargo test --locked --manifest-path src-tauri/Cargo.toml|0
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings|0
+pnpm --dir frontend lint|1
+pnpm --dir frontend typecheck|1
+pnpm --dir frontend test|1
+pnpm --dir frontend build|1
+pwsh -NoProfile -File scripts/verify_architecture.ps1|0
+pwsh -NoProfile -File scripts/verify_runtime_safety.ps1|0
+"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" native\nte-mods-plugin\nte-mods-plugin.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal|0

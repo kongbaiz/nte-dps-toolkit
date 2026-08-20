@@ -1,0 +1,109 @@
+NATIVE FINAL VERIFICATION
+
+COMMAND: & 'C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' .\native\nte-mods-plugin\nte-mods-plugin.sln /m /t:Clean /p:Configuration=Release /p:Platform=x64 /nologo /verbosity:minimal
+OUTPUT:
+<empty>
+EXIT: 0
+
+COMMAND: & 'C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe' .\native\nte-mods-plugin\nte-mods-plugin.sln /m /t:Build /p:Configuration=Release /p:Platform=x64 /nologo /verbosity:minimal
+OUTPUT:
+  Assembling src\dwmapi_stubs.asm...
+  dwmapi_proxy.cpp
+  find_offsets_scanner.cpp
+  host_api.cpp
+  ipc_transport.cpp
+  memory_access.cpp
+  mod_runtime.cpp
+  obfuscated_string.cpp
+  offset_resolver.cpp
+  shadow_vtable_hook.cpp
+  nte_mods_plugin.cpp
+  plugin_runtime.cpp
+  sdk_cache.cpp
+  dumper7_sdk.cpp
+  Settings.cpp
+  OffsetFinder.cpp
+  Offsets.cpp
+  NameArray.cpp
+  ObjectArray.cpp
+  UnrealObjects.cpp
+  UnrealTypes.cpp
+  CppGenerator.cpp
+  Generator.cpp
+  HashStringTable.cpp
+  CollisionManager.cpp
+  DependencyManager.cpp
+  EnumManager.cpp
+  MemberManager.cpp
+  PackageManager.cpp
+  StructManager.cpp
+  EnumWrapper.cpp
+  MemberWrappers.cpp
+  StructWrapper.cpp
+  Arch_x86.cpp
+  PlatformWindows.cpp
+    正在创建库 D:\NTE_DPS_TOOL\native\nte-mods-plugin\x64\Release\nte_mods_plugin.lib 和对象 D:\NTE_DPS_TOOL\native\nte-mods-plugin\x64\Release\nte_mods_plugin.exp
+  正在生成代码
+  Previous IPDB not found, fall back to full compilation.
+  All 10449 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  已完成代码的生成
+  nte-mods-plugin.vcxproj -> D:\NTE_DPS_TOOL\native\nte-mods-plugin\x64\Release\dwmapi.dll
+EXIT: 0
+
+COMMAND: pwsh -NoProfile -File .\native\nte-mods-plugin\tests\native_lifecycle_source_tests.ps1
+OUTPUT:
+native_lifecycle_source_tests: PASS
+EXIT: 0
+
+COMMAND: pwsh -NoProfile -File .\native\nte-mods-plugin\tests\ipc_transport_security_source_tests.ps1
+OUTPUT:
+ipc_transport_security_source_tests: PASS
+EXIT: 0
+
+COMMAND: pwsh -NoProfile -File .\scripts\test_native_signature_policy.ps1
+OUTPUT:
+signature_policy_tests.cpp
+signature_policy_tests: PASS
+EXIT: 0
+
+COMMAND: pwsh -NoProfile -File .\scripts\test_native_shadow_vtable_hook.ps1
+OUTPUT:
+shadow_vtable_hook_tests.cpp
+shadow_vtable_hook.cpp
+正在生成代码...
+shadow_vtable_hook_tests: PASS
+EXIT: 0
+
+COMMAND: pwsh -NoProfile -File .\native\nte-mods-plugin\tests\proxy_forwarding_runtime_tests.ps1
+OUTPUT:
+proxy_forwarding_runtime_tests: PASS system=C:\Windows\SYSTEM32\dwmapi.dll hr=0x00000000
+EXIT: 0
+
+COMMAND: cargo test --locked --features desktop remote_bootstrap_invokes_loaded_export -- --ignored --nocapture
+OUTPUT:
+   Compiling nte-dps-tool v0.4.1 (D:\NTE_DPS_TOOL)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.96s
+     Running unittests src\lib.rs (target\debug\deps\nte_dps_tool-64a067f0f7cd2024.exe)
+
+running 1 test
+test platform::mods_plugin_bootstrap::tests::remote_bootstrap_invokes_loaded_export ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 681 filtered out; finished in 0.06s
+
+     Running unittests src\bin\nte-updater.rs (target\debug\deps\nte_updater-ceb0b1a778fc1dfe.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\gameplay_effect_semantics.rs (target\debug\deps\gameplay_effect_semantics-63ec0a4bd3b3096f.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+EXIT: 0
+
+COMMAND: $rootObjs=@(Get-ChildItem -LiteralPath . -File -Filter *.obj -Force); if($rootObjs.Count -eq 0){ Write-Output 'ROOT_OBJ_ARTIFACTS=0'; exit 0 }
+OUTPUT:
+ROOT_OBJ_ARTIFACTS=0
+EXIT: 0

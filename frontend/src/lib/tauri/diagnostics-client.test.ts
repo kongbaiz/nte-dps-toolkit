@@ -14,7 +14,7 @@ const encodeDelivery = (events: unknown[]): ArrayBuffer => {
 };
 
 const SNAPSHOT = {
-  contractVersion: 2,
+  contractVersion: 3,
   captureGeneration: "4",
   qualityGeneration: "5",
   reportGeneration: "2",
@@ -48,6 +48,8 @@ const SNAPSHOT = {
     timeStopIntervalCount: 0,
     abyssEventCount: "0",
     serverDamageCorrections: "0",
+    unattributedServerDamageEvents: "0",
+    unattributedServerDamage: 0,
   },
   actions: {
     canImport: true,

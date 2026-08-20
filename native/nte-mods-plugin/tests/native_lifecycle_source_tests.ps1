@@ -32,6 +32,11 @@ Require-Pattern $project '<SDLCheck>true</SDLCheck>' `
     "Release x64 does not enable additional SDL security diagnostics (/sdl)."
 Require-Pattern $project '<ClInclude Include="src\\vtable_patch_policy.hpp" />' `
     "The typed vtable patch policy is not part of the native project."
+Require-Pattern $project '<ClInclude Include="src\\viewport_generation_policy.hpp" />' `
+    "The viewport generation policy is not part of the native project."
+Require-Pattern $project `
+    'dwmapi_system_anchor\.lib[\s\S]+GenerateDwmapiSystemAnchor[\s\S]+dwmapi_system_anchor\.def' `
+    "The real system DWM API-set dependency is not generated before link."
 
 $ipc = Get-Content -LiteralPath (Join-Path $sourceRoot "ipc_transport.cpp") -Raw
 Require-Pattern $ipc 'SRWLOCK\s+ipc_transport_lock\s*=\s*SRWLOCK_INIT' `
@@ -86,8 +91,27 @@ Require-Pattern $runtime `
     'captured_params[\s\S]+memory::ReadBytes\([\s\S]+event\.params\s*=\s*captured_params' `
     "ProcessEvent params can be copied from game memory after only VirtualQuery validation."
 Require-Pattern $runtime `
-    'InstallViewportHook[\s\S]+ResolveViewport\(\)\s*!=\s*viewport[\s\S]+\.Install\(' `
-    "The background viewport hook does not revalidate the full object chain before vptr CAS."
+    'CaptureViewportSessionSnapshotGuarded[\s\S]+__try[\s\S]+CaptureViewportSessionSnapshot[\s\S]+__except' `
+    "Viewport session capture is not protected by one narrow SEH boundary."
+Require-Pattern $runtime `
+    'HostViewportTimerProc[\s\S]+CaptureViewportSessionSnapshotGuarded[\s\S]+InstallViewportHook' `
+    "Viewport object resolution and hook publication are not owned by the host window thread."
+Require-Pattern $runtime `
+    'CanPublishViewportSnapshot[\s\S]+requested_epoch[\s\S]+CurrentViewportDispatchEpoch' `
+    "A cross-generation viewport snapshot can still be published."
+Require-Pattern $runtime `
+    'CanDispatchViewportGeneration[\s\S]+active_viewport_generation[\s\S]+GetCurrentThreadId' `
+    "A stale viewport generation can still execute Mod programs."
+$workspaceWatcher = [regex]::Match(
+    $runtime,
+    'DWORD\s+WINAPI\s+WatchModWorkspace[\s\S]+?\n\s*\}',
+    [System.Text.RegularExpressions.RegexOptions]::Singleline).Value
+if (-not $workspaceWatcher) {
+    throw "WatchModWorkspace was not found."
+}
+Reject-Pattern $workspaceWatcher `
+    'ResolveViewport|CaptureViewportSessionSnapshot|InstallViewportHook' `
+    "The background workspace worker still reads or publishes game objects."
 Require-Pattern $runtime `
     'hook\.object\s*==\s*object\s*&&\s*hook\.hook\.IsInstalled\(\)[\s\S]+hook\.hook\.CanInstall\(\)[\s\S]+candidate\.object\s*==\s*nullptr' `
     "ProcessEvent record lookup does not prefer the active binding before reusable or empty records."
@@ -125,10 +149,10 @@ Require-Pattern $runtime `
     'runtime_stopping[\s\S]+InterlockedExchange\([\s\S]*&runtime_stopping,\s*1\)[\s\S]+SetIpcStopping\(true\)' `
     "Runtime shutdown does not close both detour and IPC dispatch gates first."
 Require-Pattern $runtime `
-    'StopPluginRuntime\(\)[\s\S]+Reset\(\)[\s\S]+RestoreViewportHook\(\)[\s\S]+CloseIpc\(\)[\s\S]+CloseRuntimePresence\(\)' `
+    'StopPluginRuntime\(\)[\s\S]+StopViewportHostDispatch\(\)[\s\S]+Reset\(\)[\s\S]+CloseIpc\(\)[\s\S]+CloseRuntimePresence\(\)' `
     "Runtime shutdown does not attempt every independently owned teardown resource."
 Require-Pattern $runtime `
-    'reset_succeeded\s*=\s*runtime::Reset\(\)[\s\S]+viewport_succeeded\s*=\s*RestoreViewportHook\(\)[\s\S]+ipc_succeeded\s*=\s*CloseIpc\(\)' `
+    'viewport_succeeded\s*=\s*watcher_stopped\s*&&[\s\S]+StopViewportHostDispatch\(\)[\s\S]+reset_succeeded\s*=\s*runtime::Reset\(\)[\s\S]+ipc_succeeded\s*=\s*CloseIpc\(\)' `
     "Runtime shutdown does not aggregate typed teardown results before reporting unloadability."
 Require-Pattern $runtime `
     'ResetProcessEventWatches\(\)[\s\S]+all_removed\s*=\s*hook\.hook\.Remove\(\)\s*&&\s*all_removed' `
@@ -149,14 +173,25 @@ if (-not $dllMainBody) {
     throw "DllMain was not found."
 }
 Reject-Pattern $dllMainBody `
-    'LoadLibrary|FreeLibrary|CreateThread|WaitForSingleObject|InitializeDwmapiProxy|StopPluginRuntime|ShutdownDwmapiProxy|DisableThreadLibraryCalls' `
+    'LoadLibrary|FreeLibrary|CreateThread|WaitForSingleObject|InitializeDwmapiProxy|ResolveDwmapiExport|StopPluginRuntime|ShutdownDwmapiProxy|DisableThreadLibraryCalls' `
     "DllMain contains loader work, teardown work, or cross-thread waiting."
 Require-Pattern $dllMainBody `
-    'reason\s*==\s*DLL_PROCESS_ATTACH\s*&&[\s\S]+IsExplicitAttach\(reserved\)[\s\S]+StartPluginRuntime\(module\)' `
-    "Manual-map runtime start is not gated by the explicit shared attach marker."
+    'RecordPluginModule\(module\)[\s\S]+IsExplicitAttach\(reserved\)[\s\S]+InitializeRecordedPluginRuntime\(\)' `
+    "DllMain does not limit OS attach to module recording or preserve explicit manual-map startup."
 Require-Pattern $dllMain `
     'NteModsPluginShutdown[\s\S]+PluginStopAllowsUnload\([\s\S]+StopPluginRuntime\(\)' `
     "Manual-map deployments have no explicit unload-safe shutdown export."
+Require-Pattern $dllMain `
+    'NteModsPluginInitialize[\s\S]+InitializeRecordedPluginRuntime\(\)' `
+    "Loader-lock-outside hosts have no explicit runtime initialization export."
+
+$proxy = Get-Content -LiteralPath (Join-Path $sourceRoot "dwmapi_proxy.cpp") -Raw
+Reject-Pattern $proxy `
+    'LoadLibrary|GET_MODULE_HANDLE_EX_FLAG_PIN|StartPluginRuntime' `
+    "A forwarded DWM call can still load a library, pin the proxy, or start workers."
+Require-Pattern $proxy `
+    '__declspec\(dllimport\)[\s\S]+DwmFlush[\s\S]+GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS[\s\S]+GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT' `
+    "The real DWM module is not prebound through a loader-owned API-set anchor."
 
 $memory = Get-Content -LiteralPath (Join-Path $sourceRoot "memory_access.cpp") -Raw
 Require-Pattern $memory '__try[\s\S]+CopyBytes[\s\S]+__except' `
