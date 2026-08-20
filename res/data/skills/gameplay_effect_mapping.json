@@ -41669,12 +41669,509 @@
         },
         "UniqueIndex": 5951
       },
-      "Buff_BlackBird042_Melee5_Skill": {
+      "GE_Rouge_Fire_Damage": {
         "GameplayEffectClass": {
-          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird/Buff/Buff_BlackBird042_Melee5_Skill.Buff_BlackBird042_Melee5_Skill_C",
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/GE_Rouge_Fire_Damage.GE_Rouge_Fire_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5953
+      },
+      "Buff_Rouge_Fire": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Buff_Rouge_Fire.Buff_Rouge_Fire_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5954
+      },
+      "GE_Rouge_Fire2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire2/GE_Rouge_Fire2_Damage.GE_Rouge_Fire2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5955
+      },
+      "Buff_Rouge_Fire2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire2/Buff_Rouge_Fire2.Buff_Rouge_Fire2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5956
+      },
+      "GE_Rouge_Fire3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire3/GE_Rouge_Fire3_Damage.GE_Rouge_Fire3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5957
+      },
+      "Buff_Rouge_Fire3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Fire/Fire3/Buff_Rouge_Fire3.Buff_Rouge_Fire3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5958
+      },
+      "GE_Rouge_Knife_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Knife/GE_Rouge_Knife_Damage.GE_Rouge_Knife_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5959
+      },
+      "Buff_Rouge_Knife": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Knife/Buff_Rouge_Knife.Buff_Rouge_Knife_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5960
+      },
+      "GE_Rouge_Knife_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Knife/Knife2/GE_Rouge_Knife_Damage2.GE_Rouge_Knife_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5961
+      },
+      "Buff_Rouge_Knife2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Knife/Knife2/Buff_Rouge_Knife2.Buff_Rouge_Knife2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5962
+      },
+      "GE_Rouge_Knife_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Knife/Knife3/GE_Rouge_Knife_Damage3.GE_Rouge_Knife_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5963
+      },
+      "Buff_Rouge_Knife3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Knife/Knife3/Buff_Rouge_Knife3.Buff_Rouge_Knife3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5964
+      },
+      "GE_Rouge_Light_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/GE_Rouge_Light_Damage.GE_Rouge_Light_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5965
+      },
+      "Buff_Rouge_Light_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Buff_Rouge_Light_Hurted.Buff_Rouge_Light_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5966
+      },
+      "Buff_Rouge_Light": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Buff_Rouge_Light.Buff_Rouge_Light_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5967
+      },
+      "GE_Rouge_Light2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light2/GE_Rouge_Light2_Damage.GE_Rouge_Light2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5968
+      },
+      "Buff_Rouge_Light2_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light2/Buff_Rouge_Light2_Hurted.Buff_Rouge_Light2_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5969
+      },
+      "Buff_Rouge_Light2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light2/Buff_Rouge_Light2.Buff_Rouge_Light2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5970
+      },
+      "GE_Rouge_Light3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light3/GE_Rouge_Light3_Damage.GE_Rouge_Light3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5971
+      },
+      "Buff_Rouge_Light3_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light3/Buff_Rouge_Light3_Hurted.Buff_Rouge_Light3_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5972
+      },
+      "Buff_Rouge_Light3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Light/Light3/Buff_Rouge_Light3.Buff_Rouge_Light3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5973
+      },
+      "Buff_Rouge_Meteor2_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Meteor/Meteor2/Buff_Rouge_Meteor2_Hurted.Buff_Rouge_Meteor2_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5974
+      },
+      "Buff_Rouge_Meteor3_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Meteor/Meteor3/Buff_Rouge_Meteor3_Hurted.Buff_Rouge_Meteor3_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5975
+      },
+      "GE_Rouge_Quake_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/GE_Rouge_Quake_Damage.GE_Rouge_Quake_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5976
+      },
+      "Buff_Rouge_Quake_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Buff_Rouge_Quake_Hurted.Buff_Rouge_Quake_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5977
+      },
+      "Buff_Rouge_Quake": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Buff_Rouge_Quake.Buff_Rouge_Quake_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5978
+      },
+      "GE_Rouge_Quake2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake2/GE_Rouge_Quake2_Damage.GE_Rouge_Quake2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5979
+      },
+      "Buff_Rouge_Quake2_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake2/Buff_Rouge_Quake2_Hurted.Buff_Rouge_Quake2_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5980
+      },
+      "Buff_Rouge_Quake2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake2/Buff_Rouge_Quake2.Buff_Rouge_Quake2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5981
+      },
+      "GE_Rouge_Quake3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake3/GE_Rouge_Quake3_Damage.GE_Rouge_Quake3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5982
+      },
+      "Buff_Rouge_Quake3_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake3/Buff_Rouge_Quake3_Hurted.Buff_Rouge_Quake3_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5983
+      },
+      "Buff_Rouge_Quake3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Quake/Quake3/Buff_Rouge_Quake3.Buff_Rouge_Quake3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5984
+      },
+      "GE_Rouge_Thunder_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/GE_Rouge_Thunder_Damage.GE_Rouge_Thunder_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5985
+      },
+      "Buff_Rouge_Thunder_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Buff_Rouge_Thunder_Hurted.Buff_Rouge_Thunder_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5986
+      },
+      "Buff_Rouge_Thunder": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Buff_Rouge_Thunder.Buff_Rouge_Thunder_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5987
+      },
+      "GE_Rouge_Thunder2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder2/GE_Rouge_Thunder2_Damage.GE_Rouge_Thunder2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5988
+      },
+      "Buff_Rouge_Thunder2_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder2/Buff_Rouge_Thunder2_Hurted.Buff_Rouge_Thunder2_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5989
+      },
+      "Buff_Rouge_Thunder2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder2/Buff_Rouge_Thunder2.Buff_Rouge_Thunder2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5990
+      },
+      "GE_Rouge_Thunder3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder3/GE_Rouge_Thunder3_Damage.GE_Rouge_Thunder3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5991
+      },
+      "Buff_Rouge_Thunder3_Hurted": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder3/Buff_Rouge_Thunder3_Hurted.Buff_Rouge_Thunder3_Hurted_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5992
+      },
+      "Buff_Rouge_Thunder3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Thunder/Thunder3/Buff_Rouge_Thunder3.Buff_Rouge_Thunder3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5993
+      },
+      "GE_Rouge_Wave_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/GE_Rouge_Wave_Damage.GE_Rouge_Wave_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5994
+      },
+      "Buff_Rouge_Wave": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Buff_Rouge_Wave.Buff_Rouge_Wave_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5995
+      },
+      "GE_Rouge_Wave2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave2/GE_Rouge_Wave2_Damage.GE_Rouge_Wave2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5996
+      },
+      "Buff_Rouge_Wave2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave2/Buff_Rouge_Wave2.Buff_Rouge_Wave2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5997
+      },
+      "GE_Rouge_Wave3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave3/GE_Rouge_Wave3_Damage.GE_Rouge_Wave3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5998
+      },
+      "Buff_Rouge_Wave3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wave/Wave3/Buff_Rouge_Wave3.Buff_Rouge_Wave3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 5999
+      },
+      "GE_Rouge_Wind_Damage2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wind/Wind2/GE_Rouge_Wind_Damage2.GE_Rouge_Wind_Damage2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6000
+      },
+      "Buff_Rouge_Wind2": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wind/Wind2/Buff_Rouge_Wind2.Buff_Rouge_Wind2_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6001
+      },
+      "GE_Rouge_Wind_Damage3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wind/Wind3/GE_Rouge_Wind_Damage3.GE_Rouge_Wind_Damage3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6002
+      },
+      "Buff_Rouge_Wind3": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Buff/Rouge/Skill/Wind/Wind3/Buff_Rouge_Wind3.Buff_Rouge_Wind3_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6003
+      },
+      "Buff_BossBattleControl": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Monster/boss_36/Buff/Buff_BossBattleControl.Buff_BossBattleControl_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6004
+      },
+      "GE_Player_BlackBird_Evolve_UltraSkill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_UltraSkill_Damage.GE_Player_BlackBird_Evolve_UltraSkill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6005
+      },
+      "GE_Player_BlackBird_Evolve_Skill_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Skill_Damage.GE_Player_BlackBird_Evolve_Skill_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6006
+      },
+      "GE_Player_BlackBird_Evolve_QTE_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_QTE_Damage.GE_Player_BlackBird_Evolve_QTE_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6007
+      },
+      "GE_Player_BlackBird_Evolve_PerfectEvade_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_PerfectEvade_Damage.GE_Player_BlackBird_Evolve_PerfectEvade_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6008
+      },
+      "GE_Player_BlackBird_Evolve_Melee5_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee5_Damage.GE_Player_BlackBird_Evolve_Melee5_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6009
+      },
+      "GE_Player_BlackBird_Evolve_Melee4_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee4_Damage.GE_Player_BlackBird_Evolve_Melee4_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6010
+      },
+      "GE_Player_BlackBird_Evolve_Melee3_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee3_Damage.GE_Player_BlackBird_Evolve_Melee3_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6011
+      },
+      "GE_Player_BlackBird_Evolve_Melee2_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee2_Damage.GE_Player_BlackBird_Evolve_Melee2_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6012
+      },
+      "GE_Player_BlackBird_Evolve_Melee1_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_Melee1_Damage.GE_Player_BlackBird_Evolve_Melee1_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6013
+      },
+      "GE_Player_BlackBird_Evolve_AirAttack_Damage": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Damage/GE_Player_BlackBird_Evolve_AirAttack_Damage.GE_Player_BlackBird_Evolve_AirAttack_Damage_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6014
+      },
+      "GE_Player_BlackBird_Evolve_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Effect/GE_Player_BlackBird_Evolve_Melee1_HitBack.GE_Player_BlackBird_Evolve_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6015
+      },
+      "Buff_mon_19_AtkUP": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Character/Monster/mon_19/Vision/Buff_mon_19_AtkUP.Buff_mon_19_AtkUP_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6016
+      },
+      "Buff_mon_PoFang": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Character/Monster/mon_19/Vision/Buff_mon_PoFang.Buff_mon_PoFang_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6017
+      },
+      "Buff_BlackBird042_Evolve_Melee5_Skill": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_042_BlackBird_Evolve/Buff/Buff_BlackBird042_Evolve_Melee5_Skill.Buff_BlackBird042_Evolve_Melee5_Skill_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6018
+      },
+      "GE_Player_Akane_Melee1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee1_HitBack.GE_Player_Akane_Melee1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6019
+      },
+      "GE_Player_Akane_Melee1_1_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee1_1_HitBack.GE_Player_Akane_Melee1_1_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6020
+      },
+      "GE_Player_Akane_Melee2_HitBack": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Melee2_HitBack.GE_Player_Akane_Melee2_HitBack_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6021
+      },
+      "GE_Player_Akane_Backround": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_057_Akane/Effect/GE_Player_Akane_Backround.GE_Player_Akane_Backround_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6022
+      },
+      "GE_HauntedHouse": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/GameFeatures/Pukaland/HauntedHouse/GE_HauntedHouse.GE_HauntedHouse_C",
           "SubPathString": ""
         },
         "UniqueIndex": 5952
+      },
+      "Buff_Radio072_CantAddPower_E_ignore": {
+        "GameplayEffectClass": {
+          "AssetPathName": "/Game/Blueprints/Abilities/Player/Ability_076_Shinku/Buff/Buff_Radio072_CantAddPower_E_ignore.Buff_Radio072_CantAddPower_E_ignore_C",
+          "SubPathString": ""
+        },
+        "UniqueIndex": 6023
       }
     }
   }

@@ -22916,7 +22916,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_1_0_1_mon_14_BP": {
-        "HPMaxBase": 213959.0,
+        "HPMaxBase": 178014.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -22983,7 +22983,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_1_0_2_mon_14_BP": {
-        "HPMaxBase": 213959.0,
+        "HPMaxBase": 178014.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23050,7 +23050,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_1_1_1_mon_05_BP": {
-        "HPMaxBase": 213959.0,
+        "HPMaxBase": 178014.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23117,7 +23117,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_1_1_2_mon_05_BP": {
-        "HPMaxBase": 213959.0,
+        "HPMaxBase": 178014.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23184,7 +23184,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_2_0_1_mon_33_BP": {
-        "HPMaxBase": 268226.0,
+        "HPMaxBase": 223164.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23251,7 +23251,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_2_0_2_mon_33_BP": {
-        "HPMaxBase": 268226.0,
+        "HPMaxBase": 223164.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23318,7 +23318,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_2_1_1_mon_35_Red_BP": {
-        "HPMaxBase": 268226.0,
+        "HPMaxBase": 223164.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23385,7 +23385,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_2_1_1_mon_35_Blue_BP": {
-        "HPMaxBase": 268226.0,
+        "HPMaxBase": 223164.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23452,7 +23452,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_2_1_2_mon_35_Red_BP": {
-        "HPMaxBase": 268226.0,
+        "HPMaxBase": 223164.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23519,7 +23519,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_2_1_2_mon_35_Blue_BP": {
-        "HPMaxBase": 268226.0,
+        "HPMaxBase": 223164.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23586,7 +23586,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_3_0_1_mon_38_BP": {
-        "HPMaxBase": 456029.0,
+        "HPMaxBase": 379416.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23653,7 +23653,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_3_0_2_mon_38_BP": {
-        "HPMaxBase": 456029.0,
+        "HPMaxBase": 379416.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23720,7 +23720,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_3_1_1_mon_41_BP": {
-        "HPMaxBase": 342024.0,
+        "HPMaxBase": 284564.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23787,7 +23787,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_3_1_2_mon_41_BP": {
-        "HPMaxBase": 342024.0,
+        "HPMaxBase": 284564.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23854,7 +23854,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_0_1_mon_16_BP": {
-        "HPMaxBase": 836698.0,
+        "HPMaxBase": 696132.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23921,7 +23921,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_0_1_mon_14_BP": {
-        "HPMaxBase": 344524.0,
+        "HPMaxBase": 286644.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -23988,7 +23988,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_0_2_mon_16_BP": {
-        "HPMaxBase": 836698.0,
+        "HPMaxBase": 696132.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24055,7 +24055,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_0_2_mon_14_BP": {
-        "HPMaxBase": 344524.0,
+        "HPMaxBase": 286644.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24122,7 +24122,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_1_1_mon_03_BP": {
-        "HPMaxBase": 836698.0,
+        "HPMaxBase": 696132.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24189,7 +24189,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_1_1_mon_04_BP": {
-        "HPMaxBase": 390459.0,
+        "HPMaxBase": 324862.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24256,7 +24256,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_1_2_mon_03_BP": {
-        "HPMaxBase": 836698.0,
+        "HPMaxBase": 696132.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24323,7 +24323,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_4_1_2_mon_04_BP": {
-        "HPMaxBase": 390459.0,
+        "HPMaxBase": 324862.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24390,7 +24390,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_5_0_1_mon_030_BP": {
-        "HPMaxBase": 441628.0,
+        "HPMaxBase": 367434.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24457,7 +24457,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_5_0_2_mon_030_BP": {
-        "HPMaxBase": 441628.0,
+        "HPMaxBase": 367434.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24524,7 +24524,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_5_1_1_mon_08_BP": {
-        "HPMaxBase": 588840.0,
+        "HPMaxBase": 489915.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24591,7 +24591,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_5_1_2_mon_08_BP": {
-        "HPMaxBase": 588840.0,
+        "HPMaxBase": 489915.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24658,7 +24658,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_6_0_1_mon_17_BP": {
-        "HPMaxBase": 523505.0,
+        "HPMaxBase": 435556.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24725,7 +24725,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_6_0_2_mon_17_BP": {
-        "HPMaxBase": 523505.0,
+        "HPMaxBase": 435556.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24792,7 +24792,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_6_1_1_mon_020_BP": {
-        "HPMaxBase": 698005.0,
+        "HPMaxBase": 580740.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24859,7 +24859,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_6_1_2_mon_020_BP": {
-        "HPMaxBase": 698005.0,
+        "HPMaxBase": 580740.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24926,7 +24926,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_7_0_1_mon_025_BP": {
-        "HPMaxBase": 1444075.0,
+        "HPMaxBase": 1201470.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -24993,7 +24993,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_7_0_1_mon_025_double_1_BP": {
-        "HPMaxBase": 1444075.0,
+        "HPMaxBase": 1201470.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25060,7 +25060,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_7_0_1_mon_025_double_2_BP": {
-        "HPMaxBase": 1444075.0,
+        "HPMaxBase": 1201470.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25127,7 +25127,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_7_1_1_mon_27_BP": {
-        "HPMaxBase": 541529.0,
+        "HPMaxBase": 450552.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25194,7 +25194,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_7_1_2_mon_27_BP": {
-        "HPMaxBase": 541529.0,
+        "HPMaxBase": 450552.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25261,7 +25261,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_8_0_1_mon_16_BP": {
-        "HPMaxBase": 2448538.0,
+        "HPMaxBase": 2037183.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25328,7 +25328,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_8_0_1_mon_029_BP": {
-        "HPMaxBase": 1224273.0,
+        "HPMaxBase": 1018595.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25395,7 +25395,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_8_1_1_mon_39_2_BP": {
-        "HPMaxBase": 2448531.0,
+        "HPMaxBase": 2037178.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25462,7 +25462,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_8_1_1_mon_38_BP": {
-        "HPMaxBase": 1049366.0,
+        "HPMaxBase": 873073.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25529,7 +25529,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_9_0_1_mon_022_BP": {
-        "HPMaxBase": 2951406.0,
+        "HPMaxBase": 2455570.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25596,7 +25596,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_9_0_1_mon_24_BP": {
-        "HPMaxBase": 478606.0,
+        "HPMaxBase": 398200.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25663,7 +25663,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_9_1_1_mon_019_BP": {
-        "HPMaxBase": 2951406.0,
+        "HPMaxBase": 2455570.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25730,7 +25730,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_9_1_1_mon_35_Red_BP": {
-        "HPMaxBase": 1032993.0,
+        "HPMaxBase": 859450.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25797,7 +25797,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_9_1_1_mon_35_Blue_BP": {
-        "HPMaxBase": 1032993.0,
+        "HPMaxBase": 859450.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25864,7 +25864,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_10_0_1_mon_015_BP": {
-        "HPMaxBase": 3159758.0,
+        "HPMaxBase": 2628918.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25931,7 +25931,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_10_0_1_mon_38_BP": {
-        "HPMaxBase": 972234.0,
+        "HPMaxBase": 808898.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -25998,7 +25998,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_10_1_1_mon_030_BP": {
-        "HPMaxBase": 2106505.0,
+        "HPMaxBase": 1752612.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26065,7 +26065,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_10_1_1_mon_030_BP_Snow": {
-        "HPMaxBase": 2106505.0,
+        "HPMaxBase": 1752612.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26132,7 +26132,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_10_1_1_mon_030_BP_Rain": {
-        "HPMaxBase": 2106505.0,
+        "HPMaxBase": 1752612.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26199,7 +26199,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_11_0_1_Boss_017_BP": {
-        "HPMaxBase": 3253584.0,
+        "HPMaxBase": 2706982.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26266,7 +26266,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_11_1_1_boss_09_BP": {
-        "HPMaxBase": 3253584.0,
+        "HPMaxBase": 2706982.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26333,7 +26333,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_12_0_1_Boss_06_BP": {
-        "HPMaxBase": 3514714.0,
+        "HPMaxBase": 2924242.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26400,7 +26400,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_8_12_1_1_boss_26_BP": {
-        "HPMaxBase": 3514723.0,
+        "HPMaxBase": 2924249.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26467,7 +26467,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_1_0_1_mon_01_BP": {
-        "HPMaxBase": 227652.0,
+        "HPMaxBase": 213959.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26534,7 +26534,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_1_0_2_mon_01_BP": {
-        "HPMaxBase": 227652.0,
+        "HPMaxBase": 213959.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26601,7 +26601,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_1_1_1_mon_14_BP": {
-        "HPMaxBase": 227652.0,
+        "HPMaxBase": 213959.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26668,7 +26668,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_1_1_2_mon_14_BP": {
-        "HPMaxBase": 227652.0,
+        "HPMaxBase": 213959.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26735,7 +26735,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_2_0_1_mon_33_BP": {
-        "HPMaxBase": 285393.0,
+        "HPMaxBase": 268226.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26802,7 +26802,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_2_0_2_mon_33_BP": {
-        "HPMaxBase": 285393.0,
+        "HPMaxBase": 268226.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26869,7 +26869,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_2_1_1_mon_38_BP": {
-        "HPMaxBase": 380524.0,
+        "HPMaxBase": 357635.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -26936,7 +26936,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_2_1_2_mon_38_BP": {
-        "HPMaxBase": 380524.0,
+        "HPMaxBase": 357635.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27003,7 +27003,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_3_0_1_mon_03_BP": {
-        "HPMaxBase": 727825.0,
+        "HPMaxBase": 684046.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27070,7 +27070,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_3_0_1_mon_05_BP": {
-        "HPMaxBase": 363913.0,
+        "HPMaxBase": 342024.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27137,7 +27137,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_3_0_2_mon_03_BP": {
-        "HPMaxBase": 727825.0,
+        "HPMaxBase": 684046.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27204,7 +27204,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_3_0_2_mon_05_BP": {
-        "HPMaxBase": 363913.0,
+        "HPMaxBase": 342024.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27271,7 +27271,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_3_1_1_mon_05_BP": {
-        "HPMaxBase": 363913.0,
+        "HPMaxBase": 342024.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27338,7 +27338,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_3_1_2_mon_05_BP": {
-        "HPMaxBase": 363913.0,
+        "HPMaxBase": 342024.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27405,7 +27405,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_0_1_mon_35_Red_BP": {
-        "HPMaxBase": 445123.0,
+        "HPMaxBase": 418349.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27472,7 +27472,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_0_1_mon_35_Blue_BP": {
-        "HPMaxBase": 445123.0,
+        "HPMaxBase": 418349.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27539,7 +27539,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_0_2_mon_35_Red_BP": {
-        "HPMaxBase": 445123.0,
+        "HPMaxBase": 418349.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27606,7 +27606,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_0_2_mon_35_Blue_BP": {
-        "HPMaxBase": 445123.0,
+        "HPMaxBase": 418349.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27673,7 +27673,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_1_1_mon_16_BP": {
-        "HPMaxBase": 890246.0,
+        "HPMaxBase": 836698.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27740,7 +27740,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_1_1_mon_14_BP": {
-        "HPMaxBase": 445118.0,
+        "HPMaxBase": 418344.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27807,7 +27807,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_4_1_2_mon_14_BP": {
-        "HPMaxBase": 445118.0,
+        "HPMaxBase": 418344.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27874,7 +27874,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_5_0_1_mon_030_BP": {
-        "HPMaxBase": 469892.0,
+        "HPMaxBase": 441628.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -27941,7 +27941,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_5_0_2_mon_030_BP": {
-        "HPMaxBase": 469892.0,
+        "HPMaxBase": 441628.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28008,7 +28008,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_5_1_1_mon_41_BP": {
-        "HPMaxBase": 442252.0,
+        "HPMaxBase": 415650.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28075,7 +28075,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_5_1_2_mon_023_BP": {
-        "HPMaxBase": 663376.0,
+        "HPMaxBase": 623474.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28142,7 +28142,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_6_0_1_mon_08_BP": {
-        "HPMaxBase": 742684.0,
+        "HPMaxBase": 698011.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28209,7 +28209,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_6_0_2_mon_08_BP": {
-        "HPMaxBase": 742684.0,
+        "HPMaxBase": 698011.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28276,7 +28276,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_6_1_1_mon_27_BP": {
-        "HPMaxBase": 557009.0,
+        "HPMaxBase": 523505.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28343,7 +28343,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_6_1_2_mon_27_BP": {
-        "HPMaxBase": 557009.0,
+        "HPMaxBase": 523505.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28410,7 +28410,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_7_0_1_mon_020_BP": {
-        "HPMaxBase": 768251.0,
+        "HPMaxBase": 722040.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28477,7 +28477,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_7_0_2_mon_020_BP": {
-        "HPMaxBase": 768251.0,
+        "HPMaxBase": 722040.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28544,7 +28544,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_7_1_1_mon_17_BP": {
-        "HPMaxBase": 576187.0,
+        "HPMaxBase": 541529.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28611,7 +28611,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_7_1_2_mon_17_BP": {
-        "HPMaxBase": 576187.0,
+        "HPMaxBase": 541529.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28678,7 +28678,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_8_0_1_mon_022_BP": {
-        "HPMaxBase": 2605237.0,
+        "HPMaxBase": 2448531.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28745,7 +28745,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_8_0_1_mon_24_BP": {
-        "HPMaxBase": 569892.0,
+        "HPMaxBase": 535613.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28812,7 +28812,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_8_1_1_mon_025_BP": {
-        "HPMaxBase": 1736824.0,
+        "HPMaxBase": 1632354.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28879,7 +28879,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_8_1_1_mon_025_double_1_BP": {
-        "HPMaxBase": 1736824.0,
+        "HPMaxBase": 1632354.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -28946,7 +28946,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_8_1_1_mon_025_double_2_BP": {
-        "HPMaxBase": 1736824.0,
+        "HPMaxBase": 1632354.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29013,7 +29013,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_9_0_1_mon_16_BP": {
-        "HPMaxBase": 1570147.0,
+        "HPMaxBase": 1475703.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29080,7 +29080,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_9_0_1_mon_029_BP": {
-        "HPMaxBase": 785074.0,
+        "HPMaxBase": 737851.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29147,7 +29147,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_9_0_2_mon_16_BP": {
-        "HPMaxBase": 1570147.0,
+        "HPMaxBase": 1475703.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29214,7 +29214,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_9_0_2_mon_029_BP": {
-        "HPMaxBase": 785074.0,
+        "HPMaxBase": 737851.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29281,7 +29281,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_9_1_1_Boss_06_BP": {
-        "HPMaxBase": 3140296.0,
+        "HPMaxBase": 2951406.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29348,7 +29348,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_10_0_1_mon_015_BP": {
-        "HPMaxBase": 3361982.0,
+        "HPMaxBase": 3159758.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29415,7 +29415,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_10_0_1_mon_38_BP": {
-        "HPMaxBase": 1034457.0,
+        "HPMaxBase": 972234.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29482,7 +29482,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_10_1_1_mon_019_BP": {
-        "HPMaxBase": 3361982.0,
+        "HPMaxBase": 3159758.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29549,7 +29549,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_10_1_1_mon_35_Red_BP": {
-        "HPMaxBase": 603433.0,
+        "HPMaxBase": 567136.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29616,7 +29616,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_10_1_1_mon_35_Blue_BP": {
-        "HPMaxBase": 603433.0,
+        "HPMaxBase": 567136.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29683,7 +29683,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_11_0_1_Boss_07_BP": {
-        "HPMaxBase": 3461813.0,
+        "HPMaxBase": 3253584.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29750,7 +29750,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_11_1_1_Boss_017_BP": {
-        "HPMaxBase": 3461822.0,
+        "HPMaxBase": 3253593.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29817,7 +29817,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_12_0_1_mon_051_BP": {
-        "HPMaxBase": 3739665.0,
+        "HPMaxBase": 3514723.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29884,7 +29884,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_9_12_1_1_boss_33_BP": {
-        "HPMaxBase": 3739655.0,
+        "HPMaxBase": 3514714.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -29951,7 +29951,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_1_0_1_mon_04_BP": {
-        "HPMaxBase": 241345.0,
+        "HPMaxBase": 243057.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30018,7 +30018,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_1_0_2_mon_04_BP": {
-        "HPMaxBase": 241345.0,
+        "HPMaxBase": 243057.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30085,7 +30085,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_1_1_1_mon_24_BP": {
-        "HPMaxBase": 241345.0,
+        "HPMaxBase": 243057.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30152,7 +30152,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_1_1_2_mon_24_BP": {
-        "HPMaxBase": 241345.0,
+        "HPMaxBase": 243057.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30219,7 +30219,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_2_0_1_mon_35_Red_BP": {
-        "HPMaxBase": 302563.0,
+        "HPMaxBase": 304709.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30286,7 +30286,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_2_0_1_mon_35_Blue_BP": {
-        "HPMaxBase": 302563.0,
+        "HPMaxBase": 304709.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30353,7 +30353,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_2_0_2_mon_35_Red_BP": {
-        "HPMaxBase": 302563.0,
+        "HPMaxBase": 304709.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30420,7 +30420,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_2_0_2_mon_35_Blue_BP": {
-        "HPMaxBase": 302563.0,
+        "HPMaxBase": 304709.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30487,7 +30487,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_2_1_1_mon_14_BP": {
-        "HPMaxBase": 302559.0,
+        "HPMaxBase": 304705.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30554,7 +30554,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_2_1_2_mon_14_BP": {
-        "HPMaxBase": 302559.0,
+        "HPMaxBase": 304705.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30621,7 +30621,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_3_0_1_mon_03_BP": {
-        "HPMaxBase": 771604.0,
+        "HPMaxBase": 777077.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30688,7 +30688,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_3_0_1_mon_04_BP": {
-        "HPMaxBase": 360080.0,
+        "HPMaxBase": 362634.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30755,7 +30755,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_3_0_2_mon_03_BP": {
-        "HPMaxBase": 771604.0,
+        "HPMaxBase": 777077.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30822,7 +30822,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_3_0_2_mon_04_BP": {
-        "HPMaxBase": 360080.0,
+        "HPMaxBase": 362634.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30889,7 +30889,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_3_1_1_mon_41_BP": {
-        "HPMaxBase": 385803.0,
+        "HPMaxBase": 388539.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -30956,7 +30956,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_3_1_2_mon_41_BP": {
-        "HPMaxBase": 385803.0,
+        "HPMaxBase": 388539.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31023,7 +31023,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_4_0_1_mon_01_BP": {
-        "HPMaxBase": 471892.0,
+        "HPMaxBase": 475239.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31090,7 +31090,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_4_0_2_mon_01_BP": {
-        "HPMaxBase": 471892.0,
+        "HPMaxBase": 475239.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31157,7 +31157,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_4_1_1_mon_16_BP": {
-        "HPMaxBase": 943784.0,
+        "HPMaxBase": 950477.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31224,7 +31224,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_4_1_1_mon_14_BP": {
-        "HPMaxBase": 388617.0,
+        "HPMaxBase": 391373.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31291,7 +31291,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_4_1_2_mon_16_BP": {
-        "HPMaxBase": 943784.0,
+        "HPMaxBase": 950477.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31358,7 +31358,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_4_1_2_mon_14_BP": {
-        "HPMaxBase": 388617.0,
+        "HPMaxBase": 391373.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31425,7 +31425,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_5_0_1_mon_030_BP": {
-        "HPMaxBase": 498156.0,
+        "HPMaxBase": 501689.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31492,7 +31492,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_5_0_2_mon_030_BP": {
-        "HPMaxBase": 498156.0,
+        "HPMaxBase": 501689.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31559,7 +31559,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_5_1_1_mon_08_BP": {
-        "HPMaxBase": 664212.0,
+        "HPMaxBase": 668922.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31626,7 +31626,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_5_1_2_mon_08_BP": {
-        "HPMaxBase": 664212.0,
+        "HPMaxBase": 668922.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31693,7 +31693,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_6_0_1_mon_33_BP": {
-        "HPMaxBase": 590514.0,
+        "HPMaxBase": 594702.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31760,7 +31760,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_6_0_2_mon_33_BP": {
-        "HPMaxBase": 590514.0,
+        "HPMaxBase": 594702.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31827,7 +31827,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_6_1_1_mon_020_BP": {
-        "HPMaxBase": 787357.0,
+        "HPMaxBase": 792941.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31894,7 +31894,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_6_1_2_mon_020_BP": {
-        "HPMaxBase": 787357.0,
+        "HPMaxBase": 792941.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -31961,7 +31961,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_7_0_1_mon_27_BP": {
-        "HPMaxBase": 610851.0,
+        "HPMaxBase": 615184.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32028,7 +32028,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_7_0_2_mon_27_BP": {
-        "HPMaxBase": 610851.0,
+        "HPMaxBase": 615184.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32095,7 +32095,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_7_1_1_mon_019_BP": {
-        "HPMaxBase": 2443400.0,
+        "HPMaxBase": 2460729.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32162,7 +32162,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_7_1_1_mon_35_Red_BP": {
-        "HPMaxBase": 534489.0,
+        "HPMaxBase": 538279.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32229,7 +32229,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_7_1_1_mon_35_Blue_BP": {
-        "HPMaxBase": 534489.0,
+        "HPMaxBase": 538279.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32296,7 +32296,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_8_0_1_mon_022_BP": {
-        "HPMaxBase": 2761943.0,
+        "HPMaxBase": 2781532.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32363,7 +32363,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_8_1_1_mon_015_BP": {
-        "HPMaxBase": 2761943.0,
+        "HPMaxBase": 2781532.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32430,7 +32430,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_8_1_1_mon_38_BP": {
-        "HPMaxBase": 604179.0,
+        "HPMaxBase": 608464.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32497,7 +32497,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_9_0_1_mon_39_2_BP": {
-        "HPMaxBase": 3329186.0,
+        "HPMaxBase": 3352798.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32564,7 +32564,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_9_0_1_mon_38_BP": {
-        "HPMaxBase": 1426790.0,
+        "HPMaxBase": 1436909.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32631,7 +32631,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_9_1_1_mon_16_BP": {
-        "HPMaxBase": 3329176.0,
+        "HPMaxBase": 3352788.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32698,7 +32698,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_9_1_1_mon_029_BP": {
-        "HPMaxBase": 1664584.0,
+        "HPMaxBase": 1676390.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32765,7 +32765,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_10_0_1_mon_03_BP": {
-        "HPMaxBase": 1782103.0,
+        "HPMaxBase": 1794742.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32832,7 +32832,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_10_0_1_mon_04_BP": {
-        "HPMaxBase": 822509.0,
+        "HPMaxBase": 828343.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32899,7 +32899,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_10_0_2_mon_03_BP": {
-        "HPMaxBase": 1782103.0,
+        "HPMaxBase": 1794742.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -32966,7 +32966,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_10_0_2_mon_04_BP": {
-        "HPMaxBase": 822509.0,
+        "HPMaxBase": 828343.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -33033,7 +33033,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_10_1_1_Boss_15_BP": {
-        "HPMaxBase": 3564206.0,
+        "HPMaxBase": 3589485.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -33100,7 +33100,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_11_0_1_Boss_08_BP": {
-        "HPMaxBase": 3670052.0,
+        "HPMaxBase": 3696081.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -33167,7 +33167,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_11_1_1_boss_26_BP": {
-        "HPMaxBase": 3670042.0,
+        "HPMaxBase": 3696071.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -33234,7 +33234,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_12_0_1_mon_051_BP": {
-        "HPMaxBase": 3964597.0,
+        "HPMaxBase": 3992715.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
@@ -33301,7 +33301,7 @@
         "SatietyMax": 100.0
       },
       "Abyss_10_12_1_1_boss_05_BP": {
-        "HPMaxBase": 3964597.0,
+        "HPMaxBase": 3992715.0,
         "HPMaxUp": 0.0,
         "HPMaxAdd": 0.0,
         "MagBase": 0.0,
