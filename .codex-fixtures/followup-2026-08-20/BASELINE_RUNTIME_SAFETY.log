@@ -1,5 +1,0 @@
-Exception: D:\NTE_DPS_TOOL\.codex-fixtures\followup-2026-08-20\baseline-copy\scripts\generate_mod_runtime_schema.ps1:145
-Line |
- 145 |              throw "Generated Mod runtime schema is stale: $relative"
-     |              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-     | Generated Mod runtime schema is stale: src\storage\mod_runtime_schema.generated.rs
