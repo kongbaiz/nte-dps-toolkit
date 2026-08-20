@@ -4320,7 +4320,7 @@ impl PacketDecoder {
     }
 
     fn take_all_ambiguous_hits(&mut self) -> Vec<Hit> {
-        self.pending_ambiguous_hits.drain(..).collect()
+        std::mem::take(&mut self.pending_ambiguous_hits)
     }
 
     fn emit_hits(
