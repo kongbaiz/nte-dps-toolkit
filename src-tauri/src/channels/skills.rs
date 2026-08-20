@@ -9,7 +9,7 @@ use crate::{
     contract::{
         CommandError, SubscriptionReceipt,
         skills::SkillsEvent,
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::AppState,
     windows::console,
@@ -20,7 +20,7 @@ pub(crate) const SKILLS_STREAM_INTERVAL_MS: u32 = 100;
 pub(crate) fn subscribe_skills(
     subscription_id: String,
     scope: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<SkillsEvent>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -41,7 +41,7 @@ pub(crate) fn subscribe_skills(
     let mut last_revision = None;
     spawn_polling_stream(
         "nte-skills-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         SKILLS_STREAM_INTERVAL_MS,

@@ -10,7 +10,7 @@ use crate::{
     contract::{
         CommandError, SubscriptionReceipt,
         main_dps::MainDpsEvent,
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::AppState,
     windows::{island, main_dps},
@@ -20,7 +20,7 @@ pub(crate) const MAIN_DPS_STREAM_INTERVAL_MS: u32 = 100;
 #[tauri::command]
 pub(crate) fn subscribe_main_dps(
     subscription_id: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<MainDpsEvent>>,
     app: AppHandle,
     state: State<'_, AppState>,
     window: WebviewWindow,
@@ -47,7 +47,7 @@ pub(crate) fn subscribe_main_dps(
     let action_app = app.clone();
     spawn_polling_stream(
         "nte-main-dps-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         MAIN_DPS_STREAM_INTERVAL_MS,

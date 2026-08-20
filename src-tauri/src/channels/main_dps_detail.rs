@@ -8,7 +8,7 @@ use crate::{
     contract::{
         CommandError, SubscriptionReceipt,
         main_dps_detail::{MAIN_DPS_DETAIL_PAGE_LIMIT, MainDpsDetailSnapshot},
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
     },
     state::AppState,
     windows::combat_details,
@@ -18,7 +18,7 @@ pub(crate) const MAIN_DPS_DETAIL_STREAM_INTERVAL_MS: u32 = 250;
 #[tauri::command]
 pub(crate) fn subscribe_main_dps_detail(
     subscription_id: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<MainDpsDetailSnapshot>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -38,7 +38,7 @@ pub(crate) fn subscribe_main_dps_detail(
     let mut last_revision = None;
     spawn_polling_stream(
         "nte-main-dps-detail-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         MAIN_DPS_DETAIL_STREAM_INTERVAL_MS,

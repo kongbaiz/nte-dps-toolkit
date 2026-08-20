@@ -5,7 +5,7 @@ import {
   type TechnicalCommandError,
 } from "@/lib/tauri/technical-contract";
 
-export const RESOURCES_CONTRACT_VERSION = 1;
+export const RESOURCES_CONTRACT_VERSION = 2;
 export const RESOURCES_MAX_ITEMS = 20_000;
 
 const {
@@ -23,14 +23,13 @@ const {
 export type ResourcesCommandError = TechnicalCommandError;
 export type ResourceSeverity = "error" | "warning";
 export type ResourceCategory =
-  "character" | "skill" | "gameplayEffect" | "abyss" | "reaction" | "file";
+  "character" | "skill" | "gameplayEffect" | "reaction" | "file";
 
 export interface ResourceCountsSnapshot {
   characters: number;
   skillDamage: number;
   mappedEffects: number;
   semanticEffects: number;
-  abyssMonsters: number;
   reactions: number;
 }
 
@@ -127,10 +126,6 @@ function parseCounts(value: unknown): ResourceCountsSnapshot {
       item.semanticEffects,
       "resources.counts.semanticEffects",
     ),
-    abyssMonsters: nonNegativeInteger(
-      item.abyssMonsters,
-      "resources.counts.abyssMonsters",
-    ),
     reactions: nonNegativeInteger(item.reactions, "resources.counts.reactions"),
   };
 }
@@ -158,7 +153,6 @@ function parseItem(value: unknown, index: number): ResourceItemSnapshot {
         "character",
         "skill",
         "gameplayEffect",
-        "abyss",
         "reaction",
         "file",
       ] as const,

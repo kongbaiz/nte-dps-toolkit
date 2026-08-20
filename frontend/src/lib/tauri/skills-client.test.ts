@@ -1,17 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSkillsClient } from "@/lib/tauri/skills-client";
-import { MAX_STREAM_DELIVERY_BYTES } from "@/lib/tauri/stream-contract";
 
-const encodeDelivery = (events: unknown[]): ArrayBuffer => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({ streamProtocolVersion: 1, events }),
-  );
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-};
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
 
 const SKILLS_SNAPSHOT_FIXTURE = {
   contractVersion: 1,
@@ -35,7 +29,7 @@ const SKILLS_SNAPSHOT_FIXTURE = {
 };
 
 describe("Skills client", () => {
-  it("subscribes with scope and releases the acknowledged stream", async () => {
+  it("subscribes with scope and releases the stream", async () => {
     let onMessage: ((message: unknown) => void) | undefined;
     const invoke = vi.fn(async (command: string) => {
       if (command === "subscribe_skills") {
@@ -45,16 +39,8 @@ describe("Skills client", () => {
           streamIntervalMs: 100,
           streamProtocolVersion: 1,
           streamGeneration: "1",
-          maxInFlightDeliveries: 1,
-          maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
         };
       }
-      if (command === "read_stream_delivery") {
-        return encodeDelivery([
-          { event: "snapshot", payload: SKILLS_SNAPSHOT_FIXTURE },
-        ]);
-      }
-      if (command === "ack_stream_delivery") return { accepted: true };
       return undefined;
     });
     const client = createSkillsClient(
@@ -69,13 +55,11 @@ describe("Skills client", () => {
     );
     const received = vi.fn();
     const unsubscribe = client.subscribe("all", received, vi.fn());
-    onMessage?.({
-      streamProtocolVersion: 1,
-      streamKind: "skills",
-      subscriptionId: "skills-test",
-      streamGeneration: "1",
-      deliverySequence: "1",
-    });
+    onMessage?.(
+      encodeDelivery([
+        { event: "snapshot", payload: SKILLS_SNAPSHOT_FIXTURE },
+      ]),
+    );
     await vi.waitFor(() => expect(received).toHaveBeenCalledTimes(1));
     await unsubscribe();
 

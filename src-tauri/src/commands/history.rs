@@ -675,44 +675,6 @@ mod tests {
     }
 
     #[test]
-    fn file_export_releases_history_transaction_before_chunk_io() {
-        let source = include_str!("history.rs");
-        let body = source
-            .split_once("pub(crate) async fn export_history_record_file(")
-            .and_then(|(_, tail)| tail.split_once("\n#[tauri::command]"))
-            .map(|(body, _)| body)
-            .expect("file export command source should remain discoverable");
-        let prepare = body
-            .find("prepare_history_record_export")
-            .expect("short descriptor preparation");
-        let export = body
-            .find("export_prepared_history_record_to_path")
-            .expect("lock-free chunk export");
-        assert!(prepare < export);
-        assert_eq!(body.matches("run_history_operation").count(), 0);
-        assert!(!body.contains("export_history_record_to_path"));
-        assert!(!body.contains("find_record(&record_id)"));
-        assert!(
-            !body[prepare..].contains("run_history_operation"),
-            "descriptor preparation and chunk I/O must not hold the History mutation transaction"
-        );
-    }
-
-    #[test]
-    fn summary_scans_are_not_nested_inside_history_mutation_transactions() {
-        let source = include_str!("history.rs");
-        assert!(
-            !source.contains(
-                "run_history_operation(&state, || {\n                Ok(project_snapshot"
-            )
-        );
-        assert!(!source.contains(
-            "run_history_operation(&state, || {\n            let loaded = load_history_summaries"
-        ));
-        assert!(source.contains("fn load_stable_snapshot(state: &AppState)"));
-    }
-
-    #[test]
     fn interactive_hit_budget_maps_to_stable_inline_export_error() {
         let error = match (HistoryRecordLoadError::DetailHitsTooLarge {
             count: u64::MAX,

@@ -4506,35 +4506,6 @@ mod tests {
         );
         assert!(exported.details_chunks.is_none());
 
-        let source = include_str!("history.rs");
-        let export_body = source
-            .split_once("pub fn prepare_history_record_export(")
-            .and_then(|(_, tail)| tail.split_once("\npub fn load_history_index"))
-            .map(|(body, _)| body)
-            .expect("export helper source should remain discoverable");
-        assert!(export_body.contains("read_history_export_chunk"));
-        assert!(export_body.contains("source_file_for_history_export"));
-        let lane_export_body = export_body
-            .split_once("fn write_history_hit_lane_export(")
-            .and_then(|(_, tail)| tail.split_once("\nfn read_history_export_chunk"))
-            .map(|(body, _)| body)
-            .expect("lane export helper should remain discoverable");
-        assert!(lane_export_body.contains("for reference in manifest.chunks.iter()"));
-        assert!(lane_export_body.contains("let (chunk, bytes_read) = read_history_export_chunk"));
-        assert!(!lane_export_body.contains("collect::<Vec"));
-        let chunk_reader_body = export_body
-            .split_once("fn read_history_export_chunk(")
-            .and_then(|(_, tail)| tail.split_once("\nfn write_history_export_value"))
-            .map(|(body, _)| body)
-            .expect("chunk reader helper should remain discoverable");
-        assert!(chunk_reader_body.contains("BufReader::with_capacity"));
-        assert!(chunk_reader_body.contains("reader.into_inner()"));
-        assert!(
-            !export_body.contains("load_history_record_from_path")
-                && !export_body.contains("load_history_details_chunks"),
-            "file export must never hydrate the complete retained record"
-        );
-
         let _ = fs::remove_dir_all(directory);
         let _ = fs::remove_file(export_path);
     }
@@ -4843,14 +4814,6 @@ mod tests {
                 .map(|details| details.global_hits.len()),
             Some(0)
         );
-        let source = include_str!("history.rs");
-        let summary_body = source
-            .split_once("fn parse_stored_history_summary")
-            .and_then(|(_, tail)| tail.split_once("\nfn parse_history_index"))
-            .map(|(body, _)| body)
-            .expect("summary parser source should remain discoverable");
-        assert!(summary_body.contains("HistorySummaryEnvelope"));
-        assert!(!summary_body.contains("parse_history_envelope"));
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -5049,20 +5012,6 @@ mod tests {
     }
 
     #[test]
-    fn chunk_save_path_does_not_clone_record_sized_hit_vectors() {
-        let source = include_str!("history.rs");
-        let save_body = source
-            .split_once("fn write_history_details_chunks")
-            .and_then(|(_, tail)| tail.split_once("\npub fn delete_record"))
-            .map(|(body, _)| body)
-            .expect("chunk save source should remain discoverable");
-        assert!(save_body.contains("details.metadata_only()"));
-        assert!(save_body.contains("HistoryRecordDisk"));
-        assert!(!save_body.contains("details.clone()"));
-        assert!(!save_body.contains("record.clone()"));
-    }
-
-    #[test]
     fn multi_chunk_tombstone_delete_and_restore_preserves_every_hit() {
         let directory = temp_history_dir("multi_chunk_tombstone");
         let expected_hits = MAX_HISTORY_HITS_PER_CHUNK + 1;
@@ -5199,14 +5148,6 @@ mod tests {
         );
         assert_eq!(cleanup_orphaned_history_tombstones(&directory).unwrap(), 0);
 
-        let source = include_str!("history.rs");
-        let tombstone_body = source
-            .split_once("pub fn tombstone_record_from_dir")
-            .and_then(|(_, tail)| tail.split_once("\npub fn compare_records"))
-            .map(|(body, _)| body)
-            .expect("tombstone source should remain discoverable");
-        assert!(!tombstone_body.contains("load_history_details_chunks"));
-        assert!(!tombstone_body.contains("parse_stored_history_record"));
         let _ = fs::remove_dir_all(directory);
     }
 

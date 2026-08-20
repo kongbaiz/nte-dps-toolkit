@@ -2,19 +2,12 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 
 import {
   StreamContractError,
-  parseStreamAckReceipt,
   parseStreamDelivery,
-  parseStreamReadySignal,
   parseStreamSubscriptionReceipt,
   type StreamKind,
-  type StreamReadySignal,
-  type StreamSubscriptionReceipt,
 } from "@/lib/tauri/stream-contract";
 
-const READ_STREAM_DELIVERY_COMMAND = "read_stream_delivery";
-const ACK_STREAM_DELIVERY_COMMAND = "ack_stream_delivery";
-
-export interface AckedStreamTransport {
+export interface StreamTransport {
   invoke(
     command: string,
     arguments_?: Record<string, unknown>,
@@ -22,8 +15,8 @@ export interface AckedStreamTransport {
   createChannel(onMessage: (message: unknown) => void): unknown;
 }
 
-export interface AckedStreamOptions<Event> {
-  transport: AckedStreamTransport;
+export interface StreamOptions<Event> {
+  transport: StreamTransport;
   streamKind: StreamKind;
   subscriptionId: string;
   subscribeCommand: string;
@@ -34,7 +27,7 @@ export interface AckedStreamOptions<Event> {
   onError(error: unknown): void;
 }
 
-export const tauriAckedStreamTransport: AckedStreamTransport = {
+export const tauriStreamTransport: StreamTransport = {
   invoke: (command, arguments_) => invoke<unknown>(command, arguments_),
   createChannel: (onMessage) => {
     const channel = new Channel<unknown>();
@@ -43,8 +36,8 @@ export const tauriAckedStreamTransport: AckedStreamTransport = {
   },
 };
 
-export function subscribeAckedStream<Event>(
-  options: AckedStreamOptions<Event>,
+export function subscribeStream<Event>(
+  options: StreamOptions<Event>,
 ): () => Promise<void> {
   const {
     transport,
@@ -60,29 +53,19 @@ export function subscribeAckedStream<Event>(
 
   let closed = false;
   let closePromise: Promise<void> | undefined;
-  let lifecycle = 0;
-  let readInFlight = false;
-  let inFlightSequence: bigint | undefined;
-  let queuedSignal: StreamReadySignal | undefined;
-  let streamGeneration: string | undefined;
-  let lastAcknowledgedSequence: bigint | undefined;
-  let receipt: StreamSubscriptionReceipt | undefined;
-  let reportedFailure = false;
   let rawReceipt: Promise<unknown> | undefined;
+  let receiptReady = false;
+  let pendingDelivery: unknown | undefined;
+  let reportedFailure = false;
 
   const close = (): Promise<void> => {
-    if (!closed) {
-      closed = true;
-      lifecycle += 1;
-    }
+    closed = true;
     closePromise ??= (async () => {
-      const pendingReceipt = rawReceipt;
-      if (pendingReceipt === undefined) return;
+      if (rawReceipt === undefined) return;
       try {
-        await pendingReceipt;
+        await rawReceipt;
       } catch {
-        // The command may have activated the backend stream even if its
-        // response was lost. The unsubscribe command is idempotent.
+        // Unsubscribe is idempotent and also covers a lost command response.
       }
       await transport.invoke(unsubscribeCommand, { subscriptionId });
     })();
@@ -90,173 +73,69 @@ export function subscribeAckedStream<Event>(
   };
 
   const failClosed = (error: unknown): void => {
-    if (closed || reportedFailure) return;
+    if (reportedFailure) return;
     reportedFailure = true;
-    void close().catch(() => undefined);
+    void close();
     try {
       onError(error);
     } catch {
-      // Error reporting is an application boundary; cleanup has already begun.
+      // Cleanup has already started; error reporting must not reopen the stream.
     }
   };
 
-  const identityArguments = (signal: StreamReadySignal) => ({
-    streamKind,
-    subscriptionId,
-    streamGeneration: signal.streamGeneration,
-    deliverySequence: signal.deliverySequence,
-  });
-
-  const processSignal = async (
-    signal: StreamReadySignal,
-    activeLifecycle: number,
-  ): Promise<void> => {
+  const deliver = (value: unknown): void => {
+    if (closed) return;
     try {
-      const rawDelivery = await transport.invoke(
-        READ_STREAM_DELIVERY_COMMAND,
-        identityArguments(signal),
-      );
-      if (closed || lifecycle !== activeLifecycle) return;
+      for (const rawEvent of parseStreamDelivery(value)) {
+        onEvent(parseEvent(rawEvent));
+        if (closed) return;
+      }
+    } catch (error) {
+      failClosed(error);
+    }
+  };
 
-      const activeReceipt = await receiptPromise;
-      if (
-        closed ||
-        lifecycle !== activeLifecycle ||
-        activeReceipt === undefined
-      ) {
+  const onMessage = (value: unknown): void => {
+    if (closed) return;
+    if (!receiptReady) {
+      if (pendingDelivery !== undefined) {
+        failClosed(new StreamContractError("stream started before subscription completed"));
         return;
       }
-      const events = parseStreamDelivery(
-        rawDelivery,
-        activeReceipt.maxDeliveryBytes,
-      );
-      for (const value of events) {
-        const event = parseEvent(value);
-        if (closed || lifecycle !== activeLifecycle) return;
-        onEvent(event);
-      }
-      if (closed || lifecycle !== activeLifecycle) return;
-
-      const acknowledgement = parseStreamAckReceipt(
-        await transport.invoke(
-          ACK_STREAM_DELIVERY_COMMAND,
-          identityArguments(signal),
-        ),
-      );
-      if (!acknowledgement.accepted) {
-        throw new StreamContractError("stream ACK was not accepted");
-      }
-      if (closed || lifecycle !== activeLifecycle) return;
-      lastAcknowledgedSequence = BigInt(signal.deliverySequence);
-    } catch (error) {
-      failClosed(error);
-    } finally {
-      if (lifecycle === activeLifecycle) {
-        readInFlight = false;
-        inFlightSequence = undefined;
-        const pending = queuedSignal;
-        queuedSignal = undefined;
-        if (!closed && pending !== undefined) {
-          onSignal(pending);
-        }
-      }
+      pendingDelivery = value;
+      return;
     }
+    deliver(value);
   };
 
-  const onSignal = (value: unknown): void => {
-    if (closed) return;
-    let signal: StreamReadySignal;
-    try {
-      signal = parseStreamReadySignal(value);
-    } catch (error) {
-      failClosed(error);
-      return;
-    }
-    if (
-      signal.streamKind !== streamKind ||
-      signal.subscriptionId !== subscriptionId
-    ) {
-      failClosed(new StreamContractError("stream ready identity mismatch"));
-      return;
-    }
-    if (
-      streamGeneration !== undefined &&
-      signal.streamGeneration !== streamGeneration
-    ) {
-      return;
-    }
-    if (
-      receipt !== undefined &&
-      signal.streamGeneration !== receipt.streamGeneration
-    ) {
-      return;
-    }
-    const sequence = BigInt(signal.deliverySequence);
-    if (readInFlight) {
-      if (
-        (inFlightSequence === undefined || sequence > inFlightSequence) &&
-        (queuedSignal === undefined ||
-          sequence > BigInt(queuedSignal.deliverySequence))
-      ) {
-        queuedSignal = signal;
-      }
-      return;
-    }
-    if (
-      lastAcknowledgedSequence !== undefined &&
-      sequence <= lastAcknowledgedSequence
-    ) {
-      return;
-    }
-
-    streamGeneration ??= signal.streamGeneration;
-    readInFlight = true;
-    inFlightSequence = sequence;
-    const activeLifecycle = lifecycle;
-    void processSignal(signal, activeLifecycle);
-  };
-
-  const onEventChannel = transport.createChannel(onSignal);
-  if (closed) return close;
+  const onEventChannel = transport.createChannel(onMessage);
   rawReceipt = transport.invoke(subscribeCommand, {
     ...subscribeArguments,
     subscriptionId,
     onEvent: onEventChannel,
   });
-  const receiptPromise: Promise<StreamSubscriptionReceipt | undefined> =
-    rawReceipt.then(
-      (value) => {
-        try {
-          const parsed = parseStreamSubscriptionReceipt(value);
-          if (parsed.subscriptionId !== subscriptionId) {
-            throw new StreamContractError(
-              "stream subscription identity mismatch",
-            );
-          }
-          if (parsed.streamKind !== streamKind) {
-            throw new StreamContractError("stream subscription kind mismatch");
-          }
-          if (
-            streamGeneration !== undefined &&
-            parsed.streamGeneration !== streamGeneration
-          ) {
-            throw new StreamContractError(
-              "stream subscription generation mismatch",
-            );
-          }
-          receipt = parsed;
-          streamGeneration ??= parsed.streamGeneration;
-          return parsed;
-        } catch (error) {
-          failClosed(error);
-          return undefined;
+  void rawReceipt.then(
+    (value) => {
+      try {
+        const receipt = parseStreamSubscriptionReceipt(value);
+        if (
+          receipt.subscriptionId !== subscriptionId ||
+          receipt.streamKind !== streamKind
+        ) {
+          throw new StreamContractError("stream subscription identity mismatch");
         }
-      },
-      (error: unknown) => {
+        receiptReady = true;
+        if (pendingDelivery !== undefined) {
+          const delivery = pendingDelivery;
+          pendingDelivery = undefined;
+          deliver(delivery);
+        }
+      } catch (error) {
         failClosed(error);
-        return undefined;
-      },
-    );
+      }
+    },
+    failClosed,
+  );
 
   return close;
 }

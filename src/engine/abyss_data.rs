@@ -1,23 +1,16 @@
 use std::collections::HashMap;
-use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use crate::engine::parser::find_data_file;
-use crate::storage::resource::read_resource_text;
-
-const ABYSS_MONSTER_STATIC_PATH: &str = "res/data/abyss/DT_MonsterStaticData_Abyss.json";
-const MONSTER_PACK_DATA_PATH: &str = "res/data/abyss/DT_MonsterPackData.json";
-const ABYSS_MONSTER_DATASET_PATH: &str = "res/data/abyss/abyss_monsters.json";
-const ABYSS_FLOOR_MONSTER_SUMMARY_PATH: &str = "res/data/abyss/abyss_floor_monster_summary.json";
-const ABYSS_SEASON_NAMES_PATH: &str = "res/data/abyss/season_names_zh_cn.json";
-const LEGACY_ABYSS_MONSTER_STATIC_PATH: &str =
-    "NTE_Assets/DataTable/Monster/DT_MonsterStaticData_Abyss.json";
-const LEGACY_MONSTER_PACK_DATA_PATH: &str = "NTE_Assets/DataTable/PackData/DT_MonsterPackData.json";
-const LEGACY_ABYSS_LOCALIZATION_PATH: &str = "NTE_Assets/Localization/zh-CN/game.json";
-type AbyssPackIdParts = (u32, u32, Option<u32>, Option<u32>, String);
 const SUPPORTED_ABYSS_SEASONS: std::ops::RangeInclusive<u32> = 1..=10;
+const MAX_REMOTE_JSON_NODES: usize = 500_000;
+const MAX_REMOTE_JSON_DEPTH: usize = 48;
+const MAX_REMOTE_STRING_BYTES: usize = 4 * 1024;
+const MAX_REMOTE_TABLE_ROWS: usize = 50_000;
+const MAX_REMOTE_SUMMARY_ROWS: usize = 10_000;
+const MAX_REMOTE_SEASON_NAMES: usize = 32;
+const MAX_REMOTE_DATASET_MONSTERS: usize = 20_000;
 
 #[derive(Clone, Debug, Default)]
 pub struct AbyssMonsterDataset {
@@ -99,68 +92,25 @@ struct StaticMonsterInfo {
 }
 
 impl AbyssMonsterDataset {
-    pub fn load() -> Result<Self> {
-        // The floor/monster-pool summary (built from the authoritative
-        // AbyssCloneLevelDataTable + DT_AbyssMonsterPool tables) is preferred
-        // whenever it and the static/pack tables it depends on for names and
-        // stats are all present: it carries real wave/route/boss/star-time
-        // data instead of the pack_id string-guessing below. Both lookups
-        // stay optional here (not `.with_context`-required) so a packaged
-        // build shipping only the compact `abyss_monsters.json` keeps working.
-        let static_path = find_data_file(ABYSS_MONSTER_STATIC_PATH.as_ref())
-            .or_else(|| find_data_file(LEGACY_ABYSS_MONSTER_STATIC_PATH.as_ref()));
-        let pack_path = find_data_file(MONSTER_PACK_DATA_PATH.as_ref())
-            .or_else(|| find_data_file(LEGACY_MONSTER_PACK_DATA_PATH.as_ref()));
-        let summary_path = find_data_file(ABYSS_FLOOR_MONSTER_SUMMARY_PATH.as_ref());
-
-        if let (Some(static_path), Some(pack_path), Some(summary_path)) =
-            (&static_path, &pack_path, &summary_path)
-        {
-            let summary_rows = load_summary_rows(summary_path)
-                .with_context(|| format!("无法读取 {}", summary_path.display()))?;
-            if !summary_rows.is_empty() {
-                let static_rows = load_rows(static_path)
-                    .with_context(|| format!("无法读取 {}", static_path.display()))?;
-                let pack_rows = load_rows(pack_path)
-                    .with_context(|| format!("无法读取 {}", pack_path.display()))?;
-                let static_index = build_static_index(&static_rows);
-                let season_names = load_abyss_season_names();
-                let dataset = build_dataset_from_summary(
-                    &summary_rows,
-                    &pack_rows,
-                    &static_index,
-                    &season_names,
-                );
-                if !dataset.seasons.is_empty() {
-                    return Ok(dataset);
-                }
-            }
-        }
-
-        if let Some(compact_path) = find_data_file(ABYSS_MONSTER_DATASET_PATH.as_ref()) {
-            let dataset = load_compact_dataset(&compact_path)
-                .with_context(|| format!("无法读取 {}", compact_path.display()))?;
-            if !dataset.seasons.is_empty() {
-                return Ok(dataset);
-            }
-        }
-
-        let static_path = static_path
-            .with_context(|| format!("找不到深渊怪物静态表 {ABYSS_MONSTER_STATIC_PATH}"))?;
-        let pack_path =
-            pack_path.with_context(|| format!("找不到怪物数值表 {MONSTER_PACK_DATA_PATH}"))?;
-        let static_rows = load_rows(&static_path)
-            .with_context(|| format!("无法读取 {}", static_path.display()))?;
-        let pack_rows =
-            load_rows(&pack_path).with_context(|| format!("无法读取 {}", pack_path.display()))?;
+    /// Builds the runtime dataset from the four versioned tables delivered by
+    /// the official abyss-data endpoint. The caller owns transport, archive,
+    /// size and hash verification; this boundary enforces JSON shape/resource
+    /// budgets before converting untrusted values into domain state.
+    pub fn from_remote_tables(
+        monster_static: &[u8],
+        monster_pack: &[u8],
+        floor_summary: &[u8],
+        season_names: &[u8],
+    ) -> Result<Self> {
+        let static_rows = load_remote_rows(monster_static, "怪物静态表")?;
+        let pack_rows = load_remote_rows(monster_pack, "怪物数值表")?;
+        let summary_rows = load_remote_summary_rows(floor_summary)?;
+        let season_names = load_remote_season_names(season_names)?;
         let static_index = build_static_index(&static_rows);
-        let season_names = load_abyss_season_names();
-
-        Ok(build_dataset_from_pack_rows(
-            &pack_rows,
-            &static_index,
-            &season_names,
-        ))
+        let dataset =
+            build_dataset_from_summary(&summary_rows, &pack_rows, &static_index, &season_names);
+        validate_remote_dataset(&dataset)?;
+        Ok(dataset)
     }
 
     pub fn first_floor_key(&self) -> Option<(u32, u32)> {
@@ -257,43 +207,6 @@ pub fn predict_wave_clear_times(
             }
         })
         .collect()
-}
-
-fn build_dataset_from_pack_rows(
-    pack_rows: &HashMap<String, Value>,
-    static_index: &HashMap<String, StaticMonsterInfo>,
-    season_names: &HashMap<u32, String>,
-) -> AbyssMonsterDataset {
-    let mut floors = HashMap::<(u32, u32), Vec<AbyssMonsterEntry>>::new();
-
-    for (pack_id, row) in pack_rows {
-        let Some((season, floor, half, wave, monster_id)) = parse_abyss_pack_id(pack_id) else {
-            continue;
-        };
-        let stats = monster_stats(row);
-        let static_info = lookup_static_monster(static_index, &monster_id);
-        let name = static_info
-            .and_then(|info| info.name.clone())
-            .unwrap_or_else(|| monster_id.clone());
-        floors
-            .entry((season, floor))
-            .or_default()
-            .push(AbyssMonsterEntry {
-                pack_id: pack_id.clone(),
-                attribute_id: pack_id.clone(),
-                monster_pool_id: None,
-                monster_id,
-                name: name.clone(),
-                count: 1,
-                level: None,
-                half,
-                wave,
-                is_boss: false,
-                stats,
-            });
-    }
-
-    build_dataset(floors, HashMap::new(), season_names)
 }
 
 /// Per-floor metadata that is repeated across every wave/route row of a
@@ -482,133 +395,116 @@ fn is_supported_abyss_season(season: u32) -> bool {
     SUPPORTED_ABYSS_SEASONS.contains(&season)
 }
 
-fn load_rows(path: &Path) -> Result<HashMap<String, Value>> {
-    let text = read_resource_text(path)?;
-    let document: Value = serde_json::from_str(&text)?;
+fn load_remote_rows(bytes: &[u8], label: &str) -> Result<HashMap<String, Value>> {
+    let document: Value =
+        serde_json::from_slice(bytes).with_context(|| format!("{label}不是有效 JSON"))?;
+    validate_remote_json_budget(&document)?;
     let rows = document
         .as_array()
         .and_then(|entries| entries.first())
         .and_then(|entry| entry.get("Rows"))
         .and_then(Value::as_object)
-        .context("DataTable 缺少 Rows 对象")?;
+        .with_context(|| format!("{label}缺少 Rows 对象"))?;
+    anyhow::ensure!(rows.len() <= MAX_REMOTE_TABLE_ROWS, "{label}记录数超过上限");
     Ok(rows
         .iter()
         .map(|(key, row)| (key.clone(), row.clone()))
         .collect())
 }
 
-fn load_summary_rows(path: &Path) -> Result<Vec<Value>> {
-    let text = read_resource_text(path)?;
-    let document: Value = serde_json::from_str(&text)?;
+fn load_remote_summary_rows(bytes: &[u8]) -> Result<Vec<Value>> {
+    let document: Value = serde_json::from_slice(bytes).context("深渊关卡汇总不是有效 JSON")?;
+    validate_remote_json_budget(&document)?;
     let rows = document
         .get("rows")
         .and_then(Value::as_array)
-        .context("深渊怪物汇总缺少 rows 数组")?;
+        .context("深渊关卡汇总缺少 rows 数组")?;
+    anyhow::ensure!(
+        rows.len() <= MAX_REMOTE_SUMMARY_ROWS,
+        "深渊关卡汇总记录数超过上限"
+    );
     Ok(rows.clone())
 }
 
-fn load_compact_dataset(path: &Path) -> Result<AbyssMonsterDataset> {
-    let text = read_resource_text(path)?;
-    let document: Value = serde_json::from_str(&text)?;
-    let seasons = document
-        .get("seasons")
-        .and_then(Value::as_array)
-        .context("深渊怪物数据缺少 seasons 数组")?;
-    let mut parsed_seasons = Vec::new();
-    for season_row in seasons {
-        let Some(season) = u32_value(season_row, "season") else {
-            continue;
-        };
-        if !is_supported_abyss_season(season) {
-            continue;
-        }
-        let season_name = string(season_row, "name").map(str::to_owned);
-        let mut floors = Vec::new();
-        let Some(floor_rows) = season_row.get("floors").and_then(Value::as_array) else {
-            continue;
-        };
-        for floor_row in floor_rows {
-            let Some(floor) = u32_value(floor_row, "floor") else {
-                continue;
-            };
-            let mut monsters = Vec::new();
-            let Some(monster_rows) = floor_row.get("monsters").and_then(Value::as_array) else {
-                continue;
-            };
-            for monster_row in monster_rows {
-                let Some(pack_id) = string(monster_row, "pack_id") else {
-                    continue;
-                };
-                let Some(monster_id) = string(monster_row, "monster_id") else {
-                    continue;
-                };
-                monsters.push(AbyssMonsterEntry {
-                    pack_id: pack_id.to_owned(),
-                    attribute_id: string(monster_row, "attribute_id")
-                        .unwrap_or(pack_id)
-                        .to_owned(),
-                    monster_pool_id: string(monster_row, "monster_pool_id").map(str::to_owned),
-                    monster_id: monster_id.to_owned(),
-                    name: string(monster_row, "name")
-                        .filter(|value| !value.trim().is_empty())
-                        .unwrap_or(monster_id)
-                        .to_owned(),
-                    count: u32_value(monster_row, "count").unwrap_or(1).max(1),
-                    level: u32_value(monster_row, "level"),
-                    half: u32_value(monster_row, "half"),
-                    wave: u32_value(monster_row, "wave"),
-                    is_boss: bool_value(monster_row, "is_boss"),
-                    stats: monster_row
-                        .get("stats")
-                        .map(monster_stats)
-                        .unwrap_or_default(),
-                });
-            }
-            monsters.sort_by(|left, right| {
-                left.half
-                    .cmp(&right.half)
-                    .then_with(|| left.wave.cmp(&right.wave))
-                    .then_with(|| left.monster_pool_id.cmp(&right.monster_pool_id))
-                    .then_with(|| left.name.cmp(&right.name))
-                    .then_with(|| left.pack_id.cmp(&right.pack_id))
-            });
-            floors.push(AbyssFloor {
-                season,
-                season_name: season_name.clone(),
-                floor,
-                name: string(floor_row, "name").map(str::to_owned),
-                monsters,
-                max_seconds: None,
-                star_thresholds: Vec::new(),
-                recommended_elements: AbyssRecommendedElements::default(),
-            });
-        }
-        floors.sort_by_key(|floor| floor.floor);
-        parsed_seasons.push(AbyssSeason {
-            season,
-            name: season_name,
-            floors,
-        });
-    }
-    parsed_seasons.sort_by_key(|season| season.season);
-    Ok(AbyssMonsterDataset {
-        seasons: parsed_seasons,
-    })
+fn load_remote_season_names(bytes: &[u8]) -> Result<HashMap<u32, String>> {
+    let document: Value = serde_json::from_slice(bytes).context("深渊赛季名称不是有效 JSON")?;
+    validate_remote_json_budget(&document)?;
+    let names = parse_abyss_season_names(&document);
+    anyhow::ensure!(
+        names.len() <= MAX_REMOTE_SEASON_NAMES,
+        "深渊赛季名称数量超过上限"
+    );
+    Ok(names)
 }
 
-fn load_abyss_season_names() -> HashMap<u32, String> {
-    let Some(path) = find_data_file(ABYSS_SEASON_NAMES_PATH.as_ref())
-        .or_else(|| find_data_file(LEGACY_ABYSS_LOCALIZATION_PATH.as_ref()))
-    else {
-        return HashMap::new();
-    };
-    let Ok(text) = read_resource_text(&path) else {
-        return HashMap::new();
-    };
-    let Ok(document) = serde_json::from_str::<Value>(&text) else {
-        return HashMap::new();
-    };
-    parse_abyss_season_names(&document)
+fn validate_remote_json_budget(document: &Value) -> Result<()> {
+    let mut stack = vec![(document, 0_usize)];
+    let mut nodes = 0_usize;
+    while let Some((value, depth)) = stack.pop() {
+        nodes = nodes.saturating_add(1);
+        anyhow::ensure!(nodes <= MAX_REMOTE_JSON_NODES, "深渊 JSON 节点数超过上限");
+        anyhow::ensure!(depth <= MAX_REMOTE_JSON_DEPTH, "深渊 JSON 嵌套层级超过上限");
+        match value {
+            Value::String(text) => anyhow::ensure!(
+                text.len() <= MAX_REMOTE_STRING_BYTES,
+                "深渊 JSON 字符串长度超过上限"
+            ),
+            Value::Array(values) => {
+                stack.extend(values.iter().map(|value| (value, depth + 1)));
+            }
+            Value::Object(values) => {
+                for (key, value) in values {
+                    anyhow::ensure!(
+                        key.len() <= MAX_REMOTE_STRING_BYTES,
+                        "深渊 JSON 字段名长度超过上限"
+                    );
+                    stack.push((value, depth + 1));
+                }
+            }
+            Value::Number(number) => anyhow::ensure!(
+                number.as_f64().is_some_and(f64::is_finite),
+                "深渊 JSON 包含非法数值"
+            ),
+            Value::Null | Value::Bool(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_remote_dataset(dataset: &AbyssMonsterDataset) -> Result<()> {
+    anyhow::ensure!(!dataset.seasons.is_empty(), "远程深渊数据没有受支持赛季");
+    let mut monster_count = 0_usize;
+    for season in &dataset.seasons {
+        anyhow::ensure!(
+            is_supported_abyss_season(season.season),
+            "远程深渊数据包含不受支持赛季"
+        );
+        anyhow::ensure!(!season.floors.is_empty(), "远程深渊赛季没有关卡");
+        for floor in &season.floors {
+            anyhow::ensure!(!floor.monsters.is_empty(), "远程深渊关卡没有怪物");
+            for monster in &floor.monsters {
+                monster_count = monster_count.saturating_add(1);
+                anyhow::ensure!(
+                    monster_count <= MAX_REMOTE_DATASET_MONSTERS,
+                    "远程深渊怪物记录数超过上限"
+                );
+                anyhow::ensure!(monster.count > 0, "远程深渊怪物数量非法");
+                anyhow::ensure!(
+                    monster.stats.hp_max_base.is_finite() && monster.stats.hp_max_base > 0.0,
+                    "远程深渊怪物生命值非法"
+                );
+                anyhow::ensure!(
+                    monster
+                        .stats
+                        .raw_props
+                        .iter()
+                        .all(|(_, value)| value.is_finite()),
+                    "远程深渊怪物属性包含非法数值"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_abyss_season_names(document: &Value) -> HashMap<u32, String> {
@@ -735,26 +631,6 @@ fn normalize_monster_numeric_key(value: &str) -> String {
         .join("_")
 }
 
-fn parse_abyss_pack_id(pack_id: &str) -> Option<AbyssPackIdParts> {
-    let parts = pack_id.split('_').collect::<Vec<_>>();
-    if parts.len() < 4 || parts.first().copied() != Some("Abyss") {
-        return None;
-    }
-    let season = parts.get(1)?.parse::<u32>().ok()?;
-    let floor = parts.get(2)?.parse::<u32>().ok()?;
-    let (half, wave, monster_start) = if parts.len() >= 6 && is_u32(parts[3]) && is_u32(parts[4]) {
-        (
-            parts[3].parse::<u32>().ok(),
-            parts[4].parse::<u32>().ok(),
-            5,
-        )
-    } else {
-        (None, None, 3)
-    };
-    let monster_id = parts.get(monster_start..)?.join("_");
-    (!monster_id.is_empty()).then_some((season, floor, half, wave, monster_id))
-}
-
 fn parse_abyss_group(value: &str) -> Option<u32> {
     value.strip_prefix("Abyss_").and_then(|suffix| {
         if suffix == "Common" {
@@ -875,7 +751,7 @@ mod tests {
     use super::{
         build_dataset_from_summary, build_static_index, is_supported_abyss_season,
         lookup_static_monster, parse_abyss_attribute_monster_id, parse_abyss_group,
-        parse_abyss_pack_id, parse_abyss_route_half, parse_abyss_season_names,
+        parse_abyss_route_half, parse_abyss_season_names,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -884,22 +760,6 @@ mod tests {
     fn supports_released_abyss_season_ten_only() {
         assert!(is_supported_abyss_season(10));
         assert!(!is_supported_abyss_season(11));
-    }
-
-    #[test]
-    fn parses_simple_abyss_pack_id() {
-        assert_eq!(
-            parse_abyss_pack_id("Abyss_1_9_Boss_016_BP"),
-            Some((1, 9, None, None, "Boss_016_BP".to_owned()))
-        );
-    }
-
-    #[test]
-    fn parses_half_and_wave_abyss_pack_id() {
-        assert_eq!(
-            parse_abyss_pack_id("Abyss_4_6_1_2_mon_03_BP"),
-            Some((4, 6, Some(1), Some(2), "mon_03_BP".to_owned()))
-        );
     }
 
     #[test]
@@ -1013,122 +873,6 @@ mod tests {
                 first_half: vec!["光".to_owned(), "咒".to_owned()],
                 second_half: Vec::new(),
             }
-        );
-    }
-
-    #[test]
-    fn loads_current_abyss_summary_resource_shape() {
-        let dataset = super::AbyssMonsterDataset::load().expect("abyss resource should load");
-        let seasons = dataset
-            .seasons
-            .iter()
-            .map(|season| season.season)
-            .collect::<Vec<_>>();
-        assert_eq!(seasons, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-
-        let floor = dataset
-            .floor(4, 1)
-            .expect("current abyss floor should exist");
-        assert_eq!(floor.wave_count(), 2);
-        assert_eq!(floor.monster_count(), 16);
-        assert!(
-            floor
-                .monsters
-                .iter()
-                .any(|monster| monster.monster_id == "mon_14_BP")
-        );
-
-        let latest_floor = dataset
-            .floor(10, 1)
-            .expect("latest abyss floor should exist");
-        assert_eq!(latest_floor.wave_count(), 2);
-        assert_eq!(latest_floor.monster_count(), 16);
-        assert_eq!(latest_floor.season_name.as_deref(), Some("星流环线"));
-        assert!(
-            latest_floor
-                .monsters
-                .iter()
-                .all(|monster| monster.stats.hp_max_base > 0.0),
-            "season 10 summary rows must resolve stats from the refreshed pack table"
-        );
-
-        // These come from the authoritative AbyssCloneLevelDataTable summary
-        // (not the pack_id-guessing fallback), so every supported floor
-        // should carry real clear-time star thresholds.
-        assert_eq!(floor.max_seconds, Some(600.0));
-        assert_eq!(
-            floor.star_thresholds,
-            vec![
-                super::AbyssStarThreshold {
-                    stars: 1,
-                    seconds: 600.0
-                },
-                super::AbyssStarThreshold {
-                    stars: 2,
-                    seconds: 420.0
-                },
-                super::AbyssStarThreshold {
-                    stars: 3,
-                    seconds: 300.0
-                },
-            ]
-        );
-        assert!(!floor.recommended_elements.first_half.is_empty());
-    }
-
-    #[test]
-    fn loads_compact_abyss_dataset_shape() {
-        let path = std::env::temp_dir().join(format!(
-            "nte_dps_tool_compact_abyss_{}.json",
-            std::process::id()
-        ));
-        std::fs::write(
-            &path,
-            r#"{
-                "seasons": [{
-                    "season": 4,
-                    "name": "测试赛季",
-                    "floors": [{
-                        "floor": 2,
-                        "name": "第二站",
-                        "monsters": [{
-                            "pack_id": "Abyss_4_2_0_1:0:1:Abyss_4_2_0_1_mon_35_Blue_BP:0",
-                            "attribute_id": "Abyss_4_2_0_1_mon_35_Blue_BP",
-                            "monster_pool_id": "Abyss_4_2_0_1",
-                            "monster_id": "mon_35_Blue_BP",
-                            "name": "罐头锡兵",
-                            "count": 2,
-                            "level": 46,
-                            "half": 0,
-                            "wave": 1,
-                            "stats": {
-                                "HPMaxBase": 1000.0,
-                                "AttackBase": 50.0
-                            }
-                        }]
-                    }]
-                }]
-            }"#,
-        )
-        .expect("compact abyss temp file should be writable");
-
-        let dataset = super::load_compact_dataset(&path).expect("compact abyss should load");
-        let floor = dataset.floor(4, 2).expect("compact floor should exist");
-        let monster = floor
-            .monsters
-            .first()
-            .expect("compact monster should exist");
-
-        assert_eq!(floor.name.as_deref(), Some("第二站"));
-        assert_eq!(monster.monster_id, "mon_35_Blue_BP");
-        assert_eq!(monster.count, 2);
-        assert_eq!(monster.stats.hp_max_base, 1000.0);
-        assert!(
-            monster
-                .stats
-                .raw_props
-                .iter()
-                .any(|(key, value)| key == "AttackBase" && *value == 50.0)
         );
     }
 

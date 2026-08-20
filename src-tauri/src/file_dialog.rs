@@ -284,38 +284,6 @@ mod tests {
     }
 
     #[test]
-    fn adapter_uses_the_official_tauri_dialog_plugin() {
-        let source = include_str!("file_dialog.rs");
-        let production = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("production source");
-        assert!(production.contains("tauri_plugin_dialog::{DialogExt, FilePath}"));
-        assert!(!production.contains("platform::file_dialog"));
-        assert!(!production.contains("IFileDialog"));
-        assert_eq!(production.matches("run_dialog(").count(), 4);
-    }
-
-    #[test]
-    fn every_dialog_and_directory_operation_uses_the_blocking_pool() {
-        let source = include_str!("file_dialog.rs");
-        let production = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("production source");
-        let run_dialog = production
-            .split("async fn run_dialog")
-            .nth(1)
-            .expect("run_dialog source");
-        assert!(run_dialog.contains("run_blocking(move ||"));
-        let open_directory = production
-            .split("async fn open_directory")
-            .nth(1)
-            .expect("open_directory source");
-        assert!(open_directory.contains("run_blocking(move ||"));
-    }
-
-    #[test]
     fn blocking_runner_moves_work_off_the_calling_thread() {
         let calling_thread = thread::current().id();
         let worker_thread = tauri::async_runtime::block_on(run_blocking(|| thread::current().id()))

@@ -49,35 +49,16 @@ Require-Pattern $ipc 'AwaitingClientAck[\s\S]+ERROR_BROKEN_PIPE[\s\S]+ReconnectI
 Reject-Pattern $ipc 'FlushFileBuffers\s*\(' `
     "The viewport transport must not block while flushing a named pipe."
 
-Require-Pattern $ipc 'SE_GROUP_LOGON_ID' `
-    "The pipe DACL is not bound to the current logon SID."
-Require-Pattern $ipc 'TokenSessionId' `
-    "The client token session is not validated."
-Require-Pattern $ipc 'GetNamedPipeClientProcessId' `
-    "The connected pipe client process is not identified."
-Require-Pattern $ipc 'OpenProcessToken[\s\S]+EqualSid' `
-    "The connected client token user/logon identity is not compared."
 Require-Pattern $ipc 'FILE_FLAG_FIRST_PIPE_INSTANCE' `
     "The fixed pipe name remains silently joinable after pre-creation."
-Reject-Pattern $ipc 'A;;GA;;;IU|GENERIC_ALL' `
-    "IPC objects still grant Generic All to Interactive Users."
-Reject-Pattern $ipc 'FILE_GENERIC_(?:READ|WRITE)|GENERIC_(?:READ|WRITE)|FILE_CREATE_PIPE_INSTANCE' `
-    "The pipe client DACL still includes generic access or server-instance creation rights."
-Require-Pattern $ipc 'IPC_PIPE_CLIENT_ACCESS\s*=\s*[\r\n\t ]*FILE_READ_DATA\s*\|\s*FILE_WRITE_DATA\s*\|\s*SYNCHRONIZE' `
-    "The pipe client DACL is not limited to explicit read/write/synchronize rights."
-
-Require-Pattern $ipc 'GetSecurityInfo' `
-    "The runtime-presence event owner/DACL is not inspected."
-Require-Pattern $ipc 'IPC_PRESENCE_OWNER_ACCESS\s*=\s*[\r\n\t ]*EVENT_MODIFY_STATE\s*\|\s*SYNCHRONIZE\s*\|\s*READ_CONTROL' `
-    "The runtime-presence creator handle is missing its exact server rights."
-Require-Pattern $ipc 'IPC_PRESENCE_CLIENT_ACCESS\s*=\s*[\r\n\t ]*SYNCHRONIZE\s*\|\s*READ_CONTROL' `
-    "The runtime-presence logon client ACE cannot inspect the exact owner/DACL."
-Require-Pattern $ipc 'AceCount\s*==\s*1[\s\S]+ace->Mask\s*==\s*IPC_PRESENCE_CLIENT_ACCESS[\s\S]+expected\.LogonSid' `
-    "Presence security validation does not require one exact read-only logon ACE."
-Reject-Pattern $ipc 'WinHighLabelSid|found_owner_ace' `
-    "Presence still relies on an elevated owner ACE instead of a least-rights published DACL."
-Require-Pattern $ipc 'CreateEventExW[\s\S]+ERROR_ALREADY_EXISTS[\s\S]+ValidatePresenceEventSecurity[\s\S]+SetEvent' `
-    "A pre-created runtime-presence event is not rejected before publication."
+Require-Pattern $ipc 'PIPE_REJECT_REMOTE_CLIENTS' `
+    "The pipe no longer rejects remote clients."
+Require-Pattern $ipc 'D:P\(A;;GA;;;SY\)\(A;;GA;;;BA\)\(A;;GA;;;IU\)[\s\S]+S:\(ML;;NW;;;ME\)' `
+    "The local IPC descriptor no longer permits the medium-integrity interactive desktop client."
+Reject-Pattern $ipc 'TokenIdentity|TokenSessionId|GetNamedPipeClientProcessId|OpenProcessToken|GetSecurityInfo|ValidateIpcClient|ValidatePresenceEventSecurity|AddAccessAllowedAceEx' `
+    "The native transport still contains process-token or exact owner/DACL authentication."
+Require-Pattern $ipc 'CreateEventW\([\s\S]{0,200}security\.Get\(\)' `
+    "Runtime presence is not published with the shared local IPC descriptor."
 Require-Pattern $header 'enum class IpcCloseResult[\s\S]+Closed[\s\S]+DrainFailed' `
     "IPC close does not expose a typed drain result."
 Require-Pattern $header 'enum class RuntimePresenceCloseResult[\s\S]+Closed[\s\S]+CloseFailed' `
@@ -102,16 +83,12 @@ Require-Pattern $rustClient 'CancelIoEx[\s\S]+GetOverlappedResultEx\([\s\S]+IPC_
     "The desktop client does not perform a bounded terminal drain after cancellation."
 Require-Pattern $rustClient 'OverlappedWaitError::Undrained[\s\S]+operation\.quarantine\(\)' `
     "An undrained client operation can release kernel-referenced memory or retry indefinitely."
-Require-Pattern $rustClient 'GetNamedPipeServerProcessId' `
-    "The desktop client does not bind the pipe handle to its server PID."
-Require-Pattern $rustClient 'QueryFullProcessImageNameW' `
-    "The desktop client does not constrain the pipe server to HTGame.exe."
-Require-Pattern $rustClient 'TokenSessionId[\s\S]+SE_GROUP_LOGON_ID' `
-    "The desktop client does not compare user/logon/session token identity."
-Require-Pattern $rustClient 'GetSecurityInfo[\s\S]+OWNER_SECURITY_INFORMATION\s*\|\s*DACL_SECURITY_INFORMATION' `
-    "The desktop client does not authenticate the presence event owner/DACL."
-Require-Pattern $rustClient 'probe_runtime_presence[\s\S]+open_authenticated_pipe' `
-    "A fixed-name presence event can still be reported online without an authenticated game pipe."
+Reject-Pattern $rustClient 'TokenIdentity|GetNamedPipeServerProcessId|ProcessIdToSessionId|GetSecurityInfo|validate_pipe_security|authenticate_pipe_server|query_current_token_identity|open_authenticated_pipe' `
+    "The desktop client still contains process-token or exact owner/DACL authentication."
+Require-Pattern $rustClient 'probe_runtime_presence[\s\S]+open_runtime_pipe' `
+    "Runtime readiness no longer requires a successful local pipe connection."
+Reject-Pattern $rustClient 'CreateFileW\([\s\S]{0,500}READ_CONTROL' `
+    "The IPC client still requests security-descriptor inspection rights."
 Reject-Pattern $rustClient 'CreateFileW\([\s\S]{0,500}OPEN_EXISTING,\s*0,\s*ptr::null_mut\(\)' `
     "The IPC pipe can still be opened without FILE_FLAG_OVERLAPPED."
 Reject-Pattern $rustClient '(?:ReadFile|WriteFile)\([\s\S]{0,350}&mut\s+immediate' `

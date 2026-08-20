@@ -44,17 +44,13 @@ pub fn run() {
             }
         })
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::Destroyed) {
-                if window
+            if matches!(event, tauri::WindowEvent::Destroyed)
+                && window
                     .state::<AppState>()
                     .stop_streams_for_window(window.label())
                     .is_err()
-                {
-                    log::warn!("Window stream registry reset after an interrupted update");
-                }
-                if let Some(runtime) = window.try_state::<history_runtime::HistoryRuntime>() {
-                    runtime.wake();
-                }
+            {
+                log::warn!("Window stream registry reset after an interrupted update");
             }
         })
         .setup(|app| {
@@ -149,27 +145,12 @@ pub fn run() {
                 app.handle().clone(),
                 state.inner().clone(),
             );
-            let history_runtime =
-                match history_runtime::HistoryRuntime::start(state.inner().clone()) {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        eprintln!("Tauri History maintenance unavailable: {error}");
-                        history_runtime::HistoryRuntime::unavailable()
-                    }
-                };
+            let history_runtime = history_runtime::HistoryRuntime::start(state.inner().clone());
             let managed = app.manage(history_runtime);
             debug_assert!(managed, "History runtime is managed once");
 
             let mod_studio_monitor =
-                match channels::mod_studio_runtime::ModStudioMonitorRuntime::start(
-                    state.inner().clone(),
-                ) {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        eprintln!("Tauri Mod runtime monitor unavailable: {error}");
-                        channels::mod_studio_runtime::ModStudioMonitorRuntime::unavailable()
-                    }
-                };
+                channels::mod_studio_runtime::ModStudioMonitorRuntime::start(state.inner().clone());
             let managed = app.manage(mod_studio_monitor);
             debug_assert!(managed, "Mod runtime monitor is managed once");
 
@@ -263,6 +244,7 @@ pub fn run() {
             commands::mod_studio::delete_mod_studio_document,
             commands::mod_studio::open_mod_studio_folder,
             commands::mod_studio::get_mod_loader_runtime,
+            commands::mod_studio::get_mod_loader_game_running,
             commands::mod_studio::set_mod_loader_running,
             commands::mod_studio::open_mod_loader_directory,
             commands::mod_studio::get_mod_studio_deployment,
@@ -302,8 +284,6 @@ pub fn run() {
             commands::settings::set_settings_interface,
             commands::settings::set_settings_update_preferences,
             commands::skills::get_skills_snapshot,
-            commands::stream::read_stream_delivery,
-            commands::stream::ack_stream_delivery,
             commands::timeline::get_timeline_snapshot,
             commands::timeline::set_timeline_preferences,
             commands::technical::get_technical_snapshot,
@@ -355,8 +335,6 @@ pub fn run() {
                 {
                     runtime.shutdown();
                 }
-                channels::mod_studio_runtime::shutdown_mod_studio_poll_runtime();
-                channels::stream_runtime::shutdown_polling_stream_runtime();
             }
         });
 }

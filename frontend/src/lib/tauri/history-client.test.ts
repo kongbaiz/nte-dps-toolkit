@@ -1,17 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createHistoryClient } from "./history-client";
-import { MAX_STREAM_DELIVERY_BYTES } from "./stream-contract";
 
-const encodeDelivery = (events: unknown[]): ArrayBuffer => {
-  const bytes = new TextEncoder().encode(
-    JSON.stringify({ streamProtocolVersion: 1, events }),
-  );
-  return bytes.buffer.slice(
-    bytes.byteOffset,
-    bytes.byteOffset + bytes.byteLength,
-  ) as ArrayBuffer;
-};
+const encodeDelivery = (events: unknown[]) => ({
+  streamProtocolVersion: 1,
+  events,
+});
 
 describe("History client", () => {
   it("routes comparison through the typed Tauri command", async () => {
@@ -82,6 +76,16 @@ describe("History client", () => {
   it("subscribes through a typed Channel and cleans it up", async () => {
     const calls: string[] = [];
     let onMessage: ((message: unknown) => void) | undefined;
+    const snapshotEvent = {
+      event: "snapshot",
+      payload: {
+        contractVersion: 2,
+        revision: "1",
+        maxImportBytes: "1",
+        skippedFiles: 0,
+        records: [],
+      },
+    };
     const client = createHistoryClient(
       {
         async invoke(command) {
@@ -93,25 +97,8 @@ describe("History client", () => {
               streamIntervalMs: 250,
               streamProtocolVersion: 1,
               streamGeneration: "1",
-              maxInFlightDeliveries: 1,
-              maxDeliveryBytes: MAX_STREAM_DELIVERY_BYTES,
             };
           }
-          if (command === "read_stream_delivery") {
-            return encodeDelivery([
-              {
-                event: "snapshot",
-                payload: {
-                  contractVersion: 2,
-                  revision: "1",
-                  maxImportBytes: "1",
-                  skippedFiles: 0,
-                  records: [],
-                },
-              },
-            ]);
-          }
-          if (command === "ack_stream_delivery") return { accepted: true };
           return undefined;
         },
         createChannel(handler) {
@@ -128,20 +115,12 @@ describe("History client", () => {
         throw error;
       },
     );
-    onMessage?.({
-      streamProtocolVersion: 1,
-      streamKind: "history",
-      subscriptionId: "history-test",
-      streamGeneration: "1",
-      deliverySequence: "1",
-    });
+    onMessage?.(encodeDelivery([snapshotEvent]));
     await vi.waitFor(() => expect(snapshots).toHaveLength(1));
     await unsubscribe();
     expect(snapshots).toHaveLength(1);
     expect(calls).toEqual([
       "subscribe_history",
-      "read_stream_delivery",
-      "ack_stream_delivery",
       "unsubscribe_history",
     ]);
   });

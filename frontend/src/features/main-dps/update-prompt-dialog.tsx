@@ -11,6 +11,7 @@ import {
   DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Markdown } from "@/components/ui/markdown";
 import { t, tf } from "@/lib/i18n";
 import type {
   AvailableUpdate,
@@ -155,14 +156,14 @@ function ReleaseNotes({ update }: { update: AvailableUpdate }) {
           {update.publishedAt} · {formatByteCount(update.artifactSize)}
         </span>
       </div>
-      <div
+      <Markdown
         className={cn(
-          "mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground",
+          "mt-2 text-xs leading-relaxed text-muted-foreground",
           !update.notes.trim() && "italic",
         )}
       >
         {update.notes.trim() || t("No release notes are available.")}
-      </div>
+      </Markdown>
     </article>
   );
 }

@@ -17,7 +17,6 @@ pub(crate) mod packets;
 pub(crate) mod resources;
 pub(crate) mod settings;
 pub(crate) mod skills;
-pub(crate) mod stream;
 pub(crate) mod technical;
 pub(crate) mod timeline;
 

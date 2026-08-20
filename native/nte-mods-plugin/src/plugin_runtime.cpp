@@ -163,6 +163,7 @@ namespace nte::mods
 		HANDLE viewport_host_stopped_event = nullptr;
 		constinit hook::ViewportSessionIdentity active_viewport_identity{};
 		PVOID volatile recorded_plugin_module = nullptr;
+		volatile LONG proxy_initialization_scheduled = 0;
 		volatile LONG ipc_dispatch_in_progress = 0;
 		volatile LONG runtime_stopping = 1;
 		volatile LONG active_runtime_detours = 0;
@@ -1789,6 +1790,38 @@ namespace nte::mods
 		if (module != nullptr)
 			InterlockedCompareExchangePointer(
 				&recorded_plugin_module, module, nullptr);
+	}
+
+	DWORD WINAPI InitializeRecordedPluginRuntimeWorker(void*) noexcept
+	{
+		InitializeRecordedPluginRuntime();
+		return 0;
+	}
+
+	bool ScheduleRecordedPluginRuntimeInitialization() noexcept
+	{
+		if (InterlockedCompareExchange(
+				&proxy_initialization_scheduled, 1, 0) != 0)
+			return true;
+
+		// This helper is invoked during DLL_PROCESS_ATTACH, but it performs only
+		// finite thread creation and never waits. Windows does not run the new
+		// thread's entry point until all active DLL initialization callbacks have
+		// returned, so the runtime starts after the loader lock is released.
+		HANDLE worker = CreateThread(
+			nullptr,
+			0,
+			InitializeRecordedPluginRuntimeWorker,
+			nullptr,
+			0,
+			nullptr);
+		if (worker == nullptr)
+		{
+			InterlockedExchange(&proxy_initialization_scheduled, 0);
+			return false;
+		}
+		CloseHandle(worker);
+		return true;
 	}
 
 	PluginStartResult InitializeRecordedPluginRuntime()

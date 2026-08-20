@@ -10,6 +10,9 @@ import {
 export function abyssValuesFixture(): Record<string, unknown> {
   return {
     contractVersion: ABYSS_VALUES_CONTRACT_VERSION,
+    dataVersion: "fixture-v1",
+    dataUpdatedAt: "2026-08-20T00:00:00Z",
+    dataStale: false,
     seasonCount: 1,
     floorCount: 1,
     monsterCount: 2,
@@ -79,6 +82,7 @@ describe("abyss values contract", () => {
       upper: true,
       lower: false,
     });
+    expect(snapshot.dataStale).toBe(false);
   });
 
   it("rejects version, count, and numeric drift", () => {

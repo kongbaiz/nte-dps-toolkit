@@ -220,13 +220,29 @@ function AbyssValuesReady({
   return (
     <>
       <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b px-3">
-        <p className="text-sm font-medium">
-          {tf("{} seasons · {} floors · {} abyss enemies", [
-            String(snapshot.seasonCount),
-            String(snapshot.floorCount),
-            String(snapshot.monsterCount),
-          ])}
-        </p>
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            {tf("{} seasons · {} floors · {} abyss enemies", [
+              String(snapshot.seasonCount),
+              String(snapshot.floorCount),
+              String(snapshot.monsterCount),
+            ])}
+          </p>
+          <p
+            className={cn(
+              "truncate text-xs text-muted-foreground",
+              snapshot.dataStale && "text-amber-600 dark:text-amber-400",
+            )}
+            title={snapshot.dataVersion}
+          >
+            {snapshot.dataUpdatedAt.slice(0, 10)} ·{" "}
+            {t(
+              snapshot.dataStale
+                ? "Using cached abyss data"
+                : "Abyss data is up to date",
+            )}
+          </p>
+        </div>
         <Button
           variant="outline"
           disabled={pending}

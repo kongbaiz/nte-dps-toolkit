@@ -3,7 +3,6 @@
 //! validated session item IDs and polls completed responses.
 
 use std::io;
-use std::mem::{offset_of, size_of};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
@@ -12,7 +11,6 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, TrySendError, bounded, unbounded};
 #[cfg(feature = "desktop")]
 use std::collections::BTreeMap;
-#[cfg(feature = "desktop")]
 use std::fmt;
 #[cfg(feature = "desktop")]
 use std::fs;
@@ -23,23 +21,12 @@ use std::os::windows::ffi::OsStrExt;
 #[cfg(feature = "desktop")]
 use std::path::{Path, PathBuf};
 use std::ptr;
+#[cfg(feature = "desktop")]
+use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_INSUFFICIENT_BUFFER, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING,
-    ERROR_OPERATION_ABORTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
-};
-#[cfg(feature = "desktop")]
-use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, LocalFree};
-#[cfg(feature = "desktop")]
-use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
-#[cfg(feature = "desktop")]
-use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION,
-    GetAce, GetAclInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-};
-use windows_sys::Win32::Security::{
-    GetLengthSid, GetTokenInformation, IsValidSid, PSID, SECURITY_MAX_SID_SIZE, SID_AND_ATTRIBUTES,
-    TOKEN_GROUPS, TOKEN_INFORMATION_CLASS, TOKEN_QUERY, TOKEN_USER, TokenGroups, TokenSessionId,
-    TokenUser,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_BAD_PIPE, ERROR_FILE_NOT_FOUND, ERROR_IO_INCOMPLETE,
+    ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_BUSY, ERROR_PIPE_NOT_CONNECTED,
+    ERROR_SEM_TIMEOUT, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_READ_DATA, FILE_WRITE_DATA, OPEN_EXISTING, ReadFile,
@@ -47,24 +34,18 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::Storage::FileSystem::{
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW, READ_CONTROL,
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResultEx, OVERLAPPED};
-use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
 #[cfg(feature = "desktop")]
 use windows_sys::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6432KEY,
     RegCloseKey, RegCreateKeyW, RegGetValueW, RegSetValueExW,
 };
+use windows_sys::Win32::System::Threading::CreateEventW;
 #[cfg(feature = "desktop")]
-use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
-use windows_sys::Win32::System::SystemServices::SE_GROUP_LOGON_ID;
-use windows_sys::Win32::System::Threading::{
-    CreateEventW, GetCurrentProcess, OpenProcess, OpenProcessToken,
-    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-};
-#[cfg(feature = "desktop")]
-use windows_sys::Win32::System::Threading::{OpenEventW, SYNCHRONIZATION_SYNCHRONIZE};
+use windows_sys::Win32::System::Threading::OpenEventW;
 
 use crate::engine::model::HtItemNetId;
 #[cfg(feature = "desktop")]
@@ -73,6 +54,7 @@ use crate::storage::mod_scripts::{
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\nte-mods-plugin-v7";
+
 #[cfg(feature = "desktop")]
 const RUNTIME_PRESENCE_NAME: &str = r"Local\nte-mods-plugin-v1-present";
 const IPC_MAGIC: u32 = 0x5145_544e;
@@ -94,8 +76,7 @@ const IPC_QUERY_MOD_EVENTS: u16 = 12;
 const IPC_QUERY_MOD_LOGS: u16 = 13;
 const IPC_TIMEOUT_MS: u32 = 1_500;
 const IPC_CANCEL_DRAIN_TIMEOUT_MS: u32 = 250;
-const MAX_TOKEN_INFORMATION_BYTES: usize = 64 * 1024;
-const MAX_PROCESS_IMAGE_UTF16: usize = 32_768;
+const IPC_TRANSACTION_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 const MAX_PLACEMENTS: usize = 64;
 const REQUEST_HEADER_SIZE: usize = 56;
 const PLACEMENT_SIZE: usize = 16;
@@ -145,6 +126,7 @@ const GAME_INSTALL_REGISTRY_KEYS: [(ModsPluginGameRegion, &str); 2] = [
 ];
 #[cfg(feature = "desktop")]
 const GAME_BINARY_RELATIVE_PATH: &str = r"Client\WindowsNoEditor\HT\Binaries\Win64";
+#[cfg(feature = "desktop")]
 const GAME_EXECUTABLE_NAME: &str = "HTGame.exe";
 #[cfg(feature = "desktop")]
 const PLUGIN_FILE_NAME: &str = "dwmapi.dll";
@@ -837,42 +819,129 @@ pub(crate) fn query_mod_logs() -> Result<Vec<ModLogSnapshot>, String> {
 }
 
 #[cfg(feature = "desktop")]
-pub fn probe_runtime_presence() -> Result<bool, String> {
-    let mut event_name = RUNTIME_PRESENCE_NAME.encode_utf16().collect::<Vec<_>>();
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModsPluginRuntimePresence {
+    Absent,
+    Initializing,
+    Ready,
+}
+
+#[cfg(feature = "desktop")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModsPluginRuntimeProbeErrorCode {
+    RuntimeEventAccessDenied,
+    RuntimeEventOpenFailed,
+    IpcClientUnavailable,
+    IpcPipeAccessDenied,
+    IpcPipeOpenFailed,
+    PollWorkerFailed,
+    RuntimeSubscriptionFailed,
+}
+
+#[cfg(feature = "desktop")]
+impl ModsPluginRuntimeProbeErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimeEventAccessDenied => "RUNTIME_EVENT_ACCESS_DENIED",
+            Self::RuntimeEventOpenFailed => "RUNTIME_EVENT_OPEN_FAILED",
+            Self::IpcClientUnavailable => "IPC_CLIENT_UNAVAILABLE",
+            Self::IpcPipeAccessDenied => "IPC_PIPE_ACCESS_DENIED",
+            Self::IpcPipeOpenFailed => "IPC_PIPE_OPEN_FAILED",
+            Self::PollWorkerFailed => "POLL_WORKER_FAILED",
+            Self::RuntimeSubscriptionFailed => "RUNTIME_SUBSCRIPTION_FAILED",
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModsPluginRuntimeProbeError {
+    pub code: ModsPluginRuntimeProbeErrorCode,
+    pub os_error_code: Option<u32>,
+}
+
+#[cfg(feature = "desktop")]
+impl ModsPluginRuntimeProbeError {
+    const fn new(code: ModsPluginRuntimeProbeErrorCode, os_error_code: Option<u32>) -> Self {
+        Self {
+            code,
+            os_error_code,
+        }
+    }
+}
+
+#[cfg(feature = "desktop")]
+pub fn probe_runtime_presence() -> Result<ModsPluginRuntimePresence, ModsPluginRuntimeProbeError> {
+    probe_runtime_presence_named(RUNTIME_PRESENCE_NAME)
+}
+
+#[cfg(feature = "desktop")]
+fn probe_runtime_presence_named(
+    runtime_presence_name: &str,
+) -> Result<ModsPluginRuntimePresence, ModsPluginRuntimeProbeError> {
+    let mut event_name = runtime_presence_name.encode_utf16().collect::<Vec<_>>();
     event_name.push(0);
 
-    // The transaction lock is deliberately non-blocking. Presence probing is a
-    // fallback read model and must not queue behind a live plugin operation.
-    let _transaction = acquire_ipc_transaction()?;
-    let current_identity = query_current_token_identity()?;
-
-    // READ_CONTROL is read-only and is required to authenticate the exact owner
-    // and DACL before treating the fixed-name event as plugin-owned.
+    // The presence event is only a lightweight initialization marker. The pipe
+    // connection below is the actual readiness boundary; no token, process, or
+    // security-descriptor inspection is part of runtime detection.
     // SAFETY: event_name is NUL-terminated and remains alive for the call.
-    let handle = unsafe {
-        OpenEventW(
-            SYNCHRONIZATION_SYNCHRONIZE | READ_CONTROL,
-            0,
-            event_name.as_ptr(),
-        )
-    };
+    let handle = unsafe { OpenEventW(SYNCHRONIZE, 0, event_name.as_ptr()) };
     if handle.is_null() {
         let error = io::Error::last_os_error();
         return match error.raw_os_error() {
-            Some(code) if code as u32 == ERROR_FILE_NOT_FOUND => Ok(false),
-            _ => Err(error.to_string()),
+            Some(code) if code as u32 == ERROR_FILE_NOT_FOUND => {
+                Ok(ModsPluginRuntimePresence::Absent)
+            }
+            Some(code) if code as u32 == ERROR_ACCESS_DENIED => {
+                Err(ModsPluginRuntimeProbeError::new(
+                    ModsPluginRuntimeProbeErrorCode::RuntimeEventAccessDenied,
+                    Some(code as u32),
+                ))
+            }
+            code => Err(ModsPluginRuntimeProbeError::new(
+                ModsPluginRuntimeProbeErrorCode::RuntimeEventOpenFailed,
+                code.map(|value| value as u32),
+            )),
         };
     }
-    let event = OwnedHandle(handle);
-    validate_presence_event_security(event.raw(), &current_identity)?;
+    let _event = OwnedHandle(handle);
 
-    // A fixed-name event alone has no creator-PID query. Require a simultaneous
-    // authenticated pipe whose server is the same-logon HTGame.exe process.
+    // The transaction lock is deliberately non-blocking. Presence probing is a
+    // fallback read model and must not queue behind a live plugin operation.
+    // A healthy competing request is a transient observation, not a system
+    // probe failure; a quarantined/poisoned client remains fail-closed.
+    let _transaction = match acquire_ipc_transaction() {
+        Ok(transaction) => transaction,
+        Err(IpcTransactionAcquireError::Busy) => {
+            return Ok(ModsPluginRuntimePresence::Initializing);
+        }
+        Err(IpcTransactionAcquireError::Unavailable) => {
+            return Err(ModsPluginRuntimeProbeError::new(
+                ModsPluginRuntimeProbeErrorCode::IpcClientUnavailable,
+                None,
+            ));
+        }
+    };
+
+    // A successful local pipe connection distinguishes a published marker from
+    // an IPC-ready runtime. The bounded request/response path validates protocol
+    // magic, version, size, request ID, and delivery acknowledgement.
     // Merely connecting performs no plugin request and therefore has no domain
     // or revision effect.
     let deadline = Instant::now() + Duration::from_millis(u64::from(IPC_TIMEOUT_MS));
-    let _pipe = open_authenticated_pipe(deadline, &current_identity)?;
-    Ok(true)
+    match open_runtime_pipe(deadline) {
+        Ok(_pipe) => Ok(ModsPluginRuntimePresence::Ready),
+        Err(PipeOpenError::NotReady) => Ok(ModsPluginRuntimePresence::Initializing),
+        Err(PipeOpenError::AccessDenied(code)) => Err(ModsPluginRuntimeProbeError::new(
+            ModsPluginRuntimeProbeErrorCode::IpcPipeAccessDenied,
+            Some(code),
+        )),
+        Err(PipeOpenError::Failed(code)) => Err(ModsPluginRuntimeProbeError::new(
+            ModsPluginRuntimeProbeErrorCode::IpcPipeOpenFailed,
+            code,
+        )),
+    }
 }
 
 struct OwnedHandle(HANDLE);
@@ -896,306 +965,55 @@ impl Drop for OwnedHandle {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct TokenIdentity {
-    user_sid: Vec<u8>,
-    logon_sid: Vec<u8>,
-    session_id: u32,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IpcTransactionAcquireError {
+    Busy,
+    Unavailable,
 }
 
-struct TokenInformationBuffer {
-    words: Vec<usize>,
-    byte_len: usize,
-}
-
-impl TokenInformationBuffer {
-    fn as_ptr(&self) -> *const u8 {
-        self.words.as_ptr().cast()
+impl fmt::Display for IpcTransactionAcquireError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Busy => "Mod IPC transaction is busy",
+            Self::Unavailable => "Mod IPC client is unavailable",
+        })
     }
 }
 
-fn query_token_information(
-    token: HANDLE,
-    information_class: TOKEN_INFORMATION_CLASS,
-) -> Result<TokenInformationBuffer, String> {
-    let mut required = 0_u32;
-    // SAFETY: this is the documented size query; the null buffer has length 0
-    // and required remains writable for the duration of the call.
-    let queried =
-        unsafe { GetTokenInformation(token, information_class, ptr::null_mut(), 0, &mut required) };
-    let size_error = io::Error::last_os_error();
-    if queried != 0
-        || size_error.raw_os_error().map(|code| code as u32) != Some(ERROR_INSUFFICIENT_BUFFER)
-        || required == 0
-        || required as usize > MAX_TOKEN_INFORMATION_BYTES
-    {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-
-    let byte_len = required as usize;
-    let word_count = byte_len.div_ceil(size_of::<usize>());
-    let mut words = vec![0_usize; word_count];
-    let mut returned = required;
-    // SAFETY: the word allocation is suitably aligned, spans at least required
-    // bytes, and remains exclusively writable during GetTokenInformation.
-    if unsafe {
-        GetTokenInformation(
-            token,
-            information_class,
-            words.as_mut_ptr().cast(),
-            required,
-            &mut returned,
-        )
-    } == 0
-        || returned == 0
-        || returned as usize > byte_len
-    {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    Ok(TokenInformationBuffer {
-        words,
-        byte_len: returned as usize,
-    })
-}
-
-fn copy_valid_sid(sid: PSID) -> Result<Vec<u8>, String> {
-    if sid.is_null() {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    // SAFETY: callers obtain SIDs from a validated token or security descriptor
-    // that remains alive for this call. IsValidSid validates the variable tail
-    // before GetLengthSid and from_raw_parts inspect it.
-    if unsafe { IsValidSid(sid) } == 0 {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    // SAFETY: IsValidSid succeeded for sid above.
-    let sid_len = unsafe { GetLengthSid(sid) } as usize;
-    if sid_len == 0 || sid_len > SECURITY_MAX_SID_SIZE as usize {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    // SAFETY: GetLengthSid returned the readable byte length of the valid SID.
-    Ok(unsafe { std::slice::from_raw_parts(sid.cast::<u8>(), sid_len) }.to_vec())
-}
-
-fn query_token_identity(token: HANDLE) -> Result<TokenIdentity, String> {
-    let user_buffer = query_token_information(token, TokenUser)?;
-    if user_buffer.byte_len < size_of::<TOKEN_USER>() {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    // SAFETY: query_token_information returns suitably aligned storage with at
-    // least a TOKEN_USER and keeps the SID target alive through the copy.
-    let token_user = unsafe { &*user_buffer.as_ptr().cast::<TOKEN_USER>() };
-    let user_sid = copy_valid_sid(token_user.User.Sid)?;
-
-    let mut session_id = 0_u32;
-    let mut returned = 0_u32;
-    // SAFETY: session_id is exactly the documented TokenSessionId output type.
-    if unsafe {
-        GetTokenInformation(
-            token,
-            TokenSessionId,
-            (&mut session_id as *mut u32).cast(),
-            size_of::<u32>() as u32,
-            &mut returned,
-        )
-    } == 0
-        || returned != size_of::<u32>() as u32
-    {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-
-    let groups_buffer = query_token_information(token, TokenGroups)?;
-    if groups_buffer.byte_len < size_of::<TOKEN_GROUPS>() {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    // SAFETY: the buffer is aligned and large enough for the fixed prefix.
-    let groups = unsafe { &*groups_buffer.as_ptr().cast::<TOKEN_GROUPS>() };
-    let group_count = groups.GroupCount as usize;
-    let groups_bytes = group_count
-        .checked_mul(size_of::<SID_AND_ATTRIBUTES>())
-        .and_then(|size| offset_of!(TOKEN_GROUPS, Groups).checked_add(size))
-        .ok_or_else(|| "Mod IPC token identity is unavailable".to_owned())?;
-    if group_count == 0 || groups_bytes > groups_buffer.byte_len {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-
-    let first_group = ptr::addr_of!(groups.Groups).cast::<SID_AND_ATTRIBUTES>();
-    let logon_flag = SE_GROUP_LOGON_ID as u32;
-    for index in 0..group_count {
-        // SAFETY: groups_bytes proves every indexed flexible-array element lies
-        // inside the token buffer.
-        let group = unsafe { &*first_group.add(index) };
-        if group.Attributes & logon_flag == logon_flag {
-            return Ok(TokenIdentity {
-                user_sid,
-                logon_sid: copy_valid_sid(group.Sid)?,
-                session_id,
-            });
-        }
-    }
-    Err("Mod IPC token identity is unavailable".to_owned())
-}
-
-fn query_current_token_identity() -> Result<TokenIdentity, String> {
-    let mut token = ptr::null_mut();
-    // SAFETY: GetCurrentProcess returns a valid pseudo-handle and token receives
-    // one owned TOKEN_QUERY handle when OpenProcessToken succeeds.
-    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
-        return Err("Mod IPC token identity is unavailable".to_owned());
-    }
-    let token = OwnedHandle(token);
-    query_token_identity(token.raw())
-}
-
-fn query_process_token_identity(process: HANDLE) -> Result<TokenIdentity, String> {
-    let mut token = ptr::null_mut();
-    // SAFETY: process is a live PROCESS_QUERY_LIMITED_INFORMATION handle and
-    // token receives one owned TOKEN_QUERY handle on success.
-    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) } == 0 {
-        return Err("Mod IPC server identity is unavailable".to_owned());
-    }
-    let token = OwnedHandle(token);
-    query_token_identity(token.raw())
-}
-
-fn authenticate_pipe_server(pipe: HANDLE, expected: &TokenIdentity) -> Result<(), String> {
-    let mut process_id = 0_u32;
-    // SAFETY: pipe is a connected named-pipe client handle and process_id is a
-    // valid output for the duration of the call.
-    if unsafe { GetNamedPipeServerProcessId(pipe, &mut process_id) } == 0 || process_id == 0 {
-        return Err("Mod IPC server authentication failed".to_owned());
-    }
-
-    // SAFETY: process_id came from the connected pipe. No handle inheritance is
-    // requested, and the result is checked before ownership is assumed.
-    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
-    if process.is_null() {
-        return Err("Mod IPC server authentication failed".to_owned());
-    }
-    let process = OwnedHandle(process);
-
-    let mut image = vec![0_u16; MAX_PROCESS_IMAGE_UTF16];
-    let mut image_len = image.len() as u32;
-    // SAFETY: process has query rights and image is a writable UTF-16 buffer of
-    // image_len elements. The API updates image_len to the written element count.
-    if unsafe { QueryFullProcessImageNameW(process.raw(), 0, image.as_mut_ptr(), &mut image_len) }
-        == 0
-        || image_len == 0
-        || image_len as usize > image.len()
-    {
-        return Err("Mod IPC server authentication failed".to_owned());
-    }
-    let image = String::from_utf16(&image[..image_len as usize])
-        .map_err(|_| "Mod IPC server authentication failed".to_owned())?;
-    let executable = image.rsplit(['\\', '/']).next().unwrap_or("");
-    if !executable.eq_ignore_ascii_case(GAME_EXECUTABLE_NAME) {
-        return Err("Mod IPC server authentication failed".to_owned());
-    }
-
-    let actual = query_process_token_identity(process.raw())?;
-    if &actual != expected {
-        return Err("Mod IPC server authentication failed".to_owned());
-    }
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-struct LocalSecurityDescriptor(PSECURITY_DESCRIPTOR);
-
-#[cfg(feature = "desktop")]
-impl Drop for LocalSecurityDescriptor {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            // SAFETY: GetSecurityInfo allocated this descriptor with LocalAlloc
-            // and ownership is released exactly once here.
-            unsafe {
-                LocalFree(self.0.cast());
-            }
-        }
-    }
-}
-
-#[cfg(feature = "desktop")]
-fn validate_presence_event_security(event: HANDLE, expected: &TokenIdentity) -> Result<(), String> {
-    let mut owner: PSID = ptr::null_mut();
-    let mut dacl: *mut ACL = ptr::null_mut();
-    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-    // SAFETY: event was opened with READ_CONTROL. All requested output pointers
-    // remain writable and descriptor is released through LocalFree below.
-    let status = unsafe {
-        GetSecurityInfo(
-            event,
-            SE_KERNEL_OBJECT,
-            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            &mut owner,
-            ptr::null_mut(),
-            &mut dacl,
-            ptr::null_mut(),
-            &mut descriptor,
-        )
-    };
-    if status != ERROR_SUCCESS || descriptor.is_null() {
-        if !descriptor.is_null() {
-            drop(LocalSecurityDescriptor(descriptor));
-        }
-        return Err("Mod runtime presence authentication failed".to_owned());
-    }
-    let _descriptor = LocalSecurityDescriptor(descriptor);
-    if owner.is_null() || dacl.is_null() || copy_valid_sid(owner)? != expected.user_sid {
-        return Err("Mod runtime presence authentication failed".to_owned());
-    }
-
-    let mut acl = ACL_SIZE_INFORMATION::default();
-    // SAFETY: dacl points inside the live security descriptor and acl is the
-    // exact output type requested by AclSizeInformation.
-    if unsafe {
-        GetAclInformation(
-            dacl,
-            (&mut acl as *mut ACL_SIZE_INFORMATION).cast(),
-            size_of::<ACL_SIZE_INFORMATION>() as u32,
-            AclSizeInformation,
-        )
-    } == 0
-        || acl.AceCount != 1
-    {
-        return Err("Mod runtime presence authentication failed".to_owned());
-    }
-
-    let mut ace_value = ptr::null_mut();
-    // SAFETY: the validated ACL has exactly one ACE and ace_value remains valid
-    // while the security descriptor guard is alive.
-    if unsafe { GetAce(dacl, 0, &mut ace_value) } == 0 || ace_value.is_null() {
-        return Err("Mod runtime presence authentication failed".to_owned());
-    }
-    // SAFETY: GetAce returned a pointer to the ACL's first ACE. Header type and
-    // fixed fields are checked before the variable SID is copied.
-    let ace = unsafe { &*ace_value.cast::<ACCESS_ALLOWED_ACE>() };
-    let expected_access = SYNCHRONIZATION_SYNCHRONIZE | READ_CONTROL;
-    let ace_sid = ptr::addr_of!(ace.SidStart).cast_mut().cast();
-    if ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE as u8
-        || ace.Header.AceFlags != 0
-        || ace.Mask != expected_access
-        || copy_valid_sid(ace_sid)? != expected.logon_sid
-    {
-        return Err("Mod runtime presence authentication failed".to_owned());
-    }
-    Ok(())
-}
-
-fn acquire_ipc_transaction() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+fn acquire_ipc_transaction()
+-> Result<std::sync::MutexGuard<'static, ()>, IpcTransactionAcquireError> {
     if IPC_CLIENT_QUARANTINED.load(Ordering::Acquire) {
-        return Err("Mod IPC client is unavailable".to_owned());
+        return Err(IpcTransactionAcquireError::Unavailable);
     }
     match IPC_TRANSACTION_LOCK.try_lock() {
         Ok(guard) => {
             if IPC_CLIENT_QUARANTINED.load(Ordering::Acquire) {
-                Err("Mod IPC client is unavailable".to_owned())
+                Err(IpcTransactionAcquireError::Unavailable)
             } else {
                 Ok(guard)
             }
         }
-        Err(TryLockError::WouldBlock) => Err("Mod IPC transaction is busy".to_owned()),
-        Err(TryLockError::Poisoned(_)) => Err("Mod IPC client is unavailable".to_owned()),
+        Err(TryLockError::WouldBlock) => Err(IpcTransactionAcquireError::Busy),
+        Err(TryLockError::Poisoned(_)) => Err(IpcTransactionAcquireError::Unavailable),
+    }
+}
+
+fn acquire_ipc_transaction_until(
+    deadline: Instant,
+) -> Result<std::sync::MutexGuard<'static, ()>, IpcTransactionAcquireError> {
+    loop {
+        match acquire_ipc_transaction() {
+            Ok(transaction) => return Ok(transaction),
+            Err(IpcTransactionAcquireError::Unavailable) => {
+                return Err(IpcTransactionAcquireError::Unavailable);
+            }
+            Err(IpcTransactionAcquireError::Busy) => {
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    return Err(IpcTransactionAcquireError::Busy);
+                };
+                thread::sleep(remaining.min(IPC_TRANSACTION_RETRY_INTERVAL));
+            }
+        }
     }
 }
 
@@ -1208,18 +1026,46 @@ fn remaining_timeout_ms(deadline: Instant) -> Option<u32> {
     Some(millis as u32)
 }
 
-fn open_authenticated_pipe(
-    deadline: Instant,
-    current_identity: &TokenIdentity,
-) -> Result<OwnedHandle, String> {
-    let timeout =
-        remaining_timeout_ms(deadline).ok_or_else(|| "Mod IPC operation timed out".to_owned())?;
+#[derive(Debug, PartialEq, Eq)]
+enum PipeOpenError {
+    NotReady,
+    AccessDenied(u32),
+    Failed(Option<u32>),
+}
+
+impl fmt::Display for PipeOpenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotReady => formatter.write_str("Mod IPC pipe is not ready"),
+            Self::AccessDenied(code) => write!(formatter, "Mod IPC pipe access denied ({code})"),
+            Self::Failed(Some(code)) => write!(formatter, "Mod IPC pipe open failed ({code})"),
+            Self::Failed(None) => formatter.write_str("Mod IPC pipe open failed"),
+        }
+    }
+}
+
+fn classify_pipe_open_error(error: io::Error) -> PipeOpenError {
+    match error.raw_os_error().map(|code| code as u32) {
+        Some(
+            ERROR_FILE_NOT_FOUND
+            | ERROR_BAD_PIPE
+            | ERROR_PIPE_BUSY
+            | ERROR_PIPE_NOT_CONNECTED
+            | ERROR_SEM_TIMEOUT,
+        ) => PipeOpenError::NotReady,
+        Some(ERROR_ACCESS_DENIED) => PipeOpenError::AccessDenied(ERROR_ACCESS_DENIED),
+        code => PipeOpenError::Failed(code),
+    }
+}
+
+fn open_runtime_pipe(deadline: Instant) -> Result<OwnedHandle, PipeOpenError> {
+    let timeout = remaining_timeout_ms(deadline).ok_or(PipeOpenError::NotReady)?;
     let mut pipe_name = PIPE_NAME.encode_utf16().collect::<Vec<_>>();
     pipe_name.push(0);
 
     // SAFETY: pipe_name is NUL-terminated and remains alive for the bounded wait.
     if unsafe { WaitNamedPipeW(pipe_name.as_ptr(), timeout) } == 0 {
-        return Err(io::Error::last_os_error().to_string());
+        return Err(classify_pipe_open_error(io::Error::last_os_error()));
     }
 
     // SAFETY: pipe_name is NUL-terminated. FILE_FLAG_OVERLAPPED is mandatory so
@@ -1236,11 +1082,9 @@ fn open_authenticated_pipe(
         )
     };
     if pipe == INVALID_HANDLE_VALUE {
-        return Err(io::Error::last_os_error().to_string());
+        return Err(classify_pipe_open_error(io::Error::last_os_error()));
     }
-    let pipe = OwnedHandle(pipe);
-    authenticate_pipe_server(pipe.raw(), current_identity)?;
-    Ok(pipe)
+    Ok(OwnedHandle(pipe))
 }
 
 struct OverlappedPipeOperation {
@@ -1447,10 +1291,14 @@ fn encode_delivery_ack(request_id: u64) -> [u8; DELIVERY_ACK_SIZE] {
 }
 
 fn call_plugin_request(request: &[u8; REQUEST_SIZE]) -> Result<[u8; RESPONSE_SIZE], String> {
-    let _transaction = acquire_ipc_transaction()?;
     let deadline = Instant::now() + Duration::from_millis(u64::from(IPC_TIMEOUT_MS));
-    let current_identity = query_current_token_identity()?;
-    let pipe = open_authenticated_pipe(deadline, &current_identity)?;
+    // All pipe callers share one bounded transaction lane. Runtime monitors run
+    // on owned worker threads, so waiting here does not hold AppState locks or
+    // block the UI. Treating ordinary contention as provider loss made the Mod
+    // Studio connection and combat-clock health oscillate under capture load.
+    let _transaction =
+        acquire_ipc_transaction_until(deadline).map_err(|error| error.to_string())?;
+    let pipe = open_runtime_pipe(deadline).map_err(|error| error.to_string())?;
 
     overlapped_write_exact(pipe.raw(), request, deadline)?;
     let response_bytes = overlapped_read_exact(pipe.raw(), RESPONSE_SIZE, deadline)?;
@@ -2793,6 +2641,48 @@ fn file_system_error(error: io::Error) -> ModsPluginDeploymentError {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn runtime_presence_treats_expected_pipe_absence_as_initializing() {
+        for code in [ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, ERROR_SEM_TIMEOUT] {
+            assert_eq!(
+                classify_pipe_open_error(io::Error::from_raw_os_error(code as i32)),
+                PipeOpenError::NotReady
+            );
+        }
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn absent_runtime_is_reported_before_ipc_lane_contention() {
+        let _transaction = IPC_TRANSACTION_LOCK
+            .lock()
+            .expect("lock the IPC lane for the contention fixture");
+        let event_name = format!(
+            r"Local\nte-mods-plugin-absent-fixture-{}",
+            std::process::id()
+        );
+
+        assert_eq!(
+            probe_runtime_presence_named(&event_name),
+            Ok(ModsPluginRuntimePresence::Absent)
+        );
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn runtime_presence_preserves_pipe_access_denied_code() {
+        let error = classify_pipe_open_error(io::Error::from_raw_os_error(5));
+        assert_eq!(error, PipeOpenError::AccessDenied(5));
+    }
+
+    #[cfg(feature = "desktop")]
+    #[test]
+    fn runtime_presence_keeps_unexpected_pipe_failures_fail_closed() {
+        let error = classify_pipe_open_error(io::Error::from_raw_os_error(87));
+        assert_eq!(error, PipeOpenError::Failed(Some(87)));
+    }
+
     const NATIVE_IPC_HEADER: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/native/nte-mods-plugin/include/nte_mods_ipc.h"
@@ -3199,6 +3089,31 @@ mod tests {
         assert!(remaining_timeout_ms(Instant::now() - Duration::from_millis(1)).is_none());
         let timeout = remaining_timeout_ms(Instant::now() + Duration::from_secs(1));
         assert!(timeout.is_some_and(|value| value > 0 && value <= 1_000));
+    }
+
+    #[test]
+    fn ipc_request_waits_for_the_active_bounded_transaction() {
+        let active = IPC_TRANSACTION_LOCK
+            .lock()
+            .expect("lock the active IPC transaction fixture");
+        let (result_sender, result_receiver) = std::sync::mpsc::channel();
+        let waiter = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_millis(250);
+            let acquired = acquire_ipc_transaction_until(deadline).is_ok();
+            result_sender
+                .send(acquired)
+                .expect("publish bounded acquisition result");
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        assert!(result_receiver.try_recv().is_err());
+        drop(active);
+        assert!(
+            result_receiver
+                .recv_timeout(Duration::from_millis(200))
+                .expect("waiter completes after the active transaction")
+        );
+        waiter.join().expect("join transaction waiter");
     }
 
     #[test]

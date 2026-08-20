@@ -8,7 +8,7 @@ use crate::{
     commands::timeline::{parse_scope, snapshot},
     contract::{
         CommandError, SubscriptionReceipt,
-        stream::{StreamKind, StreamReadySignal},
+        stream::{StreamDeliveryBody, StreamKind},
         timeline::TimelineEvent,
     },
     state::AppState,
@@ -20,7 +20,7 @@ pub(crate) const TIMELINE_STREAM_INTERVAL_MS: u32 = 100;
 pub(crate) fn subscribe_timeline(
     subscription_id: String,
     scope: String,
-    on_event: Channel<StreamReadySignal>,
+    on_event: Channel<StreamDeliveryBody<TimelineEvent>>,
     state: State<'_, AppState>,
     window: WebviewWindow,
 ) -> Result<SubscriptionReceipt, CommandError> {
@@ -41,7 +41,7 @@ pub(crate) fn subscribe_timeline(
     let mut last_revision = None;
     spawn_polling_stream(
         "nte-timeline-stream",
-        StreamDeliveryEndpoint::new(stream_kind, subscription_id.clone(), on_event),
+        StreamDeliveryEndpoint::new(on_event),
         state,
         registration,
         TIMELINE_STREAM_INTERVAL_MS,

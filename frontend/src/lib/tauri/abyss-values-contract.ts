@@ -5,7 +5,7 @@ import {
   type TechnicalCommandError,
 } from "./technical-contract";
 
-export const ABYSS_VALUES_CONTRACT_VERSION = 2;
+export const ABYSS_VALUES_CONTRACT_VERSION = 3;
 
 const {
   array,
@@ -28,6 +28,9 @@ export type AbyssHalfId = "upper" | "lower";
 
 export interface AbyssValuesSnapshot {
   contractVersion: number;
+  dataVersion: string;
+  dataUpdatedAt: string;
+  dataStale: boolean;
   seasonCount: number;
   floorCount: number;
   monsterCount: number;
@@ -108,6 +111,16 @@ export function parseAbyssValuesSnapshot(value: unknown): AbyssValuesSnapshot {
     );
   }
   const seasons = array(snapshot.seasons, "seasons").map(parseSeason);
+  const dataVersion = string(snapshot.dataVersion, "dataVersion");
+  const dataUpdatedAt = string(snapshot.dataUpdatedAt, "dataUpdatedAt");
+  if (
+    dataVersion.length === 0 ||
+    dataVersion.length > 128 ||
+    dataUpdatedAt.length > 64 ||
+    !Number.isFinite(Date.parse(dataUpdatedAt))
+  ) {
+    throw new TechnicalContractError("abyss data metadata is invalid");
+  }
   const seasonCount = integer(snapshot.seasonCount, "seasonCount");
   const floorCount = integer(snapshot.floorCount, "floorCount");
   const monsterCount = integer(snapshot.monsterCount, "monsterCount");
@@ -126,6 +139,9 @@ export function parseAbyssValuesSnapshot(value: unknown): AbyssValuesSnapshot {
   }
   return {
     contractVersion,
+    dataVersion,
+    dataUpdatedAt,
+    dataStale: boolean(snapshot.dataStale, "dataStale"),
     seasonCount,
     floorCount,
     monsterCount,
